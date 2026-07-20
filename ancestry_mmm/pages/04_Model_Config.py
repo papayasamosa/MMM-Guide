@@ -89,10 +89,10 @@ st.markdown("---")
 with st.expander("Advanced settings: MCMC sampling"):
     st.caption("Reasonable defaults are pre-filled. Increase draws/tune for a more reliable fit; reduce them for a quicker check.")
     c1, c2, c3, c4 = st.columns(4)
-    mcmc_draws = c1.number_input("Draws", min_value=200, max_value=5000, value=int(get_state("mcmc_draws", 2000)), step=200)
-    mcmc_tune = c2.number_input("Tune", min_value=200, max_value=5000, value=int(get_state("mcmc_tune", 1000)), step=200)
-    mcmc_chains = c3.number_input("Chains", min_value=1, max_value=8, value=int(get_state("mcmc_chains", 4)))
-    mcmc_target_accept = c4.slider("Target accept", 0.7, 0.99, float(get_state("mcmc_target_accept", 0.9)), 0.01)
+    mcmc_draws = c1.number_input("Draws", min_value=200, max_value=5000, value=int(get_state("mcmc_draws", 2000)), step=200, key="mcmc_draws_input")
+    mcmc_tune = c2.number_input("Tune", min_value=200, max_value=5000, value=int(get_state("mcmc_tune", 1000)), step=200, key="mcmc_tune_input")
+    mcmc_chains = c3.number_input("Chains", min_value=1, max_value=8, value=int(get_state("mcmc_chains", 4)), key="mcmc_chains_input")
+    mcmc_target_accept = c4.slider("Target accept", 0.7, 0.99, float(get_state("mcmc_target_accept", 0.9)), 0.01, key="mcmc_target_accept_input")
 
 st.markdown("---")
 if st.button("Prepare modelling frame", type="primary"):
