@@ -1,10 +1,8 @@
 """Data loading and validation utilities."""
 
 import pandas as pd
-import numpy as np
 from pathlib import Path
 from typing import Optional, Tuple, List, Dict, Any
-import streamlit as st
 
 
 def load_file(uploaded_file) -> Tuple[Optional[pd.DataFrame], Optional[str]]:

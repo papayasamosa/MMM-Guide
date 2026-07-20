@@ -19,7 +19,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from ancestry_mmm.utils import init_session_state, get_workflow_progress, THEME_COLORS
+from ancestry_mmm.utils import init_session_state, get_workflow_progress
 
 
 def setup_page_config():

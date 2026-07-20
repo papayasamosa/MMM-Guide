@@ -4,9 +4,8 @@ import numpy as np
 import pymc as pm
 import arviz as az
 from typing import Dict, List, Optional, Tuple, Callable, Any
-import warnings
 
-from .transformations import geometric_adstock_matrix, log_transform
+from .transformations import log_transform
 
 
 def build_loglog_model(

@@ -12,7 +12,7 @@ serialise a project as human-readable JSON per the persistence requirement.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 
 DEFAULT_SEGMENTS = ["New", "DNA_CrossSell", "Winback"]

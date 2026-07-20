@@ -100,7 +100,6 @@ def curve_plausibility_checks(
     issues: List[Dict[str, str]] = []
 
     K_mean = trace.posterior["hill_K"].mean(dim=["chain", "draw"])
-    K_hdi = az.hdi(trace, var_names=["hill_K"])["hill_K"]
     beta_mean = trace.posterior["beta"].mean(dim=["chain", "draw"])
     beta_std = trace.posterior["beta"].std(dim=["chain", "draw"])
 

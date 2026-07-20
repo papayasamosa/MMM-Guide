@@ -1,7 +1,7 @@
 """Marketing mix model transformations: adstock and saturation functions."""
 
 import numpy as np
-from typing import Optional, Union
+from typing import Union
 import pytensor
 import pytensor.tensor as pt
 
