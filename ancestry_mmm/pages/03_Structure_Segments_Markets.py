@@ -7,14 +7,16 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import streamlit as st
 
-from ancestry_mmm.utils import init_session_state, get_state, set_state, clear_model_state
+from ancestry_mmm.utils import init_session_state, get_state, set_state, clear_model_state, readable_label, FIELD_HELP
+from ancestry_mmm.components import apply_theme, render_sidebar, render_page_header, render_next_step, render_empty_state
 from ancestry_mmm.core.schema import ModelSpec, DEFAULT_SEGMENTS
 from ancestry_mmm.data import validate_modeling_frame, detect_column_types
 
 st.set_page_config(page_title="Structure - Ancestry FH MMM", page_icon="🧬", layout="wide")
 init_session_state()
-
-st.title("🧩 Structure: Segments & Markets")
+apply_theme()
+render_sidebar("structure")
+render_page_header("structure")
 st.caption(
     "Markets and FH segments (New, DNA cross-sell, Winback) are explicit structural dimensions "
     "here - not just filter values - because the joint hierarchical model needs to know them to "
@@ -23,7 +25,11 @@ st.caption(
 
 df = get_state("transformed_data")
 if df is None:
-    st.warning("No transformed data yet. Go to **Transform Pipeline** first.")
+    st.markdown("---")
+    render_empty_state(
+        "No transformed data yet. Complete Transform Pipeline first.",
+        button_label="Go to Transform Pipeline", target_key="transform_pipeline",
+    )
     st.stop()
 
 date_col = get_state("date_col")
@@ -31,14 +37,15 @@ market_col = get_state("market_col")
 hints = detect_column_types(df)
 numeric_cols = hints["numeric"]
 
+st.markdown("---")
 st.markdown("### Markets")
 if market_col:
     available_markets = sorted(df[market_col].dropna().unique().tolist())
-    markets = st.multiselect("Markets to include", available_markets, default=available_markets)
+    markets = st.multiselect("Markets to include *", available_markets, default=available_markets)
     unpooled_markets = st.multiselect(
         "Markets to model unpooled (structurally too different to share strength)",
         markets, default=[],
-        help="Everything else defaults to partial pooling across markets.",
+        help="Everything else defaults to partial pooling across markets. " + FIELD_HELP["partial_pooling"],
     )
 else:
     st.info("No market column was set - treating this as a single implicit market.")
@@ -52,14 +59,17 @@ st.markdown("---")
 st.markdown("### FH segments")
 st.caption("Map each segment to its weekly GSA outcome column.")
 
-n_segments = st.number_input("Number of segments", min_value=1, max_value=6, value=3)
+n_segments = st.number_input("Number of segments *", min_value=1, max_value=6, value=3)
 segment_outcomes = {}
 default_keys = DEFAULT_SEGMENTS
 for i in range(n_segments):
     c1, c2 = st.columns(2)
     key = c1.text_input(f"Segment {i + 1} name", value=default_keys[i] if i < len(default_keys) else f"segment_{i+1}", key=f"seg_key_{i}")
     guess_idx = next((j for j, c in enumerate(numeric_cols) if key.lower().replace("_", "") in c.lower().replace("_", "")), 0)
-    col = c2.selectbox(f"Outcome column for '{key}'", numeric_cols, index=guess_idx if numeric_cols else 0, key=f"seg_col_{i}")
+    col = c2.selectbox(
+        f"Outcome column for '{key}'", numeric_cols, index=guess_idx if numeric_cols else 0, key=f"seg_col_{i}",
+        format_func=readable_label,
+    )
     if key:
         segment_outcomes[key] = col
 
@@ -74,10 +84,11 @@ spend_hint_cols = [c for c in numeric_cols if c not in segment_outcomes.values()
 # so a strict keyword match against potential_media would under-select badly.
 _non_channel_hints = ["promo", "price", "confidence", "discount", "offer", "index"]
 default_channels = [c for c in spend_hint_cols if not any(h in c.lower() for h in _non_channel_hints)]
-channels = st.multiselect("Channel spend columns", spend_hint_cols, default=default_channels or spend_hint_cols)
+channels = st.multiselect("Channel spend columns *", spend_hint_cols, default=default_channels or spend_hint_cols, format_func=readable_label)
 dna_channels = st.multiselect(
-    "Which of these are DNA-targeted media? (drives the explicit DNA halo pathway)",
-    channels, default=[c for c in channels if "dna" in c.lower()],
+    "DNA-targeted media", channels, default=[c for c in channels if "dna" in c.lower()],
+    format_func=readable_label,
+    help="Which of these channels drive the explicit DNA halo pathway to other segments.",
 )
 
 st.markdown("---")
@@ -89,6 +100,7 @@ for seg in segment_outcomes:
         ["(none)"] + numeric_cols, key=f"promo_{seg}",
         index=(["(none)"] + numeric_cols).index(next((c for c in numeric_cols if "promo" in c.lower() and seg.lower()[:3] in c.lower()), "(none)"))
         if any("promo" in c.lower() for c in numeric_cols) else 0,
+        format_func=lambda c: c if c == "(none)" else readable_label(c),
     )
     if col != "(none)":
         promo_cols[seg] = col
@@ -96,17 +108,21 @@ for seg in segment_outcomes:
 st.markdown("---")
 st.markdown("### Controls")
 remaining_numeric = [c for c in numeric_cols if c not in segment_outcomes.values() and c not in channels and c not in promo_cols.values()]
-control_cols = st.multiselect("Global controls (apply to all segments)", remaining_numeric)
+control_cols = st.multiselect("Global controls (apply to all segments)", remaining_numeric, format_func=readable_label)
 
 st.markdown("**Segment-specific controls** (e.g. DNA kit price -> DNA cross-sell only)")
 segment_control_cols = {}
 for seg in segment_outcomes:
-    cols = st.multiselect(f"Controls specific to '{seg}'", [c for c in remaining_numeric if c not in control_cols], key=f"segctrl_{seg}")
+    cols = st.multiselect(
+        f"Controls specific to '{seg}'", [c for c in remaining_numeric if c not in control_cols],
+        key=f"segctrl_{seg}", format_func=readable_label,
+    )
     if cols:
         segment_control_cols[seg] = cols
 
 st.markdown("---")
-st.markdown("### Segment LTV (used for LTV-weighted optimisation)")
+st.markdown("### Segment LTV")
+st.caption(FIELD_HELP["ltv"])
 sample_ltv = get_state("sample_ltv") or {}
 segment_ltv = {}
 for seg in segment_outcomes:
@@ -149,6 +165,4 @@ if st.button("Save structure and validate", type="primary"):
             st.info("No validation issues flagged.")
 
 if get_state("model_spec"):
-    st.markdown("---")
-    if st.button("Continue to Model Configuration →", type="primary"):
-        st.switch_page("pages/04_Model_Config.py")
+    render_next_step("structure")

@@ -9,6 +9,15 @@ from .charts import (
     create_response_curve,
     create_waterfall_chart,
 )
+from .ui import (
+    apply_theme,
+    render_sidebar,
+    render_page_header,
+    render_next_step,
+    render_empty_state,
+    render_status_card,
+    render_glossary,
+)
 
 __all__ = [
     "create_time_series_chart",
@@ -18,4 +27,11 @@ __all__ = [
     "create_correlation_heatmap",
     "create_response_curve",
     "create_waterfall_chart",
+    "apply_theme",
+    "render_sidebar",
+    "render_page_header",
+    "render_next_step",
+    "render_empty_state",
+    "render_status_card",
+    "render_glossary",
 ]

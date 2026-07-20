@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 import streamlit as st
 
 from ancestry_mmm.utils import init_session_state, get_state, set_state, curve_bank_dir, PROJECT_EXPORT_ROOT
+from ancestry_mmm.components import apply_theme, render_sidebar, render_page_header
 from ancestry_mmm.core.persistence import (
     export_project,
     import_project,
@@ -22,8 +23,9 @@ from ancestry_mmm.core.schema import ModelSpec
 
 st.set_page_config(page_title="Project Export - Ancestry FH MMM", page_icon="🧬", layout="wide")
 init_session_state()
-
-st.title("💾 Project Export & Handover")
+apply_theme()
+render_sidebar("export")
+render_page_header("export")
 st.caption(
     "Streamlit session state is never the system of record - it only drives in-session "
     "interactivity. This bundle (Parquet + JSON + NetCDF, all open formats) is what an analyst "
@@ -31,6 +33,7 @@ st.caption(
     "refreshed weekly data."
 )
 
+st.markdown("---")
 st.markdown("### Export project bundle")
 project_name = get_state("project_name", "ancestry-fh-uk")
 if st.button("Build export bundle", type="primary"):
@@ -52,7 +55,7 @@ if st.button("Build export bundle", type="primary"):
             model_run_id=get_state("model_run_id"),
             model_meta=get_state("model_meta"),
         )
-    st.success(f"Bundle written to {output_path}")
+    st.success(f"Project bundle built: {output_path}")
     with open(output_path, "rb") as f:
         st.download_button("Download project bundle (.zip)", f, file_name=f"{project_name}.zip", mime="application/zip")
 
@@ -143,3 +146,6 @@ This is the Phase 1 core plus the scenario planner (Phase 2) and this basic pers
   workflow exists (Results & Curve Bank page), but nothing pulls test results in automatically.
 - **Stage 2 media x context interactions** - explicitly out of scope for the core model per the brief.
 """)
+
+st.markdown("---")
+st.caption("This is the last step in the workflow. Revisit any page from the sidebar to refine the model or plans.")

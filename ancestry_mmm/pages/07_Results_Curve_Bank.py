@@ -8,7 +8,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 import streamlit as st
 import pandas as pd
 
-from ancestry_mmm.utils import init_session_state, get_state, set_state, curve_bank_dir
+from ancestry_mmm.utils import init_session_state, get_state, set_state, curve_bank_dir, dataframe_column_config, format_date, FIELD_HELP
+from ancestry_mmm.components import apply_theme, render_sidebar, render_page_header, render_next_step, render_empty_state
 from ancestry_mmm.core.approval import ApprovalMismatchError, ModelApproval
 from ancestry_mmm.core.fingerprint import fingerprint_dataframe, fingerprint_model_spec, fingerprint_posterior
 from ancestry_mmm.core.schema import ModelSpec
@@ -20,8 +21,9 @@ from ancestry_mmm.components.charts import create_waterfall_chart
 
 st.set_page_config(page_title="Results & Curve Bank - Ancestry FH MMM", page_icon="🧬", layout="wide")
 init_session_state()
-
-st.title("📈 Results & Curve Bank")
+apply_theme()
+render_sidebar("curve_bank")
+render_page_header("curve_bank")
 
 trace = get_state("trace")
 frame = get_state("frame")
@@ -29,24 +31,29 @@ meta = get_state("model_meta")
 params = get_state("posterior_params")
 spec_dict = get_state("model_spec")
 if trace is None or frame is None or meta is None or params is None:
-    st.warning("Train a model first on **Model Training**.")
+    st.markdown("---")
+    render_empty_state(
+        "No trained model yet. Complete Model Training first.",
+        button_label="Go to Model Training", target_key="model_training",
+    )
     st.stop()
 
 spec = ModelSpec.from_dict(spec_dict)
 ltv = spec.segment_ltv
 
+st.markdown("---")
 with st.spinner("Computing Shapley contributions..."):
     contributions = compute_shapley_contributions(frame, meta, params, n_permutations=100)
 
 st.markdown("### Total-FH contribution by channel")
 st.caption("Total impact per channel across all segments, plus which segment that impact falls into and LTV-weighted value.")
 total_df = total_fh_contribution(frame, meta, params, contributions, ltv)
-st.dataframe(total_df, width="stretch")
+st.dataframe(total_df, width="stretch", column_config=dataframe_column_config(total_df))
 
 st.markdown("---")
 st.markdown("### Segment x channel detail")
 seg_df = segment_channel_summary(frame, meta, params, contributions, ltv)
-st.dataframe(seg_df, width="stretch")
+st.dataframe(seg_df, width="stretch", column_config=dataframe_column_config(seg_df))
 
 st.markdown("---")
 st.markdown("### Contribution waterfall")
@@ -61,7 +68,7 @@ st.plotly_chart(
 st.markdown("---")
 st.markdown("### DNA halo strength by segment")
 halo_df = pd.DataFrame([{"segment": s, "halo_strength": params.halo_strength.get(s)} for s in meta.segments])
-st.dataframe(halo_df, width="stretch")
+st.dataframe(halo_df, width="stretch", column_config=dataframe_column_config(halo_df))
 st.caption(
     f"DNA cross-sell segment ('{meta.dna_segment}') is fixed at 1.0 (full weight). "
     "Other segments' values are the estimated halo effect strength, shrunk toward zero by prior "
@@ -70,10 +77,7 @@ st.caption(
 
 st.markdown("---")
 st.markdown("## Curve bank")
-st.caption(
-    "Every model run's shared curves and segment parameters can be saved as a versioned entry, "
-    "traceable to the run, data window and (once logged) any geo/in-platform test calibration."
-)
+st.caption(FIELD_HELP["curve_bank"])
 
 approval_dict = get_state("model_approval")
 model_run_id = get_state("model_run_id")
@@ -96,24 +100,26 @@ approval_matches_current = (
 )
 
 if not approval_dict:
-    st.warning(
+    st.markdown("---")
+    render_empty_state(
         "This model hasn't been approved yet. Results above are still visible for review, but "
-        "saving to the curve bank is blocked until you approve it on the **Diagnostics Scorecard** "
-        "page - only an approved model may populate the curve bank."
+        "saving to the curve bank is blocked until the model is approved on Diagnostics.",
+        button_label="Go to Diagnostics", target_key="diagnostics",
     )
 elif not approval_matches_current:
-    st.warning(
+    st.markdown("---")
+    render_empty_state(
         "This model's approval no longer matches the current fitted model (the data, "
-        "specification, posterior, or run have changed since it was approved) - saving to the "
-        "curve bank is blocked until it's reviewed and approved again on the "
-        "**Diagnostics Scorecard** page."
+        "specification, posterior, or run have changed since it was approved). Saving to the "
+        "curve bank is blocked until it's reviewed and approved again.",
+        button_label="Go to Diagnostics", target_key="diagnostics",
     )
 else:
     approval = ModelApproval.from_dict(approval_dict)
     st.caption(f"Model approved by **{approval.approved_by}** - saving to the curve bank will record this approval on the entry.")
 
     c1, c2 = st.columns(2)
-    run_label = c1.text_input("Run label", value=f"{spec.markets and spec.markets[0] or 'run'}-v1")
+    run_label = c1.text_input("Run label *", value=f"{spec.markets and spec.markets[0] or 'run'}-v1")
     notes = c2.text_input("Notes (optional)")
 
     if st.button("Save current curves to curve bank", type="primary"):
@@ -131,16 +137,16 @@ entries = cb.load_all_entries(curve_bank_dir())
 if entries:
     st.markdown("#### Curve bank history")
     entries_df = cb.entries_to_dataframe(entries)
-    st.dataframe(entries_df, width="stretch")
+    st.dataframe(entries_df, width="stretch", column_config=dataframe_column_config(entries_df))
     if entries_df["legacy_approval"].any():
         st.caption(
-            "⚠️ Rows marked `legacy_approval = True` were saved before curve bank entries were "
+            "Rows marked `legacy_approval = True` were saved before curve bank entries were "
             "bound to a verified model run - their approval could not be checked against a "
             "specific fitted model."
         )
 
     st.markdown("#### Log a geo-test / in-platform calibration result")
-    entry_options = {f"{e.run_label} ({e.entry_id[:8]}, {pd.Timestamp.fromtimestamp(e.created_at).date()})": e.entry_id for e in entries}
+    entry_options = {f"{e.run_label} ({e.entry_id[:8]}, {format_date(pd.Timestamp.fromtimestamp(e.created_at))})": e.entry_id for e in entries}
     chosen_label = st.selectbox("Curve bank entry", list(entry_options.keys()))
     chosen_entry = next(e for e in entries if e.entry_id == entry_options[chosen_label])
 
@@ -163,10 +169,9 @@ if entries:
     calibrations = cb.load_all_calibrations(curve_bank_dir())
     if calibrations:
         st.markdown("#### Calibration history")
-        st.dataframe(cb.calibrations_to_dataframe(calibrations), width="stretch")
+        cal_df = cb.calibrations_to_dataframe(calibrations)
+        st.dataframe(cal_df, width="stretch", column_config=dataframe_column_config(cal_df))
 else:
     st.info("No curve bank entries saved yet.")
 
-st.markdown("---")
-if st.button("Continue to Scenario Planner →", type="primary"):
-    st.switch_page("pages/08_Scenario_Planner.py")
+render_next_step("curve_bank")

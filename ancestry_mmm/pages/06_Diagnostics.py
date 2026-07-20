@@ -8,7 +8,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 import streamlit as st
 import pandas as pd
 
-from ancestry_mmm.utils import init_session_state, get_state, set_state
+from ancestry_mmm.utils import init_session_state, get_state, set_state, format_date, format_number, dataframe_column_config, FIELD_HELP
+from ancestry_mmm.components import apply_theme, render_sidebar, render_page_header, render_next_step, render_empty_state, render_glossary
 from ancestry_mmm.core.approval import ModelApproval
 from ancestry_mmm.core.diagnostics import compute_scorecard, expanding_window_backtest
 from ancestry_mmm.core.fingerprint import fingerprint_dataframe, fingerprint_model_spec, fingerprint_posterior
@@ -20,17 +21,23 @@ from ancestry_mmm.data import prepare_fh_modeling_frame
 
 st.set_page_config(page_title="Diagnostics - Ancestry FH MMM", page_icon="🧬", layout="wide")
 init_session_state()
-
-st.title("🩺 Diagnostics Scorecard")
+apply_theme()
+render_sidebar("diagnostics")
+render_page_header("diagnostics")
 st.caption("A scorecard, not a single headline R-squared - convergence, fit, posterior predictive coverage and plausibility flags together.")
 
 trace = get_state("trace")
 frame = get_state("frame")
 meta = get_state("model_meta")
 if trace is None or frame is None or meta is None:
-    st.warning("Train a model first on **Model Training**.")
+    st.markdown("---")
+    render_empty_state(
+        "No trained model yet. Complete Model Training first.",
+        button_label="Go to Model Training", target_key="model_training",
+    )
     st.stop()
 
+st.markdown("---")
 if st.button("Compute scorecard", type="primary"):
     with st.spinner("Computing diagnostics..."):
         scorecard = compute_scorecard(trace, frame, meta)
@@ -42,9 +49,9 @@ if scorecard:
     conv = scorecard["convergence"]
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Max R-hat", f"{conv['rhat_max']:.3f}", help="Should be < 1.01")
-    c2.metric("Min ESS", f"{conv['ess_min']:.0f}", help="Effective sample size; higher is better")
-    c3.metric("Divergences", conv["divergences"])
-    c4.metric("Converged", "✅ Yes" if conv["converged"] else "⚠️ No")
+    c2.metric("Min ESS", format_number(round(conv["ess_min"])), help="Effective sample size; higher is better")
+    c3.metric("Divergences", format_number(conv["divergences"]))
+    c4.metric("Converged", "Yes" if conv["converged"] else "No")
     if not conv["converged"]:
         st.warning(
             "Convergence diagnostics are outside typical thresholds. Consider more draws/tune, "
@@ -53,12 +60,14 @@ if scorecard:
 
     st.markdown("---")
     st.markdown("### In-sample fit")
-    st.dataframe(pd.DataFrame(scorecard["in_sample_fit"]), width="stretch")
+    fit_df = pd.DataFrame(scorecard["in_sample_fit"])
+    st.dataframe(fit_df, width="stretch", column_config=dataframe_column_config(fit_df))
 
     st.markdown("---")
     st.markdown("### Posterior predictive coverage")
     st.caption("% of actual observations falling inside the posterior predictive credible interval - should be close to the target %.")
-    st.dataframe(pd.DataFrame(scorecard["ppc_coverage"]), width="stretch")
+    ppc_df = pd.DataFrame(scorecard["ppc_coverage"])
+    st.dataframe(ppc_df, width="stretch", column_config=dataframe_column_config(ppc_df))
 
     st.markdown("---")
     st.markdown("### Curve & ROI plausibility flags")
@@ -71,12 +80,8 @@ if scorecard:
 
 st.markdown("---")
 st.markdown("### Model approval")
-st.caption(
-    "A high R-squared is not, by itself, a reason to accept a model. Approving here binds the "
-    "approval to this exact fitted model (data, specification and posterior) - it's what "
-    "authorises saving curves to the curve bank and using the Scenario Planner, and it stops "
-    "being valid the moment any of those three things change."
-)
+st.caption(FIELD_HELP["approval"])
+render_glossary(["Prior", "Posterior", "Approval"])
 
 posterior_params = get_state("posterior_params")
 model_spec_dict = get_state("model_spec")
@@ -111,7 +116,7 @@ if approval_dict and not approval_matches_current:
 
 if approval_dict:
     approved_at = pd.Timestamp.fromtimestamp(approval_dict["approved_at"])
-    st.success(f"Approved by **{approval_dict['approved_by']}** on {approved_at:%Y-%m-%d %H:%M}.")
+    st.success(f"Approved by **{approval_dict['approved_by']}** on {format_date(approved_at)}.")
     with st.expander("Approval details"):
         st.write(f"**Model run:** `{approval_dict.get('model_run_id', '')[:8]}`")
         st.write(f"**Data fingerprint:** `{approval_dict.get('data_fingerprint', '')[:12]}`")
@@ -133,7 +138,7 @@ elif current_identity is None:
     )
 else:
     with st.form("approve_model_form"):
-        approved_by = st.text_input("Approved by (name)")
+        approved_by = st.text_input("Approved by (name) *")
         diagnostics_accepted = st.multiselect(
             "Diagnostics reviewed before approving",
             ["convergence", "in_sample_fit", "ppc_coverage", "plausibility_flags", "backtest"],
@@ -151,7 +156,7 @@ else:
         submitted = st.form_submit_button("Approve this model for planning", type="primary")
         if submitted:
             if not approved_by.strip():
-                st.error("Enter a name before approving.")
+                st.error("Enter a name before approving - approval must be attributed to a reviewer.")
             else:
                 approval = ModelApproval(
                     approved_by=approved_by.strip(),
@@ -209,8 +214,6 @@ if st.button("Run backtest"):
 
 backtest_results = get_state("backtest_results")
 if backtest_results is not None and not backtest_results.empty:
-    st.dataframe(backtest_results, width="stretch")
+    st.dataframe(backtest_results, width="stretch", column_config=dataframe_column_config(backtest_results))
 
-st.markdown("---")
-if st.button("Continue to Results & Curve Bank →", type="primary"):
-    st.switch_page("pages/07_Results_Curve_Bank.py")
+render_next_step("diagnostics")
