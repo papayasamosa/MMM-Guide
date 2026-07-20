@@ -10,6 +10,8 @@ import pandas as pd
 import streamlit as st
 
 from ancestry_mmm.utils import init_session_state, get_state, set_state
+from ancestry_mmm.core.approval import ApprovalMismatchError, ModelApproval
+from ancestry_mmm.core.fingerprint import fingerprint_dataframe, fingerprint_model_spec, fingerprint_posterior
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.optimization import (
     SpendConstraint, evaluate_scenario, optimize_scenario, scenario_to_dict, compare_scenarios, WEEKS_PER_MONTH,
@@ -34,12 +36,42 @@ if frame is None or meta is None or params is None:
     st.warning("Train a model first on **Model Training**.")
     st.stop()
 
-if not get_state("model_approval"):
+model_run_id = get_state("model_run_id")
+prior_config = get_state("prior_config") or {}
+dna_lag_weeks = get_state("dna_lag_weeks", 4)
+current_identity = None
+if model_run_id and spec_dict is not None:
+    current_identity = {
+        "model_run_id": model_run_id,
+        "data_fingerprint": fingerprint_dataframe(frame["df"]),
+        "model_spec_fingerprint": fingerprint_model_spec(spec_dict, prior_config, dna_lag_weeks),
+        "posterior_fingerprint": fingerprint_posterior(params),
+    }
+
+approval_dict = get_state("model_approval")
+approval_matches_current = (
+    approval_dict is not None
+    and current_identity is not None
+    and ModelApproval.from_dict(approval_dict).matches_current_model(**current_identity)
+)
+
+if not approval_dict:
     st.warning(
         "This model hasn't been approved yet. Approve it on the **Diagnostics Scorecard** page "
         "before planning scenarios - only an approved model's results may drive the planner."
     )
     st.stop()
+if not approval_matches_current:
+    st.warning(
+        "This model's approval no longer matches the current fitted model (the data, "
+        "specification, posterior, or run have changed since it was approved) - the model must "
+        "be reviewed and approved again on the **Diagnostics Scorecard** page before planning "
+        "scenarios."
+    )
+    st.stop()
+
+approval = ModelApproval.from_dict(approval_dict)
+identity_kwargs = dict(approval=approval, **current_identity)
 
 spec = ModelSpec.from_dict(spec_dict)
 ltv = spec.segment_ltv
@@ -102,7 +134,11 @@ tab_manual, tab_constrained, tab_unconstrained = st.tabs(["Manual", "Constrained
 
 with tab_manual:
     st.markdown("Predicted outcomes for the spend plan as edited above.")
-    predicted = evaluate_scenario(spend_plan, market, meta, params, reference_context_by_month, ltv)
+    try:
+        predicted = evaluate_scenario(spend_plan, market, meta, params, reference_context_by_month, ltv, **identity_kwargs)
+    except ApprovalMismatchError as e:
+        st.error(f"Cannot evaluate this scenario: {e}")
+        st.stop()
     st.dataframe(predicted, width="stretch")
     totals = predicted.groupby("segment")[["predicted_gsa", "value"]].sum().reset_index()
     st.markdown("**Totals by segment**")
@@ -155,13 +191,19 @@ with tab_constrained:
 
     if st.button("Run constrained optimisation", type="primary"):
         with st.spinner("Optimising..."):
-            result = optimize_scenario(
-                spend_plan, months, meta.channels, market, meta, params, reference_context_by_month,
-                ltv, objective=objective, constraints=st.session_state["scenario_constraints"], conserve_total_budget=True,
-            )
-        if not result["success"]:
-            st.warning(f"Optimiser did not fully converge: {result['message']}")
-        st.session_state["constrained_result"] = result
+            try:
+                result = optimize_scenario(
+                    spend_plan, months, meta.channels, market, meta, params, reference_context_by_month,
+                    ltv, objective=objective, constraints=st.session_state["scenario_constraints"], conserve_total_budget=True,
+                    **identity_kwargs,
+                )
+            except ApprovalMismatchError as e:
+                st.error(f"Cannot run optimisation: {e}")
+                result = None
+        if result is not None:
+            if not result["success"]:
+                st.warning(f"Optimiser did not fully converge: {result['message']}")
+            st.session_state["constrained_result"] = result
 
     result = st.session_state.get("constrained_result")
     if result:
@@ -188,11 +230,17 @@ with tab_unconstrained:
     )
     if st.button("Run unconstrained benchmark", type="primary"):
         with st.spinner("Optimising..."):
-            result = optimize_scenario(
-                spend_plan, months, meta.channels, market, meta, params, reference_context_by_month,
-                ltv, objective=objective, constraints=[], conserve_total_budget=True,
-            )
-        st.session_state["unconstrained_result"] = result
+            try:
+                result = optimize_scenario(
+                    spend_plan, months, meta.channels, market, meta, params, reference_context_by_month,
+                    ltv, objective=objective, constraints=[], conserve_total_budget=True,
+                    **identity_kwargs,
+                )
+            except ApprovalMismatchError as e:
+                st.error(f"Cannot run optimisation: {e}")
+                result = None
+        if result is not None:
+            st.session_state["unconstrained_result"] = result
 
     result = st.session_state.get("unconstrained_result")
     if result:

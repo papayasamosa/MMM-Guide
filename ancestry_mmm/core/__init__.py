@@ -1,6 +1,7 @@
 """Core modeling modules for the Ancestry FH MMM."""
 
-from .approval import ModelApproval
+from .approval import ModelApproval, ApprovalMismatchError, require_matching_approval
+from .fingerprint import fingerprint_dataframe, fingerprint_model_spec, fingerprint_posterior
 from .schema import ModelSpec, DEFAULT_SEGMENTS
 from .transformations import (
     geometric_adstock,
@@ -67,10 +68,22 @@ from .optimization import (
     optimize_budget_marginal_roi,
     calculate_expected_lift,
 )
-from .persistence import export_project, import_project, export_excel_summary, UnsafeZipEntryError
+from .persistence import (
+    export_project,
+    import_project,
+    export_excel_summary,
+    UnsafeZipEntryError,
+    reconstruct_model_state,
+    verify_imported_approval,
+)
 
 __all__ = [
     "ModelApproval",
+    "ApprovalMismatchError",
+    "require_matching_approval",
+    "fingerprint_dataframe",
+    "fingerprint_model_spec",
+    "fingerprint_posterior",
     "ModelSpec",
     "DEFAULT_SEGMENTS",
     "geometric_adstock",
@@ -129,4 +142,6 @@ __all__ = [
     "import_project",
     "export_excel_summary",
     "UnsafeZipEntryError",
+    "reconstruct_model_state",
+    "verify_imported_approval",
 ]

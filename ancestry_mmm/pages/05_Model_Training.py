@@ -3,6 +3,7 @@
 import sys
 import threading
 import time
+import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -98,6 +99,13 @@ if st.button("Build & fit model", type="primary"):
         set_state("trace", trace)
         set_state("model_trained", True)
         set_state("posterior_params", extract_posterior_params(trace, meta))
+        # A fresh fit is a new model run, full stop - mint a new identity and
+        # drop any approval that was sitting in session state, even if this
+        # is a re-run of the same spec on the same data (retraining always
+        # invalidates the previous approval; clear_model_state() covers the
+        # "upstream config changed" path, this covers "user just refit").
+        set_state("model_run_id", str(uuid.uuid4()))
+        set_state("model_approval", None)
         st.success("Model trained.")
 
 if get_state("model_trained"):

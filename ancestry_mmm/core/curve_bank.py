@@ -12,8 +12,10 @@ straight append log with entry_id-based cross-references from calibration
 records.
 
 Every entry also carries the ModelApproval that authorised it (see
-core.approval) - make_entry requires one, so an entry cannot be created
-from an unapproved model run.
+core.approval) - make_entry requires one, and requires that it match the
+exact model run being saved (model_run_id plus data/spec/posterior
+fingerprints), so an entry cannot be created from an unapproved *or stale*
+model run.
 """
 
 from __future__ import annotations
@@ -27,7 +29,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
-from .approval import ModelApproval
+from .approval import ModelApproval, require_matching_approval
 from .hierarchical_model import FHModelMeta
 from .predict import FHPosteriorParams
 
@@ -54,6 +56,19 @@ class CurveBankEntry:
     approval_notes: str = ""
     approval_limitations: str = ""
     diagnostics_accepted: List[str] = field(default_factory=list)
+    # Model-run identity the approval was verified against when this entry
+    # was created (see core.approval.ModelApproval) - empty for entries
+    # written before model-bound approval existed.
+    model_run_id: str = ""
+    data_fingerprint: str = ""
+    model_spec_fingerprint: str = ""
+    posterior_fingerprint: str = ""
+    # True for entries written before model-bound approval existed (either
+    # the original pre-approval-gate era, or the earlier approval-gate-but-
+    # not-model-bound era) - never inferred silently from missing fields,
+    # always set explicitly by from_dict/make_entry so it's an honest record
+    # rather than a guess.
+    legacy_approval: bool = False
     notes: str = ""
 
     def to_dict(self) -> dict:
@@ -70,6 +85,16 @@ class CurveBankEntry:
         # by load_all_entries' broad except clause.
         d.setdefault("approved_by", "(unknown - pre-dates approval gate)")
         d.setdefault("approved_at", d.get("created_at", 0.0))
+        # Entries written before model-bound approval (this includes both
+        # the original pre-approval-gate era and the PR #2 approval-gate
+        # era) have no model_run_id/fingerprints - mark them legacy rather
+        # than raising, so curve-bank history stays loadable.
+        is_legacy = "model_run_id" not in d
+        d.setdefault("model_run_id", "")
+        d.setdefault("data_fingerprint", "")
+        d.setdefault("model_spec_fingerprint", "")
+        d.setdefault("posterior_fingerprint", "")
+        d.setdefault("legacy_approval", is_legacy)
         known = {f for f in cls.__dataclass_fields__}
         return cls(**{k: v for k, v in d.items() if k in known})
 
@@ -103,19 +128,34 @@ def make_entry(
     data_window: Tuple[str, str],
     run_label: str,
     approval: ModelApproval,
+    *,
+    model_run_id: str,
+    data_fingerprint: str,
+    model_spec_fingerprint: str,
+    posterior_fingerprint: str,
     notes: str = "",
 ) -> CurveBankEntry:
     """
     Build a curve bank entry from a fitted model's posterior parameters.
 
     `approval` is required, not optional: per the guide this build follows,
-    "only an approved model should populate the official curve bank" - an
-    unapproved model run has no way to reach `save_entry` through the normal
-    call path (see pages/07_Results_Curve_Bank.py, which gates the "save to
-    curve bank" action on an ModelApproval existing in session state).
+    "only an approved model should populate the official curve bank". It
+    must also match the *exact* model run being saved here - `model_run_id`
+    and the three fingerprints are the current model's identity (see
+    core.fingerprint), computed by the caller from the same artefacts
+    (`meta`/`params` and the data/spec that produced them); this function
+    verifies the approval was granted for that identity, not merely that
+    some approval object exists. Enforced here (not only in the Streamlit
+    page) so a direct call to make_entry can't bypass it - raises
+    ApprovalMismatchError for missing, legacy, or mismatched approval.
     """
-    if not isinstance(approval, ModelApproval):
-        raise TypeError("make_entry requires a ModelApproval instance - see core.approval.")
+    require_matching_approval(
+        approval,
+        model_run_id=model_run_id,
+        data_fingerprint=data_fingerprint,
+        model_spec_fingerprint=model_spec_fingerprint,
+        posterior_fingerprint=posterior_fingerprint,
+    )
     return CurveBankEntry(
         entry_id=str(uuid.uuid4()),
         created_at=time.time(),
@@ -137,6 +177,11 @@ def make_entry(
         approval_notes=approval.notes,
         approval_limitations=approval.known_limitations,
         diagnostics_accepted=list(approval.diagnostics_accepted),
+        model_run_id=model_run_id,
+        data_fingerprint=data_fingerprint,
+        model_spec_fingerprint=model_spec_fingerprint,
+        posterior_fingerprint=posterior_fingerprint,
+        legacy_approval=False,
         notes=notes,
     )
 
@@ -177,6 +222,8 @@ def entries_to_dataframe(entries: List[CurveBankEntry]) -> pd.DataFrame:
                     "data_window_end": e.data_window[1],
                     "approved_by": e.approved_by,
                     "approved_at": pd.Timestamp.fromtimestamp(e.approved_at),
+                    "model_run_id": e.model_run_id,
+                    "legacy_approval": e.legacy_approval,
                     "segment": seg,
                     "channel": ch,
                     "decay_rate": e.decay_rate.get(ch),

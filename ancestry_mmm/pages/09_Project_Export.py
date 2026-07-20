@@ -8,7 +8,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 import streamlit as st
 
 from ancestry_mmm.utils import init_session_state, get_state, set_state, curve_bank_dir, PROJECT_EXPORT_ROOT
-from ancestry_mmm.core.persistence import export_project, import_project, export_excel_summary, UnsafeZipEntryError
+from ancestry_mmm.core.persistence import (
+    export_project,
+    import_project,
+    export_excel_summary,
+    reconstruct_model_state,
+    verify_imported_approval,
+    UnsafeZipEntryError,
+)
 from ancestry_mmm.core.curve_bank import load_all_entries, entries_to_dataframe
 from ancestry_mmm.core.attribution import compute_shapley_contributions, total_fh_contribution, segment_channel_summary
 from ancestry_mmm.core.schema import ModelSpec
@@ -42,6 +49,8 @@ if st.button("Build export bundle", type="primary"):
             scenarios=get_state("scenarios") or [],
             curve_bank_source_dir=curve_bank_dir(),
             model_approval=get_state("model_approval"),
+            model_run_id=get_state("model_run_id"),
+            model_meta=get_state("model_meta"),
         )
     st.success(f"Bundle written to {output_path}")
     with open(output_path, "rb") as f:
@@ -69,13 +78,29 @@ if uploaded_zip is not None and st.button("Import bundle"):
         set_state("dna_lag_weeks", imported["dna_lag_weeks"])
         set_state("scenarios", imported["scenarios"])
         set_state("data_loaded", bool(imported["raw_sources"]))
-        # Always overwrite (not just when present) so a stale approval from
-        # the current session's in-progress model doesn't linger attached to
-        # whatever gets imported.
-        set_state("model_approval", imported["model_approval"])
-        if imported["trace"] is not None:
-            set_state("trace", imported["trace"])
-            st.info("Imported a fitted trace. Re-run Model Training's setup (without re-fitting) if you need model_meta/posterior_params - or just re-fit to refresh.")
+        set_state("trace", imported["trace"])
+        set_state("model_run_id", imported["model_run_id"])
+
+        # Re-derive the frame and posterior params from the raw artefacts
+        # (cheap - pandas prep + posterior summarisation, no re-fit) so the
+        # imported approval can be verified against them rather than blindly
+        # trusted or blindly discarded.
+        reconstructed = reconstruct_model_state(imported)
+        set_state("frame", reconstructed["frame"])
+        set_state("model_meta", reconstructed["model_meta"])
+        set_state("posterior_params", reconstructed["posterior_params"])
+        set_state("model_trained", reconstructed["posterior_params"] is not None)
+
+        verified_approval, message = verify_imported_approval(imported, reconstructed)
+        set_state("model_approval", verified_approval.to_dict() if verified_approval else None)
+        (st.success if verified_approval else st.warning)(message)
+
+        if imported["trace"] is not None and reconstructed["frame"] is None:
+            st.info(
+                "Imported a fitted trace, but couldn't reconstruct the modelling frame (missing "
+                "or inconsistent transformed data / model spec) - re-run Model Configuration's "
+                "\"Prepare modelling frame\" step, or re-fit, to continue."
+            )
         st.success("Project imported. Review each page to pick up where you left off.")
     finally:
         tmp_path.unlink(missing_ok=True)

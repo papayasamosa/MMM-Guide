@@ -8,6 +8,10 @@ Bundle layout (a single zip):
     config/pipeline_steps.json         - ordered transform steps
     config/model_spec.json             - ModelSpec
     config/prior_config.json           - prior overrides + dna_lag_weeks
+    config/model_run_id.json           - the fitted model's run ID, if trained
+    config/model_meta.json             - FHModelMeta, if trained (lets a re-import
+                                          reconstruct the modelling frame and posterior
+                                          parameters without a full re-fit)
     config/model_approval.json         - ModelApproval, if the trained model has been approved
     config/scenarios.json              - scenario definitions (spend plan, constraints)
     scenarios/scenario_<i>_predicted.csv
@@ -17,6 +21,11 @@ Bundle layout (a single zip):
 Session state (Streamlit) is never the system of record - this bundle is.
 No proprietary format: Parquet, JSON and NetCDF are all open, and readable
 without this app (pandas.read_parquet, json, arviz.from_netcdf).
+
+reconstruct_model_state() and verify_imported_approval() below turn a raw
+import_project() result into re-derived model artefacts (frame, posterior
+params) and a verified-or-rejected approval, without requiring a full
+re-fit - see their docstrings.
 """
 
 from __future__ import annotations
@@ -25,14 +34,20 @@ import json
 import shutil
 import tempfile
 import zipfile
+from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 import arviz as az
 
+from .approval import ModelApproval
+from .fingerprint import fingerprint_dataframe, fingerprint_model_spec, fingerprint_posterior
+from .hierarchical_model import FHModelMeta
+from .predict import extract_posterior_params
 from .schema import ModelSpec
 from .optimization import SpendConstraint
+from ..data.preprocessor import prepare_fh_modeling_frame
 
 
 class UnsafeZipEntryError(ValueError):
@@ -95,6 +110,8 @@ def export_project(
     scenarios: List[dict],
     curve_bank_source_dir: Optional[Path] = None,
     model_approval: Optional[dict] = None,
+    model_run_id: Optional[str] = None,
+    model_meta: Optional[FHModelMeta] = None,
 ) -> Path:
     output_path = Path(output_path)
     with tempfile.TemporaryDirectory() as tmp:
@@ -116,6 +133,10 @@ def export_project(
         )
         if model_approval is not None:
             (tmp / "config" / "model_approval.json").write_text(json.dumps(model_approval, indent=2, default=str))
+        if model_run_id is not None:
+            (tmp / "config" / "model_run_id.json").write_text(json.dumps({"model_run_id": model_run_id}, indent=2))
+        if model_meta is not None:
+            (tmp / "config" / "model_meta.json").write_text(json.dumps(asdict(model_meta), indent=2, default=str))
 
         scenarios_meta = []
         for i, s in enumerate(scenarios):
@@ -152,6 +173,7 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         "raw_sources": {}, "transformed_data": None, "pipeline_steps": [],
         "model_spec": None, "prior_config": {}, "dna_lag_weeks": 4,
         "trace": None, "scenarios": [], "model_approval": None,
+        "model_run_id": None, "model_meta": None,
     }
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
@@ -178,6 +200,10 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
             result["dna_lag_weeks"] = prior_data.get("dna_lag_weeks", 4)
         if (config_dir / "model_approval.json").exists():
             result["model_approval"] = json.loads((config_dir / "model_approval.json").read_text())
+        if (config_dir / "model_run_id.json").exists():
+            result["model_run_id"] = json.loads((config_dir / "model_run_id.json").read_text()).get("model_run_id")
+        if (config_dir / "model_meta.json").exists():
+            result["model_meta"] = json.loads((config_dir / "model_meta.json").read_text())
         if (config_dir / "scenarios.json").exists():
             scenarios_meta = json.loads((config_dir / "scenarios.json").read_text())
             for i, s in enumerate(scenarios_meta):
@@ -197,6 +223,100 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
             }
 
     return result
+
+
+def reconstruct_model_state(imported: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Given the dict returned by import_project(), re-derive the model
+    artefacts that aren't directly serialised in the bundle - the modelling
+    frame and posterior parameters - from what is: transformed_data +
+    model_spec (frame; no MCMC involved, just the same pandas/numpy prep
+    fit uses) and trace + model_meta (posterior params; posterior
+    summarisation, not re-sampling). Doesn't require or trigger a re-fit.
+
+    Returns {"frame": ..., "model_meta": ..., "posterior_params": ...},
+    with any entry left None if its inputs are missing or inconsistent
+    (never raises - callers decide what an incomplete reconstruction means).
+    """
+    result: Dict[str, Any] = {"frame": None, "model_meta": None, "posterior_params": None}
+
+    if imported.get("model_meta") is not None:
+        try:
+            result["model_meta"] = FHModelMeta(**imported["model_meta"])
+        except TypeError:
+            result["model_meta"] = None
+
+    if imported.get("transformed_data") is not None and imported.get("model_spec") is not None:
+        try:
+            spec = ModelSpec.from_dict(imported["model_spec"])
+            result["frame"] = prepare_fh_modeling_frame(imported["transformed_data"], spec)
+        except (ValueError, KeyError):
+            result["frame"] = None
+
+    if imported.get("trace") is not None and result["model_meta"] is not None:
+        try:
+            result["posterior_params"] = extract_posterior_params(imported["trace"], result["model_meta"])
+        except (KeyError, ValueError):
+            result["posterior_params"] = None
+
+    return result
+
+
+def verify_imported_approval(
+    imported: Dict[str, Any],
+    reconstructed: Dict[str, Any],
+) -> Tuple[Optional[ModelApproval], str]:
+    """
+    Decide whether an imported project's approval is still valid against its
+    (reconstructed) model artefacts. Never silently accepts or discards a
+    mismatch: always returns an explanatory message alongside the verdict,
+    for the caller to show the user. Returns (None, reason) when the
+    approval should NOT be treated as valid; (approval, reason) when it is
+    verified.
+
+    `imported` is an import_project() result; `reconstructed` is a
+    reconstruct_model_state(imported) result.
+    """
+    approval_dict = imported.get("model_approval")
+    if approval_dict is None:
+        return None, "No approval was included in this project bundle."
+
+    approval = ModelApproval.from_dict(approval_dict)
+    if not approval.is_model_bound():
+        return None, (
+            "The imported approval predates model-bound approval (no run ID or "
+            "fingerprints were recorded) - treated as unverified. The model must be "
+            "reviewed and approved again."
+        )
+
+    frame = reconstructed.get("frame")
+    posterior_params = reconstructed.get("posterior_params")
+    if frame is None or posterior_params is None:
+        return None, (
+            "Could not reconstruct this project's model artefacts (data, specification "
+            "or posterior) well enough to verify its approval - treated as unverified. "
+            "The model must be reviewed and approved again."
+        )
+
+    data_fp = fingerprint_dataframe(frame["df"])
+    spec_fp = fingerprint_model_spec(
+        imported.get("model_spec") or {}, imported.get("prior_config") or {}, imported.get("dna_lag_weeks", 4),
+    )
+    posterior_fp = fingerprint_posterior(posterior_params)
+    current_run_id = imported.get("model_run_id") or approval.model_run_id
+
+    if approval.matches_current_model(
+        model_run_id=current_run_id,
+        data_fingerprint=data_fp,
+        model_spec_fingerprint=spec_fp,
+        posterior_fingerprint=posterior_fp,
+    ):
+        return approval, f"Imported approval verified: matches the imported model artefacts (approved by {approval.approved_by})."
+
+    return None, (
+        "The imported approval does not match the imported model artefacts (data, "
+        "specification, or posterior differ) - the model must be reviewed and approved again."
+    )
 
 
 def export_excel_summary(

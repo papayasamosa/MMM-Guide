@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from ancestry_mmm.core.approval import ModelApproval
+from ancestry_mmm.core.approval import ApprovalMismatchError, ModelApproval
 from ancestry_mmm.core.curve_bank import (
     CurveBankEntry,
     compare_to_test,
@@ -51,29 +51,66 @@ def params() -> FHPosteriorParams:
     )
 
 
+IDENTITY = dict(
+    model_run_id="run-abc123",
+    data_fingerprint="data-fp-1",
+    model_spec_fingerprint="spec-fp-1",
+    posterior_fingerprint="posterior-fp-1",
+)
+
+
 @pytest.fixture
 def approval() -> ModelApproval:
-    return ModelApproval(approved_by="Jane Analyst", diagnostics_accepted=["convergence"])
+    """A model-bound approval matching IDENTITY - the normal, valid case."""
+    return ModelApproval(approved_by="Jane Analyst", diagnostics_accepted=["convergence"], **IDENTITY)
 
 
-class TestMakeEntryRequiresApproval:
+class TestMakeEntryRequiresMatchingApproval:
     def test_missing_approval_argument_raises(self, meta, params):
         with pytest.raises(TypeError):
-            make_entry(meta, params, ("2024-01-01", "2024-12-31"), "uk-v1")  # no approval
+            make_entry(meta, params, ("2024-01-01", "2024-12-31"), "uk-v1", **IDENTITY)  # no approval
 
     def test_wrong_type_for_approval_raises(self, meta, params):
-        with pytest.raises(TypeError):
-            make_entry(meta, params, ("2024-01-01", "2024-12-31"), "uk-v1", approval={"not": "an ModelApproval"})
+        with pytest.raises(ApprovalMismatchError):
+            make_entry(
+                meta, params, ("2024-01-01", "2024-12-31"), "uk-v1",
+                approval={"not": "a ModelApproval"}, **IDENTITY,
+            )
 
-    def test_valid_approval_produces_an_entry_carrying_it(self, meta, params, approval):
-        entry = make_entry(meta, params, ("2024-01-01", "2024-12-31"), "uk-v1", approval)
+    def test_legacy_unbound_approval_raises(self, meta, params):
+        legacy = ModelApproval(approved_by="Jane Analyst")  # no identity fields at all
+        with pytest.raises(ApprovalMismatchError):
+            make_entry(meta, params, ("2024-01-01", "2024-12-31"), "uk-v1", legacy, **IDENTITY)
+
+    def test_mismatched_run_id_raises(self, meta, params, approval):
+        current = dict(IDENTITY)
+        current["model_run_id"] = "a-different-run"
+        with pytest.raises(ApprovalMismatchError):
+            make_entry(meta, params, ("2024-01-01", "2024-12-31"), "uk-v1", approval, **current)
+
+    def test_mismatched_data_fingerprint_raises(self, meta, params, approval):
+        current = dict(IDENTITY)
+        current["data_fingerprint"] = "different-data"
+        with pytest.raises(ApprovalMismatchError):
+            make_entry(meta, params, ("2024-01-01", "2024-12-31"), "uk-v1", approval, **current)
+
+    def test_valid_matching_approval_permits_entry_creation(self, meta, params, approval):
+        entry = make_entry(meta, params, ("2024-01-01", "2024-12-31"), "uk-v1", approval, **IDENTITY)
         assert entry.approved_by == "Jane Analyst"
         assert entry.approved_at == approval.approved_at
         assert entry.diagnostics_accepted == ["convergence"]
 
+    def test_entry_retains_all_model_identifiers(self, meta, params, approval):
+        entry = make_entry(meta, params, ("2024-01-01", "2024-12-31"), "uk-v1", approval, **IDENTITY)
+        assert entry.model_run_id == IDENTITY["model_run_id"]
+        assert entry.data_fingerprint == IDENTITY["data_fingerprint"]
+        assert entry.model_spec_fingerprint == IDENTITY["model_spec_fingerprint"]
+        assert entry.posterior_fingerprint == IDENTITY["posterior_fingerprint"]
+        assert entry.legacy_approval is False
+
 
 def test_curve_bank_entry_roundtrip(meta, params, approval):
-    entry = make_entry(meta, params, ("2024-01-01", "2024-12-31"), "uk-v1", approval, notes="first run")
+    entry = make_entry(meta, params, ("2024-01-01", "2024-12-31"), "uk-v1", approval, notes="first run", **IDENTITY)
     restored = CurveBankEntry.from_dict(entry.to_dict())
     assert restored == entry
 
@@ -85,16 +122,25 @@ def test_legacy_entry_without_approval_fields_backfills_instead_of_raising():
         "channels": ["TV_Brand"], "dna_channels": [], "dna_segment": "New",
         "decay_rate": {"TV_Brand": 0.5}, "hill_K": {"TV_Brand": 1000.0}, "hill_S": {"TV_Brand": 1.0},
         "beta": {"New": {"TV_Brand": 0.1}}, "halo_strength": {"New": 0.0}, "promo_coef": {"New": 0.1},
-        # no approved_by / approved_at - simulates a pre-approval-gate curve bank file
+        # no approved_by / approved_at / model_run_id / fingerprints - simulates a
+        # curve bank file from before either the approval gate or model-binding existed.
     }
     entry = CurveBankEntry.from_dict(legacy)
     assert "unknown" in entry.approved_by.lower()
     assert entry.approved_at == legacy["created_at"]
+    assert entry.legacy_approval is True
+    assert entry.model_run_id == ""
+
+
+def test_new_entry_is_not_marked_legacy(meta, params, approval):
+    entry = make_entry(meta, params, ("2024-01-01", "2024-12-31"), "uk-v1", approval, **IDENTITY)
+    restored = CurveBankEntry.from_dict(entry.to_dict())
+    assert restored.legacy_approval is False
 
 
 def test_curve_bank_is_append_only_and_versioned(tmp_path, meta, params, approval):
-    entry_1 = make_entry(meta, params, ("2024-01-01", "2024-06-30"), "uk-v1", approval)
-    entry_2 = make_entry(meta, params, ("2024-01-01", "2024-12-31"), "uk-v2", approval)
+    entry_1 = make_entry(meta, params, ("2024-01-01", "2024-06-30"), "uk-v1", approval, **IDENTITY)
+    entry_2 = make_entry(meta, params, ("2024-01-01", "2024-12-31"), "uk-v2", approval, **IDENTITY)
 
     save_entry(tmp_path, entry_1)
     save_entry(tmp_path, entry_2)
@@ -105,11 +151,14 @@ def test_curve_bank_is_append_only_and_versioned(tmp_path, meta, params, approva
     assert len(list(tmp_path.glob("*.json"))) == 2
 
 
-def test_entries_to_dataframe_includes_approval_columns(meta, params, approval):
-    entry = make_entry(meta, params, ("2024-01-01", "2024-12-31"), "uk-v1", approval)
+def test_entries_to_dataframe_includes_approval_and_legacy_columns(meta, params, approval):
+    entry = make_entry(meta, params, ("2024-01-01", "2024-12-31"), "uk-v1", approval, **IDENTITY)
     df = entries_to_dataframe([entry])
     assert "approved_by" in df.columns
     assert (df["approved_by"] == "Jane Analyst").all()
+    assert "model_run_id" in df.columns
+    assert "legacy_approval" in df.columns
+    assert (df["legacy_approval"] == False).all()  # noqa: E712
 
 
 class TestCompareToTest:

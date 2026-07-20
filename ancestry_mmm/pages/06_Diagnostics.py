@@ -11,6 +11,7 @@ import pandas as pd
 from ancestry_mmm.utils import init_session_state, get_state, set_state
 from ancestry_mmm.core.approval import ModelApproval
 from ancestry_mmm.core.diagnostics import compute_scorecard, expanding_window_backtest
+from ancestry_mmm.core.fingerprint import fingerprint_dataframe, fingerprint_model_spec, fingerprint_posterior
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
 from ancestry_mmm.core.models import fit_model
@@ -71,16 +72,51 @@ if scorecard:
 st.markdown("---")
 st.markdown("### Model approval")
 st.caption(
-    "A high R-squared is not, by itself, a reason to accept a model. Approving here is what "
-    "authorises this model's curves to be saved to the curve bank and used in the Scenario "
-    "Planner - both are blocked until it happens."
+    "A high R-squared is not, by itself, a reason to accept a model. Approving here binds the "
+    "approval to this exact fitted model (data, specification and posterior) - it's what "
+    "authorises saving curves to the curve bank and using the Scenario Planner, and it stops "
+    "being valid the moment any of those three things change."
 )
 
+posterior_params = get_state("posterior_params")
+model_spec_dict = get_state("model_spec")
+prior_config = get_state("prior_config") or {}
+dna_lag_weeks = get_state("dna_lag_weeks", 4)
+model_run_id = get_state("model_run_id")
+
+current_identity = None
+if model_run_id and posterior_params is not None and model_spec_dict is not None:
+    current_identity = {
+        "model_run_id": model_run_id,
+        "data_fingerprint": fingerprint_dataframe(frame["df"]),
+        "model_spec_fingerprint": fingerprint_model_spec(model_spec_dict, prior_config, dna_lag_weeks),
+        "posterior_fingerprint": fingerprint_posterior(posterior_params),
+    }
+
 approval_dict = get_state("model_approval")
+approval_matches_current = (
+    approval_dict is not None
+    and current_identity is not None
+    and ModelApproval.from_dict(approval_dict).matches_current_model(**current_identity)
+)
+
+if approval_dict and not approval_matches_current:
+    st.warning(
+        "An approval exists in this session, but it no longer matches the current model "
+        "(it was granted for a different run, or the data/specification/posterior have "
+        "changed since) - it has been invalidated. Review and approve again below."
+    )
+    set_state("model_approval", None)
+    approval_dict = None
+
 if approval_dict:
     approved_at = pd.Timestamp.fromtimestamp(approval_dict["approved_at"])
     st.success(f"Approved by **{approval_dict['approved_by']}** on {approved_at:%Y-%m-%d %H:%M}.")
     with st.expander("Approval details"):
+        st.write(f"**Model run:** `{approval_dict.get('model_run_id', '')[:8]}`")
+        st.write(f"**Data fingerprint:** `{approval_dict.get('data_fingerprint', '')[:12]}`")
+        st.write(f"**Spec fingerprint:** `{approval_dict.get('model_spec_fingerprint', '')[:12]}`")
+        st.write(f"**Posterior fingerprint:** `{approval_dict.get('posterior_fingerprint', '')[:12]}`")
         st.write(f"**Notes:** {approval_dict.get('notes') or '(none)'}")
         st.write(f"**Known limitations:** {approval_dict.get('known_limitations') or '(none)'}")
         st.write(f"**Diagnostics reviewed:** {', '.join(approval_dict.get('diagnostics_accepted', [])) or '(none recorded)'}")
@@ -89,6 +125,12 @@ if approval_dict:
         st.rerun()
 elif not scorecard:
     st.info("Compute the scorecard above before approving this model.")
+elif current_identity is None:
+    st.warning(
+        "Can't approve yet: the current model run's identity (run ID, data/specification/"
+        "posterior fingerprints) isn't fully available. This shouldn't normally happen once "
+        "a model has trained - try recomputing the scorecard, or retrain if the problem persists."
+    )
 else:
     with st.form("approve_model_form"):
         approved_by = st.text_input("Approved by (name)")
@@ -99,6 +141,13 @@ else:
         )
         notes = st.text_area("Notes")
         known_limitations = st.text_area("Known limitations")
+        st.caption(
+            f"Binding to model run `{current_identity['model_run_id'][:8]}` "
+            f"(data `{current_identity['data_fingerprint'][:8]}`, "
+            f"spec `{current_identity['model_spec_fingerprint'][:8]}`, "
+            f"posterior `{current_identity['posterior_fingerprint'][:8]}`) - identifiers are "
+            "captured automatically, not entered by hand."
+        )
         submitted = st.form_submit_button("Approve this model for planning", type="primary")
         if submitted:
             if not approved_by.strip():
@@ -109,6 +158,7 @@ else:
                     notes=notes,
                     known_limitations=known_limitations,
                     diagnostics_accepted=diagnostics_accepted,
+                    **current_identity,
                 )
                 set_state("model_approval", approval.to_dict())
                 st.success(f"Model approved by {approved_by.strip()}.")

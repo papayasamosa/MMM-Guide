@@ -17,6 +17,13 @@ constant within a month is treated as having reached its adstock
 steady-state, so a month's expected outcome is a closed-form function of
 that month's channel spend - no MCMC in the optimisation loop.
 
+evaluate_scenario and optimize_scenario are the core planning entry points,
+and both require a ModelApproval that matches the exact model run supplying
+`meta`/`params` (model_run_id plus data/spec/posterior fingerprints - see
+core.fingerprint and core.approval). This is enforced here, not only by the
+Streamlit Scenario Planner page's own checks, so a direct call to either
+function - bypassing the page - still requires a valid, matching approval.
+
 Kept from the original single-KPI implementation for reuse:
 calculate_marginal_roi_loglog, optimize_budget_marginal_roi, calculate_expected_lift.
 """
@@ -30,6 +37,7 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import minimize, LinearConstraint
 
+from .approval import ModelApproval, require_matching_approval
 from .hierarchical_model import FHModelMeta
 from .predict import FHPosteriorParams, steady_state_segment_response
 
@@ -47,13 +55,30 @@ def evaluate_scenario(
     params: FHPosteriorParams,
     reference_context_by_month: Dict[str, dict],
     ltv: Optional[Dict[str, float]] = None,
+    *,
+    approval: ModelApproval,
+    model_run_id: str,
+    data_fingerprint: str,
+    model_spec_fingerprint: str,
+    posterior_fingerprint: str,
 ) -> pd.DataFrame:
     """
     Predicted monthly outcomes for a spend plan: {month_label: {channel: spend}}.
 
     Returns one row per (month, segment) with predicted GSAs (weekly steady-
     state rate x weeks/month) and LTV-weighted value if `ltv` is given.
+
+    Raises ApprovalMismatchError unless `approval` matches the current model
+    run identity (`model_run_id` plus the three fingerprints) - see
+    core.approval.require_matching_approval.
     """
+    require_matching_approval(
+        approval,
+        model_run_id=model_run_id,
+        data_fingerprint=data_fingerprint,
+        model_spec_fingerprint=model_spec_fingerprint,
+        posterior_fingerprint=posterior_fingerprint,
+    )
     ltv = ltv or {}
     rows = []
     for month, spend_by_channel in spend_plan.items():
@@ -223,6 +248,12 @@ def optimize_scenario(
     constraints: Optional[List[SpendConstraint]] = None,
     conserve_total_budget: bool = True,
     max_iter: int = 200,
+    *,
+    approval: ModelApproval,
+    model_run_id: str,
+    data_fingerprint: str,
+    model_spec_fingerprint: str,
+    posterior_fingerprint: str,
 ) -> Dict:
     """
     Optimise a spend plan. `constraints=None` (or empty) + conserve_total_budget=True
@@ -230,7 +261,19 @@ def optimize_scenario(
     freely, ignoring locks/floors/bounded-movement - a theoretical-optimum
     comparison point, not a recommended plan. Pass `constraints` for the
     constrained-planning mode analysts will actually use.
+
+    Raises ApprovalMismatchError unless `approval` matches the current model
+    run identity - checked up front, before running the (potentially slow)
+    SLSQP optimisation, not just when the final predicted outcomes are
+    computed via evaluate_scenario below.
     """
+    require_matching_approval(
+        approval,
+        model_run_id=model_run_id,
+        data_fingerprint=data_fingerprint,
+        model_spec_fingerprint=model_spec_fingerprint,
+        posterior_fingerprint=posterior_fingerprint,
+    )
     constraints = constraints or []
     current_spend = _flatten(current_spend_plan, months, channels)
 
@@ -252,8 +295,12 @@ def optimize_scenario(
     )
 
     optimized_plan = _unflatten(np.clip(result.x, 0, None), months, channels)
-    predicted = evaluate_scenario(optimized_plan, market, meta, params, reference_context_by_month, ltv)
-    current_predicted = evaluate_scenario(current_spend_plan, market, meta, params, reference_context_by_month, ltv)
+    identity_kwargs = dict(
+        approval=approval, model_run_id=model_run_id, data_fingerprint=data_fingerprint,
+        model_spec_fingerprint=model_spec_fingerprint, posterior_fingerprint=posterior_fingerprint,
+    )
+    predicted = evaluate_scenario(optimized_plan, market, meta, params, reference_context_by_month, ltv, **identity_kwargs)
+    current_predicted = evaluate_scenario(current_spend_plan, market, meta, params, reference_context_by_month, ltv, **identity_kwargs)
 
     return {
         "success": bool(result.success),

@@ -1,10 +1,14 @@
 import zipfile
+from dataclasses import asdict
 
 import arviz as az
 import numpy as np
 import pandas as pd
 import pytest
 
+from ancestry_mmm.core.approval import ModelApproval
+from ancestry_mmm.core.fingerprint import fingerprint_dataframe, fingerprint_model_spec, fingerprint_posterior
+from ancestry_mmm.core.hierarchical_model import FHModelMeta
 from ancestry_mmm.core.optimization import SpendConstraint
 from ancestry_mmm.core.persistence import (
     UnsafeZipEntryError,
@@ -13,8 +17,12 @@ from ancestry_mmm.core.persistence import (
     export_excel_summary,
     export_project,
     import_project,
+    reconstruct_model_state,
+    verify_imported_approval,
 )
+from ancestry_mmm.core.predict import extract_posterior_params
 from ancestry_mmm.core.schema import ModelSpec
+from ancestry_mmm.data.preprocessor import prepare_fh_modeling_frame
 
 
 # ---------------------------------------------------------------------------
@@ -217,3 +225,197 @@ def test_export_excel_summary_writes_a_readable_workbook(tmp_path):
     assert output_path.exists()
     reread = pd.read_excel(output_path, sheet_name="Total FH Contribution")
     pd.testing.assert_frame_equal(reread, total_df)
+
+
+# ---------------------------------------------------------------------------
+# Model-run identity: export/import round trip, reconstruction without a
+# re-fit, and verifying (or rejecting) an imported approval against the
+# imported/reconstructed model artefacts.
+# ---------------------------------------------------------------------------
+
+def _make_consistent_meta() -> FHModelMeta:
+    return FHModelMeta(
+        markets=["UK"], segments=["New"], channels=["TV_Brand"], dna_channels=[],
+        dna_channel_idx=[], non_dna_idx=[0], dna_segment="New", dna_lag_weeks=4,
+        unpooled_markets=[], control_names=[],
+    )
+
+
+def _make_trace(meta: FHModelMeta, n_fourier: int = 6, chains: int = 2, draws: int = 10, seed: int = 0) -> az.InferenceData:
+    """A structurally-valid (but not really fitted) trace with exactly the
+    variables/dims extract_posterior_params(trace, meta) needs, for a meta
+    with no DNA channels/control columns (so halo_strength/control_coef/
+    segment_control_coef aren't required)."""
+    rng = np.random.default_rng(seed)
+    n_ch, n_seg, n_mkt = len(meta.channels), len(meta.segments), len(meta.markets)
+    posterior = {
+        "decay_rate": rng.uniform(0.1, 0.9, size=(chains, draws, n_ch)),
+        "hill_K": rng.uniform(500, 2000, size=(chains, draws, n_ch)),
+        "hill_S": rng.uniform(0.5, 2.0, size=(chains, draws, n_ch)),
+        "intercept": rng.normal(size=(chains, draws, n_seg)),
+        "trend_coef": rng.normal(size=(chains, draws, n_seg)),
+        "promo_coef": rng.uniform(0, 1, size=(chains, draws, n_seg)),
+        "alpha": rng.uniform(1, 10, size=(chains, draws, n_seg)),
+        "beta": rng.normal(size=(chains, draws, n_seg, n_ch)),
+        "market_offset": rng.normal(size=(chains, draws, n_mkt, n_seg)),
+        "gamma_fourier": rng.normal(size=(chains, draws, n_fourier, n_seg)),
+    }
+    coords = {"channel": meta.channels, "segment": meta.segments, "market": meta.markets, "fourier": list(range(n_fourier))}
+    dims = {
+        "decay_rate": ["channel"], "hill_K": ["channel"], "hill_S": ["channel"],
+        "intercept": ["segment"], "trend_coef": ["segment"], "promo_coef": ["segment"], "alpha": ["segment"],
+        "beta": ["segment", "channel"], "market_offset": ["market", "segment"], "gamma_fourier": ["fourier", "segment"],
+    }
+    return az.from_dict(posterior=posterior, coords=coords, dims=dims)
+
+
+@pytest.fixture
+def consistent_meta() -> FHModelMeta:
+    return _make_consistent_meta()
+
+
+@pytest.fixture
+def consistent_trace(consistent_meta) -> az.InferenceData:
+    return _make_trace(consistent_meta)
+
+
+@pytest.fixture
+def consistent_project(consistent_meta, consistent_trace):
+    """A project bundle that is fully internally consistent: the approval's
+    fingerprints genuinely match the data/spec/posterior being exported
+    alongside it (computed the same way verify_imported_approval will)."""
+    transformed_data = pd.DataFrame({
+        "date": pd.date_range("2024-01-01", periods=8, freq="W"),
+        "market": ["UK"] * 8,
+        "TV_Brand": [100.0, 120.0, 90.0, 110.0, 130.0, 95.0, 105.0, 115.0],
+        "fh_new_gsa": [10, 12, 9, 11, 13, 9, 10, 11],
+    })
+    model_spec_dict = ModelSpec(
+        date_col="date", market_col="market", markets=["UK"],
+        segment_outcomes={"New": "fh_new_gsa"}, channels=["TV_Brand"],
+    ).to_dict()
+    prior_config = {"decay_mu": 0.5}
+    dna_lag_weeks = 4
+
+    spec = ModelSpec.from_dict(model_spec_dict)
+    frame = prepare_fh_modeling_frame(transformed_data, spec)
+    posterior_params = extract_posterior_params(consistent_trace, consistent_meta)
+
+    model_run_id = "run-consistent-1"
+    approval = ModelApproval(
+        approved_by="Jane Analyst",
+        model_run_id=model_run_id,
+        data_fingerprint=fingerprint_dataframe(frame["df"]),
+        model_spec_fingerprint=fingerprint_model_spec(model_spec_dict, prior_config, dna_lag_weeks),
+        posterior_fingerprint=fingerprint_posterior(posterior_params),
+    )
+
+    return dict(
+        raw_sources={}, transformed_data=transformed_data, pipeline_steps=[],
+        model_spec=model_spec_dict, prior_config=prior_config, dna_lag_weeks=dna_lag_weeks,
+        trace=consistent_trace, scenarios=[], model_approval=approval.to_dict(),
+        model_run_id=model_run_id, model_meta=consistent_meta,
+    )
+
+
+def test_export_then_import_preserves_model_run_id_and_meta(tmp_path, consistent_project):
+    output_path = export_project(tmp_path / "bundle.zip", **consistent_project)
+    imported = import_project(output_path)
+
+    assert imported["model_run_id"] == consistent_project["model_run_id"]
+    assert imported["model_meta"] == asdict(consistent_project["model_meta"])
+    assert imported["model_approval"] == consistent_project["model_approval"]
+
+
+def test_reconstruct_model_state_rebuilds_frame_and_posterior_without_a_refit(tmp_path, consistent_project):
+    output_path = export_project(tmp_path / "bundle.zip", **consistent_project)
+    imported = import_project(output_path)
+
+    reconstructed = reconstruct_model_state(imported)
+    assert reconstructed["frame"] is not None
+    assert reconstructed["model_meta"] == consistent_project["model_meta"]
+    assert reconstructed["posterior_params"] is not None
+
+
+def test_reconstruct_model_state_handles_missing_inputs_without_raising():
+    assert reconstruct_model_state({}) == {"frame": None, "model_meta": None, "posterior_params": None}
+
+
+class TestVerifyImportedApproval:
+    def test_matching_imported_approval_is_verified(self, tmp_path, consistent_project):
+        output_path = export_project(tmp_path / "bundle.zip", **consistent_project)
+        imported = import_project(output_path)
+        reconstructed = reconstruct_model_state(imported)
+
+        approval, message = verify_imported_approval(imported, reconstructed)
+        assert approval is not None
+        assert approval.approved_by == "Jane Analyst"
+        assert "verified" in message.lower()
+
+    def test_rejected_when_imported_data_differs(self, tmp_path, consistent_project):
+        output_path = export_project(tmp_path / "bundle.zip", **consistent_project)
+        imported = import_project(output_path)
+        imported["transformed_data"].loc[0, "TV_Brand"] = 999999.0
+
+        reconstructed = reconstruct_model_state(imported)
+        approval, message = verify_imported_approval(imported, reconstructed)
+        assert approval is None
+        assert "does not match" in message.lower()
+
+    def test_rejected_when_model_spec_differs(self, tmp_path, consistent_project):
+        output_path = export_project(tmp_path / "bundle.zip", **consistent_project)
+        imported = import_project(output_path)
+        imported["prior_config"]["decay_mu"] = 0.9
+
+        reconstructed = reconstruct_model_state(imported)
+        approval, message = verify_imported_approval(imported, reconstructed)
+        assert approval is None
+        assert "does not match" in message.lower()
+
+    def test_rejected_when_posterior_artefacts_differ(self, tmp_path, consistent_meta, consistent_project):
+        output_path = export_project(tmp_path / "bundle.zip", **consistent_project)
+        imported = import_project(output_path)
+        imported["trace"] = _make_trace(consistent_meta, seed=999)  # structurally valid, numerically different
+
+        reconstructed = reconstruct_model_state(imported)
+        approval, message = verify_imported_approval(imported, reconstructed)
+        assert approval is None
+        assert "does not match" in message.lower()
+
+    def test_no_approval_in_bundle(self, tmp_path, consistent_project):
+        consistent_project = dict(consistent_project)
+        consistent_project["model_approval"] = None
+        output_path = export_project(tmp_path / "bundle.zip", **consistent_project)
+        imported = import_project(output_path)
+        reconstructed = reconstruct_model_state(imported)
+
+        approval, message = verify_imported_approval(imported, reconstructed)
+        assert approval is None
+        assert "no approval" in message.lower()
+
+    def test_legacy_bundle_without_model_meta_remains_importable_but_unverified(self, tmp_path, sample_project):
+        # sample_project has model_approval but no model_run_id/model_meta at all -
+        # simulates a bundle from before model-bound approval existed.
+        output_path = export_project(tmp_path / "bundle.zip", **sample_project)
+        imported = import_project(output_path)
+        assert imported["model_meta"] is None
+
+        reconstructed = reconstruct_model_state(imported)
+        approval, message = verify_imported_approval(imported, reconstructed)
+        assert approval is None
+        assert "predates" in message.lower() or "unverified" in message.lower()
+
+    def test_legacy_approval_within_an_otherwise_new_bundle_is_unverified(self, tmp_path, consistent_project):
+        # The approval itself lacks fingerprints even though model_meta/model_run_id
+        # are present - must still be treated as unverified, not "close enough".
+        legacy_approval = ModelApproval(approved_by="Old Approver")
+        consistent_project = dict(consistent_project)
+        consistent_project["model_approval"] = legacy_approval.to_dict()
+
+        output_path = export_project(tmp_path / "bundle.zip", **consistent_project)
+        imported = import_project(output_path)
+        reconstructed = reconstruct_model_state(imported)
+
+        approval, message = verify_imported_approval(imported, reconstructed)
+        assert approval is None
+        assert "predates" in message.lower()
