@@ -19,18 +19,9 @@ MMM-guide/
 ├── notebooks/                  # Jupyter notebooks with full MMM examples
 │   ├── mmm_complete_example.ipynb       # Additive model
 │   └── mmm_multiplicative_example.ipynb # Multiplicative model
-├── frontend/                   # Next.js web application
-│   └── src/app/               # React pages (upload, explore, config, etc.)
-├── backend/                    # FastAPI backend server
-│   ├── main.py                # API endpoints for model training
-│   └── core/                  # Core MMM modules
-│       ├── __init__.py
-│       ├── transformations.py # Adstock, saturation functions
-│       ├── models.py          # PyMC model building
-│       ├── attribution.py     # Channel contribution analysis
-│       └── optimization.py    # Budget optimization
-├── conjura_mmm_data.csv       # Raw dataset
-├── mmm_weekly_clean.csv       # Preprocessed weekly data
+├── ancestry_mmm/                # Actively developed app - see below
+├── archive/                    # Archived stacks (dashboard/, backend/, frontend/) - see archive/README.md
+├── conjura_mmm_data.csv       # Raw dataset used by archive/dashboard/
 ├── pyproject.toml             # Python dependencies
 └── README.md
 ```
@@ -49,56 +40,13 @@ All notebooks are located in the `notebooks/` folder.
 - **Additive Model**: Simpler interpretation, straightforward decomposition, works well for most cases
 - **Multiplicative Model**: Better when channels interact strongly, coefficients are elasticities, requires Shapley values for attribution
 
-## Web Application
+## Web Application (archived)
 
-The project includes a modern web application (MMMpact) that provides a no-code interface for building and deploying Marketing Mix Models. It's designed for marketing analysts and data scientists who want to run MMM analysis without writing Python code.
-
-![MMMpact Results Dashboard](docs/mmmpact-results.png)
-
-### What It Does
-
-**MMMpact** guides you through the complete MMM workflow:
-
-- **Upload your data** - Drag and drop CSV/Excel files or use the built-in demo dataset
-- **Explore and validate** - Visualize trends, check data quality, and understand your marketing spend patterns
-- **Configure the model** - Set adstock decay rates, saturation curves, and Bayesian priors per channel
-- **Train with confidence** - Run MCMC sampling with real-time progress and convergence diagnostics
-- **Understand results** - Interactive charts showing channel contributions, ROI, response curves, and model fit
-- **Plan budgets** - Optimize allocation across channels, set constraints, compare scenarios, and export recommendations
-
-### Who It's For
-
-- **Marketing analysts** who need to measure channel effectiveness without coding
-- **Data scientists** who want a faster way to iterate on MMM configurations
-- **Agencies** presenting MMM insights to clients with interactive dashboards
-- **Teams** collaborating on budget planning with exportable scenarios
-
-### Running the Web App
-
-1. Start the backend server:
-```bash
-cd backend
-uv run uvicorn main:app --reload --port 8000
-```
-
-2. In a new terminal, start the frontend:
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-3. Open http://localhost:3000 in your browser
-
-### Features (7-Step Workflow)
-
-1. **Data Upload**: Upload CSV files or use the demo dataset
-2. **Data Exploration**: Interactive charts and data quality analysis
-3. **Column Mapping**: Map your columns to target, media spend, and controls
-4. **Model Configuration**: Configure adstock, saturation, and MCMC parameters
-5. **Model Training**: Train Bayesian MMM models with progress tracking
-6. **Results Analysis**: View contributions, ROI, response curves, and diagnostics
-7. **Budget Planning**: Optimize allocation, set constraints, create scenarios, and export plans
+The project previously included a separate no-code web application ("MMMpact": FastAPI + Next.js)
+alongside a generic single-KPI "MMM Studio" Streamlit dashboard. Both are now archived under
+`archive/` — see `archive/README.md` for why (in short: MMMpact does not run as committed, and
+the dashboard's results/optimisation pages presented some fabricated numbers). `ancestry_mmm/`
+(below) is the actively developed application.
 
 ## Ancestry FH MMM & Scenario Planner
 
@@ -110,8 +58,9 @@ single-KPI MMM. See `docs/ancestry_fh_mmm.md` for the full requirements brief th
 
 Ancestry's FH acquisition splits into three paths with materially different media response,
 promotional sensitivity and value - **New**, **DNA cross-sell**, **Winback** - plus a DNA-media
-halo effect that needs to be tracked explicitly. A blended single-KPI model (what `dashboard/`
-provides) hides all of that. `ancestry_mmm/` models the three segments **jointly**: shared
+halo effect that needs to be tracked explicitly. A blended single-KPI model (what the archived
+`archive/dashboard/` MMM Studio codebase provides) hides all of that. `ancestry_mmm/` models the
+three segments **jointly**: shared
 channel-level adstock/saturation curves, segment-specific response strength via partial pooling,
 an explicit lagged DNA halo pathway, and segment-specific promo sensitivity - see
 `ancestry_mmm/core/hierarchical_model.py`.
@@ -237,7 +186,6 @@ Lift-Factor:    Sales = Baseline * (1 + lift_1) * (1 + lift_2)
 ### Prerequisites
 - Python 3.11+
 - [uv](https://github.com/astral-sh/uv) package manager
-- Node.js 18+ (for the web frontend)
 
 ### Installation
 
@@ -252,19 +200,12 @@ cd MMM-guide
 uv sync
 ```
 
-3. Install frontend dependencies:
-```bash
-cd frontend
-npm install
-cd ..
-```
-
-4. Start Jupyter Lab for notebooks:
+3. Start Jupyter Lab for notebooks:
 ```bash
 uv run jupyter lab
 ```
 
-5. Open `notebooks/mmm_complete_example.ipynb` and run the cells
+4. Open `notebooks/mmm_complete_example.ipynb` and run the cells
 
 ### Dependencies
 
