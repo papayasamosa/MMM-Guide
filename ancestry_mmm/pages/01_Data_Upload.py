@@ -6,9 +6,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import streamlit as st
-import pandas as pd
 
-from ancestry_mmm.utils import init_session_state, get_state, set_state, clear_model_state
+from ancestry_mmm.utils import init_session_state, clear_model_state
 from ancestry_mmm.data import load_file, load_all_sample_sources, get_data_summary
 
 st.set_page_config(page_title="Data Upload - Ancestry FH MMM", page_icon="🧬", layout="wide")

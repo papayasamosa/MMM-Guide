@@ -16,7 +16,7 @@ from ancestry_mmm.core.attribution import (
     compute_shapley_contributions, segment_channel_summary, total_fh_contribution, contribution_waterfall,
 )
 from ancestry_mmm.core import curve_bank as cb
-from ancestry_mmm.components.charts import create_waterfall_chart, create_bar_chart_with_ci
+from ancestry_mmm.components.charts import create_waterfall_chart
 
 st.set_page_config(page_title="Results & Curve Bank - Ancestry FH MMM", page_icon="🧬", layout="wide")
 init_session_state()

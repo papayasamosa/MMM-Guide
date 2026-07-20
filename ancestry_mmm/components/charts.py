@@ -4,7 +4,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 import numpy as np
 import pandas as pd
-from typing import List, Dict, Optional
+from typing import List, Optional
 
 from ancestry_mmm.utils import CHART_COLORS, THEME_COLORS
 

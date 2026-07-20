@@ -30,7 +30,7 @@ calculate_marginal_roi_loglog, optimize_budget_marginal_roi, calculate_expected_
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np

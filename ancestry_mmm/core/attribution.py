@@ -16,7 +16,7 @@ are kept from the original single-KPI implementation for reuse.
 from __future__ import annotations
 
 from itertools import combinations
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 import pandas as pd

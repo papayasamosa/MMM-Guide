@@ -152,12 +152,10 @@ def build_fh_hierarchical_model(
 
     n_obs, n_channels = X_media.shape
     n_segments = len(segments)
-    n_markets = len(markets)
     n_fourier = fourier.shape[1]
     n_controls = X_controls.shape[1]
 
     dna_segment = _default_dna_segment(segments, dna_segment)
-    dna_segment_idx = segments.index(dna_segment)
     non_dna_idx = [i for i, c in enumerate(channels) if i not in dna_channel_idx]
 
     channel_mean_spend = X_media.mean(axis=0)
