@@ -91,7 +91,7 @@ def create_stacked_area_chart(
     """Create a stacked area chart for decomposition."""
     fig = go.Figure()
 
-    colors = ['#64748B'] + list(CHART_COLORS.values())  # Baseline + channels
+    colors = [THEME_COLORS['foreground_muted']] + list(CHART_COLORS.values())  # Baseline + channels
 
     for i, col in enumerate(y_cols):
         fig.add_trace(go.Scatter(

@@ -47,7 +47,6 @@ from .hierarchical_model import FHModelMeta
 from .predict import extract_posterior_params
 from .schema import ModelSpec
 from .optimization import SpendConstraint
-from ..data.preprocessor import prepare_fh_modeling_frame
 
 
 class UnsafeZipEntryError(ValueError):
@@ -248,6 +247,13 @@ def reconstruct_model_state(imported: Dict[str, Any]) -> Dict[str, Any]:
 
     if imported.get("transformed_data") is not None and imported.get("model_spec") is not None:
         try:
+            # Local import: `ancestry_mmm.data.preprocessor` imports `ancestry_mmm.core.schema`
+            # at module level, so importing it at module level here would close a
+            # circular dependency whenever `ancestry_mmm.data` is the first of the two
+            # packages a caller imports (see e.g. any pages/*.py that import
+            # `ancestry_mmm.data` before `ancestry_mmm.core`).
+            from ..data.preprocessor import prepare_fh_modeling_frame
+
             spec = ModelSpec.from_dict(imported["model_spec"])
             result["frame"] = prepare_fh_modeling_frame(imported["transformed_data"], spec)
         except (ValueError, KeyError):

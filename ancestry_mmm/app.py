@@ -1,5 +1,5 @@
 """
-Ancestry FH MMM & Scenario Planner
+Marketing Mix Modelling & Scenario Planner (Home)
 
 An in-house Marketing Mix Modelling and scenario-planning tool built around
 Ancestry's actual FH measurement problem: three acquisition paths (New,
@@ -19,123 +19,73 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from ancestry_mmm.utils import init_session_state, get_workflow_progress
+from ancestry_mmm.utils import init_session_state, get_state
+from ancestry_mmm.components import apply_theme, render_sidebar, render_status_card
 
 
 def setup_page_config():
     st.set_page_config(
-        page_title="Ancestry FH MMM",
+        page_title="Marketing Mix Modelling & Scenario Planner",
         page_icon="🧬",
         layout="wide",
         initial_sidebar_state="expanded",
     )
 
 
-def apply_custom_css():
-    st.markdown("""
-    <style>
-    .stApp { background-color: #0F172A; }
-    [data-testid="stSidebar"] { background-color: #1E293B; }
-    .metric-card {
-        background-color: #1E293B;
-        border: 1px solid #334155;
-        border-radius: 12px;
-        padding: 20px;
-    }
-    .stProgress > div > div { background-color: #4F46E5; }
-    h1, h2, h3 { color: #F1F5F9; }
-    .muted { color: #94A3B8; }
-    .success { color: #10B981; }
-    .error { color: #EF4444; }
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    </style>
-    """, unsafe_allow_html=True)
-
-
-def render_sidebar():
-    with st.sidebar:
-        st.markdown("### 🧬 Ancestry FH MMM")
-        st.caption("New · DNA cross-sell · Winback")
-        st.markdown("---")
-
-        st.markdown("**DATA**")
-        st.page_link("pages/01_Data_Upload.py", label="Data Upload")
-        st.page_link("pages/02_Transform_Pipeline.py", label="Transform Pipeline")
-        st.page_link("pages/03_Structure_Segments_Markets.py", label="Structure: Segments & Markets")
-
-        st.markdown("")
-        st.markdown("**MODEL**")
-        st.page_link("pages/04_Model_Config.py", label="Model Configuration")
-        st.page_link("pages/05_Model_Training.py", label="Model Training")
-        st.page_link("pages/06_Diagnostics.py", label="Diagnostics Scorecard")
-        st.page_link("pages/07_Results_Curve_Bank.py", label="Results & Curve Bank")
-
-        st.markdown("")
-        st.markdown("**PLANNING**")
-        st.page_link("pages/08_Scenario_Planner.py", label="Scenario Planner")
-        st.page_link("pages/09_Project_Export.py", label="Project Export & Handover")
-
-        st.markdown("---")
-        current_step, total_steps = get_workflow_progress()
-        st.markdown("**Workflow Progress**")
-        st.progress(current_step / total_steps)
-        st.caption(f"Step {current_step} of {total_steps}")
-
-
 def main():
     setup_page_config()
-    apply_custom_css()
     init_session_state()
-    render_sidebar()
+    apply_theme()
+    render_sidebar("home")
 
-    st.title("Ancestry FH MMM & Scenario Planner")
+    st.title("Marketing Mix Modelling & Scenario Planner")
+    st.markdown(
+        "A hierarchical marketing mix modelling and scenario planning application for "
+        "segment-level measurement, response curves, attribution, diagnostics, and "
+        "constrained budget planning."
+    )
 
-    st.markdown("""
-    A joint hierarchical model across Ancestry's three Family History acquisition
-    paths - **New**, **DNA cross-sell** and **Winback** - not a single blended KPI.
-    Channel-level adstock and saturation curves are shared; segment response
-    strength, promotional sensitivity and the DNA halo pathway are estimated
-    through partial pooling, so segments borrow strength where data is thin and
-    diverge where the data supports it.
+    st.markdown("---")
+    st.markdown("### Workflow")
+    st.markdown(
+        "1. **Data Upload** - load media, outcome and control sources, or the built-in demo data.\n"
+        "2. **Transform Pipeline** - join sources and record any data clean-up steps.\n"
+        "3. **Structure: Segments & Markets** - define markets, segments, channels and value.\n"
+        "4. **Model Configuration** - set curve priors, hierarchy and MCMC settings.\n"
+        "5. **Model Training** - fit the joint hierarchical Bayesian model.\n"
+        "6. **Diagnostics** - review convergence, fit and plausibility, then approve the model.\n"
+        "7. **Results & Curve Bank** - review contributions and save versioned curves.\n"
+        "8. **Scenario Planner** - plan and compare spend scenarios.\n"
+        "9. **Project Export & Handover** - export a portable project bundle."
+    )
 
-    ### Workflow
-
-    1. **Data Upload** - media / outcomes / controls sources, or the built-in synthetic demo
-    2. **Transform Pipeline** - ordered, auditable, replayable data transforms
-    3. **Structure: Segments & Markets** - define markets, FH segments, DNA channels, promo columns, LTV
-    4. **Model Configuration** - hierarchy, adstock/saturation priors, DNA halo lag
-    5. **Model Training** - joint hierarchical Bayesian fit (PyMC / NUTS)
-    6. **Diagnostics Scorecard** - convergence, fit, out-of-sample accuracy, plausibility flags
-    7. **Results & Curve Bank** - segment + total-FH contributions, versioned curve storage
-    8. **Scenario Planner** - manual / constrained / unconstrained-benchmark planning
-    9. **Project Export & Handover** - Parquet + JSON + NetCDF bundle, Excel export
-    """)
-
+    st.markdown("---")
     col1, col2, col3 = st.columns(3)
     with col1:
-        if st.button("📤 Upload Data", width="stretch"):
+        if st.button("Upload Data", width="stretch"):
             st.switch_page("pages/01_Data_Upload.py")
     with col2:
-        if st.button("📊 View Results", width="stretch"):
+        if st.button("View Results", width="stretch"):
             st.switch_page("pages/07_Results_Curve_Bank.py")
     with col3:
-        if st.button("🎯 Plan Scenarios", width="stretch"):
+        if st.button("Plan Scenarios", width="stretch"):
             st.switch_page("pages/08_Scenario_Planner.py")
 
     st.markdown("---")
-    st.markdown("### Current Status")
+    st.markdown("### Current status")
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        st.metric("Data", "Loaded" if st.session_state.get("data_loaded") else "Not loaded")
+        render_status_card("Data", "Loaded" if get_state("data_loaded") else "Not loaded", bool(get_state("data_loaded")))
     with c2:
-        spec = st.session_state.get("model_spec")
-        st.metric("Structure", "Defined" if spec else "Not defined")
+        spec = get_state("model_spec")
+        render_status_card("Structure", "Defined" if spec else "Not defined", bool(spec))
     with c3:
-        st.metric("Model", "Trained" if st.session_state.get("model_trained") else "Not trained")
+        trained = get_state("model_trained")
+        render_status_card("Model", "Trained" if trained else "Not trained", bool(trained))
     with c4:
-        st.metric("Scenarios", str(len(st.session_state.get("scenarios") or [])))
+        scenarios = get_state("scenarios") or []
+        render_status_card("Scenarios", str(len(scenarios)), bool(scenarios))
 
 
 if __name__ == "__main__":
