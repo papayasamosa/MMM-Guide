@@ -1,0 +1,155 @@
+import numpy as np
+import pandas as pd
+import pytest
+
+from ancestry_mmm.core.fingerprint import (
+    fingerprint_dataframe,
+    fingerprint_model_spec,
+    fingerprint_posterior,
+)
+
+
+# ---------------------------------------------------------------------------
+# Data fingerprint
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def base_df() -> pd.DataFrame:
+    return pd.DataFrame({
+        "date": pd.date_range("2024-01-01", periods=4, freq="W"),
+        "market": ["UK", "UK", "UK", "UK"],
+        "TV_Brand": [100.0, 200.0, 150.0, 175.0],
+        "fh_new_gsa": [10, 12, 11, 13],
+    })
+
+
+class TestFingerprintDataframe:
+    def test_identical_data_same_fingerprint(self, base_df):
+        assert fingerprint_dataframe(base_df) == fingerprint_dataframe(base_df.copy())
+
+    def test_changed_value_changes_fingerprint(self, base_df):
+        changed = base_df.copy()
+        changed.loc[0, "TV_Brand"] = 999.0
+        assert fingerprint_dataframe(base_df) != fingerprint_dataframe(changed)
+
+    def test_changed_row_order_changes_fingerprint(self, base_df):
+        reordered = base_df.iloc[::-1].reset_index(drop=True)
+        assert fingerprint_dataframe(base_df) != fingerprint_dataframe(reordered)
+
+    def test_changed_column_order_changes_fingerprint(self, base_df):
+        reordered = base_df[["market", "date", "fh_new_gsa", "TV_Brand"]]
+        assert fingerprint_dataframe(base_df) != fingerprint_dataframe(reordered)
+
+    def test_changed_dtype_changes_fingerprint(self, base_df):
+        recast = base_df.copy()
+        recast["fh_new_gsa"] = recast["fh_new_gsa"].astype(float)
+        assert fingerprint_dataframe(base_df) != fingerprint_dataframe(recast)
+
+    def test_missing_values_are_deterministic(self):
+        df1 = pd.DataFrame({"a": [1.0, np.nan, 3.0]})
+        df2 = pd.DataFrame({"a": [1.0, np.nan, 3.0]})
+        assert fingerprint_dataframe(df1) == fingerprint_dataframe(df2)
+        # ... and distinguishable from a genuinely different value in the same slot.
+        df3 = pd.DataFrame({"a": [1.0, 2.0, 3.0]})
+        assert fingerprint_dataframe(df1) != fingerprint_dataframe(df3)
+
+    def test_date_columns_are_deterministic(self):
+        df1 = pd.DataFrame({"date": pd.date_range("2024-01-01", periods=3)})
+        df2 = pd.DataFrame({"date": pd.date_range("2024-01-01", periods=3)})
+        df3 = pd.DataFrame({"date": pd.date_range("2024-02-01", periods=3)})
+        assert fingerprint_dataframe(df1) == fingerprint_dataframe(df2)
+        assert fingerprint_dataframe(df1) != fingerprint_dataframe(df3)
+
+    def test_categorical_columns_are_deterministic(self):
+        df1 = pd.DataFrame({"segment": pd.Categorical(["New", "Winback", "New"])})
+        df2 = pd.DataFrame({"segment": pd.Categorical(["New", "Winback", "New"])})
+        df3 = pd.DataFrame({"segment": pd.Categorical(["New", "New", "New"])})
+        assert fingerprint_dataframe(df1) == fingerprint_dataframe(df2)
+        assert fingerprint_dataframe(df1) != fingerprint_dataframe(df3)
+
+    def test_empty_dataframe_does_not_raise(self):
+        fingerprint_dataframe(pd.DataFrame({"a": []}))
+        fingerprint_dataframe(pd.DataFrame())
+
+
+# ---------------------------------------------------------------------------
+# Model-specification fingerprint
+# ---------------------------------------------------------------------------
+
+class TestFingerprintModelSpec:
+    def test_key_insertion_order_does_not_matter(self):
+        spec_a = {"markets": ["UK"], "channels": ["TV", "Search"]}
+        spec_b = {"channels": ["TV", "Search"], "markets": ["UK"]}
+        assert fingerprint_model_spec(spec_a, {"decay_mu": 0.5}, 4) == fingerprint_model_spec(spec_b, {"decay_mu": 0.5}, 4)
+
+    def test_changed_spec_changes_fingerprint(self):
+        spec_a = {"markets": ["UK"], "channels": ["TV"]}
+        spec_b = {"markets": ["UK", "Australia"], "channels": ["TV"]}
+        assert fingerprint_model_spec(spec_a, {}, 4) != fingerprint_model_spec(spec_b, {}, 4)
+
+    def test_changed_prior_changes_fingerprint(self):
+        spec = {"markets": ["UK"]}
+        assert fingerprint_model_spec(spec, {"decay_mu": 0.5}, 4) != fingerprint_model_spec(spec, {"decay_mu": 0.7}, 4)
+
+    def test_changed_dna_lag_weeks_changes_fingerprint(self):
+        spec = {"markets": ["UK"]}
+        assert fingerprint_model_spec(spec, {}, 4) != fingerprint_model_spec(spec, {}, 6)
+
+    def test_list_order_is_preserved_and_meaningful(self):
+        spec_a = {"channels": ["TV", "Search"]}
+        spec_b = {"channels": ["Search", "TV"]}
+        assert fingerprint_model_spec(spec_a, {}, 4) != fingerprint_model_spec(spec_b, {}, 4)
+
+
+# ---------------------------------------------------------------------------
+# Posterior fingerprint
+# ---------------------------------------------------------------------------
+
+class TestFingerprintPosterior:
+    def _params(self, beta_tv=0.1):
+        return {
+            "decay_rate": {"TV": 0.5, "Search": 0.2},
+            "hill_K": {"TV": 1000.0, "Search": 500.0},
+            "beta": {"New": {"TV": beta_tv}, "Winback": {"TV": 0.05}},
+            "gamma_fourier": {"New": np.array([1.0, 2.0, 3.0])},
+        }
+
+    def test_identical_params_same_fingerprint(self):
+        assert fingerprint_posterior(self._params()) == fingerprint_posterior(self._params())
+
+    def test_changed_param_changes_fingerprint(self):
+        assert fingerprint_posterior(self._params(beta_tv=0.1)) != fingerprint_posterior(self._params(beta_tv=0.2))
+
+    def test_reordered_dict_keys_do_not_change_fingerprint(self):
+        params_a = self._params()
+        params_b = {
+            "gamma_fourier": params_a["gamma_fourier"],
+            "beta": params_a["beta"],
+            "hill_K": params_a["hill_K"],
+            "decay_rate": params_a["decay_rate"],
+        }
+        assert fingerprint_posterior(params_a) == fingerprint_posterior(params_b)
+
+    def test_array_order_is_meaningful(self):
+        params_a = {"gamma_fourier": {"New": np.array([1.0, 2.0, 3.0])}}
+        params_b = {"gamma_fourier": {"New": np.array([3.0, 2.0, 1.0])}}
+        assert fingerprint_posterior(params_a) != fingerprint_posterior(params_b)
+
+    def test_array_shape_matters(self):
+        params_a = {"gamma_fourier": {"New": np.array([1.0, 2.0])}}
+        params_b = {"gamma_fourier": {"New": np.array([[1.0, 2.0]])}}
+        assert fingerprint_posterior(params_a) != fingerprint_posterior(params_b)
+
+    def test_works_on_a_real_fh_posterior_params_dataclass(self):
+        from ancestry_mmm.core.predict import FHPosteriorParams
+
+        params = FHPosteriorParams(
+            decay_rate={"TV": 0.5}, hill_K={"TV": 1000.0}, hill_S={"TV": 1.0},
+            beta={"New": {"TV": 0.1}}, halo_strength={"New": 0.0}, promo_coef={"New": 0.1},
+            market_offset={"UK": {"New": 0.0}}, intercept={"New": 2.0}, trend_coef={"New": 0.0},
+            gamma_fourier={"New": np.zeros(6)}, alpha={"New": 5.0}, control_coef={}, segment_control_coef={},
+        )
+        fp1 = fingerprint_posterior(params)
+        fp2 = fingerprint_posterior(params)
+        assert fp1 == fp2
+        assert isinstance(fp1, str) and len(fp1) == 64  # sha256 hexdigest

@@ -28,7 +28,8 @@ env/
 
 # uv
 .uv/
-uv.lock
+# uv.lock is committed deliberately - CI (.github/workflows/tests.yml) installs
+# from it via `uv sync --locked` for reproducible dependency resolution.
 
 # Jupyter
 .ipynb_checkpoints/

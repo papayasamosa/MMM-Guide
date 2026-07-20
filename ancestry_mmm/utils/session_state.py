@@ -39,6 +39,10 @@ def init_session_state():
         "trace": None,
         "model_trained": False,
         "posterior_params": None,
+        # Fresh UUID minted on every successful fit (see pages/05_Model_Training.py) -
+        # part of a model run's identity alongside the data/spec/posterior
+        # fingerprints computed on demand from the artifacts above (core.fingerprint).
+        "model_run_id": None,
 
         # Diagnostics
         "scorecard": None,
@@ -91,8 +95,9 @@ def clear_model_state() -> None:
         "frame", "model", "model_meta", "trace", "model_trained", "posterior_params",
         "scorecard", "backtest_results", "curve_bank_entry_id",
         # A retrained (or newly loaded) model has not been reviewed yet -
-        # any prior approval no longer applies to it.
-        "model_approval",
+        # any prior approval no longer applies to it. model_run_id resets too,
+        # since it identifies a specific fit event, not just "a model exists".
+        "model_approval", "model_run_id",
     ]
     for key in model_keys:
         st.session_state[key] = None

@@ -9,7 +9,8 @@ import streamlit as st
 import pandas as pd
 
 from ancestry_mmm.utils import init_session_state, get_state, set_state, curve_bank_dir
-from ancestry_mmm.core.approval import ModelApproval
+from ancestry_mmm.core.approval import ApprovalMismatchError, ModelApproval
+from ancestry_mmm.core.fingerprint import fingerprint_dataframe, fingerprint_model_spec, fingerprint_posterior
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.attribution import (
     compute_shapley_contributions, segment_channel_summary, total_fh_contribution, contribution_waterfall,
@@ -75,11 +76,37 @@ st.caption(
 )
 
 approval_dict = get_state("model_approval")
+model_run_id = get_state("model_run_id")
+prior_config = get_state("prior_config") or {}
+dna_lag_weeks = get_state("dna_lag_weeks", 4)
+
+current_identity = None
+if model_run_id and spec_dict is not None:
+    current_identity = {
+        "model_run_id": model_run_id,
+        "data_fingerprint": fingerprint_dataframe(frame["df"]),
+        "model_spec_fingerprint": fingerprint_model_spec(spec_dict, prior_config, dna_lag_weeks),
+        "posterior_fingerprint": fingerprint_posterior(params),
+    }
+
+approval_matches_current = (
+    approval_dict is not None
+    and current_identity is not None
+    and ModelApproval.from_dict(approval_dict).matches_current_model(**current_identity)
+)
+
 if not approval_dict:
     st.warning(
         "This model hasn't been approved yet. Results above are still visible for review, but "
         "saving to the curve bank is blocked until you approve it on the **Diagnostics Scorecard** "
         "page - only an approved model may populate the curve bank."
+    )
+elif not approval_matches_current:
+    st.warning(
+        "This model's approval no longer matches the current fitted model (the data, "
+        "specification, posterior, or run have changed since it was approved) - saving to the "
+        "curve bank is blocked until it's reviewed and approved again on the "
+        "**Diagnostics Scorecard** page."
     )
 else:
     approval = ModelApproval.from_dict(approval_dict)
@@ -91,16 +118,26 @@ else:
 
     if st.button("Save current curves to curve bank", type="primary"):
         data_window = (str(pd.Timestamp(frame["dates"].min()).date()), str(pd.Timestamp(frame["dates"].max()).date()))
-        entry = cb.make_entry(meta, params, data_window, run_label, approval, notes)
-        path = cb.save_entry(curve_bank_dir(), entry)
-        set_state("curve_bank_entry_id", entry.entry_id)
-        st.success(f"Saved curve bank entry {entry.entry_id[:8]} to {path}")
+        try:
+            entry = cb.make_entry(meta, params, data_window, run_label, approval, notes=notes, **current_identity)
+        except ApprovalMismatchError as e:
+            st.error(f"Could not save to the curve bank: {e}")
+        else:
+            path = cb.save_entry(curve_bank_dir(), entry)
+            set_state("curve_bank_entry_id", entry.entry_id)
+            st.success(f"Saved curve bank entry {entry.entry_id[:8]} to {path}")
 
 entries = cb.load_all_entries(curve_bank_dir())
 if entries:
     st.markdown("#### Curve bank history")
     entries_df = cb.entries_to_dataframe(entries)
     st.dataframe(entries_df, width="stretch")
+    if entries_df["legacy_approval"].any():
+        st.caption(
+            "⚠️ Rows marked `legacy_approval = True` were saved before curve bank entries were "
+            "bound to a verified model run - their approval could not be checked against a "
+            "specific fitted model."
+        )
 
     st.markdown("#### Log a geo-test / in-platform calibration result")
     entry_options = {f"{e.run_label} ({e.entry_id[:8]}, {pd.Timestamp.fromtimestamp(e.created_at).date()})": e.entry_id for e in entries}
