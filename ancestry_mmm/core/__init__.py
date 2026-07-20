@@ -1,5 +1,6 @@
 """Core modeling modules for the Ancestry FH MMM."""
 
+from .approval import ModelApproval
 from .schema import ModelSpec, DEFAULT_SEGMENTS
 from .transformations import (
     geometric_adstock,
@@ -66,9 +67,10 @@ from .optimization import (
     optimize_budget_marginal_roi,
     calculate_expected_lift,
 )
-from .persistence import export_project, import_project, export_excel_summary
+from .persistence import export_project, import_project, export_excel_summary, UnsafeZipEntryError
 
 __all__ = [
+    "ModelApproval",
     "ModelSpec",
     "DEFAULT_SEGMENTS",
     "geometric_adstock",
@@ -126,4 +128,5 @@ __all__ = [
     "export_project",
     "import_project",
     "export_excel_summary",
+    "UnsafeZipEntryError",
 ]

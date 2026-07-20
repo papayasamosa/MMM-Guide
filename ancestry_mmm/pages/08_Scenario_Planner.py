@@ -34,6 +34,13 @@ if frame is None or meta is None or params is None:
     st.warning("Train a model first on **Model Training**.")
     st.stop()
 
+if not get_state("model_approval"):
+    st.warning(
+        "This model hasn't been approved yet. Approve it on the **Diagnostics Scorecard** page "
+        "before planning scenarios - only an approved model's results may drive the planner."
+    )
+    st.stop()
+
 spec = ModelSpec.from_dict(spec_dict)
 ltv = spec.segment_ltv
 

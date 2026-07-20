@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 import streamlit as st
 
 from ancestry_mmm.utils import init_session_state, get_state, set_state, curve_bank_dir, PROJECT_EXPORT_ROOT
-from ancestry_mmm.core.persistence import export_project, import_project, export_excel_summary
+from ancestry_mmm.core.persistence import export_project, import_project, export_excel_summary, UnsafeZipEntryError
 from ancestry_mmm.core.curve_bank import load_all_entries, entries_to_dataframe
 from ancestry_mmm.core.attribution import compute_shapley_contributions, total_fh_contribution, segment_channel_summary
 from ancestry_mmm.core.schema import ModelSpec
@@ -41,6 +41,7 @@ if st.button("Build export bundle", type="primary"):
             trace=get_state("trace"),
             scenarios=get_state("scenarios") or [],
             curve_bank_source_dir=curve_bank_dir(),
+            model_approval=get_state("model_approval"),
         )
     st.success(f"Bundle written to {output_path}")
     with open(output_path, "rb") as f:
@@ -54,20 +55,30 @@ if uploaded_zip is not None and st.button("Import bundle"):
     PROJECT_EXPORT_ROOT.mkdir(parents=True, exist_ok=True)
     with open(tmp_path, "wb") as f:
         f.write(uploaded_zip.getbuffer())
-    with st.spinner("Importing..."):
-        imported = import_project(tmp_path)
-    set_state("raw_sources", imported["raw_sources"])
-    set_state("transformed_data", imported["transformed_data"])
-    set_state("pipeline_steps", imported["pipeline_steps"])
-    set_state("model_spec", imported["model_spec"])
-    set_state("prior_config", imported["prior_config"])
-    set_state("dna_lag_weeks", imported["dna_lag_weeks"])
-    set_state("scenarios", imported["scenarios"])
-    set_state("data_loaded", bool(imported["raw_sources"]))
-    if imported["trace"] is not None:
-        set_state("trace", imported["trace"])
-        st.info("Imported a fitted trace. Re-run Model Training's setup (without re-fitting) if you need model_meta/posterior_params - or just re-fit to refresh.")
-    st.success("Project imported. Review each page to pick up where you left off.")
+    try:
+        with st.spinner("Importing..."):
+            imported = import_project(tmp_path)
+    except UnsafeZipEntryError as e:
+        st.error(f"Refusing to import this bundle: {e}")
+    else:
+        set_state("raw_sources", imported["raw_sources"])
+        set_state("transformed_data", imported["transformed_data"])
+        set_state("pipeline_steps", imported["pipeline_steps"])
+        set_state("model_spec", imported["model_spec"])
+        set_state("prior_config", imported["prior_config"])
+        set_state("dna_lag_weeks", imported["dna_lag_weeks"])
+        set_state("scenarios", imported["scenarios"])
+        set_state("data_loaded", bool(imported["raw_sources"]))
+        # Always overwrite (not just when present) so a stale approval from
+        # the current session's in-progress model doesn't linger attached to
+        # whatever gets imported.
+        set_state("model_approval", imported["model_approval"])
+        if imported["trace"] is not None:
+            set_state("trace", imported["trace"])
+            st.info("Imported a fitted trace. Re-run Model Training's setup (without re-fitting) if you need model_meta/posterior_params - or just re-fit to refresh.")
+        st.success("Project imported. Review each page to pick up where you left off.")
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
 st.markdown("---")
 st.markdown("### Excel export (curve bank + contributions)")

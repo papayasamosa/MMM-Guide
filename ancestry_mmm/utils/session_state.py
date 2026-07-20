@@ -44,6 +44,11 @@ def init_session_state():
         "scorecard": None,
         "backtest_results": None,
 
+        # Model approval gate (core.approval.ModelApproval as a dict) - required
+        # before a model's curves can be saved to the curve bank or used to plan
+        # scenarios; reset by clear_model_state() whenever the model changes.
+        "model_approval": None,
+
         # Curve bank
         "curve_bank_entry_id": None,
         "calibration_records": [],
@@ -85,6 +90,9 @@ def clear_model_state() -> None:
     model_keys = [
         "frame", "model", "model_meta", "trace", "model_trained", "posterior_params",
         "scorecard", "backtest_results", "curve_bank_entry_id",
+        # A retrained (or newly loaded) model has not been reviewed yet -
+        # any prior approval no longer applies to it.
+        "model_approval",
     ]
     for key in model_keys:
         st.session_state[key] = None
