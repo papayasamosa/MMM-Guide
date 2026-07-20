@@ -76,6 +76,25 @@ from .persistence import (
     reconstruct_model_state,
     verify_imported_approval,
 )
+from .market_config import (
+    MarketDescriptors,
+    MarketCurrency,
+    MarketProfile,
+    ChannelMediaUnitConfig,
+    MarketSpecConfig,
+    UNIT_TYPE_SUGGESTIONS,
+    COST_BASIS_SUGGESTIONS,
+    market_data_quality_status,
+)
+from .simulation import (
+    MarketSimSpec,
+    ChannelSimSpec,
+    SimulationGroundTruth,
+    SimulationResult,
+    default_markets,
+    default_channels,
+    simulate_market_specific_panel,
+)
 
 __all__ = [
     "ModelApproval",
@@ -144,4 +163,19 @@ __all__ = [
     "UnsafeZipEntryError",
     "reconstruct_model_state",
     "verify_imported_approval",
+    "MarketDescriptors",
+    "MarketCurrency",
+    "MarketProfile",
+    "ChannelMediaUnitConfig",
+    "MarketSpecConfig",
+    "UNIT_TYPE_SUGGESTIONS",
+    "COST_BASIS_SUGGESTIONS",
+    "market_data_quality_status",
+    "MarketSimSpec",
+    "ChannelSimSpec",
+    "SimulationGroundTruth",
+    "SimulationResult",
+    "default_markets",
+    "default_channels",
+    "simulate_market_specific_panel",
 ]
