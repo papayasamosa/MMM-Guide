@@ -31,6 +31,8 @@ dependencies = [
     # Excel support (for data dictionary)
     "openpyxl>=3.1.0",
     "graphviz>=0.21",
+    # Parquet read/write for project persistence (ancestry_mmm/core/persistence.py)
+    "pyarrow>=14.0.0",
 ]
 
 [project.optional-dependencies]
@@ -42,10 +44,15 @@ api = [
 dev = [
     "black>=23.0.0",
     "ruff>=0.1.0",
+    "pytest>=7.4.0",
 ]
 
 [tool.uv]
 dev-dependencies = [
     "black>=23.0.0",
     "ruff>=0.1.0",
+    "pytest>=7.4.0",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["ancestry_mmm/tests"]

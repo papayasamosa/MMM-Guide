@@ -9,6 +9,7 @@ import streamlit as st
 import pandas as pd
 
 from ancestry_mmm.utils import init_session_state, get_state, set_state
+from ancestry_mmm.core.approval import ModelApproval
 from ancestry_mmm.core.diagnostics import compute_scorecard, expanding_window_backtest
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
@@ -66,6 +67,52 @@ if scorecard:
     else:
         for f in flags:
             (st.warning if f["level"] == "warning" else st.error)(f"**{f.get('channel', '')}**: {f['message']}")
+
+st.markdown("---")
+st.markdown("### Model approval")
+st.caption(
+    "A high R-squared is not, by itself, a reason to accept a model. Approving here is what "
+    "authorises this model's curves to be saved to the curve bank and used in the Scenario "
+    "Planner - both are blocked until it happens."
+)
+
+approval_dict = get_state("model_approval")
+if approval_dict:
+    approved_at = pd.Timestamp.fromtimestamp(approval_dict["approved_at"])
+    st.success(f"Approved by **{approval_dict['approved_by']}** on {approved_at:%Y-%m-%d %H:%M}.")
+    with st.expander("Approval details"):
+        st.write(f"**Notes:** {approval_dict.get('notes') or '(none)'}")
+        st.write(f"**Known limitations:** {approval_dict.get('known_limitations') or '(none)'}")
+        st.write(f"**Diagnostics reviewed:** {', '.join(approval_dict.get('diagnostics_accepted', [])) or '(none recorded)'}")
+    if st.button("Revoke approval"):
+        set_state("model_approval", None)
+        st.rerun()
+elif not scorecard:
+    st.info("Compute the scorecard above before approving this model.")
+else:
+    with st.form("approve_model_form"):
+        approved_by = st.text_input("Approved by (name)")
+        diagnostics_accepted = st.multiselect(
+            "Diagnostics reviewed before approving",
+            ["convergence", "in_sample_fit", "ppc_coverage", "plausibility_flags", "backtest"],
+            default=["convergence", "in_sample_fit", "ppc_coverage", "plausibility_flags"],
+        )
+        notes = st.text_area("Notes")
+        known_limitations = st.text_area("Known limitations")
+        submitted = st.form_submit_button("Approve this model for planning", type="primary")
+        if submitted:
+            if not approved_by.strip():
+                st.error("Enter a name before approving.")
+            else:
+                approval = ModelApproval(
+                    approved_by=approved_by.strip(),
+                    notes=notes,
+                    known_limitations=known_limitations,
+                    diagnostics_accepted=diagnostics_accepted,
+                )
+                set_state("model_approval", approval.to_dict())
+                st.success(f"Model approved by {approved_by.strip()}.")
+                st.rerun()
 
 st.markdown("---")
 st.markdown("### Out-of-sample accuracy (expanding-window backtest)")

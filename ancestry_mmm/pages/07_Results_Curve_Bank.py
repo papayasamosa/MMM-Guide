@@ -9,6 +9,7 @@ import streamlit as st
 import pandas as pd
 
 from ancestry_mmm.utils import init_session_state, get_state, set_state, curve_bank_dir
+from ancestry_mmm.core.approval import ModelApproval
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.attribution import (
     compute_shapley_contributions, segment_channel_summary, total_fh_contribution, contribution_waterfall,
@@ -73,16 +74,27 @@ st.caption(
     "traceable to the run, data window and (once logged) any geo/in-platform test calibration."
 )
 
-c1, c2 = st.columns(2)
-run_label = c1.text_input("Run label", value=f"{spec.markets and spec.markets[0] or 'run'}-v1")
-notes = c2.text_input("Notes (optional)")
+approval_dict = get_state("model_approval")
+if not approval_dict:
+    st.warning(
+        "This model hasn't been approved yet. Results above are still visible for review, but "
+        "saving to the curve bank is blocked until you approve it on the **Diagnostics Scorecard** "
+        "page - only an approved model may populate the curve bank."
+    )
+else:
+    approval = ModelApproval.from_dict(approval_dict)
+    st.caption(f"Model approved by **{approval.approved_by}** - saving to the curve bank will record this approval on the entry.")
 
-if st.button("Save current curves to curve bank", type="primary"):
-    data_window = (str(pd.Timestamp(frame["dates"].min()).date()), str(pd.Timestamp(frame["dates"].max()).date()))
-    entry = cb.make_entry(meta, params, data_window, run_label, notes)
-    path = cb.save_entry(curve_bank_dir(), entry)
-    set_state("curve_bank_entry_id", entry.entry_id)
-    st.success(f"Saved curve bank entry {entry.entry_id[:8]} to {path}")
+    c1, c2 = st.columns(2)
+    run_label = c1.text_input("Run label", value=f"{spec.markets and spec.markets[0] or 'run'}-v1")
+    notes = c2.text_input("Notes (optional)")
+
+    if st.button("Save current curves to curve bank", type="primary"):
+        data_window = (str(pd.Timestamp(frame["dates"].min()).date()), str(pd.Timestamp(frame["dates"].max()).date()))
+        entry = cb.make_entry(meta, params, data_window, run_label, approval, notes)
+        path = cb.save_entry(curve_bank_dir(), entry)
+        set_state("curve_bank_entry_id", entry.entry_id)
+        st.success(f"Saved curve bank entry {entry.entry_id[:8]} to {path}")
 
 entries = cb.load_all_entries(curve_bank_dir())
 if entries:

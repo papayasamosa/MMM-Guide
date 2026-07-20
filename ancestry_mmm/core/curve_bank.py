@@ -10,6 +10,10 @@ it, and so cross-market synthesis can consume curves without a full model
 rebuild. Curves are appended, never overwritten in place, so history is a
 straight append log with entry_id-based cross-references from calibration
 records.
+
+Every entry also carries the ModelApproval that authorised it (see
+core.approval) - make_entry requires one, so an entry cannot be created
+from an unapproved model run.
 """
 
 from __future__ import annotations
@@ -23,6 +27,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
+from .approval import ModelApproval
 from .hierarchical_model import FHModelMeta
 from .predict import FHPosteriorParams
 
@@ -44,6 +49,11 @@ class CurveBankEntry:
     beta: Dict[str, Dict[str, float]]
     halo_strength: Dict[str, float]
     promo_coef: Dict[str, float]
+    approved_by: str
+    approved_at: float
+    approval_notes: str = ""
+    approval_limitations: str = ""
+    diagnostics_accepted: List[str] = field(default_factory=list)
     notes: str = ""
 
     def to_dict(self) -> dict:
@@ -53,7 +63,15 @@ class CurveBankEntry:
     def from_dict(cls, d: dict) -> "CurveBankEntry":
         d = dict(d)
         d["data_window"] = tuple(d["data_window"])
-        return cls(**d)
+        # Entries written before the approval gate was added have no
+        # approved_by/approved_at - backfill an explicit "unknown" sentinel
+        # rather than raising, so pre-existing curve bank history stays
+        # loadable (and visibly flagged) instead of being silently dropped
+        # by load_all_entries' broad except clause.
+        d.setdefault("approved_by", "(unknown - pre-dates approval gate)")
+        d.setdefault("approved_at", d.get("created_at", 0.0))
+        known = {f for f in cls.__dataclass_fields__}
+        return cls(**{k: v for k, v in d.items() if k in known})
 
 
 @dataclass
@@ -84,8 +102,20 @@ def make_entry(
     params: FHPosteriorParams,
     data_window: Tuple[str, str],
     run_label: str,
+    approval: ModelApproval,
     notes: str = "",
 ) -> CurveBankEntry:
+    """
+    Build a curve bank entry from a fitted model's posterior parameters.
+
+    `approval` is required, not optional: per the guide this build follows,
+    "only an approved model should populate the official curve bank" - an
+    unapproved model run has no way to reach `save_entry` through the normal
+    call path (see pages/07_Results_Curve_Bank.py, which gates the "save to
+    curve bank" action on an ModelApproval existing in session state).
+    """
+    if not isinstance(approval, ModelApproval):
+        raise TypeError("make_entry requires a ModelApproval instance - see core.approval.")
     return CurveBankEntry(
         entry_id=str(uuid.uuid4()),
         created_at=time.time(),
@@ -102,6 +132,11 @@ def make_entry(
         beta=params.beta,
         halo_strength=params.halo_strength,
         promo_coef=params.promo_coef,
+        approved_by=approval.approved_by,
+        approved_at=approval.approved_at,
+        approval_notes=approval.notes,
+        approval_limitations=approval.known_limitations,
+        diagnostics_accepted=list(approval.diagnostics_accepted),
         notes=notes,
     )
 
@@ -140,6 +175,8 @@ def entries_to_dataframe(entries: List[CurveBankEntry]) -> pd.DataFrame:
                     "created_at": pd.Timestamp.fromtimestamp(e.created_at),
                     "data_window_start": e.data_window[0],
                     "data_window_end": e.data_window[1],
+                    "approved_by": e.approved_by,
+                    "approved_at": pd.Timestamp.fromtimestamp(e.approved_at),
                     "segment": seg,
                     "channel": ch,
                     "decay_rate": e.decay_rate.get(ch),
