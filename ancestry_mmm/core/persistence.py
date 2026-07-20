@@ -111,6 +111,7 @@ def export_project(
     model_approval: Optional[dict] = None,
     model_run_id: Optional[str] = None,
     model_meta: Optional[FHModelMeta] = None,
+    market_spec_config: Optional[dict] = None,
 ) -> Path:
     output_path = Path(output_path)
     with tempfile.TemporaryDirectory() as tmp:
@@ -136,6 +137,8 @@ def export_project(
             (tmp / "config" / "model_run_id.json").write_text(json.dumps({"model_run_id": model_run_id}, indent=2))
         if model_meta is not None:
             (tmp / "config" / "model_meta.json").write_text(json.dumps(asdict(model_meta), indent=2, default=str))
+        if market_spec_config is not None:
+            (tmp / "config" / "market_spec_config.json").write_text(json.dumps(market_spec_config, indent=2, default=str))
 
         scenarios_meta = []
         for i, s in enumerate(scenarios):
@@ -173,6 +176,11 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         "model_spec": None, "prior_config": {}, "dna_lag_weeks": 4,
         "trace": None, "scenarios": [], "model_approval": None,
         "model_run_id": None, "model_meta": None,
+        # Absent in bundles exported before the market-specific redesign
+        # (Phase 1) - None here is the correct "legacy bundle" signal, not
+        # an error; core.market_config.MarketSpecConfig.from_dict(None)
+        # returns an empty config.
+        "market_spec_config": None,
     }
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
@@ -203,6 +211,8 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
             result["model_run_id"] = json.loads((config_dir / "model_run_id.json").read_text()).get("model_run_id")
         if (config_dir / "model_meta.json").exists():
             result["model_meta"] = json.loads((config_dir / "model_meta.json").read_text())
+        if (config_dir / "market_spec_config.json").exists():
+            result["market_spec_config"] = json.loads((config_dir / "market_spec_config.json").read_text())
         if (config_dir / "scenarios.json").exists():
             scenarios_meta = json.loads((config_dir / "scenarios.json").read_text())
             for i, s in enumerate(scenarios_meta):

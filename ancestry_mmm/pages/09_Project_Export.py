@@ -54,6 +54,7 @@ if st.button("Build export bundle", type="primary"):
             model_approval=get_state("model_approval"),
             model_run_id=get_state("model_run_id"),
             model_meta=get_state("model_meta"),
+            market_spec_config=get_state("market_spec_config"),
         )
     st.success(f"Project bundle built: {output_path}")
     with open(output_path, "rb") as f:
@@ -83,6 +84,13 @@ if uploaded_zip is not None and st.button("Import bundle"):
         set_state("data_loaded", bool(imported["raw_sources"]))
         set_state("trace", imported["trace"])
         set_state("model_run_id", imported["model_run_id"])
+        set_state("market_spec_config", imported["market_spec_config"])
+        if imported["market_spec_config"] is None:
+            st.caption(
+                "This bundle predates the market-specific redesign - no market descriptors or "
+                "media-unit mappings to import. Add them on Channel & Media Units / Market "
+                "Descriptors if needed."
+            )
 
         # Re-derive the frame and posterior params from the raw artefacts
         # (cheap - pandas prep + posterior summarisation, no re-fit) so the

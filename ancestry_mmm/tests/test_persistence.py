@@ -9,6 +9,7 @@ import pytest
 from ancestry_mmm.core.approval import ModelApproval
 from ancestry_mmm.core.fingerprint import fingerprint_dataframe, fingerprint_model_spec, fingerprint_posterior
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
+from ancestry_mmm.core.market_config import ChannelMediaUnitConfig, MarketCurrency, MarketProfile, MarketSpecConfig
 from ancestry_mmm.core.optimization import SpendConstraint
 from ancestry_mmm.core.persistence import (
     UnsafeZipEntryError,
@@ -199,6 +200,36 @@ def test_export_then_import_reproduces_trace(tmp_path, sample_project):
     original = sample_project["trace"].posterior["intercept"].values
     restored = imported["trace"].posterior["intercept"].values
     np.testing.assert_allclose(restored, original)
+
+
+def test_export_then_import_reproduces_market_spec_config(tmp_path, sample_project):
+    market_spec_config = MarketSpecConfig()
+    market_spec_config.set_profile(MarketProfile(market="UK", currency=MarketCurrency(local_currency="GBP")))
+    market_spec_config.set_media_unit_config(
+        ChannelMediaUnitConfig(market="UK", channel="TV_Brand", spend_column="TV_Brand", response_unit_column="TV_Brand_GRP")
+    )
+    sample_project = dict(sample_project)
+    sample_project["market_spec_config"] = market_spec_config.to_dict()
+
+    output_path = export_project(tmp_path / "bundle.zip", **sample_project)
+    imported = import_project(output_path)
+
+    restored = MarketSpecConfig.from_dict(imported["market_spec_config"])
+    assert restored.get_profile("UK").currency.local_currency == "GBP"
+    assert restored.get_media_unit_config("UK", "TV_Brand").response_unit_column == "TV_Brand_GRP"
+
+
+def test_legacy_bundle_without_market_spec_config_imports_with_none(tmp_path, sample_project):
+    """A bundle exported before the market-specific redesign has no
+    market_spec_config.json - import must not fail, and MarketSpecConfig
+    must treat the missing data as an empty (not corrupt) config."""
+    output_path = export_project(tmp_path / "bundle.zip", **sample_project)
+    imported = import_project(output_path)
+
+    assert imported["market_spec_config"] is None
+    restored = MarketSpecConfig.from_dict(imported["market_spec_config"])
+    assert restored.market_profiles == {}
+    assert restored.channel_media_units == {}
 
 
 def test_export_without_trace_or_approval_omits_them_on_import(tmp_path, sample_project):

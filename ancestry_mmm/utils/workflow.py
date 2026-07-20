@@ -57,6 +57,32 @@ WORKFLOW_STEPS: List[Dict[str, Any]] = [
             "Select media channels, promo flags, controls and LTV per segment.",
             "Save the structure to validate it.",
         ],
+        "next": "Map each channel's spend and physical media units in Channel & Media Units.",
+    },
+    {
+        "key": "channel_media_units",
+        "label": "Channel & Media Units",
+        "path": "pages/10_Channel_Media_Units.py",
+        "title": "Channel & Media Units",
+        "purpose": "Map each channel's spend column to a physical delivery metric (impressions, GRPs, clicks, ...) for CPA and media-unit reporting.",
+        "steps": [
+            "For each channel, optionally map a response-unit column (impressions, GRPs, clicks, TVRs, reach, ...).",
+            "Record the unit type, currency and cost basis.",
+            "Save the mapping - it's optional and can be skipped or added later.",
+        ],
+        "next": "Add market context in Market Descriptors.",
+    },
+    {
+        "key": "market_descriptors",
+        "label": "Market Descriptors",
+        "path": "pages/11_Market_Descriptors.py",
+        "title": "Market Descriptors",
+        "purpose": "Record market context (currency, audience, penetration, maturity) used to explain market-level differences.",
+        "steps": [
+            "Review each market's data coverage card.",
+            "Record currency and, optionally, market descriptors.",
+            "Save - every field is optional and can be filled in later.",
+        ],
         "next": "Configure adstock, saturation and hierarchy priors in Model Configuration.",
     },
     {

@@ -24,6 +24,12 @@ def init_session_state():
         # Structural model spec (core.schema.ModelSpec as a dict)
         "model_spec": None,
 
+        # Market-specific redesign, Phase 1: market descriptors, currency and
+        # channel media-unit mappings (core.market_config.MarketSpecConfig as
+        # a dict). Optional and not yet consumed by the fitting pipeline -
+        # see docs/market_hierarchy.md.
+        "market_spec_config": None,
+
         # Model configuration
         "prior_config": dict(DEFAULT_FH_PRIORS),
         "dna_lag_weeks": DEFAULT_DNA_LAG_WEEKS,
@@ -105,8 +111,16 @@ def clear_model_state() -> None:
 
 
 def get_workflow_progress() -> "tuple[int, int]":
-    """Get current workflow progress (current_step, total_steps)."""
-    total_steps = 9
+    """Get current workflow progress (current_step, total_steps).
+
+    Steps 4 (Channel & Media-Unit Mapping) and 5 (Market Descriptors) are
+    optional in Phase 1 - nothing downstream requires them yet - so there's
+    no session-state signal to gate on. Once `model_spec` exists but the
+    modelling frame isn't prepared, this points the user at step 4 (the
+    first optional step) as the next recommended stop; reaching step 6
+    (frame prepared) doesn't require having visited 4/5 first.
+    """
+    total_steps = 11
 
     if not get_state("data_loaded"):
         return 1, total_steps
@@ -117,15 +131,15 @@ def get_workflow_progress() -> "tuple[int, int]":
     if get_state("frame") is None:
         return 4, total_steps
     if not get_state("model_trained"):
-        return 5, total_steps
-    if not get_state("scorecard"):
-        return 6, total_steps
-    if not get_state("curve_bank_entry_id"):
         return 7, total_steps
-    if not get_state("scenarios"):
+    if not get_state("scorecard"):
         return 8, total_steps
+    if not get_state("curve_bank_entry_id"):
+        return 9, total_steps
+    if not get_state("scenarios"):
+        return 10, total_steps
 
-    return 9, total_steps
+    return 11, total_steps
 
 
 def is_step_complete(step: int) -> bool:
