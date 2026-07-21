@@ -83,7 +83,7 @@ def extract_posterior_params(
     promo_coef = by_coord("promo_coef", "segment", meta.segments)
     alpha = by_coord("alpha", "segment", meta.segments)
     halo_strength = by_coord("halo_strength", "segment", meta.segments) if meta.dna_channel_idx else {
-        s: (1.0 if s in meta.direct_dna_segments else 0.0) for s in meta.segments
+        s: 0.0 for s in meta.segments
     }
 
     beta_reduced = _reduce(post["beta"])
@@ -175,11 +175,18 @@ def predict_mu(
 
     beta_matrix = np.array([[params.beta[s][c] for c in meta.channels] for s in segments])  # (S, C)
     if meta.dna_channel_idx:
-        lagged_dna = lag_frame(sat_media[:, meta.dna_channel_idx], frame["market_bounds"], meta.dna_lag_weeks)
+        dna_direct_media = sat_media[:, meta.dna_channel_idx]
+        dna_halo_media = lag_frame(dna_direct_media, frame["market_bounds"], meta.dna_lag_weeks)
         eta_nondna = sat_media[:, meta.non_dna_idx] @ beta_matrix[:, meta.non_dna_idx].T if meta.non_dna_idx else np.zeros((n_obs, n_seg))
-        halo = np.array([params.halo_strength[s] for s in segments])
-        eta_dna = (lagged_dna @ beta_matrix[:, meta.dna_channel_idx].T) * halo[None, :]
-        eta_channels = eta_nondna + eta_dna
+        has_direct = np.array([1.0 if s in meta.direct_dna_segments else 0.0 for s in segments])
+        # Masked by halo_eligible_segments (not just trusting params.halo_strength
+        # to already be zero) so a kit-only segment structurally never picks up
+        # a halo contribution here, regardless of what's in params.
+        halo_eligible = set(meta.halo_eligible_segments)
+        halo = np.array([params.halo_strength.get(s, 0.0) if s in halo_eligible else 0.0 for s in segments])
+        eta_dna_direct = (dna_direct_media @ beta_matrix[:, meta.dna_channel_idx].T) * has_direct[None, :]
+        eta_dna_halo = (dna_halo_media @ beta_matrix[:, meta.dna_channel_idx].T) * halo[None, :]
+        eta_channels = eta_nondna + eta_dna_direct + eta_dna_halo
     else:
         eta_channels = sat_media @ beta_matrix.T
 
@@ -252,10 +259,17 @@ def steady_state_segment_response(
 
         for c in meta.channels:
             if c in meta.dna_channels:
+                # At steady state, spend is held constant forever, so
+                # dna_direct_media and dna_halo_media (a lag of that same
+                # constant series) converge to the identical value `sat[c]` -
+                # the two pathways collapse to one multiplier here, the sum
+                # of whichever of has_direct/halo_strength apply to `s`
+                # (both, for `dna_segment`; exactly one, for everyone else -
+                # see core.hierarchical_model.FHModelMeta).
+                weight = params.halo_strength.get(s, 0.0) if s in meta.halo_eligible_segments else 0.0
                 if s in meta.direct_dna_segments:
-                    val += params.beta[s][c] * sat[c]
-                else:
-                    val += params.beta[s][c] * sat[c] * params.halo_strength.get(s, 0.0)
+                    weight += 1.0
+                val += params.beta[s][c] * sat[c] * weight
             else:
                 val += params.beta[s][c] * sat[c]
 
@@ -292,8 +306,9 @@ def generate_channel_curve(
     interact in this model's linear predictor, so a channel's own curve
     doesn't depend on any other channel's spend level - each point is just
     that channel's own Hill saturation curve, scaled by each segment's beta
-    (and, for a DNA channel, the halo strength). Point estimates only
-    (posterior means), same convention as steady_state_segment_response.
+    (and, for a DNA channel, that segment's direct-plus-halo weight - see
+    steady_state_segment_response). Point estimates only (posterior means),
+    same convention as steady_state_segment_response.
     """
     if channel not in meta.channels:
         raise ValueError(f"'{channel}' is not one of this model's channels: {meta.channels}")
@@ -312,8 +327,14 @@ def generate_channel_curve(
         overall = 0.0
         for seg in meta.segments:
             beta_val = params.beta[seg][channel]
-            if is_dna and seg not in meta.direct_dna_segments:
-                beta_val = beta_val * params.halo_strength.get(seg, 0.0)
+            if is_dna:
+                # Same steady-state collapse as steady_state_segment_response:
+                # dna_direct_media and dna_halo_media converge to the same
+                # constant `sat` here, so the two pathways' weights just add.
+                weight = params.halo_strength.get(seg, 0.0) if seg in meta.halo_eligible_segments else 0.0
+                if seg in meta.direct_dna_segments:
+                    weight += 1.0
+                beta_val = beta_val * weight
             value = beta_val * sat
             row[f"{seg}_response"] = value
             overall += value

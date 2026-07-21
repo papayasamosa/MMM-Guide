@@ -73,7 +73,7 @@ def extract_market_specific_posterior_params(
     promo_coef = by_coord("promo_coef", "segment", meta.segments)
     alpha = by_coord("alpha", "segment", meta.segments)
     halo_strength = by_coord("halo_strength", "segment", meta.segments) if meta.dna_channel_idx else {
-        s: (1.0 if s in meta.direct_dna_segments else 0.0) for s in meta.segments
+        s: 0.0 for s in meta.segments
     }
 
     hill_K_reduced = _reduce(post["hill_K"])
@@ -165,16 +165,23 @@ def predict_mu_market_specific(
     beta_by_row = beta_stack[market_idx]  # (n_obs, n_segment, n_channel)
 
     if meta.dna_channel_idx:
-        lagged_dna = lag_frame(sat_media[:, meta.dna_channel_idx], frame["market_bounds"], meta.dna_lag_weeks)
-        halo = np.array([params.halo_strength[s] for s in segments])
+        dna_direct_media = sat_media[:, meta.dna_channel_idx]
+        dna_halo_media = lag_frame(dna_direct_media, frame["market_bounds"], meta.dna_lag_weeks)
+        has_direct = np.array([1.0 if s in meta.direct_dna_segments else 0.0 for s in segments])
+        # Masked by halo_eligible_segments (not just trusting params.halo_strength
+        # to already be zero) so a kit-only segment structurally never picks up
+        # a halo contribution here, regardless of what's in params.
+        halo_eligible = set(meta.halo_eligible_segments)
+        halo = np.array([params.halo_strength.get(s, 0.0) if s in halo_eligible else 0.0 for s in segments])
         if meta.non_dna_idx:
             eta_nondna = np.einsum(
                 "oc,osc->os", sat_media[:, meta.non_dna_idx], beta_by_row[:, :, meta.non_dna_idx]
             )
         else:
             eta_nondna = np.zeros((n_obs, n_seg))
-        eta_dna = np.einsum("oc,osc->os", lagged_dna, beta_by_row[:, :, meta.dna_channel_idx]) * halo[None, :]
-        eta_channels = eta_nondna + eta_dna
+        eta_dna_direct = np.einsum("oc,osc->os", dna_direct_media, beta_by_row[:, :, meta.dna_channel_idx]) * has_direct[None, :]
+        eta_dna_halo = np.einsum("oc,osc->os", dna_halo_media, beta_by_row[:, :, meta.dna_channel_idx]) * halo[None, :]
+        eta_channels = eta_nondna + eta_dna_direct + eta_dna_halo
     else:
         eta_channels = np.einsum("oc,osc->os", sat_media, beta_by_row)
 
@@ -242,10 +249,12 @@ def steady_state_segment_response_market_specific(
         for c in meta.channels:
             beta_val = params.beta[market][s][c]
             if c in meta.dna_channels:
+                # Steady-state collapse (dna_direct_media == dna_halo_media
+                # at constant spend) - see core.predict.steady_state_segment_response.
+                weight = params.halo_strength.get(s, 0.0) if s in meta.halo_eligible_segments else 0.0
                 if s in meta.direct_dna_segments:
-                    val += beta_val * sat[c]
-                else:
-                    val += beta_val * sat[c] * params.halo_strength.get(s, 0.0)
+                    weight += 1.0
+                val += beta_val * sat[c] * weight
             else:
                 val += beta_val * sat[c]
 
@@ -305,8 +314,11 @@ def generate_market_channel_curve(
         overall = 0.0
         for seg in meta.segments:
             beta_val = params.beta[market][seg][channel]
-            if is_dna and seg not in meta.direct_dna_segments:
-                beta_val = beta_val * params.halo_strength.get(seg, 0.0)
+            if is_dna:
+                weight = params.halo_strength.get(seg, 0.0) if seg in meta.halo_eligible_segments else 0.0
+                if seg in meta.direct_dna_segments:
+                    weight += 1.0
+                beta_val = beta_val * weight
             value = beta_val * sat
             row[f"{seg}_response"] = value
             overall += value

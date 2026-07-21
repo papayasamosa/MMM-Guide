@@ -254,3 +254,97 @@ class TestGenerateMarketChannelCurveDirectDnaSegments:
         row = df.iloc[0]
         raw_new = params_with_dna_kit_segment.beta["UK"]["New"]["DNA_Media"] * row["saturation"]
         assert row["New_response"] == pytest.approx(raw_new * params_with_dna_kit_segment.halo_strength["New"])
+
+
+class TestPredictMuMarketSpecificDirectHaloSeparation:
+    """Model C equivalent of test_predict.py's TestPredictMuDirectHaloSeparation -
+    proves the same four invariants using predict_mu_market_specific on a
+    real (non-constant) frame, since the steady-state functions can't
+    observe a lag at all (a lag of a constant series is that same constant).
+    See that class's docstring for the full design rationale."""
+
+    SEGMENTS = ["New", "DNA_CrossSell", "New Customer"]
+    CHANNELS = ["TV", "DNA_Media"]
+    N_WEEKS = 10
+    SPIKE_WEEK = 3
+
+    def _meta(self, dna_lag_weeks: int) -> FHModelMeta:
+        return FHModelMeta(
+            markets=["UK"], segments=self.SEGMENTS, channels=self.CHANNELS,
+            dna_channels=["DNA_Media"], dna_channel_idx=[1], non_dna_idx=[0],
+            dna_segment="DNA_CrossSell", dna_lag_weeks=dna_lag_weeks,
+            unpooled_markets=[], control_names=[],
+            direct_dna_segments=["DNA_CrossSell", "New Customer"],
+        )
+
+    def _params(self) -> FHMarketSpecificPosteriorParams:
+        beta_uk = {
+            "New": {"TV": 0.0, "DNA_Media": 1.0},
+            "DNA_CrossSell": {"TV": 0.0, "DNA_Media": 1.0},
+            "New Customer": {"TV": 0.0, "DNA_Media": 1.0},
+        }
+        return FHMarketSpecificPosteriorParams(
+            decay_rate={"TV": 0.0, "DNA_Media": 0.0},
+            hill_K={"UK": {"TV": 1000.0, "DNA_Media": 1000.0}},
+            hill_S={"TV": 1.0, "DNA_Media": 1.0},
+            beta={"UK": beta_uk},
+            halo_strength={"New": 0.5, "DNA_CrossSell": 0.5, "New Customer": 0.0},
+            promo_coef={s: 0.0 for s in self.SEGMENTS},
+            market_offset={"UK": {s: 0.0 for s in self.SEGMENTS}},
+            intercept={s: 0.0 for s in self.SEGMENTS},
+            trend_coef={s: 0.0 for s in self.SEGMENTS},
+            gamma_fourier={s: np.zeros(4) for s in self.SEGMENTS},
+            alpha={s: 5.0 for s in self.SEGMENTS},
+            control_coef={}, segment_control_coef={},
+        )
+
+    def _frame(self):
+        n = self.N_WEEKS
+        X_media = np.zeros((n, 2))
+        X_media[self.SPIKE_WEEK, 1] = 500.0
+        return {
+            "markets": ["UK"], "market_idx": np.zeros(n, dtype=int), "market_bounds": [(0, n)],
+            "X_media": X_media, "promo": np.zeros((n, len(self.SEGMENTS))),
+            "trend": np.zeros(n), "fourier": np.zeros((n, 4)),
+            "control_names": [], "X_controls": np.zeros((n, 0)),
+            "segment_controls": {}, "segment_control_names": {},
+        }
+
+    def test_kit_only_segment_does_not_inherit_the_extra_halo_lag(self):
+        lag = 2
+        meta = self._meta(dna_lag_weeks=lag)
+        mu = predict_mu_market_specific(self._frame(), meta, self._params())
+        seg_idx = meta.segments.index("New Customer")
+        baseline = mu[0, seg_idx]
+        assert mu[self.SPIKE_WEEK, seg_idx] > baseline
+        assert mu[self.SPIKE_WEEK + lag, seg_idx] == pytest.approx(baseline)
+
+    def test_fh_halo_segment_does_inherit_the_extra_lag(self):
+        lag = 2
+        meta = self._meta(dna_lag_weeks=lag)
+        mu = predict_mu_market_specific(self._frame(), meta, self._params())
+        seg_idx = meta.segments.index("New")
+        baseline = mu[0, seg_idx]
+        assert mu[self.SPIKE_WEEK, seg_idx] == pytest.approx(baseline)
+        assert mu[self.SPIKE_WEEK + lag, seg_idx] > baseline
+
+    def test_changing_halo_lag_does_not_alter_the_direct_kit_response(self):
+        params = self._params()
+        frame = self._frame()
+        seg_idx = self.SEGMENTS.index("New Customer")
+        mu_lag2 = predict_mu_market_specific(frame, self._meta(dna_lag_weeks=2), params)
+        mu_lag5 = predict_mu_market_specific(frame, self._meta(dna_lag_weeks=5), params)
+        np.testing.assert_allclose(mu_lag2[:, seg_idx], mu_lag5[:, seg_idx])
+
+    def test_dna_cross_sell_direct_and_halo_components_add_without_double_counting(self):
+        lag = 2
+        meta = self._meta(dna_lag_weeks=lag)
+        mu = predict_mu_market_specific(self._frame(), meta, self._params())
+
+        cross_idx = meta.segments.index("DNA_CrossSell")
+        kit_idx = meta.segments.index("New Customer")
+        halo_idx = meta.segments.index("New")
+
+        assert mu[self.SPIKE_WEEK, cross_idx] == pytest.approx(mu[self.SPIKE_WEEK, kit_idx])
+        assert mu[self.SPIKE_WEEK + lag, cross_idx] == pytest.approx(mu[self.SPIKE_WEEK + lag, halo_idx])
+        assert mu[self.SPIKE_WEEK + lag, kit_idx] == pytest.approx(mu[0, kit_idx])
