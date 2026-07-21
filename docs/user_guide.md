@@ -71,13 +71,17 @@ structure you chose), so retraining or changing any upstream setting invalidates
 ## Step 10: Results & Curve Bank
 
 For a shared-curve model (Model A): review channel and segment contributions, DNA halo strength,
-and the contribution waterfall. For a market-specific model (Model C): explore each market's own
-channel curves in the curve viewer instead - Shapley attribution isn't available for market-specific
-models yet (planned for a later phase). Either way, once approved, save the model's curves to the
-curve bank as versioned, traceable entries (one per market for a market-specific model, each
-labelled with how much that market's own data drove its estimate), filter the curve bank history by
-market/channel/segment/curve status, and log geo-test or in-platform calibration results against any
-saved entry.
+and the contribution waterfall, then a channel curve viewer. For a market-specific model (Model C):
+explore each market's own channel curves in the curve viewer instead - Shapley attribution isn't
+available for market-specific models yet (planned for a later phase). Either curve viewer shows CPA
+(average and marginal) alongside the spend curve, and - where you've mapped a channel to a physical
+delivery column on Channel & Media Units - a response-unit curve, historical cost-per-unit trend,
+and calculators for "how much to spend to buy N units" and "what response would N units produce."
+Once approved, save the model's curves to the curve bank as versioned, traceable entries (one per
+market for a market-specific model, each labelled with how much that market's own data drove its
+estimate, plus a mirrored media-unit entry wherever a cost-per-unit relationship exists), filter the
+curve bank history by market/channel/segment/curve status, and log geo-test or in-platform
+calibration results against any saved entry.
 
 ## Step 11: Scenario Planner
 

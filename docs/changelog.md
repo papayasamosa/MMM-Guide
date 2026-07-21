@@ -3,7 +3,33 @@
 Entries by pull request, most recent first. Predates this file: see git history for anything
 earlier than the entries below.
 
-## Unreleased - Market-Specific MMM Redesign, Phase 3a (this PR)
+## Unreleased - Market-Specific MMM Redesign, Phase 3b (this PR)
+
+- Added `core.predict.generate_channel_curve` - Model A's spend -> response curve generator (a real
+  UX gap it closes - Model A never had one before), mirroring
+  `core.market_specific_predict.generate_market_channel_curve`'s column shape so downstream code
+  works on either model type's curve identically.
+- Added `core.media_units`: `compute_cpa` (average + marginal CPA on any curve DataFrame),
+  `cpa_stability_flags` (point-estimate proxy for unstable marginal CPA), `extract_cost_per_unit_series`
+  and `historical_cost_trend` (year-on-year inflation, indexed cost trend, from raw spend/media-unit
+  data), `response_unit_curve` (spend curve -> media-unit curve via average historical cost-per-unit
+  - a documented simplification), `equivalent_delivery` and `equivalent_response`.
+- Extended `core.curve_bank`: `CurveBankEntry` gained a `cost_per_unit` field;
+  `make_media_unit_entries` mirrors a market-specific run's spend entries into `input_type="media_unit"`
+  entries wherever a media-unit mapping and valid cost history exist. Not built for shared (Model A)
+  curves - cost-per-unit is inherently market-specific with no single market to attribute it to for
+  a curve that spans several markets by construction (see decision log).
+- Results & Curve Bank: both model types now have a curve viewer with CPA shown alongside the spend
+  curve, plus a "Media units & inflation" section (historical cost trend, response-unit curve,
+  equivalent delivery/response calculators) wherever a media-unit mapping exists. Curve bank saving
+  now also saves media-unit entries for a market-specific fit.
+- 41 new tests (`test_media_units.py`, `test_predict.py`, plus curve bank additions), plus
+  AppTest-based end-to-end verification of the new curve/CPA/media-unit UI and save flow for both
+  model types.
+- No changes to Model A/C model-building, prediction (beyond the additive curve generator),
+  diagnostics, model comparison, fingerprint, or Scenario Planner behaviour.
+
+## Unreleased - Market-Specific MMM Redesign, Phase 3a
 
 - Added `core.evidence_tiers`: `classify_market_evidence` / `classify_all_markets` - classifies a
   fitted Model C market/channel into `Locally estimated`/`Partially pooled`/`Transferred estimate`

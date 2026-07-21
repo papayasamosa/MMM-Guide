@@ -44,13 +44,24 @@
 
 ## Inflation assumptions
 
-- Media cost inflation calculations (Phase 3) will only be as good as the historical cost-per-unit
-  data available; a channel with sparse or noisy media-unit data will produce an unreliable
-  cost-per-unit trend.
+- Media cost inflation calculations (`core.media_units.historical_cost_trend`, Phase 3b) will only
+  be as good as the historical cost-per-unit data available; a channel with sparse or noisy
+  media-unit data will produce an unreliable cost-per-unit trend, and a single year of data gives no
+  year-on-year inflation figure at all (returns `None`, not a guessed rate).
+- `response_unit_curve` uses one constant average historical cost-per-unit across the whole curve's
+  spend range, not a spend-level-varying relationship - see `docs/decision_log.md` and
+  `docs/media_units_and_inflation.md` for why, and what a fuller treatment would need.
 - The design principle that a future inflation assumption is never applied silently
   (`docs/media_units_and_inflation.md`) places the burden of choosing a reasonable assumption on the
-  user - the tool surfaces the assumption in use, it does not validate that the assumption is
+  user - `equivalent_delivery`/`equivalent_response` always take the cost assumption as an explicit
+  argument (a UI number input pre-filled with the historical average, editable) rather than baking
+  one in; the tool surfaces the assumption in use, it does not validate that the assumption is
   correct.
+- CPA's posterior uncertainty is not assessed directly (curves are point estimates only, as they've
+  been since Phase 2) - `cpa_stability_flags` is a point-estimate proxy (flags curve regions that are
+  too flat to trust a marginal number from), not a credible interval on CPA itself. A real
+  uncertainty band on CPA needs per-draw curve generation, which remains a documented future
+  extension.
 
 ## Uncertainty in small markets
 
@@ -69,19 +80,24 @@
 
 ## Scope boundaries (this PR specifically)
 
-- This PR (Phase 3a) redesigns the curve bank to per-curve records and adds evidence-tier
-  classification (`core.evidence_tiers`, `core.curve_bank`) - it does not touch Model A's or Model
-  C's model-building, prediction, diagnostics, or model comparison code, and does not touch
-  optimisation (`core.optimization`) or the Scenario Planner at all. Everything described as
-  "Phase 3b/4" in these docs remains a design record, not shipped functionality.
-- Shapley attribution and Scenario Planner remain Model-A-only; a market-specific model still gets a
-  read-only curve viewer for attribution, with a clear "not available yet" message
-  (`docs/decision_log.md`) - **only curve bank saving itself was extended to both model types**.
+- This PR (Phase 3b) adds CPA, response-unit curves, and media-unit curve bank entries
+  (`core.media_units`, `core.curve_bank.make_media_unit_entries`) - it does not touch Model A's or
+  Model C's model-building, prediction (beyond the additive `generate_channel_curve`), diagnostics,
+  or model comparison code, and does not touch optimisation (`core.optimization`) or the Scenario
+  Planner at all. Everything described as "Phase 3c/4" in these docs remains a design record, not
+  shipped functionality.
+- Shapley attribution and Scenario Planner remain Model-A-only - **CPA/media-unit curves and curve
+  bank saving now work for both model types, but Scenario Planner integration (planning in physical
+  units, inflation-aware optimisation) is still Phase 3c**, not built here.
+- Media-unit curve bank entries (`input_type="media_unit"`) are only auto-saved for a market-specific
+  fit - a shared curve's cost-per-unit context is inherently market-specific with no single market to
+  attribute it to, so it's shown in the UI (for a chosen reference market) but not persisted for
+  Model A (`docs/decision_log.md`).
 - The model-specification fingerprint (`core.fingerprint.fingerprint_model_spec`) still does **not**
   include market hierarchy, media-unit mappings, or currency settings from `market_spec_config` -
-  approval invalidation does not yet react to changes in that data. This remains tracked as Phase 3b
+  approval invalidation does not yet react to changes in that data. This remains tracked as future
   work (wiring `market_spec_config` into the model/fingerprint together), not an oversight.
-- `input_type`/`unit_type` on every curve bank entry are always `"spend"`/`None` in this PR - Phase
-  3b populates them once response-unit curves exist (`docs/media_units_and_inflation.md`).
-- Evidence-tier thresholds (`core.evidence_tiers`) are reasonable defaults, not yet validated against
-  real Ancestry data - see `docs/decision_log.md`.
+- CPA has no credible interval - point estimates only, same as the curves it's computed from; see the
+  "Inflation assumptions" section above.
+- Evidence-tier thresholds (`core.evidence_tiers`, Phase 3a) are reasonable defaults, not yet
+  validated against real Ancestry data - see `docs/decision_log.md`.

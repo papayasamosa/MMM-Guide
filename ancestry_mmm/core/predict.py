@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 import numpy as np
+import pandas as pd
 import arviz as az
 
 from .transformations import geometric_adstock_matrix, hill_function
@@ -250,3 +251,56 @@ def steady_state_segment_response(
         eta[s] = val
 
     return {s: float(np.clip(np.exp(v), 1e-6, 1e9)) for s, v in eta.items()}
+
+
+def generate_channel_curve(
+    channel: str,
+    meta: FHModelMeta,
+    params: FHPosteriorParams,
+    spend_range: Optional[np.ndarray] = None,
+    n_points: int = 25,
+    max_spend: Optional[float] = None,
+) -> pd.DataFrame:
+    """
+    Spend -> incremental response curve for one channel, per segment and
+    overall - the Model A ("shared curve") equivalent of
+    core.market_specific_predict.generate_market_channel_curve, kept
+    symmetric with it (same column shape: spend, saturation,
+    {segment}_response..., overall_response) so downstream consumers -
+    core.media_units's CPA/media-unit calculations, the curve bank - can
+    work on either model type's curve without branching on which one
+    produced it.
+
+    Steady-state approximation (see module docstring): channels don't
+    interact in this model's linear predictor, so a channel's own curve
+    doesn't depend on any other channel's spend level - each point is just
+    that channel's own Hill saturation curve, scaled by each segment's beta
+    (and, for a DNA channel, the halo strength). Point estimates only
+    (posterior means), same convention as steady_state_segment_response.
+    """
+    if channel not in meta.channels:
+        raise ValueError(f"'{channel}' is not one of this model's channels: {meta.channels}")
+
+    K = params.hill_K[channel]
+    S = params.hill_S[channel]
+    if spend_range is None:
+        cap = max_spend if max_spend is not None else max(K * 3, 1.0)
+        spend_range = np.linspace(0.0, cap, n_points)
+
+    is_dna = channel in meta.dna_channels
+    rows = []
+    for spend in spend_range:
+        sat = float(hill_function(np.array([float(spend)]), K, S)[0])
+        row = {"channel": channel, "spend": float(spend), "saturation": sat}
+        overall = 0.0
+        for seg in meta.segments:
+            beta_val = params.beta[seg][channel]
+            if is_dna and seg != meta.dna_segment:
+                beta_val = beta_val * params.halo_strength.get(seg, 0.0)
+            value = beta_val * sat
+            row[f"{seg}_response"] = value
+            overall += value
+        row["overall_response"] = overall
+        rows.append(row)
+
+    return pd.DataFrame(rows)

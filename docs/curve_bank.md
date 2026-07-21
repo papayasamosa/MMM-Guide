@@ -45,20 +45,33 @@ The curve bank history table on Results & Curve Bank filters by market, channel,
 status - the rest of the planned filter set (model run, currency, unit type) is available as
 columns today; dedicated filter widgets for them are a small follow-up, not a structural gap.
 
-## Planned redesign (Phase 3b)
+## Media-unit entries (Phase 3b - built)
 
-`input_type`/`unit_type`/`currency` exist on every entry today but are only populated for spend
-curves (`input_type="spend"`, `unit_type=None`) - `docs/media_units_and_inflation.md`'s
-response-unit curves, CPA and marginal CPA at each curve point, and cost-per-unit tracking are
-Phase 3b work that will populate the remaining fields and add `curve_type` variants beyond the
-plain response curve.
+`input_type` is `"spend"` (every entry) or `"media_unit"` (Phase 3b,
+`core.curve_bank.make_media_unit_entries`) - a mirrored entry for a (market, channel) that has a
+media-unit mapping (`core.market_config.ChannelMediaUnitConfig`) and a computable historical
+cost-per-unit (`core.media_units.historical_cost_trend`). A media-unit entry carries the same
+`beta`/`hill_K`/`hill_S`/`decay_rate` as its spend counterpart (the curve parameters themselves
+don't change - see `docs/media_units_and_inflation.md` for why the media-unit axis is a derived
+rescaling, not an independently fitted curve) plus `unit_type`, `currency`, and `cost_per_unit`
+(the average historical cost-per-unit the media-unit axis was derived from).
+
+**Only built for market-specific (Model C) saves.** A shared (Model A) curve has no single market to
+attribute a cost-per-unit relationship to - cost-per-unit is inherently a market-level fact even
+though the curve itself is shared - so Results & Curve Bank still shows a Model A curve's
+media-unit context for a chosen reference market, but doesn't persist it to the curve bank
+(`docs/decision_log.md`).
+
+The curve bank history table on Results & Curve Bank filters by market, channel, segment, and curve
+status - `input_type`, `currency`, `unit_type`, and `cost_per_unit` are all available as columns
+today; dedicated filter widgets for `input_type` are a small follow-up, not a structural gap.
 
 ## What's built toward this so far
 
 Phase 1 added `core.market_config` and the Channel & Media Units / Market Descriptors pages to
 capture the market/currency/media-unit context this redesign attaches to each curve record. Phase 2
-added the market-specific model itself (`core.market_specific_model`, "Model C"). Phase 3a (this
-work) redesigned the curve bank to per-curve records, added evidence-tier classification
-(`core.evidence_tiers`), and wired both Model A and Model C into curve bank saving - Shapley
-attribution remains Model-A-only (it would misread Model C's market-indexed parameters), but curve
-bank storage no longer requires it.
+added the market-specific model itself (`core.market_specific_model`, "Model C"). Phase 3a redesigned
+the curve bank to per-curve records and added evidence-tier classification (`core.evidence_tiers`).
+Phase 3b (this work) added CPA, response-unit curves, and media-unit curve bank entries
+(`core.media_units`, `core.curve_bank.make_media_unit_entries`). Shapley attribution and the
+Scenario Planner remain Model-A-only (Phase 3c).

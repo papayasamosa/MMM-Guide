@@ -67,11 +67,11 @@ tight quantitative recovery, which needs a production draw count to assess prope
 3. A strong market can move away from the pooled mean. - **Phase 2, built**; confirmed on simulated data (UK's higher K/beta ranking preserved)
 4. Segment responses differ within each market. - **Already true**, and now market-specific too (`beta[market, segment, channel]`)
 5. Overall response equals the defined segment aggregation. - **Already true today** (`docs/segment_methodology.md`); Model C's `generate_market_channel_curve` follows the same rule (`overall_response` = sum of segment responses)
-6. Spend curves and media-unit curves are internally consistent. - *Phase 3*
-7. CPA is calculated correctly at every curve point. - *Phase 3*
-8. Marginal CPA differs from average CPA where expected. - *Phase 3*
-9. Media inflation changes required spend but not response to physical delivery. - *Phase 3*
-10. Same-response and same-delivery scenarios work. - *Phase 3*
+6. Spend curves and media-unit curves are internally consistent. - **Phase 3b, built** (`core.media_units.response_unit_curve` derives the media-unit curve directly from the spend curve, so they can't diverge - a documented single-cost-per-unit simplification, see `docs/decision_log.md`)
+7. CPA is calculated correctly at every curve point. - **Phase 3b, built**: `core.media_units.compute_cpa`, unit-tested against hand-computed expected values (`tests/test_media_units.py`)
+8. Marginal CPA differs from average CPA where expected. - **Phase 3b, built**: both reported together on every curve; `test_media_units.py` confirms they diverge as spend increases toward saturation
+9. Media inflation changes required spend but not response to physical delivery. - **Phase 3b, built**: `equivalent_delivery`/`equivalent_response` keep media units and response fixed while only the spend side changes with the assumed cost-per-unit
+10. Same-response and same-delivery scenarios work. - **Phase 3b, built** as calculators (`equivalent_delivery`, `equivalent_response`) on Results & Curve Bank; *Scenario Planner integration itself is Phase 3c*
 11. The Scenario Planner always uses the selected market's curve. - *Phase 3* (blocked entirely for market-specific models until then, rather than silently using the wrong curve - `docs/decision_log.md`)
 12. Transferred estimates are clearly labelled. - **Phase 3a, built**: every Model C curve bank entry carries a `curve_status` (`Locally estimated`/`Partially pooled`/`Transferred estimate`) from `core.evidence_tiers`, filterable in the curve bank history table (`docs/market_hierarchy.md` section 4, `docs/curve_bank.md`)
 13. Approval is invalidated after model-relevant changes. - **Built**: `model_type` is now part of `fingerprint_model_spec`'s hash payload (Phase 2), on top of the existing data/spec/posterior/run binding; market hierarchy/media-unit/inflation config fingerprinting remains Phase 3
