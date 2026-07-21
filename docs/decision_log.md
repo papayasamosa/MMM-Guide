@@ -254,3 +254,114 @@ magnitudes much more closely.
 a candidate for a future phase if a fast/stable-enough MCMC configuration is found.
 **Owner:** Modelling.
 **Status:** Accepted.
+
+---
+
+**Date:** 2026-07-21
+**Decision:** Add a `Shared` curve status, beyond the three-tier
+`Locally estimated`/`Partially pooled`/`Transferred estimate` enum the original redesign brief
+specifies for curve bank entries.
+**Reason:** Those three tiers are inherently about *market-specific* evidence strength - how much a
+market's own data versus the pooled distribution drove its estimate. A Model A (shared-curve) entry
+has no market dimension at all; forcing it into one of the three tiers would assert something false
+about evidence strength that was never assessed for that curve. `Shared` says plainly "this curve is
+the same for every market by construction," which is a different, true statement.
+**Alternatives considered:** Omitting `market`-tier labelling entirely for Model A entries (leaving
+`curve_status` blank) - rejected, since an unlabelled field invites a reader to guess, and a blank
+status is easy to confuse with a bug rather than an intentional "not applicable."
+**Impact:** `core.curve_bank.CURVE_STATUS_SHARED`; `make_entries` sets it automatically for every
+`model_type="shared"` entry, never asks the caller to supply it.
+**Owner:** Product/Modelling.
+**Status:** Accepted; implemented in Phase 3a.
+
+---
+
+**Date:** 2026-07-21
+**Decision:** Redesign `core.curve_bank.CurveBankEntry` to one record per (market, channel,
+segment-or-overall) instead of one record per model run, per `docs/curve_bank.md`'s original plan -
+and implement it for **both** Model A and Model C, not only Model C.
+**Reason:** The per-curve shape is what makes filtering/comparing individual curves in the UI
+possible (`docs/curve_bank.md`'s planned filter-by-market/channel/segment/status table), and what
+lets a market-specific fit save one record per market instead of an awkward nested blob. Extending
+it to Model A too (rather than leaving Model A on the old per-run shape and only building the new
+shape for Model C) avoids maintaining two different curve bank schemas side by side indefinitely,
+and removes the earlier Phase 2 restriction that blocked market-specific models from the curve bank
+at all - that restriction was about *shape mismatch* (`FHPosteriorParams` vs.
+`FHMarketSpecificPosteriorParams`), not about anything specific to Model C, so a shape both model
+types can populate resolves it for both.
+**Alternatives considered:** Keep a run-level Model A entry format and add a *separate*,
+market-specific-only per-curve format for Model C (rejected - two formats to maintain, two things to
+teach curve bank UI code to handle, and no real benefit since Model A can just produce per-curve
+entries with `market=None`). Extend the existing per-run entry to nest market data inside it as a
+dict (rejected - defeats the point of "one record per curve" that makes filtering/comparison
+straightforward).
+**Impact:** `core.curve_bank.make_entries` (renamed from `make_entry`, now returns a list),
+`save_entries` (renamed from `save_entry`), `entries_to_dataframe` (now a direct 1:1 mapping, no more
+per-entry segment x channel expansion loop). `pages/07_Results_Curve_Bank.py`'s curve bank section
+moved out of the Model A / Model C branch entirely, since saving now works identically for both.
+**Owner:** Engineering.
+**Status:** Accepted; implemented in Phase 3a.
+
+---
+
+**Date:** 2026-07-21
+**Decision:** Old, pre-Phase-3a curve bank JSON files (one file per model run, nested per-segment/
+per-channel dicts) stay loadable, expanded into the new per-curve shape at read time and marked
+`legacy_format=True`, rather than being dropped or requiring a one-off migration script.
+**Reason:** A curve bank directory is real, potentially valued project history (calibration records
+reference entry IDs from it) that could exist in a user's already-exported project bundle. Silently
+failing to load it, or requiring a manual migration step before the redesigned code can read it, both
+risk looking like data loss even though the underlying JSON is untouched.
+**Alternatives considered:** A separate one-off migration script the user runs manually (rejected -
+extra manual step, and an easy one to forget before opening a curve bank that then appears empty). A
+strict schema version bump that refuses to load pre-3a files (rejected as unnecessarily destructive
+for what's a straightforward, losslessly invertible expansion).
+**Impact:** `core.curve_bank.CurveBankEntry.from_dict` now returns a list (one item for a
+current-format file, several for an expanded legacy one) and detects format by the presence of the
+`segment_or_overall` key; `_expand_legacy_entry` does the expansion, computing each channel's
+"Overall" beta as the sum of its per-segment betas (valid by linearity - see `docs/curve_bank.md`).
+**Owner:** Engineering.
+**Status:** Accepted; implemented in Phase 3a.
+
+---
+
+**Date:** 2026-07-21
+**Decision:** Classify a market's evidence tier (`docs/market_hierarchy.md` section 4) from two
+combined signals - period count and the fitted posterior's own relative uncertainty (std/mean) on
+`hill_K` and `beta` for that market/channel - rather than from period count alone.
+**Reason:** Period count alone (what `core.market_config.market_data_quality_status` already uses,
+pre-model) can't reflect what partial pooling actually did: a market can have plenty of periods but
+still get pulled hard toward the pooled mean if its own signal was weak or noisy (e.g. flat spend, a
+short bookings window), and conversely a market with fewer-but-highly-informative periods could earn
+tighter posterior estimates. The *fitted* posterior's uncertainty is the direct evidence of which
+happened; period count alone would mislabel both cases.
+**Alternatives considered:** Reusing `market_K_sigma`/`market_beta_sigma` (the *global* pooling-
+strength hyperparameters) directly as the signal - rejected; those describe how much markets are
+*allowed* to differ on average across the whole model, not how confidently *this* market's own
+estimate was pinned down, which is what a per-market evidence tier needs.
+**Impact:** `core.evidence_tiers.classify_market_evidence` / `classify_all_markets`; thresholds
+(`min_observations_for_local=52`, `min_observations_for_pooled=12`,
+`max_relative_uncertainty_for_local=0.5`) are keyword arguments with defaults, adjustable by a caller
+without code changes if they prove too strict or too loose against real data.
+**Owner:** Modelling.
+**Status:** Accepted; implemented in Phase 3a. Revisit thresholds once compared against
+real-data model comparison outcomes (`docs/model_validation.md`).
+
+---
+
+**Date:** 2026-07-21
+**Decision:** Drop `promo_coef` from the redesigned per-curve `CurveBankEntry` (it existed on the old
+per-run entry).
+**Reason:** `promo_coef` is a per-segment coefficient, not tied to any specific channel's curve - it
+doesn't fit "one record per (market, channel, segment)" cleanly, since every channel's entry for a
+given segment would otherwise carry an identical, channel-irrelevant copy of the same number. The
+redesign brief's own per-record schema (`model_run_id, market, channel, segment_or_overall,
+curve_type, input_type, currency, unit_type`) doesn't include it either.
+**Alternatives considered:** Keeping a duplicated `promo_coef` on every channel's entry for a segment
+(rejected - redundant, and invites a reader to mistake it for something channel-specific).
+**Impact:** `core.curve_bank.CurveBankEntry` has no `promo_coef` field. Promo sensitivity remains
+visible on Diagnostics/Model Training via the fitted `params.promo_coef` directly; it was never
+saved anywhere else once a model run is superseded, so this loses no information that was uniquely
+preserved by the curve bank.
+**Owner:** Engineering.
+**Status:** Accepted; implemented in Phase 3a.

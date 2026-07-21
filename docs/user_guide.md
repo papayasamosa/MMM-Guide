@@ -71,11 +71,13 @@ structure you chose), so retraining or changing any upstream setting invalidates
 ## Step 10: Results & Curve Bank
 
 For a shared-curve model (Model A): review channel and segment contributions, DNA halo strength,
-and the contribution waterfall, then save the approved model's curves to the curve bank as a
-versioned, traceable entry, and log geo-test or in-platform calibration results against any saved
-entry. For a market-specific model (Model C): explore each market's own channel curves in the
-curve viewer - Shapley attribution and saving to the curve bank aren't available for market-specific
-models yet (planned for a later phase).
+and the contribution waterfall. For a market-specific model (Model C): explore each market's own
+channel curves in the curve viewer instead - Shapley attribution isn't available for market-specific
+models yet (planned for a later phase). Either way, once approved, save the model's curves to the
+curve bank as versioned, traceable entries (one per market for a market-specific model, each
+labelled with how much that market's own data drove its estimate), filter the curve bank history by
+market/channel/segment/curve status, and log geo-test or in-platform calibration results against any
+saved entry.
 
 ## Step 11: Scenario Planner
 
@@ -95,8 +97,8 @@ Build an Excel summary of curves and contributions for handover.
 ## What's coming next
 
 Steps 4-5 (Channel & Media Units, Market Descriptors) exist today purely to capture data; nothing
-downstream uses it yet. Market-specific curves (Model C, Phase 2) are now available for review and
-diagnostics, but the curve bank, Shapley attribution, and Scenario Planner remain shared-curve
-(Model A) only until Phase 3, which adds CPA/media-unit reporting and inflation-aware scenario
-planning on top of market-specific curves. See `docs/project_objectives.md` for the full phased
-plan.
+downstream uses it yet. Market-specific curves (Model C) can now be reviewed, diagnosed, and saved
+to the curve bank with their own evidence-tier labelling. Shapley attribution and Scenario Planner
+remain shared-curve (Model A) only until a later phase adds CPA/media-unit reporting and
+inflation-aware scenario planning on top of market-specific curves. See `docs/project_objectives.md`
+for the full phased plan.
