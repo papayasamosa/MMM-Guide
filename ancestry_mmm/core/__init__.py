@@ -137,6 +137,40 @@ from .report import (
     render_markdown,
     render_html,
 )
+from .outcomes import (
+    FAMILY_HISTORY,
+    DNA,
+    DNA_SEGMENT_NEW,
+    DNA_SEGMENT_EXISTING_FH,
+    DNA_SEGMENT_COMBINED,
+    OutcomeDefinition,
+    outcome_is_modelled,
+    validate_outcome_definitions,
+    fh_outcomes_from_spec,
+    dna_outcomes_from_columns,
+    dna_kit_outcome_columns,
+    resolve_outcome_definitions,
+    outcomes_to_dataframe,
+)
+from .promotions import (
+    PromotionEvent,
+    validate_promotion_events,
+    promotion_weekly_series,
+    apply_promotion_events_to_frame,
+    promotion_events_to_dataframe,
+)
+from .uncertainty import (
+    sample_draw_indices,
+    summarize_distribution,
+    generate_channel_curve_with_uncertainty,
+    generate_market_channel_curve_with_uncertainty,
+    evaluate_scenario_with_uncertainty,
+)
+from .market_specific_attribution import (
+    compute_shapley_contributions_market_specific,
+    segment_channel_market_summary,
+    total_contribution_market_specific,
+)
 
 __all__ = [
     "ModelApproval",
@@ -250,4 +284,30 @@ __all__ = [
     "build_report_sections",
     "render_markdown",
     "render_html",
+    "FAMILY_HISTORY",
+    "DNA",
+    "DNA_SEGMENT_NEW",
+    "DNA_SEGMENT_EXISTING_FH",
+    "DNA_SEGMENT_COMBINED",
+    "OutcomeDefinition",
+    "outcome_is_modelled",
+    "validate_outcome_definitions",
+    "fh_outcomes_from_spec",
+    "dna_outcomes_from_columns",
+    "dna_kit_outcome_columns",
+    "resolve_outcome_definitions",
+    "outcomes_to_dataframe",
+    "PromotionEvent",
+    "validate_promotion_events",
+    "promotion_weekly_series",
+    "apply_promotion_events_to_frame",
+    "promotion_events_to_dataframe",
+    "sample_draw_indices",
+    "summarize_distribution",
+    "generate_channel_curve_with_uncertainty",
+    "generate_market_channel_curve_with_uncertainty",
+    "evaluate_scenario_with_uncertainty",
+    "compute_shapley_contributions_market_specific",
+    "segment_channel_market_summary",
+    "total_contribution_market_specific",
 ]

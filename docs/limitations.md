@@ -29,6 +29,12 @@
   offline recovery check run so far (`docs/decision_log.md`) used a small draw budget for speed and
   recovered correct market *ranking* with compressed magnitudes - a production draw count is needed
   to assess quantitative recovery, not just direction.
+- The kit-sale-to-later-FH-conversion **pipeline effect** - a DNA kit purchase changing a customer's
+  later likelihood of FH signup, distinct from DNA media's halo onto FH cross-sell - is deliberately
+  **not modelled**: it would need person-level linkage this aggregate weekly-panel model doesn't have,
+  and adding it without that risks double-counting against the existing halo pathway. Any real
+  correlation is implicitly absorbed into the FH segments' own baseline/trend, not lost, but also not
+  separately quantified - see `docs/dna_fh_causal_structure.md`.
 
 ## Transferred-curve limitations
 
@@ -83,10 +89,13 @@
 ## Scope boundaries
 
 - Scenario planning (`core.optimization`, Scenario Planner) supports both Model A and Model C,
-  including media-unit planning mode and CPA outputs. **Shapley attribution remains Model-A-only**
-  (it would misread Model C's market-indexed parameters) - Project Export builds a market-specific
-  summary (evidence tiers, CPA table, diagnostics, approval, scenario comparison) for Model C instead
-  of silently producing an incorrect attribution sheet.
+  including media-unit planning mode and CPA outputs. Shapley attribution is also available for
+  both model types - Model C uses `core.market_specific_attribution`'s market-aware decomposition
+  (each row's own market's `beta`/`hill_K`), not Model A's shared-curve implementation.
+- Posterior uncertainty (`core.uncertainty`) for response curves and scenario outcomes is a
+  subsample-and-summarize approximation: it re-runs the same point-estimate calculation once per
+  sampled posterior draw (typically 20-200 draws out of several thousand, a speed/accuracy
+  tradeoff) rather than using the entire posterior - see `docs/decision_log.md`.
 - The Scenario Planner's optimiser always conserves total budget (`conserve_total_budget=True`). As a
   consequence, a true *marginal* CPA at the scenario level isn't meaningful (there's no net spend
   change to compute it against) - the planner reports a *blended average* CPA (current vs. optimised

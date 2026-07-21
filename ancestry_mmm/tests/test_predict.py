@@ -7,11 +7,17 @@ established, shipped code with no dedicated test file, per this project's
 convention of not unit-testing every existing NumPy-replay function - see
 docs/decision_log.md and the equivalent note in test_market_specific_model.py."""
 
+import arviz as az
 import numpy as np
 import pytest
 
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
-from ancestry_mmm.core.predict import FHPosteriorParams, generate_channel_curve
+from ancestry_mmm.core.predict import (
+    FHPosteriorParams,
+    extract_posterior_params,
+    generate_channel_curve,
+    steady_state_segment_response,
+)
 
 SEGMENTS = ["New", "DNA_CrossSell"]
 CHANNELS = ["TV_Brand", "DNA_Media"]
@@ -84,3 +90,134 @@ class TestGenerateChannelCurve:
     def test_max_spend_overrides_the_default_cap(self, meta, params):
         df = generate_channel_curve("TV_Brand", meta, params, n_points=5, max_spend=50.0)
         assert df["spend"].max() == pytest.approx(50.0)
+
+
+class TestGenerateChannelCurveDirectDnaSegments:
+    """A DNA-product kit-sale segment (core.outcomes) fit alongside the FH
+    segments is DNA media's *direct* target, not a halo recipient - it must
+    get the same full, undamped response as `dna_segment` itself, not the
+    shrunk-toward-zero halo other segments get (docs/dna_fh_causal_structure.md)."""
+
+    @pytest.fixture
+    def meta_with_dna_kit_segment(self) -> FHModelMeta:
+        return FHModelMeta(
+            markets=["UK"], segments=SEGMENTS + ["New Customer"], channels=CHANNELS,
+            dna_channels=["DNA_Media"], dna_channel_idx=[1], non_dna_idx=[0],
+            dna_segment="DNA_CrossSell", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+            direct_dna_segments=["DNA_CrossSell", "New Customer"],
+        )
+
+    @pytest.fixture
+    def params_with_dna_kit_segment(self, params) -> FHPosteriorParams:
+        params.beta["New Customer"] = {"TV_Brand": 0.03, "DNA_Media": 0.5}
+        params.halo_strength["New Customer"] = 0.2  # would apply if wrongly treated as a halo recipient
+        return params
+
+    def test_dna_kit_segment_gets_full_response_not_halo_shrunk(self, meta_with_dna_kit_segment, params_with_dna_kit_segment):
+        df = generate_channel_curve("DNA_Media", meta_with_dna_kit_segment, params_with_dna_kit_segment, spend_range=np.array([500.0]))
+        row = df.iloc[0]
+        raw = params_with_dna_kit_segment.beta["New Customer"]["DNA_Media"] * row["saturation"]
+        assert row["New Customer_response"] == pytest.approx(raw)  # NOT raw * halo_strength
+
+    def test_ordinary_non_direct_segment_is_still_halo_shrunk(self, meta_with_dna_kit_segment, params_with_dna_kit_segment):
+        # Regression guard: adding a direct DNA-kit segment must not
+        # accidentally exempt an unrelated FH segment (New) from the halo
+        # shrinkage it's still supposed to get.
+        df = generate_channel_curve("DNA_Media", meta_with_dna_kit_segment, params_with_dna_kit_segment, spend_range=np.array([500.0]))
+        row = df.iloc[0]
+        raw_new = params_with_dna_kit_segment.beta["New"]["DNA_Media"] * row["saturation"]
+        assert row["New_response"] == pytest.approx(raw_new * params_with_dna_kit_segment.halo_strength["New"])
+
+
+class TestSteadyStateSegmentResponseDirectDnaSegments:
+    """steady_state_segment_response has its own (non-array-based) halo
+    branch - same direct_dna_segments requirement as generate_channel_curve,
+    tested separately since the code path is separate."""
+
+    @pytest.fixture
+    def meta_with_dna_kit_segment(self) -> FHModelMeta:
+        return FHModelMeta(
+            markets=["UK"], segments=SEGMENTS + ["New Customer"], channels=CHANNELS,
+            dna_channels=["DNA_Media"], dna_channel_idx=[1], non_dna_idx=[0],
+            dna_segment="DNA_CrossSell", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+            direct_dna_segments=["DNA_CrossSell", "New Customer"],
+        )
+
+    @pytest.fixture
+    def params_with_dna_kit_segment(self, params) -> FHPosteriorParams:
+        params.beta["New Customer"] = {"TV_Brand": 0.03, "DNA_Media": 0.5}
+        params.halo_strength["New Customer"] = 0.2
+        params.intercept["New Customer"] = 2.0
+        params.trend_coef["New Customer"] = 0.0
+        params.promo_coef["New Customer"] = 0.0
+        params.gamma_fourier["New Customer"] = np.zeros(6)
+        return params
+
+    def test_dna_kit_segment_response_uses_full_beta_not_halo_shrunk(self, meta_with_dna_kit_segment, params_with_dna_kit_segment):
+        spend = {"TV_Brand": 0.0, "DNA_Media": 500.0}
+        direct = steady_state_segment_response("UK", spend, meta_with_dna_kit_segment, params_with_dna_kit_segment)
+
+        halo_meta = FHModelMeta(
+            markets=["UK"], segments=SEGMENTS + ["New Customer"], channels=CHANNELS,
+            dna_channels=["DNA_Media"], dna_channel_idx=[1], non_dna_idx=[0],
+            dna_segment="DNA_CrossSell", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+            direct_dna_segments=["DNA_CrossSell"],  # New Customer NOT direct here
+        )
+        shrunk = steady_state_segment_response("UK", spend, halo_meta, params_with_dna_kit_segment)
+
+        # Full-weight response must exceed the halo-shrunk response for the
+        # same inputs (halo_strength < 1 for "New Customer").
+        assert direct["New Customer"] > shrunk["New Customer"]
+
+
+class TestExtractPosteriorParamsAt:
+    """`at=(chain, draw)` (added for core.uncertainty's per-draw calculations)
+    selects one specific posterior sample instead of averaging over the
+    whole posterior - the Model A equivalent of
+    TestExtractMarketSpecificPosteriorParams's `at=` coverage in
+    test_market_specific_predict.py."""
+
+    @pytest.fixture
+    def trace(self) -> az.InferenceData:
+        n_chain, n_draw = 2, 5
+        coords = {"segment": SEGMENTS, "channel": CHANNELS, "market": ["UK"], "fourier": list(range(6))}
+        rng = np.random.default_rng(1)
+
+        def const(value):
+            arr = np.asarray(value, dtype=float)
+            return np.broadcast_to(arr, (n_chain, n_draw) + arr.shape).copy()
+
+        posterior = {
+            "decay_rate": const([0.7, 0.5]) + rng.normal(0, 1e-6, size=(n_chain, n_draw, 2)),
+            "hill_K": const([1000.0, 500.0]),
+            "hill_S": const([1.2, 1.0]),
+            "beta": const([[0.10, 0.05], [0.02, 0.20]]),
+            "halo_strength": const([0.15, 1.0]),
+            "promo_coef": const([0.2, 0.3]),
+            "market_offset": const([[0.0, 0.0]]),
+            "intercept": const([3.0, 2.0]),
+            "trend_coef": const([0.1, 0.05]),
+            "gamma_fourier": const(np.zeros((6, 2))),
+            "alpha": const([5.0, 5.0]),
+        }
+        dims = {
+            "decay_rate": ["channel"], "hill_K": ["channel"], "hill_S": ["channel"],
+            "beta": ["segment", "channel"], "halo_strength": ["segment"],
+            "promo_coef": ["segment"], "market_offset": ["market", "segment"],
+            "intercept": ["segment"], "trend_coef": ["segment"],
+            "gamma_fourier": ["fourier", "segment"], "alpha": ["segment"],
+        }
+        return az.from_dict(posterior=posterior, coords=coords, dims=dims)
+
+    def test_at_selects_one_draw_instead_of_averaging_over_the_posterior(self, trace, meta):
+        mean_params = extract_posterior_params(trace, meta)
+        draw_a = extract_posterior_params(trace, meta, at=(0, 0))
+        draw_b = extract_posterior_params(trace, meta, at=(1, 3))
+        assert draw_a.decay_rate["TV_Brand"] != draw_b.decay_rate["TV_Brand"]
+        assert draw_a.decay_rate["TV_Brand"] != mean_params.decay_rate["TV_Brand"]
+
+    def test_at_still_selects_correctly_for_segment_and_channel_indexed_fields(self, trace, meta):
+        draw = extract_posterior_params(trace, meta, at=(1, 2))
+        assert draw.beta["New"]["TV_Brand"] == pytest.approx(0.10)
+        assert draw.beta["DNA_CrossSell"]["DNA_Media"] == pytest.approx(0.20)
+        assert draw.hill_K["DNA_Media"] == pytest.approx(500.0)

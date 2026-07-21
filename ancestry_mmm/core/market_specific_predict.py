@@ -45,61 +45,73 @@ class FHMarketSpecificPosteriorParams:
 
 
 def extract_market_specific_posterior_params(
-    trace: az.InferenceData, meta: FHModelMeta,
+    trace: az.InferenceData, meta: FHModelMeta, at: Optional[tuple[int, int]] = None,
 ) -> FHMarketSpecificPosteriorParams:
-    """Pull posterior means (across chains and draws) into plain dicts keyed by name."""
+    """
+    Pull posterior values into plain dicts keyed by name - the posterior
+    mean (across every chain and draw) by default, or one specific
+    `(chain, draw)` index pair when `at` is given (see
+    core.predict.extract_posterior_params's docstring - `at` is what makes
+    per-draw uncertainty calculations possible, core.uncertainty).
+    """
     post = trace.posterior
 
-    def mean_by_coord(var: str, coord: str, labels: List[str]) -> Dict[str, float]:
-        vals = post[var].mean(dim=[d for d in post[var].dims if d not in (coord,)])
+    def _reduce(da):
+        if at is not None:
+            return da.isel(chain=at[0], draw=at[1])
+        return da.mean(dim=["chain", "draw"])
+
+    def by_coord(var: str, coord: str, labels: List[str]) -> Dict[str, float]:
+        da = post[var]
+        vals = da.isel(chain=at[0], draw=at[1]) if at is not None else da.mean(dim=[d for d in da.dims if d not in (coord,)])
         return {label: float(vals.sel({coord: label}).values) for label in labels}
 
-    decay_rate = mean_by_coord("decay_rate", "channel", meta.channels)
-    hill_S = mean_by_coord("hill_S", "channel", meta.channels)
-    intercept = mean_by_coord("intercept", "segment", meta.segments)
-    trend_coef = mean_by_coord("trend_coef", "segment", meta.segments)
-    promo_coef = mean_by_coord("promo_coef", "segment", meta.segments)
-    alpha = mean_by_coord("alpha", "segment", meta.segments)
-    halo_strength = mean_by_coord("halo_strength", "segment", meta.segments) if meta.dna_channel_idx else {
-        s: (1.0 if s == meta.dna_segment else 0.0) for s in meta.segments
+    decay_rate = by_coord("decay_rate", "channel", meta.channels)
+    hill_S = by_coord("hill_S", "channel", meta.channels)
+    intercept = by_coord("intercept", "segment", meta.segments)
+    trend_coef = by_coord("trend_coef", "segment", meta.segments)
+    promo_coef = by_coord("promo_coef", "segment", meta.segments)
+    alpha = by_coord("alpha", "segment", meta.segments)
+    halo_strength = by_coord("halo_strength", "segment", meta.segments) if meta.dna_channel_idx else {
+        s: (1.0 if s in meta.direct_dna_segments else 0.0) for s in meta.segments
     }
 
-    hill_K_mean = post["hill_K"].mean(dim=["chain", "draw"])
+    hill_K_reduced = _reduce(post["hill_K"])
     hill_K = {
-        m: {c: float(hill_K_mean.sel(market=m, channel=c).values) for c in meta.channels}
+        m: {c: float(hill_K_reduced.sel(market=m, channel=c).values) for c in meta.channels}
         for m in meta.markets
     }
 
-    beta_mean = post["beta"].mean(dim=["chain", "draw"])
+    beta_reduced = _reduce(post["beta"])
     beta = {
         m: {
-            s: {c: float(beta_mean.sel(market=m, segment=s, channel=c).values) for c in meta.channels}
+            s: {c: float(beta_reduced.sel(market=m, segment=s, channel=c).values) for c in meta.channels}
             for s in meta.segments
         }
         for m in meta.markets
     }
 
-    market_offset_mean = post["market_offset"].mean(dim=["chain", "draw"])
+    market_offset_reduced = _reduce(post["market_offset"])
     market_offset = {
-        m: {s: float(market_offset_mean.sel(market=m, segment=s).values) for s in meta.segments}
+        m: {s: float(market_offset_reduced.sel(market=m, segment=s).values) for s in meta.segments}
         for m in meta.markets
     }
 
-    gamma_fourier_mean = post["gamma_fourier"].mean(dim=["chain", "draw"])
-    gamma_fourier = {s: gamma_fourier_mean.sel(segment=s).values for s in meta.segments}
+    gamma_fourier_reduced = _reduce(post["gamma_fourier"])
+    gamma_fourier = {s: gamma_fourier_reduced.sel(segment=s).values for s in meta.segments}
 
     control_coef = {}
     if meta.control_names and "control_coef" in post:
-        cc_mean = post["control_coef"].mean(dim=["chain", "draw"])
-        control_coef = {c: float(cc_mean.sel(control=c).values) for c in meta.control_names}
+        cc_reduced = _reduce(post["control_coef"])
+        control_coef = {c: float(cc_reduced.sel(control=c).values) for c in meta.control_names}
 
     segment_control_coef: Dict[str, Dict[str, float]] = {}
     for seg, names in meta.segment_control_names.items():
         var_name = f"segment_control_coef_{seg}"
         if var_name in post:
             coord_name = f"{seg}_control"
-            vmean = post[var_name].mean(dim=["chain", "draw"])
-            segment_control_coef[seg] = {n: float(vmean.sel({coord_name: n}).values) for n in names}
+            v_reduced = _reduce(post[var_name])
+            segment_control_coef[seg] = {n: float(v_reduced.sel({coord_name: n}).values) for n in names}
 
     return FHMarketSpecificPosteriorParams(
         decay_rate=decay_rate, hill_K=hill_K, hill_S=hill_S, beta=beta,
@@ -230,7 +242,7 @@ def steady_state_segment_response_market_specific(
         for c in meta.channels:
             beta_val = params.beta[market][s][c]
             if c in meta.dna_channels:
-                if s == meta.dna_segment:
+                if s in meta.direct_dna_segments:
                     val += beta_val * sat[c]
                 else:
                     val += beta_val * sat[c] * params.halo_strength.get(s, 0.0)
@@ -293,7 +305,7 @@ def generate_market_channel_curve(
         overall = 0.0
         for seg in meta.segments:
             beta_val = params.beta[market][seg][channel]
-            if is_dna and seg != meta.dna_segment:
+            if is_dna and seg not in meta.direct_dna_segments:
                 beta_val = beta_val * params.halo_strength.get(seg, 0.0)
             value = beta_val * sat
             row[f"{seg}_response"] = value

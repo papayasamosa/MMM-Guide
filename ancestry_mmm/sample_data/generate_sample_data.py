@@ -69,6 +69,30 @@ SEGMENT_LTV = {"New": 180, "DNA_CrossSell": 260, "Winback": 110}
 
 BASELINE_GSA = {"New": 3200, "DNA_CrossSell": 900, "Winback": 700}
 
+# --- DNA kit purchase outcomes (distinct from the FH "DNA cross-sell" GSA
+# above, which is a Family History sign-up event - these are DNA kit sale
+# events: PR2 of the DNA/FH architecture work, see docs/outcomes.md).
+# "New" = a customer with no prior Family History engagement buying a DNA
+# kit; "Existing FH" = an existing Family History customer buying one as a
+# cross-sell/add-on. Kept as two separate synthetic series (rather than
+# generating a combined-only demo) so the demo project can exercise the
+# split-outcome path through core.outcomes, not only the single-column
+# fallback.
+DNA_KIT_BASELINE = {"New Customer": 800, "Existing FH Customer": 250}
+# DNA media response: kit purchases from new customers respond strongly to
+# DNA-targeted media (that's what it's built to sell); existing customers
+# are already engaged and respond more weakly to media, more to promo/price.
+DNA_KIT_MEDIA_MULT = {"New Customer": 1.20, "Existing FH Customer": 0.40}
+DNA_KIT_PROMO_SENSITIVITY = {"New Customer": 0.20, "Existing FH Customer": 0.30}
+# Kit purchases are more price-sensitive than the FH DNA-cross-sell signup
+# metric above (-0.006) - a kit purchase is the actual transaction, not just
+# an expression of interest.
+DNA_KIT_PRICE_COEF = -0.010
+# DNA kits are a classic gift item - lean harder into the Christmas/New
+# Year seasonality spike than the FH outcomes do.
+DNA_KIT_SEASONALITY_WEIGHT = 0.8
+DNA_KIT_LTV = {"New Customer": 90, "Existing FH Customer": 65}
+
 
 def geometric_adstock(x, decay):
     out = np.zeros_like(x)
@@ -161,12 +185,28 @@ def build_market(market: str, n_weeks: int, start_date: str, maturity: float) ->
         gsa = rng.negative_binomial(dispersion, p)
         outcomes[seg] = gsa
 
+    # --- DNA kit purchase outcomes (separate business events from the FH
+    # DNA-cross-sell GSA above - see the DNA_KIT_* constants' docstring).
+    dna_kit_outcomes = {}
+    for dna_seg in ("New Customer", "Existing FH Customer"):
+        media_effect = DNA_KIT_MEDIA_MULT[dna_seg] * saturated["DNA_Media"]
+        promo_lift = 1 + DNA_KIT_PROMO_SENSITIVITY[dna_seg] * dna_promo
+        price_effect = 1 + DNA_KIT_PRICE_COEF * (dna_kit_price - dna_kit_price.mean())
+        baseline = DNA_KIT_BASELINE[dna_seg] * maturity * (1 + trend) * (1 + DNA_KIT_SEASONALITY_WEIGHT * seasonality)
+        mean_kits = np.clip(baseline * (1 + media_effect) * promo_lift * price_effect, 5, None)
+
+        dispersion = 20.0
+        p = dispersion / (dispersion + mean_kits)
+        dna_kit_outcomes[dna_seg] = rng.negative_binomial(dispersion, p)
+
     media_df = pd.DataFrame({"date": dates, "market": market, **media})
     outcomes_df = pd.DataFrame({
         "date": dates, "market": market,
         "GSA_New": outcomes["New"],
         "GSA_DNA_CrossSell": outcomes["DNA_CrossSell"],
         "GSA_Winback": outcomes["Winback"],
+        "DNA_Kit_New_Customer": dna_kit_outcomes["New Customer"],
+        "DNA_Kit_Existing_FH_Customer": dna_kit_outcomes["Existing FH Customer"],
     })
     controls_df = pd.DataFrame({
         "date": dates, "market": market,

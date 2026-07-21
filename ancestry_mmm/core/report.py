@@ -33,6 +33,7 @@ from .approval import ModelApproval
 from .curve_bank import CurveBankEntry, entries_to_dataframe
 from .market_config import MarketSpecConfig
 from .optimization import compare_scenarios
+from .outcomes import DNA, resolve_outcome_definitions, outcomes_to_dataframe
 from .schema import ModelSpec
 
 MODEL_TYPE_LABELS = {
@@ -110,6 +111,29 @@ def _model_section(spec: Optional[ModelSpec], model_type: str, dna_lag_weeks: Op
         title="Model",
         paragraphs=["See docs/modelling_methodology.md for the full structural specification."],
         bullets=bullets,
+    )
+
+
+def _outcomes_section(spec: Optional[ModelSpec], outcome_definitions: Optional[List[dict]]) -> ReportSection:
+    if spec is None:
+        return ReportSection(title="Outcomes", paragraphs=["No model specification is available yet."])
+    outcomes = resolve_outcome_definitions(outcome_definitions, spec.segment_outcomes, spec.segment_ltv)
+    table = outcomes_to_dataframe(outcomes)
+    n_dna = sum(1 for o in outcomes if o.product == DNA)
+    paragraphs = [
+        f"{len(outcomes)} outcome(s) catalogued: {len(outcomes) - n_dna} Family History, {n_dna} DNA.",
+    ]
+    if n_dna:
+        paragraphs.append(
+            "DNA outcomes are opt-in: `modelled_today = False` means this outcome type isn't fit "
+            "automatically the way Family History segments are, not that it can never be - mapping "
+            "it on Structure and re-preparing the modelling frame includes it, with DNA-targeted "
+            "media getting full direct response rather than the shrunk halo pathway other segments "
+            "get. See docs/dna_fh_causal_structure.md."
+        )
+    return ReportSection(
+        title="Outcomes", paragraphs=paragraphs,
+        table=table, table_caption="Outcome catalogue (modelled_today = fit automatically, with no extra configuration)",
     )
 
 
@@ -194,7 +218,12 @@ def _limitations_section(model_type: str, market_spec_config: Optional[MarketSpe
             "Evidence-tier thresholds (core.evidence_tiers) are reasonable defaults, not yet "
             "validated against real Ancestry data (docs/decision_log.md)."
         )
-        bullets.append("Shapley attribution and CPA are not available for market-specific curves in the same view.")
+    bullets.append(
+        "Posterior uncertainty for curves and scenario outcomes (core.uncertainty) re-runs the "
+        "same point-estimate calculation once per sampled posterior draw (a subsample, typically "
+        "20-200 out of several thousand, for speed) rather than the full posterior - it is opt-in "
+        "and shown alongside, not in place of, the point estimate."
+    )
     if market_spec_config and market_spec_config.channel_media_units:
         bullets.append(
             "Media-unit response curves and cost-per-unit trends use one constant average "
@@ -233,6 +262,7 @@ def build_report_sections(
     curve_bank_entries: Optional[List[CurveBankEntry]] = None,
     scenarios: Optional[List[Dict]] = None,
     market_spec_config: Optional[MarketSpecConfig] = None,
+    outcome_definitions: Optional[List[dict]] = None,
 ) -> List[ReportSection]:
     """Assemble every section of the report, in display order. Every input is
     optional and independently missing-safe - a report can be generated at
@@ -246,6 +276,7 @@ def build_report_sections(
         _objective_section(spec, model_type),
         _data_section(spec, pipeline_steps, data_window),
         _model_section(spec, model_type, dna_lag_weeks),
+        _outcomes_section(spec, outcome_definitions),
         _diagnostics_section(scorecard),
         _approval_section(approval),
         _curve_bank_section(curve_bank_entries),

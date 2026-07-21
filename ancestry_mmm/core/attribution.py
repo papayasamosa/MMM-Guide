@@ -16,7 +16,7 @@ are kept from the original single-KPI implementation for reuse.
 from __future__ import annotations
 
 from itertools import combinations
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -87,7 +87,7 @@ def _channel_log_terms(frame: Dict, meta: FHModelMeta, params: FHPosteriorParams
             b = params.beta[seg][ch]
             if is_dna:
                 x = lagged_dna[:, dna_pos]
-                if seg != meta.dna_segment:
+                if seg not in meta.direct_dna_segments:
                     b = b * params.halo_strength.get(seg, 0.0)
             else:
                 x = sat_media[:, ci]
@@ -183,9 +183,23 @@ def total_fh_contribution(
     contributions: Optional[Dict] = None,
     ltv: Optional[Dict[str, float]] = None,
     n_permutations: int = 200,
+    segments: Optional[List[str]] = None,
 ) -> pd.DataFrame:
-    """Total-FH (all segments summed) view per channel, plus which segment the impact falls into."""
+    """
+    Total-FH (all Family History segments summed) view per channel, plus
+    which segment the impact falls into.
+
+    `segments` restricts which of `meta.segments` are summed into the total
+    - pass the Family History segment subset when the fitted model also
+    includes DNA-product segments (core.outcomes), so a GSA count and a kit-
+    sale count are never summed into one meaningless combined number.
+    Defaults to every segment in `meta.segments`, preserving existing
+    behaviour for a fit with no DNA segments (where "every segment" already
+    means "every FH segment").
+    """
     summary = segment_channel_summary(frame, meta, params, contributions, ltv, n_permutations)
+    if segments is not None:
+        summary = summary[summary["segment"].isin(segments)]
     total = summary.groupby("channel").agg(
         spend=("spend", "first"),
         volume_contribution=("volume_contribution", "sum"),

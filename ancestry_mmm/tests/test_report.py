@@ -155,6 +155,42 @@ class TestBuildReportSectionsFullState:
         assert "manual-uk" in scenarios_section.table["scenario"].tolist()
 
 
+class TestOutcomesSection:
+    def test_no_spec_gives_a_placeholder(self):
+        sections = build_report_sections(spec=None)
+        outcomes = next(s for s in sections if s.title == "Outcomes")
+        assert "No model specification" in outcomes.paragraphs[0]
+
+    def test_derives_fh_outcomes_from_spec_when_none_saved(self, spec):
+        sections = build_report_sections(spec=spec, outcome_definitions=None)
+        outcomes = next(s for s in sections if s.title == "Outcomes")
+        assert "2 outcome(s) catalogued: 2 Family History, 0 DNA" in outcomes.paragraphs[0]
+        assert outcomes.table is not None
+        assert set(outcomes.table["product"]) == {"Family History"}
+        assert outcomes.table["modelled_today"].all()
+
+    def test_includes_dna_outcomes_and_flags_them_as_opt_in(self, spec):
+        outcome_definitions = [
+            {"outcome_id": "fh_new", "product": "Family History", "segment": "New", "metric": "GSA", "column": "fh_new_gsa", "value_weight": 180.0},
+            {"outcome_id": "dna_new_kit", "product": "DNA", "segment": "New Customer", "metric": "Kit sale", "column": "DNA_Kit_New", "value_weight": 90.0},
+        ]
+        sections = build_report_sections(spec=spec, outcome_definitions=outcome_definitions)
+        outcomes = next(s for s in sections if s.title == "Outcomes")
+        assert "1 Family History, 1 DNA" in outcomes.paragraphs[0]
+        assert any("opt-in" in p for p in outcomes.paragraphs)
+        dna_row = outcomes.table[outcomes.table["product"] == "DNA"].iloc[0]
+        assert dna_row["modelled_today"] == False  # noqa: E712
+
+    def test_renders_without_error_with_dna_outcomes(self, spec):
+        outcome_definitions = [
+            {"outcome_id": "dna_new_kit", "product": "DNA", "segment": "New Customer", "metric": "Kit sale", "column": "DNA_Kit_New"},
+        ]
+        sections = build_report_sections(spec=spec, outcome_definitions=outcome_definitions)
+        md = render_markdown("proj", sections)
+        html = render_html("proj", sections)
+        assert "DNA" in md and "DNA" in html
+
+
 class TestLimitationsSectionVariesByModelType:
     def test_shared_model_does_not_mention_market_specific_caveats(self, spec):
         sections = build_report_sections(spec=spec, model_type="shared")

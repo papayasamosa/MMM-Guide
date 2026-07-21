@@ -598,3 +598,205 @@ invalidated by upgrading, which is correct: those approvals were never actually 
 transformation recipe or media-unit/currency config they should have been.
 **Owner:** Engineering.
 **Status:** Accepted; implemented in PR1 (correctness and consistency pass).
+
+---
+
+**Date:** 2026-07-21
+**Decision:** Add `core.outcomes.OutcomeDefinition` as an additive outcome catalogue (product,
+segment, metric, column, value weight) layered on top of `ModelSpec`, rather than folding DNA
+outcomes into `ModelSpec.segment_outcomes` or replacing that field.
+**Reason:** `ModelSpec.segment_outcomes` means exactly one thing today - the Family History segments
+the joint hierarchical model actually fits - and every existing call site (`core.hierarchical_model`,
+`core.market_specific_model`, `core.predict`, `core.attribution`, the curve bank, the scenario
+planner, the fingerprint) depends on that exact meaning. DNA kit purchases are a genuinely different
+business outcome (a product sale, not an FH signup) with no response equations yet - building those
+equations is later, separate work. Changing what `segment_outcomes` means, or silently expanding it
+to include non-FH columns, would either break every one of those call sites or require them to start
+guessing which entries are "real" FH segments. A separate, additive catalogue avoids both: `ModelSpec`
+and the fitted model are completely unchanged, and the catalogue can describe DNA outcomes as captured
+data without any of them being mistaken for something the model is already using.
+**Alternatives considered:** Adding DNA columns directly into `segment_outcomes` with a naming
+convention to distinguish them (rejected - every consumer of `segment_outcomes` would need new logic
+to filter them back out, and a naming convention is exactly the kind of implicit, easy-to-violate
+contract this schema exists to avoid). Waiting until DNA response equations exist before capturing any
+DNA outcome data at all (rejected - the redesign brief explicitly wants outcome definitions and DNA
+data support as their own, separately reviewable unit of work before the modelling equations land, so
+data capture doesn't sit blocked behind a much larger change).
+**Impact:** `core.outcomes` (new module): `OutcomeDefinition`, `fh_outcomes_from_spec` (backward-
+compatible derivation from any `ModelSpec`), `dna_outcomes_from_columns` (split New Customer/Existing
+FH Customer, or an explicit combined fallback), `resolve_outcome_definitions` (the single read path
+every caller uses), `outcome_is_modelled`/`outcomes_to_dataframe`. New "DNA outcomes" section on
+Structure: Segments & Markets. New `config/outcome_definitions.json` in the project bundle (absent =
+legacy bundle, not an error - same convention as `market_spec_config.json`). New "Outcomes" section in
+the project report. **Deliberately not** added to `core.fingerprint.fingerprint_model_spec`'s payload
+- nothing in it feeds a calculation yet, so mapping or editing a DNA outcome must not invalidate an
+existing model approval (same descriptive/model-relevant boundary principle as market descriptors).
+Incidental fix while extending `pages/09_Project_Export.py`'s export/import wiring: `model_type` was
+never actually passed to `export_project`, so every exported Model C bundle silently re-imported as
+Model A - now fixed and covered by a regression test (`test_export_then_import_reproduces_model_type`).
+**Owner:** Engineering.
+**Status:** Accepted; implemented in PR2 (general outcome schema and DNA data support). See
+`docs/outcomes.md` for the full design record.
+
+---
+
+**Date:** 2026-07-21
+**Decision:** Generalise `FHModelMeta.dna_segment` (a single Family History segment) to
+`FHModelMeta.direct_dna_segments` (a list) to fit DNA-product kit-sale segments (core.outcomes)
+alongside the Family History segments in the same joint model, reusing the existing likelihood,
+adstock/saturation, promo, price/control, trend and seasonality machinery unchanged - rather than
+building a separate DNA-only model or a new halo-style pathway for kit sales.
+**Reason:** The joint model was already fully generic over `segment` dims - nothing in
+`build_fh_hierarchical_model`/`build_fh_market_specific_model` assumed a segment was a Family History
+outcome specifically, except the single hardcoded `dna_segment` halo target. DNA-targeted media's
+relationship to DNA kit sales is a *direct* effect (arguably DNA media's primary purpose), not a halo
+effect - treating a DNA-kit segment as an ordinary "other segment" would have wrongly shrunk it toward
+zero the same way an unrelated segment like Winback is shrunk. Generalising the one hardcoded
+full-weight segment to a list, defaulting to `[dna_segment]` for exact backward compatibility, was the
+minimal change that let every existing model-building/prediction/attribution code path keep working
+unchanged for a project with no DNA segments, while giving DNA-kit segments the mechanically-correct
+treatment once they're included. See docs/dna_fh_causal_structure.md for the full pathway-by-pathway
+treatment (including what's deliberately *not* modelled - the kit-sale-to-later-FH-conversion pipeline
+effect, and why).
+**Alternatives considered:** A separate, DNA-only PyMC model (rejected - duplicates the entire
+adstock/saturation/promo/trend/seasonality machinery for no structural reason, and would need its own
+persistence/diagnostics/prediction code paths). Treating DNA-kit segments as ordinary halo recipients
+(rejected - actively wrong: DNA media's effect on kit sales is not "a smaller effect elsewhere", it's
+the primary effect, and shrinking it toward zero by construction would bias every downstream CPA/
+attribution number for DNA kit sales low).
+**Impact:** `core.hierarchical_model.FHModelMeta` gains `direct_dna_segments: List[str]` (defaults to
+`[dna_segment]` via `__post_init__` if omitted/empty - existing bundles/tests unaffected).
+`build_fh_hierarchical_model`/`build_fh_market_specific_model` gain an optional
+`direct_dna_segments` parameter and a new `_resolve_direct_dna_segments` helper. Every NumPy-replay
+and attribution function that previously hardcoded `segment == meta.dna_segment`
+(`core.predict`/`core.market_specific_predict`'s `extract_posterior_params`,
+`steady_state_segment_response(_market_specific)`, `generate_channel_curve`/
+`generate_market_channel_curve`; `core.attribution._channel_log_terms`) now checks
+`segment in meta.direct_dna_segments` instead - found and fixed as a direct, necessary consequence of
+this change (a DNA-kit segment would otherwise have been silently mis-attributed by Shapley/curve
+code even though correctly fit by the model). `core.attribution.total_fh_contribution` gained a
+`segments` filter parameter so a DNA kit-sale count is never summed into an "FH total" alongside a GSA
+count - wired at the two call sites (`pages/07_Results_Curve_Bank.py`, `pages/09_Project_Export.py`)
+to exclude DNA-product segments from that specific total.
+`data.preprocessor.prepare_fh_modeling_frame` gains an optional `dna_kit_outcomes` parameter
+(segment -> column, same shape as `spec.segment_outcomes`) that extends the fitted segment set without
+changing `ModelSpec`'s own shape - `pages/04_Model_Config.py` derives it automatically from whatever
+DNA outcomes are mapped on Structure (`core.outcomes.dna_kit_outcome_columns`) and
+`pages/05_Model_Training.py` passes the corresponding `direct_dna_segments` through to whichever
+builder is fitting - opt-in, automatic once mapped, never silent (a caption on Model Configuration
+always states which segments, FH and DNA, are about to be fit).
+New `core.promotions` module (`PromotionEvent`, `promotion_weekly_series`,
+`apply_promotion_events_to_frame`) gives DNA promotions the richer representation the instruction
+document asks for (event name, dates, discount depth, sale price) while still feeding the *same*
+`promo_cols`/`promo_coef` pathway every segment's promotion already uses - a promotion's effect is
+structurally additive and separate from media response in the linear predictor either way, so it can
+never be silently absorbed into a channel's media coefficient.
+Incidental fix while extending `core.attribution`: the pre-existing `_channel_log_terms` DNA-halo
+branch would have mis-attributed *any* second "dna"-named segment even before this PR (the auto-detect
+in `_default_dna_segment` only ever resolved one), not just a newly-added DNA-kit segment - now
+correctly generalised.
+**Verification:** Offline recovery check (not a committed test - same precedent as Model C's original
+check): a synthetic panel with a known, large *direct* DNA-media effect on a DNA-kit segment
+(`beta=0.45`) and known, much smaller *effective* (halo-shrunk) effect on an ordinary FH segment
+(`beta=0.15 x halo=0.10 -> effective 0.015`), fit with `direct_dna_segments=["DNA_CrossSell", "New
+Customer"]` (300/400 tune/draws, 2 chains), correctly recovered: `halo_strength` fixed at exactly
+`1.0` for both `DNA_CrossSell` and `New Customer` (not estimated, as designed), and the ordinary
+segment's effective DNA_Media response (0.018) came out smallest of the three, versus 0.091
+(`DNA_CrossSell`) and 0.095 (`New Customer`) - the correct ordering. Absolute point-estimate magnitudes
+were compressed toward the pooled mean under the small draw budget, the same expected pattern as
+Model C's original recovery check - this confirms the halo/direct structure is mechanically correct,
+not tight quantitative recovery, which needs a production draw count. The fast, non-MCMC parts (the
+`direct_dna_segments` logic itself at both the pre-PyMC-construction level and the NumPy-replay level)
+are unit tested directly and committed - see `ancestry_mmm/tests/test_hierarchical_model.py`,
+`test_predict.py`, `test_market_specific_predict.py`, `test_attribution.py`, `test_preprocessor.py`.
+**Owner:** Engineering.
+**Status:** Accepted; implemented in PR3 (DNA model equations and integrated halo). See
+`docs/dna_fh_causal_structure.md` for the full design record.
+
+---
+
+**Date:** 2026-07-21
+**Decision:** Add posterior uncertainty (`core.uncertainty`) as a re-run-per-draw subsample, and a
+dedicated market-aware Shapley attribution module for Model C (`core.market_specific_attribution`)
+that reuses Model A's baseline term but reimplements the channel-response term for market-indexed
+parameters - rather than forcing Model A's implementation onto Model C, or computing uncertainty
+analytically.
+**Reason:** Every curve/CPA/scenario function in this codebase (`core.predict`,
+`core.market_specific_predict`, `core.media_units`, `core.optimization`) works off the posterior
+*mean* (`extract_posterior_params`/`extract_market_specific_posterior_params` with no `at=`) - a
+single point estimate with no sense of how much the posterior actually varies. There's no closed-form
+expression for the credible interval of a Hill-saturated, adstocked, exponentiated response curve or
+a multi-step scenario evaluation, so the only general way to get one is to literally recompute the
+same calculation once per posterior draw and summarize the resulting distribution - re-running the
+existing point-estimate code path with a different draw's parameters each time, not a new modelling
+approximation on top of it. Doing this against the *entire* posterior (often several thousand draws)
+for every curve/scenario view would make the UI too slow to be usable, so `n_draws` (default 100, a
+UI-exposed slider from 20-200) subsamples without replacement (`sample_draw_indices`) - a documented
+speed/fidelity tradeoff, not a modelling shortcut.
+Model A's Shapley decomposition (`core.attribution`) is built entirely around
+`params.beta[segment][channel]`/`params.hill_K[channel]` - a single shared curve per channel. Model
+C's parameters are market-indexed (`params.beta[market][segment][channel]`,
+`params.hill_K[market][channel]`); every observation row already belongs to exactly one market via
+`frame["market_idx"]` (the frame is built one contiguous block per market - `data.preprocessor.
+prepare_fh_modeling_frame`), so a market-aware decomposition falls out of using each row's own
+market's `beta`/`hill_K` in the per-channel log-term, with no separate market loop needed in the
+permutation-average Shapley algorithm itself. Everything *not* market-indexed (intercept,
+market_offset, trend_coef, gamma_fourier, promo_coef, control_coef, segment_control_coef) is identical
+in shape between `FHPosteriorParams` and `FHMarketSpecificPosteriorParams`, so
+`core.attribution._baseline_eta` is reused directly rather than duplicated.
+**Alternatives considered:** A closed-form/delta-method approximation to posterior uncertainty
+(rejected - would need a new derivation per calculation type, whereas re-running the exact existing
+calculation per draw is mechanically simple and can never drift out of sync with the point-estimate
+path it summarizes). Computing uncertainty against the full posterior every time (rejected - too slow
+for interactive use; the UI exposes the subsample size as a control rather than hiding the tradeoff).
+Adapting Model A's `compute_shapley_contributions` to accept market-indexed parameters via branching
+(rejected per the brief's explicit instruction not to force Model A's implementation onto Model C -
+a dedicated module keeps the parameter-shape difference explicit rather than threading `if
+market_specific` branches through Model A's existing, working code).
+**Impact:** `core.predict.extract_posterior_params` and
+`core.market_specific_predict.extract_market_specific_posterior_params` gain an optional
+`at: tuple[int, int]` (chain, draw) parameter - `None` (default) keeps the existing posterior-mean
+behaviour byte-for-byte; every existing caller is unaffected. New `core.uncertainty` module:
+`sample_draw_indices`, `summarize_distribution`, `generate_channel_curve_with_uncertainty`,
+`generate_market_channel_curve_with_uncertainty`, `evaluate_scenario_with_uncertainty`. Scenario
+uncertainty pairs draws (the same sampled draw index is used for both the proposed and baseline plan
+in each comparison) rather than resampling independently - comparing two independently-resampled
+distributions would overstate the apparent uncertainty in their *difference*, since it would include
+sampling noise from two separate draws instead of one shared draw per comparison;
+`prob_outperforms_baseline` is the fraction of paired draws where the proposed plan's total value
+exceeds the baseline's. New `core.market_specific_attribution` module:
+`compute_shapley_contributions_market_specific`, `segment_channel_market_summary` (adds a `market`
+column - genuinely differs by market, unlike Model A), `total_contribution_market_specific` (adds a
+`by_market` toggle; two-stage spend aggregation - `spend=("spend","first")` at the (market, channel)
+level before any `spend=("spend","sum")` across markets - since spend is constant across every segment
+row for a given (market, channel), summing it across segment rows first would double count). The DNA
+halo logic (`direct_dna_segments`) is handled identically to Model A. UI: Results & Curve Bank's
+Model C branch now shows a total-contribution table, market x segment x channel detail, and a
+contribution waterfall (previously an "attribution isn't available" message); both model types' curve
+viewers gained an opt-in posterior-uncertainty band (a new `create_response_curve_with_band` chart);
+Scenario Planner's manual tab gained an opt-in posterior-uncertainty view with
+`prob_outperforms_baseline` against the recent-average-spend baseline; Project Export's Model C Excel
+branch gained "Total Contribution" and "Market x Segment x Channel" sheets. `docs/limitations.md`,
+`docs/user_guide.md`, `docs/curve_bank.md`, `docs/modelling_methodology.md`, and `core/report.py`'s
+limitations section had their "Shapley attribution remains Model-A-only" claims removed as now stale,
+replaced where relevant with the uncertainty-approximation caveat.
+**Verification:** `compute_shapley_contributions_market_specific`'s additivity
+(`baseline + sum(channel_contributions) == mu_total`, exactly, for every row/segment) and correct
+`direct_dna_segments` halo handling are unit tested directly
+(`ancestry_mmm/tests/test_market_specific_attribution.py`), as is the two-stage spend aggregation (no
+double counting across segment rows) and the `segments`/`by_market` filters.
+`generate_channel_curve_with_uncertainty`/`generate_market_channel_curve_with_uncertainty` are tested
+for `lower <= mean <= upper` at every spend point and for raising no warnings despite the
+legitimately-all-NaN marginal-CPA-at-zero-spend case (`ancestry_mmm/tests/test_uncertainty.py`).
+`evaluate_scenario_with_uncertainty` is tested for the same interval ordering and for
+`prob_outperforms_baseline` correctly reaching 1.0/0.0 for a plan that strictly dominates/is dominated
+by its paired baseline. `extract_posterior_params`/`extract_market_specific_posterior_params`'s new
+`at=` parameter is tested directly for both model types (`test_predict.py`,
+`test_market_specific_predict.py`) - a specific `(chain, draw)` selection must disagree with both
+another draw and the posterior mean. All three new pages' code paths (curve-uncertainty checkboxes,
+Model C attribution tables, scenario-uncertainty checkbox, Excel export's new sheets, project report)
+were exercised end-to-end via `streamlit.testing.v1.AppTest` against two real (small, fast) MCMC fits -
+one Model A, one Model C - not just hand-built parameter fixtures; not committed, per this project's
+established convention for AppTest verification scripts.
+**Owner:** Engineering.
+**Status:** Accepted; implemented in PR4 (Model C attribution and uncertainty).

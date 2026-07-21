@@ -17,15 +17,19 @@ from ancestry_mmm.core.market_config import MarketSpecConfig
 from ancestry_mmm.core.attribution import (
     compute_shapley_contributions, segment_channel_summary, total_fh_contribution, contribution_waterfall,
 )
+from ancestry_mmm.core.market_specific_attribution import (
+    compute_shapley_contributions_market_specific, segment_channel_market_summary, total_contribution_market_specific,
+)
 from ancestry_mmm.core import curve_bank as cb
 from ancestry_mmm.core.evidence_tiers import classify_all_markets
 from ancestry_mmm.core.predict import generate_channel_curve
 from ancestry_mmm.core.market_specific_predict import generate_market_channel_curve
+from ancestry_mmm.core.uncertainty import generate_channel_curve_with_uncertainty, generate_market_channel_curve_with_uncertainty
 from ancestry_mmm.core.media_units import (
     compute_cpa, cpa_stability_flags, extract_cost_per_unit_series, historical_cost_trend,
     response_unit_curve, equivalent_delivery, equivalent_response,
 )
-from ancestry_mmm.components.charts import create_waterfall_chart, create_response_curve
+from ancestry_mmm.components.charts import create_waterfall_chart, create_response_curve, create_response_curve_with_band
 
 st.set_page_config(page_title="Results & Curve Bank - Ancestry FH MMM", page_icon="🧬", layout="wide")
 init_session_state()
@@ -145,27 +149,94 @@ market_config = MarketSpecConfig.from_dict(get_state("market_spec_config"))
 
 if model_type == "market_specific":
     st.markdown("---")
-    st.info(
-        "Shapley attribution isn't available yet for market-specific models - it's built around a "
-        "single shared curve per channel and would misread a market-specific fit. This is planned "
-        "for a later phase (see docs/curve_bank.md). In the meantime, explore each market's own "
-        "channel curves below - and you can still save market-specific curves to the curve bank "
-        "further down this page."
+    with st.spinner("Computing market-aware Shapley contributions..."):
+        ms_contributions = compute_shapley_contributions_market_specific(frame, meta, params, n_permutations=100)
+
+    st.markdown("### Total contribution by channel")
+    dna_kit_segments_in_fit = [s for s in meta.direct_dna_segments if s != meta.dna_segment]
+    fh_segments_in_fit = [s for s in meta.segments if s not in dna_kit_segments_in_fit]
+    if dna_kit_segments_in_fit:
+        st.caption(
+            f"Total impact per channel across FH segments only ({', '.join(fh_segments_in_fit)}) - "
+            f"DNA-product segments ({', '.join(dna_kit_segments_in_fit)}) are excluded from this total "
+            "since a kit-sale count and a GSA count aren't the same unit; see their own rows in the "
+            "market x segment x channel detail below."
+        )
+    else:
+        st.caption("Total impact per channel across all markets and segments, plus LTV-weighted value.")
+    by_market_total = st.checkbox("Break totals out by market", value=False)
+    ms_total_df = total_contribution_market_specific(
+        frame, meta, params, ms_contributions, ltv, segments=fh_segments_in_fit, by_market=by_market_total,
+    )
+    st.dataframe(ms_total_df, width="stretch", column_config=dataframe_column_config(ms_total_df))
+
+    st.markdown("---")
+    st.markdown("### Market x segment x channel detail")
+    ms_seg_df = segment_channel_market_summary(frame, meta, params, ms_contributions, ltv)
+    st.dataframe(ms_seg_df, width="stretch", column_config=dataframe_column_config(ms_seg_df))
+
+    st.markdown("---")
+    st.markdown("### Contribution waterfall")
+    c1, c2 = st.columns(2)
+    waterfall_market = c1.selectbox("Market", meta.markets, key="ms_waterfall_market")
+    waterfall_scope = c2.selectbox("Scope", ["Total FH"] + meta.segments, key="ms_waterfall_scope")
+    segment_arg = None if waterfall_scope == "Total FH" else waterfall_scope
+    market_row_mask = ms_contributions["market_idx"] == meta.markets.index(waterfall_market)
+    market_contributions = {
+        "baseline": ms_contributions["baseline"][market_row_mask],
+        "channel_contributions": {ch: arr[market_row_mask] for ch, arr in ms_contributions["channel_contributions"].items()},
+        "mu_total": ms_contributions["mu_total"][market_row_mask],
+    }
+    # `contributions` is always given below, so `frame` is unused by
+    # contribution_waterfall in that path - passed only to satisfy its signature.
+    waterfall_df = contribution_waterfall(frame, meta, params, segment=segment_arg, contributions=market_contributions)
+    st.plotly_chart(
+        create_waterfall_chart(
+            waterfall_df["category"].tolist(), waterfall_df["value"].tolist(),
+            title=f"{waterfall_market} - {waterfall_scope} contribution waterfall",
+        ),
+        width="stretch",
     )
 
+    st.markdown("---")
     st.markdown("### Market-specific channel curve viewer")
     st.caption(
         "Spend -> incremental response for one market and channel, per segment and overall "
-        "(overall = sum of segment responses). Point estimates only (posterior means) - "
-        "credible intervals are also a later-phase addition."
+        "(overall = sum of segment responses)."
     )
     c1, c2 = st.columns(2)
     viewer_market = c1.selectbox("Market", meta.markets)
     viewer_channel = c2.selectbox("Channel", meta.channels)
 
-    curve_df = generate_market_channel_curve(viewer_market, viewer_channel, meta, params)
-    _render_curve_with_cpa(curve_df, f"{viewer_market} - {viewer_channel}")
-    st.dataframe(curve_df, width="stretch", column_config=dataframe_column_config(curve_df))
+    show_uncertainty = st.checkbox(
+        "Show posterior uncertainty band (re-runs the curve once per sampled draw - slower)",
+        value=False, key="ms_curve_uncertainty",
+    )
+    if show_uncertainty:
+        n_draws = st.slider("Posterior draws to sample", 20, 200, 50, step=10, key="ms_curve_n_draws")
+        with st.spinner(f"Computing curve uncertainty from {n_draws} posterior draws..."):
+            band_df = generate_market_channel_curve_with_uncertainty(
+                viewer_market, viewer_channel, meta, trace, n_draws=n_draws,
+            )
+        st.plotly_chart(
+            create_response_curve_with_band(
+                band_df["spend"].to_numpy(), band_df["overall_response_mean"].to_numpy(),
+                band_df["overall_response_lower"].to_numpy(), band_df["overall_response_upper"].to_numpy(),
+                f"{viewer_market} - {viewer_channel}",
+            ),
+            width="stretch",
+        )
+        st.caption(
+            f"Shaded band = 90% credible interval across {n_draws} sampled posterior draws "
+            "(docs/decision_log.md) - a subsample of the full posterior for speed, not the full "
+            "posterior itself."
+        )
+        st.dataframe(band_df, width="stretch", column_config=dataframe_column_config(band_df))
+        curve_df = generate_market_channel_curve(viewer_market, viewer_channel, meta, params)
+    else:
+        curve_df = generate_market_channel_curve(viewer_market, viewer_channel, meta, params)
+        _render_curve_with_cpa(curve_df, f"{viewer_market} - {viewer_channel}")
+        st.dataframe(curve_df, width="stretch", column_config=dataframe_column_config(curve_df))
 
     st.markdown("---")
     st.markdown("### Media units & inflation")
@@ -183,8 +254,18 @@ else:
         contributions = compute_shapley_contributions(frame, meta, params, n_permutations=100)
 
     st.markdown("### Total-FH contribution by channel")
-    st.caption("Total impact per channel across all segments, plus which segment that impact falls into and LTV-weighted value.")
-    total_df = total_fh_contribution(frame, meta, params, contributions, ltv)
+    dna_kit_segments_in_fit = [s for s in meta.direct_dna_segments if s != meta.dna_segment]
+    fh_segments_in_fit = [s for s in meta.segments if s not in dna_kit_segments_in_fit]
+    if dna_kit_segments_in_fit:
+        st.caption(
+            f"Total impact per FH channel across FH segments only ({', '.join(fh_segments_in_fit)}) - "
+            f"DNA-product segments ({', '.join(dna_kit_segments_in_fit)}) are excluded from this total "
+            "since a kit-sale count and a GSA count aren't the same unit; see their own rows in the "
+            "segment x channel detail below."
+        )
+    else:
+        st.caption("Total impact per channel across all segments, plus which segment that impact falls into and LTV-weighted value.")
+    total_df = total_fh_contribution(frame, meta, params, contributions, ltv, segments=fh_segments_in_fit)
     st.dataframe(total_df, width="stretch", column_config=dataframe_column_config(total_df))
 
     st.markdown("---")
@@ -207,12 +288,37 @@ else:
     st.caption(
         "Spend -> incremental response for one channel, per segment and overall (overall = sum of "
         "segment responses) - the same curve every market uses, since it's shared across markets in "
-        "this model structure. Point estimates only (posterior means)."
+        "this model structure."
     )
     viewer_channel = st.selectbox("Channel", meta.channels)
-    curve_df = generate_channel_curve(viewer_channel, meta, params)
-    _render_curve_with_cpa(curve_df, viewer_channel)
-    st.dataframe(curve_df, width="stretch", column_config=dataframe_column_config(curve_df))
+
+    show_uncertainty = st.checkbox(
+        "Show posterior uncertainty band (re-runs the curve once per sampled draw - slower)",
+        value=False, key="shared_curve_uncertainty",
+    )
+    if show_uncertainty:
+        n_draws = st.slider("Posterior draws to sample", 20, 200, 50, step=10, key="shared_curve_n_draws")
+        with st.spinner(f"Computing curve uncertainty from {n_draws} posterior draws..."):
+            band_df = generate_channel_curve_with_uncertainty(viewer_channel, meta, trace, n_draws=n_draws)
+        st.plotly_chart(
+            create_response_curve_with_band(
+                band_df["spend"].to_numpy(), band_df["overall_response_mean"].to_numpy(),
+                band_df["overall_response_lower"].to_numpy(), band_df["overall_response_upper"].to_numpy(),
+                viewer_channel,
+            ),
+            width="stretch",
+        )
+        st.caption(
+            f"Shaded band = 90% credible interval across {n_draws} sampled posterior draws "
+            "(docs/decision_log.md) - a subsample of the full posterior for speed, not the full "
+            "posterior itself."
+        )
+        st.dataframe(band_df, width="stretch", column_config=dataframe_column_config(band_df))
+        curve_df = generate_channel_curve(viewer_channel, meta, params)
+    else:
+        curve_df = generate_channel_curve(viewer_channel, meta, params)
+        _render_curve_with_cpa(curve_df, viewer_channel)
+        st.dataframe(curve_df, width="stretch", column_config=dataframe_column_config(curve_df))
 
     st.markdown("---")
     st.markdown("### Media units & inflation")

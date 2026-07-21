@@ -213,6 +213,63 @@ def create_response_curve(
     return fig
 
 
+def create_response_curve_with_band(
+    x_values: np.ndarray,
+    mean_values: np.ndarray,
+    lower_values: np.ndarray,
+    upper_values: np.ndarray,
+    channel_name: str,
+    current_spend: Optional[float] = None,
+    height: int = 320,
+) -> go.Figure:
+    """Response curve with a shaded credible-interval band around the mean -
+    the per-draw uncertainty equivalent of create_response_curve
+    (core.uncertainty's generate_channel_curve_with_uncertainty /
+    generate_market_channel_curve_with_uncertainty)."""
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=np.concatenate([x_values, x_values[::-1]]),
+        y=np.concatenate([upper_values, lower_values[::-1]]),
+        fill='toself',
+        fillcolor='rgba(99, 179, 138, 0.2)',
+        line=dict(color='rgba(0,0,0,0)'),
+        hoverinfo='skip',
+        name='Credible interval',
+        showlegend=True,
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=x_values,
+        y=mean_values,
+        mode='lines',
+        line=dict(color=CHART_COLORS['primary'], width=2),
+        name='Mean response',
+    ))
+
+    if current_spend is not None:
+        idx = np.argmin(np.abs(x_values - current_spend))
+        fig.add_trace(go.Scatter(
+            x=[current_spend],
+            y=[mean_values[idx]],
+            mode='markers',
+            marker=dict(color=CHART_COLORS['warning'], size=10),
+            name='Current',
+        ))
+
+    fig.update_layout(
+        template="plotly_dark",
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        title=f"{channel_name} Response Curve (with uncertainty)",
+        xaxis_title="Spend",
+        yaxis_title="Response",
+        height=height,
+    )
+
+    return fig
+
+
 def create_waterfall_chart(
     categories: List[str],
     values: List[float],
