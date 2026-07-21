@@ -598,3 +598,42 @@ invalidated by upgrading, which is correct: those approvals were never actually 
 transformation recipe or media-unit/currency config they should have been.
 **Owner:** Engineering.
 **Status:** Accepted; implemented in PR1 (correctness and consistency pass).
+
+---
+
+**Date:** 2026-07-21
+**Decision:** Add `core.outcomes.OutcomeDefinition` as an additive outcome catalogue (product,
+segment, metric, column, value weight) layered on top of `ModelSpec`, rather than folding DNA
+outcomes into `ModelSpec.segment_outcomes` or replacing that field.
+**Reason:** `ModelSpec.segment_outcomes` means exactly one thing today - the Family History segments
+the joint hierarchical model actually fits - and every existing call site (`core.hierarchical_model`,
+`core.market_specific_model`, `core.predict`, `core.attribution`, the curve bank, the scenario
+planner, the fingerprint) depends on that exact meaning. DNA kit purchases are a genuinely different
+business outcome (a product sale, not an FH signup) with no response equations yet - building those
+equations is later, separate work. Changing what `segment_outcomes` means, or silently expanding it
+to include non-FH columns, would either break every one of those call sites or require them to start
+guessing which entries are "real" FH segments. A separate, additive catalogue avoids both: `ModelSpec`
+and the fitted model are completely unchanged, and the catalogue can describe DNA outcomes as captured
+data without any of them being mistaken for something the model is already using.
+**Alternatives considered:** Adding DNA columns directly into `segment_outcomes` with a naming
+convention to distinguish them (rejected - every consumer of `segment_outcomes` would need new logic
+to filter them back out, and a naming convention is exactly the kind of implicit, easy-to-violate
+contract this schema exists to avoid). Waiting until DNA response equations exist before capturing any
+DNA outcome data at all (rejected - the redesign brief explicitly wants outcome definitions and DNA
+data support as their own, separately reviewable unit of work before the modelling equations land, so
+data capture doesn't sit blocked behind a much larger change).
+**Impact:** `core.outcomes` (new module): `OutcomeDefinition`, `fh_outcomes_from_spec` (backward-
+compatible derivation from any `ModelSpec`), `dna_outcomes_from_columns` (split New Customer/Existing
+FH Customer, or an explicit combined fallback), `resolve_outcome_definitions` (the single read path
+every caller uses), `outcome_is_modelled`/`outcomes_to_dataframe`. New "DNA outcomes" section on
+Structure: Segments & Markets. New `config/outcome_definitions.json` in the project bundle (absent =
+legacy bundle, not an error - same convention as `market_spec_config.json`). New "Outcomes" section in
+the project report. **Deliberately not** added to `core.fingerprint.fingerprint_model_spec`'s payload
+- nothing in it feeds a calculation yet, so mapping or editing a DNA outcome must not invalidate an
+existing model approval (same descriptive/model-relevant boundary principle as market descriptors).
+Incidental fix while extending `pages/09_Project_Export.py`'s export/import wiring: `model_type` was
+never actually passed to `export_project`, so every exported Model C bundle silently re-imported as
+Model A - now fixed and covered by a regression test (`test_export_then_import_reproduces_model_type`).
+**Owner:** Engineering.
+**Status:** Accepted; implemented in PR2 (general outcome schema and DNA data support). See
+`docs/outcomes.md` for the full design record.

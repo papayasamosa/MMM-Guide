@@ -7,9 +7,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import streamlit as st
 
-from ancestry_mmm.utils import init_session_state, get_state, set_state, clear_model_state, readable_label, FIELD_HELP
+from ancestry_mmm.utils import init_session_state, get_state, set_state, clear_model_state, readable_label, FIELD_HELP, dataframe_column_config
 from ancestry_mmm.components import apply_theme, render_sidebar, render_page_header, render_next_step, render_empty_state
 from ancestry_mmm.core.schema import ModelSpec, DEFAULT_SEGMENTS
+from ancestry_mmm.core.outcomes import (
+    fh_outcomes_from_spec, dna_outcomes_from_columns, validate_outcome_definitions, outcomes_to_dataframe,
+)
 from ancestry_mmm.data import validate_modeling_frame, detect_column_types
 
 st.set_page_config(page_title="Structure - Ancestry FH MMM", page_icon="🧬", layout="wide")
@@ -82,7 +85,9 @@ spend_hint_cols = [c for c in numeric_cols if c not in segment_outcomes.values()
 # price, or index/confidence-style control - channel names rarely contain the
 # literal words "spend"/"cost"/"budget" (e.g. "TV_Brand", "Search_NonBrand"),
 # so a strict keyword match against potential_media would under-select badly.
-_non_channel_hints = ["promo", "price", "confidence", "discount", "offer", "index"]
+# "kit" excludes DNA kit purchase outcome columns (core.outcomes) - they're
+# numeric like a spend column but are an outcome, not media spend.
+_non_channel_hints = ["promo", "price", "confidence", "discount", "offer", "index", "kit"]
 default_channels = [c for c in spend_hint_cols if not any(h in c.lower() for h in _non_channel_hints)]
 channels = st.multiselect("Channel spend columns *", spend_hint_cols, default=default_channels or spend_hint_cols, format_func=readable_label)
 dna_channels = st.multiselect(
@@ -130,6 +135,38 @@ for seg in segment_outcomes:
     segment_ltv[seg] = st.number_input(f"LTV for '{seg}'", min_value=0.0, value=float(default_val), key=f"ltv_{seg}")
 
 st.markdown("---")
+st.markdown("### DNA outcomes (optional)")
+st.info(
+    "DNA kit purchases are a separate business outcome from the FH DNA-cross-sell signup GSA above "
+    "- map them here so they're captured and persisted. **Not yet modelled**: DNA outcomes are "
+    "data capture only until a later phase builds the DNA response equations - skip this if you "
+    "don't have the columns yet."
+)
+dna_mode = st.radio(
+    "Data available for DNA kit purchases",
+    ["None yet", "Separate New Customer / Existing FH Customer columns", "Single combined column"],
+    horizontal=True,
+)
+dna_new_col = dna_existing_col = dna_combined_col = None
+dna_new_weight = dna_existing_weight = dna_combined_weight = None
+if dna_mode == "Separate New Customer / Existing FH Customer columns":
+    c1, c2 = st.columns(2)
+    dna_new_col = c1.selectbox("New Customer DNA kit column", ["(none)"] + numeric_cols, format_func=lambda c: c if c == "(none)" else readable_label(c))
+    dna_new_col = None if dna_new_col == "(none)" else dna_new_col
+    dna_new_weight = c1.number_input("Value per kit (New Customer)", min_value=0.0, value=90.0)
+    dna_existing_col = c2.selectbox("Existing FH Customer DNA kit column", ["(none)"] + numeric_cols, format_func=lambda c: c if c == "(none)" else readable_label(c))
+    dna_existing_col = None if dna_existing_col == "(none)" else dna_existing_col
+    dna_existing_weight = c2.number_input("Value per kit (Existing FH Customer)", min_value=0.0, value=65.0)
+elif dna_mode == "Single combined column":
+    dna_combined_col = st.selectbox("Combined DNA kit column", ["(none)"] + numeric_cols, format_func=lambda c: c if c == "(none)" else readable_label(c))
+    dna_combined_col = None if dna_combined_col == "(none)" else dna_combined_col
+    dna_combined_weight = st.number_input("Value per kit (combined)", min_value=0.0, value=80.0)
+    st.caption(
+        "A single combined outcome is an explicit fallback for data that can't support the "
+        "New/Existing split - it will be labelled as such wherever outcomes are shown."
+    )
+
+st.markdown("---")
 if st.button("Save structure and validate", type="primary"):
     spec = ModelSpec(
         date_col=date_col,
@@ -145,11 +182,19 @@ if st.button("Save structure and validate", type="primary"):
         segment_ltv=segment_ltv,
     )
     errors = spec.validate()
+
+    outcome_definitions = fh_outcomes_from_spec(segment_outcomes, segment_ltv) + dna_outcomes_from_columns(
+        new_customer_column=dna_new_col, existing_fh_column=dna_existing_col, combined_column=dna_combined_col,
+        value_weight_new=dna_new_weight, value_weight_existing=dna_existing_weight, value_weight_combined=dna_combined_weight,
+    )
+    errors += validate_outcome_definitions(outcome_definitions)
+
     if errors:
         for e in errors:
             st.error(e)
     else:
         set_state("model_spec", spec.to_dict())
+        set_state("outcome_definitions", [o.to_dict() for o in outcome_definitions])
         clear_model_state()
         issues = validate_modeling_frame(
             df if market_col in df.columns else df.assign(**{market_col: "default"}),
@@ -163,6 +208,11 @@ if st.button("Save structure and validate", type="primary"):
                 (st.warning if issue["level"] == "warning" else st.error)(issue["message"])
         else:
             st.info("No validation issues flagged.")
+
+        st.markdown("#### Outcome catalogue")
+        st.caption("Every outcome captured for this project - `modelled_today = False` means captured/persisted only, not yet fed into a fitted model.")
+        outcomes_df = outcomes_to_dataframe(outcome_definitions)
+        st.dataframe(outcomes_df, width="stretch", column_config=dataframe_column_config(outcomes_df))
 
 if get_state("model_spec"):
     render_next_step("structure")
