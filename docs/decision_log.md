@@ -508,3 +508,50 @@ per-column unit label (`dataframe_column_config`'s `label_overrides`) so a mixed
 ambiguous about which column is in which unit.
 **Owner:** Engineering.
 **Status:** Accepted; implemented in Phase 3c.
+
+---
+
+**Date:** 2026-07-21
+**Decision:** Build the Phase 4 project report (`core.report`) from the project's *actual current
+session/persisted state* (spec, scorecard, approval, curve bank entries, scenarios,
+`market_spec_config`) rather than by copying or templating the static `docs/*.md` files.
+**Reason:** The redesign brief's own requirement is a *reproducible* report - one that reflects what
+this specific project actually did, not a generic description of what the tool is capable of. A
+report built from static docs would say the same thing regardless of whether a model had even been
+fit yet; a report built from live state can honestly say "no scorecard has been computed yet" versus
+showing real convergence numbers, and updates automatically as the project progresses without anyone
+having to remember to edit a template.
+**Alternatives considered:** Rendering the `docs/` directory itself (or a curated subset of it) as
+the "report" (rejected - conflates the tool's general design documentation with a specific project
+run's actual results; the two audiences and purposes are different, even though the report does
+point back to `docs/decision_log.md` and related files for anyone who wants the full design
+rationale behind what they're looking at).
+**Impact:** `core.report.build_report_sections` takes the same kind of artefacts
+`core.persistence.export_project` already exports (not a copy of the docs directory); every section
+is independently missing-safe, since a report can legitimately be generated at any point in the
+12-step workflow, not only once every step is complete.
+**Owner:** Product/Engineering.
+**Status:** Accepted; implemented in Phase 4.
+
+---
+
+**Date:** 2026-07-21
+**Decision:** `core.report` renders both Markdown and HTML from one shared, structured
+`List[ReportSection]` data model, rather than generating Markdown and parsing it into HTML (or vice
+versa) with a template/parsing library.
+**Reason:** A shared data model guarantees the two output formats can never drift apart in content -
+whatever appears in one appears in the other, by construction, since both renderers read the exact
+same section objects. Parsing Markdown into HTML (or the reverse) would need a Markdown parser
+dependency this project doesn't otherwise have, for content this module already controls the exact
+structure of - there's no need to round-trip through a text format only to reparse it.
+**Alternatives considered:** Adding a Markdown-to-HTML library dependency (rejected - unnecessary new
+dependency for a small, fully-known set of report constructs (headings, paragraphs, bullet lists,
+tables) that a dozen lines of direct rendering code covers without needing a general-purpose parser).
+Generating only one format and converting to the other in the UI layer (rejected - couples
+`core.report` to a specific conversion library choice made by whichever page calls it, when the
+module can just own both renderers itself).
+**Impact:** `core.report.ReportSection`, `render_markdown`, `render_html`. HTML output is escaped via
+Python's stdlib `html.escape` (project name and every paragraph/bullet/table cell) - untrusted
+project names or notes text cannot inject markup into the generated document.
+**Owner:** Engineering.
+**Status:** Accepted; implemented in Phase 4.

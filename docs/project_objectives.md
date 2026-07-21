@@ -81,5 +81,7 @@ alone with no support.
   (Phase 3b, `core.media_units`).
 - Constrained and unconstrained scenario comparisons, market-aware (Phase 3c: the planner requires a
   market selection and, for a market-specific fit, uses that market's own curve).
-- A reproducible project report (Markdown + HTML, Phase 4) covering objective, data, model,
-  diagnostics, curves, scenarios, limitations and the decision log in one document.
+- A reproducible project report (Markdown + HTML, Phase 4, `core.report`) covering objective, data,
+  model, diagnostics, curve bank, scenarios, known limitations and a decision-log pointer, built
+  from the project's actual current state and available at any point in the workflow -
+  Project Export & Handover.

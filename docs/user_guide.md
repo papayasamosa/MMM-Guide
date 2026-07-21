@@ -98,7 +98,10 @@ not a recommended plan.
 
 Build a downloadable project bundle (Parquet + JSON + NetCDF - all open formats) so your work is
 never only sitting in a browser session. Import a previous bundle to pick up where you left off.
-Build an Excel summary of curves and contributions for handover.
+Build an Excel summary of curves and contributions for handover, or a reproducible project report
+(Markdown + HTML) covering objective, data, model, diagnostics, curve bank, scenarios, and known
+limitations in one document - available at any point in the workflow, not only once every step is
+complete.
 
 ## What's coming next
 
