@@ -297,10 +297,25 @@ def generate_channel_curve(
     overall - the Model A ("shared curve") equivalent of
     core.market_specific_predict.generate_market_channel_curve, kept
     symmetric with it (same column shape: spend, saturation,
-    {segment}_response..., overall_response) so downstream consumers -
-    core.media_units's CPA/media-unit calculations, the curve bank - can
-    work on either model type's curve without branching on which one
-    produced it.
+    {segment}_response..., overall_response, fh_response, dna_response) so
+    downstream consumers - core.media_units's CPA/media-unit calculations,
+    the curve bank - can work on either model type's curve without
+    branching on which one produced it.
+
+    `fh_response`/`dna_response` split `overall_response` by product
+    (docs/dna_fh_causal_structure.md's "never sum kits and GSAs as one
+    volume") - `dna_response` is the sum over `meta.kit_only_segments`
+    (DNA-product kit-sale segments, which is exactly the set of segments
+    with `product == DNA` in the outcome catalogue - see
+    `FHModelMeta.kit_only_segments`'s docstring), `fh_response` is every
+    other segment (every Family History segment, including the FH
+    DNA-cross-sell segment - its response is a GSA count, not a kit count,
+    even though DNA media drives it). `overall_response` remains their sum,
+    unchanged in value - it is not removed, since plenty of existing
+    callers (and the curve bank) still want "this channel's total modelled
+    response" as one number when a project has no DNA-kit segments at all
+    (the overwhelming majority of curves, where `dna_response` is
+    identically zero and `overall_response == fh_response`).
 
     Steady-state approximation (see module docstring): channels don't
     interact in this model's linear predictor, so a channel's own curve
@@ -325,6 +340,7 @@ def generate_channel_curve(
         sat = float(hill_function(np.array([float(spend)]), K, S)[0])
         row = {"channel": channel, "spend": float(spend), "saturation": sat}
         overall = 0.0
+        dna_total = 0.0
         for seg in meta.segments:
             beta_val = params.beta[seg][channel]
             if is_dna:
@@ -338,7 +354,11 @@ def generate_channel_curve(
             value = beta_val * sat
             row[f"{seg}_response"] = value
             overall += value
+            if seg in meta.kit_only_segments:
+                dna_total += value
         row["overall_response"] = overall
+        row["dna_response"] = dna_total
+        row["fh_response"] = overall - dna_total
         rows.append(row)
 
     return pd.DataFrame(rows)

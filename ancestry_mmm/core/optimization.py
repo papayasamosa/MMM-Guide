@@ -88,11 +88,29 @@ def evaluate_scenario(
     Predicted monthly outcomes for a spend plan: {month_label: {channel: spend}}.
 
     Returns one row per (month, segment) with predicted GSAs (weekly steady-
-    state rate x weeks/month), LTV-weighted value if `ltv` is given, and
-    `avg_cpa` (that month's total spend / total predicted GSAs across every
-    segment - `None` where total predicted GSAs is zero or negative, same
-    "never compute CPA on a non-positive base" rule as
-    core.media_units.compute_cpa).
+    state rate x weeks/month) and LTV-weighted value if `ltv` is given.
+
+    Product-aware, same denominator discipline as
+    core.media_units.compute_cpa_by_product: `meta.kit_only_segments` are
+    DNA kit sales, every other segment (including `dna_segment`, the FH
+    DNA-cross-sell segment) is a Family History GSA - see
+    docs/dna_fh_causal_structure.md. Each row repeats these month-level
+    totals (same "duplicated scalar per segment row" shape `total_spend`
+    already used):
+
+    - `fh_gsa` / `dna_kits`: that month's total predicted GSAs / DNA kits,
+      each summed only over its own product's segments - never combined.
+    - `avg_cpa`: `total_spend / fh_gsa` (`None` where `fh_gsa` is zero or
+      negative, same "never compute CPA on a non-positive base" rule as
+      core.media_units.compute_cpa). Family-History-scoped - this replaces
+      the previous behaviour, which divided total spend by predicted GSAs
+      summed across *every* segment including DNA kit segments, silently
+      mixing two different units into one CPA number.
+    - `dna_avg_cpa`: `total_spend / dna_kits`, `None` where `dna_kits` is
+      zero/negative or the model has no DNA-kit segments at all.
+    - `total_value`: that month's LTV-weighted value summed across every
+      segment (safe to combine across products - LTV already expresses
+      both in the same currency unit, unlike a raw GSA/kit count).
 
     `model_type` selects which model's steady-state response function
     drives the evaluation - `"shared"` (Model A, default) or
@@ -116,17 +134,24 @@ def evaluate_scenario(
         ref = reference_context_by_month.get(month, {})
         weekly_rate = response_fn(market, spend_by_channel, meta, params, ref)
         total_spend = sum(spend_by_channel.values())
-        total_monthly_gsa = sum(weekly_rate.values()) * WEEKS_PER_MONTH
-        avg_cpa = (total_spend / total_monthly_gsa) if total_monthly_gsa > 0 else None
-        for seg, rate in weekly_rate.items():
-            monthly_gsa = rate * WEEKS_PER_MONTH
+        monthly_gsa_by_seg = {seg: rate * WEEKS_PER_MONTH for seg, rate in weekly_rate.items()}
+        dna_kits = sum(v for seg, v in monthly_gsa_by_seg.items() if seg in meta.kit_only_segments)
+        fh_gsa = sum(v for seg, v in monthly_gsa_by_seg.items() if seg not in meta.kit_only_segments)
+        avg_cpa = (total_spend / fh_gsa) if fh_gsa > 0 else None
+        dna_avg_cpa = (total_spend / dna_kits) if dna_kits > 0 else None
+        total_value = sum(v * ltv.get(seg, 1.0) for seg, v in monthly_gsa_by_seg.items())
+        for seg, monthly_gsa in monthly_gsa_by_seg.items():
             rows.append({
                 "month": month,
                 "segment": seg,
                 "predicted_gsa": monthly_gsa,
                 "value": monthly_gsa * ltv.get(seg, 1.0),
                 "total_spend": total_spend,
+                "fh_gsa": fh_gsa,
+                "dna_kits": dna_kits,
                 "avg_cpa": avg_cpa,
+                "dna_avg_cpa": dna_avg_cpa,
+                "total_value": total_value,
             })
     return pd.DataFrame(rows)
 
@@ -249,14 +274,69 @@ def build_bounds_and_constraints(
 # Optimiser
 # ---------------------------------------------------------------------------
 
+VALID_OBJECTIVES = ("fh_gsa", "dna_kits", "weighted_mix", "expected_value")
+
+
+def _objective_weight(
+    objective: str,
+    meta: FHModelMeta,
+    ltv: Optional[Dict[str, float]],
+    target_segments: Optional[List[str]],
+    weights: Optional[Dict[str, float]],
+) -> Dict[str, float]:
+    """
+    Per-segment weight for the optimiser's scalar objective - the
+    instruction document's "optimisation objectives must be explicit" /
+    "block generic raw-volume optimisation when mixed metric types are
+    present" requirement. `objective` must be one of VALID_OBJECTIVES:
+    there is no "maximise everything, whatever unit it's in" option, and a
+    segment outside the objective's scope gets weight 0 (excluded), never
+    an implicit 1 (silently counted as if it were the same unit as
+    everything else - the confirmed defect this replaces).
+
+    - `"fh_gsa"`: Family History GSAs - every segment except
+      `meta.kit_only_segments`, or just `target_segments` if given (e.g. a
+      single FH segment - "maximise FH New").
+    - `"dna_kits"`: DNA kit sales - `meta.kit_only_segments`, or just
+      `target_segments` if given. Raises if the model has none.
+    - `"weighted_mix"`: an analyst-supplied per-segment `weights` dict -
+      required explicitly; there is no default mix to fall back to.
+    - `"expected_value"`: LTV-weighted total value across every segment -
+      requires `ltv` (this is exactly what `ltv` is for).
+    """
+    if objective not in VALID_OBJECTIVES:
+        raise ValueError(
+            f"objective must be one of {VALID_OBJECTIVES}, got {objective!r}. Generic unlabelled "
+            "volume optimisation is not supported here - it would silently combine Family History "
+            "GSAs and DNA kit sales into one meaningless total."
+        )
+    if objective == "fh_gsa":
+        eligible = set(target_segments) if target_segments else (set(meta.segments) - set(meta.kit_only_segments))
+        return {s: 1.0 for s in eligible}
+    if objective == "dna_kits":
+        eligible = set(target_segments) if target_segments else set(meta.kit_only_segments)
+        if not eligible:
+            raise ValueError("objective='dna_kits' but this model has no DNA-kit segments (meta.kit_only_segments is empty).")
+        return {s: 1.0 for s in eligible}
+    if objective == "weighted_mix":
+        if not weights:
+            raise ValueError("objective='weighted_mix' requires an explicit weights={segment: weight} dict - there is no default mix.")
+        return weights
+    if not ltv:
+        raise ValueError("objective='expected_value' requires ltv={segment: value} - it is the LTV-weighted total across every segment.")
+    return ltv
+
+
 def _objective_factory(
     months: List[str], channels: List[str], market: str,
     meta: FHModelMeta, params: AnyPosteriorParams,
     reference_context_by_month: Dict[str, dict],
     ltv: Optional[Dict[str, float]], objective: str,
     model_type: str = "shared",
+    target_segments: Optional[List[str]] = None,
+    weights: Optional[Dict[str, float]] = None,
 ):
-    weight = ltv if objective == "value" and ltv else {s: 1.0 for s in meta.segments}
+    weight = _objective_weight(objective, meta, ltv, target_segments, weights)
     response_fn = _steady_state_response_fn(model_type)
 
     def neg_total(x: np.ndarray) -> float:
@@ -266,7 +346,7 @@ def _objective_factory(
             ref = reference_context_by_month.get(m, {})
             rates = response_fn(market, spend_plan[m], meta, params, ref)
             for seg, rate in rates.items():
-                total += rate * WEEKS_PER_MONTH * weight.get(seg, 1.0)
+                total += rate * WEEKS_PER_MONTH * weight.get(seg, 0.0)
         return -total
 
     return neg_total
@@ -281,12 +361,14 @@ def optimize_scenario(
     params: AnyPosteriorParams,
     reference_context_by_month: Dict[str, dict],
     ltv: Optional[Dict[str, float]] = None,
-    objective: str = "value",
+    objective: str = "fh_gsa",
     constraints: Optional[List[SpendConstraint]] = None,
     conserve_total_budget: bool = True,
     max_iter: int = 200,
     *,
     model_type: str = "shared",
+    target_segments: Optional[List[str]] = None,
+    weights: Optional[Dict[str, float]] = None,
     approval: ModelApproval,
     model_run_id: str,
     data_fingerprint: str,
@@ -300,6 +382,13 @@ def optimize_scenario(
     comparison point, not a recommended plan. Pass `constraints` for the
     constrained-planning mode analysts will actually use.
 
+    `objective` must be one of `VALID_OBJECTIVES` - see `_objective_weight`'s
+    docstring for what each one maximises and what `target_segments`/
+    `weights` do. There is deliberately no generic "maximise volume"
+    objective (the instruction document's audit-confirmed defect this
+    replaces): every objective states exactly what it sums, and a segment
+    outside its scope contributes 0, never an implicit 1.
+
     `model_type` selects which model's steady-state response function drives
     optimisation and evaluation - `"shared"` (Model A, default) or
     `"market_specific"` (Model C) - see module docstring.
@@ -307,7 +396,9 @@ def optimize_scenario(
     Raises ApprovalMismatchError unless `approval` matches the current model
     run identity - checked up front, before running the (potentially slow)
     SLSQP optimisation, not just when the final predicted outcomes are
-    computed via evaluate_scenario below.
+    computed via evaluate_scenario below. Raises ValueError up front too if
+    `objective` (plus `target_segments`/`weights`/`ltv`) isn't resolvable -
+    same "fail before the slow optimisation runs" reasoning.
     """
     require_matching_approval(
         approval,
@@ -327,6 +418,7 @@ def optimize_scenario(
 
     objective_fn = _objective_factory(
         months, channels, market, meta, params, reference_context_by_month, ltv, objective, model_type,
+        target_segments=target_segments, weights=weights,
     )
 
     result = minimize(
@@ -346,6 +438,12 @@ def optimize_scenario(
     predicted = evaluate_scenario(optimized_plan, market, meta, params, reference_context_by_month, ltv, **identity_kwargs)
     current_predicted = evaluate_scenario(current_spend_plan, market, meta, params, reference_context_by_month, ltv, **identity_kwargs)
 
+    # Evaluated via the same objective_fn used for optimisation (not
+    # re-derived from the predicted DataFrames) so "current" and "optimised"
+    # totals are guaranteed to use the identical weighting - no risk of the
+    # two diverging from a second, hand-written copy of the eligibility logic.
+    current_objective_value = -float(objective_fn(current_spend))
+
     return {
         "success": bool(result.success),
         "message": str(result.message),
@@ -353,7 +451,7 @@ def optimize_scenario(
         "predicted": predicted,
         "current_predicted": current_predicted,
         "objective_value": -float(result.fun),
-        "current_objective_value": float(current_predicted["value"].sum() if objective == "value" else current_predicted["predicted_gsa"].sum()),
+        "current_objective_value": current_objective_value,
     }
 
 
@@ -378,17 +476,40 @@ def scenario_from_dict(d: dict) -> dict:
 
 
 def compare_scenarios(scenarios: List[Dict], predicted_key: str = "predicted") -> pd.DataFrame:
-    """Compare total predicted value/volume and spend across saved scenarios."""
+    """
+    Compare total predicted value/volume and spend across saved scenarios.
+
+    `total_value` is safe to sum directly from `pred["value"]` (genuinely
+    per-segment, not duplicated across rows) - LTV already expresses every
+    segment in the same currency unit. `total_gsa`, by contrast, would sum
+    Family History GSAs and DNA kit sales into one meaningless count if any
+    scenario has DNA-kit segments - split into `total_fh_gsa`/
+    `total_dna_kits` instead (never combined), same product-aware discipline
+    as core.optimization.evaluate_scenario. `fh_gsa`/`dna_kits` are
+    month-level totals *duplicated* across every segment row within a month
+    (see evaluate_scenario's docstring), so they're deduplicated by month
+    before summing across a scenario's months - directly summing them across
+    every row would overcount by the number of segments in each month.
+    """
     rows = []
     for s in scenarios:
         pred = s[predicted_key]
         total_spend = sum(sum(ch.values()) for ch in s["spend_plan"].values())
+        has_product_split = "fh_gsa" in pred.columns and "dna_kits" in pred.columns
+        if has_product_split:
+            by_month = pred.groupby("month")[["fh_gsa", "dna_kits"]].first()
+            total_fh_gsa = float(by_month["fh_gsa"].sum())
+            total_dna_kits = float(by_month["dna_kits"].sum())
+        else:
+            total_fh_gsa = float(pred["predicted_gsa"].sum())
+            total_dna_kits = 0.0
         rows.append({
             "scenario": s["name"],
             "market": s.get("market"),
             "total_spend": total_spend,
             "total_value": pred["value"].sum() if "value" in pred else np.nan,
-            "total_gsa": pred["predicted_gsa"].sum(),
+            "total_fh_gsa": total_fh_gsa,
+            "total_dna_kits": total_dna_kits,
         })
     return pd.DataFrame(rows)
 

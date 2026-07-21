@@ -107,6 +107,7 @@ if model_run_id and posterior_params is not None and model_spec_dict is not None
         "model_spec_fingerprint": fingerprint_model_spec(
             model_spec_dict, prior_config, dna_lag_weeks, model_type=model_type,
             pipeline_steps=get_state("pipeline_steps") or [], market_spec_config=get_state("market_spec_config"),
+            direct_dna_segments=meta.direct_dna_segments if meta is not None else None,
         ),
         "posterior_fingerprint": fingerprint_posterior(posterior_params),
     }

@@ -7,11 +7,14 @@ from ancestry_mmm.core.outcomes import (
     DNA_SEGMENT_EXISTING_FH,
     DNA_SEGMENT_NEW,
     FAMILY_HISTORY,
+    OUTCOME_STATUSES,
     OutcomeDefinition,
     dna_kit_outcome_columns,
     dna_outcomes_from_columns,
     fh_outcomes_from_spec,
-    outcome_is_modelled,
+    outcome_requires_opt_in,
+    outcome_status,
+    outcome_was_modelled,
     outcomes_to_dataframe,
     resolve_outcome_definitions,
     validate_outcome_definitions,
@@ -40,14 +43,79 @@ class TestOutcomeDefinitionRoundTrip:
         assert outcome.value_weight is None
 
 
-class TestOutcomeIsModelled:
-    def test_family_history_is_modelled_today(self):
+class TestOutcomeRequiresOptIn:
+    def test_family_history_does_not_require_opt_in(self):
         outcome = OutcomeDefinition(outcome_id="fh_new", product=FAMILY_HISTORY, segment="New", metric="GSA", column="c")
-        assert outcome_is_modelled(outcome) is True
+        assert outcome_requires_opt_in(outcome) is False
 
-    def test_dna_is_not_modelled_today(self):
+    def test_dna_requires_opt_in(self):
         outcome = OutcomeDefinition(outcome_id="dna_new_kit", product=DNA, segment=DNA_SEGMENT_NEW, metric="Kit sale", column="c")
-        assert outcome_is_modelled(outcome) is False
+        assert outcome_requires_opt_in(outcome) is True
+
+
+class TestOutcomeWasModelled:
+    def test_none_model_meta_is_always_false(self):
+        outcome = OutcomeDefinition(outcome_id="fh_new", product=FAMILY_HISTORY, segment="New", metric="GSA", column="c")
+        assert outcome_was_modelled(outcome, None) is False
+
+    def test_true_when_segment_is_in_the_fitted_models_segments(self):
+        outcome = OutcomeDefinition(outcome_id="dna_new_kit", product=DNA, segment=DNA_SEGMENT_NEW, metric="Kit sale", column="c")
+
+        class FakeMeta:
+            segments = [DNA_SEGMENT_NEW, "New"]
+
+        assert outcome_was_modelled(outcome, FakeMeta()) is True
+
+    def test_false_when_segment_is_not_in_the_fitted_models_segments(self):
+        outcome = OutcomeDefinition(outcome_id="dna_new_kit", product=DNA, segment=DNA_SEGMENT_NEW, metric="Kit sale", column="c")
+
+        class FakeMeta:
+            segments = ["New", "Winback"]
+
+        assert outcome_was_modelled(outcome, FakeMeta()) is False
+
+
+class TestOutcomeStatus:
+    def _outcome(self, column="kit_col"):
+        return OutcomeDefinition(outcome_id="dna_new_kit", product=DNA, segment=DNA_SEGMENT_NEW, metric="Kit sale", column=column)
+
+    def test_defaults_to_configured(self):
+        assert outcome_status(self._outcome()) == "Configured"
+
+    def test_excluded_takes_priority_over_configured(self):
+        assert outcome_status(self._outcome(), excluded=True) == "Excluded"
+
+    def test_missing_source_column_when_never_prepared_or_fit(self):
+        assert outcome_status(self._outcome(), available_columns={"other_col"}) == "Missing source column"
+
+    def test_included_in_prepared_frame(self):
+        assert outcome_status(self._outcome(), frame_segments=[DNA_SEGMENT_NEW]) == "Included in prepared frame"
+
+    def test_included_in_fitted_run_takes_priority_over_prepared_frame(self):
+        status = outcome_status(self._outcome(), frame_segments=[DNA_SEGMENT_NEW], model_meta_segments=[DNA_SEGMENT_NEW])
+        assert status == "Included in fitted run"
+
+    def test_stale_when_column_vanishes_after_being_prepared(self):
+        status = outcome_status(self._outcome(), available_columns={"other_col"}, frame_segments=[DNA_SEGMENT_NEW])
+        assert status == "Stale after configuration changes"
+
+    def test_stale_when_column_vanishes_after_being_fit(self):
+        status = outcome_status(
+            self._outcome(), available_columns={"other_col"},
+            frame_segments=[DNA_SEGMENT_NEW], model_meta_segments=[DNA_SEGMENT_NEW],
+        )
+        assert status == "Stale after configuration changes"
+
+    def test_every_returned_value_is_a_known_status(self):
+        cases = [
+            outcome_status(self._outcome()),
+            outcome_status(self._outcome(), excluded=True),
+            outcome_status(self._outcome(), available_columns={"other_col"}),
+            outcome_status(self._outcome(), frame_segments=[DNA_SEGMENT_NEW]),
+            outcome_status(self._outcome(), model_meta_segments=[DNA_SEGMENT_NEW]),
+        ]
+        for status in cases:
+            assert status in OUTCOME_STATUSES
 
 
 class TestFhOutcomesFromSpec:
@@ -199,16 +267,24 @@ class TestOutcomesToDataframe:
     def test_empty_list_gives_empty_dataframe_with_expected_columns(self):
         df = outcomes_to_dataframe([])
         assert df.empty
-        assert "modelled_today" in df.columns
+        assert "status" in df.columns
 
-    def test_has_one_row_per_outcome_with_modelled_today_column(self):
+    def test_has_one_row_per_outcome_with_status_column(self):
         outcomes = fh_outcomes_from_spec({"New": "GSA_New"}) + dna_outcomes_from_columns(new_customer_column="DNA_Kit_New")
         df = outcomes_to_dataframe(outcomes)
         assert len(df) == 2
         fh_row = df[df["product"] == FAMILY_HISTORY].iloc[0]
         dna_row = df[df["product"] == DNA].iloc[0]
-        assert fh_row["modelled_today"] == True  # noqa: E712
-        assert dna_row["modelled_today"] == False  # noqa: E712
+        # No frame/fit/exclusion context given - FH and DNA both just "Configured"
+        # (FH always would be "included" in practice, but with no frame/model_meta
+        # context passed there's nothing to distinguish that from "Configured" here).
+        assert fh_row["status"] == "Configured"
+        assert dna_row["status"] == "Configured"
+
+    def test_excluded_outcome_ids_marks_matching_rows_excluded(self):
+        outcomes = dna_outcomes_from_columns(new_customer_column="DNA_Kit_New")
+        df = outcomes_to_dataframe(outcomes, excluded_outcome_ids=["dna_new_kit"])
+        assert df.iloc[0]["status"] == "Excluded"
 
 
 class TestDnaKitOutcomeColumns:

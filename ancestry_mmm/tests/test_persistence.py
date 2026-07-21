@@ -403,7 +403,9 @@ def consistent_project(consistent_meta, consistent_trace):
         approved_by="Jane Analyst",
         model_run_id=model_run_id,
         data_fingerprint=fingerprint_dataframe(frame["df"]),
-        model_spec_fingerprint=fingerprint_model_spec(model_spec_dict, prior_config, dna_lag_weeks),
+        model_spec_fingerprint=fingerprint_model_spec(
+            model_spec_dict, prior_config, dna_lag_weeks, direct_dna_segments=consistent_meta.direct_dna_segments,
+        ),
         posterior_fingerprint=fingerprint_posterior(posterior_params),
     )
 
@@ -436,6 +438,73 @@ def test_reconstruct_model_state_rebuilds_frame_and_posterior_without_a_refit(tm
 
 def test_reconstruct_model_state_handles_missing_inputs_without_raising():
     assert reconstruct_model_state({}) == {"frame": None, "model_meta": None, "posterior_params": None}
+
+
+class TestReconstructModelStateWithDnaKitOutcomes:
+    """The instruction document's audit-confirmed persistence defect:
+    reconstruct_model_state used to rebuild the frame from transformed_data
+    + model_spec alone, silently dropping any DNA-kit segments (dna_kit_outcomes
+    was never passed to prepare_fh_modeling_frame on reimport) - so a
+    reimported FH-plus-DNA project's frame came back FH-only, disagreeing
+    with model_meta.segments from the very same bundle
+    (reimport_frame_matches_meta_segments: False)."""
+
+    @pytest.fixture
+    def dna_kit_project(self):
+        transformed_data = pd.DataFrame({
+            "date": pd.date_range("2024-01-01", periods=8, freq="W"),
+            "market": ["UK"] * 8,
+            "TV_Brand": [100.0, 120.0, 90.0, 110.0, 130.0, 95.0, 105.0, 115.0],
+            "DNA_Ad": [40.0, 45.0, 35.0, 42.0, 48.0, 36.0, 41.0, 44.0],
+            "fh_new_gsa": [10, 12, 9, 11, 13, 9, 10, 11],
+            "dna_kit_sales": [3, 4, 2, 3, 5, 2, 3, 4],
+        })
+        model_spec_dict = ModelSpec(
+            date_col="date", market_col="market", markets=["UK"],
+            segment_outcomes={"New": "fh_new_gsa"}, channels=["TV_Brand", "DNA_Ad"], dna_channels=["DNA_Ad"],
+        ).to_dict()
+        outcome_definitions = [
+            OutcomeDefinition(
+                outcome_id="fh_new", product=FAMILY_HISTORY, segment="New", metric="gsa", column="fh_new_gsa",
+            ).to_dict(),
+            OutcomeDefinition(
+                outcome_id="dna_new_customer", product=DNA, segment="New Customer", metric="kits",
+                column="dna_kit_sales",
+            ).to_dict(),
+        ]
+        meta = FHModelMeta(
+            markets=["UK"], segments=["New", "New Customer"], channels=["TV_Brand", "DNA_Ad"],
+            dna_channels=["DNA_Ad"], dna_channel_idx=[1], non_dna_idx=[0], dna_segment="New", dna_lag_weeks=4,
+            unpooled_markets=[], control_names=[], direct_dna_segments=["New", "New Customer"],
+        )
+        return dict(
+            raw_sources={}, transformed_data=transformed_data, pipeline_steps=[],
+            model_spec=model_spec_dict, prior_config={}, dna_lag_weeks=4,
+            trace=None, scenarios=[], model_meta=meta, outcome_definitions=outcome_definitions,
+        )
+
+    def test_reconstructed_frame_segments_match_model_meta_segments(self, tmp_path, dna_kit_project):
+        output_path = export_project(tmp_path / "bundle.zip", **dna_kit_project)
+        imported = import_project(output_path)
+
+        reconstructed = reconstruct_model_state(imported)
+        assert reconstructed["frame"] is not None
+        assert set(reconstructed["frame"]["segments"]) == set(reconstructed["model_meta"].segments)
+        assert "New Customer" in reconstructed["frame"]["segments"]
+
+    def test_a_legacy_bundle_with_no_outcome_definitions_still_reconstructs_fh_only(self, tmp_path, dna_kit_project):
+        # No outcome_definitions.json in the bundle (pre-PR2 export) - must
+        # fall back to an FH-only frame derived from model_spec alone, not
+        # raise or silently invent a DNA-kit segment that was never saved.
+        legacy_project = dict(dna_kit_project)
+        legacy_project["outcome_definitions"] = None
+        output_path = export_project(tmp_path / "bundle.zip", **legacy_project)
+        imported = import_project(output_path)
+
+        reconstructed = reconstruct_model_state(imported)
+        assert reconstructed["frame"] is not None
+        assert "New Customer" not in reconstructed["frame"]["segments"]
+        assert reconstructed["frame"]["segments"] == ["New"]
 
 
 class TestVerifyImportedApproval:

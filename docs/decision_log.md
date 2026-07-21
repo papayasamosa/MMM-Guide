@@ -892,3 +892,127 @@ for the full write-up.
 **Owner:** Engineering.
 **Status:** Accepted; implemented in PR B (direct DNA versus halo correction, per the post-merge
 correctness audit's PR ordering). See docs/dna_fh_causal_structure.md for the full design record.
+
+---
+
+**Date:** 2026-07-21
+**Decision:** PR C ("Outcome-aware semantics: canonical outcomes, unit-safe totals, CPA and
+objectives, run-aware status and migrations", per the instruction document's PR ordering) - nine
+sub-changes, each verified and tested before the next started:
+
+1. `OutcomeDefinition` gains `unit` (derived default: `"GSA"` for Family History, `"kit"` for DNA) and
+   `role` (default `"primary"`, free text) fields, migration-safe (`from_dict` filters to known
+   dataclass fields, so an older/missing key just uses the field default - nothing to migrate
+   explicitly).
+2. Replace the single collapsed `outcome_is_modelled(outcome)` boolean with a static,
+   type-level `outcome_requires_opt_in(outcome)` plus a run-aware `outcome_was_modelled(outcome,
+   model_meta)`, and a six-state `outcome_status(...)` (`OUTCOME_STATUSES`: `Configured`, `Included in
+   prepared frame`, `Included in fitted run`, `Missing source column`, `Excluded`, `Stale after
+   configuration changes`) that a single boolean can't express. A genuine "exclude this DNA outcome
+   from the next fit" `st.multiselect` on the Structure page (`excluded_outcome_ids`, session state)
+   is consumed by `pages/04_Model_Config.py` to filter `dna_kit_outcomes` before preparing the frame -
+   not decorative.
+3. `core.predict.generate_channel_curve`/`core.market_specific_predict.generate_market_channel_curve`
+   gain `fh_response`/`dna_response` columns, computed from `meta.kit_only_segments` alone (which is,
+   by construction, exactly the set of segments with `OutcomeDefinition.product == DNA` - no new
+   `core.outcomes` import into `core.predict`, avoiding an import-cycle risk).
+4. `core.media_units.compute_cpa` raises on its `"overall_response"` default when a curve genuinely
+   mixes `fh_response`/`dna_response`, unless the caller passes an explicit `response_col` or
+   `allow_mixed=True`; `compute_cpa_by_product` is the new safe default entry point (always computes
+   plain `avg_cpa`/`marginal_cpa` against `fh_response`, plus prefixed `dna_avg_cpa`/
+   `dna_marginal_cpa` against `dna_response` where non-trivial) - wired into
+   `market_specific_cpa_table`, `core.uncertainty`'s curve-uncertainty functions, and Results & Curve
+   Bank. The same mixed-denominator guard was extended to `equivalent_response` (a direct correctness
+   issue - it returns a single response number a caller could misread) but deliberately not to
+   `cpa_stability_flags` (advisory flags about curve shape, not a dollar-denominated answer - a
+   documented, lower-severity residual gap).
+5. `core.optimization.evaluate_scenario` gains `fh_gsa`/`dna_kits` (month totals, each summed only
+   over its own product's segments), a Family-History-scoped `avg_cpa` (replacing the previous
+   behaviour, which divided total spend by predicted GSAs summed across *every* segment including
+   DNA-kit segments), `dna_avg_cpa`, and `total_value` (safe to sum across products - LTV already
+   expresses both in one currency unit, unlike a raw GSA/kit count). `compare_scenarios`' `total_gsa`
+   (same all-segments-summed defect) is replaced with `total_fh_gsa`/`total_dna_kits`, de-duplicated
+   by month before summing (`fh_gsa`/`dna_kits` are month-level totals repeated per segment row).
+6. `core.optimization.optimize_scenario`'s `objective` becomes an explicit enum
+   (`VALID_OBJECTIVES`: `"fh_gsa"`, `"dna_kits"`, `"weighted_mix"`, `"expected_value"`) instead of
+   `"value"`/`"volume"` - `"volume"` gave every segment weight `1.0` regardless of product, silently
+   summing FH GSAs and DNA kits into one meaningless total (the audit's confirmed
+   `volume_objective_mixes_units` defect). A segment outside the chosen objective's scope now
+   contributes weight `0`, never an implicit `1` - this also fixed a latent version of the same bug in
+   the old `"value"` objective (a segment missing from `ltv` silently got weight `1.0`, mixing a raw
+   count into an LTV-dollar total). `target_segments`/`weights` parameters generalise "maximise a
+   single named segment" (e.g. "FH New") and a fully custom weighted mix without hardcoding segment
+   names into library code. The Scenario Planner UI's objective radio, manual-tab totals, and
+   optimisation-result CPA panels were updated in lockstep (not deferred to a later UI-wiring pass) -
+   `"Maximise FH GSAs"` / `"Maximise DNA kit sales"` (only offered where the model has DNA-kit
+   segments) / `"Maximise LTV-weighted expected value"`.
+7. `fingerprint_model_spec` gains a `direct_dna_segments` parameter (sorted before hashing - an
+   unordered set of segments) - closing the audit's second confirmed defect: which DNA-kit outcomes
+   are included in a fit changes `meta.segments`/`direct_dna_segments` without touching `model_spec`,
+   prior config, pipeline steps, or the raw data at all, so an approval could stay "matching" across
+   two structurally different fits. All four production call sites (Diagnostics, Results & Curve
+   Bank, Scenario Planner, `verify_imported_approval`) now pass the fitted model's own
+   `meta.direct_dna_segments`. Separately, `reconstruct_model_state` now recomputes `dna_kit_outcomes`
+   from the bundle's own `outcome_definitions` (`resolve_outcome_definitions` +
+   `dna_kit_outcome_columns`, the identical derivation `pages/04_Model_Config.py` uses) before
+   rebuilding the frame - previously it rebuilt from `transformed_data` + `model_spec` alone, silently
+   dropping every DNA-kit segment, so a reimported FH-plus-DNA project's frame came back FH-only,
+   disagreeing with `model_meta.segments` from the same bundle (the audit's measured
+   `reimport_frame_matches_meta_segments: False`).
+8. UI wiring for pages 03/07/08/09: substantially already correct as a direct consequence of fixing
+   each call site immediately within steps 4/6 above rather than deferring - verified by a systematic
+   sweep (no remaining bare `compute_cpa(...)` calls, no remaining `"volume"`/`"value"` objective
+   strings) that found only one further gap, a stale in-app "what's out of scope" caption on Project
+   Export describing the old unlabelled-volume objective; fixed in place.
+9. Tests were written alongside each step above, not deferred to a separate pass - `TestComputeCpa`'s
+   mixed-denominator cases, `TestComputeCpaByProduct`, `TestEquivalentResponse`'s guard tests (PR C4);
+   `TestProductAwareScenarioOutputs`, `TestComputeCpaByProduct`-equivalent `compare_scenarios` tests,
+   an uncertainty-summary product-aware-columns test (PR C5); `TestExplicitOptimisationObjectives`
+   (10 tests covering every `VALID_OBJECTIVES` value plus the invalid-objective/missing-weights/
+   missing-ltv rejection paths) (PR C6); `TestFingerprintModelSpecDirectDnaSegments` and
+   `TestReconstructModelStateWithDnaKitOutcomes` (the direct regression test for the persistence
+   defect - asserts a reconstructed frame's segments now match the fitted model's, both for a bundle
+   with `outcome_definitions` and for a legacy bundle without one) (PR C7).
+
+**Reason:** The instruction document's post-merge correctness audit (`docs/decision_log.md`'s PR A
+entry) found that every "total" the app exposed for a project with DNA-kit outcomes mapped - curve
+response, CPA, scenario predicted-GSAs, optimiser objective value - silently summed Family History
+GSAs and DNA kit sales as if they were the same unit, and that neither the fingerprint nor the
+persistence round-trip actually tracked which DNA-kit outcomes a given fit included. None of this was
+visible in the UI as a caveat; a project with DNA-kit outcomes mapped would report numbers that looked
+exactly as trustworthy as an FH-only project's, but weren't. PR C makes every one of these outputs
+explicit about which product(s) it counts, blocks the generic mixed-unit path outright (raise, not a
+silent default) where the output is a single dollar/count figure a business decision could ride on,
+and closes the two structural gaps (fingerprint, reimport) that let a stale or mismatched model
+identity go undetected.
+**Alternatives considered:** A single "blended" total with a footnote (rejected - the instruction
+document explicitly rules this out: "do not expose a generic total volume that adds kits and GSAs" /
+"CPA must identify its denominator"; a footnote is exactly the kind of thing an analyst under time
+pressure skips). Fingerprinting the full resolved `dna_kit_outcomes` dict (segment -> source column)
+instead of just `direct_dna_segments` (rejected for this PR - `direct_dna_segments` closes the
+measured, confirmed defect (segment membership) at much lower complexity; the column-mapping edge
+case is called out as a documented residual gap rather than expanding scope). Persisting
+`excluded_outcome_ids` in the project bundle now, to close the reimport's remaining residual gap fully
+(rejected for this PR - the current fallback, "reimport re-includes every mapped DNA outcome", is
+visible and immediately correctable on the next fit, not a silent-data-loss defect like the one this
+PR fixes; adding a new persisted field is better scoped as its own small change).
+**Impact:** See the nine numbered points above for the concrete API/behaviour changes. Every existing
+approval computed before this PR is invalidated by the `fingerprint_model_spec` payload change (the
+same "adding a genuinely model-relevant field is an intentional breaking change" pattern used for
+every prior fingerprint-payload addition in this log) - correct, since an approval that didn't cover
+DNA-kit segment membership was never actually binding on it. `optimize_scenario`'s default `objective`
+changed from `"value"` to `"fh_gsa"` (the old default silently required nothing and fell back to
+raw-volume weighting when no `ltv` was given - the new default requires nothing either, but is always
+unit-safe instead).
+**Verification:** Full test suite run after each of the nine steps (529 -> 540 -> 544 -> 547 -> 557 ->
+563 passing across PR C4-C7; no regressions at any step), `ruff check` clean throughout. A live
+`streamlit.testing.v1.AppTest` run against a real (small, fast) MCMC fit with a genuine DNA-kit
+segment present drove the Scenario Planner end-to-end: page load, all three objective radio options,
+and both constrained and unconstrained optimisation for every objective - zero exceptions, sane and
+visibly distinct metrics per objective (e.g. `"fh_gsa"` and `"dna_kits"` current-total metrics differ
+by more than 2x on the same spend plan, confirming the objectives are actually scoped to different
+segment sets rather than coincidentally computing the same number).
+**Owner:** Engineering.
+**Status:** Accepted; implemented in PR C (outcome-aware semantics, per the post-merge correctness
+audit's PR ordering). See docs/outcomes.md, docs/dna_fh_causal_structure.md, docs/scenario_planner.md,
+docs/media_units_and_inflation.md and docs/limitations.md for the updated design records.

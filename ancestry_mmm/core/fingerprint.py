@@ -110,46 +110,64 @@ def fingerprint_model_spec(
     model_type: str = "shared",
     pipeline_steps: Optional[List[Dict[str, Any]]] = None,
     market_spec_config: Optional[Dict[str, Any]] = None,
+    direct_dna_segments: Optional[List[str]] = None,
 ) -> str:
     """
     Fingerprint the full set of inputs that determine how the model is
     *built*: the structural ModelSpec (markets/segments/channels/DNA
     channels/promo & control columns/LTV), the prior overrides, the DNA
     halo lag, which model structure was fit, the transformation recipe that
-    produced the modelling data (`pipeline_steps`), and the calculation-
+    produced the modelling data (`pipeline_steps`), the calculation-
     relevant subset of market/channel configuration (`market_spec_config`,
     filtered by `_model_relevant_market_config` - see that function's
-    docstring for the descriptive/model-relevant boundary) - i.e. everything
-    that determines the fitted model and what it's used to calculate,
-    besides the data values themselves (those are covered separately by
-    `fingerprint_dataframe`). A changed prior therefore changes this
-    fingerprint, since priors are part of the fitted model's identity - and
-    so does switching model structure (`model_type`): a shared-curve fit and
-    a market-specific fit of the *same* data/spec/priors are not the same
-    fitted model, and an approval granted for one must not be treated as
-    valid for the other (docs/decision_log.md, market-specific redesign).
+    docstring for the descriptive/model-relevant boundary), and which
+    segments get a direct DNA-media pathway (`direct_dna_segments` - the
+    DNA-kit segments actually included in this fit, per
+    `core.outcomes`/the Structure page's exclude-from-fit control; see
+    `FHModelMeta.kit_only_segments`/`docs/dna_fh_causal_structure.md`) -
+    i.e. everything that determines the fitted model and what it's used to
+    calculate, besides the data values themselves (those are covered
+    separately by `fingerprint_dataframe`). A changed prior therefore
+    changes this fingerprint, since priors are part of the fitted model's
+    identity - and so does switching model structure (`model_type`): a
+    shared-curve fit and a market-specific fit of the *same* data/spec/
+    priors are not the same fitted model, and an approval granted for one
+    must not be treated as valid for the other (docs/decision_log.md,
+    market-specific redesign). Likewise, toggling which DNA-kit outcomes
+    are excluded from a fit (Structure page) changes `meta.segments` and
+    `meta.kit_only_segments` without touching `model_spec`/`prior_config`/
+    the raw data at all - `direct_dna_segments` is what makes that a
+    fingerprint-breaking change too, closing a gap the instruction
+    document's audit confirmed (an approval could otherwise stay
+    "matching" across two structurally different fits).
 
     `model_type` defaults to `"shared"` (core.hierarchical_model's model,
     "Model A") so existing call sites that don't pass it keep fingerprinting
     that model type explicitly, not omitting model identity from the hash.
-    `pipeline_steps` and `market_spec_config` default to `None` (treated as
-    empty) for the same reason - a caller with nothing to pass still gets a
-    deterministic, explicit fingerprint rather than an error.
+    `pipeline_steps`, `market_spec_config` and `direct_dna_segments` default
+    to `None` (treated as empty) for the same reason - a caller with nothing
+    to pass still gets a deterministic, explicit fingerprint rather than an
+    error. `direct_dna_segments` is sorted before hashing - it names an
+    unordered set of segments, so two calls listing the same segments in a
+    different order must fingerprint identically.
 
-    Note: adding `pipeline_steps` and `market_spec_config` to this payload
-    is an intentional breaking change to every fingerprint this function
-    produces, including for callers who pass neither (the payload always
-    carries `"pipeline_steps": []` and `"market_relevant_config": {}` keys
-    now) - the same pattern used when `model_type` was added
+    Note: adding `pipeline_steps`, `market_spec_config` and
+    `direct_dna_segments` to this payload is an intentional breaking change
+    to every fingerprint this function produces, including for callers who
+    pass none of them (the payload always carries `"pipeline_steps": []`,
+    `"market_relevant_config": {}` and `"direct_dna_segments": []` keys now)
+    - the same pattern used when `model_type` was added
     (docs/decision_log.md). Every pre-existing approval is invalidated by
     upgrading to this version, which is correct: an approval bound to a
-    fingerprint that didn't cover the transformation recipe or media-unit/
-    currency config was never actually binding on them, so forcing
-    re-review is the honest behaviour, not a regression.
+    fingerprint that didn't cover the transformation recipe, media-unit/
+    currency config, or DNA-kit segment membership was never actually
+    binding on them, so forcing re-review is the honest behaviour, not a
+    regression.
 
     Canonical JSON with sorted dict keys, so insertion order never matters;
     list order is preserved (json.dumps does not reorder lists), since list
-    order is meaningful (e.g. `channels`, `pipeline_steps`).
+    order is meaningful (e.g. `channels`, `pipeline_steps`) - except
+    `direct_dna_segments`, sorted explicitly above for exactly that reason.
     """
     payload = {
         "model_spec": model_spec,
@@ -158,6 +176,7 @@ def fingerprint_model_spec(
         "model_type": model_type,
         "pipeline_steps": pipeline_steps or [],
         "market_relevant_config": _model_relevant_market_config(market_spec_config),
+        "direct_dna_segments": sorted(direct_dna_segments) if direct_dna_segments else [],
     }
     blob = _canonical_json(payload)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()

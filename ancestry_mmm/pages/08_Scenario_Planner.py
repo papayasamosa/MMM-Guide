@@ -5,8 +5,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from typing import Optional
-
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -29,15 +27,21 @@ from ancestry_mmm.core.media_units import extract_cost_per_unit_series, historic
 from ancestry_mmm.data.preprocessor import create_fourier_features_from_calendar
 
 
-def _overall_avg_cpa(predicted_df: pd.DataFrame) -> Optional[float]:
-    """Blended average CPA across a whole predicted-outcomes DataFrame
-    (every month, every segment) - total spend / total predicted GSAs,
-    None if total predicted GSAs isn't positive. `total_spend` is repeated
-    per segment row within a month (core.optimization.evaluate_scenario), so
-    it's de-duplicated by month before summing."""
-    total_spend = predicted_df.groupby("month")["total_spend"].first().sum()
-    total_gsa = predicted_df["predicted_gsa"].sum()
-    return float(total_spend / total_gsa) if total_gsa > 0 else None
+def _scenario_cpa_summary(predicted_df: pd.DataFrame) -> dict:
+    """Product-aware average CPA across a whole predicted-outcomes
+    DataFrame (every month, every segment) - never a blended total-spend /
+    (FH-GSAs-plus-DNA-kits) number (docs/dna_fh_causal_structure.md).
+    `total_spend`/`fh_gsa`/`dna_kits` are month-level totals repeated per
+    segment row (core.optimization.evaluate_scenario), so de-duplicated by
+    month before summing across the whole plan."""
+    by_month = predicted_df.groupby("month")[["total_spend", "fh_gsa", "dna_kits"]].first()
+    total_spend = by_month["total_spend"].sum()
+    fh_gsa = by_month["fh_gsa"].sum()
+    dna_kits = by_month["dna_kits"].sum()
+    return {
+        "fh_avg_cpa": float(total_spend / fh_gsa) if fh_gsa > 0 else None,
+        "dna_avg_cpa": float(total_spend / dna_kits) if dna_kits > 0 else None,
+    }
 
 
 st.set_page_config(page_title="Scenario Planner - Ancestry FH MMM", page_icon="🧬", layout="wide")
@@ -77,6 +81,7 @@ if model_run_id and spec_dict is not None:
         "model_spec_fingerprint": fingerprint_model_spec(
             spec_dict, prior_config, dna_lag_weeks, model_type=model_type,
             pipeline_steps=get_state("pipeline_steps") or [], market_spec_config=get_state("market_spec_config"),
+            direct_dna_segments=meta.direct_dna_segments if meta is not None else None,
         ),
         "posterior_fingerprint": fingerprint_posterior(params),
     }
@@ -239,9 +244,26 @@ else:
 st.session_state[plan_key] = edited
 spend_plan = {m: {c: float(edited.loc[m, c]) for c in meta.channels} for m in months}
 
-objective = st.radio("Optimisation objective", ["value", "volume"], horizontal=True,
-                      format_func=lambda x: "LTV-weighted value" if x == "value" else "Raw segment volume (GSAs)",
-                      help=FIELD_HELP["ltv"])
+_has_dna_kit_segments = bool(meta.kit_only_segments)
+_objective_options = ["fh_gsa", "expected_value"] + (["dna_kits"] if _has_dna_kit_segments else [])
+_objective_labels = {
+    "fh_gsa": "Maximise Family History GSAs",
+    "dna_kits": "Maximise DNA kit sales",
+    "expected_value": "Maximise LTV-weighted expected value",
+}
+objective = st.radio(
+    "Optimisation objective", _objective_options, horizontal=True,
+    format_func=lambda x: _objective_labels[x], help=FIELD_HELP["ltv"],
+)
+st.caption(
+    "Each objective states exactly what it maximises - Family History GSAs and DNA kit sales are "
+    "never silently combined into one generic 'volume' number (docs/dna_fh_causal_structure.md)."
+)
+if objective == "expected_value" and not ltv:
+    st.warning(
+        "No LTV weights are configured for this project - 'Maximise expected value' needs at "
+        "least one segment's LTV set on the Structure page before optimisation can run."
+    )
 
 st.markdown("---")
 tab_manual, tab_constrained, tab_unconstrained = st.tabs(["Manual", "Constrained optimisation", "Unconstrained benchmark"])
@@ -257,11 +279,19 @@ with tab_manual:
     totals = predicted.groupby("segment")[["predicted_gsa", "value"]].sum().reset_index()
     st.markdown("**Totals by segment**")
     st.dataframe(totals, width="stretch", column_config=dataframe_column_config(totals))
-    c1, c2 = st.columns(2)
-    c1.metric("Total predicted value" if objective == "value" else "Total predicted GSAs",
-              f"{predicted['value'].sum():,.0f}" if objective == "value" else f"{predicted['predicted_gsa'].sum():,.0f}")
-    plan_avg_cpa = _overall_avg_cpa(predicted)
-    c2.metric("Avg CPA (blended)", f"{plan_avg_cpa:,.2f}" if plan_avg_cpa is not None else "n/a")
+    by_month_totals = predicted.groupby("month")[["fh_gsa", "dna_kits"]].first()
+    _objective_totals = {
+        "fh_gsa": ("Total predicted FH GSAs", float(by_month_totals["fh_gsa"].sum())),
+        "dna_kits": ("Total predicted DNA kits", float(by_month_totals["dna_kits"].sum())),
+        "expected_value": ("Total predicted value", float(predicted["value"].sum())),
+    }
+    c1, c2, c3 = st.columns(3)
+    total_label, total_value = _objective_totals[objective]
+    c1.metric(total_label, f"{total_value:,.0f}")
+    cpa_summary = _scenario_cpa_summary(predicted)
+    c2.metric("Avg CPA (Family History GSAs)", f"{cpa_summary['fh_avg_cpa']:,.2f}" if cpa_summary["fh_avg_cpa"] is not None else "n/a")
+    if _has_dna_kit_segments:
+        c3.metric("Avg CPA (DNA kits)", f"{cpa_summary['dna_avg_cpa']:,.2f}" if cpa_summary["dna_avg_cpa"] is not None else "n/a")
 
     scenario_name = st.text_input("Scenario name *", value=f"manual-{market}-{months[0]}", key="manual_name")
     if st.button("Save this scenario"):
@@ -361,36 +391,48 @@ with tab_constrained:
             st.rerun()
 
     if st.button("Run constrained optimisation", type="primary"):
-        with st.spinner("Optimising..."):
-            try:
-                result = optimize_scenario(
-                    spend_plan, months, meta.channels, market, meta, params, reference_context_by_month,
-                    ltv, objective=objective, constraints=st.session_state["scenario_constraints"], conserve_total_budget=True,
-                    **identity_kwargs,
-                )
-            except ApprovalMismatchError as e:
-                st.error(f"Cannot run optimisation: {e}")
-                result = None
-        if result is not None:
-            if not result["success"]:
-                st.warning(f"Optimiser did not fully converge: {result['message']}")
-            st.session_state["constrained_result"] = result
+        if objective == "expected_value" and not ltv:
+            st.error("Cannot run optimisation: 'Maximise expected value' needs at least one segment's LTV set on the Structure page.")
+            result = None
+        else:
+            with st.spinner("Optimising..."):
+                try:
+                    result = optimize_scenario(
+                        spend_plan, months, meta.channels, market, meta, params, reference_context_by_month,
+                        ltv, objective=objective, constraints=st.session_state["scenario_constraints"], conserve_total_budget=True,
+                        **identity_kwargs,
+                    )
+                except ApprovalMismatchError as e:
+                    st.error(f"Cannot run optimisation: {e}")
+                    result = None
+            if result is not None:
+                if not result["success"]:
+                    st.warning(f"Optimiser did not fully converge: {result['message']}")
+                st.session_state["constrained_result"] = result
 
     result = st.session_state.get("constrained_result")
     if result:
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Current total", f"{result['current_objective_value']:,.0f}")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric(f"Current total ({_objective_labels[objective]})", f"{result['current_objective_value']:,.0f}")
         c2.metric("Optimised total", f"{result['objective_value']:,.0f}",
                    delta=f"{result['objective_value'] - result['current_objective_value']:,.0f}")
-        current_cpa = _overall_avg_cpa(result["current_predicted"])
-        optimised_cpa = _overall_avg_cpa(result["predicted"])
+        current_cpa = _scenario_cpa_summary(result["current_predicted"])
+        optimised_cpa = _scenario_cpa_summary(result["predicted"])
         c3.metric(
-            "Avg CPA (blended)",
-            f"{optimised_cpa:,.2f}" if optimised_cpa is not None else "n/a",
-            delta=f"{optimised_cpa - current_cpa:,.2f}" if (optimised_cpa is not None and current_cpa is not None) else None,
+            "Avg CPA (FH GSAs)",
+            f"{optimised_cpa['fh_avg_cpa']:,.2f}" if optimised_cpa["fh_avg_cpa"] is not None else "n/a",
+            delta=f"{optimised_cpa['fh_avg_cpa'] - current_cpa['fh_avg_cpa']:,.2f}" if (optimised_cpa["fh_avg_cpa"] is not None and current_cpa["fh_avg_cpa"] is not None) else None,
             delta_color="inverse",  # lower CPA is an improvement
-            help="Total spend / total predicted GSAs across the whole plan - current plan vs this optimised one.",
+            help="Total spend / total predicted FH GSAs across the whole plan - current plan vs this optimised one.",
         )
+        if _has_dna_kit_segments:
+            c4.metric(
+                "Avg CPA (DNA kits)",
+                f"{optimised_cpa['dna_avg_cpa']:,.2f}" if optimised_cpa["dna_avg_cpa"] is not None else "n/a",
+                delta=f"{optimised_cpa['dna_avg_cpa'] - current_cpa['dna_avg_cpa']:,.2f}" if (optimised_cpa["dna_avg_cpa"] is not None and current_cpa["dna_avg_cpa"] is not None) else None,
+                delta_color="inverse",
+                help="Total spend / total predicted DNA kits across the whole plan - current plan vs this optimised one.",
+            )
         plan_result_df = pd.DataFrame(result["spend_plan"]).T
         st.dataframe(plan_result_df, width="stretch", column_config=dataframe_column_config(plan_result_df))
         st.dataframe(result["predicted"], width="stretch", column_config=dataframe_column_config(result["predicted"]))
@@ -411,34 +453,46 @@ with tab_unconstrained:
         "comparison only."
     )
     if st.button("Run unconstrained benchmark", type="primary"):
-        with st.spinner("Optimising..."):
-            try:
-                result = optimize_scenario(
-                    spend_plan, months, meta.channels, market, meta, params, reference_context_by_month,
-                    ltv, objective=objective, constraints=[], conserve_total_budget=True,
-                    **identity_kwargs,
-                )
-            except ApprovalMismatchError as e:
-                st.error(f"Cannot run optimisation: {e}")
-                result = None
-        if result is not None:
-            st.session_state["unconstrained_result"] = result
+        if objective == "expected_value" and not ltv:
+            st.error("Cannot run optimisation: 'Maximise expected value' needs at least one segment's LTV set on the Structure page.")
+            result = None
+        else:
+            with st.spinner("Optimising..."):
+                try:
+                    result = optimize_scenario(
+                        spend_plan, months, meta.channels, market, meta, params, reference_context_by_month,
+                        ltv, objective=objective, constraints=[], conserve_total_budget=True,
+                        **identity_kwargs,
+                    )
+                except ApprovalMismatchError as e:
+                    st.error(f"Cannot run optimisation: {e}")
+                    result = None
+            if result is not None:
+                st.session_state["unconstrained_result"] = result
 
     result = st.session_state.get("unconstrained_result")
     if result:
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Current total", f"{result['current_objective_value']:,.0f}")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric(f"Current total ({_objective_labels[objective]})", f"{result['current_objective_value']:,.0f}")
         c2.metric("Theoretical optimum", f"{result['objective_value']:,.0f}",
                    delta=f"{result['objective_value'] - result['current_objective_value']:,.0f}")
-        current_cpa = _overall_avg_cpa(result["current_predicted"])
-        optimised_cpa = _overall_avg_cpa(result["predicted"])
+        current_cpa = _scenario_cpa_summary(result["current_predicted"])
+        optimised_cpa = _scenario_cpa_summary(result["predicted"])
         c3.metric(
-            "Avg CPA (blended)",
-            f"{optimised_cpa:,.2f}" if optimised_cpa is not None else "n/a",
-            delta=f"{optimised_cpa - current_cpa:,.2f}" if (optimised_cpa is not None and current_cpa is not None) else None,
+            "Avg CPA (FH GSAs)",
+            f"{optimised_cpa['fh_avg_cpa']:,.2f}" if optimised_cpa["fh_avg_cpa"] is not None else "n/a",
+            delta=f"{optimised_cpa['fh_avg_cpa'] - current_cpa['fh_avg_cpa']:,.2f}" if (optimised_cpa["fh_avg_cpa"] is not None and current_cpa["fh_avg_cpa"] is not None) else None,
             delta_color="inverse",
-            help="Total spend / total predicted GSAs across the whole plan - current plan vs this theoretical optimum.",
+            help="Total spend / total predicted FH GSAs across the whole plan - current plan vs this theoretical optimum.",
         )
+        if _has_dna_kit_segments:
+            c4.metric(
+                "Avg CPA (DNA kits)",
+                f"{optimised_cpa['dna_avg_cpa']:,.2f}" if optimised_cpa["dna_avg_cpa"] is not None else "n/a",
+                delta=f"{optimised_cpa['dna_avg_cpa'] - current_cpa['dna_avg_cpa']:,.2f}" if (optimised_cpa["dna_avg_cpa"] is not None and current_cpa["dna_avg_cpa"] is not None) else None,
+                delta_color="inverse",
+                help="Total spend / total predicted DNA kits across the whole plan - current plan vs this theoretical optimum.",
+            )
         unconstrained_plan_df = pd.DataFrame(result["spend_plan"]).T
         st.dataframe(unconstrained_plan_df, width="stretch", column_config=dataframe_column_config(unconstrained_plan_df))
 
