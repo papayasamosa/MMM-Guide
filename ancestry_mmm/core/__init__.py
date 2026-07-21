@@ -137,6 +137,20 @@ from .report import (
     render_markdown,
     render_html,
 )
+from .outcomes import (
+    FAMILY_HISTORY,
+    DNA,
+    DNA_SEGMENT_NEW,
+    DNA_SEGMENT_EXISTING_FH,
+    DNA_SEGMENT_COMBINED,
+    OutcomeDefinition,
+    outcome_is_modelled,
+    validate_outcome_definitions,
+    fh_outcomes_from_spec,
+    dna_outcomes_from_columns,
+    resolve_outcome_definitions,
+    outcomes_to_dataframe,
+)
 
 __all__ = [
     "ModelApproval",
@@ -250,4 +264,16 @@ __all__ = [
     "build_report_sections",
     "render_markdown",
     "render_html",
+    "FAMILY_HISTORY",
+    "DNA",
+    "DNA_SEGMENT_NEW",
+    "DNA_SEGMENT_EXISTING_FH",
+    "DNA_SEGMENT_COMBINED",
+    "OutcomeDefinition",
+    "outcome_is_modelled",
+    "validate_outcome_definitions",
+    "fh_outcomes_from_spec",
+    "dna_outcomes_from_columns",
+    "resolve_outcome_definitions",
+    "outcomes_to_dataframe",
 ]

@@ -33,6 +33,7 @@ from .approval import ModelApproval
 from .curve_bank import CurveBankEntry, entries_to_dataframe
 from .market_config import MarketSpecConfig
 from .optimization import compare_scenarios
+from .outcomes import DNA, resolve_outcome_definitions, outcomes_to_dataframe
 from .schema import ModelSpec
 
 MODEL_TYPE_LABELS = {
@@ -110,6 +111,27 @@ def _model_section(spec: Optional[ModelSpec], model_type: str, dna_lag_weeks: Op
         title="Model",
         paragraphs=["See docs/modelling_methodology.md for the full structural specification."],
         bullets=bullets,
+    )
+
+
+def _outcomes_section(spec: Optional[ModelSpec], outcome_definitions: Optional[List[dict]]) -> ReportSection:
+    if spec is None:
+        return ReportSection(title="Outcomes", paragraphs=["No model specification is available yet."])
+    outcomes = resolve_outcome_definitions(outcome_definitions, spec.segment_outcomes, spec.segment_ltv)
+    table = outcomes_to_dataframe(outcomes)
+    n_dna = sum(1 for o in outcomes if o.product == DNA)
+    paragraphs = [
+        f"{len(outcomes)} outcome(s) catalogued: {len(outcomes) - n_dna} Family History, {n_dna} DNA.",
+    ]
+    if n_dna:
+        paragraphs.append(
+            "DNA outcomes are captured and persisted but **not yet modelled** - they are not fed "
+            "into the fitted model's equations. See the `modelled_today` column below and "
+            "docs/outcomes.md."
+        )
+    return ReportSection(
+        title="Outcomes", paragraphs=paragraphs,
+        table=table, table_caption="Outcome catalogue (modelled_today = fed into the fitted model)",
     )
 
 
@@ -233,6 +255,7 @@ def build_report_sections(
     curve_bank_entries: Optional[List[CurveBankEntry]] = None,
     scenarios: Optional[List[Dict]] = None,
     market_spec_config: Optional[MarketSpecConfig] = None,
+    outcome_definitions: Optional[List[dict]] = None,
 ) -> List[ReportSection]:
     """Assemble every section of the report, in display order. Every input is
     optional and independently missing-safe - a report can be generated at
@@ -246,6 +269,7 @@ def build_report_sections(
         _objective_section(spec, model_type),
         _data_section(spec, pipeline_steps, data_window),
         _model_section(spec, model_type, dna_lag_weeks),
+        _outcomes_section(spec, outcome_definitions),
         _diagnostics_section(scorecard),
         _approval_section(approval),
         _curve_bank_section(curve_bank_entries),

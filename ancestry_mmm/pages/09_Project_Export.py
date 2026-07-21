@@ -62,6 +62,8 @@ if st.button("Build export bundle", type="primary"):
             model_run_id=get_state("model_run_id"),
             model_meta=get_state("model_meta"),
             market_spec_config=get_state("market_spec_config"),
+            model_type=get_state("model_type", "shared"),
+            outcome_definitions=get_state("outcome_definitions"),
         )
     st.success(f"Project bundle built: {output_path}")
     with open(output_path, "rb") as f:
@@ -92,11 +94,20 @@ if uploaded_zip is not None and st.button("Import bundle"):
         set_state("trace", imported["trace"])
         set_state("model_run_id", imported["model_run_id"])
         set_state("market_spec_config", imported["market_spec_config"])
+        set_state("model_type", imported["model_type"])
+        set_state("outcome_definitions", imported["outcome_definitions"])
         if imported["market_spec_config"] is None:
             st.caption(
                 "This bundle predates the market-specific redesign - no market descriptors or "
                 "media-unit mappings to import. Add them on Channel & Media Units / Market "
                 "Descriptors if needed."
+            )
+        if imported["outcome_definitions"] is None:
+            st.caption(
+                "This bundle predates the outcome-schema work - no DNA outcome mappings to "
+                "import. The Family History outcome catalogue is still derived automatically "
+                "from this project's structure; add DNA outcomes on Structure: Segments & "
+                "Markets if needed."
             )
 
         # Re-derive the frame and posterior params from the raw artefacts
@@ -214,6 +225,7 @@ if st.button("Build project report"):
         curve_bank_entries=entries,
         scenarios=get_state("scenarios") or [],
         market_spec_config=market_config,
+        outcome_definitions=get_state("outcome_definitions"),
     )
 
     PROJECT_EXPORT_ROOT.mkdir(parents=True, exist_ok=True)

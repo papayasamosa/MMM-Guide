@@ -11,6 +11,7 @@ from ancestry_mmm.core.fingerprint import fingerprint_dataframe, fingerprint_mod
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
 from ancestry_mmm.core.market_config import ChannelMediaUnitConfig, MarketCurrency, MarketProfile, MarketSpecConfig
 from ancestry_mmm.core.optimization import SpendConstraint
+from ancestry_mmm.core.outcomes import DNA, FAMILY_HISTORY, OutcomeDefinition
 from ancestry_mmm.core.persistence import (
     UnsafeZipEntryError,
     _is_safe_zip_member,
@@ -230,6 +231,51 @@ def test_legacy_bundle_without_market_spec_config_imports_with_none(tmp_path, sa
     restored = MarketSpecConfig.from_dict(imported["market_spec_config"])
     assert restored.market_profiles == {}
     assert restored.channel_media_units == {}
+
+
+def test_export_then_import_reproduces_model_type(tmp_path, sample_project):
+    # Regression test: export_project's caller (pages/09_Project_Export.py)
+    # previously never passed model_type through at all, so every exported
+    # Model C bundle silently re-imported as Model A. Covered here at the
+    # persistence layer directly (the round trip itself has always worked
+    # once the caller passes it - the bug was the caller omitting it).
+    sample_project = dict(sample_project)
+    sample_project["model_type"] = "market_specific"
+    output_path = export_project(tmp_path / "bundle.zip", **sample_project)
+    imported = import_project(output_path)
+    assert imported["model_type"] == "market_specific"
+
+
+def test_legacy_bundle_without_model_type_imports_as_shared(tmp_path, sample_project):
+    """A bundle exported before Model C existed has no model_type.json -
+    "shared" (Model A) is the correct default, not an error."""
+    output_path = export_project(tmp_path / "bundle.zip", **sample_project)
+    imported = import_project(output_path)
+    assert imported["model_type"] == "shared"
+
+
+def test_export_then_import_reproduces_outcome_definitions(tmp_path, sample_project):
+    outcome_definitions = [
+        OutcomeDefinition(outcome_id="fh_new", product=FAMILY_HISTORY, segment="New", metric="GSA", column="fh_new_gsa", value_weight=180.0).to_dict(),
+        OutcomeDefinition(outcome_id="dna_new_kit", product=DNA, segment="New Customer", metric="Kit sale", column="DNA_Kit_New").to_dict(),
+    ]
+    sample_project = dict(sample_project)
+    sample_project["outcome_definitions"] = outcome_definitions
+
+    output_path = export_project(tmp_path / "bundle.zip", **sample_project)
+    imported = import_project(output_path)
+
+    assert imported["outcome_definitions"] == outcome_definitions
+
+
+def test_legacy_bundle_without_outcome_definitions_imports_with_none(tmp_path, sample_project):
+    """A bundle exported before the outcome-schema work (PR2) has no
+    outcome_definitions.json - import must not fail, and
+    core.outcomes.resolve_outcome_definitions(None, ...) must derive an
+    equivalent FH-only set rather than treating this as an error."""
+    output_path = export_project(tmp_path / "bundle.zip", **sample_project)
+    imported = import_project(output_path)
+    assert imported["outcome_definitions"] is None
 
 
 def test_export_without_trace_or_approval_omits_them_on_import(tmp_path, sample_project):
