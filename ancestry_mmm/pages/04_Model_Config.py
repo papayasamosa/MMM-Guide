@@ -10,6 +10,7 @@ import streamlit as st
 from ancestry_mmm.utils import init_session_state, get_state, set_state, clear_model_state, DEFAULT_FH_PRIORS, format_number, FIELD_HELP
 from ancestry_mmm.components import apply_theme, render_sidebar, render_page_header, render_next_step, render_empty_state
 from ancestry_mmm.core.schema import ModelSpec
+from ancestry_mmm.core.outcomes import resolve_outcome_definitions, dna_kit_outcome_columns
 from ancestry_mmm.data import prepare_fh_modeling_frame
 
 st.set_page_config(page_title="Model Configuration - Ancestry FH MMM", page_icon="🧬", layout="wide")
@@ -123,10 +124,26 @@ with st.expander("Advanced settings: MCMC sampling"):
     mcmc_chains = c3.number_input("Chains", min_value=1, max_value=8, value=int(get_state("mcmc_chains", 4)), key="mcmc_chains_input")
     mcmc_target_accept = c4.slider("Target accept", 0.7, 0.99, float(get_state("mcmc_target_accept", 0.9)), 0.01, key="mcmc_target_accept_input")
 
+outcome_definitions = resolve_outcome_definitions(get_state("outcome_definitions"), spec.segment_outcomes, spec.segment_ltv)
+dna_kit_outcomes = dna_kit_outcome_columns(outcome_definitions)
+dna_kit_outcomes = {seg: col for seg, col in dna_kit_outcomes.items() if col in df.columns}
+
 st.markdown("---")
+if dna_kit_outcomes:
+    st.info(
+        f"DNA outcomes mapped on Structure will be included in this fit: {', '.join(dna_kit_outcomes)}. "
+        "DNA-targeted media gets full direct response on these segments, same as the FH DNA-cross-sell "
+        "segment - see docs/dna_fh_causal_structure.md."
+    )
+else:
+    st.caption(
+        "No DNA outcomes mapped (or their columns aren't in the current data) - fitting Family "
+        "History segments only. Map DNA kit columns on Structure: Segments & Markets to include them."
+    )
+
 if st.button("Prepare modelling frame", type="primary"):
     try:
-        frame = prepare_fh_modeling_frame(df, spec)
+        frame = prepare_fh_modeling_frame(df, spec, dna_kit_outcomes=dna_kit_outcomes)
         set_state("frame", frame)
         set_state("prior_config", prior_config)
         set_state("dna_lag_weeks", int(dna_lag_weeks))
@@ -135,6 +152,7 @@ if st.button("Prepare modelling frame", type="primary"):
         set_state("mcmc_chains", int(mcmc_chains))
         set_state("mcmc_target_accept", float(mcmc_target_accept))
         set_state("model_type", model_type)
+        set_state("direct_dna_segments", list(dna_kit_outcomes.keys()))
         clear_model_state()
         set_state("frame", frame)  # clear_model_state wipes frame too - reset after
         st.success(

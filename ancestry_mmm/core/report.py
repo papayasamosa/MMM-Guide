@@ -125,13 +125,15 @@ def _outcomes_section(spec: Optional[ModelSpec], outcome_definitions: Optional[L
     ]
     if n_dna:
         paragraphs.append(
-            "DNA outcomes are captured and persisted but **not yet modelled** - they are not fed "
-            "into the fitted model's equations. See the `modelled_today` column below and "
-            "docs/outcomes.md."
+            "DNA outcomes are opt-in: `modelled_today = False` means this outcome type isn't fit "
+            "automatically the way Family History segments are, not that it can never be - mapping "
+            "it on Structure and re-preparing the modelling frame includes it, with DNA-targeted "
+            "media getting full direct response rather than the shrunk halo pathway other segments "
+            "get. See docs/dna_fh_causal_structure.md."
         )
     return ReportSection(
         title="Outcomes", paragraphs=paragraphs,
-        table=table, table_caption="Outcome catalogue (modelled_today = fed into the fitted model)",
+        table=table, table_caption="Outcome catalogue (modelled_today = fit automatically, with no extra configuration)",
     )
 
 

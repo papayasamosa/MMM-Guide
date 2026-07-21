@@ -159,7 +159,9 @@ if get_state("trace") is not None and get_state("model_spec"):
 
         if model_type_for_export == "shared":
             contributions = compute_shapley_contributions(frame, meta, params, n_permutations=100)
-            total_df = total_fh_contribution(frame, meta, params, contributions, spec.segment_ltv)
+            dna_kit_segments_in_fit = [s for s in meta.direct_dna_segments if s != meta.dna_segment]
+            fh_segments_in_fit = [s for s in meta.segments if s not in dna_kit_segments_in_fit]
+            total_df = total_fh_contribution(frame, meta, params, contributions, spec.segment_ltv, segments=fh_segments_in_fit)
             seg_df = segment_channel_summary(frame, meta, params, contributions, spec.segment_ltv)
             sheets = {
                 "Total FH Contribution": total_df,

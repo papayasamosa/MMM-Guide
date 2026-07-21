@@ -183,8 +183,18 @@ else:
         contributions = compute_shapley_contributions(frame, meta, params, n_permutations=100)
 
     st.markdown("### Total-FH contribution by channel")
-    st.caption("Total impact per channel across all segments, plus which segment that impact falls into and LTV-weighted value.")
-    total_df = total_fh_contribution(frame, meta, params, contributions, ltv)
+    dna_kit_segments_in_fit = [s for s in meta.direct_dna_segments if s != meta.dna_segment]
+    fh_segments_in_fit = [s for s in meta.segments if s not in dna_kit_segments_in_fit]
+    if dna_kit_segments_in_fit:
+        st.caption(
+            f"Total impact per FH channel across FH segments only ({', '.join(fh_segments_in_fit)}) - "
+            f"DNA-product segments ({', '.join(dna_kit_segments_in_fit)}) are excluded from this total "
+            "since a kit-sale count and a GSA count aren't the same unit; see their own rows in the "
+            "segment x channel detail below."
+        )
+    else:
+        st.caption("Total impact per channel across all segments, plus which segment that impact falls into and LTV-weighted value.")
+    total_df = total_fh_contribution(frame, meta, params, contributions, ltv, segments=fh_segments_in_fit)
     st.dataframe(total_df, width="stretch", column_config=dataframe_column_config(total_df))
 
     st.markdown("---")

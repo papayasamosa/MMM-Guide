@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
-from ancestry_mmm.core.predict import FHPosteriorParams, generate_channel_curve
+from ancestry_mmm.core.predict import FHPosteriorParams, generate_channel_curve, steady_state_segment_response
 
 SEGMENTS = ["New", "DNA_CrossSell"]
 CHANNELS = ["TV_Brand", "DNA_Media"]
@@ -84,3 +84,81 @@ class TestGenerateChannelCurve:
     def test_max_spend_overrides_the_default_cap(self, meta, params):
         df = generate_channel_curve("TV_Brand", meta, params, n_points=5, max_spend=50.0)
         assert df["spend"].max() == pytest.approx(50.0)
+
+
+class TestGenerateChannelCurveDirectDnaSegments:
+    """A DNA-product kit-sale segment (core.outcomes) fit alongside the FH
+    segments is DNA media's *direct* target, not a halo recipient - it must
+    get the same full, undamped response as `dna_segment` itself, not the
+    shrunk-toward-zero halo other segments get (docs/dna_fh_causal_structure.md)."""
+
+    @pytest.fixture
+    def meta_with_dna_kit_segment(self) -> FHModelMeta:
+        return FHModelMeta(
+            markets=["UK"], segments=SEGMENTS + ["New Customer"], channels=CHANNELS,
+            dna_channels=["DNA_Media"], dna_channel_idx=[1], non_dna_idx=[0],
+            dna_segment="DNA_CrossSell", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+            direct_dna_segments=["DNA_CrossSell", "New Customer"],
+        )
+
+    @pytest.fixture
+    def params_with_dna_kit_segment(self, params) -> FHPosteriorParams:
+        params.beta["New Customer"] = {"TV_Brand": 0.03, "DNA_Media": 0.5}
+        params.halo_strength["New Customer"] = 0.2  # would apply if wrongly treated as a halo recipient
+        return params
+
+    def test_dna_kit_segment_gets_full_response_not_halo_shrunk(self, meta_with_dna_kit_segment, params_with_dna_kit_segment):
+        df = generate_channel_curve("DNA_Media", meta_with_dna_kit_segment, params_with_dna_kit_segment, spend_range=np.array([500.0]))
+        row = df.iloc[0]
+        raw = params_with_dna_kit_segment.beta["New Customer"]["DNA_Media"] * row["saturation"]
+        assert row["New Customer_response"] == pytest.approx(raw)  # NOT raw * halo_strength
+
+    def test_ordinary_non_direct_segment_is_still_halo_shrunk(self, meta_with_dna_kit_segment, params_with_dna_kit_segment):
+        # Regression guard: adding a direct DNA-kit segment must not
+        # accidentally exempt an unrelated FH segment (New) from the halo
+        # shrinkage it's still supposed to get.
+        df = generate_channel_curve("DNA_Media", meta_with_dna_kit_segment, params_with_dna_kit_segment, spend_range=np.array([500.0]))
+        row = df.iloc[0]
+        raw_new = params_with_dna_kit_segment.beta["New"]["DNA_Media"] * row["saturation"]
+        assert row["New_response"] == pytest.approx(raw_new * params_with_dna_kit_segment.halo_strength["New"])
+
+
+class TestSteadyStateSegmentResponseDirectDnaSegments:
+    """steady_state_segment_response has its own (non-array-based) halo
+    branch - same direct_dna_segments requirement as generate_channel_curve,
+    tested separately since the code path is separate."""
+
+    @pytest.fixture
+    def meta_with_dna_kit_segment(self) -> FHModelMeta:
+        return FHModelMeta(
+            markets=["UK"], segments=SEGMENTS + ["New Customer"], channels=CHANNELS,
+            dna_channels=["DNA_Media"], dna_channel_idx=[1], non_dna_idx=[0],
+            dna_segment="DNA_CrossSell", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+            direct_dna_segments=["DNA_CrossSell", "New Customer"],
+        )
+
+    @pytest.fixture
+    def params_with_dna_kit_segment(self, params) -> FHPosteriorParams:
+        params.beta["New Customer"] = {"TV_Brand": 0.03, "DNA_Media": 0.5}
+        params.halo_strength["New Customer"] = 0.2
+        params.intercept["New Customer"] = 2.0
+        params.trend_coef["New Customer"] = 0.0
+        params.promo_coef["New Customer"] = 0.0
+        params.gamma_fourier["New Customer"] = np.zeros(6)
+        return params
+
+    def test_dna_kit_segment_response_uses_full_beta_not_halo_shrunk(self, meta_with_dna_kit_segment, params_with_dna_kit_segment):
+        spend = {"TV_Brand": 0.0, "DNA_Media": 500.0}
+        direct = steady_state_segment_response("UK", spend, meta_with_dna_kit_segment, params_with_dna_kit_segment)
+
+        halo_meta = FHModelMeta(
+            markets=["UK"], segments=SEGMENTS + ["New Customer"], channels=CHANNELS,
+            dna_channels=["DNA_Media"], dna_channel_idx=[1], non_dna_idx=[0],
+            dna_segment="DNA_CrossSell", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+            direct_dna_segments=["DNA_CrossSell"],  # New Customer NOT direct here
+        )
+        shrunk = steady_state_segment_response("UK", spend, halo_meta, params_with_dna_kit_segment)
+
+        # Full-weight response must exceed the halo-shrunk response for the
+        # same inputs (halo_strength < 1 for "New Customer").
+        assert direct["New Customer"] > shrunk["New Customer"]

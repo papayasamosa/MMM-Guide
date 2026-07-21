@@ -66,7 +66,7 @@ def extract_posterior_params(trace: az.InferenceData, meta: FHModelMeta) -> FHPo
     promo_coef = mean_by_coord("promo_coef", "segment", meta.segments)
     alpha = mean_by_coord("alpha", "segment", meta.segments)
     halo_strength = mean_by_coord("halo_strength", "segment", meta.segments) if meta.dna_channel_idx else {
-        s: (1.0 if s == meta.dna_segment else 0.0) for s in meta.segments
+        s: (1.0 if s in meta.direct_dna_segments else 0.0) for s in meta.segments
     }
 
     beta_mean = post["beta"].mean(dim=["chain", "draw"])
@@ -235,7 +235,7 @@ def steady_state_segment_response(
 
         for c in meta.channels:
             if c in meta.dna_channels:
-                if s == meta.dna_segment:
+                if s in meta.direct_dna_segments:
                     val += params.beta[s][c] * sat[c]
                 else:
                     val += params.beta[s][c] * sat[c] * params.halo_strength.get(s, 0.0)
@@ -295,7 +295,7 @@ def generate_channel_curve(
         overall = 0.0
         for seg in meta.segments:
             beta_val = params.beta[seg][channel]
-            if is_dna and seg != meta.dna_segment:
+            if is_dna and seg not in meta.direct_dna_segments:
                 beta_val = beta_val * params.halo_strength.get(seg, 0.0)
             value = beta_val * sat
             row[f"{seg}_response"] = value

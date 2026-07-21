@@ -1,23 +1,25 @@
 """
-Generalised outcome schema - PR2 of the DNA/FH architecture work (see the
-instruction document's section 4.1: "Refactor the schema so outcomes are
-defined using explicit dimensions rather than assuming all outcomes are FH
-segments").
+Generalised outcome schema (see the instruction document's section 4.1:
+"Refactor the schema so outcomes are defined using explicit dimensions
+rather than assuming all outcomes are FH segments").
 
-Scope boundary (important): this module defines, validates, derives, and
-persists outcome definitions. It does **not** change what the fitted model
-predicts. A DNA-product `OutcomeDefinition` is captured data, not a modelled
-one, until PR3 ("DNA model equations and integrated halo") builds the actual
-DNA response equations - see `outcome_is_modelled` below and
-`docs/outcomes.md` for the full rationale. Every place this module's output
-reaches the UI must show that distinction plainly (Definition of Done: "the
-app visibly labels assumptions and limitations") rather than implying a DNA
-outcome is already being predicted.
+This module defines, validates, derives, and persists outcome definitions.
+It does not itself change `ModelSpec` (`core.schema`) - `segment_outcomes`
+there still means exactly what it always has, and `OutcomeDefinition` is an
+additive, descriptive catalogue layered on top of it, not a replacement.
 
-`ModelSpec` (`core.schema`) is unchanged and remains the single source of
-truth for what the joint FH model actually fits - `segment_outcomes` there
-still means exactly what it always has. `OutcomeDefinition` is an additive,
-descriptive catalogue layered on top of it, not a replacement.
+A DNA-product `OutcomeDefinition` is opt-in, not automatic: once mapped on
+Structure: Segments & Markets, it is picked up automatically the next time
+the modelling frame is prepared on Model Configuration
+(`core.outcomes.dna_kit_outcome_columns` -> `data.preprocessor.
+prepare_fh_modeling_frame`'s `dna_kit_outcomes` parameter -> `core.
+hierarchical_model.build_fh_hierarchical_model`'s `direct_dna_segments`),
+where DNA-targeted media gets full direct response on it, not the shrunk
+halo pathway other segments get - see docs/dna_fh_causal_structure.md.
+`outcome_is_modelled` below reflects that opt-in distinction: Family
+History segments are always part of every fit; DNA-product segments are
+only part of a fit an analyst has actually configured for them by mapping
+DNA columns.
 """
 
 from __future__ import annotations
@@ -68,11 +70,17 @@ class OutcomeDefinition:
 
 
 def outcome_is_modelled(outcome: OutcomeDefinition) -> bool:
-    """True if this outcome is actually fed into a fitted model today.
-    Only Family History outcomes are - DNA outcomes are captured/persisted
-    from PR2 onward but not modelled until PR3's DNA equations land. This is
-    the single place that boundary is encoded, so UI/report callers never
-    have to hardcode `product == FAMILY_HISTORY` themselves."""
+    """True if this outcome is *always* part of a fit, with no extra
+    configuration - Family History segments are. DNA-product outcomes are
+    opt-in: they join the fit automatically once mapped on Structure (see
+    the module docstring), but a fresh `OutcomeDefinition` on its own
+    doesn't guarantee any particular past fit included it - check the
+    fitted model's own `FHModelMeta.segments`/`direct_dna_segments` for
+    whether a specific trace actually modelled it. This function answers
+    "does this outcome type require an extra step", not "was this run
+    included in the last fit". This is the single place that boundary is
+    encoded, so UI/report callers never have to hardcode
+    `product == FAMILY_HISTORY` themselves."""
     return outcome.product == FAMILY_HISTORY
 
 
@@ -192,6 +200,18 @@ def resolve_outcome_definitions(
     if outcome_definitions:
         return [OutcomeDefinition.from_dict(d) for d in outcome_definitions]
     return fh_outcomes_from_spec(segment_outcomes, segment_ltv)
+
+
+def dna_kit_outcome_columns(outcomes: List[OutcomeDefinition]) -> Dict[str, str]:
+    """
+    `{segment: column}` for every DNA-product outcome in `outcomes` - the
+    shape `data.preprocessor.prepare_fh_modeling_frame`'s `dna_kit_outcomes`
+    parameter and `core.hierarchical_model.build_fh_hierarchical_model`'s
+    `direct_dna_segments` (via `list(...)`) both expect, so a project's
+    saved outcome catalogue can be fed straight into model fitting without
+    the analyst mapping DNA columns a second time.
+    """
+    return {o.segment: o.column for o in outcomes if o.product == DNA}
 
 
 def outcomes_to_dataframe(outcomes: List[OutcomeDefinition]) -> pd.DataFrame:

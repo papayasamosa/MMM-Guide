@@ -199,3 +199,38 @@ class TestGenerateMarketChannelCurve:
     def test_response_increases_with_spend(self, meta, params):
         df = generate_market_channel_curve("UK", "TV", meta, params, spend_range=np.array([0.0, 500.0, 5000.0]))
         assert df["overall_response"].is_monotonic_increasing
+
+
+class TestGenerateMarketChannelCurveDirectDnaSegments:
+    """A DNA-product kit-sale segment fit alongside the FH segments must get
+    DNA media's full, undamped response, not the halo-shrunk pathway other
+    segments get - same requirement as core.predict, tested separately for
+    Model C's market-indexed parameter shape."""
+
+    @pytest.fixture
+    def meta_with_dna_kit_segment(self) -> FHModelMeta:
+        return FHModelMeta(
+            markets=MARKETS, segments=SEGMENTS + ["New Customer"], channels=CHANNELS,
+            dna_channels=["DNA_Media"], dna_channel_idx=[1], non_dna_idx=[0],
+            dna_segment="DNA_CrossSell", dna_lag_weeks=1, unpooled_markets=[], control_names=[],
+            direct_dna_segments=["DNA_CrossSell", "New Customer"],
+        )
+
+    @pytest.fixture
+    def params_with_dna_kit_segment(self, params) -> FHMarketSpecificPosteriorParams:
+        for market in MARKETS:
+            params.beta[market]["New Customer"] = {"TV": 0.03, "DNA_Media": 0.5}
+        params.halo_strength["New Customer"] = 0.2
+        return params
+
+    def test_dna_kit_segment_gets_full_response_not_halo_shrunk(self, meta_with_dna_kit_segment, params_with_dna_kit_segment):
+        df = generate_market_channel_curve("UK", "DNA_Media", meta_with_dna_kit_segment, params_with_dna_kit_segment, spend_range=np.array([500.0]))
+        row = df.iloc[0]
+        raw = params_with_dna_kit_segment.beta["UK"]["New Customer"]["DNA_Media"] * row["saturation"]
+        assert row["New Customer_response"] == pytest.approx(raw)  # NOT raw * halo_strength
+
+    def test_ordinary_non_direct_segment_is_still_halo_shrunk(self, meta_with_dna_kit_segment, params_with_dna_kit_segment):
+        df = generate_market_channel_curve("UK", "DNA_Media", meta_with_dna_kit_segment, params_with_dna_kit_segment, spend_range=np.array([500.0]))
+        row = df.iloc[0]
+        raw_new = params_with_dna_kit_segment.beta["UK"]["New"]["DNA_Media"] * row["saturation"]
+        assert row["New_response"] == pytest.approx(raw_new * params_with_dna_kit_segment.halo_strength["New"])

@@ -148,8 +148,16 @@ from .outcomes import (
     validate_outcome_definitions,
     fh_outcomes_from_spec,
     dna_outcomes_from_columns,
+    dna_kit_outcome_columns,
     resolve_outcome_definitions,
     outcomes_to_dataframe,
+)
+from .promotions import (
+    PromotionEvent,
+    validate_promotion_events,
+    promotion_weekly_series,
+    apply_promotion_events_to_frame,
+    promotion_events_to_dataframe,
 )
 
 __all__ = [
@@ -274,6 +282,12 @@ __all__ = [
     "validate_outcome_definitions",
     "fh_outcomes_from_spec",
     "dna_outcomes_from_columns",
+    "dna_kit_outcome_columns",
     "resolve_outcome_definitions",
     "outcomes_to_dataframe",
+    "PromotionEvent",
+    "validate_promotion_events",
+    "promotion_weekly_series",
+    "apply_promotion_events_to_frame",
+    "promotion_events_to_dataframe",
 ]

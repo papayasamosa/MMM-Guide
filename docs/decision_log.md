@@ -637,3 +637,78 @@ Model A - now fixed and covered by a regression test (`test_export_then_import_r
 **Owner:** Engineering.
 **Status:** Accepted; implemented in PR2 (general outcome schema and DNA data support). See
 `docs/outcomes.md` for the full design record.
+
+---
+
+**Date:** 2026-07-21
+**Decision:** Generalise `FHModelMeta.dna_segment` (a single Family History segment) to
+`FHModelMeta.direct_dna_segments` (a list) to fit DNA-product kit-sale segments (core.outcomes)
+alongside the Family History segments in the same joint model, reusing the existing likelihood,
+adstock/saturation, promo, price/control, trend and seasonality machinery unchanged - rather than
+building a separate DNA-only model or a new halo-style pathway for kit sales.
+**Reason:** The joint model was already fully generic over `segment` dims - nothing in
+`build_fh_hierarchical_model`/`build_fh_market_specific_model` assumed a segment was a Family History
+outcome specifically, except the single hardcoded `dna_segment` halo target. DNA-targeted media's
+relationship to DNA kit sales is a *direct* effect (arguably DNA media's primary purpose), not a halo
+effect - treating a DNA-kit segment as an ordinary "other segment" would have wrongly shrunk it toward
+zero the same way an unrelated segment like Winback is shrunk. Generalising the one hardcoded
+full-weight segment to a list, defaulting to `[dna_segment]` for exact backward compatibility, was the
+minimal change that let every existing model-building/prediction/attribution code path keep working
+unchanged for a project with no DNA segments, while giving DNA-kit segments the mechanically-correct
+treatment once they're included. See docs/dna_fh_causal_structure.md for the full pathway-by-pathway
+treatment (including what's deliberately *not* modelled - the kit-sale-to-later-FH-conversion pipeline
+effect, and why).
+**Alternatives considered:** A separate, DNA-only PyMC model (rejected - duplicates the entire
+adstock/saturation/promo/trend/seasonality machinery for no structural reason, and would need its own
+persistence/diagnostics/prediction code paths). Treating DNA-kit segments as ordinary halo recipients
+(rejected - actively wrong: DNA media's effect on kit sales is not "a smaller effect elsewhere", it's
+the primary effect, and shrinking it toward zero by construction would bias every downstream CPA/
+attribution number for DNA kit sales low).
+**Impact:** `core.hierarchical_model.FHModelMeta` gains `direct_dna_segments: List[str]` (defaults to
+`[dna_segment]` via `__post_init__` if omitted/empty - existing bundles/tests unaffected).
+`build_fh_hierarchical_model`/`build_fh_market_specific_model` gain an optional
+`direct_dna_segments` parameter and a new `_resolve_direct_dna_segments` helper. Every NumPy-replay
+and attribution function that previously hardcoded `segment == meta.dna_segment`
+(`core.predict`/`core.market_specific_predict`'s `extract_posterior_params`,
+`steady_state_segment_response(_market_specific)`, `generate_channel_curve`/
+`generate_market_channel_curve`; `core.attribution._channel_log_terms`) now checks
+`segment in meta.direct_dna_segments` instead - found and fixed as a direct, necessary consequence of
+this change (a DNA-kit segment would otherwise have been silently mis-attributed by Shapley/curve
+code even though correctly fit by the model). `core.attribution.total_fh_contribution` gained a
+`segments` filter parameter so a DNA kit-sale count is never summed into an "FH total" alongside a GSA
+count - wired at the two call sites (`pages/07_Results_Curve_Bank.py`, `pages/09_Project_Export.py`)
+to exclude DNA-product segments from that specific total.
+`data.preprocessor.prepare_fh_modeling_frame` gains an optional `dna_kit_outcomes` parameter
+(segment -> column, same shape as `spec.segment_outcomes`) that extends the fitted segment set without
+changing `ModelSpec`'s own shape - `pages/04_Model_Config.py` derives it automatically from whatever
+DNA outcomes are mapped on Structure (`core.outcomes.dna_kit_outcome_columns`) and
+`pages/05_Model_Training.py` passes the corresponding `direct_dna_segments` through to whichever
+builder is fitting - opt-in, automatic once mapped, never silent (a caption on Model Configuration
+always states which segments, FH and DNA, are about to be fit).
+New `core.promotions` module (`PromotionEvent`, `promotion_weekly_series`,
+`apply_promotion_events_to_frame`) gives DNA promotions the richer representation the instruction
+document asks for (event name, dates, discount depth, sale price) while still feeding the *same*
+`promo_cols`/`promo_coef` pathway every segment's promotion already uses - a promotion's effect is
+structurally additive and separate from media response in the linear predictor either way, so it can
+never be silently absorbed into a channel's media coefficient.
+Incidental fix while extending `core.attribution`: the pre-existing `_channel_log_terms` DNA-halo
+branch would have mis-attributed *any* second "dna"-named segment even before this PR (the auto-detect
+in `_default_dna_segment` only ever resolved one), not just a newly-added DNA-kit segment - now
+correctly generalised.
+**Verification:** Offline recovery check (not a committed test - same precedent as Model C's original
+check): a synthetic panel with a known, large *direct* DNA-media effect on a DNA-kit segment
+(`beta=0.45`) and known, much smaller *effective* (halo-shrunk) effect on an ordinary FH segment
+(`beta=0.15 x halo=0.10 -> effective 0.015`), fit with `direct_dna_segments=["DNA_CrossSell", "New
+Customer"]` (300/400 tune/draws, 2 chains), correctly recovered: `halo_strength` fixed at exactly
+`1.0` for both `DNA_CrossSell` and `New Customer` (not estimated, as designed), and the ordinary
+segment's effective DNA_Media response (0.018) came out smallest of the three, versus 0.091
+(`DNA_CrossSell`) and 0.095 (`New Customer`) - the correct ordering. Absolute point-estimate magnitudes
+were compressed toward the pooled mean under the small draw budget, the same expected pattern as
+Model C's original recovery check - this confirms the halo/direct structure is mechanically correct,
+not tight quantitative recovery, which needs a production draw count. The fast, non-MCMC parts (the
+`direct_dna_segments` logic itself at both the pre-PyMC-construction level and the NumPy-replay level)
+are unit tested directly and committed - see `ancestry_mmm/tests/test_hierarchical_model.py`,
+`test_predict.py`, `test_market_specific_predict.py`, `test_attribution.py`, `test_preprocessor.py`.
+**Owner:** Engineering.
+**Status:** Accepted; implemented in PR3 (DNA model equations and integrated halo). See
+`docs/dna_fh_causal_structure.md` for the full design record.

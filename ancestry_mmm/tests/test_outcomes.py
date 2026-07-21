@@ -8,6 +8,7 @@ from ancestry_mmm.core.outcomes import (
     DNA_SEGMENT_NEW,
     FAMILY_HISTORY,
     OutcomeDefinition,
+    dna_kit_outcome_columns,
     dna_outcomes_from_columns,
     fh_outcomes_from_spec,
     outcome_is_modelled,
@@ -208,3 +209,25 @@ class TestOutcomesToDataframe:
         dna_row = df[df["product"] == DNA].iloc[0]
         assert fh_row["modelled_today"] == True  # noqa: E712
         assert dna_row["modelled_today"] == False  # noqa: E712
+
+
+class TestDnaKitOutcomeColumns:
+    def test_returns_column_per_dna_segment(self):
+        outcomes = dna_outcomes_from_columns(
+            new_customer_column="DNA_Kit_New", existing_fh_column="DNA_Kit_Existing",
+        )
+        assert dna_kit_outcome_columns(outcomes) == {
+            DNA_SEGMENT_NEW: "DNA_Kit_New", DNA_SEGMENT_EXISTING_FH: "DNA_Kit_Existing",
+        }
+
+    def test_excludes_family_history_outcomes(self):
+        outcomes = fh_outcomes_from_spec({"New": "GSA_New"}) + dna_outcomes_from_columns(new_customer_column="DNA_Kit_New")
+        result = dna_kit_outcome_columns(outcomes)
+        assert result == {DNA_SEGMENT_NEW: "DNA_Kit_New"}
+
+    def test_empty_outcomes_gives_empty_dict(self):
+        assert dna_kit_outcome_columns([]) == {}
+
+    def test_no_dna_outcomes_gives_empty_dict(self):
+        outcomes = fh_outcomes_from_spec({"New": "GSA_New", "Winback": "GSA_Winback"})
+        assert dna_kit_outcome_columns(outcomes) == {}
