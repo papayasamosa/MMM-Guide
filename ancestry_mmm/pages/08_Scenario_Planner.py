@@ -22,6 +22,7 @@ from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.optimization import (
     SpendConstraint, evaluate_scenario, optimize_scenario, scenario_to_dict, compare_scenarios, WEEKS_PER_MONTH,
 )
+from ancestry_mmm.core.uncertainty import evaluate_scenario_with_uncertainty
 from ancestry_mmm.core.evidence_tiers import classify_market_evidence
 from ancestry_mmm.core.market_config import MarketSpecConfig
 from ancestry_mmm.core.media_units import extract_cost_per_unit_series, historical_cost_trend
@@ -269,6 +270,47 @@ with tab_manual:
         scenarios[-1]["predicted"] = predicted
         set_state("scenarios", scenarios)
         st.success(f"Saved scenario '{scenario_name}'.")
+
+    st.markdown("---")
+    if trace is None:
+        st.caption("Posterior uncertainty needs a fitted trace, not just point-estimate posterior params - unavailable here.")
+    else:
+        show_scenario_uncertainty = st.checkbox(
+            "Show posterior uncertainty for this plan (re-runs the scenario once per sampled draw - slower)",
+            value=False, key="manual_scenario_uncertainty",
+        )
+        if show_scenario_uncertainty:
+            n_draws = st.slider("Posterior draws to sample", 20, 200, 50, step=10, key="manual_scenario_n_draws")
+            baseline_plan = {m: {c: float(v) for c, v in zip(meta.channels, default_monthly)} for m in months}
+            with st.spinner(f"Computing scenario uncertainty from {n_draws} posterior draws..."):
+                try:
+                    uncertainty_result = evaluate_scenario_with_uncertainty(
+                        spend_plan, market, meta, trace, reference_context_by_month, ltv,
+                        n_draws=n_draws, baseline_spend_plan=baseline_plan, **identity_kwargs,
+                    )
+                except ApprovalMismatchError as e:
+                    st.error(f"Cannot evaluate this scenario: {e}")
+                    uncertainty_result = None
+            if uncertainty_result is not None:
+                st.markdown("**Predicted outcomes with uncertainty (mean / median / 90% credible interval)**")
+                summary_df = uncertainty_result["summary"]
+                st.dataframe(summary_df, width="stretch", column_config=dataframe_column_config(summary_df))
+                prob = uncertainty_result["prob_outperforms_baseline"]
+                if prob is not None:
+                    st.metric(
+                        "Probability this plan outperforms the recent-average baseline",
+                        f"{prob:.0%}",
+                        help=(
+                            "Fraction of paired posterior draws where this plan's total predicted value "
+                            "exceeds the recent-average-spend baseline's - the same draw index is used "
+                            "for both plans in each comparison, so the result isn't inflated by "
+                            "independently-resampled noise (docs/decision_log.md)."
+                        ),
+                    )
+                st.caption(
+                    f"Based on {uncertainty_result['n_draws']} sampled posterior draws - a subsample of "
+                    "the full posterior for speed, not the full posterior itself."
+                )
 
 with tab_constrained:
     st.markdown(

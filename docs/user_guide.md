@@ -72,11 +72,14 @@ structure you chose), so retraining or changing any upstream setting invalidates
 
 For a shared-curve model (Model A): review channel and segment contributions, DNA halo strength,
 and the contribution waterfall, then a channel curve viewer. For a market-specific model (Model C):
-explore each market's own channel curves in the curve viewer instead - Shapley attribution isn't
-available for market-specific models yet (planned for a later phase). Either curve viewer shows CPA
-(average and marginal) alongside the spend curve, and - where you've mapped a channel to a physical
-delivery column on Channel & Media Units - a response-unit curve, historical cost-per-unit trend,
-and calculators for "how much to spend to buy N units" and "what response would N units produce."
+the same total/segment/waterfall views are available market-by-market (or aggregated across
+markets), computed with each market's own `beta`/`hill_K` rather than Model A's shared curve, plus
+each market's own channel curve viewer. Either curve viewer shows CPA (average and marginal)
+alongside the spend curve, and - where you've mapped a channel to a physical delivery column on
+Channel & Media Units - a response-unit curve, historical cost-per-unit trend, and calculators for
+"how much to spend to buy N units" and "what response would N units produce." An optional posterior
+uncertainty band (re-running the curve once per sampled posterior draw) is available for either
+model type, at the cost of extra computation time.
 Once approved, save the model's curves to the curve bank as versioned, traceable entries (one per
 market for a market-specific model, each labelled with how much that market's own data drove its
 estimate, plus a mirrored media-unit entry wherever a cost-per-unit relationship exists), filter the
@@ -92,7 +95,10 @@ any channel you've mapped to a physical delivery column, in media units instead 
 (locked cells, spend floors, bounded movement) and let the optimiser suggest an allocation. Every
 result shows a blended average CPA (current plan vs. this one), alongside total predicted value or
 volume. An unconstrained benchmark is also available for comparison - it's a theoretical optimum,
-not a recommended plan.
+not a recommended plan. An optional posterior uncertainty view re-runs the scenario once per sampled
+posterior draw and summarizes the resulting distribution (mean/median/90% interval) alongside the
+probability the current plan actually outperforms the current/baseline plan, paired draw-for-draw so
+the comparison isn't inflated by independently-resampled noise.
 
 ## Step 12: Project Export & Handover
 
@@ -107,8 +113,7 @@ complete.
 
 Market-specific curves (Model C) can now be reviewed, diagnosed, saved to the curve bank with their
 own evidence-tier labelling, and planned against in Scenario Planner - including CPA, media-unit
-planning mode, and inflation calculators. **Shapley attribution remains shared-curve (Model A)
-only** - it would misread Model C's market-indexed parameters. A future phase would need to
-redesign attribution for a market-specific model before that changes. See `docs/project_objectives.md`
-for the full phased plan and `docs/limitations.md` for what's deliberately still out of scope
-(CPA/inflation as optimiser objectives, media-unit spend constraints, and more).
+planning mode, inflation calculators, Shapley attribution (market-aware), and posterior uncertainty
+for both curves and scenario outcomes. See `docs/project_objectives.md` for the full phased plan and
+`docs/limitations.md` for what's deliberately still out of scope (CPA/inflation as optimiser
+objectives, media-unit spend constraints, and more).

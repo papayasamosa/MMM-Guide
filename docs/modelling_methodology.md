@@ -78,10 +78,11 @@ posterior-extraction and NumPy curve-replay module (`core.market_specific_predic
 scorecard equivalent is `core.market_specific_diagnostics.compute_scorecard_market_specific`.
 Requires at least 2 markets - partial pooling across a single market is meaningless.
 
-**Not yet market-specific (Phase 3):** curve bank storage, Shapley attribution, and Scenario
-Planner all remain Model-A-only for now - they're built around a single shared curve per channel
-and would misread Model C's market-indexed parameters. Market-specific curves can be reviewed via a
-dedicated curve viewer (Results & Curve Bank) using `core.market_specific_predict.generate_market_channel_curve`.
+Curve bank storage, Shapley attribution (`core.market_specific_attribution`, market-aware - each
+row uses its own market's `beta`/`hill_K` rather than Model A's shared curve), and Scenario Planner
+are all available for Model C. Market-specific curves can be reviewed via a dedicated curve viewer
+(Results & Curve Bank) using `core.market_specific_predict.generate_market_channel_curve`, with an
+optional per-draw posterior uncertainty band (`core.uncertainty`).
 
 ## Priors
 

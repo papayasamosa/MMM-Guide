@@ -72,6 +72,7 @@ Phase 1 added `core.market_config` and the Channel & Media Units / Market Descri
 capture the market/currency/media-unit context this redesign attaches to each curve record. Phase 2
 added the market-specific model itself (`core.market_specific_model`, "Model C"). Phase 3a redesigned
 the curve bank to per-curve records and added evidence-tier classification (`core.evidence_tiers`).
-Phase 3b (this work) added CPA, response-unit curves, and media-unit curve bank entries
-(`core.media_units`, `core.curve_bank.make_media_unit_entries`). Shapley attribution and the
-Scenario Planner remain Model-A-only (Phase 3c).
+Phase 3b added CPA, response-unit curves, and media-unit curve bank entries (`core.media_units`,
+`core.curve_bank.make_media_unit_entries`). Phase 3c extended the Scenario Planner to both model
+types. A later phase (`core.market_specific_attribution`) added market-aware Shapley attribution for
+Model C, so both model types now have full attribution, scenario planning, and curve bank coverage.

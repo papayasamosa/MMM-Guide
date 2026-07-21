@@ -218,7 +218,12 @@ def _limitations_section(model_type: str, market_spec_config: Optional[MarketSpe
             "Evidence-tier thresholds (core.evidence_tiers) are reasonable defaults, not yet "
             "validated against real Ancestry data (docs/decision_log.md)."
         )
-        bullets.append("Shapley attribution and CPA are not available for market-specific curves in the same view.")
+    bullets.append(
+        "Posterior uncertainty for curves and scenario outcomes (core.uncertainty) re-runs the "
+        "same point-estimate calculation once per sampled posterior draw (a subsample, typically "
+        "20-200 out of several thousand, for speed) rather than the full posterior - it is opt-in "
+        "and shown alongside, not in place of, the point estimate."
+    )
     if market_spec_config and market_spec_config.channel_media_units:
         bullets.append(
             "Media-unit response curves and cost-per-unit trends use one constant average "

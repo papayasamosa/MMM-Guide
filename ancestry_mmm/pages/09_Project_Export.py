@@ -20,6 +20,9 @@ from ancestry_mmm.core.persistence import (
 )
 from ancestry_mmm.core.curve_bank import load_all_entries, entries_to_dataframe
 from ancestry_mmm.core.attribution import compute_shapley_contributions, total_fh_contribution, segment_channel_summary
+from ancestry_mmm.core.market_specific_attribution import (
+    compute_shapley_contributions_market_specific, total_contribution_market_specific, segment_channel_market_summary,
+)
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.approval import ModelApproval
 from ancestry_mmm.core.market_config import MarketSpecConfig
@@ -142,11 +145,9 @@ if get_state("trace") is not None and get_state("model_spec"):
         st.caption("Curve bank, total-FH contribution and segment x channel Shapley attribution (Model A).")
     else:
         st.caption(
-            "Shapley attribution isn't available for market-specific models - it's built around a "
-            "single shared curve per channel and would misread Model C's market-indexed parameters "
-            "(same restriction as Results & Curve Bank). This export instead includes the "
-            "market-specific curve bank, evidence tiers, a CPA table per market/channel, diagnostics "
-            "and approval metadata, and the scenario comparison."
+            "Curve bank, evidence tiers, a CPA table per market/channel, market-aware Shapley "
+            "attribution (total and market x segment x channel detail, computed with each market's "
+            "own beta/hill_K), diagnostics and approval metadata, and the scenario comparison."
         )
     if st.button("Build Excel summary"):
         meta = get_state("model_meta")
@@ -175,10 +176,19 @@ if get_state("trace") is not None and get_state("model_spec"):
             approval_df = pd.DataFrame([approval_dict]) if approval_dict else None
             scenarios = get_state("scenarios") or []
             scenarios_df = compare_scenarios(scenarios) if scenarios else None
+            ms_contributions = compute_shapley_contributions_market_specific(frame, meta, params, n_permutations=100)
+            dna_kit_segments_in_fit = [s for s in meta.direct_dna_segments if s != meta.dna_segment]
+            fh_segments_in_fit = [s for s in meta.segments if s not in dna_kit_segments_in_fit]
+            ms_total_df = total_contribution_market_specific(
+                frame, meta, params, ms_contributions, spec.segment_ltv, segments=fh_segments_in_fit, by_market=True,
+            )
+            ms_seg_df = segment_channel_market_summary(frame, meta, params, ms_contributions, spec.segment_ltv)
             sheets = {
                 "Curve Bank": entries_df,
                 "Evidence Tiers": evidence_tiers_dataframe(trace, frame, meta),
                 "CPA": market_specific_cpa_table(meta, params),
+                "Total Contribution": ms_total_df,
+                "Market x Segment x Channel": ms_seg_df,
                 "Diagnostics": diagnostics_df,
                 "Approval": approval_df,
                 "Scenarios": scenarios_df,
@@ -247,8 +257,6 @@ st.markdown("### What's out of scope")
 st.markdown("""
 Per `docs/project_objectives.md` and `docs/limitations.md`, deliberately **not** built:
 
-- **Shapley attribution for market-specific models** - it's built around a single shared curve per
-  channel and would misread Model C's market-indexed parameters.
 - **CPA/inflation as first-class optimiser objectives** - "minimise CPA," "maintain response/delivery
   under inflation" from the original redesign brief; `avg_cpa` is reported as an output metric, not
   an optimisation target.

@@ -712,3 +712,91 @@ are unit tested directly and committed - see `ancestry_mmm/tests/test_hierarchic
 **Owner:** Engineering.
 **Status:** Accepted; implemented in PR3 (DNA model equations and integrated halo). See
 `docs/dna_fh_causal_structure.md` for the full design record.
+
+---
+
+**Date:** 2026-07-21
+**Decision:** Add posterior uncertainty (`core.uncertainty`) as a re-run-per-draw subsample, and a
+dedicated market-aware Shapley attribution module for Model C (`core.market_specific_attribution`)
+that reuses Model A's baseline term but reimplements the channel-response term for market-indexed
+parameters - rather than forcing Model A's implementation onto Model C, or computing uncertainty
+analytically.
+**Reason:** Every curve/CPA/scenario function in this codebase (`core.predict`,
+`core.market_specific_predict`, `core.media_units`, `core.optimization`) works off the posterior
+*mean* (`extract_posterior_params`/`extract_market_specific_posterior_params` with no `at=`) - a
+single point estimate with no sense of how much the posterior actually varies. There's no closed-form
+expression for the credible interval of a Hill-saturated, adstocked, exponentiated response curve or
+a multi-step scenario evaluation, so the only general way to get one is to literally recompute the
+same calculation once per posterior draw and summarize the resulting distribution - re-running the
+existing point-estimate code path with a different draw's parameters each time, not a new modelling
+approximation on top of it. Doing this against the *entire* posterior (often several thousand draws)
+for every curve/scenario view would make the UI too slow to be usable, so `n_draws` (default 100, a
+UI-exposed slider from 20-200) subsamples without replacement (`sample_draw_indices`) - a documented
+speed/fidelity tradeoff, not a modelling shortcut.
+Model A's Shapley decomposition (`core.attribution`) is built entirely around
+`params.beta[segment][channel]`/`params.hill_K[channel]` - a single shared curve per channel. Model
+C's parameters are market-indexed (`params.beta[market][segment][channel]`,
+`params.hill_K[market][channel]`); every observation row already belongs to exactly one market via
+`frame["market_idx"]` (the frame is built one contiguous block per market - `data.preprocessor.
+prepare_fh_modeling_frame`), so a market-aware decomposition falls out of using each row's own
+market's `beta`/`hill_K` in the per-channel log-term, with no separate market loop needed in the
+permutation-average Shapley algorithm itself. Everything *not* market-indexed (intercept,
+market_offset, trend_coef, gamma_fourier, promo_coef, control_coef, segment_control_coef) is identical
+in shape between `FHPosteriorParams` and `FHMarketSpecificPosteriorParams`, so
+`core.attribution._baseline_eta` is reused directly rather than duplicated.
+**Alternatives considered:** A closed-form/delta-method approximation to posterior uncertainty
+(rejected - would need a new derivation per calculation type, whereas re-running the exact existing
+calculation per draw is mechanically simple and can never drift out of sync with the point-estimate
+path it summarizes). Computing uncertainty against the full posterior every time (rejected - too slow
+for interactive use; the UI exposes the subsample size as a control rather than hiding the tradeoff).
+Adapting Model A's `compute_shapley_contributions` to accept market-indexed parameters via branching
+(rejected per the brief's explicit instruction not to force Model A's implementation onto Model C -
+a dedicated module keeps the parameter-shape difference explicit rather than threading `if
+market_specific` branches through Model A's existing, working code).
+**Impact:** `core.predict.extract_posterior_params` and
+`core.market_specific_predict.extract_market_specific_posterior_params` gain an optional
+`at: tuple[int, int]` (chain, draw) parameter - `None` (default) keeps the existing posterior-mean
+behaviour byte-for-byte; every existing caller is unaffected. New `core.uncertainty` module:
+`sample_draw_indices`, `summarize_distribution`, `generate_channel_curve_with_uncertainty`,
+`generate_market_channel_curve_with_uncertainty`, `evaluate_scenario_with_uncertainty`. Scenario
+uncertainty pairs draws (the same sampled draw index is used for both the proposed and baseline plan
+in each comparison) rather than resampling independently - comparing two independently-resampled
+distributions would overstate the apparent uncertainty in their *difference*, since it would include
+sampling noise from two separate draws instead of one shared draw per comparison;
+`prob_outperforms_baseline` is the fraction of paired draws where the proposed plan's total value
+exceeds the baseline's. New `core.market_specific_attribution` module:
+`compute_shapley_contributions_market_specific`, `segment_channel_market_summary` (adds a `market`
+column - genuinely differs by market, unlike Model A), `total_contribution_market_specific` (adds a
+`by_market` toggle; two-stage spend aggregation - `spend=("spend","first")` at the (market, channel)
+level before any `spend=("spend","sum")` across markets - since spend is constant across every segment
+row for a given (market, channel), summing it across segment rows first would double count). The DNA
+halo logic (`direct_dna_segments`) is handled identically to Model A. UI: Results & Curve Bank's
+Model C branch now shows a total-contribution table, market x segment x channel detail, and a
+contribution waterfall (previously an "attribution isn't available" message); both model types' curve
+viewers gained an opt-in posterior-uncertainty band (a new `create_response_curve_with_band` chart);
+Scenario Planner's manual tab gained an opt-in posterior-uncertainty view with
+`prob_outperforms_baseline` against the recent-average-spend baseline; Project Export's Model C Excel
+branch gained "Total Contribution" and "Market x Segment x Channel" sheets. `docs/limitations.md`,
+`docs/user_guide.md`, `docs/curve_bank.md`, `docs/modelling_methodology.md`, and `core/report.py`'s
+limitations section had their "Shapley attribution remains Model-A-only" claims removed as now stale,
+replaced where relevant with the uncertainty-approximation caveat.
+**Verification:** `compute_shapley_contributions_market_specific`'s additivity
+(`baseline + sum(channel_contributions) == mu_total`, exactly, for every row/segment) and correct
+`direct_dna_segments` halo handling are unit tested directly
+(`ancestry_mmm/tests/test_market_specific_attribution.py`), as is the two-stage spend aggregation (no
+double counting across segment rows) and the `segments`/`by_market` filters.
+`generate_channel_curve_with_uncertainty`/`generate_market_channel_curve_with_uncertainty` are tested
+for `lower <= mean <= upper` at every spend point and for raising no warnings despite the
+legitimately-all-NaN marginal-CPA-at-zero-spend case (`ancestry_mmm/tests/test_uncertainty.py`).
+`evaluate_scenario_with_uncertainty` is tested for the same interval ordering and for
+`prob_outperforms_baseline` correctly reaching 1.0/0.0 for a plan that strictly dominates/is dominated
+by its paired baseline. `extract_posterior_params`/`extract_market_specific_posterior_params`'s new
+`at=` parameter is tested directly for both model types (`test_predict.py`,
+`test_market_specific_predict.py`) - a specific `(chain, draw)` selection must disagree with both
+another draw and the posterior mean. All three new pages' code paths (curve-uncertainty checkboxes,
+Model C attribution tables, scenario-uncertainty checkbox, Excel export's new sheets, project report)
+were exercised end-to-end via `streamlit.testing.v1.AppTest` against two real (small, fast) MCMC fits -
+one Model A, one Model C - not just hand-built parameter fixtures; not committed, per this project's
+established convention for AppTest verification scripts.
+**Owner:** Engineering.
+**Status:** Accepted; implemented in PR4 (Model C attribution and uncertainty).

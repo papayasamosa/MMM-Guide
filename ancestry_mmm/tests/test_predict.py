@@ -7,11 +7,17 @@ established, shipped code with no dedicated test file, per this project's
 convention of not unit-testing every existing NumPy-replay function - see
 docs/decision_log.md and the equivalent note in test_market_specific_model.py."""
 
+import arviz as az
 import numpy as np
 import pytest
 
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
-from ancestry_mmm.core.predict import FHPosteriorParams, generate_channel_curve, steady_state_segment_response
+from ancestry_mmm.core.predict import (
+    FHPosteriorParams,
+    extract_posterior_params,
+    generate_channel_curve,
+    steady_state_segment_response,
+)
 
 SEGMENTS = ["New", "DNA_CrossSell"]
 CHANNELS = ["TV_Brand", "DNA_Media"]
@@ -162,3 +168,56 @@ class TestSteadyStateSegmentResponseDirectDnaSegments:
         # Full-weight response must exceed the halo-shrunk response for the
         # same inputs (halo_strength < 1 for "New Customer").
         assert direct["New Customer"] > shrunk["New Customer"]
+
+
+class TestExtractPosteriorParamsAt:
+    """`at=(chain, draw)` (added for core.uncertainty's per-draw calculations)
+    selects one specific posterior sample instead of averaging over the
+    whole posterior - the Model A equivalent of
+    TestExtractMarketSpecificPosteriorParams's `at=` coverage in
+    test_market_specific_predict.py."""
+
+    @pytest.fixture
+    def trace(self) -> az.InferenceData:
+        n_chain, n_draw = 2, 5
+        coords = {"segment": SEGMENTS, "channel": CHANNELS, "market": ["UK"], "fourier": list(range(6))}
+        rng = np.random.default_rng(1)
+
+        def const(value):
+            arr = np.asarray(value, dtype=float)
+            return np.broadcast_to(arr, (n_chain, n_draw) + arr.shape).copy()
+
+        posterior = {
+            "decay_rate": const([0.7, 0.5]) + rng.normal(0, 1e-6, size=(n_chain, n_draw, 2)),
+            "hill_K": const([1000.0, 500.0]),
+            "hill_S": const([1.2, 1.0]),
+            "beta": const([[0.10, 0.05], [0.02, 0.20]]),
+            "halo_strength": const([0.15, 1.0]),
+            "promo_coef": const([0.2, 0.3]),
+            "market_offset": const([[0.0, 0.0]]),
+            "intercept": const([3.0, 2.0]),
+            "trend_coef": const([0.1, 0.05]),
+            "gamma_fourier": const(np.zeros((6, 2))),
+            "alpha": const([5.0, 5.0]),
+        }
+        dims = {
+            "decay_rate": ["channel"], "hill_K": ["channel"], "hill_S": ["channel"],
+            "beta": ["segment", "channel"], "halo_strength": ["segment"],
+            "promo_coef": ["segment"], "market_offset": ["market", "segment"],
+            "intercept": ["segment"], "trend_coef": ["segment"],
+            "gamma_fourier": ["fourier", "segment"], "alpha": ["segment"],
+        }
+        return az.from_dict(posterior=posterior, coords=coords, dims=dims)
+
+    def test_at_selects_one_draw_instead_of_averaging_over_the_posterior(self, trace, meta):
+        mean_params = extract_posterior_params(trace, meta)
+        draw_a = extract_posterior_params(trace, meta, at=(0, 0))
+        draw_b = extract_posterior_params(trace, meta, at=(1, 3))
+        assert draw_a.decay_rate["TV_Brand"] != draw_b.decay_rate["TV_Brand"]
+        assert draw_a.decay_rate["TV_Brand"] != mean_params.decay_rate["TV_Brand"]
+
+    def test_at_still_selects_correctly_for_segment_and_channel_indexed_fields(self, trace, meta):
+        draw = extract_posterior_params(trace, meta, at=(1, 2))
+        assert draw.beta["New"]["TV_Brand"] == pytest.approx(0.10)
+        assert draw.beta["DNA_CrossSell"]["DNA_Media"] == pytest.approx(0.20)
+        assert draw.hill_K["DNA_Media"] == pytest.approx(500.0)

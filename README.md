@@ -66,12 +66,15 @@ Requires Python 3.11 or 3.12 (see [Deployment](#deployment) below for why there'
   one per (market, channel) for Model C, each carrying its evidence tier - traceable to its data
   window, approver and run label, plus a geo-test/in-platform-test calibration log with an
   agree/diverge flag (Model A only).
-- **Attribution** (`ancestry_mmm/core/attribution.py`): Shapley-decomposed segment and total-FH
-  contributions (order-independent, sums exactly to the model's predicted total), ROAS/CPA by
-  channel x segment, LTV-weighted value - **Model A only** (it's built around a single shared
-  curve per channel and would misread Model C's market-indexed parameters); Project Export builds
-  a market-specific summary (evidence tiers, CPA, diagnostics, approval, scenarios) for Model C
-  instead.
+- **Attribution** (`ancestry_mmm/core/attribution.py`, `ancestry_mmm/core/market_specific_attribution.py`):
+  Shapley-decomposed segment and total-FH contributions (order-independent, sums exactly to the
+  model's predicted total), ROAS/CPA by channel x segment, LTV-weighted value - available for both
+  model types; Model C's decomposition is market-aware (each row uses its own market's `beta`/
+  `hill_K`, not a single shared curve).
+- **Posterior uncertainty** (`ancestry_mmm/core/uncertainty.py`): opt-in credible intervals for
+  response curves and scenario outcomes, computed by re-running the same point-estimate calculation
+  once per sampled posterior draw (a subsample, for speed) and summarizing the resulting
+  distribution - alongside, never in place of, the point estimate.
 - **Scenario planner** (`ancestry_mmm/core/optimization.py`, `ancestry_mmm/core/predict.py`):
   manual editing, constrained optimisation (locked cells, fixed channel/month totals, bounded
   movement, minimum-spend floors), and a clearly-labelled unconstrained benchmark - market-aware

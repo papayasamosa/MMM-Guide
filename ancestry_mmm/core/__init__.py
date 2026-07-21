@@ -159,6 +159,18 @@ from .promotions import (
     apply_promotion_events_to_frame,
     promotion_events_to_dataframe,
 )
+from .uncertainty import (
+    sample_draw_indices,
+    summarize_distribution,
+    generate_channel_curve_with_uncertainty,
+    generate_market_channel_curve_with_uncertainty,
+    evaluate_scenario_with_uncertainty,
+)
+from .market_specific_attribution import (
+    compute_shapley_contributions_market_specific,
+    segment_channel_market_summary,
+    total_contribution_market_specific,
+)
 
 __all__ = [
     "ModelApproval",
@@ -290,4 +302,12 @@ __all__ = [
     "promotion_weekly_series",
     "apply_promotion_events_to_frame",
     "promotion_events_to_dataframe",
+    "sample_draw_indices",
+    "summarize_distribution",
+    "generate_channel_curve_with_uncertainty",
+    "generate_market_channel_curve_with_uncertainty",
+    "evaluate_scenario_with_uncertainty",
+    "compute_shapley_contributions_market_specific",
+    "segment_channel_market_summary",
+    "total_contribution_market_specific",
 ]

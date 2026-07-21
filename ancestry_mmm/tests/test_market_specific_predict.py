@@ -120,6 +120,26 @@ class TestExtractMarketSpecificPosteriorParams:
         assert set(params.decay_rate) == {"TV", "DNA_Media"}
         assert params.decay_rate["TV"] == pytest.approx(0.5, abs=1e-3)
 
+    def test_at_selects_one_draw_instead_of_averaging_over_the_posterior(self, trace, meta):
+        # decay_rate has rng noise added per (chain, draw) in the trace fixture
+        # above, so two different (chain, draw) selections must disagree with
+        # each other and with the posterior mean - proves `at=` actually
+        # indexes rather than silently falling back to the mean.
+        mean_params = extract_market_specific_posterior_params(trace, meta)
+        draw_a = extract_market_specific_posterior_params(trace, meta, at=(0, 0))
+        draw_b = extract_market_specific_posterior_params(trace, meta, at=(1, 3))
+        assert draw_a.decay_rate["TV"] != draw_b.decay_rate["TV"]
+        assert draw_a.decay_rate["TV"] != mean_params.decay_rate["TV"]
+
+    def test_at_still_selects_correctly_for_market_and_segment_indexed_fields(self, trace, meta):
+        # beta has no per-draw noise in the fixture, so every (chain, draw)
+        # must reproduce the same hand-known value - confirms `at=` selects
+        # the right coordinate slice, not just a different scalar.
+        draw = extract_market_specific_posterior_params(trace, meta, at=(1, 2))
+        assert draw.beta["UK"]["New"]["TV"] == pytest.approx(0.10)
+        assert draw.beta["AU"]["DNA_CrossSell"]["DNA_Media"] == pytest.approx(0.18)
+        assert draw.hill_K["AU"]["DNA_Media"] == pytest.approx(300.0)
+
 
 class TestAdstockSaturateFrameMarketSpecific:
     def test_uses_each_markets_own_k(self, meta, params, frame):
