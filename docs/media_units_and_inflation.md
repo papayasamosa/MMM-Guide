@@ -1,9 +1,9 @@
 # Media Units and Inflation
 
 Design record for spend-vs-delivery modelling and media cost inflation. Phase 1 built the data
-capture (`core.market_config.ChannelMediaUnitConfig`, Channel & Media Units page); Phase 3b (this
-work) built the calculations against it (`core.media_units`). Scenario Planner integration remains
-Phase 3c.
+capture (`core.market_config.ChannelMediaUnitConfig`, Channel & Media Units page); Phase 3b built the
+calculations against it (`core.media_units`); Phase 3c wired those calculations into the Scenario
+Planner (`docs/scenario_planner.md`).
 
 ## Why spend alone isn't enough
 
@@ -86,8 +86,17 @@ for what this proxy is and isn't).
   for market-specific (Model C) saves - a shared (Model A) curve has no single market to attribute
   its cost-per-unit context to, so its media-unit context is shown in the UI (a chosen reference
   market) but not persisted to the curve bank; see `docs/decision_log.md`.
-- **Scenario planner integration** (plan in spend or physical units; scenario-specific cost
-  overrides) - **still Phase 3c**, not built here.
+- **Scenario planner integration (Phase 3c - built):** the spend plan editor can display/accept
+  physical media units for any mapped channel (converted to/from spend via the same average
+  historical cost-per-unit), and `core.optimization` now dispatches to the correct model type's
+  steady-state response function so the planner works for a market-specific fit too, not just Model
+  A. **Not built:** locked/min/max media-unit constraint types (still spend-only in
+  `SpendConstraint`), and CPA/inflation as first-class optimiser objectives ("minimise CPA,"
+  "maintain response/delivery under inflation") - `avg_cpa` is reported as an output metric on every
+  scenario, not yet an optimisation target. Marginal CPA at the scenario level was considered and
+  deliberately not built: the planner always conserves total budget, so there's no net spend change
+  to compute a marginal CPA against - the *blended average* CPA of the current vs. optimised
+  allocation is the well-defined metric shown instead (`docs/decision_log.md`).
 
 ## Currency
 

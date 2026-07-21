@@ -80,19 +80,29 @@
 
 ## Scope boundaries (this PR specifically)
 
-- This PR (Phase 3b) adds CPA, response-unit curves, and media-unit curve bank entries
-  (`core.media_units`, `core.curve_bank.make_media_unit_entries`) - it does not touch Model A's or
-  Model C's model-building, prediction (beyond the additive `generate_channel_curve`), diagnostics,
-  or model comparison code, and does not touch optimisation (`core.optimization`) or the Scenario
-  Planner at all. Everything described as "Phase 3c/4" in these docs remains a design record, not
-  shipped functionality.
-- Shapley attribution and Scenario Planner remain Model-A-only - **CPA/media-unit curves and curve
-  bank saving now work for both model types, but Scenario Planner integration (planning in physical
-  units, inflation-aware optimisation) is still Phase 3c**, not built here.
-- Media-unit curve bank entries (`input_type="media_unit"`) are only auto-saved for a market-specific
-  fit - a shared curve's cost-per-unit context is inherently market-specific with no single market to
-  attribute it to, so it's shown in the UI (for a chosen reference market) but not persisted for
-  Model A (`docs/decision_log.md`).
+- This PR (Phase 3c) extends scenario planning (`core.optimization`, Scenario Planner) to Model C and
+  wires in media-unit planning mode and CPA outputs - it does not touch Model A's or Model C's
+  model-building, prediction, diagnostics, model comparison, or curve bank code. **Shapley
+  attribution remains Model-A-only** (it would misread Model C's market-indexed parameters) - this is
+  the one piece of the original Phase 2 restriction still in place; everything else that was blocked
+  for market-specific models (curve bank saving in Phase 3a, Scenario Planning in this phase) is now
+  built.
+- The Scenario Planner's optimiser always conserves total budget (`conserve_total_budget=True`) -
+  this predates Phase 3c and wasn't changed by it. As a consequence, a true *marginal* CPA at the
+  scenario level isn't meaningful (there's no net spend change to compute it against) - the planner
+  reports a *blended average* CPA (current vs. optimised plan) instead, which is well-defined even at
+  fixed total spend; see `docs/decision_log.md`.
+- Media-unit planning mode converts to/from spend using one average historical cost-per-unit per
+  channel (same simplification as Results & Curve Bank's response-unit curve, Phase 3b) - not a
+  spend-level-varying relationship. `SpendConstraint` (locked cells, floors, bounded movement) still
+  operates in spend terms only; there's no dedicated "locked media units" constraint type.
+- CPA/inflation are not first-class optimiser objectives - "minimise CPA," "maintain response/
+  delivery under inflation" from the original redesign brief aren't built; `objective` remains
+  `"value"` or `"volume"`, with `avg_cpa` reported as an output metric only.
+- Media-unit curve bank entries (`input_type="media_unit"`, Phase 3a/3b) are only auto-saved for a
+  market-specific fit - a shared curve's cost-per-unit context is inherently market-specific with no
+  single market to attribute it to, so it's shown in the UI (for a chosen reference market) but not
+  persisted for Model A (`docs/decision_log.md`).
 - The model-specification fingerprint (`core.fingerprint.fingerprint_model_spec`) still does **not**
   include market hierarchy, media-unit mappings, or currency settings from `market_spec_config` -
   approval invalidation does not yet react to changes in that data. This remains tracked as future

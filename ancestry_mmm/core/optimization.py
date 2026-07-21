@@ -17,6 +17,18 @@ constant within a month is treated as having reached its adstock
 steady-state, so a month's expected outcome is a closed-form function of
 that month's channel spend - no MCMC in the optimisation loop.
 
+Works against either model type (Phase 3c) via `model_type`: `"shared"`
+(Model A, the default - `steady_state_segment_response`, `params` an
+`FHPosteriorParams`) or `"market_specific"` (Model C -
+`steady_state_segment_response_market_specific`, `params` an
+`FHMarketSpecificPosteriorParams`). Both functions have the identical
+`(market, spend_by_channel, meta, params, reference_context) -> {segment:
+rate}` contract - `market` already selects the right market-specific
+baseline/K/beta for Model C the same way it already selected the right
+market baseline for Model A - so nothing else in this module's planning
+math (constraints, bounds, the optimiser objective) needs to know which
+model type it's driving.
+
 evaluate_scenario and optimize_scenario are the core planning entry points,
 and both require a ModelApproval that matches the exact model run supplying
 `meta`/`params` (model_run_id plus data/spec/posterior fingerprints - see
@@ -31,7 +43,7 @@ calculate_marginal_roi_loglog, optimize_budget_marginal_roi, calculate_expected_
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -40,8 +52,17 @@ from scipy.optimize import minimize, LinearConstraint
 from .approval import ModelApproval, require_matching_approval
 from .hierarchical_model import FHModelMeta
 from .predict import FHPosteriorParams, steady_state_segment_response
+from .market_specific_predict import FHMarketSpecificPosteriorParams, steady_state_segment_response_market_specific
 
 WEEKS_PER_MONTH = 365.25 / 12 / 7  # ~4.348
+
+AnyPosteriorParams = Union[FHPosteriorParams, FHMarketSpecificPosteriorParams]
+
+
+def _steady_state_response_fn(model_type: str):
+    if model_type not in ("shared", "market_specific"):
+        raise ValueError(f"model_type must be 'shared' or 'market_specific', got {model_type!r}")
+    return steady_state_segment_response_market_specific if model_type == "market_specific" else steady_state_segment_response
 
 
 # ---------------------------------------------------------------------------
@@ -52,10 +73,11 @@ def evaluate_scenario(
     spend_plan: Dict[str, Dict[str, float]],
     market: str,
     meta: FHModelMeta,
-    params: FHPosteriorParams,
+    params: AnyPosteriorParams,
     reference_context_by_month: Dict[str, dict],
     ltv: Optional[Dict[str, float]] = None,
     *,
+    model_type: str = "shared",
     approval: ModelApproval,
     model_run_id: str,
     data_fingerprint: str,
@@ -66,7 +88,15 @@ def evaluate_scenario(
     Predicted monthly outcomes for a spend plan: {month_label: {channel: spend}}.
 
     Returns one row per (month, segment) with predicted GSAs (weekly steady-
-    state rate x weeks/month) and LTV-weighted value if `ltv` is given.
+    state rate x weeks/month), LTV-weighted value if `ltv` is given, and
+    `avg_cpa` (that month's total spend / total predicted GSAs across every
+    segment - `None` where total predicted GSAs is zero or negative, same
+    "never compute CPA on a non-positive base" rule as
+    core.media_units.compute_cpa).
+
+    `model_type` selects which model's steady-state response function
+    drives the evaluation - `"shared"` (Model A, default) or
+    `"market_specific"` (Model C) - see module docstring.
 
     Raises ApprovalMismatchError unless `approval` matches the current model
     run identity (`model_run_id` plus the three fingerprints) - see
@@ -79,11 +109,15 @@ def evaluate_scenario(
         model_spec_fingerprint=model_spec_fingerprint,
         posterior_fingerprint=posterior_fingerprint,
     )
+    response_fn = _steady_state_response_fn(model_type)
     ltv = ltv or {}
     rows = []
     for month, spend_by_channel in spend_plan.items():
         ref = reference_context_by_month.get(month, {})
-        weekly_rate = steady_state_segment_response(market, spend_by_channel, meta, params, ref)
+        weekly_rate = response_fn(market, spend_by_channel, meta, params, ref)
+        total_spend = sum(spend_by_channel.values())
+        total_monthly_gsa = sum(weekly_rate.values()) * WEEKS_PER_MONTH
+        avg_cpa = (total_spend / total_monthly_gsa) if total_monthly_gsa > 0 else None
         for seg, rate in weekly_rate.items():
             monthly_gsa = rate * WEEKS_PER_MONTH
             rows.append({
@@ -91,7 +125,8 @@ def evaluate_scenario(
                 "segment": seg,
                 "predicted_gsa": monthly_gsa,
                 "value": monthly_gsa * ltv.get(seg, 1.0),
-                "total_spend": sum(spend_by_channel.values()),
+                "total_spend": total_spend,
+                "avg_cpa": avg_cpa,
             })
     return pd.DataFrame(rows)
 
@@ -216,18 +251,20 @@ def build_bounds_and_constraints(
 
 def _objective_factory(
     months: List[str], channels: List[str], market: str,
-    meta: FHModelMeta, params: FHPosteriorParams,
+    meta: FHModelMeta, params: AnyPosteriorParams,
     reference_context_by_month: Dict[str, dict],
     ltv: Optional[Dict[str, float]], objective: str,
+    model_type: str = "shared",
 ):
     weight = ltv if objective == "value" and ltv else {s: 1.0 for s in meta.segments}
+    response_fn = _steady_state_response_fn(model_type)
 
     def neg_total(x: np.ndarray) -> float:
         spend_plan = _unflatten(x, months, channels)
         total = 0.0
         for m in months:
             ref = reference_context_by_month.get(m, {})
-            rates = steady_state_segment_response(market, spend_plan[m], meta, params, ref)
+            rates = response_fn(market, spend_plan[m], meta, params, ref)
             for seg, rate in rates.items():
                 total += rate * WEEKS_PER_MONTH * weight.get(seg, 1.0)
         return -total
@@ -241,7 +278,7 @@ def optimize_scenario(
     channels: List[str],
     market: str,
     meta: FHModelMeta,
-    params: FHPosteriorParams,
+    params: AnyPosteriorParams,
     reference_context_by_month: Dict[str, dict],
     ltv: Optional[Dict[str, float]] = None,
     objective: str = "value",
@@ -249,6 +286,7 @@ def optimize_scenario(
     conserve_total_budget: bool = True,
     max_iter: int = 200,
     *,
+    model_type: str = "shared",
     approval: ModelApproval,
     model_run_id: str,
     data_fingerprint: str,
@@ -261,6 +299,10 @@ def optimize_scenario(
     freely, ignoring locks/floors/bounded-movement - a theoretical-optimum
     comparison point, not a recommended plan. Pass `constraints` for the
     constrained-planning mode analysts will actually use.
+
+    `model_type` selects which model's steady-state response function drives
+    optimisation and evaluation - `"shared"` (Model A, default) or
+    `"market_specific"` (Model C) - see module docstring.
 
     Raises ApprovalMismatchError unless `approval` matches the current model
     run identity - checked up front, before running the (potentially slow)
@@ -283,7 +325,9 @@ def optimize_scenario(
         total_row = np.ones(len(current_spend))
         linear_constraints.append(LinearConstraint(total_row, lb=current_spend.sum(), ub=current_spend.sum()))
 
-    objective_fn = _objective_factory(months, channels, market, meta, params, reference_context_by_month, ltv, objective)
+    objective_fn = _objective_factory(
+        months, channels, market, meta, params, reference_context_by_month, ltv, objective, model_type,
+    )
 
     result = minimize(
         objective_fn,
@@ -296,7 +340,7 @@ def optimize_scenario(
 
     optimized_plan = _unflatten(np.clip(result.x, 0, None), months, channels)
     identity_kwargs = dict(
-        approval=approval, model_run_id=model_run_id, data_fingerprint=data_fingerprint,
+        model_type=model_type, approval=approval, model_run_id=model_run_id, data_fingerprint=data_fingerprint,
         model_spec_fingerprint=model_spec_fingerprint, posterior_fingerprint=posterior_fingerprint,
     )
     predicted = evaluate_scenario(optimized_plan, market, meta, params, reference_context_by_month, ltv, **identity_kwargs)

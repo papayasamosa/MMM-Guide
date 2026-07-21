@@ -3,7 +3,26 @@
 Entries by pull request, most recent first. Predates this file: see git history for anything
 earlier than the entries below.
 
-## Unreleased - Market-Specific MMM Redesign, Phase 3b (this PR)
+## Unreleased - Market-Specific MMM Redesign, Phase 3c (this PR)
+
+- Extended `core.optimization` (`evaluate_scenario`, `optimize_scenario`, the optimiser objective) to
+  Model C via a `model_type` parameter that dispatches to the correct steady-state response function -
+  the planning math itself (constraints, bounds, budget conservation) needed no changes, since both
+  model types' response functions share the same call contract.
+- `evaluate_scenario`'s output gained `avg_cpa` (blended average CPA per month: total spend / total
+  predicted GSAs across every segment).
+- Removed the Phase 2 restriction blocking Scenario Planner for market-specific models entirely.
+- Scenario Planner: added an evidence-tier panel (per planned channel, for the selected market, on a
+  market-specific fit), a spend-vs-media-unit planning mode for the spend plan editor (built on
+  `core.media_units`'s conversions, plan always stored in spend terms internally), and a blended
+  "Avg CPA (current vs. optimised/theoretical-optimum)" metric on every result panel.
+- 6 new tests (`test_optimization.py::TestModelTypeDispatch`, `TestAverageCpa`), plus AppTest-based
+  end-to-end verification of the manual/constrained/unconstrained flows, the media-unit planning
+  mode toggle, and the evidence-tier panel for both model types.
+- No changes to Model A/C model-building, prediction, diagnostics, model comparison, curve bank, or
+  fingerprint behaviour. Shapley attribution remains Model-A-only.
+
+## Unreleased - Market-Specific MMM Redesign, Phase 3b
 
 - Added `core.predict.generate_channel_curve` - Model A's spend -> response curve generator (a real
   UX gap it closes - Model A never had one before), mirroring
