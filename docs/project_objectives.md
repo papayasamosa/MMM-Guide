@@ -31,13 +31,13 @@ alone with no support.
 
 - Channel budget allocation **within** a market (e.g. "should UK TV spend go up or down next
   quarter").
-- Channel budget allocation **across** markets, once market-specific curves exist - today the tool
-  can only say "here's the shared curve," not "here's what changes if we move budget from Australia
-  to the UK."
+- Channel budget allocation **across** markets - each market's own curve, when Model C is fit
+  (`docs/market_hierarchy.md`), including planning against it directly in Scenario Planner.
 - Whether a smaller or newer market's curve is trustworthy enough to plan against, or should be
-  treated as directional only (`docs/market_hierarchy.md` section 4).
-- CPA and marginal CPA at different spend levels, in both spend and physical media-unit terms
-  (`docs/media_units_and_inflation.md`) - once Phase 3 lands.
+  treated as directional only (`docs/market_hierarchy.md` section 4) - surfaced directly on the
+  Scenario Planner as each planned channel's evidence tier for the selected market.
+- CPA and average CPA at different spend levels, in both spend and physical media-unit terms
+  (`docs/media_units_and_inflation.md`).
 - Whether apparent spend growth is buying more delivery, or just paying more for the same delivery
   (media cost inflation, `docs/media_units_and_inflation.md`).
 
@@ -51,7 +51,7 @@ alone with no support.
 - Constrained scenario planning (locked cells, floors, bounded movement) as the primary planning
   mode, with an unconstrained benchmark shown for comparison only.
 - Market-specific response curves with partial pooling (this redesign, Phase 2 onward).
-- Spend- and physical-media-unit curves, CPA at both, and media cost inflation tracking (Phase 3).
+- Spend- and physical-media-unit curves, CPA at both, and media cost inflation tracking (Phase 3b/c).
 - A portable, re-importable project bundle as the system of record (not Streamlit session state).
 
 ### Out of scope (explicitly, per `docs/ancestry_fh_mmm.md` and the redesign brief)
@@ -75,10 +75,11 @@ alone with no support.
 ## Expected outputs
 
 - A scorecard-gated, approved, fingerprint-bound fitted model (existing).
-- Segment-level response curves in the curve bank today; market-specific response curves are
-  viewable (Phase 2) but not yet saveable to the curve bank itself (Phase 3, `docs/curve_bank.md`).
-- CPA and marginal-CPA tables by spend and by physical media unit (Phase 3).
-- Constrained and unconstrained scenario comparisons, market-aware (Phase 3 extends the existing
-  planner to require a market selection and use that market's own curve).
+- Segment-level and market-specific response curves in the curve bank, each labelled with its own
+  evidence tier (Phase 3a, `docs/curve_bank.md`).
+- Average and marginal CPA by spend, and by physical media unit via the response-unit curve
+  (Phase 3b, `core.media_units`).
+- Constrained and unconstrained scenario comparisons, market-aware (Phase 3c: the planner requires a
+  market selection and, for a market-specific fit, uses that market's own curve).
 - A reproducible project report (Markdown + HTML, Phase 4) covering objective, data, model,
   diagnostics, curves, scenarios, limitations and the decision log in one document.

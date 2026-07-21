@@ -85,12 +85,14 @@ calibration results against any saved entry.
 
 ## Step 11: Scenario Planner
 
-Choose a market and a planning window. Edit a spend plan directly (manual mode), or add
-constraints (locked cells, spend floors, bounded movement) and let the optimiser suggest an
-allocation. An unconstrained benchmark is also available for comparison - it's a theoretical
-optimum, not a recommended plan. Not yet available for market-specific models (planned for a later
-phase) - switch back to the shared-curve model on Model Configuration to plan scenarios in the
-meantime.
+Choose a market and a planning window. For a market-specific model, an expander shows each planned
+channel's evidence tier (local/pooled/transferred) for that market so you know how much local data
+backs the curve you're planning against. Edit a spend plan directly (manual mode) - in spend or, for
+any channel you've mapped to a physical delivery column, in media units instead - or add constraints
+(locked cells, spend floors, bounded movement) and let the optimiser suggest an allocation. Every
+result shows a blended average CPA (current plan vs. this one), alongside total predicted value or
+volume. An unconstrained benchmark is also available for comparison - it's a theoretical optimum,
+not a recommended plan.
 
 ## Step 12: Project Export & Handover
 
@@ -100,9 +102,10 @@ Build an Excel summary of curves and contributions for handover.
 
 ## What's coming next
 
-Steps 4-5 (Channel & Media Units, Market Descriptors) exist today purely to capture data; nothing
-downstream uses it yet. Market-specific curves (Model C) can now be reviewed, diagnosed, and saved
-to the curve bank with their own evidence-tier labelling. Shapley attribution and Scenario Planner
-remain shared-curve (Model A) only until a later phase adds CPA/media-unit reporting and
-inflation-aware scenario planning on top of market-specific curves. See `docs/project_objectives.md`
-for the full phased plan.
+Market-specific curves (Model C) can now be reviewed, diagnosed, saved to the curve bank with their
+own evidence-tier labelling, and planned against in Scenario Planner - including CPA, media-unit
+planning mode, and inflation calculators. **Shapley attribution remains shared-curve (Model A)
+only** - it would misread Model C's market-indexed parameters. A future phase would need to
+redesign attribution for a market-specific model before that changes. See `docs/project_objectives.md`
+for the full phased plan and `docs/limitations.md` for what's deliberately still out of scope
+(CPA/inflation as optimiser objectives, media-unit spend constraints, and more).

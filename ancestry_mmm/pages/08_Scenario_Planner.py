@@ -5,6 +5,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+from typing import Optional
+
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -20,7 +22,22 @@ from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.optimization import (
     SpendConstraint, evaluate_scenario, optimize_scenario, scenario_to_dict, compare_scenarios, WEEKS_PER_MONTH,
 )
+from ancestry_mmm.core.evidence_tiers import classify_market_evidence
+from ancestry_mmm.core.market_config import MarketSpecConfig
+from ancestry_mmm.core.media_units import extract_cost_per_unit_series, historical_cost_trend
 from ancestry_mmm.data.preprocessor import create_fourier_features_from_calendar
+
+
+def _overall_avg_cpa(predicted_df: pd.DataFrame) -> Optional[float]:
+    """Blended average CPA across a whole predicted-outcomes DataFrame
+    (every month, every segment) - total spend / total predicted GSAs,
+    None if total predicted GSAs isn't positive. `total_spend` is repeated
+    per segment row within a month (core.optimization.evaluate_scenario), so
+    it's de-duplicated by month before summing."""
+    total_spend = predicted_df.groupby("month")["total_spend"].first().sum()
+    total_gsa = predicted_df["predicted_gsa"].sum()
+    return float(total_spend / total_gsa) if total_gsa > 0 else None
+
 
 st.set_page_config(page_title="Scenario Planner - Ancestry FH MMM", page_icon="🧬", layout="wide")
 init_session_state()
@@ -37,6 +54,7 @@ frame = get_state("frame")
 meta = get_state("model_meta")
 params = get_state("posterior_params")
 spec_dict = get_state("model_spec")
+trace = get_state("trace")
 if frame is None or meta is None or params is None:
     st.markdown("---")
     render_empty_state(
@@ -46,19 +64,6 @@ if frame is None or meta is None or params is None:
     st.stop()
 
 model_type = get_state("model_type", "shared")
-if model_type == "market_specific":
-    st.markdown("---")
-    st.warning(
-        "Scenario planning isn't available yet for market-specific models - the optimiser and "
-        "steady-state evaluator are built around a single shared curve per channel and would "
-        "misread a market-specific fit. This is planned for a later phase (see "
-        "docs/scenario_planner.md). Explore each market's own channel curves on Results & Curve "
-        "Bank instead, or switch back to the shared-curve model on Model Configuration to plan "
-        "scenarios."
-    )
-    if st.button("Go to Results & Curve Bank"):
-        st.switch_page("pages/07_Results_Curve_Bank.py")
-    st.stop()
 
 model_run_id = get_state("model_run_id")
 prior_config = get_state("prior_config") or {}
@@ -99,7 +104,7 @@ if not approval_matches_current:
     st.stop()
 
 approval = ModelApproval.from_dict(approval_dict)
-identity_kwargs = dict(approval=approval, **current_identity)
+identity_kwargs = dict(model_type=model_type, approval=approval, **current_identity)
 
 spec = ModelSpec.from_dict(spec_dict)
 ltv = spec.segment_ltv
@@ -111,6 +116,28 @@ c1, c2, c3 = st.columns(3)
 market = c1.selectbox("Market *", meta.markets)
 start_month = c2.date_input("Plan start month *", value=pd.Timestamp.today().replace(day=1))
 n_months = c3.number_input("Number of months *", min_value=1, max_value=24, value=12)
+
+if model_type == "market_specific":
+    st.caption(
+        "This model has market-specific curves - the plan below uses "
+        f"**{market}**'s own fitted curve, not a curve shared with other markets."
+    )
+    with st.expander(f"Curve source for {market}'s channels"):
+        tier_rows = []
+        for ch in meta.channels:
+            try:
+                tier = classify_market_evidence(trace, frame, meta, market, ch)
+            except (KeyError, ValueError) as e:
+                tier = f"unavailable ({e})"
+            tier_rows.append({"channel": ch, "curve_status": tier})
+        tier_df = pd.DataFrame(tier_rows)
+        st.dataframe(tier_df, width="stretch", column_config=dataframe_column_config(tier_df))
+        if (tier_df["curve_status"] == "Transferred estimate").any():
+            st.caption(
+                "One or more channels above are a **transferred estimate** for this market - "
+                "not enough local data to estimate a market-specific curve confidently. Plan "
+                "against these with extra caution (`docs/market_hierarchy.md` section 4)."
+            )
 
 month_dates = pd.date_range(pd.Timestamp(start_month), periods=n_months, freq="MS")
 months = [d.strftime("%Y-%m") for d in month_dates]
@@ -151,10 +178,60 @@ if plan_key not in st.session_state:
         [default_monthly for _ in months], index=months, columns=meta.channels
     ).round(0)
 
+# --- Spend-vs-media-unit planning mode (docs/media_units_and_inflation.md,
+# docs/scenario_planner.md's "Planned redesign"): the plan is always stored
+# in spend terms in session state (plan_key) - media-unit mode only affects
+# what the editor displays/accepts, converting at the edges using each
+# channel's average historical cost-per-unit (core.media_units), the same
+# documented simplification Results & Curve Bank's response-unit curve uses.
+market_config = MarketSpecConfig.from_dict(get_state("market_spec_config"))
+media_unit_channels = {}
+for ch in meta.channels:
+    cfg = market_config.get_media_unit_config(market, ch)
+    if not (cfg and cfg.has_media_unit()):
+        continue
+    try:
+        cost_df = extract_cost_per_unit_series(frame["df"], spec.date_col, spec.market_col, market, cfg)
+        trend = historical_cost_trend(cost_df, spec.date_col)
+    except ValueError:
+        continue
+    if trend["avg_cost_per_unit"]:
+        media_unit_channels[ch] = {"unit_type": cfg.unit_type or "units", "avg_cost_per_unit": trend["avg_cost_per_unit"]}
+
 st.markdown("### Spend plan (monthly, by channel)")
+planning_mode = "Spend"
+if media_unit_channels:
+    planning_mode = st.radio(
+        "Planning mode", ["Spend", "Media units"], horizontal=True,
+        help=(
+            "Media units mode converts to/from spend using each channel's average historical "
+            "cost per unit - available for: " + ", ".join(sorted(media_unit_channels)) + ". "
+            "Other channels stay in spend terms either way."
+        ),
+    )
 st.caption("Edit values directly for manual mode - the same plan seeds the optimisation tabs below.")
+
 plan_df = st.session_state[plan_key]
-edited = st.data_editor(plan_df, width="stretch", key=f"editor_{plan_key}", column_config=dataframe_column_config(plan_df))
+if planning_mode == "Media units":
+    display_df = plan_df.copy()
+    for ch, info in media_unit_channels.items():
+        display_df[ch] = plan_df[ch] / info["avg_cost_per_unit"]
+    label_overrides = {ch: f"{readable_label(ch)} ({info['unit_type']})" for ch, info in media_unit_channels.items()}
+    edited_display = st.data_editor(
+        display_df, width="stretch", key=f"editor_{plan_key}_units",
+        column_config=dataframe_column_config(display_df, label_overrides=label_overrides),
+    )
+    edited = edited_display.copy()
+    for ch, info in media_unit_channels.items():
+        edited[ch] = edited_display[ch] * info["avg_cost_per_unit"]
+    st.caption(
+        "Cost-per-unit assumptions in use: " + ", ".join(
+            f"{readable_label(ch)} = {info['avg_cost_per_unit']:,.2f} / {info['unit_type']}"
+            for ch, info in media_unit_channels.items()
+        )
+    )
+else:
+    edited = st.data_editor(plan_df, width="stretch", key=f"editor_{plan_key}", column_config=dataframe_column_config(plan_df))
 st.session_state[plan_key] = edited
 spend_plan = {m: {c: float(edited.loc[m, c]) for c in meta.channels} for m in months}
 
@@ -176,8 +253,11 @@ with tab_manual:
     totals = predicted.groupby("segment")[["predicted_gsa", "value"]].sum().reset_index()
     st.markdown("**Totals by segment**")
     st.dataframe(totals, width="stretch", column_config=dataframe_column_config(totals))
-    st.metric("Total predicted value" if objective == "value" else "Total predicted GSAs",
-               f"{predicted['value'].sum():,.0f}" if objective == "value" else f"{predicted['predicted_gsa'].sum():,.0f}")
+    c1, c2 = st.columns(2)
+    c1.metric("Total predicted value" if objective == "value" else "Total predicted GSAs",
+              f"{predicted['value'].sum():,.0f}" if objective == "value" else f"{predicted['predicted_gsa'].sum():,.0f}")
+    plan_avg_cpa = _overall_avg_cpa(predicted)
+    c2.metric("Avg CPA (blended)", f"{plan_avg_cpa:,.2f}" if plan_avg_cpa is not None else "n/a")
 
     scenario_name = st.text_input("Scenario name *", value=f"manual-{market}-{months[0]}", key="manual_name")
     if st.button("Save this scenario"):
@@ -253,9 +333,19 @@ with tab_constrained:
 
     result = st.session_state.get("constrained_result")
     if result:
-        st.metric("Current total", f"{result['current_objective_value']:,.0f}")
-        st.metric("Optimised total", f"{result['objective_value']:,.0f}",
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Current total", f"{result['current_objective_value']:,.0f}")
+        c2.metric("Optimised total", f"{result['objective_value']:,.0f}",
                    delta=f"{result['objective_value'] - result['current_objective_value']:,.0f}")
+        current_cpa = _overall_avg_cpa(result["current_predicted"])
+        optimised_cpa = _overall_avg_cpa(result["predicted"])
+        c3.metric(
+            "Avg CPA (blended)",
+            f"{optimised_cpa:,.2f}" if optimised_cpa is not None else "n/a",
+            delta=f"{optimised_cpa - current_cpa:,.2f}" if (optimised_cpa is not None and current_cpa is not None) else None,
+            delta_color="inverse",  # lower CPA is an improvement
+            help="Total spend / total predicted GSAs across the whole plan - current plan vs this optimised one.",
+        )
         plan_result_df = pd.DataFrame(result["spend_plan"]).T
         st.dataframe(plan_result_df, width="stretch", column_config=dataframe_column_config(plan_result_df))
         st.dataframe(result["predicted"], width="stretch", column_config=dataframe_column_config(result["predicted"]))
@@ -291,9 +381,19 @@ with tab_unconstrained:
 
     result = st.session_state.get("unconstrained_result")
     if result:
-        st.metric("Current total", f"{result['current_objective_value']:,.0f}")
-        st.metric("Theoretical optimum", f"{result['objective_value']:,.0f}",
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Current total", f"{result['current_objective_value']:,.0f}")
+        c2.metric("Theoretical optimum", f"{result['objective_value']:,.0f}",
                    delta=f"{result['objective_value'] - result['current_objective_value']:,.0f}")
+        current_cpa = _overall_avg_cpa(result["current_predicted"])
+        optimised_cpa = _overall_avg_cpa(result["predicted"])
+        c3.metric(
+            "Avg CPA (blended)",
+            f"{optimised_cpa:,.2f}" if optimised_cpa is not None else "n/a",
+            delta=f"{optimised_cpa - current_cpa:,.2f}" if (optimised_cpa is not None and current_cpa is not None) else None,
+            delta_color="inverse",
+            help="Total spend / total predicted GSAs across the whole plan - current plan vs this theoretical optimum.",
+        )
         unconstrained_plan_df = pd.DataFrame(result["spend_plan"]).T
         st.dataframe(unconstrained_plan_df, width="stretch", column_config=dataframe_column_config(unconstrained_plan_df))
 

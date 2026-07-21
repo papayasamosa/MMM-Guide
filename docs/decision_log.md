@@ -434,3 +434,77 @@ codebase has been deliberately avoiding since Phase 2, docs/decision_log.md).
 just plumbing for Phase 3b).
 **Owner:** Engineering.
 **Status:** Accepted; implemented in Phase 3b.
+
+---
+
+**Date:** 2026-07-21
+**Decision:** Extend `core.optimization`'s scenario planning (`evaluate_scenario`,
+`optimize_scenario`, the optimiser objective) to Model C by adding a `model_type` parameter that
+dispatches to `steady_state_segment_response` or `steady_state_segment_response_market_specific`,
+rather than writing separate market-specific planning functions.
+**Reason:** Both response functions already share the exact same `(market, spend_by_channel, meta,
+params, reference_context) -> {segment: rate}` contract - `market` already selected the right
+market-specific baseline for Model A (`market_offset`), and does the same job selecting the right
+market-specific `K`/`beta` for Model C. None of the surrounding planning math (constraint
+translation, bounds, budget conservation, the SLSQP objective) reads `params` directly or needs to
+know which model type it's driving - it only ever calls the response function and sums the result.
+**Alternatives considered:** Separate `evaluate_scenario_market_specific`/`optimize_scenario_market_specific`
+functions mirroring `core.market_specific_predict`'s pattern of fully separate modules (rejected -
+unlike curve generation and diagnostics, which genuinely read `hill_K`/`beta`'s shape directly and
+so needed parallel implementations, the planning math here has no such dependency; a parallel module
+would be pure duplication of constraint/bounds/optimiser code with a one-line difference at the
+call site).
+**Impact:** `core.optimization.evaluate_scenario`/`optimize_scenario`/`_objective_factory` gained a
+`model_type: str = "shared"` parameter (default preserves every existing caller's behaviour
+unchanged); `pages/08_Scenario_Planner.py`'s market-specific block from Phase 2 was removed entirely
+rather than replaced with new plumbing.
+**Owner:** Engineering.
+**Status:** Accepted; implemented in Phase 3c.
+
+---
+
+**Date:** 2026-07-21
+**Decision:** Report a scenario's CPA as a *blended average* (total spend / total predicted GSAs,
+current plan vs. optimised plan) rather than attempting a scenario-level *marginal* CPA.
+**Reason:** `optimize_scenario` always calls with `conserve_total_budget=True` in every mode the
+planner exposes (manual, constrained, unconstrained benchmark) - a deliberate, pre-existing design
+choice (the tool reallocates a fixed budget, it doesn't recommend spending more or less overall).
+With total spend held fixed by construction, "change in spend" between the current and optimised
+plan is ~0, making a marginal-CPA ratio (`change in spend / change in response`) either undefined or
+dominated by rounding noise - it would not mean what "marginal CPA" means at a single curve point
+(docs/media_units_and_inflation.md), where spend genuinely varies. Average CPA, by contrast, is
+well-defined and meaningful here: even at fixed total spend, reallocating across channels/months
+changes total predicted GSAs, so the blended average CPA before and after reallocation are
+genuinely different, informative numbers.
+**Alternatives considered:** Computing marginal CPA anyway from the (near-zero) spend delta
+(rejected - actively misleading, since a tiny denominator would produce wildly unstable numbers with
+no real interpretation). Relaxing `conserve_total_budget` to let marginal CPA be computed against a
+genuine budget change (rejected - out of scope for this phase and changes the planner's existing,
+already-shipped default behaviour, which is a bigger decision than a display metric warrants).
+**Impact:** `pages/08_Scenario_Planner.py`'s `_overall_avg_cpa` helper and the "Avg CPA (blended)"
+metrics on the Manual/Constrained/Unconstrained panels. `core.optimization.evaluate_scenario`'s new
+`avg_cpa` output column is the same blended-average definition, computed per month.
+**Owner:** Modelling.
+**Status:** Accepted; implemented in Phase 3c.
+
+---
+
+**Date:** 2026-07-21
+**Decision:** The Scenario Planner's spend-plan editor always stores the plan in spend terms in
+session state; media-unit planning mode only changes what's displayed/accepted in the editor widget,
+converting at the display/input boundary using each channel's average historical cost-per-unit.
+**Reason:** Keeping a single, canonical representation (spend) avoids two different session-state
+shapes needing to stay in sync, and matches how `core.optimization` already works internally (spend
+is the actual decision variable the optimiser operates on - media units are a translated view of
+it, not an independent state). Recomputing the unit-mode display from the canonical spend plan on
+every rerun also means switching modes back and forth never loses or corrupts data.
+**Alternatives considered:** Storing the plan in whichever unit the user last edited it in (rejected
+- means every downstream consumer of the plan, including the optimiser, would need to know which
+unit is currently "live" and convert accordingly, and switching modes mid-session would need an
+explicit, error-prone conversion step rather than being a pure display change).
+**Impact:** `pages/08_Scenario_Planner.py`'s spend-plan editor section; channels without a media-unit
+mapping always display in spend terms regardless of the selected planning mode, shown with a clear
+per-column unit label (`dataframe_column_config`'s `label_overrides`) so a mixed-unit table is never
+ambiguous about which column is in which unit.
+**Owner:** Engineering.
+**Status:** Accepted; implemented in Phase 3c.
