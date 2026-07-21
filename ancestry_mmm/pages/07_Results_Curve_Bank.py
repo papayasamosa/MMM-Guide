@@ -19,7 +19,12 @@ from ancestry_mmm.core.attribution import (
 )
 from ancestry_mmm.core import curve_bank as cb
 from ancestry_mmm.core.evidence_tiers import classify_all_markets
+from ancestry_mmm.core.predict import generate_channel_curve
 from ancestry_mmm.core.market_specific_predict import generate_market_channel_curve
+from ancestry_mmm.core.media_units import (
+    compute_cpa, cpa_stability_flags, extract_cost_per_unit_series, historical_cost_trend,
+    response_unit_curve, equivalent_delivery, equivalent_response,
+)
 from ancestry_mmm.components.charts import create_waterfall_chart, create_response_curve
 
 st.set_page_config(page_title="Results & Curve Bank - Ancestry FH MMM", page_icon="🧬", layout="wide")
@@ -27,6 +32,98 @@ init_session_state()
 apply_theme()
 render_sidebar("curve_bank")
 render_page_header("curve_bank")
+
+
+def _render_curve_with_cpa(curve_df: pd.DataFrame, title: str) -> None:
+    """Response chart + CPA table (docs/media_units_and_inflation.md) for
+    any curve DataFrame - shared by both model types since
+    core.predict.generate_channel_curve and
+    core.market_specific_predict.generate_market_channel_curve produce the
+    same column shape."""
+    st.plotly_chart(
+        create_response_curve(curve_df["spend"].to_numpy(), curve_df["overall_response"].to_numpy(), title),
+        width="stretch",
+    )
+    cpa_df = compute_cpa(curve_df)
+    st.markdown("**Spend curve with CPA**")
+    st.caption(
+        "Average CPA = spend / incremental outcomes; marginal CPA = change in spend / change in "
+        "incremental outcomes - both shown together since they diverge near saturation. Left blank "
+        "wherever response (or its change between points) is zero or negative."
+    )
+    st.dataframe(cpa_df, width="stretch", column_config=dataframe_column_config(cpa_df))
+    for f in cpa_stability_flags(curve_df)[:5]:
+        st.warning(f["message"])
+
+
+def _render_media_unit_section(curve_df: pd.DataFrame, market_config: MarketSpecConfig, market: str, channel: str) -> None:
+    """Historical cost trend, response-unit curve, and equivalent delivery/
+    response calculators for one (market, channel) - only shown where a
+    media-unit mapping exists (Channel & Media Units page)."""
+    config = market_config.get_media_unit_config(market, channel)
+    if not (config and config.has_media_unit()):
+        st.caption(
+            f"No media-unit mapping for {market} / {channel} yet - add one on Channel & Media Units "
+            "to see a response-unit curve, historical cost trend, and delivery/response equivalence "
+            "calculators here."
+        )
+        return
+
+    try:
+        cost_df = extract_cost_per_unit_series(frame["df"], spec.date_col, spec.market_col, market, config)
+    except ValueError as e:
+        st.warning(f"Could not compute a cost-per-unit history for {market} / {channel}: {e}")
+        return
+
+    trend = historical_cost_trend(cost_df, spec.date_col)
+    if trend["avg_cost_per_unit"] is None:
+        st.caption(f"No valid cost-per-unit observations for {market} / {channel} yet.")
+        return
+
+    unit_label = config.unit_type or "units"
+    st.markdown(f"**Historical cost per {unit_label}**")
+    c1, c2 = st.columns(2)
+    c1.metric(f"Average cost per {unit_label}", f"{trend['avg_cost_per_unit']:,.2f}")
+    c2.metric(
+        "Year-on-year inflation",
+        f"{trend['yoy_inflation_pct']:.1f}%" if trend["yoy_inflation_pct"] is not None else "n/a (< 2 years of data)",
+    )
+    st.dataframe(trend["indexed_trend"], width="stretch", column_config=dataframe_column_config(trend["indexed_trend"]))
+    st.caption("`indexed` = cost per unit relative to the first year with data (100 = that year's average).")
+
+    st.markdown(f"**Response-unit curve ({unit_label})**")
+    ru_df = response_unit_curve(curve_df, trend["avg_cost_per_unit"])
+    st.plotly_chart(
+        create_response_curve(ru_df["media_units"].to_numpy(), ru_df["overall_response"].to_numpy(), f"{channel} ({unit_label})"),
+        width="stretch",
+    )
+    st.caption(
+        "Derived from the spend curve using the average historical cost per unit - a documented "
+        "simplification (docs/media_units_and_inflation.md), not an independently observed "
+        "spend-to-delivery relationship at every spend level."
+    )
+
+    st.markdown("**Equivalent delivery / response**")
+    key_suffix = f"{market}_{channel}"
+    c1, c2 = st.columns(2)
+    with c1:
+        st.caption(f"How much to spend to buy a target number of {unit_label}?")
+        target_units = st.number_input(f"Target {unit_label}", min_value=0.0, value=100.0, key=f"target_units_{key_suffix}")
+        future_cost = st.number_input(
+            f"Assumed future cost per {unit_label}", min_value=0.0, value=float(trend["avg_cost_per_unit"]),
+            key=f"future_cost_{key_suffix}",
+        )
+        st.metric("Required spend", f"{equivalent_delivery(target_units, future_cost):,.0f}")
+    with c2:
+        st.caption(f"What response would a target number of {unit_label} produce?")
+        target_units2 = st.number_input(f"Target {unit_label} (response)", min_value=0.0, value=100.0, key=f"target_units2_{key_suffix}")
+        cost_assumption = st.number_input(
+            f"Cost per {unit_label} assumption", min_value=0.0, value=float(trend["avg_cost_per_unit"]),
+            key=f"cost_assumption_{key_suffix}",
+        )
+        response = equivalent_response(target_units2, cost_assumption, curve_df)
+        st.metric("Modelled response", f"{response:,.1f}")
+
 
 trace = get_state("trace")
 frame = get_state("frame")
@@ -44,6 +141,7 @@ if trace is None or frame is None or meta is None or params is None:
 spec = ModelSpec.from_dict(spec_dict)
 ltv = spec.segment_ltv
 model_type = get_state("model_type", "shared")
+market_config = MarketSpecConfig.from_dict(get_state("market_spec_config"))
 
 if model_type == "market_specific":
     st.markdown("---")
@@ -66,14 +164,12 @@ if model_type == "market_specific":
     viewer_channel = c2.selectbox("Channel", meta.channels)
 
     curve_df = generate_market_channel_curve(viewer_market, viewer_channel, meta, params)
-    st.plotly_chart(
-        create_response_curve(
-            curve_df["spend"].to_numpy(), curve_df["overall_response"].to_numpy(),
-            f"{viewer_market} - {viewer_channel}",
-        ),
-        width="stretch",
-    )
+    _render_curve_with_cpa(curve_df, f"{viewer_market} - {viewer_channel}")
     st.dataframe(curve_df, width="stretch", column_config=dataframe_column_config(curve_df))
+
+    st.markdown("---")
+    st.markdown("### Media units & inflation")
+    _render_media_unit_section(curve_df, market_config, viewer_market, viewer_channel)
 
     st.markdown("---")
     st.markdown("### DNA halo strength by segment")
@@ -107,6 +203,27 @@ else:
     )
 
     st.markdown("---")
+    st.markdown("### Channel curve viewer")
+    st.caption(
+        "Spend -> incremental response for one channel, per segment and overall (overall = sum of "
+        "segment responses) - the same curve every market uses, since it's shared across markets in "
+        "this model structure. Point estimates only (posterior means)."
+    )
+    viewer_channel = st.selectbox("Channel", meta.channels)
+    curve_df = generate_channel_curve(viewer_channel, meta, params)
+    _render_curve_with_cpa(curve_df, viewer_channel)
+    st.dataframe(curve_df, width="stretch", column_config=dataframe_column_config(curve_df))
+
+    st.markdown("---")
+    st.markdown("### Media units & inflation")
+    st.caption(
+        "Cost-per-unit history is inherently market-specific, even though the curve above is shared "
+        "across markets - choose a reference market to see its own cost data."
+    )
+    viewer_market = st.selectbox("Reference market (for cost data)", meta.markets)
+    _render_media_unit_section(curve_df, market_config, viewer_market, viewer_channel)
+
+    st.markdown("---")
     st.markdown("### DNA halo strength by segment")
     halo_df = pd.DataFrame([{"segment": s, "halo_strength": params.halo_strength.get(s)} for s in meta.segments])
     st.dataframe(halo_df, width="stretch", column_config=dataframe_column_config(halo_df))
@@ -119,7 +236,12 @@ else:
 # --- Curve bank: available for both model types (Phase 3a) - a market-
 # specific fit saves one set of curves per market, each labelled with its
 # own evidence tier (docs/market_hierarchy.md section 4); a shared-curve
-# fit saves one set of curves labelled "Shared".
+# fit saves one set of curves labelled "Shared". Media-unit curve entries
+# (Phase 3b) are only auto-saved for a market-specific fit - a shared
+# curve's cost-per-unit context is inherently market-specific, so there's
+# no single market to attribute it to at save time (see docs/decision_log.md);
+# the viewer above still shows media-unit context for a chosen reference
+# market, it just isn't persisted to the curve bank for a shared curve.
 st.markdown("---")
 st.markdown("## Curve bank")
 st.caption(FIELD_HELP["curve_bank"])
@@ -173,7 +295,6 @@ else:
             if model_type == "market_specific":
                 with st.spinner("Classifying market evidence tiers..."):
                     evidence_tiers = classify_all_markets(trace, frame, meta)
-                market_config = MarketSpecConfig.from_dict(get_state("market_spec_config"))
                 currency_by_market = {
                     m: market_config.get_profile(m).currency.local_currency
                     for m in meta.markets if market_config.get_profile(m).currency.local_currency
@@ -183,6 +304,26 @@ else:
                     evidence_tiers=evidence_tiers, currency_by_market=currency_by_market,
                     notes=notes, **current_identity,
                 )
+                media_unit_info = {}
+                for m in meta.markets:
+                    for ch in meta.channels:
+                        cfg = market_config.get_media_unit_config(m, ch)
+                        if not (cfg and cfg.has_media_unit()):
+                            continue
+                        try:
+                            cost_df = extract_cost_per_unit_series(frame["df"], spec.date_col, spec.market_col, m, cfg)
+                            trend = historical_cost_trend(cost_df, spec.date_col)
+                        except ValueError:
+                            continue
+                        if trend["avg_cost_per_unit"] is None:
+                            continue
+                        media_unit_info[(m, ch)] = {
+                            "unit_type": cfg.unit_type,
+                            "currency": cfg.currency or currency_by_market.get(m),
+                            "avg_cost_per_unit": trend["avg_cost_per_unit"],
+                        }
+                if media_unit_info:
+                    entries = entries + cb.make_media_unit_entries(entries, media_unit_info)
             else:
                 entries = cb.make_entries(
                     meta, params, data_window, run_label, approval, model_type=model_type,
@@ -232,7 +373,7 @@ if entries:
 
     st.markdown("#### Log a geo-test / in-platform calibration result")
     entry_options = {
-        f"{e.run_label} - {e.market or '(shared)'} / {e.channel} / {e.segment_or_overall} "
+        f"{e.run_label} - {e.market or '(shared)'} / {e.channel} / {e.segment_or_overall} / {e.input_type} "
         f"({e.entry_id[:8]}, {format_date(pd.Timestamp.fromtimestamp(e.created_at))})": e.entry_id
         for e in entries
     }

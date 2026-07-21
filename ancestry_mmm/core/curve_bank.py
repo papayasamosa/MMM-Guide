@@ -29,7 +29,7 @@ from __future__ import annotations
 import json
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -74,10 +74,16 @@ class CurveBankEntry:
     beta: float
     halo_strength: Optional[float]
 
-    # Phase 3b will populate these; Phase 3a always writes "spend"/None/None.
+    # "spend" (always) or "media_unit" (Phase 3b, only where a media-unit
+    # mapping exists - see make_media_unit_entries). currency/unit_type/
+    # cost_per_unit are None for a "spend" entry.
     input_type: str = "spend"
     currency: Optional[str] = None
     unit_type: Optional[str] = None
+    # Average historical cost-per-unit (core.media_units.historical_cost_trend)
+    # this entry's media-unit axis was derived from - only set on
+    # input_type="media_unit" entries; None for "spend" entries.
+    cost_per_unit: Optional[float] = None
 
     approved_by: str = ""
     approved_at: float = 0.0
@@ -307,6 +313,42 @@ def make_entries(
     return entries
 
 
+def make_media_unit_entries(
+    entries: List[CurveBankEntry],
+    media_unit_info: Dict[Tuple[Optional[str], str], Dict[str, Any]],
+) -> List[CurveBankEntry]:
+    """
+    For each `input_type="spend"` entry in `entries` whose (market, channel)
+    has an entry in `media_unit_info` - `{"unit_type": ..., "currency": ...,
+    "avg_cost_per_unit": ...}`, typically built from
+    `core.market_config.ChannelMediaUnitConfig` and
+    `core.media_units.historical_cost_trend` - produce a mirrored
+    `input_type="media_unit"` entry carrying the same curve parameters
+    (`beta`/`hill_K`/`hill_S`/`decay_rate` don't change; only the x-axis
+    interpretation does, applied at curve-generation time via
+    `core.media_units.response_unit_curve`, not stored twice here) plus the
+    media-unit context needed to reconstruct that curve later.
+
+    Entries with no mapping in `media_unit_info` are skipped, not defaulted -
+    a media-unit curve without an actual cost-per-unit relationship to back
+    it would be fabricated, not derived.
+    """
+    mirrored: List[CurveBankEntry] = []
+    for e in entries:
+        if e.input_type != "spend":
+            continue
+        info = media_unit_info.get((e.market, e.channel))
+        if info is None:
+            continue
+        mirrored.append(replace(
+            e, entry_id=str(uuid.uuid4()), input_type="media_unit",
+            unit_type=info.get("unit_type"),
+            currency=info.get("currency") or e.currency,
+            cost_per_unit=info.get("avg_cost_per_unit"),
+        ))
+    return mirrored
+
+
 def save_entries(curve_bank_dir: Path, entries: List[CurveBankEntry]) -> List[Path]:
     """One JSON file per entry (per curve), all sharing the same
     `model_run_id` so a single save's entries can be found together."""
@@ -355,6 +397,7 @@ def entries_to_dataframe(entries: List[CurveBankEntry]) -> pd.DataFrame:
             "input_type": e.input_type,
             "currency": e.currency,
             "unit_type": e.unit_type,
+            "cost_per_unit": e.cost_per_unit,
             "decay_rate": e.decay_rate,
             "hill_K": e.hill_K,
             "hill_S": e.hill_S,

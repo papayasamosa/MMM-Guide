@@ -28,6 +28,7 @@ from .predict import (
     adstock_saturate_frame,
     lag_frame,
     steady_state_segment_response,
+    generate_channel_curve,
 )
 from .diagnostics import (
     compute_scorecard,
@@ -40,6 +41,7 @@ from .curve_bank import (
     CurveBankEntry,
     CalibrationRecord,
     make_entries,
+    make_media_unit_entries,
     save_entries,
     load_all_entries,
     entries_to_dataframe,
@@ -51,6 +53,15 @@ from .curve_bank import (
 from .evidence_tiers import (
     classify_market_evidence,
     classify_all_markets,
+)
+from .media_units import (
+    compute_cpa,
+    cpa_stability_flags,
+    extract_cost_per_unit_series,
+    historical_cost_trend,
+    response_unit_curve,
+    equivalent_delivery,
+    equivalent_response,
 )
 from .attribution import (
     compute_shapley_contributions,
@@ -149,6 +160,7 @@ __all__ = [
     "adstock_saturate_frame",
     "lag_frame",
     "steady_state_segment_response",
+    "generate_channel_curve",
     "compute_scorecard",
     "in_sample_fit",
     "posterior_predictive_coverage",
@@ -157,9 +169,17 @@ __all__ = [
     "CurveBankEntry",
     "CalibrationRecord",
     "make_entries",
+    "make_media_unit_entries",
     "save_entries",
     "classify_market_evidence",
     "classify_all_markets",
+    "compute_cpa",
+    "cpa_stability_flags",
+    "extract_cost_per_unit_series",
+    "historical_cost_trend",
+    "response_unit_curve",
+    "equivalent_delivery",
+    "equivalent_response",
     "load_all_entries",
     "entries_to_dataframe",
     "compare_to_test",

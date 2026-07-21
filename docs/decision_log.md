@@ -365,3 +365,72 @@ saved anywhere else once a model run is superseded, so this loses no information
 preserved by the curve bank.
 **Owner:** Engineering.
 **Status:** Accepted; implemented in Phase 3a.
+
+---
+
+**Date:** 2026-07-21
+**Decision:** Derive the response-unit curve (`core.media_units.response_unit_curve`) by dividing a
+spend curve's spend axis by a single average historical cost-per-unit, rather than modelling
+cost-per-unit as a function of spend level.
+**Reason:** No data exists (or is planned to exist) that would let a model learn "cost per unit at
+spend level X" as its own curve - the media-unit config only captures a historical time series of
+`spend`/`media_units` pairs at whatever spend levels actually occurred, not a spend-elasticity-of-
+cost relationship. A constant-average-cost-per-unit rescaling is the honest, directly-supportable
+reading of that data; anything more elaborate (e.g. a fitted cost-per-unit-vs-spend curve) would be
+extrapolating a relationship the data doesn't actually speak to.
+**Alternatives considered:** Fitting a secondary regression of `cost_per_unit` on `spend` per
+(market, channel) to let the response-unit curve reflect non-constant unit economics at different
+spend levels (rejected for this phase - meaningfully more modelling work and validation burden for a
+benefit that's speculative without first checking whether real Ancestry cost-per-unit data shows any
+such non-constant pattern worth capturing; a documented next step, not ruled out).
+**Impact:** `docs/media_units_and_inflation.md`'s "Spend curve vs. response-unit curve" section
+records this explicitly as a simplification, not silently. `core.media_units.response_unit_curve`'s
+docstring says the same.
+**Owner:** Modelling.
+**Status:** Accepted; implemented in Phase 3b.
+
+---
+
+**Date:** 2026-07-21
+**Decision:** `core.curve_bank.make_media_unit_entries` only mirrors curve bank entries into
+`input_type="media_unit"` for a market-specific (Model C) save, not a shared (Model A) save.
+**Reason:** A media-unit curve needs a cost-per-unit relationship, and cost-per-unit is inherently
+market-specific (media costs differ by market) even though a shared curve's `beta`/`K`/`S` are the
+same across every market it covers. There is no single, non-arbitrary market to attribute "the"
+cost-per-unit context to for a curve that spans several markets by construction - picking one would
+silently misrepresent the other markets' costs as if they matched it.
+**Alternatives considered:** Averaging cost-per-unit across every market the shared curve covers
+(rejected - blends genuinely different markets' costs into a number that doesn't represent any of
+them accurately, and would need every market to have a media-unit mapping simultaneously to compute,
+which is an unnecessarily strict requirement). Saving one media-unit entry per market anyway, each
+tagged with that market's own cost data despite the underlying curve being shared (rejected - this
+is exactly what Model C's market-specific entries already do correctly; doing the same thing for
+Model A would misleadingly suggest the *curve itself* also varies by market when it explicitly
+doesn't).
+**Impact:** `pages/07_Results_Curve_Bank.py`'s Channel curve viewer (Model A) still shows media-unit
+context (response-unit curve, historical cost trend, equivalent delivery/response) for a
+user-chosen reference market - it's just not persisted to the curve bank. Extending this once Model
+A curves themselves become market-aware is out of scope until/unless that redesign happens.
+**Owner:** Product/Modelling.
+**Status:** Accepted; implemented in Phase 3b.
+
+---
+
+**Date:** 2026-07-21
+**Decision:** Add `core.predict.generate_channel_curve` (Model A) as a direct structural mirror of
+`core.market_specific_predict.generate_market_channel_curve` (Model C) - same column shape (`spend`,
+`saturation`, `{segment}_response...`, `overall_response`), just without a `market` dimension.
+**Reason:** Model A never had a spend -> response curve generator at all (only Shapley/contribution
+tables) - `core.media_units`'s CPA and media-unit functions need *some* curve DataFrame to operate
+on for either model type, and giving them one consistent shape to expect means they never need to
+know or care which model type produced it.
+**Alternatives considered:** Writing CPA/media-unit functions that branch on model type and read
+`FHPosteriorParams`/`FHMarketSpecificPosteriorParams` directly instead of a curve DataFrame
+(rejected - re-implements curve generation inside `core.media_units`, duplicating logic that
+already exists in two other modules, and reintroduces exactly the kind of model-type branching this
+codebase has been deliberately avoiding since Phase 2, docs/decision_log.md).
+**Impact:** `core.predict.generate_channel_curve`; `pages/07_Results_Curve_Bank.py` gained a
+"Channel curve viewer" section for Model A that didn't exist before (a real UX gap this closes, not
+just plumbing for Phase 3b).
+**Owner:** Engineering.
+**Status:** Accepted; implemented in Phase 3b.

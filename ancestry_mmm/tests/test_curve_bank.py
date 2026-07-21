@@ -11,6 +11,7 @@ from ancestry_mmm.core.curve_bank import (
     entries_to_dataframe,
     load_all_entries,
     make_entries,
+    make_media_unit_entries,
     save_entries,
 )
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
@@ -384,3 +385,74 @@ class TestCompareToTest:
     def test_falls_back_to_tolerance_percent_without_ci(self):
         assert compare_to_test(model_estimate=1.05, test_estimate=1.0, tolerance_pct=10.0) == "agrees"
         assert compare_to_test(model_estimate=1.5, test_estimate=1.0, tolerance_pct=10.0) == "diverges"
+
+
+class TestMakeMediaUnitEntries:
+    def test_only_mirrors_channels_with_a_media_unit_mapping(self, shared_meta, shared_params, approval):
+        entries = make_entries(
+            shared_meta, shared_params, ("2024-01-01", "2024-12-31"), "uk-v1", approval,
+            model_type="shared", **IDENTITY,
+        )
+        media_unit_info = {(None, "TV_Brand"): {"unit_type": "GRPs", "currency": "GBP", "avg_cost_per_unit": 25.0}}
+        mirrored = make_media_unit_entries(entries, media_unit_info)
+        assert {e.channel for e in mirrored} == {"TV_Brand"}
+        assert all(e.input_type == "media_unit" for e in mirrored)
+        # 1 channel x (2 segments + overall) = 3 mirrored entries
+        assert len(mirrored) == 3
+
+    def test_mirrored_entries_carry_the_cost_context(self, shared_meta, shared_params, approval):
+        entries = make_entries(
+            shared_meta, shared_params, ("2024-01-01", "2024-12-31"), "uk-v1", approval,
+            model_type="shared", **IDENTITY,
+        )
+        media_unit_info = {(None, "TV_Brand"): {"unit_type": "GRPs", "currency": "GBP", "avg_cost_per_unit": 25.0}}
+        mirrored = make_media_unit_entries(entries, media_unit_info)
+        m = mirrored[0]
+        assert m.unit_type == "GRPs"
+        assert m.currency == "GBP"
+        assert m.cost_per_unit == pytest.approx(25.0)
+
+    def test_mirrored_entries_carry_the_same_curve_parameters_as_the_source(self, shared_meta, shared_params, approval):
+        entries = make_entries(
+            shared_meta, shared_params, ("2024-01-01", "2024-12-31"), "uk-v1", approval,
+            model_type="shared", **IDENTITY,
+        )
+        media_unit_info = {(None, "TV_Brand"): {"unit_type": "GRPs", "currency": "GBP", "avg_cost_per_unit": 25.0}}
+        mirrored = make_media_unit_entries(entries, media_unit_info)
+        source = next(e for e in entries if e.channel == "TV_Brand" and e.segment_or_overall == mirrored[0].segment_or_overall)
+        assert mirrored[0].beta == pytest.approx(source.beta)
+        assert mirrored[0].hill_K == pytest.approx(source.hill_K)
+        assert mirrored[0].entry_id != source.entry_id  # a distinct record, not the same one mutated
+
+    def test_no_mapping_means_no_mirrored_entries(self, shared_meta, shared_params, approval):
+        entries = make_entries(
+            shared_meta, shared_params, ("2024-01-01", "2024-12-31"), "uk-v1", approval,
+            model_type="shared", **IDENTITY,
+        )
+        assert make_media_unit_entries(entries, {}) == []
+
+    def test_does_not_mirror_an_already_media_unit_entry(self, shared_meta, shared_params, approval):
+        entries = make_entries(
+            shared_meta, shared_params, ("2024-01-01", "2024-12-31"), "uk-v1", approval,
+            model_type="shared", **IDENTITY,
+        )
+        media_unit_info = {(None, "TV_Brand"): {"unit_type": "GRPs", "currency": "GBP", "avg_cost_per_unit": 25.0}}
+        once = make_media_unit_entries(entries, media_unit_info)
+        twice = make_media_unit_entries(once, media_unit_info)
+        assert twice == []
+
+    def test_matches_by_market_for_a_market_specific_run(self, market_specific_meta, market_specific_params, approval):
+        evidence_tiers = {
+            "UK": {"TV_Brand": "Locally estimated", "DNA_Media": "Locally estimated"},
+            "Australia": {"TV_Brand": "Partially pooled", "DNA_Media": "Transferred estimate"},
+        }
+        entries = make_entries(
+            market_specific_meta, market_specific_params, ("2024-01-01", "2024-12-31"), "uk-au-v1", approval,
+            model_type="market_specific", evidence_tiers=evidence_tiers, **IDENTITY,
+        )
+        media_unit_info = {
+            ("UK", "TV_Brand"): {"unit_type": "GRPs", "currency": "GBP", "avg_cost_per_unit": 25.0},
+        }
+        mirrored = make_media_unit_entries(entries, media_unit_info)
+        assert all(e.market == "UK" and e.channel == "TV_Brand" for e in mirrored)
+        assert len(mirrored) == 3  # 2 segments + overall, for UK/TV_Brand only
