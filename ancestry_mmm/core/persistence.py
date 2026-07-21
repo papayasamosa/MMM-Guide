@@ -13,6 +13,12 @@ Bundle layout (a single zip):
                                           reconstruct the modelling frame and posterior
                                           parameters without a full re-fit)
     config/model_approval.json         - ModelApproval, if the trained model has been approved
+    config/market_spec_config.json     - MarketSpecConfig (market descriptors, currency,
+                                          media-unit mappings), if any is set
+    config/model_type.json             - which model builder was fit: "shared" (Model A,
+                                          core.hierarchical_model - the default/legacy value
+                                          when this file is absent) or "market_specific"
+                                          (Model C, core.market_specific_model)
     config/scenarios.json              - scenario definitions (spend plan, constraints)
     scenarios/scenario_<i>_predicted.csv
     model/trace.nc                     - fitted posterior (ArviZ InferenceData, NetCDF)
@@ -112,6 +118,7 @@ def export_project(
     model_run_id: Optional[str] = None,
     model_meta: Optional[FHModelMeta] = None,
     market_spec_config: Optional[dict] = None,
+    model_type: Optional[str] = None,
 ) -> Path:
     output_path = Path(output_path)
     with tempfile.TemporaryDirectory() as tmp:
@@ -139,6 +146,8 @@ def export_project(
             (tmp / "config" / "model_meta.json").write_text(json.dumps(asdict(model_meta), indent=2, default=str))
         if market_spec_config is not None:
             (tmp / "config" / "market_spec_config.json").write_text(json.dumps(market_spec_config, indent=2, default=str))
+        if model_type is not None:
+            (tmp / "config" / "model_type.json").write_text(json.dumps({"model_type": model_type}, indent=2))
 
         scenarios_meta = []
         for i, s in enumerate(scenarios):
@@ -181,6 +190,10 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         # an error; core.market_config.MarketSpecConfig.from_dict(None)
         # returns an empty config.
         "market_spec_config": None,
+        # Absent in bundles exported before the market-specific redesign's
+        # Phase 2 - "shared" (Model A) is the correct default: every bundle
+        # exported before Model C existed was necessarily a Model A fit.
+        "model_type": "shared",
     }
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
@@ -213,6 +226,8 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
             result["model_meta"] = json.loads((config_dir / "model_meta.json").read_text())
         if (config_dir / "market_spec_config.json").exists():
             result["market_spec_config"] = json.loads((config_dir / "market_spec_config.json").read_text())
+        if (config_dir / "model_type.json").exists():
+            result["model_type"] = json.loads((config_dir / "model_type.json").read_text()).get("model_type", "shared")
         if (config_dir / "scenarios.json").exists():
             scenarios_meta = json.loads((config_dir / "scenarios.json").read_text())
             for i, s in enumerate(scenarios_meta):
@@ -271,7 +286,16 @@ def reconstruct_model_state(imported: Dict[str, Any]) -> Dict[str, Any]:
 
     if imported.get("trace") is not None and result["model_meta"] is not None:
         try:
-            result["posterior_params"] = extract_posterior_params(imported["trace"], result["model_meta"])
+            if imported.get("model_type") == "market_specific":
+                # Local import: mirrors the prepare_fh_modeling_frame import above -
+                # avoids a module-level circular import between core and data.
+                from .market_specific_predict import extract_market_specific_posterior_params
+
+                result["posterior_params"] = extract_market_specific_posterior_params(
+                    imported["trace"], result["model_meta"]
+                )
+            else:
+                result["posterior_params"] = extract_posterior_params(imported["trace"], result["model_meta"])
         except (KeyError, ValueError):
             result["posterior_params"] = None
 
@@ -317,6 +341,7 @@ def verify_imported_approval(
     data_fp = fingerprint_dataframe(frame["df"])
     spec_fp = fingerprint_model_spec(
         imported.get("model_spec") or {}, imported.get("prior_config") or {}, imported.get("dna_lag_weeks", 4),
+        model_type=imported.get("model_type", "shared"),
     )
     posterior_fp = fingerprint_posterior(posterior_params)
     current_run_id = imported.get("model_run_id") or approval.model_run_id

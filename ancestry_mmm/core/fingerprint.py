@@ -72,14 +72,24 @@ def fingerprint_model_spec(
     model_spec: Dict[str, Any],
     prior_config: Dict[str, Any],
     dna_lag_weeks: int,
+    model_type: str = "shared",
 ) -> str:
     """
     Fingerprint the full set of inputs that determine how the model is
     *built*: the structural ModelSpec (markets/segments/channels/DNA
-    channels/promo & control columns/LTV), the prior overrides, and the DNA
-    halo lag - i.e. everything `build_fh_hierarchical_model` takes besides
-    the data itself. A changed prior therefore changes this fingerprint,
-    since priors are part of the fitted model's identity.
+    channels/promo & control columns/LTV), the prior overrides, the DNA
+    halo lag, and which model structure was fit - i.e. everything
+    `build_fh_hierarchical_model` / `build_fh_market_specific_model` take
+    besides the data itself. A changed prior therefore changes this
+    fingerprint, since priors are part of the fitted model's identity - and
+    so does switching model structure (`model_type`): a shared-curve fit and
+    a market-specific fit of the *same* data/spec/priors are not the same
+    fitted model, and an approval granted for one must not be treated as
+    valid for the other (docs/decision_log.md, market-specific redesign).
+
+    `model_type` defaults to `"shared"` (core.hierarchical_model's model,
+    "Model A") so existing call sites that don't pass it keep fingerprinting
+    that model type explicitly, not omitting model identity from the hash.
 
     Canonical JSON with sorted dict keys, so insertion order never matters;
     list order is preserved (json.dumps does not reorder lists), since list
@@ -89,6 +99,7 @@ def fingerprint_model_spec(
         "model_spec": model_spec,
         "prior_config": prior_config,
         "dna_lag_weeks": dna_lag_weeks,
+        "model_type": model_type,
     }
     blob = _canonical_json(payload)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()

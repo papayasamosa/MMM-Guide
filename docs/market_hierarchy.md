@@ -32,13 +32,21 @@ market_saturation[market, channel]
   applied after the fact.
 - No market is forced to be identical to another, but none is estimated in total isolation either.
 
+**Built in Phase 2** as `core.market_specific_model.build_fh_market_specific_model` ("Model C") -
+see `docs/modelling_methodology.md` for the exact parameterisation. `beta[market, segment, channel]`
+follows the same partial-pooling idea, additively (`mu_channel + market_dev + segment_dev`, no free
+interaction term).
+
 ## 4. Market evidence tiers
 
-Every market, once a market-specific model exists, falls into one of three evidence tiers. This
-classification requires a fitted model (Phase 2) - **Phase 1 only stores a coarse, pre-model
-observation-count heuristic** (`core.market_config.market_data_quality_status`) as a placeholder on
-the Market Descriptors page's market cards. It is explicitly not the same thing as the tiers below,
-and the UI must never present it as a curve-status label.
+Every market, once a market-specific model exists, falls into one of three evidence tiers. A fitted
+Model C (Phase 2) makes this classification possible in principle - `market_K_sigma`/
+`market_beta_sigma` and each market's posterior uncertainty are the raw ingredients - but the tiers
+below are not yet surfaced as a labelled UI classification; that's still planned (alongside curve
+bank/CPA integration, Phase 3). **Until then, the Market Descriptors page's market cards still show
+only the coarse, pre-model observation-count heuristic**
+(`core.market_config.market_data_quality_status`), which is explicitly not the same thing as the
+tiers below, and must never be presented as a curve-status label.
 
 | Tier | Description | Behaviour |
 |---|---|---|

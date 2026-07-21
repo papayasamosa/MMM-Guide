@@ -13,7 +13,7 @@ marked `legacy_approval = True`.
 Because today's model shares curves across markets, there is currently **one set of curves per run**,
 not one per market.
 
-## Planned redesign (Phase 2-3)
+## Planned redesign (Phase 3)
 
 One curve bank record per relevant curve, not per run:
 
@@ -42,9 +42,13 @@ presented as if it were locally estimated.
 
 Planned UI: filter by market, channel, segment, curve status, model run, currency, unit type.
 
-## What Phase 1 adds toward this
+## What's built toward this so far
 
-Nothing to the curve bank itself yet - `core.market_config` and the two new pages exist to capture
-the market/currency/media-unit context this redesign will attach to each curve record once Phase 2's
-market-specific model produces curves to attach it to. The curve bank's actual storage format
-doesn't change until then.
+Phase 1 added `core.market_config` and the Channel & Media Units / Market Descriptors pages to
+capture the market/currency/media-unit context this redesign will eventually attach to each curve
+record. Phase 2 added the market-specific model itself (`core.market_specific_model`,
+"Model C") and a read-only curve viewer (Results & Curve Bank, using
+`core.market_specific_predict.generate_market_channel_curve`) - but **the curve bank's storage
+format and Shapley attribution are still Model-A-only**; saving a market-specific curve to a
+versioned, calibratable curve bank record is Phase 3 work, alongside the CPA/media-unit/curve-status
+pieces above (`docs/decision_log.md` explains why this wasn't attempted as a quick adaptation).

@@ -37,6 +37,16 @@ def init_session_state():
         "mcmc_tune": DEFAULT_PARAMS["mcmc_tune"],
         "mcmc_chains": DEFAULT_PARAMS["mcmc_chains"],
         "mcmc_target_accept": DEFAULT_PARAMS["mcmc_target_accept"],
+        # "shared" (Model A, core.hierarchical_model) or "market_specific"
+        # (Model C, core.market_specific_model) - a user preference like the
+        # priors above, not a per-fit artifact, so clear_model_state() does
+        # not reset it: retraining under the same chosen structure is the
+        # common case. See docs/model_validation.md.
+        "model_type": "shared",
+        # Snapshots of fitted models' scorecards for side-by-side comparison
+        # (core.model_comparison.ModelComparisonCandidate dicts) - accumulated
+        # one at a time as the user fits candidates, not auto-populated.
+        "model_comparison_candidates": [],
 
         # Model artifacts
         "frame": None,           # output of prepare_fh_modeling_frame
@@ -113,14 +123,14 @@ def clear_model_state() -> None:
 def get_workflow_progress() -> "tuple[int, int]":
     """Get current workflow progress (current_step, total_steps).
 
-    Steps 4 (Channel & Media-Unit Mapping) and 5 (Market Descriptors) are
-    optional in Phase 1 - nothing downstream requires them yet - so there's
-    no session-state signal to gate on. Once `model_spec` exists but the
-    modelling frame isn't prepared, this points the user at step 4 (the
-    first optional step) as the next recommended stop; reaching step 6
-    (frame prepared) doesn't require having visited 4/5 first.
+    Steps 4 (Channel & Media-Unit Mapping), 5 (Market Descriptors) and 8
+    (Compare Models) are optional - nothing downstream requires them - so
+    there's no session-state signal to gate on. Reaching the step after an
+    optional one doesn't require having visited the optional step first;
+    this just points the user at the first optional step as the next
+    recommended stop once the previous required step is done.
     """
-    total_steps = 11
+    total_steps = 12
 
     if not get_state("data_loaded"):
         return 1, total_steps
@@ -135,11 +145,11 @@ def get_workflow_progress() -> "tuple[int, int]":
     if not get_state("scorecard"):
         return 8, total_steps
     if not get_state("curve_bank_entry_id"):
-        return 9, total_steps
-    if not get_state("scenarios"):
         return 10, total_steps
+    if not get_state("scenarios"):
+        return 11, total_steps
 
-    return 11, total_steps
+    return 12, total_steps
 
 
 def is_step_complete(step: int) -> bool:

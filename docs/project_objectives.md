@@ -75,7 +75,8 @@ alone with no support.
 ## Expected outputs
 
 - A scorecard-gated, approved, fingerprint-bound fitted model (existing).
-- Segment-level and (once Phase 2 lands) market-specific response curves in the curve bank.
+- Segment-level response curves in the curve bank today; market-specific response curves are
+  viewable (Phase 2) but not yet saveable to the curve bank itself (Phase 3, `docs/curve_bank.md`).
 - CPA and marginal-CPA tables by spend and by physical media unit (Phase 3).
 - Constrained and unconstrained scenario comparisons, market-aware (Phase 3 extends the existing
   planner to require a market selection and use that market's own curve).
