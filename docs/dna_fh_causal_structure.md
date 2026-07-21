@@ -163,13 +163,30 @@ quantified causal pathway. This is a documented limitation, not a silent gap - s
 
 ## Validation
 
-Simulation-based recovery testing with a known direct DNA-media effect and a known (smaller) halo
-effect was run offline (not a committed test - matches the precedent for Model C's original recovery
-check, see docs/decision_log.md for why): a synthetic panel with `beta[DNA-channel]` deliberately set
-much higher for a `direct_dna_segments` member than for an ordinary FH segment recovered that ordering
-correctly - see the decision log entry for this PR for the exact result. The fast, non-MCMC parts
-(the `direct_dna_segments` halo-shrinkage logic itself, at both the PyMC-graph-construction level via
-`_resolve_direct_dna_segments` and the NumPy-replay level in `core.predict`/
-`core.market_specific_predict`/`core.attribution`) are unit tested directly - see
-`ancestry_mmm/tests/test_hierarchical_model.py`, `test_predict.py`, `test_market_specific_predict.py`,
-`test_attribution.py`.
+**Direct/halo separation (current design).** Simulation-based recovery testing was run offline (not a
+committed test - matches the precedent for Model C's original recovery check, see docs/decision_log.md
+for why) with a synthetic panel where the ground truth genuinely separates the two pathways: kit sales
+respond only to the *current* week's DNA media, an ordinary FH halo segment (Winback) responds only to
+a *lagged* week's, and the FH DNA-cross-sell segment responds to **both** (a larger direct weight, a
+smaller delayed weight) - the case this design is specifically for. Fit with a real (350 tune/350
+draws, 2 chains) MCMC run, the model correctly recovered:
+
+- The kit-only segment's `halo_strength` fixed at **exactly `0.0`** (not approximately - it's not
+  estimated at all for this segment, by construction) with a positive, substantial recovered `beta`
+  (2.95) tracking the true unlagged relationship.
+- The FH DNA-cross-sell segment recovering **both** components: a positive, substantial `beta` (1.70,
+  the direct term) *and* a meaningfully nonzero `halo_strength` (0.33, the delayed term) - proving the
+  dual-pathway estimation genuinely works with real (MCMC, not just NumPy-replay) inference, not only
+  on paper.
+- The ordinary halo-only segment (Winback) still recovering a meaningfully nonzero `halo_strength`
+  (0.49), unaffected by the direct/halo split for segments that don't have a direct pathway at all.
+
+See the decision log entry for this PR for the exact synthetic ground truth and full result. The fast,
+non-MCMC parts (the direct/halo construction itself, at both the PyMC-graph-construction level and the
+NumPy-replay/attribution level, including the four required invariants - kit response doesn't inherit
+the halo lag, FH halo does, changing the lag doesn't move the direct kit response, direct+halo add
+without double counting) are unit tested directly and committed - see
+`ancestry_mmm/tests/test_hierarchical_model.py`, `test_predict.py::TestPredictMuDirectHaloSeparation`,
+`test_market_specific_predict.py::TestPredictMuMarketSpecificDirectHaloSeparation`,
+`test_attribution.py::TestShapleyDirectHaloSeparation`,
+`test_market_specific_attribution.py::TestShapleyMarketSpecificDirectHaloSeparation`.

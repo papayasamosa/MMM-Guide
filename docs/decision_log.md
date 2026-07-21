@@ -800,3 +800,95 @@ one Model A, one Model C - not just hand-built parameter fixtures; not committed
 established convention for AppTest verification scripts.
 **Owner:** Engineering.
 **Status:** Accepted; implemented in PR4 (Model C attribution and uncertainty).
+
+---
+
+**Date:** 2026-07-21
+**Decision:** Replace the single-lagged-media-series-plus-multiplier representation of "direct" DNA
+response (`direct_dna_segments` fixed `halo_strength = 1.0`, still routed through the same
+`dna_lag_weeks`-lagged series every halo segment used) with two genuinely separate media inputs -
+`dna_direct_media` (no extra lag) and `dna_halo_media` (a further lag on top) - and let the FH
+DNA-cross-sell segment use both simultaneously with an independently estimated, regularised halo
+term, rather than one fixed-weight pathway.
+**Reason:** A post-merge correctness audit (prompted by the instruction document "Ancestry MMM
+Repository: Required Next Changes After July 2026 Review") verified this end to end - both by reading
+the code and by running the real `core` functions (fit, predict, attribute, export/import) against all
+four combinations of {FH-only, FH-plus-DNA} x {Model A, Model C} - and found that `direct_dna_segments`
+members never actually received an undamped, immediate response: the PyMC likelihood's `eta_dna`,
+`core.predict`/`core.market_specific_predict`'s `predict_mu`, and `core.attribution`/
+`core.market_specific_attribution`'s Shapley decomposition all computed a DNA-kit segment's response
+against `lagged_dna_sat`/`lagged_dna` - the exact same lag-shifted series a halo segment used - with
+only the multiplier (`halo_strength`) differing. For real (non-constant) historical spend this is not
+a cosmetic distinction: it meant a kit-sale segment's fitted response, and every dollar Shapley
+attributed to it, was tied to media spend from `dna_lag_weeks` weeks earlier rather than the week the
+purchase decision was actually driven by. The steady-state scenario/curve functions masked this in
+manual testing (a lag of a constant series is that same constant), which is why it survived three
+prior PRs' worth of review before being caught by the audit's explicit "run FH-plus-DNA end to end with
+non-constant data, don't trust docs or commit messages" mandate. The instruction document also asked
+that the FH DNA-cross-sell segment be allowed a direct, delayed, or both pathway rather than assuming
+one - the prior design couldn't represent "both" at all (one segment, one multiplier).
+**Alternatives considered:** Leaving `halo_strength = 1.0` as the sole "direct" signal and only fixing
+which series it multiplies (rejected - `dna_segment` genuinely needs the ability to respond to *both*
+an immediate and a delayed effect with independently-sized coefficients, which a single scalar
+multiplier on a single series cannot represent). Giving `dna_segment` a wholly separate,
+independently-partial-pooled beta for its halo component distinct from its direct-pathway beta
+(rejected as unnecessary complexity - reusing the existing partial-pooled `beta[segment, DNA-channel]`
+for both terms, differentiated only by which media input and whether an extra regularised
+`halo_strength` multiplier applies, is simpler, avoids adding another hierarchical parameter block for
+a small marginal benefit, and is exactly what the recovery check below confirms is sufficient to
+recover both a true direct and a true delayed effect from real data).
+**Impact:** `FHModelMeta` gains two properties: `kit_only_segments` (`direct_dna_segments` minus
+`dna_segment` - direct pathway only, no halo term at all) and `halo_eligible_segments` (every segment
+except the kit-only ones - `dna_segment` is the one member with both). Both PyMC builders
+(`build_fh_hierarchical_model`, `build_fh_market_specific_model`) construct `dna_direct_media`
+(`sat_media` for DNA channels, no extra lag) and `dna_halo_media` (that series further lagged by
+`dna_lag_weeks`, renamed from the old `lagged_dna_sat`/`lagged_dna` naming) as two separate
+deterministics, and sum two additive eta terms (`eta_dna_direct` using a fixed 0/1 `has_direct` mask,
+`eta_dna_halo` using the (now segment-set-restricted) estimated `halo_strength`) instead of one. The
+underlying PyMC variable name for the halo shrinkage prior changed from `halo_strength_other` to
+`halo_strength_est` (its shape changed - it now covers `halo_eligible_segments`, including
+`dna_segment`, not `segments - direct_dna_segments`) - this is an intentional breaking change to any
+existing trace/curve-bank entry involving DNA channels, the same "re-fit and re-approve" pattern this
+project has used for every prior structural model change (docs/decision_log.md's fingerprint-payload
+entries). The final `halo_strength` Deterministic keeps its name/shape/dims, so
+`extract_posterior_params`/`extract_market_specific_posterior_params`'s reading of it is unaffected;
+only its *values* differ (exactly `0.0` for kit-only segments now, versus a placeholder `1.0` before -
+this is itself a fix, not just a refactor, since `0.0` correctly states "no halo pathway" instead of
+implying a full-weight halo that was never actually being used).
+`core.predict`/`core.market_specific_predict`'s `predict_mu`, `steady_state_segment_response`,
+`generate_channel_curve` (and Model C equivalents), and `core.attribution`/
+`core.market_specific_attribution`'s `_channel_log_terms` all construct the same
+`dna_direct_media`/`dna_halo_media` split and additionally mask the halo term to
+`halo_eligible_segments` defensively - not merely trusting a `params` object's `halo_strength` to
+already be `0` for a kit-only segment, so the "no halo pathway for kit-only segments" invariant holds
+structurally in the replay/attribution code even against a malformed or hand-built `params`, not only
+against a correctly-fitted one. The steady-state functions collapse the two media inputs to the same
+constant value (spend held constant forever), so their formulas sum `has_direct + halo_strength` as one
+combined weight - documented inline at each call site.
+**Verification:** Four required invariants (kit response doesn't inherit the extra halo lag, FH halo
+does, changing the halo lag doesn't alter the direct kit response, direct and halo effects are not
+double counted) are proven directly and committed, for both model types at both the prediction and
+Shapley-attribution layers - `ancestry_mmm/tests/test_predict.py::TestPredictMuDirectHaloSeparation`,
+`test_market_specific_predict.py::TestPredictMuMarketSpecificDirectHaloSeparation`,
+`test_attribution.py::TestShapleyDirectHaloSeparation`,
+`test_market_specific_attribution.py::TestShapleyMarketSpecificDirectHaloSeparation` - using a
+single-media-spike synthetic frame (spend nonzero in exactly one week) so the lag's effect lands on an
+unambiguous, disjoint week index rather than being inferred indirectly. The full existing 500-test
+suite passes unmodified (516 total after these additions), including two tests that previously encoded
+the old (incorrect) fixture assumption that a kit-only segment's `halo_strength` value was irrelevant
+regardless of what it was set to - those fixtures are now realistic (`halo_strength = 0.0` for
+kit-only segments, matching what the model itself now guarantees) and pass under the new, structurally
+correct behaviour rather than by coincidence.
+Offline recovery check (not a committed test, same precedent as every prior recovery check in this
+log): a synthetic panel where kit sales respond only to the *current* week's DNA media, an ordinary FH
+halo segment (Winback) responds only to a *lagged* week's, and the FH DNA-cross-sell segment responds
+to *both* (true direct weight 0.35, true delayed weight 0.12), fit with a real MCMC run (350
+tune/draws, 2 chains, single market, 180 weeks). Recovered: kit-only segment's `halo_strength` fixed at
+exactly `0.0` (structural, confirmed post-fit) with a positive, substantial `beta` (2.95); DNA-cross-sell
+recovering *both* a positive, substantial `beta` (1.70, its direct term) *and* a meaningfully nonzero
+`halo_strength` (0.33, its delayed term); the ordinary halo segment (Winback) still recovering a
+meaningfully nonzero `halo_strength` (0.49). See docs/dna_fh_causal_structure.md's "Validation" section
+for the full write-up.
+**Owner:** Engineering.
+**Status:** Accepted; implemented in PR B (direct DNA versus halo correction, per the post-merge
+correctness audit's PR ordering). See docs/dna_fh_causal_structure.md for the full design record.
