@@ -11,18 +11,21 @@ Six distinct effects the instruction document asks to be distinguished:
 
 1. **Direct media impact on DNA kit sales.** DNA-targeted media -> a DNA-product outcome (kit
    purchases from a new customer, or from an existing FH customer - `core.outcomes`). Modelled with
-   full, undamped `beta[segment][DNA-channel]` response - the same weight `dna_segment` itself gets,
-   via `FHModelMeta.direct_dna_segments` (see "Mechanics" below). This is DNA media's primary,
-   intended effect.
+   full, undamped `beta[segment][DNA-channel]` response against `dna_direct_media` (the channel's own
+   adstocked + saturated series, no extra lag) - via `FHModelMeta.direct_dna_segments` (see
+   "Mechanics" below). This is DNA media's primary, intended effect, and it is a **genuinely separate
+   media input** from the halo pathway below, not the same lagged series scaled by a multiplier of
+   one (see "Mechanics" for why that distinction matters and what changed).
 2. **Direct media impact on FH GSAs.** Every channel's `beta[segment][channel]` response on the New
    and Winback FH segments, unchanged from the base joint model - non-DNA media, and DNA media
    through the halo pathway (next item).
 3. **DNA media halo onto FH DNA cross-sell.** The existing halo mechanism
-   (`docs/modelling_methodology.md`): DNA-targeted media's effect on the FH DNA-cross-sell segment
-   is *also* full-weight (it is `dna_segment`, always a member of `direct_dna_segments`) - this
-   predates the DNA/FH architecture work and is unchanged by it. DNA media's effect on *other* FH
-   segments (New, Winback) is shrunk toward zero (`halo_strength`, partially pooled, "smaller effect
-   elsewhere").
+   (`docs/modelling_methodology.md`), now genuinely a *second* pathway rather than a special case of
+   the first: DNA-targeted media's effect on the FH DNA-cross-sell segment can have **both** a direct
+   component (item 1's full weight, since `dna_segment` is always a `direct_dna_segments` member) and
+   a delayed/halo component (this item, `halo_strength`, estimated, regularised toward zero by
+   default) - the data decides the split, rather than the model assuming one. DNA media's effect on
+   *other* FH segments (New, Winback) is halo-only, shrunk toward zero the same way.
 4. **Kit-sales or DNA-customer pipeline effects on later FH conversion.** Explicitly **not modelled**
    - see "What is deliberately out of scope" below.
 5. **Promotional price effects.** Reused, not reinvented: `ModelSpec.promo_cols` /
@@ -36,31 +39,77 @@ Six distinct effects the instruction document asks to be distinguished:
    level is estimated independently of any FH segment's, the same partial-pooling machinery already
    used for `market_offset`/`trend_coef`/`gamma_fourier`.
 
-## Mechanics: `direct_dna_segments`
+## Mechanics: two separate media inputs, not one lagged series and a multiplier
+
+**This section describes the current design.** An earlier version of this mechanism represented
+"direct" purely by fixing a DNA-kit segment's `halo_strength` at `1.0` while still routing it through
+the *same* `dna_lag_weeks`-lagged media series every halo segment used - which meant a kit-sale
+segment's fitted response (and its Shapley attribution) was actually computed against media from
+`dna_lag_weeks` ago, not the current week, even though it was labelled "direct". A post-merge
+correctness review caught this (it is not a true separation of the two pathways - see
+docs/decision_log.md for the review and the fix) and it was corrected to the design below.
 
 `FHModelMeta.dna_segment` (a single Family History segment) predates this work and is unchanged in
-meaning. `FHModelMeta.direct_dna_segments` generalises the *mechanical* treatment: every segment in
-this list gets DNA-targeted media's full, undamped `beta` response (`halo_strength = 1`, fixed, not
-estimated); every segment *not* in this list gets the existing shrunk-toward-zero halo response
-(`halo_strength_other`, `HalfNormal` prior, partially pooled). `dna_segment` is always a member,
-whether or not the caller lists it explicitly - `_resolve_direct_dna_segments` enforces this.
+meaning. `FHModelMeta.direct_dna_segments` lists every segment that gets a **direct** pathway from
+DNA-targeted media - `dna_segment` is always a member, whether or not the caller lists it explicitly
+(`_resolve_direct_dna_segments` enforces this); DNA-product kit-sale segments are the other members
+once mapped. Two properties on `FHModelMeta` classify segments for this purpose:
 
-A DNA-product segment (kit sales) is added to `direct_dna_segments` alongside `dna_segment`, not left
-to fall into the shrunk "other segments" bucket:
+- `kit_only_segments` - `direct_dna_segments` minus `dna_segment`: segments with **only** a direct
+  pathway (a kit sale isn't a delayed response onto itself, so there is no halo term to estimate).
+- `halo_eligible_segments` - every segment except the kit-only ones: segments with **only** a halo
+  pathway (ordinary FH segments not in `direct_dna_segments` at all), except `dna_segment`, which is
+  the one segment that can have **both** simultaneously.
+
+Both PyMC builders (`build_fh_hierarchical_model`, `build_fh_market_specific_model`) construct two
+genuinely separate media inputs from the DNA channel(s)' saturated series:
 
 ```python
-build_fh_hierarchical_model(frame, spec, direct_dna_segments=["DNA_CrossSell", "New Customer"])
+dna_direct_media = sat_media[:, dna_channel_idx]                              # no extra lag
+dna_halo_media = _market_grouped_lag(dna_direct_media, market_bounds, dna_lag_weeks)  # further-lagged
 ```
 
-`pages/04_Model_Config.py` computes this automatically from whatever DNA outcomes are mapped on
-Structure (`core.outcomes.dna_kit_outcome_columns`) and stores it as `direct_dna_segments` in session
-state; `pages/05_Model_Training.py` passes it straight through to whichever builder is fitting.
-Every place that replays this halo logic outside PyMC - `core.predict`/`core.market_specific_predict`'s
-`extract_posterior_params` (default-halo fallback), `steady_state_segment_response(_market_specific)`,
-`generate_channel_curve`/`generate_market_channel_curve` - and `core.attribution`'s Shapley
-decomposition (`_channel_log_terms`) all read `meta.direct_dna_segments` the same way, so a DNA
-kit-sale segment is treated identically (full weight) everywhere its response is calculated or
-attributed, not just in the fitted model itself.
+and route each segment through whichever input(s) apply to it, each with its own coefficient:
+
+```python
+eta_dna_direct = dot(dna_direct_media, beta[:, dna_idx].T) * has_direct[None, :]   # has_direct: fixed 0/1 mask
+eta_dna_halo   = dot(dna_halo_media,   beta[:, dna_idx].T) * halo_strength[None, :] # estimated, HalfNormal, 0 for kit-only
+eta_channels = eta_nondna + eta_dna_direct + eta_dna_halo
+```
+
+`beta[segment][DNA-channel]` (the same partial-pooled response-strength parameter every other
+channel uses) is reused for both terms - a segment's underlying sensitivity to DNA media is one
+number; which media reaches it, and whether an extra (regularised) halo multiplier applies on top,
+is what differs by segment. `has_direct` is a fixed structural mask (`direct_dna_segments`
+membership), not a random variable - there's nothing to estimate about *whether* a segment has a
+direct pathway, only how strong it is (`beta`, already estimated). `halo_strength` is `HalfNormal`
+(regularised toward zero, "smaller/delayed effect" is the default assumption) and is fixed at exactly
+`0` (not estimated at all) for `kit_only_segments` - reported as a first-class parameter for every
+segment, so `0` there is a genuine, inspectable statement ("no halo pathway"), not a placeholder.
+
+Concretely, per segment:
+
+| Segment kind | Direct term (`dna_direct_media`) | Halo term (`dna_halo_media`) |
+|---|---|---|
+| Kit-only (e.g. "New Customer") | `beta * dna_direct_media` | none (fixed at 0) |
+| `dna_segment` (e.g. "DNA_CrossSell") | `beta * dna_direct_media` | `beta * halo_strength * dna_halo_media` (estimated) |
+| Ordinary FH segment (e.g. "Winback") | none | `beta * halo_strength * dna_halo_media` (estimated) |
+
+`pages/04_Model_Config.py` computes `direct_dna_segments` automatically from whatever DNA outcomes
+are mapped on Structure (`core.outcomes.dna_kit_outcome_columns`) and stores it in session state;
+`pages/05_Model_Training.py` passes it straight through to whichever builder is fitting. Every place
+that replays this logic outside PyMC - `core.predict`/`core.market_specific_predict`'s `predict_mu`,
+`steady_state_segment_response(_market_specific)`, `generate_channel_curve`/
+`generate_market_channel_curve` - and `core.attribution`/`core.market_specific_attribution`'s Shapley
+decomposition (`_channel_log_terms`) construct the same `dna_direct_media`/`dna_halo_media` split and
+mask the halo term to `halo_eligible_segments` defensively (not merely trusting a fitted model's
+`halo_strength` to already be `0` for a kit-only segment - a kit-only segment structurally cannot
+pick up a halo contribution in the replay code, regardless of what's in a given `params` object).
+The steady-state functions (`steady_state_segment_response`, `generate_channel_curve`, and their
+Model C equivalents) hold spend constant, so `dna_direct_media` and `dna_halo_media` converge to the
+same value there (a lag of a constant series is that same constant) - the two terms' *weights*
+(`has_direct` + `halo_strength`) still add correctly, they just can't be told apart by which media
+series moved, since neither does.
 
 ## What is deliberately out of scope: the kit-to-FH pipeline effect
 
@@ -88,6 +137,17 @@ quantified causal pathway. This is a documented limitation, not a silent gap - s
 - Every segment - FH or DNA-product - has its own independent Negative-Binomial likelihood over its
   own outcome column. Nothing sums a DNA kit-sale count and an FH GSA count into one figure anywhere
   in the fitting or prediction code.
+- The direct and halo pathways are structurally separate additive terms (`eta_dna_direct` +
+  `eta_dna_halo`, see "Mechanics" above) built from two different media series - a segment either
+  isn't in `direct_dna_segments` (direct term contributes exactly `0`) or isn't in
+  `halo_eligible_segments` (halo term contributes exactly `0`), so there is no way for the same
+  media-week's effect on the same segment to be counted through both terms at once. `dna_segment` is
+  the one exception by design (both terms genuinely apply), and its two terms use disjoint media
+  inputs (`dna_direct_media` vs. `dna_halo_media`) even then - see
+  `ancestry_mmm/tests/test_predict.py::TestPredictMuDirectHaloSeparation` and its Model C/attribution
+  equivalents for the tests proving this directly (a spend spike's direct-week and lagged-week
+  responses are checked to land on disjoint weeks, and `dna_segment`'s response at each of those weeks
+  is checked to exactly equal the corresponding single-pathway segment's).
 - `core.attribution.total_fh_contribution` gained a `segments` parameter specifically for this: pages
   that build a "total FH" view (Results & Curve Bank, Project Export) pass only the FH segments
   actually in the fit (`[s for s in meta.segments if s not in meta.direct_dna_segments or s ==

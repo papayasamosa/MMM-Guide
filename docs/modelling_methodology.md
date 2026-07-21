@@ -16,9 +16,13 @@
   with an explicit per-market "unpooled" override (`ModelSpec.unpooled_markets`).
 - **Segment effects:** each segment has its own intercept, trend coefficient, promo sensitivity, and
   channel response strength (`beta[segment, channel]`), drawn from a shared distribution.
-- **DNA halo:** an explicit `halo_strength[segment]` pathway - fixed at 1.0 for the DNA cross-sell
-  segment, partially pooled toward zero for other segments, so DNA-targeted media's effect on
-  non-DNA segments is estimated, not assumed.
+- **DNA direct/halo:** two genuinely separate media inputs from DNA-targeted channels -
+  `dna_direct_media` (no extra lag, for `direct_dna_segments`: the DNA cross-sell segment and any
+  DNA-product kit-sale segments) and `dna_halo_media` (a further-lagged version, for every other
+  segment). The DNA cross-sell segment can use both simultaneously, with an explicit
+  `halo_strength[segment]` pathway (estimated, partially pooled toward zero) on top of its direct
+  term - see docs/dna_fh_causal_structure.md for the full mechanics and why a single lagged series
+  scaled by a multiplier was replaced with this.
 - **Controls:** global (all-segment) and segment-specific numeric controls, plus Fourier seasonality
   and a linear trend per segment.
 - **Uncertainty:** full posterior via MCMC (not a point estimate); diagnostics (R-hat, ESS,

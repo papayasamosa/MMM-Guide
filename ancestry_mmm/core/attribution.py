@@ -67,14 +67,26 @@ def _baseline_eta(frame: Dict, meta: FHModelMeta, params: FHPosteriorParams) -> 
 
 
 def _channel_log_terms(frame: Dict, meta: FHModelMeta, params: FHPosteriorParams) -> Dict[str, np.ndarray]:
-    """Per-channel additive log-mu contribution, shape (n_obs, n_segments), before the final exp()."""
+    """Per-channel additive log-mu contribution, shape (n_obs, n_segments), before the final exp().
+
+    For a DNA channel, a segment's term is the sum of its direct-pathway
+    contribution (`beta * dna_direct_media`, for `direct_dna_segments`
+    members) and its halo-pathway contribution (`beta * halo_strength *
+    dna_halo_media`, for `halo_eligible_segments` members) - the same two
+    genuinely separate media inputs core.hierarchical_model's likelihood
+    uses, not one shared lagged series (docs/dna_fh_causal_structure.md).
+    Both pathways are summed into the channel's single term here (Shapley
+    permutes whole channels, not pathways within a channel), so
+    `dna_segment` correctly gets credit for both without either being
+    double-counted."""
     segments = meta.segments
     n_obs = frame["X_media"].shape[0]
     n_seg = len(segments)
 
     sat_media = adstock_saturate_frame(frame["X_media"], frame["market_bounds"], meta, params)
-    lagged_dna = (
-        lag_frame(sat_media[:, meta.dna_channel_idx], frame["market_bounds"], meta.dna_lag_weeks)
+    dna_direct_media = sat_media[:, meta.dna_channel_idx] if meta.dna_channel_idx else None
+    dna_halo_media = (
+        lag_frame(dna_direct_media, frame["market_bounds"], meta.dna_lag_weeks)
         if meta.dna_channel_idx else None
     )
 
@@ -86,12 +98,16 @@ def _channel_log_terms(frame: Dict, meta: FHModelMeta, params: FHPosteriorParams
         for si, seg in enumerate(segments):
             b = params.beta[seg][ch]
             if is_dna:
-                x = lagged_dna[:, dna_pos]
-                if seg not in meta.direct_dna_segments:
-                    b = b * params.halo_strength.get(seg, 0.0)
+                value = 0.0
+                if seg in meta.direct_dna_segments:
+                    value = value + b * dna_direct_media[:, dna_pos]
+                if seg in meta.halo_eligible_segments:
+                    halo = params.halo_strength.get(seg, 0.0)
+                    if halo:
+                        value = value + b * halo * dna_halo_media[:, dna_pos]
+                term[:, si] = value
             else:
-                x = sat_media[:, ci]
-            term[:, si] = b * x
+                term[:, si] = b * sat_media[:, ci]
         terms[ch] = term
     return terms
 

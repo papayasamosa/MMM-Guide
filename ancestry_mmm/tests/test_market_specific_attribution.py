@@ -188,3 +188,102 @@ class TestTotalContributionMarketSpecific:
         expected = summary.groupby("channel")["value_contribution"].sum()
         for ch in CHANNELS:
             assert total.set_index("channel").loc[ch, "value_contribution"] == pytest.approx(expected[ch])
+
+
+class TestShapleyMarketSpecificDirectHaloSeparation:
+    """Model C attribution equivalent of test_attribution.py's
+    TestShapleyDirectHaloSeparation - proves the same four invariants for
+    the market-aware Shapley decomposition. Single-channel (DNA_Media only)
+    and single-market model makes the decomposition deterministic."""
+
+    SEGMENTS = ["New", "DNA_CrossSell", "New Customer"]
+    CHANNELS = ["DNA_Media"]
+    N_WEEKS = 10
+    SPIKE_WEEK = 3
+
+    def _meta(self, dna_lag_weeks: int) -> FHModelMeta:
+        return FHModelMeta(
+            markets=["UK"], segments=self.SEGMENTS, channels=self.CHANNELS,
+            dna_channels=["DNA_Media"], dna_channel_idx=[0], non_dna_idx=[],
+            dna_segment="DNA_CrossSell", dna_lag_weeks=dna_lag_weeks,
+            unpooled_markets=[], control_names=[],
+            direct_dna_segments=["DNA_CrossSell", "New Customer"],
+        )
+
+    def _params(self) -> FHMarketSpecificPosteriorParams:
+        beta_uk = {
+            "New": {"DNA_Media": 1.0},
+            "DNA_CrossSell": {"DNA_Media": 1.0},
+            "New Customer": {"DNA_Media": 1.0},
+        }
+        return FHMarketSpecificPosteriorParams(
+            decay_rate={"DNA_Media": 0.0},
+            hill_K={"UK": {"DNA_Media": 1000.0}},
+            hill_S={"DNA_Media": 1.0},
+            beta={"UK": beta_uk},
+            halo_strength={"New": 0.5, "DNA_CrossSell": 0.5, "New Customer": 0.0},
+            promo_coef={s: 0.0 for s in self.SEGMENTS},
+            market_offset={"UK": {s: 0.0 for s in self.SEGMENTS}},
+            intercept={s: 0.0 for s in self.SEGMENTS},
+            trend_coef={s: 0.0 for s in self.SEGMENTS},
+            gamma_fourier={s: np.zeros(4) for s in self.SEGMENTS},
+            alpha={s: 5.0 for s in self.SEGMENTS},
+            control_coef={}, segment_control_coef={},
+        )
+
+    def _frame(self):
+        n = self.N_WEEKS
+        X_media = np.zeros((n, 1))
+        X_media[self.SPIKE_WEEK, 0] = 500.0
+        return {
+            "markets": ["UK"], "market_idx": np.zeros(n, dtype=int), "market_bounds": [(0, n)],
+            "X_media": X_media, "promo": np.zeros((n, len(self.SEGMENTS))),
+            "trend": np.zeros(n), "fourier": np.zeros((n, 4)),
+            "control_names": [], "X_controls": np.zeros((n, 0)),
+            "segment_controls": {}, "segment_control_names": {},
+        }
+
+    def test_kit_only_segment_contribution_does_not_inherit_the_extra_halo_lag(self):
+        lag = 2
+        meta = self._meta(dna_lag_weeks=lag)
+        contributions = compute_shapley_contributions_market_specific(self._frame(), meta, self._params(), n_permutations=5)
+        seg_idx = meta.segments.index("New Customer")
+        contrib = contributions["channel_contributions"]["DNA_Media"][:, seg_idx]
+        assert contrib[self.SPIKE_WEEK] > 0
+        assert contrib[self.SPIKE_WEEK + lag] == pytest.approx(0.0, abs=1e-9)
+
+    def test_fh_halo_segment_contribution_does_inherit_the_extra_lag(self):
+        lag = 2
+        meta = self._meta(dna_lag_weeks=lag)
+        contributions = compute_shapley_contributions_market_specific(self._frame(), meta, self._params(), n_permutations=5)
+        seg_idx = meta.segments.index("New")
+        contrib = contributions["channel_contributions"]["DNA_Media"][:, seg_idx]
+        assert contrib[self.SPIKE_WEEK] == pytest.approx(0.0, abs=1e-9)
+        assert contrib[self.SPIKE_WEEK + lag] > 0
+
+    def test_changing_halo_lag_does_not_alter_the_direct_kit_contribution(self):
+        params = self._params()
+        frame = self._frame()
+        seg_idx = self.SEGMENTS.index("New Customer")
+        c2 = compute_shapley_contributions_market_specific(frame, self._meta(dna_lag_weeks=2), params, n_permutations=5)
+        c5 = compute_shapley_contributions_market_specific(frame, self._meta(dna_lag_weeks=5), params, n_permutations=5)
+        np.testing.assert_allclose(
+            c2["channel_contributions"]["DNA_Media"][:, seg_idx],
+            c5["channel_contributions"]["DNA_Media"][:, seg_idx],
+        )
+
+    def test_dna_cross_sell_contribution_adds_direct_and_halo_without_double_counting(self):
+        lag = 2
+        meta = self._meta(dna_lag_weeks=lag)
+        contributions = compute_shapley_contributions_market_specific(self._frame(), meta, self._params(), n_permutations=5)
+        contrib = contributions["channel_contributions"]["DNA_Media"]
+        cross_idx = meta.segments.index("DNA_CrossSell")
+        kit_idx = meta.segments.index("New Customer")
+        halo_idx = meta.segments.index("New")
+
+        assert contrib[self.SPIKE_WEEK, cross_idx] == pytest.approx(contrib[self.SPIKE_WEEK, kit_idx])
+        assert contrib[self.SPIKE_WEEK + lag, cross_idx] == pytest.approx(contrib[self.SPIKE_WEEK + lag, halo_idx])
+        assert contrib[self.SPIKE_WEEK + lag, kit_idx] == pytest.approx(0.0, abs=1e-9)
+
+        reconstructed = contributions["baseline"] + contrib
+        np.testing.assert_allclose(reconstructed, contributions["mu_total"], rtol=1e-6, atol=1e-6)

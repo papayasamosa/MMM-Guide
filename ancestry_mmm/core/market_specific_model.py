@@ -185,16 +185,20 @@ def build_fh_market_specific_model(
             dims=("obs", "channel"),
         )
 
-        # DNA halo pathway input - identical to Model A: a further-lagged
-        # version of the (now market-specific) saturated DNA-channel series.
+        # Two genuinely separate DNA-media inputs - identical to Model A
+        # (hierarchical_model.py's matching comment,
+        # docs/dna_fh_causal_structure.md): `dna_direct_media` is the
+        # (market-specific) saturated DNA-channel series itself, no extra
+        # lag; `dna_halo_media` is that series with a further lag applied.
         if dna_channel_idx:
-            dna_sat = sat_media[:, dna_channel_idx]
-            lagged_dna_sat = pm.Deterministic(
-                "lagged_dna_sat",
-                _market_grouped_lag(dna_sat, market_bounds, dna_lag_weeks),
+            dna_direct_media = sat_media[:, dna_channel_idx]
+            dna_halo_media = pm.Deterministic(
+                "dna_halo_media",
+                _market_grouped_lag(dna_direct_media, market_bounds, dna_lag_weeks),
             )
         else:
-            lagged_dna_sat = None
+            dna_direct_media = None
+            dna_halo_media = None
 
         # -----------------------------------------------------------------
         # Response strength: market- *and* segment-specific, additive on
@@ -236,29 +240,35 @@ def build_fh_market_specific_model(
         beta_by_market_idx = beta[market_idx]  # (obs, segment, channel) - this row's own market's beta
 
         # -----------------------------------------------------------------
-        # DNA halo strength by segment - identical structure to Model A
-        # (not market-specific in this phase; a documented future extension,
-        # same as decay/S). Full weight for every `direct_dna_segments`
-        # member (the FH DNA-cross-sell segment plus any DNA-product
-        # kit-sale segments fit alongside it - see hierarchical_model.py's
-        # matching comment and docs/dna_fh_causal_structure.md).
+        # Direct vs. halo pathway coefficients, by segment - identical
+        # structure to Model A (halo_strength itself not market-specific in
+        # this phase; a documented future extension, same as decay/S) - see
+        # hierarchical_model.py's matching comment and
+        # docs/dna_fh_causal_structure.md for the full rationale.
+        # `kit_only_segments` (DNA-product kit-sale segments) get only the
+        # direct term; `dna_segment` (FH DNA-cross-sell) gets both, with a
+        # regularised, shrunk-toward-zero halo term; every other segment
+        # gets only the halo term, unchanged from before this split.
         # -----------------------------------------------------------------
         if dna_channel_idx:
-            other_segments = [s for s in segments if s not in direct_dna_segments]
-            halo_other = pm.HalfNormal(
-                "halo_strength_other",
+            kit_only_segments = [s for s in direct_dna_segments if s != dna_segment]
+            halo_eligible_segments = [s for s in segments if s not in kit_only_segments]
+            halo_strength_est = pm.HalfNormal(
+                "halo_strength_est",
                 sigma=prior_config.get("dna_halo_sigma", 0.25),
-                shape=len(other_segments),
+                shape=len(halo_eligible_segments),
             )
             halo_pieces = []
             j = 0
             for s in segments:
-                if s in direct_dna_segments:
-                    halo_pieces.append(pt.constant(1.0))
+                if s in kit_only_segments:
+                    halo_pieces.append(pt.constant(0.0))
                 else:
-                    halo_pieces.append(halo_other[j])
+                    halo_pieces.append(halo_strength_est[j])
                     j += 1
             halo_strength = pm.Deterministic("halo_strength", pt.stack(halo_pieces), dims="segment")
+
+            has_direct = pt.constant(np.array([1.0 if s in direct_dna_segments else 0.0 for s in segments]))
 
             non_dna_beta = beta_by_market_idx[:, :, non_dna_idx] if non_dna_idx else None
             dna_beta = beta_by_market_idx[:, :, dna_channel_idx]
@@ -267,8 +277,9 @@ def build_fh_market_specific_model(
                 pt.sum(sat_media[:, None, non_dna_idx] * non_dna_beta, axis=2)
                 if non_dna_idx else pt.zeros((n_obs, n_segments))
             )
-            eta_dna = pt.sum(lagged_dna_sat[:, None, :] * dna_beta, axis=2) * halo_strength[None, :]
-            eta_channels = eta_nondna + eta_dna
+            eta_dna_direct = pt.sum(dna_direct_media[:, None, :] * dna_beta, axis=2) * has_direct[None, :]
+            eta_dna_halo = pt.sum(dna_halo_media[:, None, :] * dna_beta, axis=2) * halo_strength[None, :]
+            eta_channels = eta_nondna + eta_dna_direct + eta_dna_halo
         else:
             eta_channels = pt.sum(sat_media[:, None, :] * beta_by_market_idx, axis=2)
 

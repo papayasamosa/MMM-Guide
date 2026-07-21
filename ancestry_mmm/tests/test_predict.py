@@ -2,10 +2,22 @@
 curve") equivalent of core.market_specific_predict.generate_market_channel_curve,
 added in Phase 3b so CPA/media-unit code (core.media_units) can work on
 either model type's curve DataFrame uniformly. The rest of core.predict
-(predict_mu, extract_posterior_params, steady_state_segment_response) is
-established, shipped code with no dedicated test file, per this project's
-convention of not unit-testing every existing NumPy-replay function - see
-docs/decision_log.md and the equivalent note in test_market_specific_model.py."""
+(extract_posterior_params, steady_state_segment_response) is established,
+shipped code with no dedicated test file, per this project's convention of
+not unit-testing every existing NumPy-replay function - see
+docs/decision_log.md and the equivalent note in test_market_specific_model.py.
+
+`predict_mu` gets a dedicated test class below (`TestPredictMuDirectHaloSeparation`)
+as a deliberate exception to that convention: it's the one NumPy-replay
+function where the direct-vs-halo DNA pathway split (docs/dna_fh_causal_structure.md)
+is actually observable, since the steady-state functions' constant-spend
+assumption makes a lag invisible (a lag of a constant series is that same
+constant) - `predict_mu` is evaluated on a real (non-constant) frame, so it's
+the only place these tests can directly prove the four required invariants:
+a kit-only segment's response doesn't inherit the halo lag, an ordinary halo
+segment's does, changing the halo lag doesn't move a kit-only segment's
+response, and the FH DNA-cross-sell segment's direct and halo components
+add rather than double-count."""
 
 import arviz as az
 import numpy as np
@@ -16,6 +28,7 @@ from ancestry_mmm.core.predict import (
     FHPosteriorParams,
     extract_posterior_params,
     generate_channel_curve,
+    predict_mu,
     steady_state_segment_response,
 )
 
@@ -221,3 +234,119 @@ class TestExtractPosteriorParamsAt:
         assert draw.beta["New"]["TV_Brand"] == pytest.approx(0.10)
         assert draw.beta["DNA_CrossSell"]["DNA_Media"] == pytest.approx(0.20)
         assert draw.hill_K["DNA_Media"] == pytest.approx(500.0)
+
+
+class TestPredictMuDirectHaloSeparation:
+    """Proves the four invariants docs/dna_fh_causal_structure.md and the
+    post-merge correctness audit require: a kit-only segment's response
+    uses `dna_direct_media` (no extra lag), an ordinary halo segment's uses
+    `dna_halo_media` (the extra lag), changing `dna_lag_weeks` never moves a
+    kit-only segment's response, and `dna_segment`'s direct and halo
+    components add without double counting. Uses `predict_mu` on a real
+    (non-constant) frame - the steady-state functions can't observe a lag at
+    all, since a lag of a constant series is that same constant.
+
+    Segments: "New" (ordinary FH, halo-only), "DNA_CrossSell" (`dna_segment`,
+    both pathways), "New Customer" (DNA-kit, direct-only). `decay_rate=0`
+    removes adstock carryover, so the saturated DNA-media series is nonzero
+    at exactly one week - the spend spike's own week - making the lag's
+    effect land at one unambiguous, disjoint week index."""
+
+    SEGMENTS = ["New", "DNA_CrossSell", "New Customer"]
+    CHANNELS = ["TV", "DNA_Media"]
+    N_WEEKS = 10
+    SPIKE_WEEK = 3
+
+    def _meta(self, dna_lag_weeks: int) -> FHModelMeta:
+        return FHModelMeta(
+            markets=["UK"], segments=self.SEGMENTS, channels=self.CHANNELS,
+            dna_channels=["DNA_Media"], dna_channel_idx=[1], non_dna_idx=[0],
+            dna_segment="DNA_CrossSell", dna_lag_weeks=dna_lag_weeks,
+            unpooled_markets=[], control_names=[],
+            direct_dna_segments=["DNA_CrossSell", "New Customer"],
+        )
+
+    def _params(self) -> FHPosteriorParams:
+        return FHPosteriorParams(
+            decay_rate={"TV": 0.0, "DNA_Media": 0.0},
+            hill_K={"TV": 1000.0, "DNA_Media": 1000.0},
+            hill_S={"TV": 1.0, "DNA_Media": 1.0},
+            beta={
+                "New": {"TV": 0.0, "DNA_Media": 1.0},
+                "DNA_CrossSell": {"TV": 0.0, "DNA_Media": 1.0},
+                "New Customer": {"TV": 0.0, "DNA_Media": 1.0},
+            },
+            # "New"/"DNA_CrossSell" share the same halo_strength deliberately
+            # (see test_dna_cross_sell_direct_and_halo_components_add_without_double_counting) -
+            # "New Customer" (kit-only) has none, since it has no halo pathway.
+            halo_strength={"New": 0.5, "DNA_CrossSell": 0.5, "New Customer": 0.0},
+            promo_coef={s: 0.0 for s in self.SEGMENTS},
+            market_offset={"UK": {s: 0.0 for s in self.SEGMENTS}},
+            intercept={s: 0.0 for s in self.SEGMENTS},
+            trend_coef={s: 0.0 for s in self.SEGMENTS},
+            gamma_fourier={s: np.zeros(4) for s in self.SEGMENTS},
+            alpha={s: 5.0 for s in self.SEGMENTS},
+            control_coef={}, segment_control_coef={},
+        )
+
+    def _frame(self):
+        n = self.N_WEEKS
+        X_media = np.zeros((n, 2))
+        X_media[self.SPIKE_WEEK, 1] = 500.0  # DNA_Media spend in exactly one week
+        return {
+            "markets": ["UK"], "market_idx": np.zeros(n, dtype=int), "market_bounds": [(0, n)],
+            "X_media": X_media, "promo": np.zeros((n, len(self.SEGMENTS))),
+            "trend": np.zeros(n), "fourier": np.zeros((n, 4)),
+            "control_names": [], "X_controls": np.zeros((n, 0)),
+            "segment_controls": {}, "segment_control_names": {},
+        }
+
+    def test_kit_only_segment_does_not_inherit_the_extra_halo_lag(self):
+        lag = 2
+        meta = self._meta(dna_lag_weeks=lag)
+        mu = predict_mu(self._frame(), meta, self._params())
+        seg_idx = meta.segments.index("New Customer")
+        baseline = mu[0, seg_idx]
+        assert mu[self.SPIKE_WEEK, seg_idx] > baseline  # direct response, same week as the spend
+        assert mu[self.SPIKE_WEEK + lag, seg_idx] == pytest.approx(baseline)  # no lagged response at all
+
+    def test_fh_halo_segment_does_inherit_the_extra_lag(self):
+        lag = 2
+        meta = self._meta(dna_lag_weeks=lag)
+        mu = predict_mu(self._frame(), meta, self._params())
+        seg_idx = meta.segments.index("New")
+        baseline = mu[0, seg_idx]
+        assert mu[self.SPIKE_WEEK, seg_idx] == pytest.approx(baseline)  # no premature direct-week response
+        assert mu[self.SPIKE_WEEK + lag, seg_idx] > baseline  # response lands on the lagged week
+
+    def test_changing_halo_lag_does_not_alter_the_direct_kit_response(self):
+        params = self._params()
+        frame = self._frame()
+        seg_idx = self.SEGMENTS.index("New Customer")
+        mu_lag2 = predict_mu(frame, self._meta(dna_lag_weeks=2), params)
+        mu_lag5 = predict_mu(frame, self._meta(dna_lag_weeks=5), params)
+        np.testing.assert_allclose(mu_lag2[:, seg_idx], mu_lag5[:, seg_idx])
+
+    def test_dna_cross_sell_direct_and_halo_components_add_without_double_counting(self):
+        lag = 2
+        meta = self._meta(dna_lag_weeks=lag)
+        mu = predict_mu(self._frame(), meta, self._params())
+
+        cross_idx = meta.segments.index("DNA_CrossSell")
+        kit_idx = meta.segments.index("New Customer")  # direct-only, same beta as DNA_CrossSell
+        halo_idx = meta.segments.index("New")           # halo-only, same beta AND halo_strength as DNA_CrossSell
+
+        # At the direct week, dna_halo_media is still zero (the lag hasn't
+        # caught up yet), so DNA_CrossSell's response there is *exactly* its
+        # direct term alone - identical to the kit-only segment's (same
+        # beta, same weight=1.0). If the direct term were being double
+        # counted (e.g. added twice, or the halo term leaking in early),
+        # this would no longer match.
+        assert mu[self.SPIKE_WEEK, cross_idx] == pytest.approx(mu[self.SPIKE_WEEK, kit_idx])
+
+        # At the lagged week, the direct term is back to zero (the spike
+        # already passed) so DNA_CrossSell's response is *exactly* its halo
+        # term alone - identical to the halo-only segment's (same beta, same
+        # halo_strength). The kit-only segment shows nothing at all there.
+        assert mu[self.SPIKE_WEEK + lag, cross_idx] == pytest.approx(mu[self.SPIKE_WEEK + lag, halo_idx])
+        assert mu[self.SPIKE_WEEK + lag, kit_idx] == pytest.approx(mu[0, kit_idx])

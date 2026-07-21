@@ -42,14 +42,25 @@ class FHModelMeta:
     `dna_segment` is specifically the Family History DNA-cross-sell segment -
     the halo pathway's traditional target, kept for backward compatibility
     and for anything that wants to label "the FH segment DNA media is meant
-    to lift". `direct_dna_segments` generalises the *mechanical* treatment:
-    every segment in this list gets DNA-targeted media's full, undamped beta
-    response (`halo_strength = 1`); every other segment gets the shrunk-
-    toward-zero halo response. `dna_segment` is always a member. DNA-product
-    outcomes (kit sales - see core.outcomes) are the other members once
-    they're included in a fit: they are the *direct* target of DNA media,
-    not a halo recipient, so they must not be shrunk the way an unrelated FH
-    segment like Winback is - see docs/dna_fh_causal_structure.md.
+    to lift". `direct_dna_segments` lists every segment that gets a *direct*
+    pathway from DNA-targeted media - `dna_segment` is always a member;
+    DNA-product outcomes (kit sales - see core.outcomes) are the other
+    members once they're included in a fit.
+
+    Two genuinely separate media inputs feed these pathways (not one shared
+    lagged series gated by a multiplier - see docs/dna_fh_causal_structure.md
+    and docs/decision_log.md for why the older `halo_strength = 1` encoding
+    of "direct" was replaced): `dna_direct_media` (adstocked + saturated DNA
+    spend, no extra lag - a purchase-driven response) for `direct_dna_segments`,
+    and `dna_halo_media` (`dna_direct_media` further lagged by `dna_lag_weeks`
+    - a delayed, decision-cycle response) for `halo_eligible_segments`.
+    `dna_segment` is the one segment that can use *both* pathways
+    simultaneously (`kit_only_segments` excludes it) - a DNA-kit segment
+    genuinely has no halo pathway onto itself, but the FH DNA-cross-sell
+    segment may plausibly respond to DNA media both immediately and with a
+    delay, so both terms are estimated (regularised, shrunk toward zero by
+    default - see `halo_strength_est`'s prior in the model builders) and
+    summed.
     """
     markets: List[str]
     segments: List[str]
@@ -67,6 +78,23 @@ class FHModelMeta:
     def __post_init__(self) -> None:
         if not self.direct_dna_segments:
             self.direct_dna_segments = [self.dna_segment]
+
+    @property
+    def kit_only_segments(self) -> List[str]:
+        """DNA-product segments (`direct_dna_segments` minus `dna_segment`) -
+        these have ONLY a direct pathway to DNA media, no halo/delayed
+        pathway, since a kit sale isn't a delayed response onto itself."""
+        return [s for s in self.direct_dna_segments if s != self.dna_segment]
+
+    @property
+    def halo_eligible_segments(self) -> List[str]:
+        """Every segment that can have a halo (delayed) pathway from DNA
+        media - every segment except the kit-only ones. Includes
+        `dna_segment` itself (which can have both a direct and a halo
+        component) and every ordinary FH segment not in
+        `direct_dna_segments` at all."""
+        kit_only = set(self.kit_only_segments)
+        return [s for s in self.segments if s not in kit_only]
 
 
 def _default_dna_segment(segments: List[str], dna_segment: Optional[str]) -> str:
@@ -246,17 +274,25 @@ def build_fh_hierarchical_model(
             dims=("obs", "channel"),
         )
 
-        # DNA halo pathway input: DNA-targeted channels enter as a *further*
-        # lagged version of their saturated series (decision-time lag beyond
-        # adstock carryover), reset at each market boundary.
+        # Two genuinely separate DNA-media inputs (docs/dna_fh_causal_structure.md,
+        # docs/decision_log.md - replaces the older single-lagged-series-plus-
+        # multiplier encoding): `dna_direct_media` is DNA-targeted channels'
+        # own saturated series, no extra lag - a purchase-driven response
+        # (DNA kit sales, and optionally the FH DNA-cross-sell segment's
+        # direct component). `dna_halo_media` is that same series with a
+        # *further* lag applied (decision-time lag beyond adstock carryover,
+        # reset at each market boundary) - a delayed response (ordinary FH
+        # halo recipients, and optionally the FH DNA-cross-sell segment's
+        # delayed component).
         if dna_channel_idx:
-            dna_sat = sat_media[:, dna_channel_idx]
-            lagged_dna_sat = pm.Deterministic(
-                "lagged_dna_sat",
-                _market_grouped_lag(dna_sat, market_bounds, dna_lag_weeks),
+            dna_direct_media = sat_media[:, dna_channel_idx]
+            dna_halo_media = pm.Deterministic(
+                "dna_halo_media",
+                _market_grouped_lag(dna_direct_media, market_bounds, dna_lag_weeks),
             )
         else:
-            lagged_dna_sat = None
+            dna_direct_media = None
+            dna_halo_media = None
 
         # -----------------------------------------------------------------
         # Segment-specific response multipliers via partial pooling.
@@ -281,35 +317,57 @@ def build_fh_hierarchical_model(
         beta = pm.Deterministic("beta", pt.exp(log_beta), dims=("segment", "channel"))
 
         # -----------------------------------------------------------------
-        # DNA halo strength by segment: fixed at 1 (full weight) for every
-        # `direct_dna_segments` member - the FH DNA-cross-sell segment
-        # (`dna_segment`) AND any DNA-product kit-sale segments fit
-        # alongside it, since DNA media is the *direct* driver of kit sales,
-        # not a halo pathway onto them (docs/dna_fh_causal_structure.md).
-        # Every other segment is shrunk toward zero and only pulled away
-        # where the data supports it ("smaller effect elsewhere"). Reported
-        # as a first-class, inspectable parameter.
+        # Direct vs. halo pathway coefficients, by segment
+        # (docs/dna_fh_causal_structure.md, docs/decision_log.md):
+        #
+        # - `kit_only_segments` (direct_dna_segments minus dna_segment - the
+        #   DNA-product kit-sale segments) get ONLY the direct pathway:
+        #   `beta[seg, dna_channel] * dna_direct_media`, full weight, no
+        #   shrinkage - a kit sale isn't a delayed response onto itself, so
+        #   there is no halo term to estimate for these segments at all.
+        # - `dna_segment` (the FH DNA-cross-sell segment) gets BOTH: the same
+        #   direct term above, *plus* a halo term
+        #   `beta[seg, dna_channel] * halo_strength[seg] * dna_halo_media`,
+        #   letting the data decide the direct/delayed split rather than
+        #   assuming one - `halo_strength` is regularised toward zero by a
+        #   HalfNormal prior, so the documented default is "primarily
+        #   direct, with a delayed component only where the data supports
+        #   it" (the same shrink-toward-zero default every other halo
+        #   segment gets).
+        # - Every other segment (ordinary FH segments not in
+        #   `direct_dna_segments`) gets ONLY the halo term, exactly as
+        #   before - this pathway's numbers are unchanged by this
+        #   direct/halo split.
+        #
+        # `halo_strength` is reported as a first-class, inspectable
+        # parameter for every segment - fixed at exactly 0 (not the old
+        # placeholder 1) for kit-only segments, since they have no halo
+        # pathway to report a strength for.
         # -----------------------------------------------------------------
         if dna_channel_idx:
-            other_segments = [s for s in segments if s not in direct_dna_segments]
-            halo_other = pm.HalfNormal(
-                "halo_strength_other",
+            kit_only_segments = [s for s in direct_dna_segments if s != dna_segment]
+            halo_eligible_segments = [s for s in segments if s not in kit_only_segments]
+            halo_strength_est = pm.HalfNormal(
+                "halo_strength_est",
                 sigma=prior_config.get("dna_halo_sigma", 0.25),
-                shape=len(other_segments),
+                shape=len(halo_eligible_segments),
             )
             halo_pieces = []
             j = 0
             for s in segments:
-                if s in direct_dna_segments:
-                    halo_pieces.append(pt.constant(1.0))
+                if s in kit_only_segments:
+                    halo_pieces.append(pt.constant(0.0))
                 else:
-                    halo_pieces.append(halo_other[j])
+                    halo_pieces.append(halo_strength_est[j])
                     j += 1
             halo_strength = pm.Deterministic("halo_strength", pt.stack(halo_pieces), dims="segment")
 
+            has_direct = pt.constant(np.array([1.0 if s in direct_dna_segments else 0.0 for s in segments]))
+
             eta_nondna = pm.math.dot(sat_media[:, non_dna_idx], beta[:, non_dna_idx].T) if non_dna_idx else pt.zeros((n_obs, n_segments))
-            eta_dna = pm.math.dot(lagged_dna_sat, beta[:, dna_channel_idx].T) * halo_strength[None, :]
-            eta_channels = eta_nondna + eta_dna
+            eta_dna_direct = pm.math.dot(dna_direct_media, beta[:, dna_channel_idx].T) * has_direct[None, :]
+            eta_dna_halo = pm.math.dot(dna_halo_media, beta[:, dna_channel_idx].T) * halo_strength[None, :]
+            eta_channels = eta_nondna + eta_dna_direct + eta_dna_halo
         else:
             eta_channels = pm.math.dot(sat_media, beta.T)
 
