@@ -15,9 +15,14 @@ from ancestry_mmm.core.diagnostics import compute_scorecard, expanding_window_ba
 from ancestry_mmm.core.fingerprint import fingerprint_dataframe, fingerprint_model_spec, fingerprint_posterior
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
+from ancestry_mmm.core.market_specific_model import build_fh_market_specific_model
 from ancestry_mmm.core.models import fit_model
 from ancestry_mmm.core.predict import extract_posterior_params, predict_mu
+from ancestry_mmm.core.market_specific_predict import extract_market_specific_posterior_params, predict_mu_market_specific
+from ancestry_mmm.core.market_specific_diagnostics import compute_scorecard_market_specific
 from ancestry_mmm.data import prepare_fh_modeling_frame
+
+MODEL_TYPE_LABEL = {"shared": "Model A - shared curve", "market_specific": "Model C - market-specific, partially pooled"}
 
 st.set_page_config(page_title="Diagnostics - Ancestry FH MMM", page_icon="🧬", layout="wide")
 init_session_state()
@@ -37,10 +42,15 @@ if trace is None or frame is None or meta is None:
     )
     st.stop()
 
+model_type = get_state("model_type", "shared")
+
 st.markdown("---")
 if st.button("Compute scorecard", type="primary"):
     with st.spinner("Computing diagnostics..."):
-        scorecard = compute_scorecard(trace, frame, meta)
+        scorecard = (
+            compute_scorecard_market_specific(trace, frame, meta) if model_type == "market_specific"
+            else compute_scorecard(trace, frame, meta)
+        )
     set_state("scorecard", scorecard)
 
 scorecard = get_state("scorecard")
@@ -94,7 +104,7 @@ if model_run_id and posterior_params is not None and model_spec_dict is not None
     current_identity = {
         "model_run_id": model_run_id,
         "data_fingerprint": fingerprint_dataframe(frame["df"]),
-        "model_spec_fingerprint": fingerprint_model_spec(model_spec_dict, prior_config, dna_lag_weeks),
+        "model_spec_fingerprint": fingerprint_model_spec(model_spec_dict, prior_config, dna_lag_weeks, model_type=model_type),
         "posterior_fingerprint": fingerprint_posterior(posterior_params),
     }
 
@@ -174,7 +184,8 @@ st.markdown("### Out-of-sample accuracy (expanding-window backtest)")
 st.caption(
     "Each fold refits the full model on an expanding training window and evaluates the next "
     "held-out block - this can take a while (it's a real fit per fold). Use a reduced draws/tune "
-    "budget for a quicker check."
+    "budget for a quicker check. Refits use the model structure chosen on Model Configuration "
+    f"({MODEL_TYPE_LABEL.get(model_type, model_type)})."
 )
 
 c1, c2, c3 = st.columns(3)
@@ -190,12 +201,19 @@ if st.button("Run backtest"):
 
     def fit_fold(train_df, test_df):
         train_frame = prepare_fh_modeling_frame(train_df, spec)
-        fold_model, fold_meta = build_fh_hierarchical_model(train_frame, spec, dna_lag_weeks=dna_lag_weeks, prior_config=prior_config)
+        if model_type == "market_specific" and len(train_frame["markets"]) >= 2:
+            fold_model, fold_meta = build_fh_market_specific_model(train_frame, spec, dna_lag_weeks=dna_lag_weeks, prior_config=prior_config)
+        else:
+            fold_model, fold_meta = build_fh_hierarchical_model(train_frame, spec, dna_lag_weeks=dna_lag_weeks, prior_config=prior_config)
         fold_trace = fit_model(fold_model, draws=int(fold_draws), tune=int(fold_draws), chains=2, cores=1, target_accept=0.9)
-        fold_params = extract_posterior_params(fold_trace, fold_meta)
 
         test_frame = prepare_fh_modeling_frame(test_df, spec)
-        mu_test = predict_mu(test_frame, fold_meta, fold_params)
+        if model_type == "market_specific" and len(train_frame["markets"]) >= 2:
+            fold_params = extract_market_specific_posterior_params(fold_trace, fold_meta)
+            mu_test = predict_mu_market_specific(test_frame, fold_meta, fold_params)
+        else:
+            fold_params = extract_posterior_params(fold_trace, fold_meta)
+            mu_test = predict_mu(test_frame, fold_meta, fold_params)
 
         r2_by_seg, mape_by_seg = {}, {}
         for i, seg in enumerate(fold_meta.segments):

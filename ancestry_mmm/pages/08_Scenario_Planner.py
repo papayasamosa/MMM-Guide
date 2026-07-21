@@ -45,6 +45,21 @@ if frame is None or meta is None or params is None:
     )
     st.stop()
 
+model_type = get_state("model_type", "shared")
+if model_type == "market_specific":
+    st.markdown("---")
+    st.warning(
+        "Scenario planning isn't available yet for market-specific models - the optimiser and "
+        "steady-state evaluator are built around a single shared curve per channel and would "
+        "misread a market-specific fit. This is planned for a later phase (see "
+        "docs/scenario_planner.md). Explore each market's own channel curves on Results & Curve "
+        "Bank instead, or switch back to the shared-curve model on Model Configuration to plan "
+        "scenarios."
+    )
+    if st.button("Go to Results & Curve Bank"):
+        st.switch_page("pages/07_Results_Curve_Bank.py")
+    st.stop()
+
 model_run_id = get_state("model_run_id")
 prior_config = get_state("prior_config") or {}
 dna_lag_weeks = get_state("dna_lag_weeks", 4)
@@ -53,7 +68,7 @@ if model_run_id and spec_dict is not None:
     current_identity = {
         "model_run_id": model_run_id,
         "data_fingerprint": fingerprint_dataframe(frame["df"]),
-        "model_spec_fingerprint": fingerprint_model_spec(spec_dict, prior_config, dna_lag_weeks),
+        "model_spec_fingerprint": fingerprint_model_spec(spec_dict, prior_config, dna_lag_weeks, model_type=model_type),
         "posterior_fingerprint": fingerprint_posterior(params),
     }
 

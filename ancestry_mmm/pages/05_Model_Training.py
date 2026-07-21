@@ -14,8 +14,15 @@ from ancestry_mmm.utils import init_session_state, get_state, set_state, format_
 from ancestry_mmm.components import apply_theme, render_sidebar, render_page_header, render_next_step, render_empty_state
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
+from ancestry_mmm.core.market_specific_model import build_fh_market_specific_model
 from ancestry_mmm.core.models import fit_model
 from ancestry_mmm.core.predict import extract_posterior_params
+from ancestry_mmm.core.market_specific_predict import extract_market_specific_posterior_params
+from ancestry_mmm.core.model_comparison import ModelComparisonCandidate
+from ancestry_mmm.core.market_specific_diagnostics import compute_scorecard_market_specific
+from ancestry_mmm.core.diagnostics import compute_scorecard
+
+MODEL_TYPE_LABELS = {"shared": "Model A - shared curve", "market_specific": "Model C - market-specific, partially pooled"}
 
 st.set_page_config(page_title="Model Training - Ancestry FH MMM", page_icon="🧬", layout="wide")
 init_session_state()
@@ -34,9 +41,17 @@ if frame is None or not spec_dict:
     st.stop()
 
 spec = ModelSpec.from_dict(spec_dict)
+model_type = get_state("model_type", "shared")
+if model_type == "market_specific" and len(frame["markets"]) < 2:
+    st.warning(
+        "This project has only 1 market, so market-specific curves aren't available - fitting the "
+        "shared-curve model (Model A) instead. Change this on Model Configuration for future fits."
+    )
+    model_type = "shared"
 
 st.markdown("---")
 st.markdown(f"""
+- **Model structure:** {MODEL_TYPE_LABELS[model_type]}
 - **Observations:** {format_number(frame['X_media'].shape[0])}
 - **Markets:** {', '.join(frame['markets'])}
 - **Segments:** {', '.join(frame['segments'])}
@@ -55,8 +70,11 @@ if st.button("Build & fit model", type="primary"):
     dna_lag_weeks = get_state("dna_lag_weeks", 4)
 
     with st.spinner("Building model..."):
-        model, meta = build_fh_hierarchical_model(frame, spec, dna_lag_weeks=dna_lag_weeks, prior_config=prior_config)
-    st.success("Model built.")
+        if model_type == "market_specific":
+            model, meta = build_fh_market_specific_model(frame, spec, dna_lag_weeks=dna_lag_weeks, prior_config=prior_config)
+        else:
+            model, meta = build_fh_hierarchical_model(frame, spec, dna_lag_weeks=dna_lag_weeks, prior_config=prior_config)
+    st.success(f"Model built ({MODEL_TYPE_LABELS[model_type]}).")
 
     # Read MCMC settings on the main thread: st.session_state (get_state) is
     # bound to Streamlit's script-run context, which a plain background
@@ -101,11 +119,16 @@ if st.button("Build & fit model", type="primary"):
         st.error(f"Sampling failed: {progress_state['error']} Try fewer draws/chains, or simplify the hierarchy, and fit again.")
     else:
         trace = progress_state["trace"]
+        posterior_params = (
+            extract_market_specific_posterior_params(trace, meta) if model_type == "market_specific"
+            else extract_posterior_params(trace, meta)
+        )
         set_state("model", model)
         set_state("model_meta", meta)
         set_state("trace", trace)
         set_state("model_trained", True)
-        set_state("posterior_params", extract_posterior_params(trace, meta))
+        set_state("posterior_params", posterior_params)
+        set_state("model_type", model_type)
         # A fresh fit is a new model run, full stop - mint a new identity and
         # drop any approval that was sitting in session state, even if this
         # is a re-run of the same spec on the same data (retraining always
@@ -113,7 +136,36 @@ if st.button("Build & fit model", type="primary"):
         # "upstream config changed" path, this covers "user just refit").
         set_state("model_run_id", str(uuid.uuid4()))
         set_state("model_approval", None)
-        st.success("Model trained.")
+        st.success(f"Model trained ({MODEL_TYPE_LABELS[model_type]}).")
 
 if get_state("model_trained"):
+    st.markdown("---")
+    st.markdown("### Save as a comparison candidate")
+    st.caption(
+        "Optional: record this fit's scorecard so it can be compared side by side with other "
+        "candidates (a different model structure, or the same structure on a different market "
+        "selection) on Compare Models."
+    )
+    candidate_label = st.text_input(
+        "Candidate label", value=f"{MODEL_TYPE_LABELS[get_state('model_type')]} - {', '.join(frame['markets'])}",
+    )
+    if st.button("Save this fit as a comparison candidate"):
+        trace = get_state("trace")
+        current_meta = get_state("model_meta")
+        current_type = get_state("model_type")
+        with st.spinner("Computing scorecard for comparison..."):
+            scorecard = (
+                compute_scorecard_market_specific(trace, frame, current_meta) if current_type == "market_specific"
+                else compute_scorecard(trace, frame, current_meta)
+            )
+        candidate = ModelComparisonCandidate.from_scorecard(
+            model_type="C" if current_type == "market_specific" else "A",
+            label=candidate_label, model_run_id=get_state("model_run_id"), fitted_at=time.time(),
+            scorecard=scorecard, market=frame["markets"][0] if len(frame["markets"]) == 1 else None,
+        )
+        candidates = get_state("model_comparison_candidates") or []
+        candidates.append(candidate.to_dict())
+        set_state("model_comparison_candidates", candidates)
+        st.success(f"Saved '{candidate_label}' as a comparison candidate.")
+
     render_next_step("model_training")

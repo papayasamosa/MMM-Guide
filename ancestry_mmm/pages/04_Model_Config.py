@@ -40,6 +40,35 @@ st.info(
 )
 
 st.markdown("---")
+st.markdown("### Model structure")
+n_markets = len(spec.markets)
+model_type_options = ["shared", "market_specific"]
+model_type_labels = {
+    "shared": "Shared curve across markets (Model A)",
+    "market_specific": "Market-specific, partially pooled (Model C)",
+}
+current_model_type = get_state("model_type", "shared")
+if n_markets < 2 and current_model_type == "market_specific":
+    st.warning(
+        "Market-specific curves need at least 2 markets; this project has 1. Falling back to the "
+        "shared-curve model. Add another market on Structure: Segments & Markets to use "
+        "market-specific curves."
+    )
+    current_model_type = "shared"
+model_type = st.radio(
+    "Choose how channel response curves are estimated across markets",
+    model_type_options, index=model_type_options.index(current_model_type),
+    format_func=lambda t: model_type_labels[t],
+    disabled=(n_markets < 2),
+    help=FIELD_HELP["model_type_shared"] if current_model_type == "shared" else FIELD_HELP["model_type_market_specific"],
+)
+if n_markets < 2:
+    st.caption("Only 1 market in this project - market-specific curves are unavailable until there are at least 2.")
+st.caption(
+    FIELD_HELP["model_type_market_specific"] if model_type == "market_specific" else FIELD_HELP["model_type_shared"]
+)
+
+st.markdown("---")
 st.markdown("### Shared adstock & saturation curve priors")
 st.caption(FIELD_HELP["priors"] + " Stage 1 core: geometric adstock + Hill saturation, shared across segments and markets per channel.")
 
@@ -105,12 +134,13 @@ if st.button("Prepare modelling frame", type="primary"):
         set_state("mcmc_tune", int(mcmc_tune))
         set_state("mcmc_chains", int(mcmc_chains))
         set_state("mcmc_target_accept", float(mcmc_target_accept))
+        set_state("model_type", model_type)
         clear_model_state()
         set_state("frame", frame)  # clear_model_state wipes frame too - reset after
         st.success(
             f"Frame prepared: {format_number(frame['X_media'].shape[0])} observations, "
             f"{len(frame['channels'])} channels, {len(frame['segments'])} segments, "
-            f"{len(frame['markets'])} market(s)."
+            f"{len(frame['markets'])} market(s). Model structure: {model_type_labels[model_type]}."
         )
     except ValueError as e:
         st.error(f"Could not prepare the modelling frame: {e} Review the structure and try again.")

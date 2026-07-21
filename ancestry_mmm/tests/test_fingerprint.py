@@ -100,6 +100,26 @@ class TestFingerprintModelSpec:
         spec_b = {"channels": ["Search", "TV"]}
         assert fingerprint_model_spec(spec_a, {}, 4) != fingerprint_model_spec(spec_b, {}, 4)
 
+    def test_model_type_defaults_to_shared_and_is_backward_compatible(self):
+        spec = {"markets": ["UK"]}
+        assert fingerprint_model_spec(spec, {}, 4) == fingerprint_model_spec(spec, {}, 4, model_type="shared")
+
+    def test_market_specific_model_type_changes_the_fingerprint(self):
+        spec = {"markets": ["UK", "Australia"]}
+        shared_fp = fingerprint_model_spec(spec, {}, 4, model_type="shared")
+        market_specific_fp = fingerprint_model_spec(spec, {}, 4, model_type="market_specific")
+        assert shared_fp != market_specific_fp
+
+    def test_switching_model_type_changes_the_fingerprint_even_with_identical_spec_and_priors(self):
+        # The scenario this guards against: a user retrains under a different
+        # model structure without touching the spec/priors/lag at all - the
+        # fingerprint must still change so a stale approval gets invalidated.
+        spec = {"markets": ["UK", "Australia"]}
+        prior_config = {"decay_mu": 0.5}
+        fp_a = fingerprint_model_spec(spec, prior_config, 4, model_type="shared")
+        fp_c = fingerprint_model_spec(spec, prior_config, 4, model_type="market_specific")
+        assert fp_a != fp_c
+
 
 # ---------------------------------------------------------------------------
 # Posterior fingerprint

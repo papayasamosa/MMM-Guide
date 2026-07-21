@@ -120,3 +120,137 @@ Descriptors pages). No existing modelling, transformation, schema, fingerprint, 
 persistence, or optimisation behaviour changes.
 **Owner:** Engineering.
 **Status:** Accepted; Phase 1 in progress as of this entry.
+
+---
+
+**Date:** 2026-07-21
+**Decision:** Build `beta[market, segment, channel]` as the simplest identifiable additive form -
+`log_beta = mu_channel[channel] + market_dev[market, channel] + segment_dev[segment, channel]` -
+with no free market x segment x channel interaction term.
+**Reason:** The redesign brief itself recommends starting with the simplest identifiable structure
+and only adding an interaction term once diagnostics show the data supports it; a full interaction
+term roughly triples the number of free parameters per channel with no diagnostic evidence yet that
+it's needed, and risks an unidentifiable fit on realistically sized data.
+**Alternatives considered:** A free `beta[market, segment, channel]` with no additive structure
+(rejected - unidentifiable with typical FH data volumes, and defeats the point of partial pooling).
+**Impact:** `core.market_specific_model.build_fh_market_specific_model` ("Model C"). Documented as a
+next step to revisit once diagnostics on real data motivate it, not a permanent constraint.
+**Owner:** Modelling.
+**Status:** Accepted; implemented in Phase 2.
+
+---
+
+**Date:** 2026-07-21
+**Decision:** Keep Model C's prediction, curve-generation and diagnostics code in fully separate
+modules (`core.market_specific_predict`, `core.market_specific_diagnostics`) rather than adding
+market-awareness branches into `core.predict` / `core.diagnostics`.
+**Reason:** Model A's prediction and diagnostics code is already shipped and in production use;
+touching it to add a market dimension risks regressing the working shared-curve path for a feature
+(market-specific curves) that not every user needs. A parallel module with an identical function
+contract (same `frame`/`meta` inputs, analogous output shapes) is easy to keep in sync by
+inspection and impossible to accidentally break Model A with.
+**Alternatives considered:** Adding an `if market_specific:` branch throughout `core.predict`/
+`core.diagnostics` - rejected; increases the risk surface on Model A's tested code path for no
+benefit, since the market-specific and shared-curve replay math genuinely differ (indexed vs.
+non-indexed `hill_K`/`beta`).
+**Impact:** `core.market_specific_predict.FHMarketSpecificPosteriorParams`,
+`extract_market_specific_posterior_params`, `predict_mu_market_specific`,
+`steady_state_segment_response_market_specific`, `generate_market_channel_curve`;
+`core.market_specific_diagnostics.compute_scorecard_market_specific` (reuses
+`core.diagnostics.posterior_predictive_coverage` and `core.models.compute_model_diagnostics`
+unchanged, since those only read `mu`/`alpha`/generic posterior variables whose shape doesn't depend
+on model type).
+**Owner:** Engineering.
+**Status:** Accepted; implemented in Phase 2.
+
+---
+
+**Date:** 2026-07-21
+**Decision:** "Model B" (independent per-market fits, the model comparison baseline from
+`docs/model_validation.md`) needs no new model-building code - it's `core.hierarchical_model.build_fh_hierarchical_model`
+(Model A's own builder) fit against a single-market slice of the frame.
+**Reason:** Partial pooling across a single market is meaningless (nothing to pool with), so
+"independent per-market model" and "the shared-curve model fit on one market's data" are the same
+thing mathematically. Writing a separate builder for Model B would be pure duplication.
+**Alternatives considered:** A dedicated `build_fh_independent_market_model` - rejected as
+unnecessary duplication of Model A's builder with zero structural difference.
+**Impact:** `core.model_comparison.slice_frame_to_market` produces the single-market frame; the
+existing Structure page's market selection already lets a user do this without any new page.
+**Owner:** Engineering.
+**Status:** Accepted; implemented in Phase 2.
+
+---
+
+**Date:** 2026-07-21
+**Decision:** Extend `core.fingerprint.fingerprint_model_spec` to include `model_type` ("shared" or
+"market_specific") in its hash payload, defaulting to `"shared"` for backward compatibility.
+**Reason:** An approval is meant to be bound to the exact model that was reviewed. Switching model
+structure (Model A <-> Model C) changes what was actually fit even if the spec, priors and DNA lag
+are byte-identical, so it must invalidate any existing approval the same way a data or spec change
+does - otherwise a Model A approval could be silently treated as covering a Model C fit.
+**Alternatives considered:** Leaving `model_type` out of the fingerprint and relying on
+`posterior_fingerprint` alone to catch the difference (rejected - the posterior fingerprint is
+computed from the *fitted* params, which only exist after training; the model-spec fingerprint
+needs to differ before that point too, e.g. to correctly gate re-approval prompts).
+**Impact:** `core.fingerprint.fingerprint_model_spec`; every page that computes a model's identity
+(`pages/06_Diagnostics.py`, `pages/07_Results_Curve_Bank.py`, `pages/08_Scenario_Planner.py`,
+`core.persistence.verify_imported_approval`) now passes `model_type` through. All fingerprints
+computed before this change will not match after upgrading - this is intentional, not a bug: an
+approval predating this fingerprint change did not have model-type binding, so it should not survive
+the upgrade as if it did.
+**Owner:** Engineering.
+**Status:** Accepted; implemented in Phase 2.
+
+---
+
+**Date:** 2026-07-21
+**Decision:** Curve bank storage, Shapley attribution, and Scenario Planner stay Model-A-only for
+Phase 2; Model C gets a read-only curve viewer instead, with a clear "not yet available, planned for
+a later phase" message where the Model-A-only features would otherwise appear.
+**Reason:** `core.curve_bank.make_entry` and `core.optimization.evaluate_scenario`/
+`optimize_scenario` are built around `FHPosteriorParams`'s Model-A-only shape
+(`hill_K[channel]`, `beta[segment][channel]`); passing them `FHMarketSpecificPosteriorParams`
+would either raise a `KeyError` or, worse, silently read the wrong values. Building the
+market-aware version of curve bank storage and the optimiser correctly is a substantial piece of
+work in its own right (CPA tables, media-unit curves and inflation are explicitly Phase 3 scope,
+`docs/curve_bank.md`, `docs/scenario_planner.md`) and doing it hastily here risks a subtly wrong
+scenario-planning result, which is a much worse failure mode than a page saying "not available yet."
+**Alternatives considered:** Best-effort adaptation of curve bank/optimiser to accept a single
+market's slice of Model C's params (rejected - would silently produce a curve bank entry / scenario
+that looks like a normal Model-A entry but is actually one market's posterior mean masquerading as
+"the" curve, with no CPA/inflation handling; misleading rather than merely incomplete).
+**Impact:** `pages/07_Results_Curve_Bank.py` (Shapley/curve-bank section gated to
+`model_type == "shared"`; new "Market-specific channel curve viewer" section for
+`model_type == "market_specific"` using `core.market_specific_predict.generate_market_channel_curve`),
+`pages/08_Scenario_Planner.py` (blocked with `st.stop()` and a link back to Results & Curve Bank for
+`model_type == "market_specific"`).
+**Owner:** Product/Modelling.
+**Status:** Accepted; Phase 3 will extend curve bank/optimiser to Model C alongside CPA/media-unit/
+inflation calculations.
+
+---
+
+**Date:** 2026-07-21
+**Decision:** Model C's hierarchical structure is validated by an offline (non-CI) recovery check
+against `core.simulation`'s synthetic ground truth before trusting it on real data, rather than by a
+committed automated test.
+**Reason:** A real MCMC fit is slow (tens of seconds to minutes even at reduced draws) and
+inherently noisy at the low draw counts that keep it fast - not the kind of check that should gate
+every CI run, and a flaky pass/fail assertion on posterior recovery would be worse than no check at
+all. This follows the same convention the codebase already uses for Model A (no test suite entry
+builds or fits `build_fh_hierarchical_model` either).
+**Result:** A 3-market, 2-channel, 52-week synthetic panel (`core.simulation.simulate_market_specific_panel`)
+fit with a deliberately small budget (150 tune, 150 draws, 2 chains, ~90s) recovered the *correct
+market ranking* for both `hill_K` and `beta` (UK > Australia > NewMarket, matching the simulation's
+`k_multiplier`/`beta_multiplier` scaling) with positive rank/scale correlation against ground truth
+(K: 0.72, beta: 0.67). Absolute magnitudes were compressed toward the pooled mean relative to ground
+truth, as expected from partial pooling under a small draw budget and are not a concern in
+themselves; `max R-hat` was 1.05 with 1 divergence, consistent with a check explicitly not run to
+full convergence. This is evidence the hierarchy is structurally sound (market differentiation is
+recoverable in direction, not collapsed to a single shared value), not evidence of tight
+quantitative recovery - a real fit with production draw counts would be expected to recover
+magnitudes much more closely.
+**Impact:** No committed test file; this entry is the record. A committed, CI-gated recovery test is
+a candidate for a future phase if a fast/stable-enough MCMC configuration is found.
+**Owner:** Modelling.
+**Status:** Accepted.

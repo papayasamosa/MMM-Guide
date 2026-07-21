@@ -24,6 +24,7 @@ EXPECTED_LABELS = [
     "Market Descriptors",
     "Model Configuration",
     "Model Training",
+    "Compare Models",
     "Diagnostics",
     "Results & Curve Bank",
     "Scenario Planner",
@@ -53,9 +54,9 @@ class TestSidebarEntries:
 
 
 class TestWorkflowStepMetadata:
-    def test_total_steps_is_eleven(self):
-        assert TOTAL_STEPS == 11
-        assert len(WORKFLOW_STEPS) == 11
+    def test_total_steps_is_twelve(self):
+        assert TOTAL_STEPS == 12
+        assert len(WORKFLOW_STEPS) == 12
 
     def test_every_step_has_required_fields(self):
         for step in WORKFLOW_STEPS:

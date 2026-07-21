@@ -3,7 +3,43 @@
 Entries by pull request, most recent first. Predates this file: see git history for anything
 earlier than the entries below.
 
-## Unreleased - Market-Specific MMM Redesign, Phase 1 (this PR)
+## Unreleased - Market-Specific MMM Redesign, Phase 2 (this PR)
+
+- Added `core.market_specific_model.build_fh_market_specific_model` ("Model C"): market-specific,
+  partially pooled `hill_K[market, channel]` and `beta[market, segment, channel]`; `decay[channel]`
+  and `hill_S[channel]` stay shared across markets in this initial version. Structurally identical
+  to Model A otherwise (DNA halo, promo, market baseline pooling, trend, seasonality, controls).
+  Requires at least 2 markets.
+- Added `core.market_specific_predict`: `FHMarketSpecificPosteriorParams`,
+  `extract_market_specific_posterior_params`, NumPy prediction/curve-replay
+  (`predict_mu_market_specific`, `steady_state_segment_response_market_specific`,
+  `generate_market_channel_curve`) - a fully separate module from `core.predict`, so Model A's
+  existing prediction path is untouched.
+- Added `core.market_specific_diagnostics`: `compute_scorecard_market_specific` and its supporting
+  pieces (`in_sample_fit_market_specific`, `curve_plausibility_checks_market_specific`), reusing
+  `core.diagnostics.posterior_predictive_coverage` and `core.models.compute_model_diagnostics`
+  unchanged.
+- Added `core.model_comparison`: `slice_frame_to_market` (Model B = Model A fit on one market's
+  slice - no new model-building code), `ModelComparisonCandidate`, `candidates_to_dataframe`.
+- Extended `core.fingerprint.fingerprint_model_spec` with a `model_type` parameter (default
+  `"shared"`, backward compatible) so switching model structure invalidates an existing approval,
+  same as a data/spec/posterior change would.
+- Extended `core.persistence` export/import with a `model_type` config file; `reconstruct_model_state`
+  and `verify_imported_approval` branch on it; legacy bundles default to `"shared"`.
+- Added a "Model structure" choice (shared vs. market-specific) to Model Configuration, disabled
+  below 2 markets; Model Training branches its build/fit/extract calls on it and can save a fit's
+  scorecard as a comparison candidate; added **Compare Models** (new step 8, workflow now 12 steps)
+  to review candidates side by side.
+- Diagnostics now computes the correct scorecard for either model type and binds approval to
+  `model_type`.
+- Results & Curve Bank: Shapley attribution and curve-bank saving stay Model-A-only (a clear
+  "not yet available, planned for a later phase" message for market-specific models); added a
+  market-specific channel curve viewer using `generate_market_channel_curve`.
+- Scenario Planner blocks with a clear message for market-specific models (Model-A-only for now);
+  points back to Results & Curve Bank.
+- No changes to Model A's model-building, prediction, diagnostics, curve bank, or optimisation code.
+
+## Unreleased - Market-Specific MMM Redesign, Phase 1
 
 - Added `docs/` project documentation (this directory) - objectives, business questions,
   methodology, market hierarchy, segment methodology, media units & inflation, data requirements,

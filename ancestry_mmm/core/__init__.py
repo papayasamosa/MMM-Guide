@@ -95,6 +95,25 @@ from .simulation import (
     default_channels,
     simulate_market_specific_panel,
 )
+from .market_specific_model import build_fh_market_specific_model
+from .market_specific_predict import (
+    FHMarketSpecificPosteriorParams,
+    extract_market_specific_posterior_params,
+    adstock_saturate_frame_market_specific,
+    predict_mu_market_specific,
+    steady_state_segment_response_market_specific,
+    generate_market_channel_curve,
+)
+from .market_specific_diagnostics import (
+    in_sample_fit_market_specific,
+    curve_plausibility_checks_market_specific,
+    compute_scorecard_market_specific,
+)
+from .model_comparison import (
+    slice_frame_to_market,
+    ModelComparisonCandidate,
+    candidates_to_dataframe,
+)
 
 __all__ = [
     "ModelApproval",
@@ -178,4 +197,17 @@ __all__ = [
     "default_markets",
     "default_channels",
     "simulate_market_specific_panel",
+    "build_fh_market_specific_model",
+    "FHMarketSpecificPosteriorParams",
+    "extract_market_specific_posterior_params",
+    "adstock_saturate_frame_market_specific",
+    "predict_mu_market_specific",
+    "steady_state_segment_response_market_specific",
+    "generate_market_channel_curve",
+    "in_sample_fit_market_specific",
+    "curve_plausibility_checks_market_specific",
+    "compute_scorecard_market_specific",
+    "slice_frame_to_market",
+    "ModelComparisonCandidate",
+    "candidates_to_dataframe",
 ]

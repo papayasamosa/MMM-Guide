@@ -12,24 +12,35 @@
 
 ## Identification limitations
 
-- `decay[channel]` and `S[channel]` staying shared across markets (Phase 2's "initial production
+- `decay[channel]` and `S[channel]` staying shared across markets (Model C's "initial production
   version" - see `docs/decision_log.md`) means the model cannot yet distinguish "this market's
   media carries over longer" from "this market's saturation point is higher" - both currently only
   show up through the shared parameters or the market-specific `K`.
+- `beta[market, segment, channel]` is built as an additive form (global + market deviation + segment
+  deviation) with no free market x segment x channel interaction term - by design (`docs/decision_log.md`),
+  not because an interaction was ruled out; it's a documented next step once diagnostics on real
+  data motivate it.
 - Simulation-based recovery testing (`core.simulation`) validates that the model *can* recover known
   ground truth under the assumed hierarchical structure - it cannot validate that this hierarchical
   structure is the correct one for real Ancestry data. Real-data model comparison
-  (`docs/model_validation.md`) is still required before trusting the redesign in production.
+  (`docs/model_validation.md`) is still required before trusting the redesign in production. The
+  offline recovery check run so far (`docs/decision_log.md`) used a small draw budget for speed and
+  recovered correct market *ranking* with compressed magnitudes - a production draw count is needed
+  to assess quantitative recovery, not just direction.
 
 ## Transferred-curve limitations
 
-- A market with no usable local evidence gets a **transferred estimate**, not a locally estimated
-  curve - explicitly labelled as such once Phase 2 exists (`docs/market_hierarchy.md` section 4).
-  Transferred estimates are directional; they should not be used for precise budget-level decisions
-  the way a locally-or-strongly-pooled curve can be.
-- Phase 1's `market_data_quality_status` is a coarse, pre-model, observation-count-only heuristic.
-  It is not the same thing as the Phase 2 curve-status classification and must not be presented to
-  users as if it were - see the explicit warning in `docs/market_hierarchy.md` section 4.
+- A market with no usable local evidence should get a **transferred estimate**, not a locally
+  estimated curve, once the evidence-tier classification is surfaced in the UI - **this labelling is
+  not built yet** (`docs/market_hierarchy.md` section 4); a fitted Model C makes the classification
+  possible in principle (via `market_K_sigma`/`market_beta_sigma` and per-market posterior
+  uncertainty) but nothing in the UI currently maps a market onto one of the three evidence tiers.
+  Treat any market-specific curve today as unlabelled with respect to evidence strength - review
+  `curve_plausibility_checks_market_specific`'s relative-uncertainty flags manually instead.
+- `market_data_quality_status` is a coarse, pre-model, observation-count-only heuristic, still the
+  only thing shown on the Market Descriptors page's market cards. It is not the same thing as the
+  evidence-tier classification above and must not be presented to users as if it were - see the
+  explicit warning in `docs/market_hierarchy.md` section 4.
 
 ## Inflation assumptions
 
@@ -58,11 +69,19 @@
 
 ## Scope boundaries (this PR specifically)
 
-- This PR (Phase 1) changes no modelling, transformation, schema, fingerprinting, approval,
-  persistence-of-existing-fields, or scenario-optimisation behaviour. Everything described as
-  "planned" or "Phase 2/3/4" in these docs is a design record, not shipped functionality.
-- The model-specification fingerprint (`core.fingerprint.fingerprint_model_spec`) does **not** yet
-  include market hierarchy, media-unit mappings, or currency settings - approval invalidation does
-  not currently react to changes in the new `market_spec_config` data, since nothing downstream
-  consumes it yet. This is intentional for Phase 1 and is tracked as Phase 2 work (extending the
-  fingerprint alongside wiring the data into the model), not an oversight.
+- This PR (Phase 2) adds a new, fully separate market-specific model, prediction, and diagnostics
+  path (`core.market_specific_model`, `core.market_specific_predict`,
+  `core.market_specific_diagnostics`, `core.model_comparison`) alongside Model A - it does not
+  modify Model A's model-building, prediction, diagnostics, curve bank, or optimisation code at all.
+  Everything described as "Phase 3/4" in these docs remains a design record, not shipped
+  functionality.
+- The model-specification fingerprint (`core.fingerprint.fingerprint_model_spec`) now includes
+  `model_type` ("shared" vs. "market_specific"), so switching model structure invalidates an
+  existing approval. It still does **not** include market hierarchy, media-unit mappings, or
+  currency settings from `market_spec_config` - approval invalidation does not yet react to changes
+  in that data, since nothing downstream consumes it yet beyond Model C's core structure. This
+  remains tracked as Phase 3 work (wiring `market_spec_config` into the model/fingerprint together),
+  not an oversight.
+- Curve bank storage, Shapley attribution, and Scenario Planner are Model-A-only; a market-specific
+  model gets a read-only curve viewer instead, with a clear "not available yet" message where the
+  Model-A-only features would otherwise appear (`docs/decision_log.md`).

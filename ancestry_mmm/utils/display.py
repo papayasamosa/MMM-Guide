@@ -156,6 +156,8 @@ FIELD_HELP = {
     "locked_cells": "Locked cells are spend values the optimiser must not change, e.g. already-committed bookings.",
     "minimum_spend": "A minimum spend floor stops the optimiser from reducing spend below a required level.",
     "maximum_movement": "Maximum movement limits how far the optimiser can move spend away from the current plan, as a percentage.",
+    "model_type_shared": "One response curve per channel, shared across every market. Simple and fast to fit, but can't show that a channel works differently in different markets.",
+    "model_type_market_specific": "A separate response curve per channel in each market, allowing information to be shared (partial pooling) so smaller markets borrow strength from larger ones instead of being fitted alone.",
 }
 
 # Compact glossary of modelling/planning terms.
@@ -172,4 +174,7 @@ GLOSSARY = {
     "Constraint": "A rule the optimiser must respect when proposing a spend plan, e.g. a locked cell or spend floor.",
     "Approval": "A reviewer's sign-off on a specific fitted model, required before it can be used for planning.",
     "Curve Bank": "A versioned store of an approved model's response curves and segment parameters.",
+    "Market-specific curve": "A response curve estimated separately for one market, rather than shared across all markets.",
+    "Shrinkage": "How far a market's estimate is pulled toward the shared distribution - larger in weak-data markets, smaller in strong-data markets.",
+    "Model comparison": "Fitting more than one candidate model structure and comparing their diagnostics before choosing which to trust.",
 }
