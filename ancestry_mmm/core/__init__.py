@@ -53,6 +53,7 @@ from .curve_bank import (
 from .evidence_tiers import (
     classify_market_evidence,
     classify_all_markets,
+    evidence_tiers_dataframe,
 )
 from .media_units import (
     compute_cpa,
@@ -62,6 +63,7 @@ from .media_units import (
     response_unit_curve,
     equivalent_delivery,
     equivalent_response,
+    market_specific_cpa_table,
 )
 from .attribution import (
     compute_shapley_contributions,
@@ -179,6 +181,7 @@ __all__ = [
     "save_entries",
     "classify_market_evidence",
     "classify_all_markets",
+    "evidence_tiers_dataframe",
     "compute_cpa",
     "cpa_stability_flags",
     "extract_cost_per_unit_series",
@@ -186,6 +189,7 @@ __all__ = [
     "response_unit_curve",
     "equivalent_delivery",
     "equivalent_response",
+    "market_specific_cpa_table",
     "load_all_entries",
     "entries_to_dataframe",
     "compare_to_test",

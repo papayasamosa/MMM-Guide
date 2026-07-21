@@ -23,6 +23,9 @@ from ancestry_mmm.core.attribution import compute_shapley_contributions, total_f
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.approval import ModelApproval
 from ancestry_mmm.core.market_config import MarketSpecConfig
+from ancestry_mmm.core.evidence_tiers import evidence_tiers_dataframe
+from ancestry_mmm.core.media_units import market_specific_cpa_table
+from ancestry_mmm.core.optimization import compare_scenarios
 from ancestry_mmm.core.report import build_report_sections, render_markdown, render_html
 
 st.set_page_config(page_title="Project Export - Ancestry FH MMM", page_icon="🧬", layout="wide")
@@ -121,22 +124,56 @@ if uploaded_zip is not None and st.button("Import bundle"):
         tmp_path.unlink(missing_ok=True)
 
 st.markdown("---")
-st.markdown("### Excel export (curve bank + contributions)")
+st.markdown("### Excel export")
+model_type_for_export = get_state("model_type", "shared")
 if get_state("trace") is not None and get_state("model_spec"):
+    if model_type_for_export == "shared":
+        st.caption("Curve bank, total-FH contribution and segment x channel Shapley attribution (Model A).")
+    else:
+        st.caption(
+            "Shapley attribution isn't available for market-specific models - it's built around a "
+            "single shared curve per channel and would misread Model C's market-indexed parameters "
+            "(same restriction as Results & Curve Bank). This export instead includes the "
+            "market-specific curve bank, evidence tiers, a CPA table per market/channel, diagnostics "
+            "and approval metadata, and the scenario comparison."
+        )
     if st.button("Build Excel summary"):
         meta = get_state("model_meta")
         params = get_state("posterior_params")
         frame = get_state("frame")
+        trace = get_state("trace")
         spec = ModelSpec.from_dict(get_state("model_spec"))
-        contributions = compute_shapley_contributions(frame, meta, params, n_permutations=100)
-        total_df = total_fh_contribution(frame, meta, params, contributions, spec.segment_ltv)
-        seg_df = segment_channel_summary(frame, meta, params, contributions, spec.segment_ltv)
         entries = load_all_entries(curve_bank_dir())
         entries_df = entries_to_dataframe(entries) if entries else None
 
+        if model_type_for_export == "shared":
+            contributions = compute_shapley_contributions(frame, meta, params, n_permutations=100)
+            total_df = total_fh_contribution(frame, meta, params, contributions, spec.segment_ltv)
+            seg_df = segment_channel_summary(frame, meta, params, contributions, spec.segment_ltv)
+            sheets = {
+                "Total FH Contribution": total_df,
+                "Segment x Channel": seg_df,
+                "Curve Bank": entries_df,
+            }
+        else:
+            scorecard = get_state("scorecard") or {}
+            diagnostics_df = pd.DataFrame(scorecard.get("in_sample_fit") or [])
+            approval_dict = get_state("model_approval")
+            approval_df = pd.DataFrame([approval_dict]) if approval_dict else None
+            scenarios = get_state("scenarios") or []
+            scenarios_df = compare_scenarios(scenarios) if scenarios else None
+            sheets = {
+                "Curve Bank": entries_df,
+                "Evidence Tiers": evidence_tiers_dataframe(trace, frame, meta),
+                "CPA": market_specific_cpa_table(meta, params),
+                "Diagnostics": diagnostics_df,
+                "Approval": approval_df,
+                "Scenarios": scenarios_df,
+            }
+
         PROJECT_EXPORT_ROOT.mkdir(parents=True, exist_ok=True)
         excel_path = PROJECT_EXPORT_ROOT / f"{project_name}_summary.xlsx"
-        export_excel_summary(excel_path, entries_df, total_df, seg_df)
+        export_excel_summary(excel_path, sheets)
         with open(excel_path, "rb") as f:
             st.download_button("Download Excel summary (.xlsx)", f, file_name=excel_path.name,
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")

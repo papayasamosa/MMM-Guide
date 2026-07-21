@@ -8,7 +8,8 @@ from typing import Any, Dict, List, Optional
 
 HOME_KEY = "home"
 
-# Ordered 1-9 workflow. Each entry:
+# Ordered workflow (see TOTAL_STEPS below - derived from this list's length,
+# never hand-counted). Each entry:
 #   key       - stable identifier used across the app
 #   label     - exact sidebar / navigation label
 #   path      - st.page_link / st.switch_page target
@@ -200,7 +201,7 @@ def get_step(key: str) -> Optional[Dict[str, Any]]:
 
 
 def step_number(key: str) -> Optional[int]:
-    """1-based position in the 9-step workflow (None for Home / unknown keys)."""
+    """1-based position in the workflow (None for Home / unknown keys)."""
     for i, step in enumerate(WORKFLOW_STEPS, start=1):
         if step["key"] == key:
             return i
@@ -222,3 +223,11 @@ def next_step_key(key: str) -> Optional[str]:
 def sidebar_entries() -> List[Dict[str, Any]]:
     """All pages in sidebar order, Home first."""
     return [_HOME] + WORKFLOW_STEPS
+
+
+def home_workflow_lines() -> List[str]:
+    """Numbered '**Label** - purpose.' lines for the Home page's workflow
+    summary, derived directly from WORKFLOW_STEPS so it can never drift out
+    of sync with the actual page count, order, or labels (see
+    docs/decision_log.md - this replaced a hand-maintained, stale copy)."""
+    return [f"{i}. **{step['label']}** - {step['purpose']}" for i, step in enumerate(WORKFLOW_STEPS, start=1)]

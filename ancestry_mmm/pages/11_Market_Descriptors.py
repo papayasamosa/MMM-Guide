@@ -1,7 +1,9 @@
-"""Page (step 5 of 11): market cards - data coverage summary plus optional
+"""Page (step 5 of 12): market cards - data coverage summary plus optional
 currency and market-descriptor capture for the market-specific redesign
-(see docs/market_hierarchy.md section 5 and section 17.4). Nothing
-downstream reads this yet; it only stores context for Phase 2/3.
+(see docs/market_hierarchy.md section 5 and section 17.4). Currency is part
+of the model-specification fingerprint once set (core.fingerprint); the
+descriptor fields (population, awareness, maturity, ...) remain purely
+informational - nothing downstream reads them.
 """
 
 import sys
@@ -39,11 +41,13 @@ render_glossary(["Partial pooling"])
 
 st.markdown("---")
 st.info(
-    "This step is optional in Phase 1 - it records context (currency, audience, penetration, "
-    "maturity, ...) that a later phase can use to explain market-level curve differences. "
-    "Skip it and continue if you don't have this information yet."
+    "This step is optional - it records context (currency, audience, penetration, "
+    "maturity, ...) for reporting and, for currency, the model-specification fingerprint. The "
+    "descriptor fields (audience, penetration, maturity, ...) are informational only and not yet "
+    "used to explain market-level curve differences. Skip it and continue if you don't have this "
+    "information yet."
 )
-st.caption("See docs/market_hierarchy.md for how this context is intended to be used once a market-specific model exists.")
+st.caption("See docs/market_hierarchy.md for how this context is used, and docs/decision_log.md for the fingerprint boundary.")
 
 config_dict = get_state("market_spec_config")
 market_config = MarketSpecConfig.from_dict(config_dict)

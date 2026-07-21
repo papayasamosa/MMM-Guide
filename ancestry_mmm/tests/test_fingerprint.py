@@ -7,6 +7,13 @@ from ancestry_mmm.core.fingerprint import (
     fingerprint_model_spec,
     fingerprint_posterior,
 )
+from ancestry_mmm.core.market_config import (
+    ChannelMediaUnitConfig,
+    MarketCurrency,
+    MarketDescriptors,
+    MarketProfile,
+    MarketSpecConfig,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -119,6 +126,103 @@ class TestFingerprintModelSpec:
         fp_a = fingerprint_model_spec(spec, prior_config, 4, model_type="shared")
         fp_c = fingerprint_model_spec(spec, prior_config, 4, model_type="market_specific")
         assert fp_a != fp_c
+
+
+# ---------------------------------------------------------------------------
+# Model-specification fingerprint: pipeline_steps + market_spec_config
+# (PR1 3.3 - see docs/decision_log.md for the descriptive/model-relevant
+# boundary this codifies)
+# ---------------------------------------------------------------------------
+
+class TestFingerprintModelSpecPipelineSteps:
+    def test_no_pipeline_steps_is_backward_compatible_with_omitting_the_argument(self):
+        spec = {"markets": ["UK"]}
+        assert fingerprint_model_spec(spec, {}, 4) == fingerprint_model_spec(spec, {}, 4, pipeline_steps=None)
+        assert fingerprint_model_spec(spec, {}, 4) == fingerprint_model_spec(spec, {}, 4, pipeline_steps=[])
+
+    def test_changed_pipeline_steps_changes_the_fingerprint(self):
+        spec = {"markets": ["UK"]}
+        steps_a = [{"op": "log_transform", "column": "TV_Brand"}]
+        steps_b = [{"op": "log_transform", "column": "TV_Brand"}, {"op": "fill_na", "column": "Search"}]
+        fp_a = fingerprint_model_spec(spec, {}, 4, pipeline_steps=steps_a)
+        fp_b = fingerprint_model_spec(spec, {}, 4, pipeline_steps=steps_b)
+        assert fp_a != fp_b
+
+    def test_pipeline_step_order_is_meaningful(self):
+        spec = {"markets": ["UK"]}
+        steps_a = [{"op": "a"}, {"op": "b"}]
+        steps_b = [{"op": "b"}, {"op": "a"}]
+        fp_a = fingerprint_model_spec(spec, {}, 4, pipeline_steps=steps_a)
+        fp_b = fingerprint_model_spec(spec, {}, 4, pipeline_steps=steps_b)
+        assert fp_a != fp_b
+
+    def test_identical_pipeline_steps_same_fingerprint(self):
+        spec = {"markets": ["UK"]}
+        steps = [{"op": "log_transform", "column": "TV_Brand"}]
+        assert fingerprint_model_spec(spec, {}, 4, pipeline_steps=steps) == fingerprint_model_spec(
+            spec, {}, 4, pipeline_steps=list(steps)
+        )
+
+
+class TestFingerprintModelSpecMarketConfig:
+    def _config_with(self, *, currency=None, descriptors=None, media_unit=None) -> dict:
+        profile = MarketProfile(
+            market="UK",
+            currency=currency or MarketCurrency(),
+            descriptors=descriptors or MarketDescriptors(),
+        )
+        config = MarketSpecConfig(market_profiles={"UK": profile})
+        if media_unit is not None:
+            config.set_media_unit_config(media_unit)
+        return config.to_dict()
+
+    def test_no_market_spec_config_is_backward_compatible_with_omitting_the_argument(self):
+        spec = {"markets": ["UK"]}
+        assert fingerprint_model_spec(spec, {}, 4) == fingerprint_model_spec(spec, {}, 4, market_spec_config=None)
+        assert fingerprint_model_spec(spec, {}, 4) == fingerprint_model_spec(spec, {}, 4, market_spec_config={})
+
+    def test_changed_market_currency_changes_the_fingerprint(self):
+        spec = {"markets": ["UK"]}
+        config_a = self._config_with(currency=MarketCurrency(local_currency="GBP"))
+        config_b = self._config_with(currency=MarketCurrency(local_currency="USD"))
+        fp_a = fingerprint_model_spec(spec, {}, 4, market_spec_config=config_a)
+        fp_b = fingerprint_model_spec(spec, {}, 4, market_spec_config=config_b)
+        assert fp_a != fp_b
+
+    def test_changed_channel_media_unit_mapping_changes_the_fingerprint(self):
+        spec = {"markets": ["UK"]}
+        config_a = self._config_with(media_unit=ChannelMediaUnitConfig(market="UK", channel="TV", spend_column="TV_Spend"))
+        config_b = self._config_with(
+            media_unit=ChannelMediaUnitConfig(
+                market="UK", channel="TV", spend_column="TV_Spend", response_unit_column="TV_GRPs", unit_type="GRPs",
+            )
+        )
+        fp_a = fingerprint_model_spec(spec, {}, 4, market_spec_config=config_a)
+        fp_b = fingerprint_model_spec(spec, {}, 4, market_spec_config=config_b)
+        assert fp_a != fp_b
+
+    def test_changed_cost_basis_changes_the_fingerprint(self):
+        spec = {"markets": ["UK"]}
+        config_a = self._config_with(
+            media_unit=ChannelMediaUnitConfig(market="UK", channel="TV", spend_column="TV_Spend", cost_basis="CPM")
+        )
+        config_b = self._config_with(
+            media_unit=ChannelMediaUnitConfig(market="UK", channel="TV", spend_column="TV_Spend", cost_basis="Cost per GRP")
+        )
+        fp_a = fingerprint_model_spec(spec, {}, 4, market_spec_config=config_a)
+        fp_b = fingerprint_model_spec(spec, {}, 4, market_spec_config=config_b)
+        assert fp_a != fp_b
+
+    def test_changed_market_descriptors_do_not_change_the_fingerprint(self):
+        # The descriptive/model-relevant boundary: population, awareness etc.
+        # are never read by any calculation (core/market_config.py's own
+        # docstring), so editing them must not invalidate an approval.
+        spec = {"markets": ["UK"]}
+        config_a = self._config_with(descriptors=MarketDescriptors(population=1_000_000, region="North"))
+        config_b = self._config_with(descriptors=MarketDescriptors(population=5_000_000, region="South"))
+        fp_a = fingerprint_model_spec(spec, {}, 4, market_spec_config=config_a)
+        fp_b = fingerprint_model_spec(spec, {}, 4, market_spec_config=config_b)
+        assert fp_a == fp_b
 
 
 # ---------------------------------------------------------------------------

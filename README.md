@@ -21,18 +21,35 @@ uv run streamlit run ancestry_mmm/app.py
 
 Opens at `http://localhost:8501`. From there: **Data Upload** → click "Load synthetic demo
 sources" for a working UK/Australia/Canada dataset with no setup required, then work through the
-sidebar in order (Transform Pipeline → Structure → Model Configuration → Model Training →
-Diagnostics → Results & Curve Bank → Scenario Planner → Project Export).
+sidebar in order (Transform Pipeline → Structure → Channel & Media Units → Market Descriptors →
+Model Configuration → Model Training → Compare Models → Diagnostics → Results & Curve Bank →
+Scenario Planner → Project Export & Handover).
 
 Requires Python 3.11 or 3.12 (see [Deployment](#deployment) below for why there's an upper bound).
 
 ## What it does
 
-- **Joint hierarchical model** (`ancestry_mmm/core/hierarchical_model.py`): one Negative-Binomial
-  model per market covering all FH segments together, with shared channel-level adstock/Hill
-  saturation curves, segment-specific response strength via partial pooling, an explicit lagged
-  DNA halo pathway (not a fixed multiplier), segment-specific promotional sensitivity, and a geo
-  hierarchy (UK / Australia / Canada in the demo data) with a per-market "unpooled" override.
+- **Joint hierarchical model** (`ancestry_mmm/core/hierarchical_model.py`, "Model A"): one
+  Negative-Binomial model per market covering all FH segments together, with one **shared**
+  channel-level adstock/Hill saturation curve across markets, segment-specific response strength
+  via partial pooling, an explicit lagged DNA halo pathway (not a fixed multiplier),
+  segment-specific promotional sensitivity, and a geo hierarchy (UK / Australia / Canada in the
+  demo data) with a per-market "unpooled" override.
+- **Market-specific model** (`ancestry_mmm/core/market_specific_model.py`, "Model C"): the same
+  joint FH structure, but with **market-specific, partially-pooled** channel curves
+  (`docs/market_hierarchy.md`) - a smaller market borrows strength from larger ones instead of
+  being forced to match a shared curve exactly or fitted alone with no support. Model B
+  (fully independent per-market fits) is available as a comparison baseline via
+  `core.model_comparison`, not as a production default. `pages/12_Compare_Models.py` compares
+  fitted candidates side by side before either is adopted.
+- **Evidence tiers** (`ancestry_mmm/core/evidence_tiers.py`): every Model C curve bank entry is
+  labelled `Locally estimated`, `Partially pooled`, or `Transferred estimate` based on
+  observation count and posterior uncertainty, so a market with too little data to trust isn't
+  presented as if it had a precisely estimated curve.
+- **Media units and CPA** (`ancestry_mmm/core/media_units.py`): optional per-(market, channel)
+  spend-to-physical-delivery mapping (Channel & Media Units page), average/marginal CPA at every
+  curve point, response-unit curves, and media cost inflation tracking - an assumed future cost
+  is always an explicit, visible input, never applied silently.
 - **Data pipeline** (`ancestry_mmm/data/pipeline.py`): multi-source upload (media/outcomes/
   controls) joined on date + market, an ordered and replayable transformation pipeline, calculated
   columns via a restricted `ast`-based expression parser (not `eval()`), and validation checks for
@@ -45,20 +62,26 @@ Requires Python 3.11 or 3.12 (see [Deployment](#deployment) below for why there'
   diagnostics were checked) is required before a model's curves can be saved to the curve bank or
   used in the Scenario Planner. Curve bank entries structurally cannot be created without one.
 - **Curve bank** (`ancestry_mmm/core/curve_bank.py`): versioned, JSON-backed, append-only storage
-  of each approved run's shared curves and segment parameters, traceable to its data window,
-  approver and run label, plus a geo-test/in-platform-test calibration log with an agree/diverge
-  flag.
+  of each approved run's curves and segment parameters - one shared curve per channel for Model A,
+  one per (market, channel) for Model C, each carrying its evidence tier - traceable to its data
+  window, approver and run label, plus a geo-test/in-platform-test calibration log with an
+  agree/diverge flag (Model A only).
 - **Attribution** (`ancestry_mmm/core/attribution.py`): Shapley-decomposed segment and total-FH
   contributions (order-independent, sums exactly to the model's predicted total), ROAS/CPA by
-  channel x segment, LTV-weighted value.
+  channel x segment, LTV-weighted value - **Model A only** (it's built around a single shared
+  curve per channel and would misread Model C's market-indexed parameters); Project Export builds
+  a market-specific summary (evidence tiers, CPA, diagnostics, approval, scenarios) for Model C
+  instead.
 - **Scenario planner** (`ancestry_mmm/core/optimization.py`, `ancestry_mmm/core/predict.py`):
   manual editing, constrained optimisation (locked cells, fixed channel/month totals, bounded
-  movement, minimum-spend floors), and a clearly-labelled unconstrained benchmark - all evaluated
-  with a documented steady-state response approximation using the model's real fitted curves, not
-  literal MCMC-in-the-loop.
+  movement, minimum-spend floors), and a clearly-labelled unconstrained benchmark - market-aware
+  for Model C, with a media-unit planning mode - all evaluated with a documented steady-state
+  response approximation using the model's real fitted curves, not literal MCMC-in-the-loop.
 - **Project persistence** (`ancestry_mmm/core/persistence.py`): a downloadable/re-importable
-  bundle (Parquet + JSON + NetCDF, all open formats), with path-traversal-safe zip import, and an
-  Excel export for stakeholders who consume spreadsheets, not code.
+  bundle (Parquet + JSON + NetCDF, all open formats), with path-traversal-safe zip import, an
+  Excel export for stakeholders who consume spreadsheets, not code, and a reproducible Markdown/
+  HTML project report (`ancestry_mmm/core/report.py`) built from the project's actual current
+  state.
 - **Synthetic demo data** (`ancestry_mmm/sample_data/generate_sample_data.py`): a synthetic UK /
   Australia / Canada dataset shaped like the real problem (three FH segments, a DNA-targeted media
   channel with a known halo effect, known adstock/saturation) - not real Ancestry data - so the

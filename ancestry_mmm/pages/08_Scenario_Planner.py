@@ -73,7 +73,10 @@ if model_run_id and spec_dict is not None:
     current_identity = {
         "model_run_id": model_run_id,
         "data_fingerprint": fingerprint_dataframe(frame["df"]),
-        "model_spec_fingerprint": fingerprint_model_spec(spec_dict, prior_config, dna_lag_weeks, model_type=model_type),
+        "model_spec_fingerprint": fingerprint_model_spec(
+            spec_dict, prior_config, dna_lag_weeks, model_type=model_type,
+            pipeline_steps=get_state("pipeline_steps") or [], market_spec_config=get_state("market_spec_config"),
+        ),
         "posterior_fingerprint": fingerprint_posterior(params),
     }
 

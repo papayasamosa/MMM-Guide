@@ -252,10 +252,30 @@ def test_reimporting_a_project_bundle_it_exported_is_a_safe_no_op(tmp_path, samp
 
 def test_export_excel_summary_writes_a_readable_workbook(tmp_path):
     total_df = pd.DataFrame({"channel": ["TV_Brand"], "volume_contribution": [42.5]})
-    output_path = export_excel_summary(tmp_path / "summary.xlsx", None, total_df, None)
+    output_path = export_excel_summary(tmp_path / "summary.xlsx", {"Total FH Contribution": total_df})
     assert output_path.exists()
     reread = pd.read_excel(output_path, sheet_name="Total FH Contribution")
     pd.testing.assert_frame_equal(reread, total_df)
+
+
+def test_export_excel_summary_skips_none_and_empty_sheets(tmp_path):
+    total_df = pd.DataFrame({"channel": ["TV_Brand"], "volume_contribution": [42.5]})
+    output_path = export_excel_summary(tmp_path / "summary.xlsx", {
+        "Total FH Contribution": total_df, "Empty": pd.DataFrame(), "Missing": None,
+    })
+    workbook_sheets = pd.ExcelFile(output_path).sheet_names
+    assert workbook_sheets == ["Total FH Contribution"]
+
+
+def test_export_excel_summary_writes_every_non_empty_sheet(tmp_path):
+    sheets = {
+        "Curve Bank": pd.DataFrame({"channel": ["TV"], "beta": [0.1]}),
+        "Evidence Tiers": pd.DataFrame({"market": ["UK"], "curve_status": ["Locally estimated"]}),
+        "CPA": pd.DataFrame({"market": ["UK"], "channel": ["TV"], "avg_cpa": [12.5]}),
+    }
+    output_path = export_excel_summary(tmp_path / "summary.xlsx", sheets)
+    workbook_sheets = pd.ExcelFile(output_path).sheet_names
+    assert set(workbook_sheets) == set(sheets.keys())
 
 
 # ---------------------------------------------------------------------------

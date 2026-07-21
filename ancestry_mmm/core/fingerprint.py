@@ -17,7 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import asdict, is_dataclass
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -68,19 +68,61 @@ def _canonical_json(payload: Any) -> str:
     return json.dumps(payload, sort_keys=True, default=str, separators=(",", ":"))
 
 
+def _model_relevant_market_config(market_spec_config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    The subset of a `MarketSpecConfig.to_dict()` payload that actually feeds
+    a calculation, for the fingerprint - not the whole thing.
+
+    The descriptive/model-relevant boundary (docs/decision_log.md has the
+    full rationale):
+
+    - **Included** - `channel_media_units` (spend/response-unit column
+      mapping, unit type, currency, cost basis, date frequency: these drive
+      `core.media_units`'s CPA and response-unit-curve calculations and
+      `core.curve_bank.make_media_unit_entries`) and each market's
+      `currency` (local/reporting currency, exchange rate: reporting
+      context a planner reads directly off exported curves/CPA tables).
+    - **Excluded** - each market's `descriptors` (population, awareness,
+      market maturity, etc.). Nothing in the fitting, prediction, curve, CPA
+      or scenario code reads `MarketDescriptors` - `core/market_config.py`
+      says so explicitly ("Phase 1 only stores and displays these: nothing
+      downstream requires them"). Editing a market's population must not
+      invalidate an approval that has nothing to do with it.
+
+    If a future phase makes `MarketDescriptors` calculation-relevant (e.g.
+    feeding a covariate), it must move to the included side here - and that
+    move is itself a fingerprint-breaking change, same as any other new
+    model-relevant field.
+    """
+    if not market_spec_config:
+        return {}
+    profiles = market_spec_config.get("market_profiles") or {}
+    return {
+        "market_currencies": {market: (profile.get("currency") or {}) for market, profile in profiles.items()},
+        "channel_media_units": market_spec_config.get("channel_media_units") or {},
+    }
+
+
 def fingerprint_model_spec(
     model_spec: Dict[str, Any],
     prior_config: Dict[str, Any],
     dna_lag_weeks: int,
     model_type: str = "shared",
+    pipeline_steps: Optional[List[Dict[str, Any]]] = None,
+    market_spec_config: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
     Fingerprint the full set of inputs that determine how the model is
     *built*: the structural ModelSpec (markets/segments/channels/DNA
     channels/promo & control columns/LTV), the prior overrides, the DNA
-    halo lag, and which model structure was fit - i.e. everything
-    `build_fh_hierarchical_model` / `build_fh_market_specific_model` take
-    besides the data itself. A changed prior therefore changes this
+    halo lag, which model structure was fit, the transformation recipe that
+    produced the modelling data (`pipeline_steps`), and the calculation-
+    relevant subset of market/channel configuration (`market_spec_config`,
+    filtered by `_model_relevant_market_config` - see that function's
+    docstring for the descriptive/model-relevant boundary) - i.e. everything
+    that determines the fitted model and what it's used to calculate,
+    besides the data values themselves (those are covered separately by
+    `fingerprint_dataframe`). A changed prior therefore changes this
     fingerprint, since priors are part of the fitted model's identity - and
     so does switching model structure (`model_type`): a shared-curve fit and
     a market-specific fit of the *same* data/spec/priors are not the same
@@ -90,16 +132,32 @@ def fingerprint_model_spec(
     `model_type` defaults to `"shared"` (core.hierarchical_model's model,
     "Model A") so existing call sites that don't pass it keep fingerprinting
     that model type explicitly, not omitting model identity from the hash.
+    `pipeline_steps` and `market_spec_config` default to `None` (treated as
+    empty) for the same reason - a caller with nothing to pass still gets a
+    deterministic, explicit fingerprint rather than an error.
+
+    Note: adding `pipeline_steps` and `market_spec_config` to this payload
+    is an intentional breaking change to every fingerprint this function
+    produces, including for callers who pass neither (the payload always
+    carries `"pipeline_steps": []` and `"market_relevant_config": {}` keys
+    now) - the same pattern used when `model_type` was added
+    (docs/decision_log.md). Every pre-existing approval is invalidated by
+    upgrading to this version, which is correct: an approval bound to a
+    fingerprint that didn't cover the transformation recipe or media-unit/
+    currency config was never actually binding on them, so forcing
+    re-review is the honest behaviour, not a regression.
 
     Canonical JSON with sorted dict keys, so insertion order never matters;
     list order is preserved (json.dumps does not reorder lists), since list
-    order is meaningful (e.g. `channels`).
+    order is meaningful (e.g. `channels`, `pipeline_steps`).
     """
     payload = {
         "model_spec": model_spec,
         "prior_config": prior_config,
         "dna_lag_weeks": dna_lag_weeks,
         "model_type": model_type,
+        "pipeline_steps": pipeline_steps or [],
+        "market_relevant_config": _model_relevant_market_config(market_spec_config),
     }
     blob = _canonical_json(payload)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()

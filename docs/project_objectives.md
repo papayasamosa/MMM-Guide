@@ -9,7 +9,7 @@ channel across every market. That was sufficient to stand the tool up end-to-end
 answer a question the business actually has: *does TV work the same way in the UK as it does in
 Australia?* A single shared curve can't say.
 
-This redesign (tracked from this PR onward - see `docs/decision_log.md`) exists to answer that
+This redesign (see `docs/decision_log.md` for the full history) exists to answer that
 question without throwing away what already works: the three-segment structure, the DNA halo
 pathway, the curve bank, and constrained scenario planning all stay. What changes is that channel
 response curves become **market-specific**, estimated with partial pooling so smaller markets
@@ -43,15 +43,15 @@ alone with no support.
 
 ## Scope
 
-### In scope (current build, all phases)
+### In scope (current build)
 
 - New, DNA cross-sell, Winback as explicit, always-visible segments.
 - The DNA halo pathway (DNA-targeted media affecting non-DNA segments).
 - A versioned, traceable curve bank with model-run-bound approval.
 - Constrained scenario planning (locked cells, floors, bounded movement) as the primary planning
   mode, with an unconstrained benchmark shown for comparison only.
-- Market-specific response curves with partial pooling (this redesign, Phase 2 onward).
-- Spend- and physical-media-unit curves, CPA at both, and media cost inflation tracking (Phase 3b/c).
+- Market-specific response curves with partial pooling (this redesign).
+- Spend- and physical-media-unit curves, CPA at both, and media cost inflation tracking.
 - A portable, re-importable project bundle as the system of record (not Streamlit session state).
 
 ### Out of scope (explicitly, per `docs/ancestry_fh_mmm.md` and the redesign brief)
@@ -76,12 +76,12 @@ alone with no support.
 
 - A scorecard-gated, approved, fingerprint-bound fitted model (existing).
 - Segment-level and market-specific response curves in the curve bank, each labelled with its own
-  evidence tier (Phase 3a, `docs/curve_bank.md`).
+  evidence tier (`docs/curve_bank.md`).
 - Average and marginal CPA by spend, and by physical media unit via the response-unit curve
-  (Phase 3b, `core.media_units`).
-- Constrained and unconstrained scenario comparisons, market-aware (Phase 3c: the planner requires a
+  (`core.media_units`).
+- Constrained and unconstrained scenario comparisons, market-aware (the planner requires a
   market selection and, for a market-specific fit, uses that market's own curve).
-- A reproducible project report (Markdown + HTML, Phase 4, `core.report`) covering objective, data,
+- A reproducible project report (Markdown + HTML, `core.report`) covering objective, data,
   model, diagnostics, curve bank, scenarios, known limitations and a decision-log pointer, built
   from the project's actual current state and available at any point in the workflow -
   Project Export & Handover.

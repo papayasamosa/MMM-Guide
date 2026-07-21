@@ -233,11 +233,11 @@ else:
         "default and only pulled away from zero where the data supports it."
     )
 
-# --- Curve bank: available for both model types (Phase 3a) - a market-
+# --- Curve bank: available for both model types - a market-
 # specific fit saves one set of curves per market, each labelled with its
 # own evidence tier (docs/market_hierarchy.md section 4); a shared-curve
 # fit saves one set of curves labelled "Shared". Media-unit curve entries
-# (Phase 3b) are only auto-saved for a market-specific fit - a shared
+# are only auto-saved for a market-specific fit - a shared
 # curve's cost-per-unit context is inherently market-specific, so there's
 # no single market to attribute it to at save time (see docs/decision_log.md);
 # the viewer above still shows media-unit context for a chosen reference
@@ -256,7 +256,10 @@ if model_run_id and spec_dict is not None:
     current_identity = {
         "model_run_id": model_run_id,
         "data_fingerprint": fingerprint_dataframe(frame["df"]),
-        "model_spec_fingerprint": fingerprint_model_spec(spec_dict, prior_config, dna_lag_weeks, model_type=model_type),
+        "model_spec_fingerprint": fingerprint_model_spec(
+            spec_dict, prior_config, dna_lag_weeks, model_type=model_type,
+            pipeline_steps=get_state("pipeline_steps") or [], market_spec_config=get_state("market_spec_config"),
+        ),
         "posterior_fingerprint": fingerprint_posterior(params),
     }
 
@@ -367,7 +370,7 @@ if entries:
     if entries_df["legacy_format"].any():
         st.caption(
             "Rows marked `legacy_format = True` were saved before curves were stored one-per-market/"
-            "channel/segment (Phase 3a) - each was one shared, run-level record, expanded into this "
+            "channel/segment - each was one shared, run-level record, expanded into this "
             "table's shape for display; their `curve_status` is always `Legacy`."
         )
 

@@ -342,6 +342,7 @@ def verify_imported_approval(
     spec_fp = fingerprint_model_spec(
         imported.get("model_spec") or {}, imported.get("prior_config") or {}, imported.get("dna_lag_weeks", 4),
         model_type=imported.get("model_type", "shared"),
+        pipeline_steps=imported.get("pipeline_steps") or [], market_spec_config=imported.get("market_spec_config"),
     )
     posterior_fp = fingerprint_posterior(posterior_params)
     current_run_id = imported.get("model_run_id") or approval.model_run_id
@@ -360,19 +361,24 @@ def verify_imported_approval(
     )
 
 
-def export_excel_summary(
-    output_path: Path,
-    curve_bank_entries_df: Optional[pd.DataFrame],
-    total_fh_df: Optional[pd.DataFrame],
-    segment_channel_df: Optional[pd.DataFrame],
-) -> Path:
-    """Excel export of curve bank + contribution summaries for stakeholders who consume Excel, not code."""
+def export_excel_summary(output_path: Path, sheets: Dict[str, Optional[pd.DataFrame]]) -> Path:
+    """
+    Excel export of named summary sheets for stakeholders who consume Excel,
+    not code. `sheets` maps a sheet name to its DataFrame - `None` or an
+    empty DataFrame is skipped (so callers can pass every sheet they might
+    have without checking emptiness themselves). Sheet names are truncated
+    to Excel's 31-character limit.
+
+    Deliberately generic rather than fixed named parameters (curve bank /
+    total FH / segment x channel) - Model A and Model C summaries share
+    almost none of the same sheets (docs/decision_log.md: Shapley
+    attribution is Model-A-only), so a fixed signature would force one
+    model type's callers to pass `None` for sheets that make no sense for
+    them.
+    """
     output_path = Path(output_path)
     with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
-        if total_fh_df is not None:
-            total_fh_df.to_excel(writer, sheet_name="Total FH Contribution", index=False)
-        if segment_channel_df is not None:
-            segment_channel_df.to_excel(writer, sheet_name="Segment x Channel", index=False)
-        if curve_bank_entries_df is not None and not curve_bank_entries_df.empty:
-            curve_bank_entries_df.to_excel(writer, sheet_name="Curve Bank", index=False)
+        for name, df in sheets.items():
+            if df is not None and not df.empty:
+                df.to_excel(writer, sheet_name=name[:31], index=False)
     return output_path

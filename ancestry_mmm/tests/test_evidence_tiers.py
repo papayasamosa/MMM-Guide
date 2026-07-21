@@ -12,6 +12,7 @@ from ancestry_mmm.core.evidence_tiers import (
     TRANSFERRED_ESTIMATE,
     classify_all_markets,
     classify_market_evidence,
+    evidence_tiers_dataframe,
 )
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
 
@@ -118,3 +119,19 @@ class TestClassifyAllMarkets:
             assert set(market_result) == set(CHANNELS)
         assert result["NewMarket"]["TV"] == TRANSFERRED_ESTIMATE
         assert result["UK"]["TV"] == LOCALLY_ESTIMATED
+
+
+class TestEvidenceTiersDataframe:
+    def test_has_one_row_per_market_channel_combination(self, meta):
+        frame = _frame_with_market_sizes([104, 60, 5])
+        trace = _trace({"UK": 0.05, "Australia": 0.3, "NewMarket": 0.05})
+        df = evidence_tiers_dataframe(trace, frame, meta)
+        assert len(df) == len(MARKETS) * len(CHANNELS)
+        assert set(df.columns) == {"market", "channel", "curve_status"}
+
+    def test_values_match_classify_all_markets(self, meta):
+        frame = _frame_with_market_sizes([104, 60, 5])
+        trace = _trace({"UK": 0.05, "Australia": 0.3, "NewMarket": 0.05})
+        df = evidence_tiers_dataframe(trace, frame, meta)
+        row = df[(df["market"] == "NewMarket") & (df["channel"] == "TV")].iloc[0]
+        assert row["curve_status"] == TRANSFERRED_ESTIMATE
