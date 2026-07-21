@@ -5,6 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+import pandas as pd
 import streamlit as st
 
 from ancestry_mmm.utils import init_session_state, get_state, set_state, curve_bank_dir, PROJECT_EXPORT_ROOT
@@ -20,6 +21,9 @@ from ancestry_mmm.core.persistence import (
 from ancestry_mmm.core.curve_bank import load_all_entries, entries_to_dataframe
 from ancestry_mmm.core.attribution import compute_shapley_contributions, total_fh_contribution, segment_channel_summary
 from ancestry_mmm.core.schema import ModelSpec
+from ancestry_mmm.core.approval import ModelApproval
+from ancestry_mmm.core.market_config import MarketSpecConfig
+from ancestry_mmm.core.report import build_report_sections, render_markdown, render_html
 
 st.set_page_config(page_title="Project Export - Ancestry FH MMM", page_icon="🧬", layout="wide")
 init_session_state()
@@ -140,18 +144,68 @@ else:
     st.info("Train a model first to build an Excel summary.")
 
 st.markdown("---")
-st.markdown("### Roadmap: what's beyond this build")
-st.markdown("""
-This is the Phase 1 core plus the scenario planner (Phase 2) and this basic persistence layer
-(Phase 3), per the requirements brief's own phasing. Deliberately **not** built yet:
+st.markdown("### Project report")
+st.caption(
+    "A single reproducible document - objective, data, model, diagnostics, curve bank, scenarios, "
+    "known limitations, and a pointer to the decision log - built from this project's actual current "
+    "state, not a static template. Available at any point in the workflow; sections say plainly what "
+    "hasn't happened yet rather than being left out."
+)
+if st.button("Build project report"):
+    spec_dict = get_state("model_spec")
+    spec = ModelSpec.from_dict(spec_dict) if spec_dict else None
+    frame = get_state("frame")
+    data_window = None
+    if frame is not None and frame.get("dates") is not None and len(frame["dates"]):
+        data_window = (
+            str(pd.Timestamp(frame["dates"].min()).date()),
+            str(pd.Timestamp(frame["dates"].max()).date()),
+        )
+    approval_dict = get_state("model_approval")
+    approval = ModelApproval.from_dict(approval_dict) if approval_dict else None
+    entries = load_all_entries(curve_bank_dir())
+    market_config = MarketSpecConfig.from_dict(get_state("market_spec_config"))
 
-- **PowerPoint export** - Excel + the project bundle cover handover today; a slide export is a
-  templating exercise on top of the same summary tables, not a modelling change.
-- **Australia / Canada as fully separate market builds** - the geo hierarchy (partial pooling,
-  per-market unpooled override) is implemented and exercised by the synthetic demo's 3 markets,
-  but real cross-market synthesis needs real AU/CA data to mean anything.
-- **Live geo-test / in-platform-test feed into the curve bank** - the comparison-and-agreement
-  workflow exists (Results & Curve Bank page), but nothing pulls test results in automatically.
+    sections = build_report_sections(
+        spec=spec,
+        model_type=get_state("model_type", "shared"),
+        pipeline_steps=get_state("pipeline_steps") or [],
+        data_window=data_window,
+        dna_lag_weeks=get_state("dna_lag_weeks", 4),
+        scorecard=get_state("scorecard"),
+        approval=approval,
+        curve_bank_entries=entries,
+        scenarios=get_state("scenarios") or [],
+        market_spec_config=market_config,
+    )
+
+    PROJECT_EXPORT_ROOT.mkdir(parents=True, exist_ok=True)
+    md_path = PROJECT_EXPORT_ROOT / f"{project_name}_report.md"
+    html_path = PROJECT_EXPORT_ROOT / f"{project_name}_report.html"
+    md_path.write_text(render_markdown(project_name, sections))
+    html_path.write_text(render_html(project_name, sections))
+    st.success("Report built.")
+    c1, c2 = st.columns(2)
+    with open(md_path, "rb") as f:
+        c1.download_button("Download report (.md)", f, file_name=md_path.name, mime="text/markdown")
+    with open(html_path, "rb") as f:
+        c2.download_button("Download report (.html)", f, file_name=html_path.name, mime="text/html")
+
+st.markdown("---")
+st.markdown("### What's out of scope")
+st.markdown("""
+Per `docs/project_objectives.md` and `docs/limitations.md`, deliberately **not** built:
+
+- **Shapley attribution for market-specific models** - it's built around a single shared curve per
+  channel and would misread Model C's market-indexed parameters.
+- **CPA/inflation as first-class optimiser objectives** - "minimise CPA," "maintain response/delivery
+  under inflation" from the original redesign brief; `avg_cpa` is reported as an output metric, not
+  an optimisation target.
+- **Media-unit spend constraints** (locked/min/max media units) - `SpendConstraint` still operates in
+  spend terms only.
+- **PowerPoint export** - Excel + the project bundle + this report cover handover today.
+- **Automating currency conversion** - the tool stores exchange-rate context but never silently
+  converts or applies an inflation assumption without it being visible in the UI.
 - **Stage 2 media x context interactions** - explicitly out of scope for the core model per the brief.
 """)
 

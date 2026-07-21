@@ -129,6 +129,12 @@ from .model_comparison import (
     ModelComparisonCandidate,
     candidates_to_dataframe,
 )
+from .report import (
+    ReportSection,
+    build_report_sections,
+    render_markdown,
+    render_html,
+)
 
 __all__ = [
     "ModelApproval",
@@ -236,4 +242,8 @@ __all__ = [
     "slice_frame_to_market",
     "ModelComparisonCandidate",
     "candidates_to_dataframe",
+    "ReportSection",
+    "build_report_sections",
+    "render_markdown",
+    "render_html",
 ]

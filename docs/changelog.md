@@ -3,7 +3,29 @@
 Entries by pull request, most recent first. Predates this file: see git history for anything
 earlier than the entries below.
 
-## Unreleased - Market-Specific MMM Redesign, Phase 3c (this PR)
+## Unreleased - Market-Specific MMM Redesign, Phase 4 (this PR)
+
+- Added `core.report`: `build_report_sections`/`render_markdown`/`render_html` - a reproducible
+  project report (objective, data, model, diagnostics, curve bank, scenarios, known limitations, a
+  decision-log pointer) built from the project's actual current state, not a static template. Every
+  input is independently missing-safe, so a report can be generated at any point in the workflow.
+  Both renderers consume the same structured section data, so Markdown and HTML can never drift out
+  of sync with each other. No dependency on `ancestry_mmm.utils` or Streamlit, matching every other
+  `core` module.
+- Project Export & Handover: added a "Project report" section (Markdown + HTML download); replaced
+  the page's stale "Roadmap" block (still describing the pre-redesign phase numbering) with an
+  accurate "What's out of scope" list reflecting the completed market-specific redesign.
+- 19 new tests (`test_report.py`), plus AppTest-based end-to-end verification of report generation in
+  both an empty (no model trained yet) and fully-populated project state.
+- No changes to Model A/C model-building, prediction, diagnostics, model comparison, curve bank,
+  optimisation, or fingerprint behaviour.
+
+This completes the market-specific MMM redesign's core arc (Phase 1 docs/schema/simulation -> Phase 2
+hierarchical model -> Phase 3a/b/c curve bank/CPA/media-units/inflation/scenario-planner -> Phase 4
+report generation) from the original redesign brief, short of the items explicitly recorded as out
+of scope throughout (`docs/limitations.md`, `docs/project_objectives.md`).
+
+## Unreleased - Market-Specific MMM Redesign, Phase 3c
 
 - Extended `core.optimization` (`evaluate_scenario`, `optimize_scenario`, the optimiser objective) to
   Model C via a `model_type` parameter that dispatches to the correct steady-state response function -
