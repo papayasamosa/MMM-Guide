@@ -6,8 +6,10 @@
   isn't in the data. A market with genuinely flat spend over its whole history won't yield an
   identifiable curve no matter how much pooling is applied - it will just inherit the shared
   pattern with wide uncertainty, which is the correct behaviour, not a workaround.
-- Market descriptors (`core.market_config.MarketDescriptors`) are entirely optional and, as of this
-  PR, purely informational. Leaving them blank does not degrade anything today, but a future phase
+- Market descriptors (`core.market_config.MarketDescriptors`) are entirely optional and currently
+  purely informational - nothing in the fitting, prediction, curve, CPA or scenario code reads them
+  (deliberately excluded from the model-specification fingerprint for the same reason - see
+  `docs/decision_log.md`). Leaving them blank does not degrade anything today, but a future feature
   that uses them to explain curve parameters will only be as good as what's actually filled in.
 
 ## Identification limitations
@@ -31,7 +33,7 @@
 ## Transferred-curve limitations
 
 - A market with no usable local evidence gets a **transferred estimate**, not a locally estimated
-  curve - `core.evidence_tiers.classify_market_evidence` (Phase 3a) labels every Model C curve bank
+  curve - `core.evidence_tiers.classify_market_evidence` labels every Model C curve bank
   entry's `curve_status` accordingly (`docs/market_hierarchy.md` section 4, `docs/curve_bank.md`).
   The thresholds behind this classification (period counts, relative posterior uncertainty) are
   reasonable defaults, not validated against real Ancestry data yet - see the decision log entry
@@ -44,7 +46,7 @@
 
 ## Inflation assumptions
 
-- Media cost inflation calculations (`core.media_units.historical_cost_trend`, Phase 3b) will only
+- Media cost inflation calculations (`core.media_units.historical_cost_trend`) will only
   be as good as the historical cost-per-unit data available; a channel with sparse or noisy
   media-unit data will produce an unreliable cost-per-unit trend, and a single year of data gives no
   year-on-year inflation figure at all (returns `None`, not a guessed rate).
@@ -57,8 +59,8 @@
   argument (a UI number input pre-filled with the historical average, editable) rather than baking
   one in; the tool surfaces the assumption in use, it does not validate that the assumption is
   correct.
-- CPA's posterior uncertainty is not assessed directly (curves are point estimates only, as they've
-  been since Phase 2) - `cpa_stability_flags` is a point-estimate proxy (flags curve regions that are
+- CPA's posterior uncertainty is not assessed directly (curves are point estimates only) -
+  `cpa_stability_flags` is a point-estimate proxy (flags curve regions that are
   too flat to trust a marginal number from), not a credible interval on CPA itself. A real
   uncertainty band on CPA needs per-draw curve generation, which remains a documented future
   extension.
@@ -78,36 +80,35 @@
   flagging it will look like a change in that channel's effectiveness to the model, not a
   measurement artefact. There's no automated detection of this today.
 
-## Scope boundaries (this PR specifically)
+## Scope boundaries
 
-- This PR (Phase 3c) extends scenario planning (`core.optimization`, Scenario Planner) to Model C and
-  wires in media-unit planning mode and CPA outputs - it does not touch Model A's or Model C's
-  model-building, prediction, diagnostics, model comparison, or curve bank code. **Shapley
-  attribution remains Model-A-only** (it would misread Model C's market-indexed parameters) - this is
-  the one piece of the original Phase 2 restriction still in place; everything else that was blocked
-  for market-specific models (curve bank saving in Phase 3a, Scenario Planning in this phase) is now
-  built.
-- The Scenario Planner's optimiser always conserves total budget (`conserve_total_budget=True`) -
-  this predates Phase 3c and wasn't changed by it. As a consequence, a true *marginal* CPA at the
-  scenario level isn't meaningful (there's no net spend change to compute it against) - the planner
-  reports a *blended average* CPA (current vs. optimised plan) instead, which is well-defined even at
-  fixed total spend; see `docs/decision_log.md`.
+- Scenario planning (`core.optimization`, Scenario Planner) supports both Model A and Model C,
+  including media-unit planning mode and CPA outputs. **Shapley attribution remains Model-A-only**
+  (it would misread Model C's market-indexed parameters) - Project Export builds a market-specific
+  summary (evidence tiers, CPA table, diagnostics, approval, scenario comparison) for Model C instead
+  of silently producing an incorrect attribution sheet.
+- The Scenario Planner's optimiser always conserves total budget (`conserve_total_budget=True`). As a
+  consequence, a true *marginal* CPA at the scenario level isn't meaningful (there's no net spend
+  change to compute it against) - the planner reports a *blended average* CPA (current vs. optimised
+  plan) instead, which is well-defined even at fixed total spend; see `docs/decision_log.md`.
 - Media-unit planning mode converts to/from spend using one average historical cost-per-unit per
-  channel (same simplification as Results & Curve Bank's response-unit curve, Phase 3b) - not a
+  channel (same simplification as Results & Curve Bank's response-unit curve) - not a
   spend-level-varying relationship. `SpendConstraint` (locked cells, floors, bounded movement) still
   operates in spend terms only; there's no dedicated "locked media units" constraint type.
 - CPA/inflation are not first-class optimiser objectives - "minimise CPA," "maintain response/
   delivery under inflation" from the original redesign brief aren't built; `objective` remains
   `"value"` or `"volume"`, with `avg_cpa` reported as an output metric only.
-- Media-unit curve bank entries (`input_type="media_unit"`, Phase 3a/3b) are only auto-saved for a
+- Media-unit curve bank entries (`input_type="media_unit"`) are only auto-saved for a
   market-specific fit - a shared curve's cost-per-unit context is inherently market-specific with no
   single market to attribute it to, so it's shown in the UI (for a chosen reference market) but not
   persisted for Model A (`docs/decision_log.md`).
-- The model-specification fingerprint (`core.fingerprint.fingerprint_model_spec`) still does **not**
-  include market hierarchy, media-unit mappings, or currency settings from `market_spec_config` -
-  approval invalidation does not yet react to changes in that data. This remains tracked as future
-  work (wiring `market_spec_config` into the model/fingerprint together), not an oversight.
+- The model-specification fingerprint (`core.fingerprint.fingerprint_model_spec`) includes the
+  transformation recipe (`pipeline_steps`) and the calculation-relevant subset of
+  `market_spec_config` (channel-to-media-unit mappings, per-market currency) - approval invalidation
+  reacts to changes there. It deliberately does **not** include market descriptors (population,
+  awareness, etc.), since nothing downstream reads them; see `docs/decision_log.md` for the exact
+  boundary.
 - CPA has no credible interval - point estimates only, same as the curves it's computed from; see the
   "Inflation assumptions" section above.
-- Evidence-tier thresholds (`core.evidence_tiers`, Phase 3a) are reasonable defaults, not yet
+- Evidence-tier thresholds (`core.evidence_tiers`) are reasonable defaults, not yet
   validated against real Ancestry data - see `docs/decision_log.md`.

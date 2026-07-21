@@ -555,3 +555,46 @@ Python's stdlib `html.escape` (project name and every paragraph/bullet/table cel
 project names or notes text cannot inject markup into the generated document.
 **Owner:** Engineering.
 **Status:** Accepted; implemented in Phase 4.
+
+---
+
+**Date:** 2026-07-21
+**Decision:** Extend `fingerprint_model_spec` to also cover the transformation recipe
+(`pipeline_steps`) and a filtered, calculation-relevant subset of `MarketSpecConfig`
+(`channel_media_units` + each market's `currency`) - not the whole config as-is.
+**Reason:** Approval must bind to everything that actually determines a calculated result. Before
+this change, two projects with identical `ModelSpec`/priors/DNA lag but different transformation
+pipelines (e.g. a different log-transform or fill-NA step) or different spend/response-unit column
+mappings would fingerprint identically even though the modelling data and the CPA/media-unit numbers
+a planner reads could differ. But not everything in `MarketSpecConfig` is calculation-relevant:
+`MarketDescriptors` (population, awareness, market maturity, etc.) is explicitly documented in
+`core/market_config.py` as "Phase 1 only stores and displays these: nothing downstream requires
+them" - true today, verified by reading every consumer of `MarketSpecConfig`
+(`core.media_units`, `core.curve_bank.make_media_unit_entries`, `pages/07_Results_Curve_Bank.py`,
+`pages/08_Scenario_Planner.py`, `pages/09_Project_Export.py`): none read `.descriptors`. Including
+descriptive-only fields in the fingerprint would invalidate an analyst's approval every time someone
+fixes a typo in a market's population estimate, for no calculation reason - eroding trust in what
+"approval invalidated" actually means. The boundary rule going forward: a field belongs in the
+fingerprint the moment any fitting, prediction, curve, CPA, or scenario code reads it; until then it
+stays out, and moving it in later (e.g. if a future phase feeds `MarketDescriptors` into a
+covariate) is itself a fingerprint-breaking change like any other.
+**Alternatives considered:** Fingerprinting the entire `MarketSpecConfig.to_dict()` payload
+unfiltered (rejected - couples approval validity to purely descriptive fields with no calculation
+impact, forcing unnecessary re-review and training reviewers to treat "invalidated" as noise rather
+than signal). Leaving `market_spec_config` and `pipeline_steps` out of the fingerprint entirely and
+relying on `fingerprint_dataframe` of the transformed data alone (rejected - the transformed
+DataFrame's *values* are covered, but the media-unit/currency config that turns those values into
+CPA and response-unit-curve numbers downstream of the fit is not data, and would remain unbound to
+approval).
+**Impact:** `core.fingerprint.fingerprint_model_spec` gains two optional parameters,
+`pipeline_steps` and `market_spec_config` (both default to `None`/empty, so existing call sites don't
+break structurally); the new `core.fingerprint._model_relevant_market_config` helper implements the
+filter. Every call site that binds an approval (`pages/06_Diagnostics.py`,
+`pages/07_Results_Curve_Bank.py`, `pages/08_Scenario_Planner.py`,
+`core.persistence.verify_imported_approval`) now passes both. This is an intentional breaking change
+to every fingerprint value this function produces, including calls that pass neither new argument
+(same precedent as adding `model_type` in Phase 2) - every pre-existing `ModelApproval` is
+invalidated by upgrading, which is correct: those approvals were never actually bound to the
+transformation recipe or media-unit/currency config they should have been.
+**Owner:** Engineering.
+**Status:** Accepted; implemented in PR1 (correctness and consistency pass).

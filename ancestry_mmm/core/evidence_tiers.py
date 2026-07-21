@@ -26,6 +26,7 @@ from __future__ import annotations
 from typing import Dict, Optional
 
 import arviz as az
+import pandas as pd
 
 from .hierarchical_model import FHModelMeta
 
@@ -118,3 +119,15 @@ def classify_all_markets(
         }
         for market in frame["markets"]
     }
+
+
+def evidence_tiers_dataframe(trace: az.InferenceData, frame: Dict, meta: FHModelMeta, **kwargs) -> pd.DataFrame:
+    """Flat `market, channel, curve_status` table - `classify_all_markets`'s
+    output reshaped for direct display or Excel export (used by
+    pages/09_Project_Export.py's Model C summary, docs/curve_bank.md)."""
+    tiers = classify_all_markets(trace, frame, meta, **kwargs)
+    return pd.DataFrame([
+        {"market": market, "channel": channel, "curve_status": tier}
+        for market, by_channel in tiers.items()
+        for channel, tier in by_channel.items()
+    ])

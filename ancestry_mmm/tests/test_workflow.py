@@ -10,6 +10,7 @@ from ancestry_mmm.utils.workflow import (
     TOTAL_STEPS,
     WORKFLOW_STEPS,
     get_step,
+    home_workflow_lines,
     next_step_key,
     sidebar_entries,
     step_number,
@@ -84,6 +85,43 @@ class TestWorkflowStepMetadata:
 
     def test_get_step_unknown_key_returns_none(self):
         assert get_step("not_a_real_page") is None
+
+
+class TestHomeWorkflowLines:
+    """app.py's Home page renders `home_workflow_lines()` directly (no
+    separately hand-maintained list) - see git history for the bug this
+    replaced: a hardcoded 9-line Home summary that silently fell out of sync
+    once the workflow grew to 12 steps, missing Channel & Media Units,
+    Market Descriptors and Compare Models entirely."""
+
+    def test_returns_one_line_per_workflow_step(self):
+        assert len(home_workflow_lines()) == TOTAL_STEPS == len(WORKFLOW_STEPS)
+
+    def test_lines_are_numbered_1_indexed_in_step_order(self):
+        lines = home_workflow_lines()
+        for i, step in enumerate(WORKFLOW_STEPS, start=1):
+            assert lines[i - 1].startswith(f"{i}. **{step['label']}**")
+
+    def test_every_step_label_appears_exactly_once(self):
+        lines = home_workflow_lines()
+        for step in WORKFLOW_STEPS:
+            assert sum(step["label"] in line for line in lines) == 1
+
+    def test_adding_a_step_to_the_registry_changes_the_rendered_lines(self, monkeypatch):
+        # Regression guard for the exact bug fixed: a hardcoded Home-page
+        # list silently fell out of sync once the workflow grew past 9
+        # steps. Proves home_workflow_lines() tracks WORKFLOW_STEPS live -
+        # mutating the registry changes the output with no other code
+        # change, which a hardcoded list could never do.
+        import ancestry_mmm.utils.workflow as workflow_module
+
+        extra_step = {"key": "extra", "label": "Extra Step", "path": "pages/99_Extra.py", "purpose": "A test-only step."}
+        patched = WORKFLOW_STEPS + [extra_step]
+        monkeypatch.setattr(workflow_module, "WORKFLOW_STEPS", patched)
+
+        lines = workflow_module.home_workflow_lines()
+        assert len(lines) == len(WORKFLOW_STEPS) + 1
+        assert lines[-1] == f"{len(WORKFLOW_STEPS) + 1}. **Extra Step** - A test-only step."
 
 
 class TestNextStepMapping:

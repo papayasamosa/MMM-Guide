@@ -8,7 +8,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from ancestry_mmm.core.hierarchical_model import FHModelMeta
 from ancestry_mmm.core.market_config import ChannelMediaUnitConfig
+from ancestry_mmm.core.market_specific_predict import FHMarketSpecificPosteriorParams
 from ancestry_mmm.core.media_units import (
     compute_cpa,
     cpa_stability_flags,
@@ -16,6 +18,7 @@ from ancestry_mmm.core.media_units import (
     equivalent_response,
     extract_cost_per_unit_series,
     historical_cost_trend,
+    market_specific_cpa_table,
     response_unit_curve,
 )
 
@@ -210,3 +213,52 @@ class TestEquivalentResponse:
             equivalent_response(-1.0, 1.0, df)
         with pytest.raises(ValueError):
             equivalent_response(1.0, -1.0, df)
+
+
+class TestMarketSpecificCpaTable:
+    MARKETS = ["UK", "Australia"]
+    SEGMENTS = ["New", "DNA_CrossSell"]
+    CHANNELS = ["TV", "Search"]
+
+    @pytest.fixture
+    def meta(self) -> FHModelMeta:
+        return FHModelMeta(
+            markets=self.MARKETS, segments=self.SEGMENTS, channels=self.CHANNELS,
+            dna_channels=["TV"], dna_channel_idx=[0], non_dna_idx=[1],
+            dna_segment="DNA_CrossSell", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+        )
+
+    @pytest.fixture
+    def params(self) -> FHMarketSpecificPosteriorParams:
+        return FHMarketSpecificPosteriorParams(
+            decay_rate={"TV": 0.5, "Search": 0.3},
+            hill_K={m: {"TV": 1000.0, "Search": 500.0} for m in self.MARKETS},
+            hill_S={"TV": 1.0, "Search": 1.0},
+            beta={m: {s: {c: 0.1 for c in self.CHANNELS} for s in self.SEGMENTS} for m in self.MARKETS},
+            halo_strength={"New": 0.1, "DNA_CrossSell": 1.0}, promo_coef={"New": 0.1, "DNA_CrossSell": 0.1},
+            market_offset={m: {"New": 0.0, "DNA_CrossSell": 0.0} for m in self.MARKETS},
+            intercept={"New": 3.0, "DNA_CrossSell": 2.0}, trend_coef={"New": 0.0, "DNA_CrossSell": 0.0},
+            gamma_fourier={"New": np.zeros(6), "DNA_CrossSell": np.zeros(6)},
+            alpha={"New": 5.0, "DNA_CrossSell": 5.0}, control_coef={}, segment_control_coef={},
+        )
+
+    def test_covers_every_market_and_channel_by_default(self, meta, params):
+        table = market_specific_cpa_table(meta, params, n_points=5)
+        assert set(table["market"].unique()) == set(self.MARKETS)
+        assert set(table["channel"].unique()) == set(self.CHANNELS)
+        assert len(table) == len(self.MARKETS) * len(self.CHANNELS) * 5
+
+    def test_includes_cpa_columns(self, meta, params):
+        table = market_specific_cpa_table(meta, params, n_points=5)
+        assert {"avg_cpa", "marginal_cpa", "overall_response", "spend"} <= set(table.columns)
+
+    def test_restricts_to_the_requested_markets_and_channels(self, meta, params):
+        table = market_specific_cpa_table(meta, params, markets=["UK"], channels=["TV"], n_points=3)
+        assert set(table["market"].unique()) == {"UK"}
+        assert set(table["channel"].unique()) == {"TV"}
+        assert len(table) == 3
+
+    def test_empty_selection_gives_an_empty_dataframe_with_expected_columns(self, meta, params):
+        table = market_specific_cpa_table(meta, params, markets=[], channels=[])
+        assert table.empty
+        assert "avg_cpa" in table.columns

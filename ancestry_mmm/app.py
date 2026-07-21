@@ -20,6 +20,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from ancestry_mmm.utils import init_session_state, get_state
+from ancestry_mmm.utils.workflow import home_workflow_lines
 from ancestry_mmm.components import apply_theme, render_sidebar, render_status_card
 
 
@@ -47,17 +48,7 @@ def main():
 
     st.markdown("---")
     st.markdown("### Workflow")
-    st.markdown(
-        "1. **Data Upload** - load media, outcome and control sources, or the built-in demo data.\n"
-        "2. **Transform Pipeline** - join sources and record any data clean-up steps.\n"
-        "3. **Structure: Segments & Markets** - define markets, segments, channels and value.\n"
-        "4. **Model Configuration** - set curve priors, hierarchy and MCMC settings.\n"
-        "5. **Model Training** - fit the joint hierarchical Bayesian model.\n"
-        "6. **Diagnostics** - review convergence, fit and plausibility, then approve the model.\n"
-        "7. **Results & Curve Bank** - review contributions and save versioned curves.\n"
-        "8. **Scenario Planner** - plan and compare spend scenarios.\n"
-        "9. **Project Export & Handover** - export a portable project bundle."
-    )
+    st.markdown("\n".join(home_workflow_lines()))
 
     st.markdown("---")
     col1, col2, col3 = st.columns(3)

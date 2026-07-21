@@ -1,7 +1,8 @@
-"""Page (step 4 of 11): map each channel's spend column to a physical
-media-unit column, per market - optional Phase 1 data capture for the
-market-specific redesign (see docs/media_units_and_inflation.md). Nothing
-downstream reads this yet; it only stores the mapping for Phase 2/3.
+"""Page (step 4 of 12): map each channel's spend column to a physical
+media-unit column, per market - optional data capture for the
+market-specific redesign (see docs/media_units_and_inflation.md). Feeds
+core.media_units's CPA/response-unit-curve calculations and is part of the
+model-specification fingerprint once mapped (core.fingerprint).
 """
 
 import sys
@@ -40,8 +41,8 @@ render_glossary(["Response curve"])
 
 st.markdown("---")
 st.info(
-    "This step is optional in Phase 1 - it records how spend relates to physical delivery "
-    "(impressions, GRPs, clicks, ...) for later CPA-by-media-unit reporting and media inflation "
+    "This step is optional - it records how spend relates to physical delivery "
+    "(impressions, GRPs, clicks, ...) for CPA-by-media-unit reporting and media inflation "
     "tracking. Skip it and continue if you don't have this information yet."
 )
 st.caption("See docs/media_units_and_inflation.md for the full design this mapping feeds into.")
