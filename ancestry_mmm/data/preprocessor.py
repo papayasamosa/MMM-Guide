@@ -206,12 +206,23 @@ def create_fourier_features_from_calendar(
     return np.column_stack(features)
 
 
-def prepare_fh_modeling_frame(df: pd.DataFrame, spec: ModelSpec) -> Dict[str, Any]:
+def prepare_fh_modeling_frame(
+    df: pd.DataFrame, spec: ModelSpec, dna_kit_outcomes: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
     """
     Turn a joined, transformed DataFrame + ModelSpec into the arrays the
     joint hierarchical FH model needs: per-market index, media matrix,
     segment outcome matrix, promo matrix, controls and calendar-anchored
     seasonality/trend features.
+
+    `dna_kit_outcomes` (segment key -> outcome column, same shape as
+    `spec.segment_outcomes`) optionally adds DNA-product kit-sale segments
+    (core.outcomes) to the fit alongside the Family History segments -
+    `ModelSpec.segment_outcomes` itself is untouched, so a project with no
+    DNA outcomes mapped behaves identically to before. Promo/segment-control
+    mapping for a DNA kit segment reuses `spec.promo_cols`/
+    `spec.segment_control_cols` exactly as for an FH segment - both are
+    already keyed by segment name generically, not FH-specific.
     """
     errors = spec.validate()
     if errors:
@@ -244,11 +255,16 @@ def prepare_fh_modeling_frame(df: pd.DataFrame, spec: ModelSpec) -> Dict[str, An
         raise ValueError(f"Channel columns missing from data: {missing_channels}")
     X_media = data[spec.channels].to_numpy(dtype=float)
 
-    segments = list(spec.segment_outcomes.keys())
-    missing_outcomes = [c for c in spec.segment_outcomes.values() if c not in data.columns]
+    dna_kit_outcomes = dna_kit_outcomes or {}
+    colliding = set(spec.segment_outcomes) & set(dna_kit_outcomes)
+    if colliding:
+        raise ValueError(f"dna_kit_outcomes segment key(s) collide with existing FH segments: {sorted(colliding)}")
+    outcome_cols = {**spec.segment_outcomes, **dna_kit_outcomes}
+    segments = list(spec.segment_outcomes.keys()) + list(dna_kit_outcomes.keys())
+    missing_outcomes = [c for c in outcome_cols.values() if c not in data.columns]
     if missing_outcomes:
         raise ValueError(f"Segment outcome columns missing from data: {missing_outcomes}")
-    Y = data[[spec.segment_outcomes[s] for s in segments]].to_numpy(dtype=float)
+    Y = data[[outcome_cols[s] for s in segments]].to_numpy(dtype=float)
 
     promo = np.zeros((len(data), len(segments)))
     for i, seg in enumerate(segments):

@@ -169,7 +169,7 @@ class TestOutcomesSection:
         assert set(outcomes.table["product"]) == {"Family History"}
         assert outcomes.table["modelled_today"].all()
 
-    def test_includes_dna_outcomes_and_flags_them_as_not_yet_modelled(self, spec):
+    def test_includes_dna_outcomes_and_flags_them_as_opt_in(self, spec):
         outcome_definitions = [
             {"outcome_id": "fh_new", "product": "Family History", "segment": "New", "metric": "GSA", "column": "fh_new_gsa", "value_weight": 180.0},
             {"outcome_id": "dna_new_kit", "product": "DNA", "segment": "New Customer", "metric": "Kit sale", "column": "DNA_Kit_New", "value_weight": 90.0},
@@ -177,7 +177,7 @@ class TestOutcomesSection:
         sections = build_report_sections(spec=spec, outcome_definitions=outcome_definitions)
         outcomes = next(s for s in sections if s.title == "Outcomes")
         assert "1 Family History, 1 DNA" in outcomes.paragraphs[0]
-        assert any("not yet modelled" in p for p in outcomes.paragraphs)
+        assert any("opt-in" in p for p in outcomes.paragraphs)
         dna_row = outcomes.table[outcomes.table["product"] == "DNA"].iloc[0]
         assert dna_row["modelled_today"] == False  # noqa: E712
 

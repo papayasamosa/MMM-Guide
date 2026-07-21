@@ -14,21 +14,27 @@ Family History signup) with its own economics. `core.outcomes.OutcomeDefinition`
 optional `value_weight`, so the catalogue can describe both without forcing DNA data into a shape
 built for FH segments.
 
-## Scope boundary: captured, not modelled
+## Scope boundary: captured always, modelled once mapped
 
-**This is a data-capture and persistence layer, not a modelling change.** `ModelSpec` and the fitted
-model are completely unchanged - a project's actual joint FH model still fits exactly the segments in
-`ModelSpec.segment_outcomes`, exactly as before. DNA outcomes mapped through this schema are stored
-and shown, but nothing in `core.hierarchical_model`, `core.market_specific_model`,
-`core.predict`, or `core.market_specific_predict` reads them.
+`ModelSpec.segment_outcomes` is unchanged and still means exactly what it always has - the Family
+History segments the joint model fits automatically, no configuration needed. DNA-product outcomes
+are **opt-in**: mapping one on Structure: Segments & Markets does not, by itself, retroactively
+change any existing fit, but the next time the modelling frame is prepared on Model Configuration,
+`core.outcomes.dna_kit_outcome_columns` feeds the mapped DNA segment(s) into
+`data.preprocessor.prepare_fh_modeling_frame`'s `dna_kit_outcomes` parameter, and from there into
+`core.hierarchical_model.build_fh_hierarchical_model`/`core.market_specific_model.
+build_fh_market_specific_model`'s `direct_dna_segments` - DNA-targeted media then gets full, direct
+response on that segment, not the shrunk-toward-zero halo pathway other segments get. See
+`docs/dna_fh_causal_structure.md` for the full equation-level treatment and how double counting
+between DNA kit sales and FH cross-sell is avoided.
 
-`core.outcomes.outcome_is_modelled(outcome)` is the single source of truth for this boundary -
-`True` only for a `"Family History"`-product outcome. Every place the outcome catalogue reaches the
-UI (Structure page, project report) shows a `modelled_today` column or an explicit caption built from
-this function, rather than letting a DNA row imply it's already influencing planning outputs. DNA
-response equations, and the causal linkage between DNA kit sales and FH cross-sell (so the same
-effect isn't counted twice), are a separate, later piece of work - see `docs/decision_log.md` for
-where this fits in the overall sequencing.
+`core.outcomes.outcome_is_modelled(outcome)` reflects the *automatic-vs-opt-in* distinction
+specifically - `True` only for a `"Family History"`-product outcome, since that's the only kind
+that's part of every fit with no extra step. It does not tell you whether a *specific* past fit
+happened to include a given DNA segment - that's `FHModelMeta.segments`/`direct_dna_segments` on the
+actual trained model. Every place the outcome catalogue reaches the UI (Structure page, project
+report) shows a `modelled_today` column or an explicit caption built from `outcome_is_modelled`,
+so a DNA row is never presented as if it's unconditionally influencing every fit's outputs.
 
 ## The schema
 

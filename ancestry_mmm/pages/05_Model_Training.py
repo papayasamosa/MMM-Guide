@@ -49,12 +49,14 @@ if model_type == "market_specific" and len(frame["markets"]) < 2:
     )
     model_type = "shared"
 
+dna_kit_segments = get_state("direct_dna_segments") or []
+
 st.markdown("---")
 st.markdown(f"""
 - **Model structure:** {MODEL_TYPE_LABELS[model_type]}
 - **Observations:** {format_number(frame['X_media'].shape[0])}
 - **Markets:** {', '.join(frame['markets'])}
-- **Segments:** {', '.join(frame['segments'])}
+- **Segments:** {', '.join(frame['segments'])}{f" (DNA-product, direct media response: {', '.join(dna_kit_segments)})" if dna_kit_segments else ""}
 - **Channels:** {', '.join(frame['channels'])} (DNA: {', '.join(frame['channels'][i] for i in frame['dna_channel_idx']) or 'none'})
 - **MCMC:** {format_number(get_state('mcmc_draws'))} draws, {format_number(get_state('mcmc_tune'))} tune, {get_state('mcmc_chains')} chains
 """)
@@ -68,12 +70,19 @@ st.info(
 if st.button("Build & fit model", type="primary"):
     prior_config = get_state("prior_config")
     dna_lag_weeks = get_state("dna_lag_weeks", 4)
+    direct_dna_segments = get_state("direct_dna_segments") or None
 
     with st.spinner("Building model..."):
         if model_type == "market_specific":
-            model, meta = build_fh_market_specific_model(frame, spec, dna_lag_weeks=dna_lag_weeks, prior_config=prior_config)
+            model, meta = build_fh_market_specific_model(
+                frame, spec, dna_lag_weeks=dna_lag_weeks, prior_config=prior_config,
+                direct_dna_segments=direct_dna_segments,
+            )
         else:
-            model, meta = build_fh_hierarchical_model(frame, spec, dna_lag_weeks=dna_lag_weeks, prior_config=prior_config)
+            model, meta = build_fh_hierarchical_model(
+                frame, spec, dna_lag_weeks=dna_lag_weeks, prior_config=prior_config,
+                direct_dna_segments=direct_dna_segments,
+            )
     st.success(f"Model built ({MODEL_TYPE_LABELS[model_type]}).")
 
     # Read MCMC settings on the main thread: st.session_state (get_state) is

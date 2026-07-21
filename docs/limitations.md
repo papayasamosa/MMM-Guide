@@ -29,6 +29,12 @@
   offline recovery check run so far (`docs/decision_log.md`) used a small draw budget for speed and
   recovered correct market *ranking* with compressed magnitudes - a production draw count is needed
   to assess quantitative recovery, not just direction.
+- The kit-sale-to-later-FH-conversion **pipeline effect** - a DNA kit purchase changing a customer's
+  later likelihood of FH signup, distinct from DNA media's halo onto FH cross-sell - is deliberately
+  **not modelled**: it would need person-level linkage this aggregate weekly-panel model doesn't have,
+  and adding it without that risks double-counting against the existing halo pathway. Any real
+  correlation is implicitly absorbed into the FH segments' own baseline/trend, not lost, but also not
+  separately quantified - see `docs/dna_fh_causal_structure.md`.
 
 ## Transferred-curve limitations
 

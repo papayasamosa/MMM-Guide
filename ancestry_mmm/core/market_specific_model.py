@@ -36,7 +36,7 @@ import numpy as np
 import pymc as pm
 import pytensor.tensor as pt
 
-from .hierarchical_model import FHModelMeta, _default_dna_segment, _market_grouped_lag
+from .hierarchical_model import FHModelMeta, _default_dna_segment, _market_grouped_lag, _resolve_direct_dna_segments
 from .schema import ModelSpec
 from .transformations import pt_geometric_adstock_matrix, pt_hill_function
 
@@ -70,6 +70,7 @@ def build_fh_market_specific_model(
     dna_lag_weeks: int = 4,
     dna_segment: Optional[str] = None,
     prior_config: Optional[Dict] = None,
+    direct_dna_segments: Optional[List[str]] = None,
 ) -> "tuple[pm.Model, FHModelMeta]":
     """
     Build the market-specific, partially-pooled joint hierarchical FH model
@@ -81,7 +82,8 @@ def build_fh_market_specific_model(
     only the shape of `hill_K` and `beta` in the fitted trace does, which is
     why posterior extraction and curve replay need their own
     market-specific-aware code (core.market_specific_predict), not this
-    module.
+    module. `direct_dna_segments` has the same meaning as Model A's - see
+    that function's docstring.
 
     Requires at least 2 markets - partial pooling across a single market is
     meaningless (there is nothing to pool with).
@@ -116,6 +118,7 @@ def build_fh_market_specific_model(
         )
 
     dna_segment = _default_dna_segment(segments, dna_segment)
+    direct_dna_segments = _resolve_direct_dna_segments(segments, dna_segment, direct_dna_segments)
     non_dna_idx = [i for i, c in enumerate(channels) if i not in dna_channel_idx]
 
     channel_mean_spend = X_media.mean(axis=0)
@@ -235,10 +238,13 @@ def build_fh_market_specific_model(
         # -----------------------------------------------------------------
         # DNA halo strength by segment - identical structure to Model A
         # (not market-specific in this phase; a documented future extension,
-        # same as decay/S).
+        # same as decay/S). Full weight for every `direct_dna_segments`
+        # member (the FH DNA-cross-sell segment plus any DNA-product
+        # kit-sale segments fit alongside it - see hierarchical_model.py's
+        # matching comment and docs/dna_fh_causal_structure.md).
         # -----------------------------------------------------------------
         if dna_channel_idx:
-            other_segments = [s for s in segments if s != dna_segment]
+            other_segments = [s for s in segments if s not in direct_dna_segments]
             halo_other = pm.HalfNormal(
                 "halo_strength_other",
                 sigma=prior_config.get("dna_halo_sigma", 0.25),
@@ -247,7 +253,7 @@ def build_fh_market_specific_model(
             halo_pieces = []
             j = 0
             for s in segments:
-                if s == dna_segment:
+                if s in direct_dna_segments:
                     halo_pieces.append(pt.constant(1.0))
                 else:
                     halo_pieces.append(halo_other[j])
@@ -350,5 +356,6 @@ def build_fh_market_specific_model(
         unpooled_markets=unpooled_markets,
         control_names=control_names,
         segment_control_names=frame.get("segment_control_names") or {},
+        direct_dna_segments=direct_dna_segments,
     )
     return model, meta

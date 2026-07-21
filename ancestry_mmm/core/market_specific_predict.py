@@ -61,7 +61,7 @@ def extract_market_specific_posterior_params(
     promo_coef = mean_by_coord("promo_coef", "segment", meta.segments)
     alpha = mean_by_coord("alpha", "segment", meta.segments)
     halo_strength = mean_by_coord("halo_strength", "segment", meta.segments) if meta.dna_channel_idx else {
-        s: (1.0 if s == meta.dna_segment else 0.0) for s in meta.segments
+        s: (1.0 if s in meta.direct_dna_segments else 0.0) for s in meta.segments
     }
 
     hill_K_mean = post["hill_K"].mean(dim=["chain", "draw"])
@@ -230,7 +230,7 @@ def steady_state_segment_response_market_specific(
         for c in meta.channels:
             beta_val = params.beta[market][s][c]
             if c in meta.dna_channels:
-                if s == meta.dna_segment:
+                if s in meta.direct_dna_segments:
                     val += beta_val * sat[c]
                 else:
                     val += beta_val * sat[c] * params.halo_strength.get(s, 0.0)
@@ -293,7 +293,7 @@ def generate_market_channel_curve(
         overall = 0.0
         for seg in meta.segments:
             beta_val = params.beta[market][seg][channel]
-            if is_dna and seg != meta.dna_segment:
+            if is_dna and seg not in meta.direct_dna_segments:
                 beta_val = beta_val * params.halo_strength.get(seg, 0.0)
             value = beta_val * sat
             row[f"{seg}_response"] = value

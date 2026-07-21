@@ -38,6 +38,18 @@ class FHModelMeta:
     the InferenceData's coords alone (e.g. which channels are DNA channels,
     the halo lag). core/predict.py uses this to replay the model's math in
     plain NumPy for scenario planning and out-of-sample diagnostics.
+
+    `dna_segment` is specifically the Family History DNA-cross-sell segment -
+    the halo pathway's traditional target, kept for backward compatibility
+    and for anything that wants to label "the FH segment DNA media is meant
+    to lift". `direct_dna_segments` generalises the *mechanical* treatment:
+    every segment in this list gets DNA-targeted media's full, undamped beta
+    response (`halo_strength = 1`); every other segment gets the shrunk-
+    toward-zero halo response. `dna_segment` is always a member. DNA-product
+    outcomes (kit sales - see core.outcomes) are the other members once
+    they're included in a fit: they are the *direct* target of DNA media,
+    not a halo recipient, so they must not be shrunk the way an unrelated FH
+    segment like Winback is - see docs/dna_fh_causal_structure.md.
     """
     markets: List[str]
     segments: List[str]
@@ -50,6 +62,11 @@ class FHModelMeta:
     unpooled_markets: List[str]
     control_names: List[str]
     segment_control_names: Dict[str, List[str]] = field(default_factory=dict)
+    direct_dna_segments: List[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if not self.direct_dna_segments:
+            self.direct_dna_segments = [self.dna_segment]
 
 
 def _default_dna_segment(segments: List[str], dna_segment: Optional[str]) -> str:
@@ -63,6 +80,21 @@ def _default_dna_segment(segments: List[str], dna_segment: Optional[str]) -> str
     raise ValueError(
         "Could not infer which segment is the DNA cross-sell segment; pass dna_segment explicitly."
     )
+
+
+def _resolve_direct_dna_segments(
+    segments: List[str], dna_segment: str, direct_dna_segments: Optional[List[str]],
+) -> List[str]:
+    """`dna_segment` is always a direct (non-halo-shrunk) recipient of DNA
+    media, whether or not the caller lists it explicitly. Every name passed
+    must be one of this model's segments."""
+    resolved = list(direct_dna_segments) if direct_dna_segments else []
+    if dna_segment not in resolved:
+        resolved.append(dna_segment)
+    unknown = [s for s in resolved if s not in segments]
+    if unknown:
+        raise ValueError(f"direct_dna_segments contains unknown segment(s): {unknown}")
+    return resolved
 
 
 def _market_grouped_adstock_and_saturation(
@@ -115,6 +147,7 @@ def build_fh_hierarchical_model(
     dna_lag_weeks: int = 4,
     dna_segment: Optional[str] = None,
     prior_config: Optional[Dict] = None,
+    direct_dna_segments: Optional[List[str]] = None,
 ) -> "tuple[pm.Model, FHModelMeta]":
     """
     Build the joint hierarchical FH model.
@@ -123,10 +156,18 @@ def build_fh_hierarchical_model(
         frame: output of data.preprocessor.prepare_fh_modeling_frame
         spec: the ModelSpec used to build `frame`
         dna_lag_weeks: extra lag (beyond adstock carryover) applied to DNA-channel
-            saturated media before it enters the DNA halo pathway
-        dna_segment: which segment key is the DNA cross-sell segment (auto-detected
+            saturated media before it entering the DNA halo pathway
+        dna_segment: which segment key is the FH DNA cross-sell segment (auto-detected
             from the segment names if not given)
         prior_config: optional dict of prior overrides (see defaults below)
+        direct_dna_segments: segments that get DNA-targeted media's full,
+            undamped response rather than the shrunk-toward-zero halo -
+            `dna_segment` is always included even if omitted here. Pass the
+            DNA-product kit-sale segments (core.outcomes) alongside it when
+            fitting them in the same run - they are DNA media's *direct*
+            target, not a halo recipient (docs/dna_fh_causal_structure.md).
+            Defaults to `[dna_segment]` - a fit with no DNA-product segments
+            behaves exactly as before.
 
     Returns:
         (unfit PyMC Model, FHModelMeta). Fit the model with core.models.fit_model;
@@ -156,6 +197,7 @@ def build_fh_hierarchical_model(
     n_controls = X_controls.shape[1]
 
     dna_segment = _default_dna_segment(segments, dna_segment)
+    direct_dna_segments = _resolve_direct_dna_segments(segments, dna_segment, direct_dna_segments)
     non_dna_idx = [i for i, c in enumerate(channels) if i not in dna_channel_idx]
 
     channel_mean_spend = X_media.mean(axis=0)
@@ -239,13 +281,17 @@ def build_fh_hierarchical_model(
         beta = pm.Deterministic("beta", pt.exp(log_beta), dims=("segment", "channel"))
 
         # -----------------------------------------------------------------
-        # DNA halo strength by segment: fixed at 1 (full weight) for the DNA
-        # cross-sell segment itself; shrunk toward zero elsewhere and only
-        # pulled away from zero where the data supports it ("smaller effect
-        # elsewhere"). Reported as a first-class, inspectable parameter.
+        # DNA halo strength by segment: fixed at 1 (full weight) for every
+        # `direct_dna_segments` member - the FH DNA-cross-sell segment
+        # (`dna_segment`) AND any DNA-product kit-sale segments fit
+        # alongside it, since DNA media is the *direct* driver of kit sales,
+        # not a halo pathway onto them (docs/dna_fh_causal_structure.md).
+        # Every other segment is shrunk toward zero and only pulled away
+        # where the data supports it ("smaller effect elsewhere"). Reported
+        # as a first-class, inspectable parameter.
         # -----------------------------------------------------------------
         if dna_channel_idx:
-            other_segments = [s for s in segments if s != dna_segment]
+            other_segments = [s for s in segments if s not in direct_dna_segments]
             halo_other = pm.HalfNormal(
                 "halo_strength_other",
                 sigma=prior_config.get("dna_halo_sigma", 0.25),
@@ -254,7 +300,7 @@ def build_fh_hierarchical_model(
             halo_pieces = []
             j = 0
             for s in segments:
-                if s == dna_segment:
+                if s in direct_dna_segments:
                     halo_pieces.append(pt.constant(1.0))
                 else:
                     halo_pieces.append(halo_other[j])
@@ -366,5 +412,6 @@ def build_fh_hierarchical_model(
         unpooled_markets=unpooled_markets,
         control_names=control_names,
         segment_control_names=frame.get("segment_control_names") or {},
+        direct_dna_segments=direct_dna_segments,
     )
     return model, meta
