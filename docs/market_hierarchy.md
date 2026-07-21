@@ -39,14 +39,21 @@ interaction term).
 
 ## 4. Market evidence tiers
 
-Every market, once a market-specific model exists, falls into one of three evidence tiers. A fitted
-Model C (Phase 2) makes this classification possible in principle - `market_K_sigma`/
-`market_beta_sigma` and each market's posterior uncertainty are the raw ingredients - but the tiers
-below are not yet surfaced as a labelled UI classification; that's still planned (alongside curve
-bank/CPA integration, Phase 3). **Until then, the Market Descriptors page's market cards still show
-only the coarse, pre-model observation-count heuristic**
-(`core.market_config.market_data_quality_status`), which is explicitly not the same thing as the
-tiers below, and must never be presented as a curve-status label.
+Every market, once a market-specific model exists, falls into one of three evidence tiers.
+**Built in Phase 3a** as `core.evidence_tiers.classify_market_evidence` /
+`classify_all_markets`: combines how many periods that market has (`frame["market_bounds"]`) with
+the fitted posterior's own relative uncertainty (std/mean of `hill_K` and `beta` for that
+market/channel) against documented thresholds (same period thresholds as
+`market_data_quality_status` below, so the pre-model heuristic and the post-fit classification agree
+on what "enough periods" means). Used directly by the curve bank (`docs/curve_bank.md`) to label
+every Model C curve's `curve_status` at save time - not asserted by the user, and never overridden
+to make a curve look more locally-estimated than its own posterior supports.
+
+**The Market Descriptors page's market cards still show only the coarse, pre-model
+observation-count heuristic** (`core.market_config.market_data_quality_status`), computed before any
+model exists, so it necessarily can't reflect posterior uncertainty. It is explicitly not the same
+thing as the tiers above and must never be presented as a curve-status label - the curve bank is
+where the real, model-derived tier lives.
 
 | Tier | Description | Behaviour |
 |---|---|---|

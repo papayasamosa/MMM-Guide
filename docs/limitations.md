@@ -30,13 +30,13 @@
 
 ## Transferred-curve limitations
 
-- A market with no usable local evidence should get a **transferred estimate**, not a locally
-  estimated curve, once the evidence-tier classification is surfaced in the UI - **this labelling is
-  not built yet** (`docs/market_hierarchy.md` section 4); a fitted Model C makes the classification
-  possible in principle (via `market_K_sigma`/`market_beta_sigma` and per-market posterior
-  uncertainty) but nothing in the UI currently maps a market onto one of the three evidence tiers.
-  Treat any market-specific curve today as unlabelled with respect to evidence strength - review
-  `curve_plausibility_checks_market_specific`'s relative-uncertainty flags manually instead.
+- A market with no usable local evidence gets a **transferred estimate**, not a locally estimated
+  curve - `core.evidence_tiers.classify_market_evidence` (Phase 3a) labels every Model C curve bank
+  entry's `curve_status` accordingly (`docs/market_hierarchy.md` section 4, `docs/curve_bank.md`).
+  The thresholds behind this classification (period counts, relative posterior uncertainty) are
+  reasonable defaults, not validated against real Ancestry data yet - see the decision log entry
+  recording them, and revisit once real-data model comparison results exist
+  (`docs/model_validation.md`).
 - `market_data_quality_status` is a coarse, pre-model, observation-count-only heuristic, still the
   only thing shown on the Market Descriptors page's market cards. It is not the same thing as the
   evidence-tier classification above and must not be presented to users as if it were - see the
@@ -69,19 +69,19 @@
 
 ## Scope boundaries (this PR specifically)
 
-- This PR (Phase 2) adds a new, fully separate market-specific model, prediction, and diagnostics
-  path (`core.market_specific_model`, `core.market_specific_predict`,
-  `core.market_specific_diagnostics`, `core.model_comparison`) alongside Model A - it does not
-  modify Model A's model-building, prediction, diagnostics, curve bank, or optimisation code at all.
-  Everything described as "Phase 3/4" in these docs remains a design record, not shipped
-  functionality.
-- The model-specification fingerprint (`core.fingerprint.fingerprint_model_spec`) now includes
-  `model_type` ("shared" vs. "market_specific"), so switching model structure invalidates an
-  existing approval. It still does **not** include market hierarchy, media-unit mappings, or
-  currency settings from `market_spec_config` - approval invalidation does not yet react to changes
-  in that data, since nothing downstream consumes it yet beyond Model C's core structure. This
-  remains tracked as Phase 3 work (wiring `market_spec_config` into the model/fingerprint together),
-  not an oversight.
-- Curve bank storage, Shapley attribution, and Scenario Planner are Model-A-only; a market-specific
-  model gets a read-only curve viewer instead, with a clear "not available yet" message where the
-  Model-A-only features would otherwise appear (`docs/decision_log.md`).
+- This PR (Phase 3a) redesigns the curve bank to per-curve records and adds evidence-tier
+  classification (`core.evidence_tiers`, `core.curve_bank`) - it does not touch Model A's or Model
+  C's model-building, prediction, diagnostics, or model comparison code, and does not touch
+  optimisation (`core.optimization`) or the Scenario Planner at all. Everything described as
+  "Phase 3b/4" in these docs remains a design record, not shipped functionality.
+- Shapley attribution and Scenario Planner remain Model-A-only; a market-specific model still gets a
+  read-only curve viewer for attribution, with a clear "not available yet" message
+  (`docs/decision_log.md`) - **only curve bank saving itself was extended to both model types**.
+- The model-specification fingerprint (`core.fingerprint.fingerprint_model_spec`) still does **not**
+  include market hierarchy, media-unit mappings, or currency settings from `market_spec_config` -
+  approval invalidation does not yet react to changes in that data. This remains tracked as Phase 3b
+  work (wiring `market_spec_config` into the model/fingerprint together), not an oversight.
+- `input_type`/`unit_type` on every curve bank entry are always `"spend"`/`None` in this PR - Phase
+  3b populates them once response-unit curves exist (`docs/media_units_and_inflation.md`).
+- Evidence-tier thresholds (`core.evidence_tiers`) are reasonable defaults, not yet validated against
+  real Ancestry data - see `docs/decision_log.md`.

@@ -3,7 +3,30 @@
 Entries by pull request, most recent first. Predates this file: see git history for anything
 earlier than the entries below.
 
-## Unreleased - Market-Specific MMM Redesign, Phase 2 (this PR)
+## Unreleased - Market-Specific MMM Redesign, Phase 3a (this PR)
+
+- Added `core.evidence_tiers`: `classify_market_evidence` / `classify_all_markets` - classifies a
+  fitted Model C market/channel into `Locally estimated`/`Partially pooled`/`Transferred estimate`
+  (`docs/market_hierarchy.md` section 4) from period count plus the posterior's own relative
+  uncertainty, not period count alone.
+- Redesigned `core.curve_bank.CurveBankEntry` to one record per (market, channel,
+  segment-or-overall) instead of one per model run, for **both** Model A and Model C -
+  `make_entries` (renamed from `make_entry`) now returns the full set for a run in one call, with
+  `curve_status` set to `Shared` (Model A) or the evidence tier (Model C). Old, pre-redesign curve
+  bank files remain loadable, expanded into the new shape and marked `legacy_format=True` - nothing
+  on disk is dropped.
+- Results & Curve Bank: curve bank saving now works for market-specific models too (previously
+  blocked entirely) - Shapley attribution remains Model-A-only. Added market/channel/segment/curve-
+  status filters to the curve bank history table; calibration logging now selects a curve bank entry
+  directly instead of separately re-selecting its channel/segment.
+- 36 tests across a new `test_evidence_tiers.py` and a rewritten `test_curve_bank.py` (evidence tier
+  classification, per-curve entry creation for both model types, legacy-format expansion), plus
+  AppTest-based end-to-end verification of the curve bank save/filter/calibration flow for both
+  model types.
+- No changes to Model A/C model-building, prediction, diagnostics, model comparison, fingerprint, or
+  Scenario Planner behaviour.
+
+## Unreleased - Market-Specific MMM Redesign, Phase 2
 
 - Added `core.market_specific_model.build_fh_market_specific_model` ("Model C"): market-specific,
   partially pooled `hill_K[market, channel]` and `beta[market, segment, channel]`; `decay[channel]`

@@ -20,7 +20,7 @@ with byte-identical inputs can still be distinguished by `model_run_id`;
 everything else is content-addressed.
 
 The gate has teeth at the core API level, not just in the Streamlit
-interface: core.curve_bank.make_entry and core.optimization.evaluate_scenario
+interface: core.curve_bank.make_entries and core.optimization.evaluate_scenario
 /optimize_scenario call require_matching_approval() themselves, so calling
 them directly - bypassing whatever a Streamlit page's own checks do - still
 requires a valid, matching approval.
@@ -113,7 +113,7 @@ def require_matching_approval(
     """
     Raise ApprovalMismatchError unless `approval` is a ModelApproval that is
     model-bound and matches the given current identifiers; otherwise return
-    it unchanged. Shared by core.curve_bank.make_entry and
+    it unchanged. Shared by core.curve_bank.make_entries and
     core.optimization.evaluate_scenario/optimize_scenario so the check can't
     be skipped by calling those functions directly instead of going through
     a Streamlit page's own (weaker, UI-only) checks.

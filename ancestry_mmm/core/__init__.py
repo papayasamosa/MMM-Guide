@@ -39,14 +39,18 @@ from .diagnostics import (
 from .curve_bank import (
     CurveBankEntry,
     CalibrationRecord,
-    make_entry,
-    save_entry,
+    make_entries,
+    save_entries,
     load_all_entries,
     entries_to_dataframe,
     compare_to_test,
     record_calibration,
     load_all_calibrations,
     calibrations_to_dataframe,
+)
+from .evidence_tiers import (
+    classify_market_evidence,
+    classify_all_markets,
 )
 from .attribution import (
     compute_shapley_contributions,
@@ -152,8 +156,10 @@ __all__ = [
     "expanding_window_backtest",
     "CurveBankEntry",
     "CalibrationRecord",
-    "make_entry",
-    "save_entry",
+    "make_entries",
+    "save_entries",
+    "classify_market_evidence",
+    "classify_all_markets",
     "load_all_entries",
     "entries_to_dataframe",
     "compare_to_test",

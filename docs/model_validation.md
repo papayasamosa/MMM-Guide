@@ -73,7 +73,7 @@ tight quantitative recovery, which needs a production draw count to assess prope
 9. Media inflation changes required spend but not response to physical delivery. - *Phase 3*
 10. Same-response and same-delivery scenarios work. - *Phase 3*
 11. The Scenario Planner always uses the selected market's curve. - *Phase 3* (blocked entirely for market-specific models until then, rather than silently using the wrong curve - `docs/decision_log.md`)
-12. Transferred estimates are clearly labelled. - *Phase 3* (evidence-tier labelling not yet surfaced in the UI - `docs/market_hierarchy.md` section 4)
+12. Transferred estimates are clearly labelled. - **Phase 3a, built**: every Model C curve bank entry carries a `curve_status` (`Locally estimated`/`Partially pooled`/`Transferred estimate`) from `core.evidence_tiers`, filterable in the curve bank history table (`docs/market_hierarchy.md` section 4, `docs/curve_bank.md`)
 13. Approval is invalidated after model-relevant changes. - **Built**: `model_type` is now part of `fingerprint_model_spec`'s hash payload (Phase 2), on top of the existing data/spec/posterior/run binding; market hierarchy/media-unit/inflation config fingerprinting remains Phase 3
 14. Project documentation is generated correctly. - *Phase 4* (`docs/` exists from Phase 1; the reproducible report generator is Phase 4)
 15. Existing tests still pass. - **Enforced this PR**: `uv run pytest ancestry_mmm/tests/ -q`
