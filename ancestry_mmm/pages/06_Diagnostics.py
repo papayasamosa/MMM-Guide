@@ -9,11 +9,12 @@ import streamlit as st
 import pandas as pd
 
 from ancestry_mmm.utils import init_session_state, get_state, set_state, format_date, format_number, dataframe_column_config, FIELD_HELP
-from ancestry_mmm.components import apply_theme, render_sidebar, render_page_header, render_next_step, render_empty_state, render_glossary
+from ancestry_mmm.components import apply_theme, render_sidebar, render_page_header, render_next_step, render_empty_state, render_glossary, render_drift_status
 from ancestry_mmm.core.approval import ModelApproval
 from ancestry_mmm.core.diagnostics import compute_scorecard, expanding_window_backtest
 from ancestry_mmm.core.fingerprint import fingerprint_dataframe, fingerprint_model_spec, fingerprint_posterior
-from ancestry_mmm.core.outcomes import outcome_catalogue_fingerprint_payload
+from ancestry_mmm.core.funnel import FunnelLink, funnel_coherence_diagnostics
+from ancestry_mmm.core.outcomes import outcome_catalogue_fingerprint_payload, resolve_outcome_definitions
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
 from ancestry_mmm.core.market_specific_model import build_fh_market_specific_model
@@ -44,6 +45,14 @@ if trace is None or frame is None or meta is None:
     st.stop()
 
 model_type = get_state("model_type", "shared")
+
+spec_dict = get_state("model_spec")
+if spec_dict:
+    _spec_for_drift = ModelSpec.from_dict(spec_dict)
+    render_drift_status(
+        resolve_outcome_definitions(get_state("outcome_definitions"), _spec_for_drift.segment_outcomes, _spec_for_drift.segment_ltv),
+        meta,
+    )
 
 st.markdown("---")
 if st.button("Compute scorecard", type="primary"):
@@ -245,5 +254,45 @@ if st.button("Run backtest"):
 backtest_results = get_state("backtest_results")
 if backtest_results is not None and not backtest_results.empty:
     st.dataframe(backtest_results, width="stretch", column_config=dataframe_column_config(backtest_results))
+
+st.markdown("---")
+st.markdown("### Funnel-coherence diagnostics")
+_funnel_links_raw = get_state("funnel_links") or []
+_funnel_links = [FunnelLink.from_dict(d) for d in _funnel_links_raw]
+st.caption(
+    "Sign-ups and GSAs (or any declared upstream/downstream pair - see Structure page) are fitted as "
+    "independent outcome equations, not a constrained funnel model - these are diagnostics and "
+    "warnings only, evaluated against the *observed* data this fit was built from. They do not block "
+    "training or planning."
+)
+if not _funnel_links:
+    st.info("No funnel links configured. Define upstream/downstream outcome pairs on the Structure page.")
+else:
+    for link in _funnel_links:
+        if link.upstream_outcome_id not in frame["outcome_ids"] or link.downstream_outcome_id not in frame["outcome_ids"]:
+            st.warning(
+                f"Funnel link {link.upstream_outcome_id} -> {link.downstream_outcome_id} references an "
+                "outcome_id not in this fit - skipped."
+            )
+            continue
+        up_idx = frame["outcome_ids"].index(link.upstream_outcome_id)
+        down_idx = frame["outcome_ids"].index(link.downstream_outcome_id)
+        result = funnel_coherence_diagnostics(
+            link, frame["Y"][:, up_idx], frame["Y"][:, down_idx],
+            period_labels=list(frame["dates"]) if "dates" in frame else None,
+        )
+        icon = "⚠️" if result["has_any_warning"] else "✅"
+        st.markdown(f"**{icon} {link.upstream_outcome_id} -> {link.downstream_outcome_id}**")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Coherence violations", f"{result['n_violations']} / {result['n_periods']}")
+        c2.metric(
+            "Mean conversion rate",
+            f"{result['conversion_rate_mean']:.1%}" if result["conversion_rate_mean"] is not None else "n/a",
+        )
+        c3.metric("Out-of-range periods", result["conversion_rate_out_of_range_count"])
+        if result["conversion_rate_unstable"]:
+            st.caption(f"Conversion rate is unstable across periods (CV={result['conversion_rate_cv']:.2f}).")
+        if result["violation_periods"]:
+            st.caption(f"Violations at: {', '.join(format_date(d) for d in result['violation_periods'][:10])}" + (" ..." if len(result["violation_periods"]) > 10 else ""))
 
 render_next_step("diagnostics")

@@ -6,6 +6,7 @@ from ancestry_mmm.core.approval import ApprovalMismatchError, ModelApproval
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
 from ancestry_mmm.core.market_specific_predict import FHMarketSpecificPosteriorParams
 from ancestry_mmm.core.optimization import compare_scenarios, evaluate_scenario, optimize_scenario, VALID_OBJECTIVES
+from ancestry_mmm.core.outcomes import FAMILY_HISTORY, DNA, METRIC_GSA, METRIC_KIT_SALE, OutcomeDefinition
 from ancestry_mmm.core.predict import FHPosteriorParams
 
 IDENTITY = dict(
@@ -230,6 +231,14 @@ class TestAverageCpa:
         assert len(result) == 2  # one row per segment
         assert result["avg_cpa"].nunique() == 1
 
+    def test_whole_plan_cost_per_fh_gsa_alias_matches_avg_cpa(self, meta, params, approval, spend_plan, reference_context):
+        # PR E.2 #8 - the explicit-spend-scope name must never silently
+        # diverge from the bare avg_cpa/cost_per_fh_gsa numbers.
+        result = evaluate_scenario(spend_plan, "UK", meta, params, reference_context, approval=approval, **IDENTITY)
+        assert np.array_equal(
+            result["whole_plan_cost_per_fh_gsa"].to_numpy(dtype=float), result["avg_cpa"].to_numpy(dtype=float), equal_nan=True,
+        )
+
 
 class TestProductAwareScenarioOutputs:
     """avg_cpa must be Family-History-scoped (never a dollars-per-mixed-unit
@@ -288,6 +297,8 @@ class TestProductAwareScenarioOutputs:
         assert result["avg_cpa"].iloc[0] == pytest.approx(total_spend / fh_gsa)
         assert result["avg_cpa"].iloc[0] != pytest.approx(total_spend / (fh_gsa + dna_kits))
         assert result["dna_avg_cpa"].iloc[0] == pytest.approx(total_spend / dna_kits)
+        assert result["whole_plan_cost_per_fh_gsa"].iloc[0] == pytest.approx(result["avg_cpa"].iloc[0])
+        assert result["whole_plan_cost_per_dna_kit"].iloc[0] == pytest.approx(result["dna_avg_cpa"].iloc[0])
 
     def test_dna_avg_cpa_is_none_when_no_kit_only_segments(self, meta, params, approval, spend_plan, reference_context):
         result = evaluate_scenario(spend_plan, "UK", meta, params, reference_context, approval=approval, **IDENTITY)
@@ -316,7 +327,10 @@ class TestProductAwareScenarioOutputs:
         expected_dna_kits = predicted.groupby("month")["dna_kits"].first().sum()
         assert compare_df["total_fh_gsa"].iloc[0] == pytest.approx(expected_fh_gsa)
         assert compare_df["total_dna_kits"].iloc[0] == pytest.approx(expected_dna_kits)
-        assert compare_df["total_value"].iloc[0] == pytest.approx(predicted["value"].sum())
+        # No ltv given - value is "not configured" throughout (PR E.2), so
+        # total_value is NaN, not a fake 0.0 raw-unit total.
+        assert pd.isna(compare_df["total_value"].iloc[0])
+        assert predicted["value"].isna().all()
 
     def test_compare_scenarios_falls_back_when_predicted_has_no_product_split(self, meta, params, approval, spend_plan, reference_context):
         # Defensive against a hand-built/legacy `predicted` DataFrame that
@@ -552,6 +566,131 @@ class TestFhSignupVsGsaObjectives:
             )
 
 
+class TestOptimiserTargetValidation:
+    """PR E.2 requirement #9: harden target-outcome validation across every
+    objective - unknown outcome_ids, metric mismatches, outcomes excluded
+    from optimisation (diagnostic role or include_in_optimisation=False),
+    and raw-unit weighted mixes are all rejected before the (potentially
+    slow) optimiser runs."""
+
+    @pytest.fixture
+    def meta_with_diagnostic_outcome(self) -> FHModelMeta:
+        return FHModelMeta(
+            markets=["UK"], outcome_ids=["fh_new_gsa", "fh_new_signup", "fh_diag"], channels=["TV_Brand"],
+            dna_channels=[], dna_channel_idx=[], non_dna_idx=[0], dna_outcome_id="fh_new_gsa",
+            dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+            outcome_id_to_product={
+                "fh_new_gsa": FAMILY_HISTORY, "fh_new_signup": FAMILY_HISTORY, "fh_diag": FAMILY_HISTORY,
+            },
+            outcome_id_to_metric={"fh_new_gsa": METRIC_GSA, "fh_new_signup": "Sign-up", "fh_diag": METRIC_GSA},
+            outcome_id_to_unit={"fh_new_gsa": "GSA", "fh_new_signup": "sign-up", "fh_diag": "GSA"},
+            outcome_id_to_role={"fh_new_gsa": "primary", "fh_new_signup": "primary", "fh_diag": "diagnostic"},
+        )
+
+    @pytest.fixture
+    def params_3(self) -> FHPosteriorParams:
+        return FHPosteriorParams(
+            decay_rate={"TV_Brand": 0.5}, hill_K={"TV_Brand": 1000.0}, hill_S={"TV_Brand": 1.0},
+            beta={"fh_new_gsa": {"TV_Brand": 0.1}, "fh_new_signup": {"TV_Brand": 0.2}, "fh_diag": {"TV_Brand": 0.05}},
+            halo_strength={"fh_new_gsa": 0.0, "fh_new_signup": 0.0, "fh_diag": 0.0},
+            promo_coef={"fh_new_gsa": 0.1, "fh_new_signup": 0.1, "fh_diag": 0.1},
+            market_offset={"UK": {"fh_new_gsa": 0.0, "fh_new_signup": 0.0, "fh_diag": 0.0}},
+            intercept={"fh_new_gsa": 3.0, "fh_new_signup": 3.0, "fh_diag": 3.0},
+            trend_coef={"fh_new_gsa": 0.0, "fh_new_signup": 0.0, "fh_diag": 0.0},
+            gamma_fourier={"fh_new_gsa": np.zeros(6), "fh_new_signup": np.zeros(6), "fh_diag": np.zeros(6)},
+            alpha={"fh_new_gsa": 5.0, "fh_new_signup": 5.0, "fh_diag": 5.0}, control_coef={}, outcome_control_coef={},
+        )
+
+    @pytest.fixture
+    def ref_3(self):
+        return {
+            "2024-01": {
+                "trend": 1.0, "fourier": np.zeros(6),
+                "promo": {"fh_new_gsa": 0.0, "fh_new_signup": 0.0, "fh_diag": 0.0},
+                "controls": {}, "outcome_controls": {},
+            },
+        }
+
+    @pytest.fixture
+    def plan_3(self):
+        return {"2024-01": {"TV_Brand": 1000.0}}
+
+    def test_unknown_target_outcome_id_is_rejected(self, meta_with_diagnostic_outcome, params_3, approval, ref_3, plan_3):
+        with pytest.raises(ValueError, match="not fitted in this model"):
+            optimize_scenario(
+                plan_3, ["2024-01"], ["TV_Brand"], "UK", meta_with_diagnostic_outcome, params_3, ref_3,
+                objective="fh_gsa", target_outcome_ids=["does_not_exist"], approval=approval, **IDENTITY,
+            )
+
+    def test_metric_mismatched_target_outcome_id_is_rejected(
+        self, meta_with_diagnostic_outcome, params_3, approval, ref_3, plan_3,
+    ):
+        # Required test case 11 - a sign-up outcome must not be passed into
+        # objective="fh_gsa" and bypass metric-aware selection.
+        with pytest.raises(ValueError, match="do not match this objective's metric"):
+            optimize_scenario(
+                plan_3, ["2024-01"], ["TV_Brand"], "UK", meta_with_diagnostic_outcome, params_3, ref_3,
+                objective="fh_gsa", target_outcome_ids=["fh_new_signup"], approval=approval, **IDENTITY,
+            )
+
+    def test_diagnostic_outcome_cannot_be_optimised(self, meta_with_diagnostic_outcome, params_3, approval, ref_3, plan_3):
+        # Required test case 12.
+        with pytest.raises(ValueError, match="not eligible for optimisation"):
+            optimize_scenario(
+                plan_3, ["2024-01"], ["TV_Brand"], "UK", meta_with_diagnostic_outcome, params_3, ref_3,
+                objective="fh_gsa", target_outcome_ids=["fh_diag"], approval=approval, **IDENTITY,
+            )
+
+    def test_diagnostic_outcome_excluded_from_default_fh_gsa_total(
+        self, meta_with_diagnostic_outcome, params_3, approval, ref_3, plan_3,
+    ):
+        result = optimize_scenario(
+            plan_3, ["2024-01"], ["TV_Brand"], "UK", meta_with_diagnostic_outcome, params_3, ref_3,
+            objective="fh_gsa", approval=approval, **IDENTITY,
+        )
+        current_predicted = result["current_predicted"]
+        expected = float(current_predicted[current_predicted["outcome_id"] == "fh_new_gsa"]["predicted_outcome"].sum())
+        assert result["current_objective_value"] == pytest.approx(expected)
+
+    def test_weighted_mix_with_raw_unit_mismatch_is_rejected(
+        self, meta_with_diagnostic_outcome, params_3, approval, ref_3, plan_3,
+    ):
+        # Required test case 13 - GSA and sign-up are different units; a
+        # naive uniform-weight mix must be blocked without an explicit
+        # assertion that the weights already convert to a common scale.
+        with pytest.raises(ValueError, match="different units"):
+            optimize_scenario(
+                plan_3, ["2024-01"], ["TV_Brand"], "UK", meta_with_diagnostic_outcome, params_3, ref_3,
+                objective="weighted_mix", weights={"fh_new_gsa": 1.0, "fh_new_signup": 1.0},
+                approval=approval, **IDENTITY,
+            )
+
+    def test_weighted_mix_with_raw_unit_mismatch_allowed_when_explicitly_value_scaled(
+        self, meta_with_diagnostic_outcome, params_3, approval, ref_3, plan_3,
+    ):
+        result = optimize_scenario(
+            plan_3, ["2024-01"], ["TV_Brand"], "UK", meta_with_diagnostic_outcome, params_3, ref_3,
+            objective="weighted_mix", weights={"fh_new_gsa": 2.0, "fh_new_signup": 0.5},
+            assume_value_scaled_weights=True, approval=approval, **IDENTITY,
+        )
+        assert "success" in result
+        assert isinstance(result["objective_value"], float)
+
+    def test_weighted_mix_rejects_negative_weight(self, meta_with_diagnostic_outcome, params_3, approval, ref_3, plan_3):
+        with pytest.raises(ValueError, match="non-negative"):
+            optimize_scenario(
+                plan_3, ["2024-01"], ["TV_Brand"], "UK", meta_with_diagnostic_outcome, params_3, ref_3,
+                objective="weighted_mix", weights={"fh_new_gsa": -1.0}, approval=approval, **IDENTITY,
+            )
+
+    def test_weighted_mix_rejects_unknown_outcome_id(self, meta_with_diagnostic_outcome, params_3, approval, ref_3, plan_3):
+        with pytest.raises(ValueError, match="not fitted in this model"):
+            optimize_scenario(
+                plan_3, ["2024-01"], ["TV_Brand"], "UK", meta_with_diagnostic_outcome, params_3, ref_3,
+                objective="weighted_mix", weights={"does_not_exist": 1.0}, approval=approval, **IDENTITY,
+            )
+
+
 class TestValueWeightNeverSilentlyDefaultsToOne:
     """PR E.1's second confirmed defect: a *partial* ltv (some outcome_ids
     priced, others not) must never treat the missing entries as weight 1.0."""
@@ -576,17 +715,93 @@ class TestValueWeightNeverSilentlyDefaultsToOne:
         new_row = result[result["outcome_id"] == "New"].iloc[0]
         assert result["total_value"].iloc[0] == pytest.approx(new_row["predicted_outcome"] * 2.0)
 
-    def test_evaluate_scenario_value_equals_raw_volume_when_ltv_entirely_omitted(
+    def test_evaluate_scenario_partial_ltv_reports_value_status_and_unpriced_ids(
         self, meta_with_kit_segment, params_with_kit_segment, approval, ref_with_kit_segment,
     ):
-        # Not the defect case - no value weighting was requested at all, so
-        # "value" is simply raw predicted units (weight 1.0 uniformly),
-        # matching this function's behaviour before PR E.1's fix.
+        # PR E.2 requirement #4: a priced subtotal, flagged incomplete, with
+        # the exact unpriced outcome_ids named - not just a bare boolean.
+        plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0}}
+        ltv = {"New": 2.0}
+        result = evaluate_scenario(plan, "UK", meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment, ltv, approval=approval, **IDENTITY)
+        assert (result["value_status"] == "partial").all()
+        assert result["unpriced_outcome_ids"].iloc[0] == ["DNA_Kit"]
+        assert not result["total_value_is_complete"].iloc[0]
+
+    def test_evaluate_scenario_full_ltv_coverage_reports_complete_status(
+        self, meta_with_kit_segment, params_with_kit_segment, approval, ref_with_kit_segment,
+    ):
+        plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0}}
+        ltv = {"New": 2.0, "DNA_Kit": 50.0}
+        result = evaluate_scenario(plan, "UK", meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment, ltv, approval=approval, **IDENTITY)
+        assert (result["value_status"] == "complete").all()
+        assert result["unpriced_outcome_ids"].iloc[0] == []
+        assert result["total_value_is_complete"].iloc[0]
+
+    def test_evaluate_scenario_rejects_mixed_currency_value_weights(
+        self, params_with_kit_segment, approval, ref_with_kit_segment,
+    ):
+        # Required test case 7 (PR E.2): value weights in different explicit
+        # currencies must never be silently summed into one total_value.
+        catalogue = [
+            OutcomeDefinition(
+                outcome_id="New", product=FAMILY_HISTORY, segment="New", metric=METRIC_GSA,
+                source_column="c1", value_currency="USD",
+            ),
+            OutcomeDefinition(
+                outcome_id="DNA_Kit", product=DNA, segment="Combined", metric=METRIC_KIT_SALE,
+                source_column="c2", value_currency="GBP",
+            ),
+        ]
+        meta = FHModelMeta(
+            markets=["UK"], outcome_ids=["New", "DNA_Kit"], channels=["TV_Brand", "DNA_Ad"],
+            dna_channels=["DNA_Ad"], dna_channel_idx=[1], non_dna_idx=[0],
+            dna_outcome_id="New", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+            direct_dna_outcome_ids=["New", "DNA_Kit"], outcome_catalogue_at_fit=catalogue,
+        )
+        plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0}}
+        ltv = {"New": 2.0, "DNA_Kit": 50.0}
+        with pytest.raises(ValueError, match="different currencies"):
+            evaluate_scenario(plan, "UK", meta, params_with_kit_segment, ref_with_kit_segment, ltv, approval=approval, **IDENTITY)
+
+    def test_evaluate_scenario_allows_same_currency_value_weights(
+        self, params_with_kit_segment, approval, ref_with_kit_segment,
+    ):
+        catalogue = [
+            OutcomeDefinition(
+                outcome_id="New", product=FAMILY_HISTORY, segment="New", metric=METRIC_GSA,
+                source_column="c1", value_currency="USD",
+            ),
+            OutcomeDefinition(
+                outcome_id="DNA_Kit", product=DNA, segment="Combined", metric=METRIC_KIT_SALE,
+                source_column="c2", value_currency="USD",
+            ),
+        ]
+        meta = FHModelMeta(
+            markets=["UK"], outcome_ids=["New", "DNA_Kit"], channels=["TV_Brand", "DNA_Ad"],
+            dna_channels=["DNA_Ad"], dna_channel_idx=[1], non_dna_idx=[0],
+            dna_outcome_id="New", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+            direct_dna_outcome_ids=["New", "DNA_Kit"], outcome_catalogue_at_fit=catalogue,
+        )
+        plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0}}
+        ltv = {"New": 2.0, "DNA_Kit": 50.0}
+        result = evaluate_scenario(plan, "UK", meta, params_with_kit_segment, ref_with_kit_segment, ltv, approval=approval, **IDENTITY)
+        assert (result["value_status"] == "complete").all()
+
+    def test_evaluate_scenario_value_is_none_not_raw_units_when_ltv_entirely_omitted(
+        self, meta_with_kit_segment, params_with_kit_segment, approval, ref_with_kit_segment,
+    ):
+        # Required test case 6 (PR E.2) - reverses PR E.1's "entirely
+        # omitted ltv falls back to raw units" behaviour: raw GSA/sign-up/kit
+        # counts are not monetary value and must never be silently presented
+        # as one, even when no ltv was supplied at all.
         plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0}}
         result = evaluate_scenario(plan, "UK", meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment, approval=approval, **IDENTITY)
-        assert result["total_value_is_complete"].iloc[0]
+        assert not result["total_value_is_complete"].iloc[0]
+        assert (result["value_status"] == "not configured").all()
+        assert pd.isna(result["total_value"].iloc[0])
         for _, row in result.iterrows():
-            assert row["value"] == pytest.approx(row["predicted_outcome"])
+            assert pd.isna(row["value"])
+            assert row["value"] != pytest.approx(row["predicted_outcome"])
 
     def test_expected_value_objective_fails_closed_on_incomplete_ltv_coverage(
         self, meta_with_kit_segment, params_with_kit_segment, approval, plan_with_kit_segment, ref_with_kit_segment,

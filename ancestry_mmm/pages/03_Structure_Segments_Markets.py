@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 import streamlit as st
 
 from ancestry_mmm.utils import init_session_state, get_state, set_state, clear_model_state, readable_label, FIELD_HELP, dataframe_column_config
-from ancestry_mmm.components import apply_theme, render_sidebar, render_page_header, render_next_step, render_empty_state
+from ancestry_mmm.components import apply_theme, render_sidebar, render_page_header, render_next_step, render_empty_state, render_drift_status
 from ancestry_mmm.core.schema import ModelSpec, DEFAULT_SEGMENTS
 
 from ancestry_mmm.core.outcomes import (
@@ -18,8 +18,12 @@ from ancestry_mmm.core.outcomes import (
     validate_outcome_definitions, outcomes_to_dataframe,
     validate_fh_dna_cross_sell_outcome_id, infer_legacy_fh_dna_cross_sell_outcome_id,
 )
-from ancestry_mmm.core.promotions import PromotionEvent, validate_promotion_events, apply_promotion_events_to_frame
-from ancestry_mmm.data import validate_modeling_frame, detect_column_types
+from ancestry_mmm.core.promotions import (
+    PromotionEvent, validate_promotion_events, apply_promotion_events_to_frame,
+    promotion_events_to_transform_steps, PROMOTION_EVENT_OP,
+)
+from ancestry_mmm.core.funnel import FunnelLink, validate_funnel_links
+from ancestry_mmm.data import validate_modeling_frame, detect_column_types, pipeline_to_json, pipeline_from_json
 import pandas as pd
 
 st.set_page_config(page_title="Structure - Ancestry FH MMM", page_icon="🧬", layout="wide")
@@ -66,35 +70,15 @@ else:
     unpooled_markets = []
 
 st.markdown("---")
-st.markdown("### FH segments")
-st.caption("Map each segment to its weekly GSA outcome column.")
-
-n_segments = st.number_input("Number of segments *", min_value=1, max_value=6, value=3)
-segment_outcomes = {}
-default_keys = DEFAULT_SEGMENTS
-for i in range(n_segments):
-    c1, c2 = st.columns(2)
-    key = c1.text_input(f"Segment {i + 1} name", value=default_keys[i] if i < len(default_keys) else f"segment_{i+1}", key=f"seg_key_{i}")
-    guess_idx = next((j for j, c in enumerate(numeric_cols) if key.lower().replace("_", "") in c.lower().replace("_", "")), 0)
-    col = c2.selectbox(
-        f"Outcome column for '{key}'", numeric_cols, index=guess_idx if numeric_cols else 0, key=f"seg_col_{i}",
-        format_func=readable_label,
-    )
-    if key:
-        segment_outcomes[key] = col
-
-st.markdown("---")
 st.markdown("### Media channels")
-spend_hint_cols = [c for c in numeric_cols if c not in segment_outcomes.values()]
-# Default to every remaining numeric column that doesn't look like a promo flag,
-# price, or index/confidence-style control - channel names rarely contain the
-# literal words "spend"/"cost"/"budget" (e.g. "TV_Brand", "Search_NonBrand"),
-# so a strict keyword match against potential_media would under-select badly.
-# "kit" excludes DNA kit purchase outcome columns (core.outcomes) - they're
-# numeric like a spend column but are an outcome, not media spend.
+# Default to every numeric column that doesn't look like a promo flag, price,
+# index/confidence-style control, or a DNA kit purchase outcome - channel
+# names rarely contain the literal words "spend"/"cost"/"budget" (e.g.
+# "TV_Brand", "Search_NonBrand"), so a strict keyword match against
+# potential_media would under-select badly.
 _non_channel_hints = ["promo", "price", "confidence", "discount", "offer", "index", "kit"]
-default_channels = [c for c in spend_hint_cols if not any(h in c.lower() for h in _non_channel_hints)]
-channels = st.multiselect("Channel spend columns *", spend_hint_cols, default=default_channels or spend_hint_cols, format_func=readable_label)
+default_channels = [c for c in numeric_cols if not any(h in c.lower() for h in _non_channel_hints)]
+channels = st.multiselect("Channel spend columns *", numeric_cols, default=default_channels or numeric_cols, format_func=readable_label)
 dna_channels = st.multiselect(
     "DNA-targeted media", channels, default=[c for c in channels if "dna" in c.lower()],
     format_func=readable_label,
@@ -102,151 +86,111 @@ dna_channels = st.multiselect(
 )
 
 st.markdown("---")
-st.markdown("### Promotional flags (per segment, optional)")
-promo_cols = {}
-for seg in segment_outcomes:
-    col = st.selectbox(
-        f"Promo column for '{seg}' (or None)",
-        ["(none)"] + numeric_cols, key=f"promo_{seg}",
-        index=(["(none)"] + numeric_cols).index(next((c for c in numeric_cols if "promo" in c.lower() and seg.lower()[:3] in c.lower()), "(none)"))
-        if any("promo" in c.lower() for c in numeric_cols) else 0,
-        format_func=lambda c: c if c == "(none)" else readable_label(c),
-    )
-    if col != "(none)":
-        promo_cols[seg] = col
-
-st.markdown("---")
-st.markdown("### Controls")
-remaining_numeric = [c for c in numeric_cols if c not in segment_outcomes.values() and c not in channels and c not in promo_cols.values()]
-control_cols = st.multiselect("Global controls (apply to all segments)", remaining_numeric, format_func=readable_label)
-
-st.markdown("**Segment-specific controls** (e.g. DNA kit price -> DNA cross-sell only)")
-segment_control_cols = {}
-for seg in segment_outcomes:
-    cols = st.multiselect(
-        f"Controls specific to '{seg}'", [c for c in remaining_numeric if c not in control_cols],
-        key=f"segctrl_{seg}", format_func=readable_label,
-    )
-    if cols:
-        segment_control_cols[seg] = cols
-
-st.markdown("---")
-st.markdown("### Segment LTV")
-st.caption(FIELD_HELP["ltv"])
-sample_ltv = get_state("sample_ltv") or {}
-segment_ltv = {}
-for seg in segment_outcomes:
-    default_val = sample_ltv.get(seg, 100.0)
-    segment_ltv[seg] = st.number_input(f"LTV for '{seg}'", min_value=0.0, value=float(default_val), key=f"ltv_{seg}")
-
-st.markdown("---")
-st.markdown("### DNA outcomes (optional)")
-st.info(
-    "DNA kit purchases are a separate business outcome (product='DNA', metric='Kit sale') from any "
-    "Family History outcome above - a kit sale is never the same KPI as an FH sign-up or an FH GSA, "
-    "even for the DNA cross-sell segment. Map them here so they're captured and, once mapped, "
-    "**automatically included in the joint model fit** on Model Configuration/Training: DNA-targeted "
-    "media gets full direct response on these outcomes (not the shrunk halo pathway other outcomes "
-    "get) - see docs/dna_fh_causal_structure.md. Skip this if you don't have the columns yet."
-)
-dna_mode = st.radio(
-    "Data available for DNA kit purchases",
-    ["None yet", "Separate New Customer / Existing FH Customer columns", "Single combined column"],
-    horizontal=True,
-)
-dna_new_col = dna_existing_col = dna_combined_col = None
-dna_new_weight = dna_existing_weight = dna_combined_weight = None
-if dna_mode == "Separate New Customer / Existing FH Customer columns":
-    c1, c2 = st.columns(2)
-    dna_new_col = c1.selectbox("New Customer DNA kit column", ["(none)"] + numeric_cols, format_func=lambda c: c if c == "(none)" else readable_label(c))
-    dna_new_col = None if dna_new_col == "(none)" else dna_new_col
-    dna_new_weight = c1.number_input("Value per kit (New Customer)", min_value=0.0, value=90.0)
-    dna_existing_col = c2.selectbox("Existing FH Customer DNA kit column", ["(none)"] + numeric_cols, format_func=lambda c: c if c == "(none)" else readable_label(c))
-    dna_existing_col = None if dna_existing_col == "(none)" else dna_existing_col
-    dna_existing_weight = c2.number_input("Value per kit (Existing FH Customer)", min_value=0.0, value=65.0)
-elif dna_mode == "Single combined column":
-    dna_combined_col = st.selectbox("Combined DNA kit column", ["(none)"] + numeric_cols, format_func=lambda c: c if c == "(none)" else readable_label(c))
-    dna_combined_col = None if dna_combined_col == "(none)" else dna_combined_col
-    dna_combined_weight = st.number_input("Value per kit (combined)", min_value=0.0, value=80.0)
-    st.caption(
-        "A single combined outcome is an explicit fallback for data that can't support the "
-        "New/Existing split - it will be labelled as such wherever outcomes are shown."
-    )
-
-dna_segment_names = []
-if dna_new_col:
-    dna_segment_names.append(DNA_SEGMENT_NEW)
-if dna_existing_col:
-    dna_segment_names.append(DNA_SEGMENT_EXISTING_FH)
-if dna_combined_col:
-    dna_segment_names.append(DNA_SEGMENT_COMBINED)
-
-dna_promo_cols = {}
-dna_segment_control_cols = {}
-if dna_segment_names:
-    st.markdown("#### DNA promotional & price sensitivity (optional)")
-    st.caption(
-        "Mapped the same way as FH segments above: a promo flag/intensity column, and any price or "
-        "competitive controls specific to this DNA segment (e.g. DNA kit price)."
-    )
-    for seg in dna_segment_names:
-        c1, c2 = st.columns(2)
-        promo_col = c1.selectbox(
-            f"Promo column for '{seg}' (or None)", ["(none)"] + numeric_cols, key=f"dna_promo_{seg}",
-            format_func=lambda c: c if c == "(none)" else readable_label(c),
-        )
-        if promo_col != "(none)":
-            dna_promo_cols[seg] = promo_col
-        ctrl_cols = c2.multiselect(f"Price/competitive controls for '{seg}'", numeric_cols, key=f"dna_ctrl_{seg}", format_func=readable_label)
-        if ctrl_cols:
-            dna_segment_control_cols[seg] = ctrl_cols
-
-    st.markdown("#### DNA promotion calendar (optional, structured)")
-    st.caption(
-        "Alternative to a hand-built promo column above: define named promotion events (dates, "
-        "discount depth, sale price) and a weekly intensity series is derived automatically - "
-        "promo stays a term separate from media response either way, so a promotion is never "
-        "silently absorbed into a channel's media coefficient. Takes precedence over the promo "
-        "column above for the same segment when both are set."
-    )
-    dna_promo_events_df = st.data_editor(
-        pd.DataFrame(columns=["event_name", "segment", "start_date", "end_date", "discount_depth", "sale_price", "intensity"]),
-        num_rows="dynamic",
-        column_config={
-            "segment": st.column_config.SelectboxColumn("segment", options=dna_segment_names, required=True),
-            "start_date": st.column_config.TextColumn("start_date", help="YYYY-MM-DD"),
-            "end_date": st.column_config.TextColumn("end_date", help="YYYY-MM-DD"),
-            "discount_depth": st.column_config.NumberColumn("discount_depth", help="0-1 fraction, e.g. 0.2 for 20% off", min_value=0.0, max_value=1.0),
-            "intensity": st.column_config.NumberColumn("intensity", help="Weekly series value while active", default=1.0),
-        },
-        key="dna_promotion_events_editor",
-    )
-else:
-    dna_promo_events_df = pd.DataFrame()
-
-st.markdown("---")
 st.markdown("### Outcome catalogue")
 st.caption(
-    "The general editor for what this project actually fits - one row per measurable outcome, not "
-    "one weekly GSA column per segment. A sign-up KPI and a GSA KPI on the same segment are two "
-    "separate rows here, each with its own `outcome_id`, `metric` and `unit`, so they are fit as "
-    "fully independent outcomes - never combined anywhere downstream just because they share a "
-    "`segment` (docs/outcomes.md). Seeded from the FH segment and DNA mappings above; add, edit, or "
-    "remove rows freely - this table, not the mappings above, is what gets saved. `included_in_fit` "
-    "replaces the old 'exclude from next fit' control: unchecking a row here has the identical "
-    "effect (still captured and validated, just held back from the next fit) but is a genuinely "
-    "persisted property of the outcome, not session-only state."
+    "The **primary workflow** for what this project actually fits (PR E.2) - one row per measurable "
+    "outcome, not one weekly GSA column per segment. A sign-up KPI and a GSA KPI on the same segment "
+    "are two separate rows here, each with its own `outcome_id`, `metric` and `unit`, so they are fit "
+    "as fully independent outcomes - never combined anywhere downstream just because they share a "
+    "`segment` (docs/outcomes.md). Add, edit, or remove rows directly below; the quick-start wizards "
+    "further down are optional migration/seeding helpers only, not a second required configuration "
+    "surface - a sign-up-only or GSA-only project can add its rows here without ever opening them. "
+    "`included_in_fit` is the persisted 'exclude from next fit' control: unchecking a row here still "
+    "captures and validates it, just holds it back from the next fit."
 )
-_default_outcome_rows = fh_outcomes_from_spec(segment_outcomes, segment_ltv) + dna_outcomes_from_columns(
-    new_customer_column=dna_new_col, existing_fh_column=dna_existing_col, combined_column=dna_combined_col,
-    value_weight_new=dna_new_weight, value_weight_existing=dna_existing_weight, value_weight_combined=dna_combined_weight,
-)
-_default_outcome_df = pd.DataFrame([o.to_dict() for o in _default_outcome_rows]) if _default_outcome_rows else pd.DataFrame(
+
+if "structure_outcome_rows" not in st.session_state:
+    st.session_state["structure_outcome_rows"] = get_state("outcome_definitions") or []
+
+
+def _merge_outcome_rows(new_rows: list) -> None:
+    """Add/update rows in the session-state catalogue by outcome_id, without
+    touching any other row an analyst may already have added or edited -
+    the seeding wizards below call this rather than replacing the whole
+    catalogue."""
+    by_id = {r["outcome_id"]: r for r in st.session_state["structure_outcome_rows"]}
+    for o in new_rows:
+        by_id[o.outcome_id] = o.to_dict()
+    st.session_state["structure_outcome_rows"] = list(by_id.values())
+    st.session_state.pop("outcome_catalogue_editor", None)
+
+
+with st.expander("Quick-start wizard: Create standard FH GSA outcomes (legacy per-segment mapping)"):
+    st.caption(
+        "Migration/seeding helper only, not required - maps one weekly GSA column per FH segment, "
+        "the shape every project used before the general catalogue above existed. A sign-up-only or "
+        "GSA-only project can skip this entirely and add rows directly above. Re-running this only "
+        "adds/updates the standard GSA rows it creates; it never touches anything else in the "
+        "catalogue."
+    )
+    n_segments = st.number_input("Number of segments", min_value=1, max_value=6, value=3, key="wiz_n_segments")
+    wizard_segment_outcomes = {}
+    default_keys = DEFAULT_SEGMENTS
+    sample_ltv = get_state("sample_ltv") or {}
+    wizard_ltv = {}
+    for i in range(n_segments):
+        c1, c2, c3 = st.columns(3)
+        key = c1.text_input(f"Segment {i + 1} name", value=default_keys[i] if i < len(default_keys) else f"segment_{i+1}", key=f"wiz_seg_key_{i}")
+        guess_idx = next((j for j, c in enumerate(numeric_cols) if key.lower().replace("_", "") in c.lower().replace("_", "")), 0)
+        col = c2.selectbox(
+            f"Outcome column for '{key}'", numeric_cols, index=guess_idx if numeric_cols else 0, key=f"wiz_seg_col_{i}",
+            format_func=readable_label,
+        )
+        ltv_val = c3.number_input(f"LTV for '{key}'", min_value=0.0, value=float(sample_ltv.get(key, 100.0)), key=f"wiz_ltv_{i}")
+        if key:
+            wizard_segment_outcomes[key] = col
+            wizard_ltv[key] = ltv_val
+    if st.button("Create standard FH GSA outcomes"):
+        _merge_outcome_rows(fh_outcomes_from_spec(wizard_segment_outcomes, wizard_ltv))
+        st.rerun()
+
+with st.expander("Quick-start wizard: Add DNA kit outcomes"):
+    st.caption(
+        "DNA kit purchases are a separate business outcome (product='DNA', metric='Kit sale') from any "
+        "Family History outcome - a kit sale is never the same KPI as an FH sign-up or an FH GSA, even "
+        "for the DNA cross-sell segment. Once added, they're **automatically included in the joint "
+        "model fit** on Model Configuration/Training: DNA-targeted media gets full direct response on "
+        "these outcomes (not the shrunk halo pathway other outcomes get) - see "
+        "docs/dna_fh_causal_structure.md."
+    )
+    dna_mode = st.radio(
+        "Data available for DNA kit purchases",
+        ["None yet", "Separate New Customer / Existing FH Customer columns", "Single combined column"],
+        horizontal=True,
+    )
+    dna_new_col = dna_existing_col = dna_combined_col = None
+    dna_new_weight = dna_existing_weight = dna_combined_weight = None
+    if dna_mode == "Separate New Customer / Existing FH Customer columns":
+        c1, c2 = st.columns(2)
+        dna_new_col = c1.selectbox("New Customer DNA kit column", ["(none)"] + numeric_cols, format_func=lambda c: c if c == "(none)" else readable_label(c))
+        dna_new_col = None if dna_new_col == "(none)" else dna_new_col
+        dna_new_weight = c1.number_input("Value per kit (New Customer)", min_value=0.0, value=90.0)
+        dna_existing_col = c2.selectbox("Existing FH Customer DNA kit column", ["(none)"] + numeric_cols, format_func=lambda c: c if c == "(none)" else readable_label(c))
+        dna_existing_col = None if dna_existing_col == "(none)" else dna_existing_col
+        dna_existing_weight = c2.number_input("Value per kit (Existing FH Customer)", min_value=0.0, value=65.0)
+    elif dna_mode == "Single combined column":
+        dna_combined_col = st.selectbox("Combined DNA kit column", ["(none)"] + numeric_cols, format_func=lambda c: c if c == "(none)" else readable_label(c))
+        dna_combined_col = None if dna_combined_col == "(none)" else dna_combined_col
+        dna_combined_weight = st.number_input("Value per kit (combined)", min_value=0.0, value=80.0)
+        st.caption(
+            "A single combined outcome is an explicit fallback for data that can't support the "
+            "New/Existing split - it will be labelled as such wherever outcomes are shown."
+        )
+    if st.button("Add DNA kit outcomes to catalogue"):
+        _merge_outcome_rows(dna_outcomes_from_columns(
+            new_customer_column=dna_new_col, existing_fh_column=dna_existing_col, combined_column=dna_combined_col,
+            value_weight_new=dna_new_weight, value_weight_existing=dna_existing_weight, value_weight_combined=dna_combined_weight,
+        ))
+        st.rerun()
+
+_default_outcome_df = pd.DataFrame(st.session_state["structure_outcome_rows"]) if st.session_state["structure_outcome_rows"] else pd.DataFrame(
     columns=["outcome_id", "product", "segment", "metric", "source_column", "unit", "value_weight",
              "value_currency", "role", "included_in_fit", "exclusion_reason"]
 )
-if st.button("Reset outcome catalogue to the mappings above", help="Discards any manual edits below and reseeds from the FH segment / DNA mappings above."):
+if st.button("Clear outcome catalogue", help="Removes every row below - the wizards above can reseed it."):
+    st.session_state["structure_outcome_rows"] = []
     st.session_state.pop("outcome_catalogue_editor", None)
+    st.rerun()
 outcome_catalogue_df = st.data_editor(
     _default_outcome_df,
     num_rows="dynamic",
@@ -257,10 +201,11 @@ outcome_catalogue_df = st.data_editor(
         "metric": st.column_config.TextColumn(
             "metric", required=True,
             help=f"What's being counted - e.g. '{METRIC_GSA}', '{METRIC_SIGNUP}', '{METRIC_KIT_SALE}'. "
-            "A sign-up and a GSA must never share a metric value.",
+            "A sign-up and a GSA must never share a metric value. Display label only - matching logic "
+            "uses the stable metric_key derived from this automatically.",
         ),
         "source_column": st.column_config.SelectboxColumn("source_column", options=numeric_cols, required=True),
-        "unit": st.column_config.TextColumn("unit", help="Counting unit - defaults from product if left blank."),
+        "unit": st.column_config.TextColumn("unit", help="Counting unit - defaults from the metric registry if left blank; a custom metric needs one set explicitly."),
         "value_weight": st.column_config.NumberColumn("value_weight", min_value=0.0, help="Per-unit value (LTV for FH, an analogous per-kit value for DNA)."),
         "value_currency": st.column_config.TextColumn("value_currency", help="e.g. USD - the currency value_weight is denominated in."),
         "role": st.column_config.SelectboxColumn("role", options=list(OUTCOME_ROLES), required=True),
@@ -270,6 +215,13 @@ outcome_catalogue_df = st.data_editor(
     key="outcome_catalogue_editor",
     width="stretch",
 )
+
+if get_state("model_meta") is not None:
+    _preview_outcomes = [
+        OutcomeDefinition.from_dict(r) for r in outcome_catalogue_df.to_dict("records")
+        if r.get("outcome_id") and r.get("product") and r.get("segment") and r.get("metric") and r.get("source_column")
+    ]
+    render_drift_status(_preview_outcomes, get_state("model_meta"), available_columns=set(df.columns))
 
 _fh_candidate_ids = [
     r["outcome_id"] for r in outcome_catalogue_df.to_dict("records")
@@ -294,6 +246,178 @@ fh_dna_cross_sell_outcome_id = st.selectbox(
 fh_dna_cross_sell_outcome_id = None if fh_dna_cross_sell_outcome_id == "(none)" else fh_dna_cross_sell_outcome_id
 
 st.markdown("---")
+st.markdown("### Funnel links (optional)")
+st.caption(
+    "Declare which sign-up and GSA outcomes (or any other upstream/downstream pair) form a funnel, "
+    "e.g. a sign-up that later converts to a GSA. Sign-ups and GSAs are still fitted as independent "
+    "outcome equations - this is diagnostics/warnings only (Diagnostics page), not a constrained "
+    "funnel model."
+)
+if "funnel_links" not in st.session_state:
+    st.session_state["funnel_links"] = get_state("funnel_links") or []
+_all_outcome_ids = [r["outcome_id"] for r in outcome_catalogue_df.to_dict("records") if r.get("outcome_id")]
+if len(_all_outcome_ids) < 2:
+    st.info("Add at least two outcomes to the catalogue above to define a funnel link.")
+else:
+    c1, c2, c3 = st.columns([2, 2, 1])
+    new_upstream = c1.selectbox("Upstream outcome (e.g. sign-up)", _all_outcome_ids, key="new_funnel_upstream")
+    new_downstream = c2.selectbox("Downstream outcome (e.g. GSA)", _all_outcome_ids, key="new_funnel_downstream")
+    if c3.button("Add funnel link"):
+        if new_upstream == new_downstream:
+            st.error("Upstream and downstream must be different outcomes.")
+        else:
+            pair = (new_upstream, new_downstream)
+            existing_pairs = {(fl["upstream_outcome_id"], fl["downstream_outcome_id"]) for fl in st.session_state["funnel_links"]}
+            if pair not in existing_pairs:
+                st.session_state["funnel_links"].append({"upstream_outcome_id": new_upstream, "downstream_outcome_id": new_downstream})
+            st.rerun()
+    if st.session_state["funnel_links"]:
+        for i, fl in enumerate(list(st.session_state["funnel_links"])):
+            fc1, fc2 = st.columns([5, 1])
+            fc1.write(f"{fl['upstream_outcome_id']} -> {fl['downstream_outcome_id']}")
+            if fc2.button("Remove", key=f"remove_funnel_{i}"):
+                st.session_state["funnel_links"].pop(i)
+                st.rerun()
+funnel_links = [FunnelLink.from_dict(fl) for fl in st.session_state["funnel_links"]]
+
+# `segment_outcomes`/`segment_ltv` (ModelSpec migration fields) and per-segment
+# promo/control mappings are now derived from the catalogue's own segments,
+# not from a required separate mapping section - the catalogue is the single
+# source of truth (PR E.2). A future PR moves promo/control mappings to
+# outcome_id keys directly (docs/decision_log.md); segment-keyed is retained
+# here as the current mapping granularity.
+_catalogue_rows = outcome_catalogue_df.to_dict("records")
+segment_outcomes = {
+    r["segment"]: r["source_column"] for r in _catalogue_rows
+    if r.get("segment") and r.get("source_column") and r.get("product") == FAMILY_HISTORY
+}
+segment_ltv = {}
+for r in _catalogue_rows:
+    seg = r.get("segment")
+    weight = r.get("value_weight")
+    if seg and weight is not None and seg not in segment_ltv:
+        segment_ltv[seg] = float(weight)
+_catalogue_segments = sorted({r.get("segment") for r in _catalogue_rows if r.get("segment")})
+
+st.markdown("---")
+st.markdown("### Promotional flags (per segment, optional)")
+promo_cols = {}
+for seg in _catalogue_segments:
+    col = st.selectbox(
+        f"Promo column for '{seg}' (or None)",
+        ["(none)"] + numeric_cols, key=f"promo_{seg}",
+        index=(["(none)"] + numeric_cols).index(next((c for c in numeric_cols if "promo" in c.lower() and seg.lower()[:3] in c.lower()), "(none)"))
+        if any("promo" in c.lower() for c in numeric_cols) else 0,
+        format_func=lambda c: c if c == "(none)" else readable_label(c),
+    )
+    if col != "(none)":
+        promo_cols[seg] = col
+
+st.markdown("---")
+st.markdown("### Controls")
+remaining_numeric = [c for c in numeric_cols if c not in channels and c not in promo_cols.values()]
+control_cols = st.multiselect("Global controls (apply to every outcome)", remaining_numeric, format_func=readable_label)
+
+st.markdown("**Product-level controls** (apply to every outcome of one product, e.g. every DNA-product outcome)")
+product_control_cols = {}
+for product in KNOWN_PRODUCTS:
+    cols = st.multiselect(
+        f"Controls specific to product '{product}'", [c for c in remaining_numeric if c not in control_cols],
+        key=f"prodctrl_{product}", format_func=readable_label,
+    )
+    if cols:
+        product_control_cols[product] = cols
+
+st.markdown("**Segment-specific controls** (legacy - e.g. DNA kit price -> DNA cross-sell only)")
+segment_control_cols = {}
+for seg in _catalogue_segments:
+    cols = st.multiselect(
+        f"Controls specific to '{seg}'", [c for c in remaining_numeric if c not in control_cols],
+        key=f"segctrl_{seg}", format_func=readable_label,
+    )
+    if cols:
+        segment_control_cols[seg] = cols
+
+_outcome_ids_by_segment: dict = {}
+for r in _catalogue_rows:
+    oid, seg = r.get("outcome_id"), r.get("segment")
+    if oid and seg:
+        _outcome_ids_by_segment.setdefault(seg, []).append(oid)
+_multi_outcome_segments = {seg: oids for seg, oids in _outcome_ids_by_segment.items() if len(oids) > 1}
+
+outcome_promo_cols = {}
+outcome_control_cols = {}
+if _multi_outcome_segments:
+    st.markdown("---")
+    st.markdown("### Outcome-level promo & control overrides (optional)")
+    st.caption(
+        "Segment-level mappings above apply to every outcome sharing that segment by default "
+        "(legacy behaviour). Override per outcome_id here when two KPIs on the same segment (e.g. a "
+        "sign-up and a GSA) need genuinely different promo timing or controls - an explicit "
+        "outcome_id-keyed mapping always wins over the segment-level one above for that outcome_id. "
+        "'Apply to every outcome in this segment' is an explicit bulk action, not implicit inheritance."
+    )
+    for seg, oids in _multi_outcome_segments.items():
+        with st.expander(f"Outcome overrides for segment '{seg}' ({len(oids)} outcomes)"):
+            if st.button(f"Apply segment '{seg}' mapping to every outcome in it", key=f"bulk_apply_{seg}"):
+                seg_promo = promo_cols.get(seg)
+                seg_controls = segment_control_cols.get(seg)
+                for oid in oids:
+                    if seg_promo:
+                        st.session_state[f"outcome_promo_{oid}"] = seg_promo
+                    if seg_controls:
+                        st.session_state[f"outcome_ctrl_{oid}"] = seg_controls
+                st.rerun()
+            for oid in oids:
+                c1, c2 = st.columns(2)
+                promo_choice = c1.selectbox(
+                    f"Promo column for '{oid}' (or None)", ["(none)"] + numeric_cols,
+                    key=f"outcome_promo_{oid}", format_func=lambda c: c if c == "(none)" else readable_label(c),
+                )
+                if promo_choice != "(none)":
+                    outcome_promo_cols[oid] = promo_choice
+                ctrl_choice = c2.multiselect(
+                    f"Extra controls for '{oid}'", numeric_cols, key=f"outcome_ctrl_{oid}", format_func=readable_label,
+                )
+                if ctrl_choice:
+                    outcome_control_cols[oid] = ctrl_choice
+
+dna_segment_names = [s for s in _catalogue_segments if s in (DNA_SEGMENT_NEW, DNA_SEGMENT_EXISTING_FH, DNA_SEGMENT_COMBINED)]
+dna_promo_cols = {}
+dna_segment_control_cols = {}
+if dna_segment_names:
+    st.markdown("---")
+    st.markdown("### DNA promotion calendar (optional, structured)")
+    st.caption(
+        "Alternative to a hand-built promo column above: define named promotion events (dates, "
+        "discount depth, sale price) and a weekly intensity series is derived automatically - "
+        "promo stays a term separate from media response either way, so a promotion is never "
+        "silently absorbed into a channel's media coefficient. Takes precedence over the promo "
+        "column above for the same segment when both are set."
+    )
+    st.caption(
+        "`product`/`market` are optional, more precise targeting than `segment` alone - useful when "
+        "a segment covers more than one product or the event is market-specific. `event_id` "
+        "(stable identity across re-saves) and `transformation_version` are managed automatically."
+    )
+    dna_promo_events_df = st.data_editor(
+        pd.DataFrame(columns=["event_name", "segment", "product", "market", "start_date", "end_date", "discount_depth", "sale_price", "intensity"]),
+        num_rows="dynamic",
+        column_config={
+            "segment": st.column_config.SelectboxColumn("segment", options=dna_segment_names, required=True),
+            "product": st.column_config.SelectboxColumn("product", options=[None] + list(KNOWN_PRODUCTS), help="Optional - narrows this event to one product."),
+            "market": st.column_config.TextColumn("market", help="Optional - narrows this event to one market."),
+            "start_date": st.column_config.TextColumn("start_date", help="YYYY-MM-DD"),
+            "end_date": st.column_config.TextColumn("end_date", help="YYYY-MM-DD"),
+            "discount_depth": st.column_config.NumberColumn("discount_depth", help="0-1 fraction, e.g. 0.2 for 20% off", min_value=0.0, max_value=1.0),
+            "intensity": st.column_config.NumberColumn("intensity", help="Weekly series value while active", default=1.0),
+        },
+        key="dna_promotion_events_editor",
+    )
+else:
+    dna_promo_events_df = pd.DataFrame()
+
+st.markdown("---")
 if st.button("Save structure and validate", type="primary"):
     dna_promotion_events = []
     for row in dna_promo_events_df.to_dict("records"):
@@ -304,6 +428,7 @@ if st.button("Save structure and validate", type="primary"):
             start_date=row.get("start_date") or "", end_date=row.get("end_date") or "",
             discount_depth=row.get("discount_depth"), sale_price=row.get("sale_price"),
             intensity=row.get("intensity") if row.get("intensity") is not None else 1.0,
+            product=row.get("product") or None, market=row.get("market") or None,
         ))
 
     merged_promo_cols = {**promo_cols, **dna_promo_cols}
@@ -315,6 +440,18 @@ if st.button("Save structure and validate", type="primary"):
         updated_df, derived_promo_cols = apply_promotion_events_to_frame(df, date_col, dna_promotion_events)
         merged_promo_cols.update(derived_promo_cols)
 
+    # Persist promotion events as replayable TransformSteps (PR E.2 #11), not
+    # just as a materialised column on transformed_data - re-importing this
+    # project (or replaying the pipeline against refreshed raw data) then
+    # reproduces the same derived promo columns from the versioned event
+    # list rather than trusting whatever happens to be sitting in a parquet.
+    # Every save fully replaces the prior promotion_event steps with the
+    # current event list, so re-saving the same events is idempotent.
+    existing_steps = pipeline_from_json(get_state("pipeline_steps") or [])
+    non_promo_steps = [s for s in existing_steps if s.op != PROMOTION_EVENT_OP]
+    new_promo_steps = promotion_events_to_transform_steps(dna_promotion_events, date_col)
+    updated_pipeline_steps = non_promo_steps + new_promo_steps
+
     spec = ModelSpec(
         date_col=date_col,
         market_col=market_col,
@@ -324,8 +461,11 @@ if st.button("Save structure and validate", type="primary"):
         channels=channels,
         dna_channels=dna_channels,
         promo_cols=merged_promo_cols,
+        outcome_promo_cols=outcome_promo_cols,
         control_cols=control_cols,
+        product_control_cols=product_control_cols,
         segment_control_cols=merged_segment_control_cols,
+        outcome_control_cols=outcome_control_cols,
         segment_ltv=segment_ltv,
         fh_dna_cross_sell_outcome_id=fh_dna_cross_sell_outcome_id,
     )
@@ -351,6 +491,7 @@ if st.button("Save structure and validate", type="primary"):
             "required so the halo pathway has an explicit target (automatic name-based inference is "
             "no longer used for a live fit)."
         )
+    errors += validate_funnel_links(funnel_links, [o.outcome_id for o in outcome_definitions])
 
     if errors:
         for e in errors:
@@ -361,6 +502,8 @@ if st.button("Save structure and validate", type="primary"):
         set_state("model_spec", spec.to_dict())
         set_state("outcome_definitions", [o.to_dict() for o in outcome_definitions])
         set_state("dna_promotion_events", [e.to_dict() for e in dna_promotion_events])
+        set_state("pipeline_steps", pipeline_to_json(updated_pipeline_steps))
+        set_state("funnel_links", [fl.to_dict() for fl in funnel_links])
         clear_model_state()
         issues = validate_modeling_frame(
             df if market_col in df.columns else df.assign(**{market_col: "default"}),

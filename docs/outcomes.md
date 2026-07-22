@@ -14,6 +14,18 @@ fitted response curves, rather than conflating them because they happen to share
 `segment` remains a *descriptive* grouping field (which customer segment this outcome belongs to), not
 a unique key.
 
+**PR E.2 closes the gap PR E.1 left open: display-string metric matching, role-only eligibility, and a
+still-mandatory legacy Structure workflow.** `OutcomeDefinition.metric_key` (derived from a small
+canonical `METRIC_REGISTRY`, never guessed from `product` alone) replaces exact-string matching on
+`metric` for every built-in selector; `include_in_default_reporting`/`include_in_official_total`/
+`include_in_value`/`include_in_optimisation` replace `role="primary"`-only gating with four
+independently-configurable flags; the outcome catalogue editor is now the Structure page's only
+workflow, not a second source of truth layered on a still-mandatory legacy FH-segment mapper. See
+"Canonical metric keys and unit defaults", "Four independent eligibility flags" and "The catalogue is
+the only Structure workflow" below, and `docs/decision_log.md`'s PR E.2 entry for the full list of
+eleven changes (promo/control-by-outcome-id, funnel-coherence diagnostics, CPA scope metadata,
+optimiser target hardening, first-class drift status, replayable promotion events).
+
 **PR E.1 closes the gap PR E left open: aggregation code still keyed off "not a DNA-kit outcome"
 rather than the catalogue's actual `product`/`metric` labels.** The core model could already fit a
 sign-up and a GSA as independent outcome_ids, but `evaluate_scenario`/`optimize_scenario`/curve
@@ -324,6 +336,159 @@ The report's "Outcomes" section (`core.report._outcomes_section`) lists the full
 `resolve_outcome_definitions` and states plainly how many outcomes are Family History (modelled) vs.
 DNA (captured, not yet modelled) - available at any point in the workflow, like every other report
 section.
+
+## PR E.2: semantic hardening
+
+### Canonical metric keys and unit defaults
+
+`OutcomeDefinition.__post_init__` used to default every Family History outcome's `unit` to `"GSA"`
+regardless of metric - wrong for a sign-up outcome. `core.outcomes.METRIC_REGISTRY` maps a stable
+`metric_key` (`METRIC_KEY_FH_GSA`/`_FH_SIGNUP`/`_DNA_KIT_SALE`/`_CUSTOM`) to a `MetricDefinition
+(metric_key, display_name, default_unit, product)`; `metric_key` is derived from `metric` in
+`__post_init__` *before* the unit default is resolved, and only a recognised metric_key gets a default
+unit at all - `METRIC_KEY_CUSTOM` gets none, so a custom metric must set `unit` explicitly or
+`validate_outcome_definitions` flags it.
+
+`core.outcomes.normalize_metric_key(metric)` migrates a small, explicit table of known display
+variants (`"Signup"`, `"Signups"`, `"Sign Up"`, `"Kit Sale"`, `"kit sales"`, ...) to their canonical
+key, case/whitespace-insensitively - anything not on that table falls back to `METRIC_KEY_CUSTOM`,
+never a fuzzy guess into a business KPI. Every built-in selector (`select_outcome_ids`,
+`fh_gsa_outcome_ids`, `fh_signup_outcome_ids`, `dna_kit_sale_outcome_ids`,
+`official_total_outcome_ids`) filters on `metric_key`, not the free-text `metric` display string, so a
+user typing a display variant no longer silently disappears from named totals and objectives.
+`FHModelMeta.outcome_id_to_metric_key` carries this at fit time, populated identically by both
+`build_fh_hierarchical_model` and `build_fh_market_specific_model`.
+
+### Four independent eligibility flags
+
+PR E.1 gated every default total on `role == "primary"` only - a Family History sign-up marked
+`funnel_intermediate` was fitted but invisible from the default `fh_signups` total and its own CPA,
+because `role` was overloaded to control every downstream behaviour at once. `OutcomeDefinition` now
+has four independent, optional flags - `include_in_default_reporting`, `include_in_official_total`,
+`include_in_value`, `include_in_optimisation` (each `Optional[bool]`, `None` meaning "use the role
+default") - resolved by `core.outcomes.outcome_eligibility(outcome)` against
+`_ROLE_ELIGIBILITY_DEFAULTS`:
+
+```text
+primary:             reporting=True  official_total=True   value=True   optimisation=True
+secondary:            reporting=True  official_total=False  value=True   optimisation=False
+funnel_intermediate:  reporting=True  official_total=False  value=False  optimisation=False
+diagnostic:            reporting=False official_total=False  value=False  optimisation=False
+```
+
+A funnel-intermediate sign-up therefore still appears in its own `fh_signup_outcome_ids`/sign-up CPA
+(`include_in_default_reporting=True`) but is excluded from `official_total_outcome_ids` - the stricter
+selector official GSA/sign-up totals must use. `eligible_outcome_ids(model_meta, flag)` is the general
+selector every one of the four flags goes through; it reads `FHModelMeta.outcome_id_to_eligibility`
+when present (fit-time catalogue), falling back to re-deriving it live from `outcome_id_to_role` for
+legacy/hand-built fixtures with no eligibility metadata at all.
+
+### The catalogue is the only Structure workflow
+
+The Structure page used to require a mandatory "FH segment -> weekly GSA column" mapper *and*
+maintain the general outcome catalogue editor alongside it - two sources of truth for the same fitting
+input. The mandatory mapper was removed; the catalogue editor is now seeded from two optional,
+clearly-labelled "Quick-start wizard" expanders (`Create standard FH GSA outcomes`, `Add DNA kit
+outcomes`) - after seeding (or starting from a blank catalogue), every edit happens in the catalogue
+table itself. `promo_cols`, `segment_control_cols` and `segment_ltv` (used by `ModelSpec` migration
+fields and the DNA promotion calendar) are now *derived* from the live catalogue's segments, not
+required separate inputs. `ModelSpec.validate()` no longer requires at least one `segment_outcomes`
+mapping - `segment_outcomes` is migration-only now, populated only for bundles that predate the
+catalogue. `validate_outcome_definitions` gained the actual enforcement point instead: at least one
+outcome must be configured and `included_in_fit`, regardless of whether it came from the wizard or a
+hand-added row.
+
+### Promo and control mappings by outcome_id
+
+Promotional and control configuration used to be keyed by legacy `segment` only - a sign-up and a GSA
+sharing one segment automatically inherited the same segment-level controls and promotion series, even
+where the business definition or timing genuinely differs between them. `ModelSpec` gained three
+additive tiers: `outcome_promo_cols`/`outcome_control_cols` (keyed by `outcome_id`, take precedence
+over the legacy segment-keyed `promo_cols`/`segment_control_cols` when set for a given outcome) and
+`product_control_cols` (keyed by product - `"Family History"`/`"DNA"` - a new, coarser tier below
+global controls). `data.preprocessor.prepare_fh_modeling_frame` resolves each outcome's promo column as
+`outcome_promo_cols[oid]` if set, else the legacy segment mapping; controls are resolved additively
+across all three tiers (product, legacy segment, outcome) and deduplicated. The Structure page's
+"Outcome-level promo & control overrides" section (rendered only for segments with 2+ outcome_ids)
+provides the explicit "apply this segment's mapping to every outcome in it" bulk-action button the
+instruction document required, rather than making segment-wide inheritance implicit.
+
+### Funnel-coherence diagnostics (not a constrained funnel model)
+
+Sign-ups and GSAs are fitted as independent Negative-Binomial outcomes - nothing in the model enforces
+`GSA <= sign-up`, and the model can produce incoherent predictions in some periods or scenarios. This
+is a documented model limitation, not fixed in PR E.2 - see `core.funnel`'s module docstring and
+`docs/limitations.md`. What PR E.2 adds instead: `core.funnel.FunnelLink(upstream_outcome_id,
+downstream_outcome_id)` lets an analyst declare which sign-up/GSA pair forms a funnel;
+`funnel_coherence_diagnostics(link, upstream_values, downstream_values, ...)` computes violation
+counts/rates (downstream > upstream), implied-conversion-rate mean/range/stability, and never raises
+except on a genuine array-shape mismatch; `funnel_channel_attribution_consistency` flags
+sign-mismatched channel attribution between the pair's two outcome equations. Funnel links are
+persisted (`config/funnel_links.json`) and fingerprinted (`fingerprint_model_spec`'s `funnel_links`
+parameter, sorted by `(upstream_outcome_id, downstream_outcome_id)`). The Structure page lets an
+analyst define links from the live catalogue; the Diagnostics page renders per-link warnings and
+metrics against the prepared modelling frame.
+
+### CPA denominator and spend-scope metadata
+
+A scenario-level "cost per GSA" used to divide total scenario spend across all channels by the GSA
+total - a legitimate whole-plan efficiency number, but easily mistaken for a channel-specific or
+incremental CPA. `core.media_units.cpa_scope_metadata(denominator_metric, included_outcome_ids,
+spend_scope, ...)` returns the explicit metadata block (denominator metric, included outcome IDs,
+spend scope from `CPA_SPEND_SCOPES` - `"whole_plan"`/`"channel_incremental"`/`"observed_platform"`,
+included channels, market, time window, incremental-vs-observed), validating `spend_scope` and
+`incremental_vs_observed` against their allowed values. `compute_cpa_by_product` gained explicitly
+scope-named alias columns (`channel_incremental_cost_per_fh_gsa`/`_fh_signup`/`_dna_kit`);
+`evaluate_scenario` gained `whole_plan_cost_per_fh_gsa`/`_fh_signup`/`_dna_kit`. See
+`docs/media_units_and_inflation.md`.
+
+### Hardened optimiser target validation
+
+Every optimisation objective now runs `_validate_target_outcome_ids` before scoring anything: an
+unknown `target_outcome_id` raises; a `target_outcome_id` whose `metric_key` doesn't match the
+objective's metric raises (skipped only for legacy `FHModelMeta`s with no catalogue metadata at all,
+matching this codebase's established legacy-fallback convention); an outcome with
+`include_in_optimisation=False` (a diagnostic role's default, or an explicit override) raises. A user
+can no longer pass a sign-up outcome into `objective="fh_gsa"` and bypass metric-aware selection.
+`"weighted_mix"` additionally rejects non-finite or negative weights, and rejects mixing raw units
+across different `unit`s (e.g. GSAs and kits) unless the caller explicitly passes
+`assume_value_scaled_weights=True` - weights are assumed to already be on a common value scale only
+when the caller says so, never inferred.
+
+### Drift status is first-class, not Diagnostics-only
+
+`core.outcomes.has_blocking_drift(outcomes, model_meta, ...)` classifies drift as blocking
+(`BLOCKING_DRIFT_STATUSES`: `"Changed since fit"`, `"Removed since fit"`) or informational (`"New
+since fit"`, `"Excluded from next fit"` - a not-yet-fit addition or a deliberate exclusion isn't a
+staleness problem). `components.ui.render_drift_status` is now wired into all seven pages the
+instruction document named: Structure, Model Configuration, Model Training, Diagnostics, Results &
+Curve Bank and Project Export show it informationally (an `st.info`/`st.warning` plus an expander with
+the full field-by-field diff); **Scenario Planner blocks** (`st.stop()`) when blocking drift is
+present, even with an approved, fingerprint-matching trace still in memory - planning against a
+catalogue that no longer matches what was actually fit is never allowed, regardless of approval state.
+
+### Promotion events are replayable pipeline steps
+
+`core.promotions.PromotionEvent` gained `event_id` (stable identity, auto-generated via `uuid4` if
+left blank - what a re-save matches on to update in place rather than duplicate), `product`,
+`affected_outcome_ids`, `market`, and `transformation_version`. `promotion_events_to_transform_steps`/
+`transform_steps_to_promotion_events` convert an event list to/from `data.pipeline.TransformStep(op=
+"promotion_event", ...)` entries in the same `pipeline_steps` list the Transform Pipeline page's
+manual transforms use - deliberately excluded from that page's operation dropdown, since a
+`promotion_event` step is only ever produced from a structured `PromotionEvent`, never hand-built.
+`apply_step`'s `"promotion_event"` branch replays one event's contribution additively onto its
+segment's derived `_promo_event_{segment}` column (creating it at zero if absent), matching
+`promotion_weekly_series`'s existing "overlapping promotions for the same segment compound" semantics -
+replaying N per-event steps for one segment reproduces exactly what applying all N events at once
+would produce.
+
+The Structure page's Save handler persists events as `TransformStep`s (replacing every prior
+`promotion_event` step with the current event list - other step types are left untouched) *in addition
+to* materialising the derived column into `transformed_data` for the current session. Project Export's
+import handler goes further: it drops whatever derived promo column is already sitting in the imported
+parquet for a segment with a `promotion_event` step, then replays those steps fresh against the
+imported `transformed_data` - so re-importing a project reproduces the derived columns from the
+versioned event list, never trusting a possibly-stale value baked into the parquet.
 
 ## Synthetic demo data
 

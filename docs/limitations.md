@@ -12,6 +12,19 @@
   `docs/decision_log.md`). Leaving them blank does not degrade anything today, but a future feature
   that uses them to explain curve parameters will only be as good as what's actually filled in.
 
+## Funnel coherence (PR E.2)
+
+- Family History sign-ups and GSAs are fitted as independent Negative-Binomial outcome equations, with
+  nothing in the model enforcing `GSA <= sign-up` or estimating a sign-up-to-GSA conversion rate - the
+  model can produce incoherent predictions (implied conversion outside `[0, 1]`, predicted GSAs
+  exceeding predicted sign-ups) in some periods or scenarios, and no diagnostic warning is raised by
+  the fitting process itself. `core.funnel.FunnelLink`/`funnel_coherence_diagnostics` (PR E.2) let an
+  analyst declare a sign-up/GSA pair and surface these warnings after the fact (Diagnostics page) - this
+  is detection, not prevention or correction. A constrained funnel model (`sign-ups model` +
+  `conversion model conditional on sign-ups` + `GSA = sign-ups x conversion probability`) remains a
+  documented future direction, deliberately not built until parallel-outcome diagnostics and
+  identifiability work on real data motivates it (`docs/decision_log.md`).
+
 ## Identification limitations
 
 - `decay[channel]` and `S[channel]` staying shared across markets (Model C's "initial production
@@ -115,9 +128,21 @@
   delivery under inflation" from the original redesign brief aren't built; `objective` is explicit
   (`core.optimization.VALID_OBJECTIVES`: `"fh_gsa"`, `"fh_signups"`, `"dna_kits"`, `"weighted_mix"`,
   `"expected_value"` - no generic "maximise volume" that would mix FH GSAs, FH sign-ups and DNA kits),
-  with `avg_cpa`/`fh_signup_avg_cpa`/`dna_avg_cpa` reported as output metrics only. `"weighted_mix"`
+  with `whole_plan_cost_per_fh_gsa`/`_fh_signup`/`_dna_kit` (PR E.2 - explicit spend-scope naming, see
+  `docs/media_units_and_inflation.md`) reported as output metrics only. `"weighted_mix"`
   and per-outcome `target_outcome_ids` are implemented in `core.optimization` but not yet exposed as
-  UI controls on the Scenario Planner page.
+  UI controls on the Scenario Planner page. Every objective validates its `target_outcome_id`s
+  (existence, metric match, `include_in_optimisation` eligibility - PR E.2) before scoring anything;
+  `"weighted_mix"` additionally rejects raw-unit mixes across different `unit`s unless the caller
+  explicitly passes `assume_value_scaled_weights=True`.
+- `evaluate_scenario`'s `value`/`total_value` are `None` (not raw predicted units) whenever no `ltv`
+  mapping is supplied at all, carrying an explicit `value_status` (`"not configured"`/`"partial"`/
+  `"complete"`) rather than ever presenting a raw volume count as if it were priced (PR E.2). Mixing
+  `value_currency`s across priced outcomes raises rather than silently summing across currencies.
+- The Scenario Planner refuses to plan (`st.stop()`) when the current outcome catalogue has
+  calculation-relevant drift from the fitted model's catalogue, even with an approval whose fingerprint
+  still matches the trace (PR E.2, `core.outcomes.has_blocking_drift`) - every other page shows drift
+  informationally only.
 - Media-unit curve bank entries (`input_type="media_unit"`) are only auto-saved for a
   market-specific fit - a shared curve's cost-per-unit context is inherently market-specific with no
   single market to attribute it to, so it's shown in the UI (for a chosen reference market) but not

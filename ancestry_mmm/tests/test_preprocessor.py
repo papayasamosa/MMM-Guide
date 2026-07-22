@@ -129,6 +129,93 @@ class TestPrepareFhModelingFrameWithSharedSegmentOutcomes:
         np.testing.assert_array_equal(frame["Y"][:, 1], df["GSA_New"].to_numpy())
 
 
+class TestOutcomeIdKeyedPromoAndControlMappings:
+    """PR E.2 requirement #6 / required test case 9: promo and control
+    mappings keyed by outcome_id, not just segment - a sign-up and a GSA
+    sharing a segment can have genuinely different mappings once configured
+    explicitly at the outcome_id level."""
+
+    @pytest.fixture
+    def shared_segment_outcomes(self):
+        return [
+            OutcomeDefinition(outcome_id="fh_new_signup", product=FAMILY_HISTORY, segment="New", metric="Sign-up", source_column="Signup_New"),
+            OutcomeDefinition(outcome_id="fh_new_gsa", product=FAMILY_HISTORY, segment="New", metric="GSA", source_column="GSA_New"),
+        ]
+
+    def test_outcome_promo_cols_differs_across_signup_and_gsa_on_the_same_segment(self, df, spec, shared_segment_outcomes):
+        df = df.copy()
+        df["Promo_Signup"] = np.ones(len(df)) * 3.0
+        df["Promo_GSA"] = np.ones(len(df)) * 7.0
+        spec_with_outcome_promo = ModelSpec(
+            date_col="date", market_col="market", markets=["UK"], channels=["TV_Brand"],
+            outcome_promo_cols={"fh_new_signup": "Promo_Signup", "fh_new_gsa": "Promo_GSA"},
+        )
+        frame = prepare_fh_modeling_frame(df, spec_with_outcome_promo, outcomes=shared_segment_outcomes)
+        signup_idx = frame["outcome_ids"].index("fh_new_signup")
+        gsa_idx = frame["outcome_ids"].index("fh_new_gsa")
+        np.testing.assert_array_equal(frame["promo"][:, signup_idx], df["Promo_Signup"].to_numpy())
+        np.testing.assert_array_equal(frame["promo"][:, gsa_idx], df["Promo_GSA"].to_numpy())
+        # The two outcomes share a segment but must never end up with the
+        # same promo series just because of that.
+        assert not np.array_equal(frame["promo"][:, signup_idx], frame["promo"][:, gsa_idx])
+
+    def test_outcome_promo_cols_overrides_legacy_segment_promo_cols(self, df, spec, shared_segment_outcomes):
+        df = df.copy()
+        df["Promo_Segment"] = np.ones(len(df)) * 2.0
+        df["Promo_Override"] = np.ones(len(df)) * 9.0
+        spec_with_both = ModelSpec(
+            date_col="date", market_col="market", markets=["UK"], channels=["TV_Brand"],
+            promo_cols={"New": "Promo_Segment"},
+            outcome_promo_cols={"fh_new_gsa": "Promo_Override"},
+        )
+        frame = prepare_fh_modeling_frame(df, spec_with_both, outcomes=shared_segment_outcomes)
+        signup_idx = frame["outcome_ids"].index("fh_new_signup")
+        gsa_idx = frame["outcome_ids"].index("fh_new_gsa")
+        # fh_new_signup has no outcome-level override - falls back to the
+        # legacy segment mapping.
+        np.testing.assert_array_equal(frame["promo"][:, signup_idx], df["Promo_Segment"].to_numpy())
+        # fh_new_gsa has an explicit outcome-level override - wins outright.
+        np.testing.assert_array_equal(frame["promo"][:, gsa_idx], df["Promo_Override"].to_numpy())
+
+    def test_outcome_control_cols_differs_across_signup_and_gsa_on_the_same_segment(self, df, spec, shared_segment_outcomes):
+        df = df.copy()
+        df["Signup_Control"] = np.arange(len(df), dtype=float)
+        df["Gsa_Control"] = np.arange(len(df), dtype=float) * 2
+        spec_with_outcome_controls = ModelSpec(
+            date_col="date", market_col="market", markets=["UK"], channels=["TV_Brand"],
+            outcome_control_cols={"fh_new_signup": ["Signup_Control"], "fh_new_gsa": ["Gsa_Control"]},
+        )
+        frame = prepare_fh_modeling_frame(df, spec_with_outcome_controls, outcomes=shared_segment_outcomes)
+        assert frame["outcome_control_names"]["fh_new_signup"] == ["Signup_Control"]
+        assert frame["outcome_control_names"]["fh_new_gsa"] == ["Gsa_Control"]
+
+    def test_product_level_controls_apply_to_every_outcome_of_that_product(self, df, spec, shared_segment_outcomes):
+        df = df.copy()
+        df["FH_Product_Control"] = np.ones(len(df)) * 5.0
+        spec_with_product_controls = ModelSpec(
+            date_col="date", market_col="market", markets=["UK"], channels=["TV_Brand"],
+            product_control_cols={FAMILY_HISTORY: ["FH_Product_Control"]},
+        )
+        frame = prepare_fh_modeling_frame(df, spec_with_product_controls, outcomes=shared_segment_outcomes)
+        assert "FH_Product_Control" in frame["outcome_control_names"]["fh_new_signup"]
+        assert "FH_Product_Control" in frame["outcome_control_names"]["fh_new_gsa"]
+
+    def test_product_segment_and_outcome_controls_are_additive_and_deduplicated(self, df, spec, shared_segment_outcomes):
+        df = df.copy()
+        df["FH_Product_Control"] = np.ones(len(df))
+        df["New_Segment_Control"] = np.ones(len(df)) * 2
+        df["Gsa_Only_Control"] = np.ones(len(df)) * 3
+        combined_spec = ModelSpec(
+            date_col="date", market_col="market", markets=["UK"], channels=["TV_Brand"],
+            product_control_cols={FAMILY_HISTORY: ["FH_Product_Control"]},
+            segment_control_cols={"New": ["New_Segment_Control", "FH_Product_Control"]},  # deliberate dupe
+            outcome_control_cols={"fh_new_gsa": ["Gsa_Only_Control"]},
+        )
+        frame = prepare_fh_modeling_frame(df, combined_spec, outcomes=shared_segment_outcomes)
+        assert sorted(frame["outcome_control_names"]["fh_new_signup"]) == ["FH_Product_Control", "New_Segment_Control"]
+        assert sorted(frame["outcome_control_names"]["fh_new_gsa"]) == ["FH_Product_Control", "Gsa_Only_Control", "New_Segment_Control"]
+
+
 class TestPrepareFhModelingFrameExclusion:
     def test_included_in_fit_false_outcomes_are_left_out_of_the_frame(self, df, spec, fh_outcomes):
         outcomes = fh_outcomes + [

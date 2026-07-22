@@ -112,6 +112,7 @@ def fingerprint_model_spec(
     market_spec_config: Optional[Dict[str, Any]] = None,
     direct_dna_outcome_ids: Optional[List[str]] = None,
     outcome_catalogue: Optional[List[Dict[str, Any]]] = None,
+    funnel_links: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     """
     Fingerprint the full set of inputs that determine how the model is
@@ -162,13 +163,22 @@ def fingerprint_model_spec(
     `outcome_id` key here (defensively - callers are expected to already
     pass it pre-sorted) for the same reason.
 
+    `funnel_links` (PR E.2 - `core.funnel.FunnelLink`s, pass
+    `core.funnel.funnel_links_fingerprint_payload(links)`) is diagnostic
+    configuration - it never affects what gets fitted - but is still
+    calculation-relevant to the *diagnostics displayed*, so it is
+    fingerprinted the same way as the outcome catalogue: sorted by
+    (upstream_outcome_id, downstream_outcome_id) here defensively, `[]` when
+    omitted.
+
     Note: adding `pipeline_steps`, `market_spec_config`,
-    `direct_dna_outcome_ids` and `outcome_catalogue` to this payload is an
-    intentional breaking change to every fingerprint this function produces,
-    including for callers who pass none of them (the payload always carries
-    `"pipeline_steps": []`, `"market_relevant_config": {}`,
-    `"direct_dna_outcome_ids": []` and `"outcome_catalogue": []` keys now) -
-    the same pattern used when `model_type` was added (docs/decision_log.md).
+    `direct_dna_outcome_ids`, `outcome_catalogue` and `funnel_links` to this
+    payload is an intentional breaking change to every fingerprint this
+    function produces, including for callers who pass none of them (the
+    payload always carries `"pipeline_steps": []`, `"market_relevant_config":
+    {}`, `"direct_dna_outcome_ids": []`, `"outcome_catalogue": []` and
+    `"funnel_links": []` keys now) - the same pattern used when `model_type`
+    was added (docs/decision_log.md).
     Every pre-existing approval is invalidated by upgrading to this version,
     which is correct: an approval bound to a fingerprint that didn't cover
     the transformation recipe, media-unit/currency config, DNA-kit outcome
@@ -191,6 +201,10 @@ def fingerprint_model_spec(
         "direct_dna_outcome_ids": sorted(direct_dna_outcome_ids) if direct_dna_outcome_ids else [],
         "outcome_catalogue": (
             sorted(outcome_catalogue, key=lambda o: o.get("outcome_id", "")) if outcome_catalogue else []
+        ),
+        "funnel_links": (
+            sorted(funnel_links, key=lambda link: (link.get("upstream_outcome_id", ""), link.get("downstream_outcome_id", "")))
+            if funnel_links else []
         ),
     }
     blob = _canonical_json(payload)

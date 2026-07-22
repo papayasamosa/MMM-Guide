@@ -208,9 +208,12 @@ class TestEvaluateScenarioWithUncertainty:
         return {"2024-01": {"trend": 1.0, "fourier": np.zeros(4), "promo": {s: 0.0 for s in OUTCOME_IDS}, "controls": {}, "outcome_controls": {}}}
 
     def test_summary_has_lower_le_mean_le_upper_for_value(self, meta, market_trace, approval, reference_context):
+        # value is only meaningful (non-NaN) once every eligible outcome_id
+        # is priced (PR E.2 - raw units are never silently shown as value).
         spend_plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Media": 200.0}}
+        ltv = {oid: 5.0 for oid in OUTCOME_IDS}
         result = evaluate_scenario_with_uncertainty(
-            spend_plan, "UK", meta, market_trace, reference_context,
+            spend_plan, "UK", meta, market_trace, reference_context, ltv=ltv,
             model_type="market_specific", n_draws=20, seed=1,
             approval=approval, **IDENTITY,
         )
@@ -225,8 +228,9 @@ class TestEvaluateScenarioWithUncertainty:
     ):
         higher_spend = {"2024-01": {"TV_Brand": 5000.0, "DNA_Media": 2000.0}}
         lower_spend = {"2024-01": {"TV_Brand": 10.0, "DNA_Media": 5.0}}
+        ltv = {oid: 5.0 for oid in OUTCOME_IDS}
         result = evaluate_scenario_with_uncertainty(
-            higher_spend, "UK", meta, market_trace, reference_context,
+            higher_spend, "UK", meta, market_trace, reference_context, ltv=ltv,
             model_type="market_specific", n_draws=20, seed=1,
             approval=approval, baseline_spend_plan=lower_spend, **IDENTITY,
         )
@@ -235,8 +239,9 @@ class TestEvaluateScenarioWithUncertainty:
     def test_paired_baseline_comparison_gives_prob_zero_when_reversed(self, meta, market_trace, approval, reference_context):
         higher_spend = {"2024-01": {"TV_Brand": 5000.0, "DNA_Media": 2000.0}}
         lower_spend = {"2024-01": {"TV_Brand": 10.0, "DNA_Media": 5.0}}
+        ltv = {oid: 5.0 for oid in OUTCOME_IDS}
         result = evaluate_scenario_with_uncertainty(
-            lower_spend, "UK", meta, market_trace, reference_context,
+            lower_spend, "UK", meta, market_trace, reference_context, ltv=ltv,
             model_type="market_specific", n_draws=20, seed=1,
             approval=approval, baseline_spend_plan=higher_spend, **IDENTITY,
         )
@@ -248,8 +253,9 @@ class TestEvaluateScenarioWithUncertainty:
         this fixture's meta has no kit-only segments, so dna_avg_cpa is
         NaN throughout - not present at all would be a silent regression."""
         spend_plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Media": 200.0}}
+        ltv = {oid: 5.0 for oid in OUTCOME_IDS}
         result = evaluate_scenario_with_uncertainty(
-            spend_plan, "UK", meta, market_trace, reference_context,
+            spend_plan, "UK", meta, market_trace, reference_context, ltv=ltv,
             model_type="market_specific", n_draws=20, seed=1,
             approval=approval, **IDENTITY,
         )

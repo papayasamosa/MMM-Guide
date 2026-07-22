@@ -29,6 +29,7 @@ import pytensor.tensor as pt
 
 from .transformations import pt_geometric_adstock_matrix, pt_hill_function
 from .schema import ModelSpec
+from .outcomes import outcome_eligibility
 
 
 @dataclass
@@ -44,10 +45,13 @@ class FHModelMeta:
     - NOT segment. Two distinct KPIs (e.g. a Family History sign-up and a
     Family History GSA) can share a `segment` while being two independent
     `outcome_id`s in `outcome_ids`, each with its own fitted response curve.
-    `outcome_id_to_segment`/`_product`/`_metric`/`_unit`/`_role`/
-    `_source_column` carry the rest of each fitted outcome_id's catalogue
-    entry (see core.outcomes.OutcomeDefinition) for anything that needs to
-    group or label by those dimensions without re-deriving them.
+    `outcome_id_to_segment`/`_product`/`_metric`/`_metric_key`/`_unit`/`_role`/
+    `_eligibility`/`_source_column` carry the rest of each fitted outcome_id's
+    catalogue entry (see core.outcomes.OutcomeDefinition) for anything that
+    needs to group or label by those dimensions without re-deriving them.
+    `_metric_key` is the stable key `core.outcomes.select_outcome_ids`
+    matches on (PR E.2); `_eligibility` is each outcome_id's resolved
+    `core.outcomes.outcome_eligibility()` result at fit time.
     `outcome_catalogue_at_fit` is the exact `OutcomeDefinition` list this fit
     was built from - the source of truth for detecting drift between what a
     model was fit on and what the catalogue currently says (core.outcomes.
@@ -88,8 +92,10 @@ class FHModelMeta:
     outcome_id_to_segment: Dict[str, str] = field(default_factory=dict)
     outcome_id_to_product: Dict[str, str] = field(default_factory=dict)
     outcome_id_to_metric: Dict[str, str] = field(default_factory=dict)
+    outcome_id_to_metric_key: Dict[str, str] = field(default_factory=dict)
     outcome_id_to_unit: Dict[str, str] = field(default_factory=dict)
     outcome_id_to_role: Dict[str, str] = field(default_factory=dict)
+    outcome_id_to_eligibility: Dict[str, Dict[str, bool]] = field(default_factory=dict)
     outcome_id_to_source_column: Dict[str, str] = field(default_factory=dict)
     outcome_catalogue_at_fit: List[Any] = field(default_factory=list)
     outcome_control_names: Dict[str, List[str]] = field(default_factory=dict)
@@ -524,8 +530,10 @@ def build_fh_hierarchical_model(
         outcome_id_to_segment={o.outcome_id: o.segment for o in outcome_catalogue},
         outcome_id_to_product={o.outcome_id: o.product for o in outcome_catalogue},
         outcome_id_to_metric={o.outcome_id: o.metric for o in outcome_catalogue},
+        outcome_id_to_metric_key={o.outcome_id: o.metric_key for o in outcome_catalogue},
         outcome_id_to_unit={o.outcome_id: o.unit for o in outcome_catalogue},
         outcome_id_to_role={o.outcome_id: o.role for o in outcome_catalogue},
+        outcome_id_to_eligibility={o.outcome_id: outcome_eligibility(o) for o in outcome_catalogue},
         outcome_id_to_source_column={o.outcome_id: o.source_column for o in outcome_catalogue},
         outcome_catalogue_at_fit=outcome_catalogue,
         outcome_control_names=frame.get("outcome_control_names") or {},

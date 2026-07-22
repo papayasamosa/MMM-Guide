@@ -39,15 +39,38 @@ class ModelSpec:
     # that haven't been migrated yet.
     fh_dna_cross_sell_outcome_id: Optional[str] = None
 
-    # segment key -> promo flag/intensity column (optional per segment)
+    # segment key -> promo flag/intensity column (optional per segment) - LEGACY:
+    # PR E.2 replaces this as the primary mapping with `outcome_promo_cols`
+    # (outcome_id-keyed); kept only so every outcome sharing a legacy segment
+    # doesn't lose its promo mapping on migration. An outcome_id present in
+    # `outcome_promo_cols` always overrides this for that outcome_id.
     promo_cols: Dict[str, str] = field(default_factory=dict)
+    # outcome_id -> promo flag/intensity column (PR E.2, canonical) - unlike
+    # `promo_cols`, a sign-up and a GSA sharing a segment can have genuinely
+    # different promo mappings (different business definition or timing).
+    outcome_promo_cols: Dict[str, str] = field(default_factory=dict)
 
     # other numeric controls applied to all segments (e.g. consumer confidence)
     control_cols: List[str] = field(default_factory=list)
-    # controls that apply to a single segment only, e.g. DNA kit price -> DNA_CrossSell
+    # product ("Family History"/"DNA") -> controls applied to every outcome
+    # of that product (PR E.2) - a level between global control_cols and
+    # outcome-specific ones.
+    product_control_cols: Dict[str, List[str]] = field(default_factory=dict)
+    # controls that apply to a single segment only, e.g. DNA kit price -> DNA_CrossSell -
+    # LEGACY: PR E.2 replaces this as the primary mapping with
+    # `outcome_control_cols` (outcome_id-keyed); kept for migration. Both are
+    # additive with `control_cols`/`product_control_cols` for a given
+    # outcome_id, not mutually exclusive.
     segment_control_cols: Dict[str, List[str]] = field(default_factory=dict)
+    # outcome_id -> extra controls specific to that exact outcome (PR E.2,
+    # canonical) - e.g. a sign-up outcome needing a different competitive
+    # control than its sibling GSA outcome on the same segment.
+    outcome_control_cols: Dict[str, List[str]] = field(default_factory=dict)
 
-    # segment key -> LTV weight used by the optimiser's value objective
+    # segment key -> LTV weight used by the optimiser's value objective -
+    # LEGACY migration field; `OutcomeDefinition.value_weight` (per
+    # outcome_id, in the canonical outcome catalogue) is the actual source
+    # of truth since PR E.1.
     segment_ltv: Dict[str, float] = field(default_factory=dict)
 
     aggregation: str = "Weekly"
@@ -61,13 +84,23 @@ class ModelSpec:
         return [m for m in self.markets if m not in self.unpooled_markets]
 
     def validate(self) -> List[str]:
+        """
+        `segment_outcomes` is deliberately NOT required here (PR E.2 -
+        "the canonical outcome catalogue is the primary Structure workflow,
+        not a required legacy GSA mapping"): a sign-up-only or GSA-only
+        project may have an empty `segment_outcomes` and still be perfectly
+        valid, since the actual fitting source of truth is the outcome
+        catalogue (`core.outcomes.OutcomeDefinition` list, validated
+        separately via `validate_outcome_definitions` - the Structure page
+        combines both error lists). `segment_outcomes` survives only as a
+        migration source for `fh_outcomes_from_spec` and the "Create
+        standard FH GSA outcomes" quick-start wizard.
+        """
         errors = []
         if not self.date_col:
             errors.append("Date column is not set.")
         if not self.markets:
             errors.append("At least one market must be defined.")
-        if len(self.segment_outcomes) == 0:
-            errors.append("At least one FH segment outcome column must be mapped.")
         if not self.channels:
             errors.append("At least one media channel must be selected.")
         for ch in self.dna_channels:

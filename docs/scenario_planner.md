@@ -1,5 +1,26 @@
 # Scenario Planner
 
+## PR E.2: drift blocks planning, value has an explicit status, CPA states its scope
+
+Three PR E.2 semantic-hardening changes land directly on this page (`docs/decision_log.md`,
+`docs/outcomes.md`):
+
+- **Blocking drift check.** Immediately after loading the current `ModelSpec`, the page calls
+  `components.ui.render_drift_status(outcomes, model_meta, blocking=True)` and `st.stop()`s if it
+  returns `True` - unlike every other page (which shows drift informationally), this page refuses to
+  plan against a catalogue that has changed calculation-relevantly since the fitted model was built,
+  even with an approved, fingerprint-matching trace still sitting in session state. The approval
+  fingerprint alone isn't enough, because a fingerprint match only proves the *fitted* catalogue hasn't
+  changed - it says nothing about whether the *current* catalogue (what a re-fit would use) still
+  matches it.
+- **`value`/`total_value` carry an explicit `value_status`** (`"not configured"`/`"partial"`/
+  `"complete"`) rather than silently falling back to raw predicted units when no `ltv` mapping is
+  supplied - a bare volume number is never mislabelled as a dollar value. See "Product-aware outputs"
+  in `docs/outcomes.md`.
+- **CPA outputs are captioned with their spend scope** (`"whole-plan"` on this page - a scenario's
+  total spend divided by its outcome total, not a channel-specific or incremental number) via
+  `core.media_units.cpa_scope_metadata` - see `docs/media_units_and_inflation.md`.
+
 ## Today (Phase 3c - built)
 
 `pages/08_Scenario_Planner.py` requires a market selection and an approved, fingerprint-matching
@@ -35,7 +56,10 @@ maximum spend, locked spend, total budget, objective.
 Output additions: product-aware `avg_cpa` (Family History GSAs) and, where the model has DNA-kit
 segments, `dna_avg_cpa` (DNA kits) on every predicted-outcomes row and as "current plan vs this
 optimised/theoretical-optimum plan" metrics on each result panel - never a blended total-spend /
-(FH-GSAs-plus-DNA-kits) number (`docs/dna_fh_causal_structure.md`).
+(FH-GSAs-plus-DNA-kits) number (`docs/dna_fh_causal_structure.md`). As of PR E.2 these are labelled
+"Whole-plan avg CPA" and carry `whole_plan_cost_per_fh_gsa`/`_fh_signup`/`_dna_kit` alias columns -
+explicit about spend scope, since a scenario's whole-plan CPA is not the same measurement as a
+channel-specific or incremental CPA (`docs/media_units_and_inflation.md`).
 
 `objective` is explicit (`core.optimization.VALID_OBJECTIVES`): `"fh_gsa"` (default - maximise
 Family History GSA outcomes only), `"fh_signups"` (maximise Family History sign-up outcomes only -

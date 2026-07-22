@@ -28,9 +28,13 @@ def test_missing_markets_is_an_error():
     assert any("market" in e.lower() for e in errors)
 
 
-def test_missing_segment_outcomes_is_an_error():
+def test_empty_segment_outcomes_is_not_an_error():
+    # PR E.2 requirement #5/#8: segment_outcomes is a migration field only -
+    # a sign-up-only or GSA-only project (configured entirely via the
+    # canonical outcome catalogue, core.outcomes.validate_outcome_definitions)
+    # must not be forced to also populate the legacy per-segment mapping.
     errors = _valid_spec(segment_outcomes={}).validate()
-    assert any("segment" in e.lower() for e in errors)
+    assert not any("segment" in e.lower() for e in errors)
 
 
 def test_missing_channels_is_an_error():

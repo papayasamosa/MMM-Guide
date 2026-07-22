@@ -93,6 +93,79 @@ def compute_cpa(
     return out
 
 
+# ---------------------------------------------------------------------------
+# CPA denominator/spend-scope metadata (PR E.2 requirement #8)
+#
+# Confirmed pitfall: scenario-level "cost per GSA" divides total scenario
+# spend (every channel) by a KPI total, which is a legitimate whole-plan
+# efficiency measure but is NOT the same thing as a channel-specific curve's
+# own CPA, an incremental-effect CPA, or an agency/platform-reported CPA
+# computed directly from observed data (not modelled at all). Every CPA
+# number in this codebase must be presentable with this metadata attached -
+# never a bare `avg_cpa` with no visible scope.
+# ---------------------------------------------------------------------------
+
+CPA_SPEND_SCOPES = ("whole_plan", "channel_incremental", "observed_platform")
+CPA_INCREMENTAL_VS_OBSERVED = ("incremental", "observed")
+
+
+def cpa_scope_metadata(
+    *,
+    denominator_metric: str,
+    included_outcome_ids: List[str],
+    spend_scope: str,
+    included_channels: Optional[List[str]] = None,
+    market: Optional[str] = None,
+    time_window: Optional[str] = None,
+    incremental_vs_observed: str = "incremental",
+) -> Dict[str, object]:
+    """
+    The required metadata contract for a CPA number (PR E.2 #8): what it
+    divides by (`denominator_metric`/`included_outcome_ids`), what spend
+    it's computed over (`spend_scope`/`included_channels`), which
+    `market`/`time_window` it applies to, and whether it's a modelled
+    incremental effect or a directly observed/reported number
+    (`incremental_vs_observed`). A UI/export showing a CPA number without
+    this metadata visible alongside it is the confirmed defect this closes -
+    every CPA-producing function in this module returns (or can be paired
+    with) this.
+
+    `spend_scope` must be one of `CPA_SPEND_SCOPES`:
+    - `"whole_plan"` - total spend across every channel in a scenario,
+      divided by that scenario's total for one KPI (e.g.
+      `whole_plan_cost_per_fh_gsa` - `core.optimization.evaluate_scenario`'s
+      `avg_cpa`/`cost_per_fh_gsa`). A genuine whole-plan efficiency number,
+      not a channel-specific one.
+    - `"channel_incremental"` - one channel's own response curve at a given
+      spend level, holding other channels fixed (e.g.
+      `channel_incremental_cost_per_fh_gsa` -
+      `compute_cpa_by_product`'s `avg_cpa`/`cost_per_fh_gsa`). Not the same
+      number as the whole-plan CPA even when only one channel is active.
+    - `"observed_platform"` - directly observed/reported spend and
+      conversions (e.g. ad-platform-reported CPA), no model involved at
+      all. **Not computed anywhere in this codebase yet** (no per-channel
+      platform-reported conversion data is captured) - a documented future
+      extension, not a promise this function fulfils; `incremental_vs_
+      observed="observed"` is reserved for when it is.
+    """
+    if spend_scope not in CPA_SPEND_SCOPES:
+        raise ValueError(f"spend_scope must be one of {CPA_SPEND_SCOPES}, got {spend_scope!r}.")
+    if incremental_vs_observed not in CPA_INCREMENTAL_VS_OBSERVED:
+        raise ValueError(
+            f"incremental_vs_observed must be one of {CPA_INCREMENTAL_VS_OBSERVED}, got "
+            f"{incremental_vs_observed!r}."
+        )
+    return {
+        "denominator_metric": denominator_metric,
+        "included_outcome_ids": list(included_outcome_ids),
+        "spend_scope": spend_scope,
+        "included_channels": list(included_channels) if included_channels is not None else None,
+        "market": market,
+        "time_window": time_window,
+        "incremental_vs_observed": incremental_vs_observed,
+    }
+
+
 def compute_cpa_by_product(curve_df: pd.DataFrame) -> pd.DataFrame:
     """
     Metric-aware CPA (PR E.1): computes `avg_cpa`/`marginal_cpa` (aliases
@@ -126,18 +199,29 @@ def compute_cpa_by_product(curve_df: pd.DataFrame) -> pd.DataFrame:
     out = compute_cpa(curve_df, "fh_response", allow_mixed=True)
     out["cost_per_fh_gsa"] = out["avg_cpa"]
     out["fh_gsa_marginal_cpa"] = out["marginal_cpa"]
+    # `channel_incremental_*` (PR E.2 #8) - the explicit-spend-scope name for
+    # exactly the same numbers: this curve is one channel's own response at
+    # varying spend, holding other channels fixed, so `avg_cpa`/`marginal_cpa`
+    # here are channel-incremental, never a whole-plan number. The bare
+    # `avg_cpa`/`cost_per_fh_gsa` names are kept as legacy aliases.
+    out["channel_incremental_cost_per_fh_gsa"] = out["avg_cpa"]
+    out["channel_incremental_marginal_cost_per_fh_gsa"] = out["marginal_cpa"]
     has_dna = "dna_response" in curve_df.columns and (curve_df["dna_response"] > 0).any()
     if has_dna:
         dna_cpa = compute_cpa(curve_df, "dna_response", allow_mixed=True, column_prefix="dna_")
         out["dna_avg_cpa"] = dna_cpa["dna_avg_cpa"]
         out["dna_marginal_cpa"] = dna_cpa["dna_marginal_cpa"]
         out["cost_per_dna_kit"] = dna_cpa["dna_avg_cpa"]
+        out["channel_incremental_cost_per_dna_kit"] = dna_cpa["dna_avg_cpa"]
+        out["channel_incremental_marginal_cost_per_dna_kit"] = dna_cpa["dna_marginal_cpa"]
     has_signup = "fh_signup_response" in curve_df.columns and (curve_df["fh_signup_response"] > 0).any()
     if has_signup:
         signup_cpa = compute_cpa(curve_df, "fh_signup_response", allow_mixed=True, column_prefix="fh_signup_")
         out["fh_signup_avg_cpa"] = signup_cpa["fh_signup_avg_cpa"]
         out["fh_signup_marginal_cpa"] = signup_cpa["fh_signup_marginal_cpa"]
         out["cost_per_fh_signup"] = signup_cpa["fh_signup_avg_cpa"]
+        out["channel_incremental_cost_per_fh_signup"] = signup_cpa["fh_signup_avg_cpa"]
+        out["channel_incremental_marginal_cost_per_fh_signup"] = signup_cpa["fh_signup_marginal_cpa"]
     return out
 
 
@@ -358,7 +442,10 @@ def market_specific_cpa_table(
             "market", "channel", "spend", "saturation", "overall_response", "fh_response",
             "fh_signup_response", "dna_response",
             "avg_cpa", "marginal_cpa", "cost_per_fh_gsa", "fh_gsa_marginal_cpa",
+            "channel_incremental_cost_per_fh_gsa", "channel_incremental_marginal_cost_per_fh_gsa",
             "dna_avg_cpa", "dna_marginal_cpa", "cost_per_dna_kit",
+            "channel_incremental_cost_per_dna_kit", "channel_incremental_marginal_cost_per_dna_kit",
             "fh_signup_avg_cpa", "fh_signup_marginal_cpa", "cost_per_fh_signup",
+            "channel_incremental_cost_per_fh_signup", "channel_incremental_marginal_cost_per_fh_signup",
         ])
     return pd.concat(rows, ignore_index=True)

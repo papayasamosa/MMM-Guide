@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 import streamlit as st
 
 from ancestry_mmm.utils import init_session_state, get_state, set_state, format_number
-from ancestry_mmm.components import apply_theme, render_sidebar, render_page_header, render_next_step, render_empty_state
+from ancestry_mmm.components import apply_theme, render_sidebar, render_page_header, render_next_step, render_empty_state, render_drift_status
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
 from ancestry_mmm.core.market_specific_model import build_fh_market_specific_model
@@ -41,6 +41,8 @@ if frame is None or not spec_dict:
     st.stop()
 
 spec = ModelSpec.from_dict(spec_dict)
+if get_state("model_meta") is not None:
+    render_drift_status(frame.get("outcomes") or [], get_state("model_meta"))
 model_type = get_state("model_type", "shared")
 if model_type == "market_specific" and len(frame["markets"]) < 2:
     st.warning(

@@ -92,6 +92,11 @@ SUPPORTED_OPS = [
     "fill_missing", "drop_columns", "event_flag",
 ]
 
+# "promotion_event" is intentionally excluded from SUPPORTED_OPS - it is
+# only ever produced by `core.promotions.promotion_events_to_transform_steps`
+# from a structured `PromotionEvent`, not something an analyst hand-builds
+# through the generic Transform Pipeline page's op dropdown.
+
 
 @dataclass
 class TransformStep:
@@ -171,6 +176,23 @@ def apply_step(df: pd.DataFrame, step: TransformStep) -> pd.DataFrame:
         start, end = pd.Timestamp(p["start"]), pd.Timestamp(p["end"])
         dates = pd.to_datetime(df[date_col])
         df[new_col] = ((dates >= start) & (dates <= end)).astype(int)
+
+    elif step.op == "promotion_event":
+        # Replay one structured PromotionEvent (core.promotions) as an
+        # additive contribution to its segment's derived promo column.
+        # Overlapping events for the same segment compound (summed), the
+        # same behaviour as core.promotions.promotion_weekly_series - so
+        # replaying N per-event steps for a segment reproduces exactly what
+        # applying all N events to that segment at once would produce.
+        event = p["event"]
+        date_col = p["date_col"]
+        new_col = f"{p.get('column_prefix', '_promo_event_')}{event['segment']}"
+        start, end = pd.Timestamp(event["start_date"]), pd.Timestamp(event["end_date"])
+        dates = pd.to_datetime(df[date_col])
+        mask = (dates >= start) & (dates <= end)
+        if new_col not in df.columns:
+            df[new_col] = 0.0
+        df.loc[mask, new_col] = df.loc[mask, new_col] + event.get("intensity", 1.0)
 
     else:
         raise ValueError(f"Unknown transform op: {step.op}")

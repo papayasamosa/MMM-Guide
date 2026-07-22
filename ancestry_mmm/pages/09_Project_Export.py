@@ -9,7 +9,7 @@ import pandas as pd
 import streamlit as st
 
 from ancestry_mmm.utils import init_session_state, get_state, set_state, curve_bank_dir, PROJECT_EXPORT_ROOT
-from ancestry_mmm.components import apply_theme, render_sidebar, render_page_header
+from ancestry_mmm.components import apply_theme, render_sidebar, render_page_header, render_drift_status
 from ancestry_mmm.core.persistence import (
     export_project,
     import_project,
@@ -28,9 +28,11 @@ from ancestry_mmm.core.approval import ModelApproval
 from ancestry_mmm.core.market_config import MarketSpecConfig
 from ancestry_mmm.core.evidence_tiers import evidence_tiers_dataframe
 from ancestry_mmm.core.media_units import market_specific_cpa_table
-from ancestry_mmm.core.outcomes import fh_gsa_outcome_ids
+from ancestry_mmm.core.outcomes import fh_gsa_outcome_ids, resolve_outcome_definitions
 from ancestry_mmm.core.optimization import compare_scenarios
 from ancestry_mmm.core.report import build_report_sections, render_markdown, render_html
+from ancestry_mmm.core.promotions import PROMOTION_EVENT_OP
+from ancestry_mmm.data import apply_pipeline, pipeline_from_json
 
 st.set_page_config(page_title="Project Export - Ancestry FH MMM", page_icon="🧬", layout="wide")
 init_session_state()
@@ -68,6 +70,7 @@ if st.button("Build export bundle", type="primary"):
             market_spec_config=get_state("market_spec_config"),
             model_type=get_state("model_type", "shared"),
             outcome_definitions=get_state("outcome_definitions"),
+            funnel_links=get_state("funnel_links"),
         )
     st.success(f"Project bundle built: {output_path}")
     with open(output_path, "rb") as f:
@@ -88,7 +91,25 @@ if uploaded_zip is not None and st.button("Import bundle"):
         st.error(f"Refusing to import this bundle: {e}")
     else:
         set_state("raw_sources", imported["raw_sources"])
-        set_state("transformed_data", imported["transformed_data"])
+
+        # Replay promotion-event pipeline steps fresh against the imported
+        # data rather than trusting the derived promo columns already
+        # sitting in the imported parquet (PR E.2 #11 - "re-importing a
+        # project must reproduce the same derived columns from raw data").
+        # Any pre-existing derived column for a segment with a
+        # promotion_event step is dropped first, so the regenerated value
+        # is computed purely from the versioned event list, not layered on
+        # top of a stale one.
+        transformed = imported["transformed_data"]
+        promo_steps = [s for s in pipeline_from_json(imported["pipeline_steps"] or []) if s.op == PROMOTION_EVENT_OP]
+        if transformed is not None and promo_steps:
+            promo_columns = {
+                f"{s.params.get('column_prefix', '_promo_event_')}{s.params['event']['segment']}"
+                for s in promo_steps
+            }
+            transformed = transformed.drop(columns=[c for c in promo_columns if c in transformed.columns])
+            transformed = apply_pipeline(transformed, promo_steps)
+        set_state("transformed_data", transformed)
         set_state("pipeline_steps", imported["pipeline_steps"])
         set_state("model_spec", imported["model_spec"])
         set_state("prior_config", imported["prior_config"])
@@ -100,6 +121,7 @@ if uploaded_zip is not None and st.button("Import bundle"):
         set_state("market_spec_config", imported["market_spec_config"])
         set_state("model_type", imported["model_type"])
         set_state("outcome_definitions", imported["outcome_definitions"])
+        set_state("funnel_links", imported["funnel_links"])
         if imported["market_spec_config"] is None:
             st.caption(
                 "This bundle predates the market-specific redesign - no market descriptors or "
@@ -142,6 +164,11 @@ st.markdown("---")
 st.markdown("### Excel export")
 model_type_for_export = get_state("model_type", "shared")
 if get_state("trace") is not None and get_state("model_spec"):
+    _export_spec = ModelSpec.from_dict(get_state("model_spec"))
+    render_drift_status(
+        resolve_outcome_definitions(get_state("outcome_definitions"), _export_spec.segment_outcomes, _export_spec.segment_ltv),
+        get_state("model_meta"),
+    )
     if model_type_for_export == "shared":
         st.caption("Curve bank, total-FH contribution and segment x channel Shapley attribution (Model A).")
     else:

@@ -278,6 +278,69 @@ def test_legacy_bundle_without_outcome_definitions_imports_with_none(tmp_path, s
     assert imported["outcome_definitions"] is None
 
 
+def test_export_then_import_reproduces_funnel_links(tmp_path, sample_project):
+    from ancestry_mmm.core.funnel import FunnelLink
+
+    funnel_links = [FunnelLink(upstream_outcome_id="fh_new_signup", downstream_outcome_id="fh_new_gsa").to_dict()]
+    sample_project = dict(sample_project)
+    sample_project["funnel_links"] = funnel_links
+
+    output_path = export_project(tmp_path / "bundle.zip", **sample_project)
+    imported = import_project(output_path)
+
+    assert imported["funnel_links"] == funnel_links
+
+
+def test_legacy_bundle_without_funnel_links_imports_with_none(tmp_path, sample_project):
+    """A bundle exported before PR E.2 has no funnel_links.json - import
+    must not fail, and None must mean "no funnel diagnostics configured",
+    not an error."""
+    output_path = export_project(tmp_path / "bundle.zip", **sample_project)
+    imported = import_project(output_path)
+    assert imported["funnel_links"] is None
+
+
+def test_promotion_event_pipeline_steps_reproduce_derived_columns_on_import(tmp_path, sample_project):
+    """PR E.2 #11 - "re-importing a project must reproduce the same derived
+    columns from raw data. Do not rely only on the already-mutated
+    transformed parquet." Mirrors what pages/09_Project_Export.py's import
+    handler does: replay any promotion_event pipeline steps against the
+    imported transformed_data, dropping whatever derived column happens to
+    already be sitting there first. A bundle whose parquet has a stale/
+    hand-edited value for that column must still come back correct."""
+    from ancestry_mmm.core.promotions import PROMOTION_EVENT_OP, PromotionEvent, promotion_events_to_transform_steps
+    from ancestry_mmm.data.pipeline import apply_pipeline, pipeline_from_json
+
+    event = PromotionEvent(
+        event_name="Christmas Sale", start_date="2024-01-01", end_date="2024-01-03",
+        segment="New", intensity=1.0,
+    )
+    promo_steps = [s.to_dict() for s in promotion_events_to_transform_steps([event], date_col="date")]
+
+    sample_project = dict(sample_project)
+    sample_project["pipeline_steps"] = promo_steps
+    # Simulate a stale/corrupted value already sitting in the exported
+    # parquet for the derived column - e.g. from an older, buggy save.
+    transformed = sample_project["transformed_data"].copy()
+    transformed["_promo_event_New"] = 999.0
+    sample_project["transformed_data"] = transformed
+
+    output_path = export_project(tmp_path / "bundle.zip", **sample_project)
+    imported = import_project(output_path)
+
+    promo_steps_typed = [s for s in pipeline_from_json(imported["pipeline_steps"]) if s.op == PROMOTION_EVENT_OP]
+    assert len(promo_steps_typed) == 1
+
+    regenerated = imported["transformed_data"].drop(columns=["_promo_event_New"])
+    regenerated = apply_pipeline(regenerated, promo_steps_typed)
+
+    dates = pd.to_datetime(regenerated["date"])
+    in_window = (dates >= pd.Timestamp("2024-01-01")) & (dates <= pd.Timestamp("2024-01-03"))
+    assert (regenerated.loc[in_window, "_promo_event_New"] == 1.0).all()
+    assert (regenerated.loc[~in_window, "_promo_event_New"] == 0.0).all()
+    assert not (regenerated["_promo_event_New"] == 999.0).any()
+
+
 def test_export_without_trace_or_approval_omits_them_on_import(tmp_path, sample_project):
     sample_project = dict(sample_project)
     sample_project["trace"] = None

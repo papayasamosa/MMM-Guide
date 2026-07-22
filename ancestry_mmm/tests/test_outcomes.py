@@ -12,9 +12,16 @@ from ancestry_mmm.core.outcomes import (
     METRIC_GSA,
     METRIC_KIT_SALE,
     METRIC_SIGNUP,
+    METRIC_KEY_CUSTOM,
+    METRIC_KEY_DNA_KIT_SALE,
+    METRIC_KEY_FH_GSA,
+    METRIC_KEY_FH_SIGNUP,
+    METRIC_REGISTRY,
     OUTCOME_ROLES,
     OUTCOME_STATUSES,
     DRIFT_STATUSES,
+    ELIGIBILITY_FLAGS,
+    MetricDefinition,
     OutcomeDefinition,
     dna_kit_outcome_columns,
     dna_outcomes_from_columns,
@@ -22,11 +29,15 @@ from ancestry_mmm.core.outcomes import (
     fh_gsa_outcome_ids,
     fh_outcomes_from_spec,
     fh_signup_outcome_ids,
+    has_blocking_drift,
     included_outcomes,
     infer_legacy_fh_dna_cross_sell_outcome_id,
+    normalize_metric_key,
+    official_total_outcome_ids,
     outcome_catalogue_at_fit_by_id,
     outcome_catalogue_fingerprint_payload,
     outcome_drift_status,
+    outcome_eligibility,
     outcome_requires_opt_in,
     outcome_status,
     outcome_was_modelled,
@@ -99,7 +110,7 @@ class TestOutcomeDefinitionRoundTrip:
         outcome = OutcomeDefinition(outcome_id="x", product=FAMILY_HISTORY, segment="New", metric="GSA", source_column="c")
         assert outcome.exclusion_reason is None
 
-    def test_unit_derives_from_product_when_not_given(self):
+    def test_unit_derives_from_metric_registry_when_not_given(self):
         fh = OutcomeDefinition(outcome_id="fh_new", product=FAMILY_HISTORY, segment="New", metric="GSA", source_column="c")
         dna = OutcomeDefinition(outcome_id="dna_new_kit", product=DNA, segment=DNA_SEGMENT_NEW, metric="Kit sale", source_column="c")
         assert fh.unit == "GSA"
@@ -118,6 +129,136 @@ class TestOutcomeDefinitionRoundTrip:
         assert restored.role == "primary"
         assert restored.included_in_fit is True
         assert restored.exclusion_reason is None
+
+
+# ---------------------------------------------------------------------------
+# PR E.2 required test cases 1-3: unit defaults driven by the metric
+# registry (not product alone), metric display-variant normalisation, and
+# custom metrics requiring an explicit unit.
+# ---------------------------------------------------------------------------
+
+class TestMetricRegistryAndUnitDefaults:
+    def test_blank_unit_on_fh_signup_does_not_become_gsa(self):
+        # Required test case 1 - the confirmed pitfall: __post_init__ used to
+        # default every Family History outcome's unit to "GSA" regardless of
+        # metric, which was simply wrong for a Family History *sign-up*.
+        signup = OutcomeDefinition(
+            outcome_id="fh_new_signup", product=FAMILY_HISTORY, segment="New", metric="Sign-up",
+            source_column="c",
+        )
+        assert signup.unit == "sign-up"
+        assert signup.unit != "GSA"
+
+    def test_metric_key_derives_from_metric_for_the_three_builtin_metrics(self):
+        gsa = OutcomeDefinition(outcome_id="a", product=FAMILY_HISTORY, segment="S", metric="GSA", source_column="c")
+        signup = OutcomeDefinition(outcome_id="b", product=FAMILY_HISTORY, segment="S", metric="Sign-up", source_column="c")
+        kit = OutcomeDefinition(outcome_id="c", product=DNA, segment="S", metric="Kit sale", source_column="c")
+        assert gsa.metric_key == METRIC_KEY_FH_GSA
+        assert signup.metric_key == METRIC_KEY_FH_SIGNUP
+        assert kit.metric_key == METRIC_KEY_DNA_KIT_SALE
+
+    def test_metric_display_variants_migrate_to_canonical_keys(self):
+        # Required test case 2. A small, explicit, known-variant table -
+        # never fuzzy matching.
+        for variant in ("Signup", "signups", "Sign Up", "SIGN-UPS"):
+            assert normalize_metric_key(variant) == METRIC_KEY_FH_SIGNUP, variant
+        for variant in ("Kit Sale", "kit sales", "DNA Kit Sale"):
+            assert normalize_metric_key(variant) == METRIC_KEY_DNA_KIT_SALE, variant
+        for variant in ("gsa", "Family History GSA"):
+            assert normalize_metric_key(variant) == METRIC_KEY_FH_GSA, variant
+
+    def test_ambiguous_custom_metric_is_never_guessed(self):
+        assert normalize_metric_key("Repeat purchase") == METRIC_KEY_CUSTOM
+        assert normalize_metric_key("") == METRIC_KEY_CUSTOM
+        outcome = OutcomeDefinition(
+            outcome_id="x", product=FAMILY_HISTORY, segment="S", metric="Repeat purchase", source_column="c",
+        )
+        assert outcome.metric_key == METRIC_KEY_CUSTOM
+
+    def test_custom_metrics_require_explicit_units(self):
+        # Required test case 3 - a custom/unrecognised metric_key gets no
+        # default unit at all; validate_outcome_definitions's "no unit set"
+        # check is what actually enforces the requirement.
+        outcome = OutcomeDefinition(
+            outcome_id="x", product=FAMILY_HISTORY, segment="S", metric="Repeat purchase", source_column="c",
+        )
+        assert outcome.unit == ""
+        errors = validate_outcome_definitions([outcome])
+        assert any("no unit set" in e for e in errors)
+
+        outcome_with_unit = OutcomeDefinition(
+            outcome_id="x", product=FAMILY_HISTORY, segment="S", metric="Repeat purchase", source_column="c",
+            unit="repeat purchase",
+        )
+        errors2 = validate_outcome_definitions([outcome_with_unit])
+        assert not any("no unit set" in e for e in errors2)
+
+    def test_explicit_metric_key_overrides_derivation(self):
+        outcome = OutcomeDefinition(
+            outcome_id="x", product=FAMILY_HISTORY, segment="S", metric="Some custom label",
+            source_column="c", metric_key=METRIC_KEY_FH_GSA,
+        )
+        assert outcome.metric_key == METRIC_KEY_FH_GSA
+        # unit still derives from the (explicitly given) metric_key, not
+        # from the free-text metric label.
+        assert outcome.unit == "GSA"
+
+    def test_metric_registry_entries_are_internally_consistent(self):
+        for key, definition in METRIC_REGISTRY.items():
+            assert isinstance(definition, MetricDefinition)
+            assert definition.metric_key == key
+            assert definition.default_unit
+
+
+class TestOutcomeEligibility:
+    def test_primary_role_defaults_everything_true(self):
+        outcome = OutcomeDefinition(outcome_id="x", product=FAMILY_HISTORY, segment="S", metric="GSA", source_column="c")
+        eligibility = outcome_eligibility(outcome)
+        assert set(eligibility) == set(ELIGIBILITY_FLAGS)
+        assert all(eligibility.values())
+
+    def test_diagnostic_role_defaults_everything_false(self):
+        outcome = OutcomeDefinition(
+            outcome_id="x", product=FAMILY_HISTORY, segment="S", metric="GSA", source_column="c", role="diagnostic",
+        )
+        eligibility = outcome_eligibility(outcome)
+        assert not any(eligibility.values())
+
+    def test_funnel_intermediate_role_defaults(self):
+        outcome = OutcomeDefinition(
+            outcome_id="x", product=FAMILY_HISTORY, segment="S", metric="Sign-up", source_column="c",
+            role="funnel_intermediate",
+        )
+        eligibility = outcome_eligibility(outcome)
+        assert eligibility["include_in_default_reporting"] is True
+        assert eligibility["include_in_official_total"] is False
+        assert eligibility["include_in_value"] is False
+        assert eligibility["include_in_optimisation"] is False
+
+    def test_secondary_role_defaults(self):
+        outcome = OutcomeDefinition(
+            outcome_id="x", product=FAMILY_HISTORY, segment="S", metric="GSA", source_column="c", role="secondary",
+        )
+        eligibility = outcome_eligibility(outcome)
+        assert eligibility["include_in_default_reporting"] is True
+        assert eligibility["include_in_official_total"] is False
+        assert eligibility["include_in_value"] is True
+        assert eligibility["include_in_optimisation"] is False
+
+    def test_explicit_override_wins_over_role_default(self):
+        # A secondary outcome explicitly opted back into optimisation.
+        outcome = OutcomeDefinition(
+            outcome_id="x", product=FAMILY_HISTORY, segment="S", metric="GSA", source_column="c",
+            role="secondary", include_in_optimisation=True,
+        )
+        assert outcome_eligibility(outcome)["include_in_optimisation"] is True
+
+        # A primary outcome explicitly excluded from value.
+        outcome2 = OutcomeDefinition(
+            outcome_id="y", product=FAMILY_HISTORY, segment="S", metric="GSA", source_column="c",
+            include_in_value=False,
+        )
+        assert outcome_eligibility(outcome2)["include_in_value"] is False
 
 
 class TestOutcomeRequiresOptIn:
@@ -343,12 +484,39 @@ class TestValidateOutcomeDefinitions:
     def test_excluded_outcome_missing_from_available_columns_is_not_an_error(self):
         outcomes = [
             OutcomeDefinition(
-                outcome_id="x", product=FAMILY_HISTORY, segment="New", metric="GSA",
+                outcome_id="included", product=FAMILY_HISTORY, segment="New", metric="GSA",
+                source_column="other_col",
+            ),
+            OutcomeDefinition(
+                outcome_id="x", product=FAMILY_HISTORY, segment="New", metric="Sign-up",
                 source_column="missing_col", included_in_fit=False,
-            )
+            ),
         ]
         errors = validate_outcome_definitions(outcomes, available_columns={"other_col"})
         assert errors == []
+
+    def test_empty_catalogue_is_an_error(self):
+        assert any("at least one outcome" in e.lower() for e in validate_outcome_definitions([]))
+
+    def test_catalogue_with_only_excluded_outcomes_is_an_error(self):
+        outcomes = [
+            OutcomeDefinition(
+                outcome_id="x", product=FAMILY_HISTORY, segment="New", metric="GSA",
+                source_column="c", included_in_fit=False,
+            )
+        ]
+        assert any("at least one outcome" in e.lower() for e in validate_outcome_definitions(outcomes))
+
+    def test_signup_only_catalogue_is_valid_no_gsa_required(self):
+        # Required test case 8 (PR E.2): a sign-up-only project does not
+        # require a legacy GSA mapping.
+        outcomes = [
+            OutcomeDefinition(
+                outcome_id="fh_new_signup", product=FAMILY_HISTORY, segment="New", metric="Sign-up",
+                source_column="c",
+            )
+        ]
+        assert validate_outcome_definitions(outcomes) == []
 
     def test_signup_id_labelled_as_gsa_metric_is_an_error(self):
         outcomes = [
@@ -562,19 +730,22 @@ class TestSelectOutcomeIds:
         assert select_outcome_ids(meta, product=FAMILY_HISTORY, metric=METRIC_GSA) == ["a"]
         assert select_outcome_ids(meta, role="secondary") == ["b"]
 
-    def test_role_defaults_named_totals_to_primary_only(self):
+    def test_funnel_intermediate_appears_in_its_own_default_reporting_total(self):
+        # PR E.2 requirement #4/#5: a funnel_intermediate sign-up must still
+        # appear in its own fh_signups default-reporting total (gated by
+        # include_in_default_reporting, True by default for
+        # funnel_intermediate) even though it's excluded from the stricter
+        # official total (include_in_official_total, False by default for
+        # funnel_intermediate) - see official_total_outcome_ids below.
         meta = _meta(
             ["fh_new_gsa", "fh_new_signup"],
             {"fh_new_gsa": FAMILY_HISTORY, "fh_new_signup": FAMILY_HISTORY},
             {"fh_new_gsa": METRIC_GSA, "fh_new_signup": METRIC_SIGNUP},
             id_to_role={"fh_new_gsa": "primary", "fh_new_signup": "funnel_intermediate"},
         )
-        # funnel_intermediate is explicitly "excluded from GSA-style totals"
-        # per the instruction document's role semantics - default named
-        # totals therefore never include it, even though it matches on
-        # product+metric.
-        assert fh_signup_outcome_ids(meta) == []
-        assert fh_signup_outcome_ids(meta, include_non_primary=True) == ["fh_new_signup"]
+        assert fh_signup_outcome_ids(meta) == ["fh_new_signup"]
+        assert official_total_outcome_ids(meta, metric_key=METRIC_KEY_FH_SIGNUP) == []
+        assert official_total_outcome_ids(meta, metric_key=METRIC_KEY_FH_GSA) == ["fh_new_gsa"]
 
     def test_legacy_meta_with_no_catalogue_metadata_falls_back_to_kit_only(self):
         # A FHModelMeta reconstructed from a bundle exported before
@@ -777,6 +948,39 @@ class TestOutcomeDriftStatus:
         df = outcomes_drift_dataframe([self._outcome()], None)
         assert df.empty
 
+    def test_has_blocking_drift_false_with_no_model_meta(self):
+        assert has_blocking_drift([self._outcome()], None) is False
+
+    def test_has_blocking_drift_false_when_unchanged(self):
+        outcomes = [self._outcome()]
+        model_meta = SimpleNamespace(outcome_catalogue_at_fit=[self._outcome()])
+        assert has_blocking_drift(outcomes, model_meta) is False
+
+    def test_has_blocking_drift_true_when_changed(self):
+        # Required test case 15 - catalogue drift blocks planning.
+        current = [self._outcome(metric=METRIC_SIGNUP)]
+        model_meta = SimpleNamespace(outcome_catalogue_at_fit=[self._outcome(metric=METRIC_GSA)])
+        assert has_blocking_drift(current, model_meta) is True
+
+    def test_has_blocking_drift_true_when_removed(self):
+        current = []
+        model_meta = SimpleNamespace(outcome_catalogue_at_fit=[self._outcome()])
+        assert has_blocking_drift(current, model_meta) is True
+
+    def test_has_blocking_drift_false_when_only_new_since_fit(self):
+        # A brand-new outcome not yet part of any fit doesn't make the
+        # *existing* fit's numbers wrong - must not block.
+        current = [self._outcome(outcome_id="a"), self._outcome(outcome_id="new_one")]
+        model_meta = SimpleNamespace(outcome_catalogue_at_fit=[self._outcome(outcome_id="a")])
+        assert has_blocking_drift(current, model_meta) is False
+
+    def test_has_blocking_drift_false_when_only_excluded_from_next_fit(self):
+        # Excluding an outcome from the *next* fit doesn't affect the
+        # validity of the *current* fitted model - must not block.
+        current = [self._outcome(included_in_fit=False)]
+        model_meta = SimpleNamespace(outcome_catalogue_at_fit=[self._outcome(included_in_fit=True)])
+        assert has_blocking_drift(current, model_meta) is False
+
     def test_outcome_catalogue_at_fit_by_id_keys_by_outcome_id(self):
         fit_time = [self._outcome(outcome_id="a"), self._outcome(outcome_id="b")]
         model_meta = SimpleNamespace(outcome_catalogue_at_fit=fit_time)
@@ -803,6 +1007,8 @@ class TestOutcomeCatalogueFingerprintPayload:
         )]
         payload = outcome_catalogue_fingerprint_payload(outcomes)[0]
         assert set(payload) == {
-            "outcome_id", "product", "segment", "metric", "unit", "source_column",
+            "outcome_id", "product", "segment", "metric", "metric_key", "unit", "source_column",
             "role", "included_in_fit", "value_weight", "value_currency",
+            "include_in_default_reporting", "include_in_official_total",
+            "include_in_value", "include_in_optimisation",
         }

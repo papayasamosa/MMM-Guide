@@ -1239,3 +1239,165 @@ legacy mappers, saves correctly with the new `fh_dna_cross_sell_outcome_id` sele
 per the instruction document's explicit pre-media-pathway-schema requirement). See docs/outcomes.md,
 docs/dna_fh_causal_structure.md, docs/scenario_planner.md, docs/media_units_and_inflation.md and
 docs/limitations.md for the updated design records.
+
+---
+
+**Date:** 2026-07-22
+**Decision:** PR E.2 ("semantic hardening" - the instruction document's explicit "remaining semantic
+and architecture pitfalls exposed by PR E.1 before media-pathway work begins" directive) - eleven
+independent fixes, each closing one confirmed pitfall the instruction document named explicitly. Media
+pathways, brand mediation, causal DAGs, dynamic planning and the UI theme are explicitly out of scope
+for this PR.
+1. **Metric registry replaces product-derived unit defaults.** `OutcomeDefinition.__post_init__` used
+   to default every Family History outcome's `unit` to `"GSA"` regardless of metric - wrong for a Family
+   History sign-up. `core.outcomes.METRIC_REGISTRY` (`MetricDefinition(metric_key, display_name,
+   default_unit, product)` for `fh_gsa`/`fh_signup`/`dna_kit_sale`) now derives the default unit from
+   the outcome's `metric_key`, not its `product` - a custom (unrecognised) metric gets no default unit
+   at all and must set one explicitly.
+2. **Stable `metric_key` replaces exact-string metric matching.** Built-in selectors used to match
+   exact display strings (`"GSA"`, `"Sign-up"`, `"Kit sale"`) - a user typing `"Signup"`, `"Signups"`,
+   or `"Kit Sale"` created a fitted outcome invisible to every named total and objective.
+   `OutcomeDefinition.metric_key` (derived in `__post_init__`, one of `METRIC_KEY_FH_GSA`/
+   `_FH_SIGNUP`/`_DNA_KIT_SALE`/`_CUSTOM`) is now what every selector filters on;
+   `core.outcomes.normalize_metric_key` migrates a small, explicit table of known display variants to
+   their canonical key and falls back to `METRIC_KEY_CUSTOM` for anything not on that table - never a
+   fuzzy guess into a business KPI. `select_outcome_ids`, `fh_gsa_outcome_ids`, `fh_signup_outcome_ids`
+   and `dna_kit_sale_outcome_ids` all switched from `metric=` display-string filtering to `metric_key=`.
+3. **Four independent eligibility flags replace role-only gating.** `role="primary"`-only default
+   selection meant a Family History sign-up marked `funnel_intermediate` was fitted but invisible from
+   the default `fh_signups` total and its own CPA. `include_in_default_reporting`/
+   `include_in_official_total`/`include_in_value`/`include_in_optimisation` (each `Optional[bool]`,
+   falling back to `_ROLE_ELIGIBILITY_DEFAULTS[role]` when unset) are now independent axes -
+   `core.outcomes.outcome_eligibility(outcome)` resolves all four; `eligible_outcome_ids(meta, flag)` is
+   the general selector. Per the instruction document's exact defaults: `funnel_intermediate` outcomes
+   are `default_reporting=True, official_total=False` - visible in their own metric's total/CPA, absent
+   from the official GSA total. `official_total_outcome_ids(meta, metric_key=...)` is the new,
+   stricter-than-default-reporting selector official totals must use.
+4. **Raw units are never called "value."** When `ltv` is entirely omitted, `evaluate_scenario` used to
+   set `value`/`total_value` to raw predicted units - unsafe once a fit mixes GSAs, sign-ups and kits,
+   which cannot be added. This is now reversed: an entirely-omitted `ltv` produces `value=None`,
+   `total_value=None`, `total_value_is_complete=False`, `value_status="not configured"`. A *partially*
+   priced `ltv` produces `value_status="partial"`, a priced subtotal, and `unpriced_outcome_ids`. Mixed
+   `value_currency` across priced outcomes now raises (`_validate_no_mixed_currency_value_weights`)
+   instead of silently summing across currencies. `compare_scenarios`' `total_value` sum uses
+   `min_count=1` so an all-unpriced column reports `NaN`, not a false `0.0`.
+5. **The canonical outcome catalogue is now the Structure page's only workflow**, not a second one
+   layered on top of a still-mandatory legacy "one GSA column per FH segment" block. The mandatory FH
+   segment mapper was removed entirely; the outcome catalogue editor is seeded from two optional,
+   clearly-labelled "Quick-start wizard" expanders (legacy per-segment GSA mapper, DNA kit outcomes) -
+   after seeding, every edit happens in the catalogue. `promo_cols`/`segment_control_cols`/`segment_ltv`
+   are now *derived* from the live catalogue rather than required separate inputs.
+   `ModelSpec.validate()` no longer requires at least one `segment_outcomes` mapping;
+   `validate_outcome_definitions` gained the actual enforcement point instead - at least one outcome
+   configured and `included_in_fit`.
+6. **Promo and control mappings moved to `outcome_id`.** A shared-segment sign-up and GSA used to
+   inherit the same segment-level promo/control mapping automatically, even where the business
+   definition or timing differs. `ModelSpec` gained `outcome_promo_cols`/`outcome_control_cols`
+   (outcome-id-keyed, take precedence over the legacy segment-keyed fields when set) and
+   `product_control_cols` (a new product-level tier) - `data.preprocessor.prepare_fh_modeling_frame`
+   resolves promo per outcome_id (`outcome_promo_cols` else segment-level `promo_cols`) and controls
+   additively across all three tiers, deduplicated. The Structure page's "apply this segment's mapping
+   to every outcome in it" button is the explicit bulk action the instruction document required, rather
+   than implicit segment-wide inheritance.
+7. **Funnel-coherence diagnostics, not a constrained funnel model.** Sign-ups and GSAs are fitted as
+   independent Negative-Binomial outcomes with nothing enforcing `GSA <= sign-up` - a genuine,
+   documented model limitation, not fixed in this PR. New `core.funnel.FunnelLink(upstream_outcome_id,
+   downstream_outcome_id)` lets an analyst declare which pairs form a funnel; `funnel_coherence_
+   diagnostics` computes violation counts/rates, implied-conversion-rate range and stability, never
+   raising except on a genuine shape mismatch; `funnel_channel_attribution_consistency` flags
+   sign-mismatched channel attribution across the pair. Persisted and fingerprinted
+   (`core.fingerprint.fingerprint_model_spec`'s `funnel_links` parameter,
+   `core.persistence`'s `config/funnel_links.json`). Diagnostics page renders per-link warnings/metrics.
+   The current fits remain parallel outcome equations - this PR documents that explicitly rather than
+   building the sign-up -> conversion -> GSA transition model the instruction document reserves for a
+   later phase.
+8. **Explicit CPA denominator and spend-scope metadata.** A scenario-level CPA used to divide whole-plan
+   spend by a KPI total with no visible statement of scope - useful as a whole-plan efficiency number,
+   but easily mistaken for channel-specific or incremental CPA. `core.media_units.cpa_scope_metadata`
+   validates and returns the required metadata (denominator metric, included outcome IDs, spend scope
+   from `CPA_SPEND_SCOPES`, included channels, market, time window, incremental-vs-observed).
+   `compute_cpa_by_product` gained explicitly-named `channel_incremental_cost_per_fh_gsa`/`_signup`/
+   `dna_kit` aliases; `evaluate_scenario` gained `whole_plan_cost_per_fh_gsa`/`_fh_signup`/`_dna_kit`.
+   Results & Curve Bank and Scenario Planner now caption their CPA numbers with the exact scope
+   ("channel-incremental" vs. "whole-plan") rather than showing a bare `avg_cpa`.
+9. **Hardened optimiser target validation.** `_validate_target_outcome_ids` now runs for every
+   objective branch: unknown `target_outcome_id`s are rejected; a `target_outcome_id` whose `metric_key`
+   doesn't match the objective's metric is rejected (skipped only for legacy metas with no catalogue
+   metadata at all); an outcome with `include_in_optimisation=False` (diagnostic role default, or an
+   explicit override) is rejected. `weighted_mix` now rejects non-finite/negative weights and raw-unit
+   mixes across different `unit`s unless the caller explicitly passes `assume_value_scaled_weights=True`.
+   `expected_value`'s default eligible set switched from `role="primary"` to
+   `include_in_value ∩ include_in_optimisation`, plus the mixed-currency check from point 3.
+10. **Drift status made first-class, not something only Diagnostics showed.** `core.outcomes.
+   has_blocking_drift`/`BLOCKING_DRIFT_STATUSES` (`"Changed since fit"`, `"Removed since fit"` - `"New
+   since fit"`/`"Excluded from next fit"` deliberately don't block) and a new shared
+   `components.ui.render_drift_status` component are now wired into all seven pages the instruction
+   document named (Structure, Model Configuration, Model Training, Diagnostics, Results, Scenario
+   Planner, Export). Six show it informationally; **Scenario Planner blocks** (`st.stop()`) when
+   calculation-relevant drift is present, even with an approved trace still in memory - the instruction
+   document's explicit "block scenario planning" requirement.
+11. **Promotion events became replayable pipeline steps**, not a one-way mutation of `transformed_data`.
+    `PromotionEvent` gained `event_id` (stable identity, auto-generated), `product`, `affected_outcome_ids`,
+    `market` and `transformation_version`. `core.promotions.promotion_events_to_transform_steps`/
+    `transform_steps_to_promotion_events` convert to/from `data.pipeline.TransformStep(op=
+    "promotion_event", ...)` entries in the same `pipeline_steps` list the rest of the transform
+    pipeline uses (deliberately excluded from the Transform Pipeline page's manual-operation dropdown -
+    only ever produced from a structured `PromotionEvent`); `apply_step` replays one event's
+    contribution additively onto its segment's derived column, matching `promotion_weekly_series`'s
+    existing overlapping-events-compound semantics. The Structure page's Save handler now persists
+    events as `TransformStep`s (replacing any prior promotion_event steps, leaving every other step type
+    untouched) alongside materialising the derived column for the current session; Project Export's
+    import handler drops whatever derived promo column is sitting in the imported parquet and replays
+    the `promotion_event` steps fresh against the imported data, so re-importing a project reproduces
+    the derived columns from the versioned event list rather than trusting the parquet.
+**Reason:** PR E.1 made two independent KPIs on one segment fittable and mostly safe to plan against,
+but the instruction document's own follow-up review found eleven further places where a display label,
+an implicit role default, or a one-way mutation could still silently misattribute, mislabel, or lose
+reproducibility for exactly the multi-KPI, multi-product projects PR E/E.1 were built to support. Each
+point above closes one specific, named pitfall rather than a general refactor.
+**Alternatives considered:** Keeping `role` as the single axis controlling every downstream behaviour
+and adding narrower special cases per collision (rejected - identical reasoning to PR E.1's selector
+consolidation: defers the fix to whichever call site hits the first real funnel-intermediate project).
+Building the full sign-up -> conversion -> GSA constrained funnel model now instead of diagnostics-only
+(rejected - the instruction document explicitly reserves this for a later phase, after parallel-outcome
+diagnostics and identifiability work); this PR ships the diagnostics prerequisite only. Replaying every
+`TransformStep` (not just `promotion_event`) against `raw_sources` on project import (rejected as
+out of scope - `pipeline_steps` replay-on-import is a pre-existing gap for every step type, not
+specific to promotion events; fixing it project-wide is materially riskier and not what the instruction
+document asked for here).
+**Impact:** Every fitted model, persisted project bundle, and approval fingerprint from before this PR
+is invalidated by the fingerprinted eligibility flags, `metric_key` and `funnel_links` payload additions
+- existing bundles must be re-fit and re-approved. A `weighted_mix` objective call that previously mixed
+raw units across different `unit`s now raises unless `assume_value_scaled_weights=True` is passed
+explicitly. `evaluate_scenario`'s `value`/`total_value` are `None` (not raw units) whenever `ltv` is
+entirely omitted - any caller reading them must check `value_status`. The Scenario Planner now hard-stops
+on calculation-relevant catalogue drift where it previously allowed planning against a stale approval.
+**Verification:** 773 tests passing (754 -> 773 across this PR's eleven items), `ruff check` clean
+throughout. All 20 of the instruction document's required test cases are covered: blank FH sign-up unit
+never becomes GSA; metric display variants migrate to canonical keys; custom metrics require explicit
+units; funnel-intermediate sign-ups appear in sign-up reporting but not the official GSA total;
+no-value-configured produces `value=None`; mixed currencies rejected; sign-up-only projects need no
+legacy GSA mapping; promo/control mappings differ across sign-up and GSA sharing a segment;
+funnel-coherence warnings; objective target-metric mismatch rejected; diagnostic outcomes cannot be
+optimised; raw-unit weighted mixes blocked unless explicitly value-scaled; CPA carries denominator and
+spend-scope metadata; catalogue drift blocks Scenario Planner; promotion-event pipeline replay
+reproduces derived columns from raw data on import; Model A/Model C parity (both builders construct the
+new `outcome_id_to_metric_key`/`outcome_id_to_eligibility` fields identically - verified by source
+inspection rather than a full PyMC build, matching this codebase's established convention of not
+compiling a real model in the test suite); bundle migration and round trip (legacy bundles with no
+`funnel_links.json`/outcome-id-keyed promo-control config import safely, and a full export/import
+round trip reproduces funnel links, outcome-id-keyed mappings, and promotion-event pipeline steps
+bit-for-bit); Streamlit AppTests for the canonical Structure workflow (quick-start wizard seeding, the
+outcome-level promo/control override section and its bulk-apply button, both via real
+`AppTest.from_file` runs); visible green CI (full suite + ruff clean on this PR's head).
+`AppTest.from_function`'s isolated single-script pattern was found to have a reproducible
+pandas4/pyarrow-in-a-thread crash specific to a fresh process's first list-of-dicts DataFrame
+construction (`test_drift_status_component.py`'s docstring has the full root-cause writeup) - worked
+around by testing that specific code path via direct calls with monkeypatched `st.*` methods instead of
+`AppTest`, while proving the same code live on a real page via `AppTest.from_file`
+(`test_model_config_drift_apptest.py`), which does not reproduce the issue.
+**Owner:** Engineering.
+**Status:** Accepted; implemented in PR E.2 (semantic hardening on the canonical-outcome refactor, per
+the instruction document's explicit pre-media-pathway-schema requirement). See docs/outcomes.md,
+docs/scenario_planner.md, docs/media_units_and_inflation.md and docs/limitations.md for the updated
+design records.
