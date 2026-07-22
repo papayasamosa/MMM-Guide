@@ -495,11 +495,19 @@ versioned event list, never trusting a possibly-stale value baked into the parqu
 `METRIC_REGISTRY` gained seven forward-looking metric keys (Family History net bill-through count/rate,
 finance-date GSA, and four DNA purchase-type keys - self-activated/gifted-activated/unactivated/total)
 and `OutcomeDefinition` gained `aggregation_type`/`date_basis`/`maturity_required` - schema and
-validation only, no computation pipeline exists for any of these yet. `core.pathways.
-MediaOutcomePathway` is a new, separate, persisted/fingerprinted catalogue of explicit
+validation only at the time of PR F, no computation pipeline existed for any of these yet.
+`core.pathways.MediaOutcomePathway` is a new, separate, persisted/fingerprinted catalogue of explicit
 `(channel, target_outcome_id)` relationships, designed so a pathway can already target any of these
-planned outcome_ids. None of this changes what gets fitted. See `docs/media_outcome_pathways.md` for
-the full design record and `docs/decision_log.md`'s PR F entry.
+planned outcome_ids. None of this changed what got fitted in PR F. See `docs/media_outcome_pathways.md`
+for the full design record and `docs/decision_log.md`'s PR F entry.
+
+**Update (PR G1):** the pathway catalogue now *does* drive fitting -
+`core.pathways.resolve_pathway_masks` controls which `(outcome, channel)` coefficients are estimated in
+both PyMC builders (`docs/segment_level_estimation.md`). `core.net_billthrough` computes the
+`fh_net_billthrough_count` metric_key's deterministic weekly series (signup-date-attributed, with
+maturity safeguards - `docs/net_billthrough.md`), though it is not yet wired into
+`prepare_fh_modeling_frame`'s automatic pipeline. The DNA purchase-type classifier and finance-date GSA
+computation remain schema-only, unchanged from PR F.
 
 ## Synthetic demo data
 
