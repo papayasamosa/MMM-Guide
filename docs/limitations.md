@@ -98,15 +98,20 @@
   tradeoff) rather than using the entire posterior - see `docs/decision_log.md`.
 - The Scenario Planner's optimiser always conserves total budget (`conserve_total_budget=True`). As a
   consequence, a true *marginal* CPA at the scenario level isn't meaningful (there's no net spend
-  change to compute it against) - the planner reports a *blended average* CPA (current vs. optimised
-  plan) instead, which is well-defined even at fixed total spend; see `docs/decision_log.md`.
+  change to compute it against) - the planner reports a *product-aware average* CPA (current vs.
+  optimised plan, Family History GSAs and DNA kits kept separate - never blended into one number)
+  instead, which is well-defined even at fixed total spend; see `docs/decision_log.md`.
 - Media-unit planning mode converts to/from spend using one average historical cost-per-unit per
   channel (same simplification as Results & Curve Bank's response-unit curve) - not a
   spend-level-varying relationship. `SpendConstraint` (locked cells, floors, bounded movement) still
   operates in spend terms only; there's no dedicated "locked media units" constraint type.
 - CPA/inflation are not first-class optimiser objectives - "minimise CPA," "maintain response/
-  delivery under inflation" from the original redesign brief aren't built; `objective` remains
-  `"value"` or `"volume"`, with `avg_cpa` reported as an output metric only.
+  delivery under inflation" from the original redesign brief aren't built; `objective` is explicit
+  (`core.optimization.VALID_OBJECTIVES`: `"fh_gsa"`, `"dna_kits"`, `"weighted_mix"`,
+  `"expected_value"` - no generic "maximise volume" that would mix FH GSAs and DNA kits), with
+  `avg_cpa`/`dna_avg_cpa` reported as output metrics only. `"weighted_mix"` and per-segment
+  `target_segments` are implemented in `core.optimization` but not yet exposed as UI controls on
+  the Scenario Planner page.
 - Media-unit curve bank entries (`input_type="media_unit"`) are only auto-saved for a
   market-specific fit - a shared curve's cost-per-unit context is inherently market-specific with no
   single market to attribute it to, so it's shown in the UI (for a chosen reference market) but not

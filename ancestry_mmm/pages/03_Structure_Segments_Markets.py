@@ -178,6 +178,24 @@ if dna_existing_col:
 if dna_combined_col:
     dna_segment_names.append(DNA_SEGMENT_COMBINED)
 
+# Fixed outcome_id per DNA segment, matching core.outcomes.dna_outcomes_from_columns
+# exactly - lets "excluded" be a genuinely separate state from "not mapped
+# at all": a DNA outcome can be captured, validated, and shown in the
+# catalogue without being committed to the next fit.
+_DNA_SEGMENT_OUTCOME_ID = {
+    DNA_SEGMENT_NEW: "dna_new_kit", DNA_SEGMENT_EXISTING_FH: "dna_existing_fh_kit", DNA_SEGMENT_COMBINED: "dna_combined_kit",
+}
+excluded_dna_segments = []
+if dna_segment_names:
+    excluded_dna_segments = st.multiselect(
+        "Exclude these DNA outcomes from the next fit",
+        dna_segment_names, key="excluded_dna_segments",
+        help="A genuinely separate state from not mapping a column at all - an excluded DNA "
+        "outcome is still captured and validated here, just not included the next time the "
+        "modelling frame is prepared, until un-excluded.",
+    )
+excluded_outcome_ids = [_DNA_SEGMENT_OUTCOME_ID[s] for s in excluded_dna_segments]
+
 dna_promo_cols = {}
 dna_segment_control_cols = {}
 if dna_segment_names:
@@ -272,6 +290,7 @@ if st.button("Save structure and validate", type="primary"):
             set_state("transformed_data", updated_df)
         set_state("model_spec", spec.to_dict())
         set_state("outcome_definitions", [o.to_dict() for o in outcome_definitions])
+        set_state("excluded_outcome_ids", excluded_outcome_ids)
         set_state("dna_promotion_events", [e.to_dict() for e in dna_promotion_events])
         clear_model_state()
         issues = validate_modeling_frame(
@@ -289,12 +308,21 @@ if st.button("Save structure and validate", type="primary"):
 
         st.markdown("#### Outcome catalogue")
         st.caption(
-            "Every outcome captured for this project. `modelled_today = True` (Family History) means "
-            "always fit; `False` (DNA) means captured here and automatically included the next time "
-            "the modelling frame is prepared on Model Configuration - not yet part of a fitted model "
-            "until then."
+            "Every outcome captured for this project, with its current `status` (see "
+            "docs/outcomes.md): `Configured` means captured here only; `Excluded` means captured "
+            "but held back from the next fit; `Missing source column` means its mapped column isn't "
+            "in the current data; `Included in prepared frame` / `Included in fitted run` reflect "
+            "this session's actual Model Configuration / Model Training state, if any; `Stale after "
+            "configuration changes` means it used to be prepared or fit but its column has since "
+            "disappeared from the data."
         )
-        outcomes_df = outcomes_to_dataframe(outcome_definitions)
+        outcomes_df = outcomes_to_dataframe(
+            outcome_definitions,
+            excluded_outcome_ids=excluded_outcome_ids,
+            available_columns=set(df.columns),
+            frame_segments=(get_state("frame") or {}).get("segments"),
+            model_meta_segments=getattr(get_state("model_meta"), "segments", None),
+        )
         st.dataframe(outcomes_df, width="stretch", column_config=dataframe_column_config(outcomes_df))
 
 if get_state("model_spec"):

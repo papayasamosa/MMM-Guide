@@ -13,6 +13,7 @@ from ancestry_mmm.core.market_config import ChannelMediaUnitConfig
 from ancestry_mmm.core.market_specific_predict import FHMarketSpecificPosteriorParams
 from ancestry_mmm.core.media_units import (
     compute_cpa,
+    compute_cpa_by_product,
     cpa_stability_flags,
     equivalent_delivery,
     equivalent_response,
@@ -62,6 +63,73 @@ class TestComputeCpa:
         df = pd.DataFrame({"spend": [0.0, 100.0], "New_response": [0.0, 5.0]})
         out = compute_cpa(df, response_col="New_response")
         assert out["avg_cpa"].iloc[1] == pytest.approx(20.0)
+
+    def test_default_overall_response_raises_on_a_genuinely_mixed_curve(self):
+        df = pd.DataFrame({
+            "spend": [0.0, 100.0], "overall_response": [0.0, 15.0],
+            "fh_response": [0.0, 10.0], "dna_response": [0.0, 5.0],
+        })
+        with pytest.raises(ValueError, match="mixes Family History"):
+            compute_cpa(df)
+
+    def test_allow_mixed_bypasses_the_guard(self):
+        df = pd.DataFrame({
+            "spend": [0.0, 100.0], "overall_response": [0.0, 15.0],
+            "fh_response": [0.0, 10.0], "dna_response": [0.0, 5.0],
+        })
+        out = compute_cpa(df, allow_mixed=True)
+        assert out["avg_cpa"].iloc[1] == pytest.approx(100.0 / 15.0)
+
+    def test_no_guard_when_dna_response_is_all_zero(self):
+        df = pd.DataFrame({
+            "spend": [0.0, 100.0], "overall_response": [0.0, 10.0],
+            "fh_response": [0.0, 10.0], "dna_response": [0.0, 0.0],
+        })
+        out = compute_cpa(df)
+        assert out["avg_cpa"].iloc[1] == pytest.approx(10.0)
+
+    def test_explicit_response_col_does_not_need_allow_mixed(self):
+        df = pd.DataFrame({
+            "spend": [0.0, 100.0], "overall_response": [0.0, 15.0],
+            "fh_response": [0.0, 10.0], "dna_response": [0.0, 5.0],
+        })
+        out = compute_cpa(df, response_col="dna_response")
+        assert out["avg_cpa"].iloc[1] == pytest.approx(20.0)
+
+    def test_column_prefix_names_the_output_columns(self):
+        df = _curve_df([0.0, 100.0], [0.0, 10.0])
+        out = compute_cpa(df, column_prefix="dna_")
+        assert "dna_avg_cpa" in out.columns and "dna_marginal_cpa" in out.columns
+        assert "avg_cpa" not in out.columns
+
+
+class TestComputeCpaByProduct:
+    def _mixed_curve(self):
+        return pd.DataFrame({
+            "spend": [0.0, 100.0, 200.0], "overall_response": [0.0, 15.0, 27.0],
+            "fh_response": [0.0, 10.0, 17.0], "dna_response": [0.0, 5.0, 10.0],
+        })
+
+    def test_fh_only_curve_gets_plain_avg_cpa_no_dna_columns(self):
+        df = pd.DataFrame({
+            "spend": [0.0, 100.0], "overall_response": [0.0, 10.0],
+            "fh_response": [0.0, 10.0], "dna_response": [0.0, 0.0],
+        })
+        out = compute_cpa_by_product(df)
+        assert out["avg_cpa"].iloc[1] == pytest.approx(10.0)
+        assert "dna_avg_cpa" not in out.columns
+
+    def test_mixed_curve_gets_both_fh_and_dna_cpa_never_combined(self):
+        out = compute_cpa_by_product(self._mixed_curve())
+        assert out["avg_cpa"].iloc[1] == pytest.approx(100.0 / 10.0)
+        assert out["dna_avg_cpa"].iloc[1] == pytest.approx(100.0 / 5.0)
+        assert out["marginal_cpa"].iloc[2] == pytest.approx(100.0 / 7.0)
+        assert out["dna_marginal_cpa"].iloc[2] == pytest.approx(100.0 / 5.0)
+
+    def test_curve_without_fh_response_falls_back_to_overall_response(self):
+        df = _curve_df([0.0, 100.0], [0.0, 10.0])
+        out = compute_cpa_by_product(df)
+        assert out["avg_cpa"].iloc[1] == pytest.approx(10.0)
 
 
 class TestCpaStabilityFlags:
@@ -213,6 +281,30 @@ class TestEquivalentResponse:
             equivalent_response(-1.0, 1.0, df)
         with pytest.raises(ValueError):
             equivalent_response(1.0, -1.0, df)
+
+    def test_default_overall_response_raises_on_a_genuinely_mixed_curve(self):
+        df = pd.DataFrame({
+            "spend": [0.0, 100.0], "overall_response": [0.0, 15.0],
+            "fh_response": [0.0, 10.0], "dna_response": [0.0, 5.0],
+        })
+        with pytest.raises(ValueError, match="mixes Family History"):
+            equivalent_response(50.0, 1.0, df)
+
+    def test_allow_mixed_bypasses_the_guard(self):
+        df = pd.DataFrame({
+            "spend": [0.0, 100.0], "overall_response": [0.0, 15.0],
+            "fh_response": [0.0, 10.0], "dna_response": [0.0, 5.0],
+        })
+        result = equivalent_response(50.0, 1.0, df, allow_mixed=True)
+        assert result == pytest.approx(7.5)
+
+    def test_explicit_response_col_does_not_need_allow_mixed(self):
+        df = pd.DataFrame({
+            "spend": [0.0, 100.0], "overall_response": [0.0, 15.0],
+            "fh_response": [0.0, 10.0], "dna_response": [0.0, 5.0],
+        })
+        result = equivalent_response(50.0, 1.0, df, response_col="dna_response")
+        assert result == pytest.approx(2.5)
 
 
 class TestMarketSpecificCpaTable:

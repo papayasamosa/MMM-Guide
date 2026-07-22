@@ -164,6 +164,41 @@ class TestFingerprintModelSpecPipelineSteps:
         )
 
 
+class TestFingerprintModelSpecDirectDnaSegments:
+    """direct_dna_segments (which segments get a direct DNA-media pathway -
+    i.e. which DNA-kit outcomes are actually included in a fit) must be
+    fingerprinted - the instruction document's audit-confirmed gap: toggling
+    DNA-kit outcomes in/out of a fit changed meta.segments without changing
+    model_spec/prior_config/pipeline_steps/market_spec_config at all, so an
+    approval could stay "matching" across two structurally different fits."""
+
+    def test_no_direct_dna_segments_is_backward_compatible_with_omitting_the_argument(self):
+        spec = {"markets": ["UK"]}
+        assert fingerprint_model_spec(spec, {}, 4) == fingerprint_model_spec(spec, {}, 4, direct_dna_segments=None)
+        assert fingerprint_model_spec(spec, {}, 4) == fingerprint_model_spec(spec, {}, 4, direct_dna_segments=[])
+
+    def test_adding_a_dna_kit_segment_changes_the_fingerprint(self):
+        spec = {"markets": ["UK"]}
+        fp_none = fingerprint_model_spec(spec, {}, 4, direct_dna_segments=["DNA_CrossSell"])
+        fp_with_kit = fingerprint_model_spec(spec, {}, 4, direct_dna_segments=["DNA_CrossSell", "New Customer"])
+        assert fp_none != fp_with_kit
+
+    def test_segment_list_order_does_not_matter(self):
+        spec = {"markets": ["UK"]}
+        fp_a = fingerprint_model_spec(spec, {}, 4, direct_dna_segments=["A", "B"])
+        fp_b = fingerprint_model_spec(spec, {}, 4, direct_dna_segments=["B", "A"])
+        assert fp_a == fp_b
+
+    def test_excluding_a_previously_included_dna_outcome_changes_the_fingerprint(self):
+        # The exact scenario the audit measured: toggling the Structure
+        # page's "exclude from fit" control changes which segments a fit
+        # actually has, with model_spec itself untouched.
+        spec = {"markets": ["UK"], "segment_outcomes": {"New": "fh_new_gsa"}}
+        fp_included = fingerprint_model_spec(spec, {}, 4, direct_dna_segments=["New", "New Customer"])
+        fp_excluded = fingerprint_model_spec(spec, {}, 4, direct_dna_segments=["New"])
+        assert fp_included != fp_excluded
+
+
 class TestFingerprintModelSpecMarketConfig:
     def _config_with(self, *, currency=None, descriptors=None, media_unit=None) -> dict:
         profile = MarketProfile(

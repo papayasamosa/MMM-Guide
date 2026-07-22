@@ -26,7 +26,7 @@ from ancestry_mmm.core.predict import generate_channel_curve
 from ancestry_mmm.core.market_specific_predict import generate_market_channel_curve
 from ancestry_mmm.core.uncertainty import generate_channel_curve_with_uncertainty, generate_market_channel_curve_with_uncertainty
 from ancestry_mmm.core.media_units import (
-    compute_cpa, cpa_stability_flags, extract_cost_per_unit_series, historical_cost_trend,
+    compute_cpa_by_product, cpa_stability_flags, extract_cost_per_unit_series, historical_cost_trend,
     response_unit_curve, equivalent_delivery, equivalent_response,
 )
 from ancestry_mmm.components.charts import create_waterfall_chart, create_response_curve, create_response_curve_with_band
@@ -48,12 +48,15 @@ def _render_curve_with_cpa(curve_df: pd.DataFrame, title: str) -> None:
         create_response_curve(curve_df["spend"].to_numpy(), curve_df["overall_response"].to_numpy(), title),
         width="stretch",
     )
-    cpa_df = compute_cpa(curve_df)
+    cpa_df = compute_cpa_by_product(curve_df)
     st.markdown("**Spend curve with CPA**")
     st.caption(
         "Average CPA = spend / incremental outcomes; marginal CPA = change in spend / change in "
         "incremental outcomes - both shown together since they diverge near saturation. Left blank "
-        "wherever response (or its change between points) is zero or negative."
+        "wherever response (or its change between points) is zero or negative. `avg_cpa`/"
+        "`marginal_cpa` are against Family History GSAs; where this channel also has a mapped "
+        "DNA-kit segment, `dna_avg_cpa`/`dna_marginal_cpa` are shown separately against DNA kit "
+        "sales - the two are never combined into one number (docs/dna_fh_causal_structure.md)."
     )
     st.dataframe(cpa_df, width="stretch", column_config=dataframe_column_config(cpa_df))
     for f in cpa_stability_flags(curve_df)[:5]:
@@ -125,8 +128,12 @@ def _render_media_unit_section(curve_df: pd.DataFrame, market_config: MarketSpec
             f"Cost per {unit_label} assumption", min_value=0.0, value=float(trend["avg_cost_per_unit"]),
             key=f"cost_assumption_{key_suffix}",
         )
-        response = equivalent_response(target_units2, cost_assumption, curve_df)
-        st.metric("Modelled response", f"{response:,.1f}")
+        has_dna = "dna_response" in curve_df.columns and (curve_df["dna_response"] > 0).any()
+        fh_response = equivalent_response(target_units2, cost_assumption, curve_df, "fh_response")
+        st.metric("Modelled response (Family History GSAs)", f"{fh_response:,.1f}")
+        if has_dna:
+            dna_response = equivalent_response(target_units2, cost_assumption, curve_df, "dna_response")
+            st.metric("Modelled response (DNA kits)", f"{dna_response:,.1f}")
 
 
 trace = get_state("trace")
@@ -365,6 +372,7 @@ if model_run_id and spec_dict is not None:
         "model_spec_fingerprint": fingerprint_model_spec(
             spec_dict, prior_config, dna_lag_weeks, model_type=model_type,
             pipeline_steps=get_state("pipeline_steps") or [], market_spec_config=get_state("market_spec_config"),
+            direct_dna_segments=meta.direct_dna_segments if meta is not None else None,
         ),
         "posterior_fingerprint": fingerprint_posterior(params),
     }

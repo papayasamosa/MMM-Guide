@@ -32,7 +32,7 @@ from .market_specific_predict import (
     extract_market_specific_posterior_params,
     generate_market_channel_curve,
 )
-from .media_units import compute_cpa
+from .media_units import compute_cpa_by_product
 from .optimization import AnyPosteriorParams, evaluate_scenario
 from .predict import extract_posterior_params, generate_channel_curve
 
@@ -120,12 +120,15 @@ def generate_channel_curve_with_uncertainty(
 ) -> pd.DataFrame:
     """
     Model A per-draw response + CPA curve: `generate_channel_curve` and
-    `core.media_units.compute_cpa` run once per sampled posterior draw over
-    a *fixed* spend axis (computed once from the posterior mean if not
-    given, so every draw is evaluated at the same spend points - required
-    for the per-point summary below to compare like with like), then
-    summarized into `saturation_*`, `{segment}_response_*`,
-    `overall_response_*`, `avg_cpa_*`, `marginal_cpa_*` columns.
+    `core.media_units.compute_cpa_by_product` run once per sampled
+    posterior draw over a *fixed* spend axis (computed once from the
+    posterior mean if not given, so every draw is evaluated at the same
+    spend points - required for the per-point summary below to compare
+    like with like), then summarized into `saturation_*`,
+    `{segment}_response_*`, `overall_response_*`, `fh_response_*`,
+    `dna_response_*`, `avg_cpa_*` (against FH GSAs), `marginal_cpa_*`, and
+    - where the channel has a mapped DNA-kit segment - `dna_avg_cpa_*`/
+    `dna_marginal_cpa_*` (against DNA kits) columns.
     """
     if spend_range is None:
         mean_params = extract_posterior_params(trace, meta)
@@ -136,7 +139,7 @@ def generate_channel_curve_with_uncertainty(
     for at in sample_draw_indices(trace, n_draws, seed):
         params = extract_posterior_params(trace, meta, at=at)
         curve = generate_channel_curve(channel, meta, params, spend_range=spend_range)
-        draw_dfs.append(compute_cpa(curve))
+        draw_dfs.append(compute_cpa_by_product(curve))
 
     return _summarize_curve_draws(draw_dfs, cred_mass, identity_cols=["channel", "spend"])
 
@@ -165,12 +168,16 @@ def generate_market_channel_curve_with_uncertainty(
     for at in sample_draw_indices(trace, n_draws, seed):
         params = extract_market_specific_posterior_params(trace, meta, at=at)
         curve = generate_market_channel_curve(market, channel, meta, params, spend_range=spend_range)
-        draw_dfs.append(compute_cpa(curve))
+        draw_dfs.append(compute_cpa_by_product(curve))
 
     return _summarize_curve_draws(draw_dfs, cred_mass, identity_cols=["market", "channel", "spend"])
 
 
 def _summarize_scenario_draws(draws: List[pd.DataFrame], cred_mass: float) -> pd.DataFrame:
+    """Per (month, segment) draw summary. `avg_cpa`/`dna_avg_cpa` are
+    product-aware (see core.optimization.evaluate_scenario's docstring) -
+    each summarized independently across draws, never combined into one
+    number here either."""
     tail = (1.0 - cred_mass) / 2.0
     combined = pd.concat(draws, ignore_index=True)
     grouped = combined.groupby(["month", "segment"], sort=False)
@@ -187,6 +194,14 @@ def _summarize_scenario_draws(draws: List[pd.DataFrame], cred_mass: float) -> pd
         avg_cpa_median=("avg_cpa", "median"),
         avg_cpa_lower=("avg_cpa", lambda s: s.quantile(tail)),
         avg_cpa_upper=("avg_cpa", lambda s: s.quantile(1.0 - tail)),
+        dna_avg_cpa_mean=("dna_avg_cpa", "mean"),
+        dna_avg_cpa_median=("dna_avg_cpa", "median"),
+        dna_avg_cpa_lower=("dna_avg_cpa", lambda s: s.quantile(tail)),
+        dna_avg_cpa_upper=("dna_avg_cpa", lambda s: s.quantile(1.0 - tail)),
+        total_value_mean=("total_value", "mean"),
+        total_value_median=("total_value", "median"),
+        total_value_lower=("total_value", lambda s: s.quantile(tail)),
+        total_value_upper=("total_value", lambda s: s.quantile(1.0 - tail)),
     ).reset_index()
     return summary
 

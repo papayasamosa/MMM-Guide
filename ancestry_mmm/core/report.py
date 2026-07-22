@@ -114,26 +114,41 @@ def _model_section(spec: Optional[ModelSpec], model_type: str, dna_lag_weeks: Op
     )
 
 
-def _outcomes_section(spec: Optional[ModelSpec], outcome_definitions: Optional[List[dict]]) -> ReportSection:
+def _outcomes_section(
+    spec: Optional[ModelSpec],
+    outcome_definitions: Optional[List[dict]],
+    *,
+    model_meta: Optional[object] = None,
+    frame: Optional[Dict[str, Any]] = None,
+    excluded_outcome_ids: Optional[List[str]] = None,
+) -> ReportSection:
     if spec is None:
         return ReportSection(title="Outcomes", paragraphs=["No model specification is available yet."])
     outcomes = resolve_outcome_definitions(outcome_definitions, spec.segment_outcomes, spec.segment_ltv)
-    table = outcomes_to_dataframe(outcomes)
+    available_columns = set(frame["df"].columns) if frame and frame.get("df") is not None else None
+    frame_segments = frame.get("segments") if frame else None
+    model_meta_segments = model_meta.segments if model_meta is not None else None
+    table = outcomes_to_dataframe(
+        outcomes, excluded_outcome_ids=excluded_outcome_ids, available_columns=available_columns,
+        frame_segments=frame_segments, model_meta_segments=model_meta_segments,
+    )
     n_dna = sum(1 for o in outcomes if o.product == DNA)
     paragraphs = [
         f"{len(outcomes)} outcome(s) catalogued: {len(outcomes) - n_dna} Family History, {n_dna} DNA.",
     ]
     if n_dna:
         paragraphs.append(
-            "DNA outcomes are opt-in: `modelled_today = False` means this outcome type isn't fit "
-            "automatically the way Family History segments are, not that it can never be - mapping "
-            "it on Structure and re-preparing the modelling frame includes it, with DNA-targeted "
-            "media getting full direct response rather than the shrunk halo pathway other segments "
-            "get. See docs/dna_fh_causal_structure.md."
+            "DNA outcomes are opt-in: see each outcome's `status` column below for whether it's "
+            "only configured, included in the currently prepared frame, included in the currently "
+            "fitted model, excluded, stale, or missing its source column - mapping it on Structure "
+            "and re-preparing the modelling frame includes it, with DNA-targeted media getting full "
+            "direct response rather than the shrunk halo pathway other segments get. See "
+            "docs/dna_fh_causal_structure.md."
         )
     return ReportSection(
         title="Outcomes", paragraphs=paragraphs,
-        table=table, table_caption="Outcome catalogue (modelled_today = fit automatically, with no extra configuration)",
+        table=table, table_caption="Outcome catalogue (status: Configured / Included in prepared frame / "
+        "Included in fitted run / Missing source column / Excluded / Stale after configuration changes)",
     )
 
 
@@ -263,11 +278,20 @@ def build_report_sections(
     scenarios: Optional[List[Dict]] = None,
     market_spec_config: Optional[MarketSpecConfig] = None,
     outcome_definitions: Optional[List[dict]] = None,
+    model_meta: Optional[object] = None,
+    frame: Optional[Dict[str, Any]] = None,
+    excluded_outcome_ids: Optional[List[str]] = None,
 ) -> List[ReportSection]:
     """Assemble every section of the report, in display order. Every input is
     optional and independently missing-safe - a report can be generated at
     any point in the workflow, not only once every step is complete; each
-    section says plainly what hasn't happened yet rather than erroring."""
+    section says plainly what hasn't happened yet rather than erroring.
+
+    `model_meta`/`frame`/`excluded_outcome_ids` are optional context for the
+    Outcomes section's run-aware `status` column (core.outcomes.outcome_status) -
+    without them, every outcome still gets a status ("Configured" or
+    "Excluded"), just without the frame/fit/column context to distinguish
+    the other four."""
     pipeline_steps = pipeline_steps or []
     curve_bank_entries = curve_bank_entries or []
     scenarios = scenarios or []
@@ -276,7 +300,7 @@ def build_report_sections(
         _objective_section(spec, model_type),
         _data_section(spec, pipeline_steps, data_window),
         _model_section(spec, model_type, dna_lag_weeks),
-        _outcomes_section(spec, outcome_definitions),
+        _outcomes_section(spec, outcome_definitions, model_meta=model_meta, frame=frame, excluded_outcome_ids=excluded_outcome_ids),
         _diagnostics_section(scorecard),
         _approval_section(approval),
         _curve_bank_section(curve_bank_entries),

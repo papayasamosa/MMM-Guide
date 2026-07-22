@@ -241,3 +241,20 @@ class TestEvaluateScenarioWithUncertainty:
             approval=approval, baseline_spend_plan=higher_spend, **IDENTITY,
         )
         assert result["prob_outperforms_baseline"] == pytest.approx(0.0)
+
+    def test_summary_carries_product_aware_and_total_value_columns(self, meta, market_trace, approval, reference_context):
+        """The per-draw scenario summary must expose the same product-aware
+        split as the point-estimate path (core.optimization.evaluate_scenario):
+        this fixture's meta has no kit-only segments, so dna_avg_cpa is
+        NaN throughout - not present at all would be a silent regression."""
+        spend_plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Media": 200.0}}
+        result = evaluate_scenario_with_uncertainty(
+            spend_plan, "UK", meta, market_trace, reference_context,
+            model_type="market_specific", n_draws=20, seed=1,
+            approval=approval, **IDENTITY,
+        )
+        summary = result["summary"]
+        assert {"dna_avg_cpa_mean", "dna_avg_cpa_lower", "dna_avg_cpa_upper", "total_value_mean", "total_value_lower", "total_value_upper"} <= set(summary.columns)
+        assert np.all(summary["dna_avg_cpa_mean"].isna())  # no kit-only segments in this fixture
+        assert np.all(summary["total_value_lower"] <= summary["total_value_mean"] + 1e-9)
+        assert np.all(summary["total_value_mean"] <= summary["total_value_upper"] + 1e-9)

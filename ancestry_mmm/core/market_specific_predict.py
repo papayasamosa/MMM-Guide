@@ -284,6 +284,10 @@ def generate_market_channel_curve(
     market-level curve" deliverables from docs/market_hierarchy.md section 3
     and docs/segment_methodology.md's aggregation rule (overall = sum of
     segment responses, never an independently fitted "Overall" outcome).
+    Also splits `overall_response` by product into `fh_response`/
+    `dna_response` (docs/dna_fh_causal_structure.md's "never sum kits and
+    GSAs as one volume") - see core.predict.generate_channel_curve's
+    docstring for the exact rule (`meta.kit_only_segments`).
 
     Steady-state approximation (see core.predict module docstring): channels
     don't interact in this model's linear predictor, so a channel's own
@@ -312,6 +316,7 @@ def generate_market_channel_curve(
         sat = float(hill_function(np.array([float(spend)]), K, S)[0])
         row = {"market": market, "channel": channel, "spend": float(spend), "saturation": sat}
         overall = 0.0
+        dna_total = 0.0
         for seg in meta.segments:
             beta_val = params.beta[market][seg][channel]
             if is_dna:
@@ -322,7 +327,11 @@ def generate_market_channel_curve(
             value = beta_val * sat
             row[f"{seg}_response"] = value
             overall += value
+            if seg in meta.kit_only_segments:
+                dna_total += value
         row["overall_response"] = overall
+        row["dna_response"] = dna_total
+        row["fh_response"] = overall - dna_total
         rows.append(row)
 
     return pd.DataFrame(rows)

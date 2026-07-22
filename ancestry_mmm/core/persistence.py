@@ -264,9 +264,27 @@ def reconstruct_model_state(imported: Dict[str, Any]) -> Dict[str, Any]:
     Given the dict returned by import_project(), re-derive the model
     artefacts that aren't directly serialised in the bundle - the modelling
     frame and posterior parameters - from what is: transformed_data +
-    model_spec (frame; no MCMC involved, just the same pandas/numpy prep
-    fit uses) and trace + model_meta (posterior params; posterior
-    summarisation, not re-sampling). Doesn't require or trigger a re-fit.
+    model_spec + outcome_definitions (frame; no MCMC involved, just the
+    same pandas/numpy prep fit uses) and trace + model_meta (posterior
+    params; posterior summarisation, not re-sampling). Doesn't require or
+    trigger a re-fit.
+
+    The frame is rebuilt with the *same* DNA-kit outcomes the original fit
+    used - `dna_kit_outcome_columns(resolve_outcome_definitions(...))`, the
+    identical derivation `pages/04_Model_Config.py` uses when first
+    preparing a frame - filtered to columns actually present in
+    `transformed_data` the same defensive way. Without this, a re-imported
+    FH-plus-DNA project's frame would silently come back FH-only (the
+    instruction document's audit-confirmed defect: `reconstruct_model_state`
+    dropped DNA-kit segments on reimport, `reimport_frame_matches_meta_segments:
+    False`) - the reconstructed frame's segments would then disagree with
+    `result["model_meta"].segments` from the very same bundle. Known
+    residual gap: `excluded_outcome_ids` (which DNA outcomes an analyst had
+    deliberately excluded from the next fit, Structure page) isn't
+    persisted in the bundle, so a reimport re-includes every mapped DNA
+    outcome regardless of exclusions in effect when the project was saved -
+    safe (visible, correctable on the next fit) rather than silently wrong,
+    but not identical to the exact excluded set.
 
     Returns {"frame": ..., "model_meta": ..., "posterior_params": ...},
     with any entry left None if its inputs are missing or inconsistent
@@ -288,9 +306,16 @@ def reconstruct_model_state(imported: Dict[str, Any]) -> Dict[str, Any]:
             # packages a caller imports (see e.g. any pages/*.py that import
             # `ancestry_mmm.data` before `ancestry_mmm.core`).
             from ..data.preprocessor import prepare_fh_modeling_frame
+            from .outcomes import dna_kit_outcome_columns, resolve_outcome_definitions
 
             spec = ModelSpec.from_dict(imported["model_spec"])
-            result["frame"] = prepare_fh_modeling_frame(imported["transformed_data"], spec)
+            transformed_data = imported["transformed_data"]
+            outcome_definitions = resolve_outcome_definitions(
+                imported.get("outcome_definitions"), spec.segment_outcomes, spec.segment_ltv,
+            )
+            dna_kit_outcomes = dna_kit_outcome_columns(outcome_definitions)
+            dna_kit_outcomes = {seg: col for seg, col in dna_kit_outcomes.items() if col in transformed_data.columns}
+            result["frame"] = prepare_fh_modeling_frame(transformed_data, spec, dna_kit_outcomes=dna_kit_outcomes)
         except (ValueError, KeyError):
             result["frame"] = None
 
@@ -348,11 +373,13 @@ def verify_imported_approval(
             "The model must be reviewed and approved again."
         )
 
+    model_meta = reconstructed.get("model_meta")
     data_fp = fingerprint_dataframe(frame["df"])
     spec_fp = fingerprint_model_spec(
         imported.get("model_spec") or {}, imported.get("prior_config") or {}, imported.get("dna_lag_weeks", 4),
         model_type=imported.get("model_type", "shared"),
         pipeline_steps=imported.get("pipeline_steps") or [], market_spec_config=imported.get("market_spec_config"),
+        direct_dna_segments=model_meta.direct_dna_segments if model_meta is not None else None,
     )
     posterior_fp = fingerprint_posterior(posterior_params)
     current_run_id = imported.get("model_run_id") or approval.model_run_id

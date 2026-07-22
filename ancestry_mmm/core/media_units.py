@@ -30,7 +30,9 @@ from .market_config import ChannelMediaUnitConfig
 from .market_specific_predict import FHMarketSpecificPosteriorParams, generate_market_channel_curve
 
 
-def compute_cpa(curve_df: pd.DataFrame, response_col: str = "overall_response") -> pd.DataFrame:
+def compute_cpa(
+    curve_df: pd.DataFrame, response_col: str = "overall_response", *, allow_mixed: bool = False, column_prefix: str = "",
+) -> pd.DataFrame:
     """
     Add `avg_cpa` and `marginal_cpa` columns to a spend -> response curve
     DataFrame:
@@ -43,7 +45,36 @@ def compute_cpa(curve_df: pd.DataFrame, response_col: str = "overall_response") 
     between consecutive curve points, is zero or negative -
     docs/media_units_and_inflation.md is explicit that CPA on a
     zero-or-negative-response base is meaningless, not just large.
+
+    `response_col` must identify what's being counted in the denominator
+    (the instruction document's explicit requirement - "CPA must identify
+    its denominator... never calculate total spend divided by FH GSAs plus
+    DNA kits and call it simply CPA"). Defaults to `"overall_response"` for
+    backward compatibility with curves that only ever have one product (the
+    overwhelming majority - a project with no DNA-kit segments has
+    `dna_response` identically zero, so `overall_response == fh_response`
+    and there's nothing to disambiguate). If the curve genuinely mixes both
+    (`fh_response` and `dna_response` both present and non-trivial) and the
+    caller asks for `"overall_response"` without acknowledging that, this
+    raises rather than silently dividing spend by a sum of two different
+    units - pass `response_col="fh_response"` or `"dna_response"`
+    explicitly, or `allow_mixed=True` to acknowledge a deliberately mixed
+    denominator. `column_prefix` names the output columns
+    `{prefix}avg_cpa`/`{prefix}marginal_cpa` instead of the bare names, so
+    a caller computing CPA against more than one `response_col` on the same
+    curve (see `compute_cpa_by_product`) doesn't collide column names.
     """
+    if response_col == "overall_response" and not allow_mixed:
+        has_fh = "fh_response" in curve_df.columns and (curve_df["fh_response"] > 0).any()
+        has_dna = "dna_response" in curve_df.columns and (curve_df["dna_response"] > 0).any()
+        if has_fh and has_dna:
+            raise ValueError(
+                "This curve mixes Family History GSAs and DNA kit sales - computing CPA against "
+                "'overall_response' would divide spend by a sum of two different units. Pass "
+                "response_col='fh_response' or response_col='dna_response' explicitly (or "
+                "allow_mixed=True to acknowledge a deliberately mixed denominator)."
+            )
+
     out = curve_df.copy()
     spend = out["spend"].to_numpy()
     response = out[response_col].to_numpy()
@@ -57,8 +88,43 @@ def compute_cpa(curve_df: pd.DataFrame, response_col: str = "overall_response") 
         positive = d_response > 0
         marginal_cpa[1:][positive] = d_spend[positive] / d_response[positive]
 
-    out["avg_cpa"] = avg_cpa
-    out["marginal_cpa"] = marginal_cpa
+    out[f"{column_prefix}avg_cpa"] = avg_cpa
+    out[f"{column_prefix}marginal_cpa"] = marginal_cpa
+    return out
+
+
+def compute_cpa_by_product(curve_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Product-aware CPA: computes `avg_cpa`/`marginal_cpa` against
+    `fh_response` (Family History GSAs, including the FH DNA-cross-sell
+    segment), and - only where the curve actually has a non-trivial
+    `dna_response` (a DNA-targeted channel with a mapped DNA-kit segment
+    fit alongside it) - *additionally* `dna_avg_cpa`/`dna_marginal_cpa`
+    against `dna_response`, prefixed so neither denominator is silently
+    mixed into the other (the instruction document's "CPA must identify
+    its denominator" requirement).
+
+    The overwhelming majority of curves (no DNA-kit segments in the fit)
+    get exactly the same `avg_cpa`/`marginal_cpa` columns as before, with
+    the same values (`fh_response == overall_response` when `dna_response`
+    is identically zero) - this is the safe default entry point for UI/
+    export code that used to call `compute_cpa(curve_df)` with no
+    `response_col`, which would now raise on a genuinely mixed curve
+    instead of silently mixing units.
+    """
+    if "fh_response" not in curve_df.columns:
+        # Curve predates the fh_response/dna_response split (shouldn't
+        # happen from this codebase's own generators, but defensive against
+        # any external/hand-built curve) - fall back to the legacy,
+        # single-denominator behaviour rather than erroring.
+        return compute_cpa(curve_df, "overall_response", allow_mixed=True)
+
+    out = compute_cpa(curve_df, "fh_response", allow_mixed=True)
+    has_dna = "dna_response" in curve_df.columns and (curve_df["dna_response"] > 0).any()
+    if has_dna:
+        dna_cpa = compute_cpa(curve_df, "dna_response", allow_mixed=True, column_prefix="dna_")
+        out["dna_avg_cpa"] = dna_cpa["dna_avg_cpa"]
+        out["dna_marginal_cpa"] = dna_cpa["dna_marginal_cpa"]
     return out
 
 
@@ -72,6 +138,14 @@ def cpa_stability_flags(
     point-estimate proxy for "posterior uncertainty makes CPA unstable here"
     (see module docstring for why this isn't full credible-interval-based
     instability detection).
+
+    Unlike `compute_cpa`/`equivalent_response`, this does not gate on
+    `response_col="overall_response"` mixing FH GSAs and DNA kits: it
+    returns advisory flags about curve shape, not a dollar-denominated
+    number, so a mixed-unit `overall_response` at worst flags the wrong
+    spend points rather than misreporting a CPA. Known residual gap, not
+    fixed here - pass `response_col="fh_response"`/`"dna_response"`
+    explicitly on a curve with DNA-kit segments if precise flagging matters.
     """
     response = curve_df[response_col].to_numpy()
     if len(response) < 2:
@@ -201,6 +275,8 @@ def equivalent_response(
     cost_per_unit: float,
     curve_df: pd.DataFrame,
     response_col: str = "overall_response",
+    *,
+    allow_mixed: bool = False,
 ) -> float:
     """
     "How many media units are required to produce a given modelled
@@ -210,9 +286,25 @@ def equivalent_response(
     response grid via linear interpolation - no re-derivation of the Hill
     curve's math here, so this works identically for a Model A or Model C
     curve DataFrame.
+
+    Same mixed-denominator guard as `compute_cpa`: this returns a single
+    response number, so a caller taking the `"overall_response"` default on
+    a curve that mixes FH GSAs and DNA kits would silently get a sum of two
+    different units. Pass `response_col="fh_response"` or
+    `"dna_response"` explicitly, or `allow_mixed=True` to acknowledge a
+    deliberately mixed total.
     """
     if target_media_units < 0 or cost_per_unit < 0:
         raise ValueError("target_media_units and cost_per_unit must be non-negative")
+    if response_col == "overall_response" and not allow_mixed:
+        has_fh = "fh_response" in curve_df.columns and (curve_df["fh_response"] > 0).any()
+        has_dna = "dna_response" in curve_df.columns and (curve_df["dna_response"] > 0).any()
+        if has_fh and has_dna:
+            raise ValueError(
+                "This curve mixes Family History GSAs and DNA kit sales - 'overall_response' "
+                "would sum two different units. Pass response_col='fh_response' or "
+                "response_col='dna_response' explicitly (or allow_mixed=True)."
+            )
     target_spend = target_media_units * cost_per_unit
     spend = curve_df["spend"].to_numpy()
     response = curve_df[response_col].to_numpy()
@@ -229,10 +321,12 @@ def market_specific_cpa_table(
     """
     CPA (average + marginal) for every (market, channel) - one flattened
     table, generated by calling `generate_market_channel_curve` +
-    `compute_cpa` per combination. Used where a single summary sheet/table
-    across every market and channel is wanted (e.g. Model C's Excel export,
-    pages/09_Project_Export.py) rather than one curve at a time in the
-    interactive viewer.
+    `compute_cpa_by_product` per combination (product-aware: a DNA-targeted
+    channel with a mapped DNA-kit segment gets both `avg_cpa` against FH
+    GSAs and `dna_avg_cpa` against DNA kits, never one mixed number). Used
+    where a single summary sheet/table across every market and channel is
+    wanted (e.g. Model C's Excel export, pages/09_Project_Export.py) rather
+    than one curve at a time in the interactive viewer.
 
     `n_points` defaults lower than the interactive viewer's (25) since this
     produces `len(markets) x len(channels) x n_points` rows in one table.
@@ -244,8 +338,11 @@ def market_specific_cpa_table(
     for market in markets:
         for channel in channels:
             curve_df = generate_market_channel_curve(market, channel, meta, params, n_points=n_points)
-            cpa_df = compute_cpa(curve_df)
+            cpa_df = compute_cpa_by_product(curve_df)
             rows.append(cpa_df)
     if not rows:
-        return pd.DataFrame(columns=["market", "channel", "spend", "saturation", "overall_response", "avg_cpa", "marginal_cpa"])
+        return pd.DataFrame(columns=[
+            "market", "channel", "spend", "saturation", "overall_response", "fh_response", "dna_response",
+            "avg_cpa", "marginal_cpa", "dna_avg_cpa", "dna_marginal_cpa",
+        ])
     return pd.concat(rows, ignore_index=True)

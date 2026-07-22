@@ -167,7 +167,7 @@ class TestOutcomesSection:
         assert "2 outcome(s) catalogued: 2 Family History, 0 DNA" in outcomes.paragraphs[0]
         assert outcomes.table is not None
         assert set(outcomes.table["product"]) == {"Family History"}
-        assert outcomes.table["modelled_today"].all()
+        assert (outcomes.table["status"] == "Configured").all()
 
     def test_includes_dna_outcomes_and_flags_them_as_opt_in(self, spec):
         outcome_definitions = [
@@ -179,7 +179,20 @@ class TestOutcomesSection:
         assert "1 Family History, 1 DNA" in outcomes.paragraphs[0]
         assert any("opt-in" in p for p in outcomes.paragraphs)
         dna_row = outcomes.table[outcomes.table["product"] == "DNA"].iloc[0]
-        assert dna_row["modelled_today"] == False  # noqa: E712
+        assert dna_row["status"] == "Configured"
+
+    def test_model_meta_marks_a_dna_outcome_as_included_in_fitted_run(self, spec):
+        outcome_definitions = [
+            {"outcome_id": "dna_new_kit", "product": "DNA", "segment": "New Customer", "metric": "Kit sale", "column": "DNA_Kit_New"},
+        ]
+
+        class FakeMeta:
+            segments = ["New Customer"]
+
+        sections = build_report_sections(spec=spec, outcome_definitions=outcome_definitions, model_meta=FakeMeta())
+        outcomes = next(s for s in sections if s.title == "Outcomes")
+        dna_row = outcomes.table[outcomes.table["product"] == "DNA"].iloc[0]
+        assert dna_row["status"] == "Included in fitted run"
 
     def test_renders_without_error_with_dna_outcomes(self, spec):
         outcome_definitions = [

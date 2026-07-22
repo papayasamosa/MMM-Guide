@@ -16,10 +16,13 @@ prepare_fh_modeling_frame`'s `dna_kit_outcomes` parameter -> `core.
 hierarchical_model.build_fh_hierarchical_model`'s `direct_dna_segments`),
 where DNA-targeted media gets full direct response on it, not the shrunk
 halo pathway other segments get - see docs/dna_fh_causal_structure.md.
-`outcome_is_modelled` below reflects that opt-in distinction: Family
+`outcome_requires_opt_in` below reflects that opt-in distinction: Family
 History segments are always part of every fit; DNA-product segments are
 only part of a fit an analyst has actually configured for them by mapping
-DNA columns.
+DNA columns. `outcome_status`/`outcome_was_modelled` answer the separate,
+run-aware question of whether a *specific* outcome was actually included
+in a *specific* fitted model, rather than collapsing "requires opt-in" and
+"was modelled this run" into one boolean (docs/decision_log.md).
 """
 
 from __future__ import annotations
@@ -49,39 +52,123 @@ class OutcomeDefinition:
     dimensions rather than an assumed "FH segment" shape - `product`
     distinguishes Family History from DNA, `segment` is the customer
     segment within that product, `metric` is what's being counted
-    (e.g. "GSA", "Kit sale"), `column` is the source data column, and
-    `value_weight` is an optional per-unit value (LTV for FH, an analogous
-    per-kit value for DNA) used by value-weighted optimisation."""
+    (e.g. "GSA", "Kit sale"), `column` is the source data column, `unit` is
+    the counting unit this outcome's raw numbers are in (derived from
+    `product` if not given explicitly - see `__post_init__` - so a GSA is
+    never silently added to a kit sale as if they were the same unit
+    anywhere that reads `unit`), `value_weight` is an optional per-unit
+    value (LTV for FH, an analogous per-kit value for DNA) used by
+    value-weighted optimisation, and `role` distinguishes an outcome that
+    counts toward this product's official totals/objectives ("primary",
+    the default - every outcome today) from one that doesn't (reserved for
+    a future diagnostic/secondary-outcome distinction; the total-building
+    helpers in `core.attribution`/`core.market_specific_attribution` filter
+    on it already, so a non-"primary" outcome added later is excluded from
+    totals without needing those helpers changed again)."""
 
     outcome_id: str
     product: str
     segment: str
     metric: str
     column: str
+    unit: str = ""
     value_weight: Optional[float] = None
+    role: str = "primary"
+
+    def __post_init__(self) -> None:
+        if not self.unit:
+            self.unit = "GSA" if self.product == FAMILY_HISTORY else "kit"
 
     def to_dict(self) -> dict:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, d: dict) -> "OutcomeDefinition":
+        # Migration: bundles saved before `unit`/`role` existed simply don't
+        # have those keys - the dataclass defaults (derived `unit`, "primary"
+        # `role`) apply automatically, so an old bundle loads as an
+        # equivalent, correctly-classified outcome rather than erroring or
+        # needing an explicit migration step.
         known = set(cls.__dataclass_fields__)
         return cls(**{k: v for k, v in d.items() if k in known})
 
 
-def outcome_is_modelled(outcome: OutcomeDefinition) -> bool:
-    """True if this outcome is *always* part of a fit, with no extra
-    configuration - Family History segments are. DNA-product outcomes are
-    opt-in: they join the fit automatically once mapped on Structure (see
-    the module docstring), but a fresh `OutcomeDefinition` on its own
-    doesn't guarantee any particular past fit included it - check the
-    fitted model's own `FHModelMeta.segments`/`direct_dna_segments` for
-    whether a specific trace actually modelled it. This function answers
-    "does this outcome type require an extra step", not "was this run
-    included in the last fit". This is the single place that boundary is
-    encoded, so UI/report callers never have to hardcode
-    `product == FAMILY_HISTORY` themselves."""
-    return outcome.product == FAMILY_HISTORY
+def outcome_requires_opt_in(outcome: OutcomeDefinition) -> bool:
+    """True if this outcome needs an explicit mapping step before it can
+    ever be part of a fit - DNA-product outcomes do (see the module
+    docstring); Family History outcomes never do, they're always part of
+    every fit with no extra configuration. This answers "does this outcome
+    *type* require an extra step" - a static, catalogue-level question. It
+    does NOT answer "was this specific outcome actually included in a
+    specific fitted run" - that's `outcome_was_modelled`, which needs an
+    actual `FHModelMeta` to check against. Collapsing these two questions
+    into one boolean (the pre-existing `outcome_is_modelled`, removed) was
+    misleading: it read as answering the run-aware question but only ever
+    answered the static one - see docs/outcomes.md and docs/decision_log.md."""
+    return outcome.product != FAMILY_HISTORY
+
+
+def outcome_was_modelled(outcome: OutcomeDefinition, model_meta: Optional[object]) -> bool:
+    """True if `outcome`'s segment is actually present in a *specific
+    fitted* model's segment set - the run-aware counterpart to
+    `outcome_requires_opt_in`. Pass the `FHModelMeta` of the trace actually
+    being displayed or reported on; `None` (no fitted model this session,
+    or none loaded) always returns False, never a guess."""
+    if model_meta is None:
+        return False
+    return outcome.segment in model_meta.segments
+
+
+OUTCOME_STATUSES = (
+    "Configured",
+    "Included in prepared frame",
+    "Included in fitted run",
+    "Missing source column",
+    "Excluded",
+    "Stale after configuration changes",
+)
+
+
+def outcome_status(
+    outcome: OutcomeDefinition,
+    *,
+    excluded: bool = False,
+    available_columns: Optional[set] = None,
+    frame_segments: Optional[List[str]] = None,
+    model_meta_segments: Optional[List[str]] = None,
+) -> str:
+    """
+    Exactly one of `OUTCOME_STATUSES` - never collapsed into a single
+    boolean (the instruction document's explicit ask, docs/decision_log.md).
+
+    `available_columns`: the *current* data's column names, to detect a
+    mapped column that no longer exists. `frame_segments`/
+    `model_meta_segments`: the segment sets of whatever's *currently*
+    prepared/fitted this session, if anything - not necessarily built from
+    this exact outcome catalogue, which is what lets "stale" be detected: a
+    column that used to back a prepared-or-fitted outcome and has since
+    vanished from the data is a configuration-drift signal ("stale"), not a
+    fresh gap ("missing source column", never yet prepared or fit at all).
+
+    Known limitation: staleness is detected by the *column disappearing*,
+    not by the mapping changing to a different (still-present) column -
+    that would need the exact column used at fit time recorded on
+    `FHModelMeta`, which it isn't today. Documented, not silently assumed
+    away - see docs/dna_fh_causal_structure.md.
+    """
+    was_fit = model_meta_segments is not None and outcome.segment in model_meta_segments
+    was_prepared = frame_segments is not None and outcome.segment in frame_segments
+    column_missing = available_columns is not None and outcome.column not in available_columns
+
+    if column_missing:
+        return "Stale after configuration changes" if (was_fit or was_prepared) else "Missing source column"
+    if excluded:
+        return "Excluded"
+    if was_fit:
+        return "Included in fitted run"
+    if was_prepared:
+        return "Included in prepared frame"
+    return "Configured"
 
 
 def validate_outcome_definitions(outcomes: List[OutcomeDefinition]) -> List[str]:
@@ -214,13 +301,33 @@ def dna_kit_outcome_columns(outcomes: List[OutcomeDefinition]) -> Dict[str, str]
     return {o.segment: o.column for o in outcomes if o.product == DNA}
 
 
-def outcomes_to_dataframe(outcomes: List[OutcomeDefinition]) -> pd.DataFrame:
-    """Flat table for display/export - one row per outcome, with a
-    `modelled_today` column so a viewer never has to infer the
-    captured-vs-modelled boundary from `product` themselves."""
+def outcomes_to_dataframe(
+    outcomes: List[OutcomeDefinition],
+    *,
+    excluded_outcome_ids: Optional[List[str]] = None,
+    available_columns: Optional[set] = None,
+    frame_segments: Optional[List[str]] = None,
+    model_meta_segments: Optional[List[str]] = None,
+) -> pd.DataFrame:
+    """Flat table for display/export - one row per outcome, with a `status`
+    column (one of `OUTCOME_STATUSES`) instead of a single collapsed
+    boolean, so a viewer never has to infer the captured-vs-modelled
+    boundary from `product` themselves, and can actually tell "mapped but
+    never fit" from "fit in the currently-loaded model" from "used to be
+    fit, now stale". All keyword args are optional and independently
+    omittable - passing none of them still gives every outcome a status
+    ("Configured" or "Excluded"), just without the frame/fit/column context
+    to distinguish the other four."""
+    excluded_ids = set(excluded_outcome_ids or [])
     if not outcomes:
-        return pd.DataFrame(columns=["outcome_id", "product", "segment", "metric", "column", "value_weight", "modelled_today"])
+        return pd.DataFrame(columns=["outcome_id", "product", "segment", "metric", "column", "unit", "value_weight", "role", "status"])
     return pd.DataFrame([
-        {**o.to_dict(), "modelled_today": outcome_is_modelled(o)}
+        {
+            **o.to_dict(),
+            "status": outcome_status(
+                o, excluded=o.outcome_id in excluded_ids, available_columns=available_columns,
+                frame_segments=frame_segments, model_meta_segments=model_meta_segments,
+            ),
+        }
         for o in outcomes
     ])

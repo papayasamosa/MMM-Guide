@@ -92,11 +92,14 @@ for what this proxy is and isn't).
   steady-state response function so the planner works for a market-specific fit too, not just Model
   A. **Not built:** locked/min/max media-unit constraint types (still spend-only in
   `SpendConstraint`), and CPA/inflation as first-class optimiser objectives ("minimise CPA,"
-  "maintain response/delivery under inflation") - `avg_cpa` is reported as an output metric on every
-  scenario, not yet an optimisation target. Marginal CPA at the scenario level was considered and
-  deliberately not built: the planner always conserves total budget, so there's no net spend change
-  to compute a marginal CPA against - the *blended average* CPA of the current vs. optimised
-  allocation is the well-defined metric shown instead (`docs/decision_log.md`).
+  "maintain response/delivery under inflation") - `avg_cpa`/`dna_avg_cpa` are reported as output
+  metrics on every scenario, not yet optimisation targets themselves. What *is* built: an explicit
+  `objective` (`core.optimization.VALID_OBJECTIVES`) - `"fh_gsa"`, `"dna_kits"`, `"weighted_mix"`,
+  `"expected_value"` - with no generic "maximise volume" that would silently combine FH GSAs and
+  DNA kits. Marginal CPA at the scenario level was considered and deliberately not built: the
+  planner always conserves total budget, so there's no net spend change to compute a marginal CPA
+  against - the *product-aware average* CPA (FH GSAs and DNA kits kept separate) of the current vs.
+  optimised allocation is the well-defined metric shown instead (`docs/decision_log.md`).
 
 ## Currency
 

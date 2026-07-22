@@ -258,8 +258,10 @@ st.markdown("""
 Per `docs/project_objectives.md` and `docs/limitations.md`, deliberately **not** built:
 
 - **CPA/inflation as first-class optimiser objectives** - "minimise CPA," "maintain response/delivery
-  under inflation" from the original redesign brief; `avg_cpa` is reported as an output metric, not
-  an optimisation target.
+  under inflation" from the original redesign brief; `avg_cpa`/`dna_avg_cpa` are reported as output
+  metrics, not optimisation targets themselves. What *is* built: explicit, product-aware optimisation
+  objectives (maximise FH GSAs, DNA kits, or LTV-weighted expected value) that never silently combine
+  Family History GSAs and DNA kit sales into one "volume" number.
 - **Media-unit spend constraints** (locked/min/max media units) - `SpendConstraint` still operates in
   spend terms only.
 - **PowerPoint export** - Excel + the project bundle + this report cover handover today.

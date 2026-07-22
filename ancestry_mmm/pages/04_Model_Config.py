@@ -125,10 +125,17 @@ with st.expander("Advanced settings: MCMC sampling"):
     mcmc_target_accept = c4.slider("Target accept", 0.7, 0.99, float(get_state("mcmc_target_accept", 0.9)), 0.01, key="mcmc_target_accept_input")
 
 outcome_definitions = resolve_outcome_definitions(get_state("outcome_definitions"), spec.segment_outcomes, spec.segment_ltv)
-dna_kit_outcomes = dna_kit_outcome_columns(outcome_definitions)
+excluded_outcome_ids = set(get_state("excluded_outcome_ids") or [])
+included_outcome_definitions = [o for o in outcome_definitions if o.outcome_id not in excluded_outcome_ids]
+dna_kit_outcomes = dna_kit_outcome_columns(included_outcome_definitions)
 dna_kit_outcomes = {seg: col for seg, col in dna_kit_outcomes.items() if col in df.columns}
+excluded_dna_outcomes = [o for o in outcome_definitions if o.outcome_id in excluded_outcome_ids]
 
 st.markdown("---")
+if excluded_dna_outcomes:
+    st.caption(
+        f"Excluded from this fit (see Structure): {', '.join(o.segment for o in excluded_dna_outcomes)}."
+    )
 if dna_kit_outcomes:
     st.info(
         f"DNA outcomes mapped on Structure will be included in this fit: {', '.join(dna_kit_outcomes)}. "
