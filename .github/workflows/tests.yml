@@ -29,3 +29,9 @@ jobs:
 
       - name: Run ruff
         run: uv run ruff check ancestry_mmm
+
+      - name: Streamlit smoke tests (AppTest, every page)
+        run: uv run pytest ancestry_mmm/tests/test_streamlit_smoke.py -v
+
+      - name: Bundle round-trip tests (export/import/reconstruct/approval)
+        run: uv run pytest ancestry_mmm/tests/test_persistence.py -v
