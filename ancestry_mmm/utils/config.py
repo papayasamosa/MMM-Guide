@@ -26,7 +26,17 @@ DEFAULT_FH_PRIORS = {
     "channel_effect_mu": -2.5,
     "channel_effect_sigma": 0.5,
     "pooling_sigma_prior": 0.3,
-    "dna_halo_sigma": 0.25,
+    # PR G1 - active_cross_product_sigma/exploratory_cross_product_sigma
+    # (core.pathways) replace the old DNA-only "dna_halo_sigma" - same
+    # meaning (a channel/outcome cell's cross-product strength prior), now
+    # keyed generally rather than assuming the DNA halo pathway is the only
+    # cross-product pathway that exists. Kept the same 0.25 default as the
+    # old dna_halo_sigma for active_cross_product_sigma (identical legacy
+    # behaviour when no pathway catalogue is configured);
+    # exploratory_cross_product_sigma defaults tighter (0.08), matching
+    # core.hierarchical_model.build_fh_hierarchical_model's own default.
+    "active_cross_product_sigma": 0.25,
+    "exploratory_cross_product_sigma": 0.08,
     "promo_sigma": 0.5,
     "market_pool_sigma_prior": 0.4,
     "unpooled_market_sigma": 2.0,

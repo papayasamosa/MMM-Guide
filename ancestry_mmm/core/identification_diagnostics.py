@@ -112,10 +112,17 @@ def posterior_coefficient_stability(trace: az.InferenceData, meta: FHModelMeta) 
     needs no refit: a channel whose data can't pin down its own effect
     shows up as a wide, high-CV posterior even within a single
     well-converged fit. `coefficient_of_variation` is `NaN` wherever
-    `beta_mean <= 0` (a CV ratio is meaningless there, not silently zero)."""
+    `beta_mean <= 0` (a CV ratio is meaningless there, not silently zero).
+
+    Works for both Model A (`beta` dims `("outcome", "channel")`) and Model C
+    (`beta` dims `("market", "outcome", "channel")`) - any dimension besides
+    `chain`/`draw`/`outcome`/`channel` (i.e. `market`) is averaged over
+    first, since this diagnostic is about whether a channel's effect is
+    identifiable at all, not about per-market detail."""
     beta = trace.posterior["beta"]
-    mean = beta.mean(dim=["chain", "draw"])
-    std = beta.std(dim=["chain", "draw"])
+    extra_dims = [d for d in beta.dims if d not in ("chain", "draw", "outcome", "channel")]
+    mean = beta.mean(dim=["chain", "draw"] + extra_dims)
+    std = beta.std(dim=["chain", "draw"] + extra_dims)
     rows = []
     for oid in meta.outcome_ids:
         for ch in meta.channels:

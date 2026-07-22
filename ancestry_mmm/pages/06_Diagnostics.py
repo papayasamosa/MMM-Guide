@@ -14,6 +14,12 @@ from ancestry_mmm.core.approval import ModelApproval
 from ancestry_mmm.core.diagnostics import compute_scorecard, expanding_window_backtest
 from ancestry_mmm.core.fingerprint import fingerprint_dataframe, fingerprint_model_spec, fingerprint_posterior
 from ancestry_mmm.core.funnel import FunnelLink, funnel_coherence_diagnostics
+from ancestry_mmm.core.identification_diagnostics import (
+    channel_spend_correlation_matrix,
+    design_matrix_condition_number,
+    identification_report,
+    posterior_coefficient_stability,
+)
 from ancestry_mmm.core.outcomes import outcome_catalogue_fingerprint_payload, resolve_outcome_definitions
 from ancestry_mmm.core.pathways import MediaOutcomePathway, pathway_catalogue_fingerprint_payload, pathways_drift_dataframe
 from ancestry_mmm.core.schema import ModelSpec
@@ -59,10 +65,11 @@ if spec_dict:
     if not _pathway_drift_df.empty:
         _changed_pathways = _pathway_drift_df[_pathway_drift_df["drift_status"] != "Fitted and current"]
         if not _changed_pathways.empty:
-            st.info(
+            st.warning(
                 f"{len(_changed_pathways)} media-outcome pathway(s) differ from this fit's captured "
-                "pathway metadata (informational only - PR F's pathway catalogue does not yet drive "
-                "fitting)."
+                "pathway metadata - since PR G1 the pathway catalogue drives which coefficients get "
+                "estimated, so this fit's results no longer reflect the catalogue currently configured "
+                "on the Structure page. Re-run Model Training to pick up the change."
             )
 
 st.markdown("---")
@@ -108,6 +115,36 @@ if scorecard:
     else:
         for f in flags:
             (st.warning if f["level"] == "warning" else st.error)(f"**{f.get('channel', '')}**: {f['message']}")
+
+    st.markdown("---")
+    st.markdown("### Multicollinearity & weak-identification diagnostics")
+    st.caption(
+        "Whether this fit's channel coefficients are trustworthy enough to plan against at all - "
+        "independent of convergence, in-sample fit or PPC coverage above, since a model can score "
+        "well on all three while still having two channels whose effects the data can't tell apart. "
+        "core.identification_diagnostics - a leave-one-channel-out refit sensitivity check is not run "
+        "here (it needs a full model refit per channel, too slow for an interactive page); the three "
+        "signals below need no refit."
+    )
+    id_flags = identification_report(frame, meta, trace)
+    if not id_flags:
+        st.info("No multicollinearity or weak-identification flags raised.")
+    else:
+        for f in id_flags:
+            (st.error if f["level"] == "error" else st.warning)(f"**{f['channel']}**: {f['message']}")
+
+    with st.expander("Channel spend correlation matrix"):
+        corr_df = channel_spend_correlation_matrix(frame, meta)
+        st.dataframe(corr_df, width="stretch", column_config=dataframe_column_config(corr_df))
+
+    with st.expander("Design matrix condition number & posterior coefficient stability"):
+        cond = design_matrix_condition_number(frame)
+        st.metric(
+            "Condition number", f"{cond:,.1f}" if cond != float("inf") else "inf",
+            help="Elevated above ~30, severe above ~100 - the standard econometric rule-of-thumb thresholds.",
+        )
+        stability_df = posterior_coefficient_stability(trace, meta)
+        st.dataframe(stability_df, width="stretch", column_config=dataframe_column_config(stability_df))
 
 st.markdown("---")
 st.markdown("### Model approval")

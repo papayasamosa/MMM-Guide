@@ -123,6 +123,21 @@ class TestPosteriorCoefficientStability:
         result = posterior_coefficient_stability(trace, _meta())
         assert len(result) == len(OUTCOME_IDS) * len(CHANNELS)
 
+    def test_works_for_model_c_style_market_indexed_beta(self):
+        # Model C's beta carries an extra "market" dim beyond Model A's
+        # ("outcome", "channel") - this must average over it rather than
+        # crashing when converting a multi-element sel() to a scalar float.
+        n_chain, n_draw = 2, 10
+        rng = np.random.default_rng(11)
+        coords = {"market": ["UK", "AU"], "outcome": OUTCOME_IDS, "channel": CHANNELS}
+        beta = rng.normal(loc=1.0, scale=0.1, size=(n_chain, n_draw, 2, 1, 3))
+        trace = az.from_dict(
+            posterior={"beta": beta}, coords=coords, dims={"beta": ["market", "outcome", "channel"]},
+        )
+        result = posterior_coefficient_stability(trace, _meta())
+        assert len(result) == len(OUTCOME_IDS) * len(CHANNELS)
+        assert result["beta_mean"].notna().all()
+
 
 class TestLeaveOneChannelOutSensitivity:
     def test_stable_channel_reports_near_zero_pct_change(self):
