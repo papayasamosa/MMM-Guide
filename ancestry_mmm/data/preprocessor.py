@@ -209,6 +209,7 @@ def create_fourier_features_from_calendar(
 
 def prepare_fh_modeling_frame(
     df: pd.DataFrame, spec: ModelSpec, outcomes: Optional[List[OutcomeDefinition]] = None,
+    media_outcome_pathways: Optional[List[Any]] = None,
 ) -> Dict[str, Any]:
     """
     Turn a joined, transformed DataFrame + ModelSpec into the arrays the
@@ -241,6 +242,15 @@ def prepare_fh_modeling_frame(
     (`spec.segment_control_cols[segment]`), and outcome-level
     (`spec.outcome_control_cols[outcome_id]`) - deduplicated, order
     preserved.
+
+    `media_outcome_pathways` (PR F, `List[core.pathways.MediaOutcomePathway]`)
+    is pure pass-through metadata - it does not affect any array this
+    function builds. It is threaded through purely so the model builders
+    (`core.hierarchical_model.build_fh_hierarchical_model`,
+    `core.market_specific_model.build_fh_market_specific_model`) can capture
+    it onto `FHModelMeta.pathway_catalogue_at_fit` for drift detection
+    (`core.pathways.pathway_drift_status`), the same way this function
+    doesn't otherwise interpret `outcomes` beyond selecting/filtering it.
     """
     explicit_outcomes = outcomes is not None
     errors = spec.validate()
@@ -363,4 +373,5 @@ def prepare_fh_modeling_frame(
         "fourier": fourier,
         "trend": trend,
         "unpooled_markets": spec.unpooled_markets,
+        "media_outcome_pathways": media_outcome_pathways or [],
     }

@@ -12,6 +12,37 @@
   `docs/decision_log.md`). Leaving them blank does not degrade anything today, but a future feature
   that uses them to explain curve parameters will only be as good as what's actually filled in.
 
+## Media-outcome pathway catalogue and DNA purchase-type roadmap (PR F)
+
+- `core.pathways.MediaOutcomePathway` is a schema/validation/persistence/fingerprint/drift-detection
+  layer only - **no model equation reads it**. `ModelSpec.dna_channels`/`FHModelMeta.
+  direct_dna_outcome_ids` remain the only pathway structure the fitted model actually uses. A pathway
+  marked `role="primary_direct"` or `evidence_status="supported"` is not itself evidence that a
+  regularised, pathway-specific coefficient exists for it - that estimation work is future (PR G,
+  `docs/media_outcome_pathways.md`).
+- The planned metric keys added to `core.outcomes.METRIC_REGISTRY` (Family History net bill-through
+  count/rate, finance-date GSA, and the four DNA purchase-type keys) have no computation pipeline: no
+  transformation builds a net-bill-through cohort from sign-up/billing events, and no classifier
+  determines whether a DNA kit purchase was self-activated, gifted-activated, or unactivated. An
+  analyst can capture an `OutcomeDefinition` against one of these metric keys today only by mapping it
+  to a column they've built by hand (e.g. via the Transform Pipeline page) - this schema does not
+  create the underlying data.
+- **An unactivated DNA kit is not definitively a gift.** This is the single most important caveat in
+  the DNA purchase-type roadmap: `unactivated` must remain its own atomic category
+  (`METRIC_KEY_DNA_KIT_SALE_UNACTIVATED`) until a classifier and maturity-window rule actually exist;
+  a `gift_or_unactivated` roll-up is only ever a labelled reporting assumption, never a silent
+  substitute - see `docs/dna_fh_causal_structure.md`.
+- `OutcomeDefinition.aggregation_type`/`date_basis`/`maturity_required` are deliberately excluded from
+  the outcome-catalogue fingerprint and drift-tracked fields (same reasoning as
+  `core.market_config.MarketDescriptors`'s exclusion) - nothing downstream computes from them yet, so
+  editing one does not invalidate an existing approval. This will need to change once a real
+  transformation reads them.
+- `core.pathways.OutcomeReconciliationGroup`/`reconciliation_group_diagnostics` are diagnostics only -
+  not fingerprinted, not wired into any constrained estimation. A reconciliation group failing to
+  balance is not currently surfaced anywhere in the UI (no page calls
+  `reconciliation_group_diagnostics` yet); it exists as a core-layer building block for the future PRs
+  that will use it.
+
 ## Funnel coherence (PR E.2)
 
 - Family History sign-ups and GSAs are fitted as independent Negative-Binomial outcome equations, with

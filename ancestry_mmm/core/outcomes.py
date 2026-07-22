@@ -82,17 +82,75 @@ METRIC_KEY_FH_SIGNUP = "fh_signup"
 METRIC_KEY_DNA_KIT_SALE = "dna_kit_sale"
 METRIC_KEY_CUSTOM = "custom"
 
+# ---------------------------------------------------------------------------
+# Planned metric keys (PR F - "net bill-through and DNA purchase-type
+# segmentation" roadmap). These are catalogue/registry entries only: no data
+# pipeline exists yet to actually compute a net-bill-through cohort or
+# classify a DNA purchase's activation type (that is explicitly out of scope
+# for PR F - see docs/media_outcome_pathways.md). Registering the keys now
+# lets a `MediaOutcomePathway` (core.pathways) target one of these future
+# outcome_ids/metric_keys today, and lets `validate_outcome_definitions`
+# enforce "don't put a rate outcome in a count total" ahead of any outcome
+# actually using these keys existing in a real project.
+#
+# `dna_kit_sale_total` is deliberately a *distinct* key from the existing
+# `dna_kit_sale` (kept unchanged for backward compatibility with every
+# existing DNA-kit outcome in this codebase) - the roadmap's "recommended
+# canonical DNA metric keys" lists it alongside the three atomic purchase-type
+# keys explicitly, as the roll-up an analyst may fit *instead of* (not in
+# addition to - see `OutcomeReconciliationGroup` in core.pathways) the atomic
+# categories.
+# ---------------------------------------------------------------------------
+METRIC_KEY_FH_NET_BILLTHROUGH_COUNT = "fh_net_billthrough_count"
+METRIC_KEY_FH_NET_BILLTHROUGH_RATE = "fh_net_billthrough_rate"
+METRIC_KEY_FH_GSA_FINANCE_DATE = "fh_gsa_finance_date"
+METRIC_KEY_DNA_KIT_SALE_SELF_ACTIVATED = "dna_kit_sale_self_activated"
+METRIC_KEY_DNA_KIT_SALE_GIFTED_ACTIVATED = "dna_kit_sale_gifted_activated"
+METRIC_KEY_DNA_KIT_SALE_UNACTIVATED = "dna_kit_sale_unactivated"
+METRIC_KEY_DNA_KIT_SALE_TOTAL = "dna_kit_sale_total"
+
+# The `aggregation_type`s a `MetricDefinition`/`OutcomeDefinition` can carry -
+# "count" is a volume (summable, valid CPA denominator, valid optimiser
+# target); "rate" is a proportion (never summable into a count total, never a
+# CPA denominator - the roadmap's explicit "do not use net bill-throughs and
+# net bill-through rate as synonyms" / "do not calculate CPA using the rate
+# as though it were a volume denominator"); "currency" and "index" are
+# reserved for future value/index-type outcomes, not used by any built-in
+# metric yet.
+AGGREGATION_TYPES = ("count", "rate", "currency", "index")
+
+# The `date_basis` vocabulary an `OutcomeDefinition` may declare (PR F -
+# schema/documentation only, not yet enforced by any transformation): which
+# real-world date a row's outcome value is indexed by. A net-bill-through
+# count is indexed by `signup_date_attributed` even though the underlying
+# billing event happened later (see docs/media_outcome_pathways.md) - this
+# field is what lets that distinction be recorded explicitly rather than
+# assumed from the outcome's metric alone.
+DATE_BASIS_VALUES = ("event_date", "signup_date_attributed", "billing_date", "purchase_date", "activation_date")
+
 
 @dataclass(frozen=True)
 class MetricDefinition:
     """One entry in `METRIC_REGISTRY`: what a stable `metric_key` means -
     its default display label, its default unit, and (optionally) the one
-    product it's valid for."""
+    product it's valid for.
+
+    `aggregation_type` (PR F, one of `AGGREGATION_TYPES`) is what
+    `OutcomeDefinition.aggregation_type` defaults to when not set explicitly
+    on the outcome itself - "count" for every metric already in this
+    registry, "rate" for `fh_net_billthrough_rate`. `allowed_in_optimiser`/
+    `allowed_in_cpa` (PR F) are catalogue-level policy, not per-outcome
+    overrides: a rate metric is never optimisable and never a valid CPA
+    denominator, full stop - `validate_outcome_definitions` enforces this
+    regardless of what an individual outcome's eligibility flags say."""
 
     metric_key: str
     display_name: str
     default_unit: str
     product: Optional[str] = None
+    aggregation_type: str = "count"
+    allowed_in_optimiser: bool = True
+    allowed_in_cpa: bool = True
 
 
 METRIC_REGISTRY: Dict[str, MetricDefinition] = {
@@ -105,6 +163,36 @@ METRIC_REGISTRY: Dict[str, MetricDefinition] = {
     ),
     METRIC_KEY_DNA_KIT_SALE: MetricDefinition(
         metric_key=METRIC_KEY_DNA_KIT_SALE, display_name=METRIC_KIT_SALE, default_unit="kit", product=DNA,
+    ),
+    # --- Planned (PR F) - no computation pipeline exists for these yet ---
+    METRIC_KEY_FH_NET_BILLTHROUGH_COUNT: MetricDefinition(
+        metric_key=METRIC_KEY_FH_NET_BILLTHROUGH_COUNT, display_name="Net bill-through count",
+        default_unit="bill-through subscriber", product=FAMILY_HISTORY, aggregation_type="count",
+    ),
+    METRIC_KEY_FH_NET_BILLTHROUGH_RATE: MetricDefinition(
+        metric_key=METRIC_KEY_FH_NET_BILLTHROUGH_RATE, display_name="Net bill-through rate",
+        default_unit="proportion", product=FAMILY_HISTORY, aggregation_type="rate",
+        allowed_in_optimiser=False, allowed_in_cpa=False,
+    ),
+    METRIC_KEY_FH_GSA_FINANCE_DATE: MetricDefinition(
+        metric_key=METRIC_KEY_FH_GSA_FINANCE_DATE, display_name="GSA (finance date)",
+        default_unit="GSA", product=FAMILY_HISTORY, aggregation_type="count",
+    ),
+    METRIC_KEY_DNA_KIT_SALE_SELF_ACTIVATED: MetricDefinition(
+        metric_key=METRIC_KEY_DNA_KIT_SALE_SELF_ACTIVATED, display_name="Kit sale (self-activated)",
+        default_unit="kit", product=DNA, aggregation_type="count",
+    ),
+    METRIC_KEY_DNA_KIT_SALE_GIFTED_ACTIVATED: MetricDefinition(
+        metric_key=METRIC_KEY_DNA_KIT_SALE_GIFTED_ACTIVATED, display_name="Kit sale (gifted-activated)",
+        default_unit="kit", product=DNA, aggregation_type="count",
+    ),
+    METRIC_KEY_DNA_KIT_SALE_UNACTIVATED: MetricDefinition(
+        metric_key=METRIC_KEY_DNA_KIT_SALE_UNACTIVATED, display_name="Kit sale (unactivated)",
+        default_unit="kit", product=DNA, aggregation_type="count",
+    ),
+    METRIC_KEY_DNA_KIT_SALE_TOTAL: MetricDefinition(
+        metric_key=METRIC_KEY_DNA_KIT_SALE_TOTAL, display_name="Kit sale (total)",
+        default_unit="kit", product=DNA, aggregation_type="count",
     ),
 }
 
@@ -127,6 +215,28 @@ _METRIC_LABEL_VARIANTS: Dict[str, str] = {
     "kitsale": METRIC_KEY_DNA_KIT_SALE,
     "dna kit sale": METRIC_KEY_DNA_KIT_SALE,
     "dna kit sales": METRIC_KEY_DNA_KIT_SALE,
+    "net bill-through count": METRIC_KEY_FH_NET_BILLTHROUGH_COUNT,
+    "net billthrough count": METRIC_KEY_FH_NET_BILLTHROUGH_COUNT,
+    "net bill-through": METRIC_KEY_FH_NET_BILLTHROUGH_COUNT,
+    "net billthrough": METRIC_KEY_FH_NET_BILLTHROUGH_COUNT,
+    "net bill-through rate": METRIC_KEY_FH_NET_BILLTHROUGH_RATE,
+    "net billthrough rate": METRIC_KEY_FH_NET_BILLTHROUGH_RATE,
+    "gsa (finance date)": METRIC_KEY_FH_GSA_FINANCE_DATE,
+    "gsa finance date": METRIC_KEY_FH_GSA_FINANCE_DATE,
+    "finance date gsa": METRIC_KEY_FH_GSA_FINANCE_DATE,
+    "finance-date gsa": METRIC_KEY_FH_GSA_FINANCE_DATE,
+    "kit sale (self-activated)": METRIC_KEY_DNA_KIT_SALE_SELF_ACTIVATED,
+    "self-activated kit sale": METRIC_KEY_DNA_KIT_SALE_SELF_ACTIVATED,
+    "self activated": METRIC_KEY_DNA_KIT_SALE_SELF_ACTIVATED,
+    "kit sale (gifted-activated)": METRIC_KEY_DNA_KIT_SALE_GIFTED_ACTIVATED,
+    "gifted-activated kit sale": METRIC_KEY_DNA_KIT_SALE_GIFTED_ACTIVATED,
+    "gifted activated": METRIC_KEY_DNA_KIT_SALE_GIFTED_ACTIVATED,
+    "kit sale (unactivated)": METRIC_KEY_DNA_KIT_SALE_UNACTIVATED,
+    "unactivated kit sale": METRIC_KEY_DNA_KIT_SALE_UNACTIVATED,
+    "unactivated": METRIC_KEY_DNA_KIT_SALE_UNACTIVATED,
+    "kit sale (total)": METRIC_KEY_DNA_KIT_SALE_TOTAL,
+    "total kit sale": METRIC_KEY_DNA_KIT_SALE_TOTAL,
+    "dna kit sale total": METRIC_KEY_DNA_KIT_SALE_TOTAL,
 }
 
 
@@ -199,6 +309,25 @@ class OutcomeDefinition:
     outcomes are still captured, validated, and displayed, just excluded
     from `prepare_fh_modeling_frame`. `exclusion_reason` is an optional
     free-text note for why, shown wherever the catalogue is displayed.
+
+    `aggregation_type`/`date_basis`/`maturity_required` (PR F - schema and
+    validation only; no transformation reads or computes these fields yet,
+    see docs/media_outcome_pathways.md) are the "outcome-type metadata"
+    needed before a net-bill-through or DNA-purchase-type outcome can be
+    safely aggregated: `aggregation_type` (one of `AGGREGATION_TYPES`) is
+    derived from `metric_key` via `METRIC_REGISTRY` when left blank (same
+    pattern as `unit`) - "count" for every metric today except
+    `fh_net_billthrough_rate`, which is "rate"; a custom/unrecognised
+    metric_key defaults to "count" (the safe default matching this
+    codebase's existing implicit behaviour for every outcome fit so far,
+    not a guess about a new business meaning). `date_basis` (one of
+    `DATE_BASIS_VALUES`, or `None` if not yet meaningful for this outcome)
+    records which real-world date a row's value is indexed by - e.g. a net
+    bill-through count is indexed by `"signup_date_attributed"` even though
+    the underlying billing event happened later. `maturity_required` flags
+    an outcome whose most recent periods are right-censored (a net
+    bill-through cohort that hasn't had time to mature) - `None` means "not
+    applicable / not yet determined", not "no".
     """
 
     outcome_id: str
@@ -217,6 +346,9 @@ class OutcomeDefinition:
     include_in_official_total: Optional[bool] = None
     include_in_value: Optional[bool] = None
     include_in_optimisation: Optional[bool] = None
+    aggregation_type: str = ""
+    date_basis: Optional[str] = None
+    maturity_required: Optional[bool] = None
 
     def __post_init__(self) -> None:
         # metric_key first: unit's default (below) is looked up by
@@ -225,13 +357,15 @@ class OutcomeDefinition:
         # it's a Family History outcome).
         if not self.metric_key:
             self.metric_key = normalize_metric_key(self.metric)
+        definition = METRIC_REGISTRY.get(self.metric_key)
         if not self.unit:
-            definition = METRIC_REGISTRY.get(self.metric_key)
             if definition is not None:
                 self.unit = definition.default_unit
             # else: a custom/unrecognised metric - unit stays blank rather
             # than guessed; validate_outcome_definitions's "no unit set"
             # check requires the analyst to set it explicitly.
+        if not self.aggregation_type:
+            self.aggregation_type = definition.aggregation_type if definition is not None else "count"
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -637,6 +771,13 @@ def validate_outcome_definitions(
       enforced, since `ModelSpec.segment_outcomes` is no longer a required
       field - a sign-up-only or GSA-only project is valid as long as its
       outcome catalogue has at least one included outcome)
+    - unknown `aggregation_type` or `date_basis` (PR F - only checked when
+      set; both are optional, forward-looking metadata)
+    - a `"rate"`-aggregation outcome resolving eligible for the official
+      total or optimisation (PR F - "do not use net bill-throughs and net
+      bill-through rate as synonyms" / "do not allow rate outcomes into
+      count totals or count-based CPA"; a rate is never a volume, so it can
+      never be summed into an official count total or optimised as one)
     """
     errors: List[str] = []
     if not any(o.included_in_fit for o in outcomes):
@@ -681,6 +822,30 @@ def validate_outcome_definitions(
                 "different KPI (sign-up vs. GSA) - sign-ups and GSAs must never be labelled as "
                 "each other."
             )
+        if o.aggregation_type and o.aggregation_type not in AGGREGATION_TYPES:
+            errors.append(
+                f"Outcome '{o.outcome_id}' has unknown aggregation_type '{o.aggregation_type}' "
+                f"(expected one of {', '.join(AGGREGATION_TYPES)})."
+            )
+        if o.date_basis and o.date_basis not in DATE_BASIS_VALUES:
+            errors.append(
+                f"Outcome '{o.outcome_id}' has unknown date_basis '{o.date_basis}' "
+                f"(expected one of {', '.join(DATE_BASIS_VALUES)})."
+            )
+        if o.aggregation_type == "rate":
+            eligibility = outcome_eligibility(o)
+            if eligibility["include_in_official_total"]:
+                errors.append(
+                    f"Outcome '{o.outcome_id}' is a rate (aggregation_type='rate') but is eligible "
+                    "for the official total - a rate can never be summed into a count total; set "
+                    "include_in_official_total=False (or leave role/eligibility at their defaults)."
+                )
+            if eligibility["include_in_optimisation"]:
+                errors.append(
+                    f"Outcome '{o.outcome_id}' is a rate (aggregation_type='rate') but is eligible "
+                    "for optimisation - a rate is not a volume the optimiser can target; set "
+                    "include_in_optimisation=False (or leave role/eligibility at their defaults)."
+                )
 
     by_definition: Dict[tuple, set] = {}
     by_column: Dict[str, set] = {}

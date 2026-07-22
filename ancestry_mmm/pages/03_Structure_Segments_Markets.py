@@ -23,6 +23,9 @@ from ancestry_mmm.core.promotions import (
     promotion_events_to_transform_steps, PROMOTION_EVENT_OP,
 )
 from ancestry_mmm.core.funnel import FunnelLink, validate_funnel_links
+from ancestry_mmm.core.pathways import (
+    PATHWAY_ROLES, MediaOutcomePathway, validate_media_outcome_pathways, pathways_drift_dataframe,
+)
 from ancestry_mmm.data import validate_modeling_frame, detect_column_types, pipeline_to_json, pipeline_from_json
 import pandas as pd
 
@@ -280,6 +283,63 @@ else:
                 st.rerun()
 funnel_links = [FunnelLink.from_dict(fl) for fl in st.session_state["funnel_links"]]
 
+st.markdown("---")
+st.markdown("### Media-outcome pathway catalogue (optional, forward-looking)")
+st.caption(
+    "Declares which `(channel, target outcome)` relationships this project believes exist - a "
+    "primary direct effect, a trusted cross-product effect (e.g. DNA media's halo onto FH), or a "
+    "speculative/exploratory one not yet trusted for planning. Schema, validation, persistence and "
+    "drift detection only (PR F) - nothing here changes what gets fitted; `dna_channels` above "
+    "remains the actual structural input the model builders read. Can already target planned future "
+    "outcome_ids (e.g. a net bill-through count) the moment a matching row exists in the outcome "
+    "catalogue above, even before any dedicated transformation computes it - see "
+    "docs/media_outcome_pathways.md."
+)
+if "media_outcome_pathways" not in st.session_state:
+    st.session_state["media_outcome_pathways"] = get_state("media_outcome_pathways") or []
+_pathway_default_df = pd.DataFrame(st.session_state["media_outcome_pathways"]) if st.session_state["media_outcome_pathways"] else pd.DataFrame(
+    columns=["pathway_id", "channel", "source_product", "target_outcome_id", "role", "lag_type",
+             "lag_weeks", "prior_scale", "include_in_attribution", "include_in_planning", "evidence_status"]
+)
+pathway_catalogue_df = st.data_editor(
+    _pathway_default_df,
+    num_rows="dynamic",
+    column_config={
+        "pathway_id": None,  # auto-managed identity, not hand-edited
+        "channel": st.column_config.SelectboxColumn("channel", options=channels, required=True),
+        "source_product": st.column_config.SelectboxColumn("source_product", options=list(KNOWN_PRODUCTS), required=True),
+        "target_outcome_id": st.column_config.SelectboxColumn(
+            "target_outcome_id", options=[r["outcome_id"] for r in outcome_catalogue_df.to_dict("records") if r.get("outcome_id")],
+            required=True,
+        ),
+        "role": st.column_config.SelectboxColumn("role", options=list(PATHWAY_ROLES), required=True, default=PATHWAY_ROLES[0]),
+        "lag_type": st.column_config.TextColumn("lag_type", help="Free text, e.g. 'none', 'fixed_weeks', 'distributed'.", default="none"),
+        "lag_weeks": st.column_config.NumberColumn("lag_weeks", min_value=0, help="Only meaningful if lag_type implies a delay."),
+        "prior_scale": st.column_config.NumberColumn("prior_scale", min_value=0.0001, default=1.0, help="Smaller = tighter prior for a future estimation PR."),
+        "include_in_attribution": st.column_config.CheckboxColumn("include_in_attribution", default=True),
+        "include_in_planning": st.column_config.CheckboxColumn("include_in_planning", default=True),
+        "evidence_status": st.column_config.TextColumn("evidence_status", help="Free text, e.g. 'untested', 'supported', 'inconclusive', 'contradicted'.", default="untested"),
+    },
+    key="pathway_catalogue_editor",
+    width="stretch",
+)
+
+if get_state("model_meta") is not None and st.session_state["media_outcome_pathways"]:
+    _preview_pathways = [
+        MediaOutcomePathway.from_dict(r) for r in pathway_catalogue_df.to_dict("records")
+        if r.get("channel") and r.get("target_outcome_id")
+    ]
+    _pathway_drift_df = pathways_drift_dataframe(_preview_pathways, get_state("model_meta"))
+    if not _pathway_drift_df.empty:
+        _changed_pathways = _pathway_drift_df[_pathway_drift_df["drift_status"] != "Fitted and current"]
+        if not _changed_pathways.empty:
+            st.info(
+                f"{len(_changed_pathways)} pathway(s) differ from this fit's captured pathway metadata "
+                "(informational only - the pathway catalogue does not yet drive fitting)."
+            )
+            with st.expander("Pathway drift detail"):
+                st.dataframe(_pathway_drift_df, width="stretch")
+
 # `segment_outcomes`/`segment_ltv` (ModelSpec migration fields) and per-segment
 # promo/control mappings are now derived from the catalogue's own segments,
 # not from a required separate mapping section - the catalogue is the single
@@ -493,6 +553,15 @@ if st.button("Save structure and validate", type="primary"):
         )
     errors += validate_funnel_links(funnel_links, [o.outcome_id for o in outcome_definitions])
 
+    media_outcome_pathways = []
+    for row in pathway_catalogue_df.to_dict("records"):
+        if not (row.get("channel") and row.get("source_product") and row.get("target_outcome_id")):
+            continue  # a blank row added by the editor but never filled in
+        media_outcome_pathways.append(MediaOutcomePathway.from_dict(row))
+    errors += validate_media_outcome_pathways(
+        media_outcome_pathways, channels=channels, outcome_ids=[o.outcome_id for o in outcome_definitions],
+    )
+
     if errors:
         for e in errors:
             st.error(e)
@@ -504,6 +573,7 @@ if st.button("Save structure and validate", type="primary"):
         set_state("dna_promotion_events", [e.to_dict() for e in dna_promotion_events])
         set_state("pipeline_steps", pipeline_to_json(updated_pipeline_steps))
         set_state("funnel_links", [fl.to_dict() for fl in funnel_links])
+        set_state("media_outcome_pathways", [p.to_dict() for p in media_outcome_pathways])
         clear_model_state()
         issues = validate_modeling_frame(
             df if market_col in df.columns else df.assign(**{market_col: "default"}),

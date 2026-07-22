@@ -15,6 +15,7 @@ from ancestry_mmm.core.diagnostics import compute_scorecard, expanding_window_ba
 from ancestry_mmm.core.fingerprint import fingerprint_dataframe, fingerprint_model_spec, fingerprint_posterior
 from ancestry_mmm.core.funnel import FunnelLink, funnel_coherence_diagnostics
 from ancestry_mmm.core.outcomes import outcome_catalogue_fingerprint_payload, resolve_outcome_definitions
+from ancestry_mmm.core.pathways import MediaOutcomePathway, pathway_catalogue_fingerprint_payload, pathways_drift_dataframe
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
 from ancestry_mmm.core.market_specific_model import build_fh_market_specific_model
@@ -53,6 +54,16 @@ if spec_dict:
         resolve_outcome_definitions(get_state("outcome_definitions"), _spec_for_drift.segment_outcomes, _spec_for_drift.segment_ltv),
         meta,
     )
+    _current_pathways = [MediaOutcomePathway.from_dict(p) for p in (get_state("media_outcome_pathways") or [])]
+    _pathway_drift_df = pathways_drift_dataframe(_current_pathways, meta)
+    if not _pathway_drift_df.empty:
+        _changed_pathways = _pathway_drift_df[_pathway_drift_df["drift_status"] != "Fitted and current"]
+        if not _changed_pathways.empty:
+            st.info(
+                f"{len(_changed_pathways)} media-outcome pathway(s) differ from this fit's captured "
+                "pathway metadata (informational only - PR F's pathway catalogue does not yet drive "
+                "fitting)."
+            )
 
 st.markdown("---")
 if st.button("Compute scorecard", type="primary"):
@@ -119,6 +130,8 @@ if model_run_id and posterior_params is not None and model_spec_dict is not None
             pipeline_steps=get_state("pipeline_steps") or [], market_spec_config=get_state("market_spec_config"),
             direct_dna_outcome_ids=meta.direct_dna_outcome_ids if meta is not None else None,
             outcome_catalogue=outcome_catalogue_fingerprint_payload(meta.outcome_catalogue_at_fit) if meta is not None else None,
+            funnel_links=get_state("funnel_links"),
+            media_outcome_pathways=pathway_catalogue_fingerprint_payload(meta.pathway_catalogue_at_fit) if meta is not None else None,
         ),
         "posterior_fingerprint": fingerprint_posterior(posterior_params),
     }

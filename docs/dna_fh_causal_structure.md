@@ -151,6 +151,29 @@ it's implicitly absorbed into the FH segments' own fitted baseline/trend/seasona
 (it reflects what the aggregate data shows) rather than being asserted as an explicit, separately
 quantified causal pathway. This is a documented limitation, not a silent gap - see docs/limitations.md.
 
+## Forward-looking pathway catalogue and DNA purchase-type segmentation (PR F)
+
+The direct/halo pathway structure above is the only causal statement this codebase's *fitted model*
+makes - `dna_channels`/`direct_dna_outcome_ids` remain what the PyMC builders actually read. PR F adds
+`core.pathways.MediaOutcomePathway`, an explicit, persisted, fingerprinted catalogue of every
+`(channel, target_outcome_id)` relationship this project believes exists (a primary direct effect, a
+trusted cross-product effect, a speculative/exploratory one not yet trusted for planning, or an
+explicitly excluded one) - schema, validation and drift detection only, not yet read by any fitting
+code. See `docs/media_outcome_pathways.md` for the full design record, including how this catalogue is
+designed to target the roadmap's expanded future outcome set (Family History net bill-through count,
+finance-date GSA, and DNA purchase-type outcomes below) without assuming every FH KPI is a GSA or every
+DNA KPI is a generic kit-sale total.
+
+A related roadmap item reclassifies DNA kit purchases by the relationship between the purchasing and
+activating account (`self_activated`/`gifted_activated`/`unactivated`) rather than only
+new-customer-vs-existing-FH-customer. **The most important caveat, carried through every layer of this
+future work:** an unactivated kit is not definitively a gift - it may be a self-purchase never
+activated, a gift not yet received, a delayed activation, or a linkage failure. `unactivated` is always
+kept as its own atomic category; a `gift_or_unactivated` roll-up is only ever an explicitly labelled
+reporting assumption, never silently substituted for the atomic category. See
+`docs/media_outcome_pathways.md` for the full classification/censoring design and `docs/limitations.md`
+for why this is not yet implemented.
+
 ## How double counting is avoided today
 
 - Every outcome_id - FH or DNA-product - has its own independent Negative-Binomial likelihood over its

@@ -1401,3 +1401,125 @@ around by testing that specific code path via direct calls with monkeypatched `s
 the instruction document's explicit pre-media-pathway-schema requirement). See docs/outcomes.md,
 docs/scenario_planner.md, docs/media_units_and_inflation.md and docs/limitations.md for the updated
 design records.
+
+---
+
+**Date:** 2026-07-22
+**Decision:** PR F ("pathway catalogue" - the updated roadmap's explicit "implement PR F as the
+explicit MediaOutcomePathway schema, but design it to support the expanded future outcome catalogue"
+directive) - a new business definitions document introduced two future outcome-modelling directions
+(Family History net bill-through attributed to sign-up date, and DNA purchase-type segmentation by
+purchasing-vs-activating-account relationship) and asked for the pathway schema to be designed against
+them now, without building the transformations, classifiers, or new model equations those directions
+will eventually need.
+1. **`core.pathways.MediaOutcomePathway`** - a new, separate catalogue of explicit
+   `(channel, target_outcome_id)` relationships, with `role` (`primary_direct`/`active_cross_product`/
+   `exploratory_cross_product`/`excluded`), `lag_type`/`lag_weeks`, `prior_scale`,
+   `include_in_attribution`/`include_in_planning` (independent eligibility flags, matching
+   `core.outcomes.outcome_eligibility`'s established four-flag pattern rather than overloading `role`),
+   and `evidence_status`. **Schema, validation, persistence, fingerprinting, fit-time metadata and
+   drift detection only** - no model equation reads it; `ModelSpec.dna_channels`/
+   `FHModelMeta.direct_dna_outcome_ids` remain the only structural pathway input the PyMC builders
+   actually use. `validate_media_outcome_pathways` checks channel/product/role/outcome_id validity and
+   rejects a duplicate `(channel, target_outcome_id)` pair. Designed explicitly against the expanded
+   future outcome catalogue: `target_outcome_id` is validated against whatever outcome_ids a project's
+   *current* catalogue has, so a pathway can target `fh_net_billthrough_count` or
+   `dna_kit_sale_self_activated` the moment a matching `OutcomeDefinition` exists - nothing hard-codes
+   "every FH KPI is GSA" or "every DNA KPI is a generic kit-sale total."
+2. **Fingerprinted like `FunnelLink`.** `pathway_catalogue_fingerprint_payload` is calculation-adjacent
+   (not yet calculation-relevant) configuration, sorted/keyed by `(channel, target_outcome_id)` -
+   deliberately excluding the auto-generated `pathway_id` from the payload, so two logically-identical
+   catalogues built independently (different random ids) fingerprint identically.
+   `core.fingerprint.fingerprint_model_spec` gained a `media_outcome_pathways` parameter; every
+   pre-existing approval is invalidated by this addition, the established pattern. While making this
+   change, a pre-existing gap was also closed: the three page-level fingerprint call sites
+   (Diagnostics, Results & Curve Bank, Scenario Planner) never actually passed `funnel_links` to
+   `fingerprint_model_spec` despite PR E.2 adding that parameter - an edited funnel link never
+   invalidated a displayed "approval matches" check. Both `funnel_links` and the new
+   `media_outcome_pathways` are now passed at all three call sites and in
+   `core.persistence.verify_imported_approval`.
+3. **Persisted as `config/media_outcome_pathways.json`**, same "absent means legacy, not corrupt"
+   convention as every prior addition - `import_project` reports `None` for a bundle predating this PR.
+   `FHModelMeta.pathway_catalogue_at_fit` (populated identically by both `build_fh_hierarchical_model`
+   and `build_fh_market_specific_model`, verified by source-inspection parity test per this codebase's
+   established no-real-PyMC-build-in-tests convention) captures the exact catalogue in effect at fit
+   time via a pure pass-through added to `data.preprocessor.prepare_fh_modeling_frame`'s new
+   `media_outcome_pathways` parameter - it does not affect any array that function builds.
+4. **Drift detection, informational only everywhere it's shown.** `pathway_drift_status`/
+   `pathways_drift_dataframe` mirror `outcome_drift_status`/`outcomes_drift_dataframe`, keyed by
+   `pathway_id`. Unlike outcome-catalogue drift (which the Scenario Planner treats as blocking), pathway
+   drift is shown informationally on Structure, Diagnostics and Project Export only - the pathway
+   catalogue doesn't yet drive fitting, so there is nothing for a stale pathway to make wrong.
+5. **Planned metric keys for the expanded future outcome catalogue.** `core.outcomes.METRIC_REGISTRY`
+   gained seven entries: `fh_net_billthrough_count`/`fh_net_billthrough_rate`/`fh_gsa_finance_date`
+   (Family History) and `dna_kit_sale_self_activated`/`_gifted_activated`/`_unactivated`/`_total` (DNA -
+   `dna_kit_sale_total` kept distinct from the pre-existing `dna_kit_sale`, for backward compatibility).
+   `MetricDefinition` gained `aggregation_type` (`"count"`/`"rate"`/`"currency"`/`"index"`),
+   `allowed_in_optimiser`, `allowed_in_cpa` - `fh_net_billthrough_rate` is the only built-in metric with
+   `aggregation_type="rate"` and the only one disallowed from the optimiser/CPA. No computation
+   pipeline exists for any of these seven metrics yet - registering them only lets a
+   `MediaOutcomePathway` or a manually-mapped `OutcomeDefinition` reference them ahead of that work.
+6. **`OutcomeDefinition.aggregation_type`/`date_basis`/`maturity_required`** - schema/validation-only
+   outcome-type metadata the roadmap calls "what allows the app to prevent unsafe aggregation."
+   `aggregation_type` derives from the metric registry the same way `unit` already does.
+   `validate_outcome_definitions` now rejects a `"rate"`-aggregation outcome that resolves eligible for
+   the official total or optimisation, forcing an explicit non-`"primary"` role (or override) for any
+   rate outcome - the roadmap's "do not use net bill-throughs and net bill-through rate as synonyms" /
+   "do not allow rate outcomes into count totals or count-based CPA." `date_basis` (one of
+   `event_date`/`signup_date_attributed`/`billing_date`/`purchase_date`/`activation_date`) and
+   `maturity_required` are validated if set but read by no transformation - deliberately excluded from
+   the outcome-catalogue fingerprint and drift-tracked fields, the same "descriptive, not
+   calculation-relevant" reasoning `MarketDescriptors` is excluded from the fingerprint for.
+7. **`core.pathways.OutcomeReconciliationGroup`/`reconciliation_group_diagnostics`** - diagnostics-only
+   (e.g. "DNA total = self-activated + gifted-activated + unactivated"), never raises, reports `None`
+   rather than a guessed value for anything it can't evaluate. Explicitly not fingerprinted (nothing
+   downstream reads a reconciliation group to compute anything) and not wired into constrained
+   estimation, per the roadmap's own "initially use this for validation and diagnostics, not
+   necessarily constrained estimation."
+8. **Structure page UI** - a new "Media-outcome pathway catalogue (optional, forward-looking)" section
+   (`st.data_editor`, below Funnel links), validated against the page's own channel list and live
+   outcome catalogue, persisted through the same Save handler.
+**Reason:** The new business-definitions document found that the DNA New/Existing-customer
+segmentation and finance-date GSA reporting under-serve two real decisions: which purchases are
+self-driven vs. gifted (materially different economics and, eventually, different media response), and
+which marketing-attributed acquisitions should count toward a KPI regardless of how long billing takes
+to catch up. Rather than building those transformations immediately (which the roadmap explicitly
+defers, pending activation-maturity/censoring design work and real-data volume review), PR F builds the
+one piece that's genuinely prerequisite and low-risk now: a pathway catalogue and outcome-schema
+vocabulary that won't need to be redesigned once the transformations exist.
+**Alternatives considered:** Waiting to build `MediaOutcomePathway` until PR G (pathway-specific
+estimation) actually needs it (rejected - the roadmap explicitly asks for the schema now, "before that
+PR exists," so a later PR can be reviewed purely on estimation logic rather than schema design too).
+Making `dna_kit_sale_total` an alias for the existing `dna_kit_sale` key instead of a distinct one
+(rejected - the roadmap's recommended canonical DNA metric keys list it as a separate, explicit key
+alongside the three atomic categories; aliasing would blur the "roll-up vs. this project's actual
+generic-kit-sale total" distinction for existing projects). Fingerprinting `aggregation_type`/
+`date_basis`/`maturity_required`/reconciliation groups now, defensively, in case a future PR reads them
+(rejected - same reasoning as `MarketDescriptors`: fingerprinting purely descriptive fields that
+nothing computes from yet would invalidate approvals for no correctness benefit; the moment a real
+transformation reads one of them, that is the correct point to add it to the fingerprint, as an
+intentional breaking change like every other addition in this log).
+**Impact:** Every fitted model, persisted project bundle, and approval fingerprint from before this PR
+is invalidated by the new `media_outcome_pathways` fingerprint payload (and by the `funnel_links` gap
+fix at the three page-level call sites) - existing bundles must be re-fit and re-approved. No existing
+outcome, curve, attribution, scenario, or CPA calculation changes behaviour - this PR is purely additive
+schema/UI/persistence.
+**Verification:** 856 tests passing (774 -> 856 across this PR), `ruff check` clean throughout. Covers:
+`MediaOutcomePathway` round trip/validation/fingerprint/drift (including the required "pathway schema
+can target the expanded future outcome catalogue without hard-coding fh_gsa/generic-kit-sale" case);
+`OutcomeReconciliationGroup` validation/diagnostics (sum and ratio relations, missing-value handling);
+the seven planned metric keys' registry entries and `aggregation_type`/`allowed_in_optimiser`/
+`allowed_in_cpa` flags; `OutcomeDefinition`'s new fields and the rate-aggregation validation rule;
+Model A/Model C parity for `pathway_catalogue_at_fit` construction (source-inspection, matching this
+codebase's established no-real-PyMC-build convention); bundle export/import round trip and
+legacy-bundle-imports-with-None for `media_outcome_pathways`; Streamlit AppTests for the Structure
+page's pathway catalogue section (save + validation-error paths) and the Diagnostics page's pathway
+drift info message.
+**Owner:** Engineering.
+**Status:** Accepted; implemented in PR F (explicit media-outcome pathway schema, designed against the
+net-bill-through/DNA-purchase-type roadmap, per that document's exact instruction). Media pathways'
+*estimation* (PR G), the net-bill-through transformation, the DNA activation classifier, the
+constrained funnel model, the DNA composition model, the causal DAG, Brand Search mediation, the
+dynamic planner and the UI theme remain explicitly out of scope, per the same instruction. See
+docs/media_outcome_pathways.md, docs/outcomes.md, docs/dna_fh_causal_structure.md and
+docs/limitations.md for the updated design records.

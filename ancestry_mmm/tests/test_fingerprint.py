@@ -321,6 +321,43 @@ class TestFingerprintModelSpecFunnelLinks:
         assert fp_a != fp_b
 
 
+class TestFingerprintModelSpecMediaOutcomePathways:
+    """PR F: the pathway catalogue doesn't (yet) change what gets fitted,
+    but is calculation-adjacent metadata a future estimation PR will read -
+    fingerprinted the same way as funnel_links."""
+
+    def test_omitting_media_outcome_pathways_is_backward_compatible(self):
+        spec = {"markets": ["UK"]}
+        assert fingerprint_model_spec(spec, {}, 4) == fingerprint_model_spec(spec, {}, 4, media_outcome_pathways=None)
+        assert fingerprint_model_spec(spec, {}, 4) == fingerprint_model_spec(spec, {}, 4, media_outcome_pathways=[])
+
+    def test_adding_a_pathway_changes_the_fingerprint(self):
+        spec = {"markets": ["UK"]}
+        fp_none = fingerprint_model_spec(spec, {}, 4, media_outcome_pathways=[])
+        fp_one = fingerprint_model_spec(spec, {}, 4, media_outcome_pathways=[
+            {"channel": "DNA_Media", "target_outcome_id": "dna_new_kit", "role": "primary_direct"},
+        ])
+        assert fp_none != fp_one
+
+    def test_pathway_order_does_not_matter(self):
+        spec = {"markets": ["UK"]}
+        a = {"channel": "TV", "target_outcome_id": "fh_new_gsa"}
+        b = {"channel": "DNA_Media", "target_outcome_id": "dna_new_kit"}
+        fp_ab = fingerprint_model_spec(spec, {}, 4, media_outcome_pathways=[a, b])
+        fp_ba = fingerprint_model_spec(spec, {}, 4, media_outcome_pathways=[b, a])
+        assert fp_ab == fp_ba
+
+    def test_changing_a_pathway_role_changes_the_fingerprint(self):
+        spec = {"markets": ["UK"]}
+        fp_a = fingerprint_model_spec(spec, {}, 4, media_outcome_pathways=[
+            {"channel": "DNA_Media", "target_outcome_id": "dna_new_kit", "role": "primary_direct"},
+        ])
+        fp_b = fingerprint_model_spec(spec, {}, 4, media_outcome_pathways=[
+            {"channel": "DNA_Media", "target_outcome_id": "dna_new_kit", "role": "exploratory_cross_product"},
+        ])
+        assert fp_a != fp_b
+
+
 class TestFingerprintModelSpecMarketConfig:
     def _config_with(self, *, currency=None, descriptors=None, media_unit=None) -> dict:
         profile = MarketProfile(
