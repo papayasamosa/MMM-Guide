@@ -31,32 +31,32 @@ from .predict import FHPosteriorParams, adstock_saturate_frame, lag_frame
 
 def _baseline_eta(frame: Dict, meta: FHModelMeta, params: FHPosteriorParams) -> np.ndarray:
     """Everything in eta except the media-channel terms: intercept, market, trend, season, promo, controls."""
-    segments = meta.segments
+    outcome_ids = meta.outcome_ids
 
-    intercept = np.array([params.intercept[s] for s in segments])
-    market_offset_matrix = np.array([[params.market_offset[m][s] for s in segments] for m in meta.markets])
+    intercept = np.array([params.intercept[s] for s in outcome_ids])
+    market_offset_matrix = np.array([[params.market_offset[m][s] for s in outcome_ids] for m in meta.markets])
     eta_market = market_offset_matrix[frame["market_idx"]]
 
-    trend_coef = np.array([params.trend_coef[s] for s in segments])
+    trend_coef = np.array([params.trend_coef[s] for s in outcome_ids])
     eta_trend = frame["trend"][:, None] * trend_coef[None, :]
 
-    gamma_fourier_matrix = np.column_stack([params.gamma_fourier[s] for s in segments])
+    gamma_fourier_matrix = np.column_stack([params.gamma_fourier[s] for s in outcome_ids])
     eta_season = frame["fourier"] @ gamma_fourier_matrix
 
-    promo_coef = np.array([params.promo_coef[s] for s in segments])
+    promo_coef = np.array([params.promo_coef[s] for s in outcome_ids])
     eta_promo = frame["promo"] * promo_coef[None, :]
 
     eta = intercept[None, :] + eta_market + eta_trend + eta_season + eta_promo
 
-    segment_controls = frame.get("segment_controls") or {}
-    segment_control_names = frame.get("segment_control_names") or {}
-    for seg, arr in segment_controls.items():
-        if seg not in segments or seg not in params.segment_control_coef:
+    outcome_controls = frame.get("outcome_controls") or {}
+    outcome_control_names = frame.get("outcome_control_names") or {}
+    for oid, arr in outcome_controls.items():
+        if oid not in outcome_ids or oid not in params.outcome_control_coef:
             continue
-        s_idx = segments.index(seg)
-        names = segment_control_names.get(seg, [])
-        coefs = np.array([params.segment_control_coef[seg].get(n, 0.0) for n in names])
-        eta[:, s_idx] += arr @ coefs
+        o_idx = outcome_ids.index(oid)
+        names = outcome_control_names.get(oid, [])
+        coefs = np.array([params.outcome_control_coef[oid].get(n, 0.0) for n in names])
+        eta[:, o_idx] += arr @ coefs
 
     control_names = frame.get("control_names") or []
     if control_names and params.control_coef:
@@ -67,21 +67,21 @@ def _baseline_eta(frame: Dict, meta: FHModelMeta, params: FHPosteriorParams) -> 
 
 
 def _channel_log_terms(frame: Dict, meta: FHModelMeta, params: FHPosteriorParams) -> Dict[str, np.ndarray]:
-    """Per-channel additive log-mu contribution, shape (n_obs, n_segments), before the final exp().
+    """Per-channel additive log-mu contribution, shape (n_obs, n_outcomes), before the final exp().
 
-    For a DNA channel, a segment's term is the sum of its direct-pathway
-    contribution (`beta * dna_direct_media`, for `direct_dna_segments`
+    For a DNA channel, an outcome_id's term is the sum of its direct-pathway
+    contribution (`beta * dna_direct_media`, for `direct_dna_outcome_ids`
     members) and its halo-pathway contribution (`beta * halo_strength *
-    dna_halo_media`, for `halo_eligible_segments` members) - the same two
+    dna_halo_media`, for `halo_eligible_outcome_ids` members) - the same two
     genuinely separate media inputs core.hierarchical_model's likelihood
     uses, not one shared lagged series (docs/dna_fh_causal_structure.md).
     Both pathways are summed into the channel's single term here (Shapley
     permutes whole channels, not pathways within a channel), so
-    `dna_segment` correctly gets credit for both without either being
+    `dna_outcome_id` correctly gets credit for both without either being
     double-counted."""
-    segments = meta.segments
+    outcome_ids = meta.outcome_ids
     n_obs = frame["X_media"].shape[0]
-    n_seg = len(segments)
+    n_out = len(outcome_ids)
 
     sat_media = adstock_saturate_frame(frame["X_media"], frame["market_bounds"], meta, params)
     dna_direct_media = sat_media[:, meta.dna_channel_idx] if meta.dna_channel_idx else None
@@ -92,17 +92,17 @@ def _channel_log_terms(frame: Dict, meta: FHModelMeta, params: FHPosteriorParams
 
     terms: Dict[str, np.ndarray] = {}
     for ci, ch in enumerate(meta.channels):
-        term = np.zeros((n_obs, n_seg))
+        term = np.zeros((n_obs, n_out))
         is_dna = ci in meta.dna_channel_idx
         dna_pos = meta.dna_channel_idx.index(ci) if is_dna else None
-        for si, seg in enumerate(segments):
-            b = params.beta[seg][ch]
+        for si, oid in enumerate(outcome_ids):
+            b = params.beta[oid][ch]
             if is_dna:
                 value = 0.0
-                if seg in meta.direct_dna_segments:
+                if oid in meta.direct_dna_outcome_ids:
                     value = value + b * dna_direct_media[:, dna_pos]
-                if seg in meta.halo_eligible_segments:
-                    halo = params.halo_strength.get(seg, 0.0)
+                if oid in meta.halo_eligible_outcome_ids:
+                    halo = params.halo_strength.get(oid, 0.0)
                     if halo:
                         value = value + b * halo * dna_halo_media[:, dna_pos]
                 term[:, si] = value
@@ -120,21 +120,21 @@ def compute_shapley_contributions(
     seed: int = 42,
 ) -> Dict[str, np.ndarray]:
     """
-    Row-and-segment-level Shapley decomposition of predicted mu into a
-    baseline and per-channel contributions (GSA units), averaged over
+    Row-and-outcome_id-level Shapley decomposition of predicted mu into a
+    baseline and per-channel contributions (outcome units), averaged over
     `n_permutations` random channel removal orders. Contributions sum
-    exactly to (mu_total - mu_baseline) for every row/segment.
+    exactly to (mu_total - mu_baseline) for every row/outcome_id.
     """
     rng = np.random.default_rng(seed)
     channels = meta.channels
     n_obs = frame["X_media"].shape[0]
-    n_seg = len(meta.segments)
+    n_out = len(meta.outcome_ids)
 
     baseline_eta = _baseline_eta(frame, meta, params)
     mu_baseline = np.exp(np.clip(baseline_eta, -50, 50))
     channel_terms = _channel_log_terms(frame, meta, params)
 
-    contributions = {c: np.zeros((n_obs, n_seg)) for c in channels}
+    contributions = {c: np.zeros((n_obs, n_out)) for c in channels}
     for _ in range(n_permutations):
         order = rng.permutation(channels)
         current = mu_baseline.copy()
@@ -153,7 +153,7 @@ def compute_shapley_contributions(
         "baseline": mu_baseline,
         "channel_contributions": contributions,
         "mu_total": mu_total,
-        "segments": meta.segments,
+        "outcome_ids": meta.outcome_ids,
         "channels": channels,
     }
 
@@ -167,25 +167,26 @@ def segment_channel_summary(
     n_permutations: int = 200,
 ) -> pd.DataFrame:
     """
-    Channel x segment summary: total volume contribution, spend, ROAS/CPA,
+    Channel x outcome_id summary: total volume contribution, spend, ROAS/CPA,
     and (if `ltv` is given) LTV-weighted value contribution and value ROAS.
+    `ltv` is keyed by outcome_id.
     """
     contributions = contributions or compute_shapley_contributions(frame, meta, params, n_permutations)
     ltv = ltv or {}
     rows = []
     for ci, ch in enumerate(meta.channels):
         total_spend = float(frame["X_media"][:, ci].sum())
-        for si, seg in enumerate(meta.segments):
+        for si, oid in enumerate(meta.outcome_ids):
             vol = float(contributions["channel_contributions"][ch][:, si].sum())
-            value = vol * ltv.get(seg, 1.0)
+            value = vol * ltv.get(oid, 1.0)
             rows.append({
                 "channel": ch,
-                "segment": seg,
+                "outcome_id": oid,
                 "spend": total_spend,
                 "volume_contribution": vol,
                 "roas": vol / total_spend if total_spend > 0 else np.nan,
                 "cpa": total_spend / vol if vol > 0 else np.nan,
-                "ltv": ltv.get(seg),
+                "ltv": ltv.get(oid),
                 "value_contribution": value,
                 "value_roas": value / total_spend if total_spend > 0 else np.nan,
             })
@@ -199,23 +200,23 @@ def total_fh_contribution(
     contributions: Optional[Dict] = None,
     ltv: Optional[Dict[str, float]] = None,
     n_permutations: int = 200,
-    segments: Optional[List[str]] = None,
+    outcome_ids: Optional[List[str]] = None,
 ) -> pd.DataFrame:
     """
-    Total-FH (all Family History segments summed) view per channel, plus
-    which segment the impact falls into.
+    Total-FH (all Family History outcome_ids summed) view per channel, plus
+    which outcome_id the impact falls into.
 
-    `segments` restricts which of `meta.segments` are summed into the total
-    - pass the Family History segment subset when the fitted model also
-    includes DNA-product segments (core.outcomes), so a GSA count and a kit-
-    sale count are never summed into one meaningless combined number.
-    Defaults to every segment in `meta.segments`, preserving existing
-    behaviour for a fit with no DNA segments (where "every segment" already
-    means "every FH segment").
+    `outcome_ids` restricts which of `meta.outcome_ids` are summed into the
+    total - pass the Family History outcome_id subset when the fitted model
+    also includes DNA-product outcomes (core.outcomes), so a GSA count and a
+    kit-sale count are never summed into one meaningless combined number.
+    Defaults to every outcome_id in `meta.outcome_ids`, preserving existing
+    behaviour for a fit with no DNA outcomes (where "every outcome_id"
+    already means "every FH outcome_id").
     """
     summary = segment_channel_summary(frame, meta, params, contributions, ltv, n_permutations)
-    if segments is not None:
-        summary = summary[summary["segment"].isin(segments)]
+    if outcome_ids is not None:
+        summary = summary[summary["outcome_id"].isin(outcome_ids)]
     total = summary.groupby("channel").agg(
         spend=("spend", "first"),
         volume_contribution=("volume_contribution", "sum"),
@@ -224,7 +225,7 @@ def total_fh_contribution(
     total["roas"] = total["volume_contribution"] / total["spend"].replace(0, np.nan)
     total["value_roas"] = total["value_contribution"] / total["spend"].replace(0, np.nan)
 
-    pivot = summary.pivot(index="channel", columns="segment", values="volume_contribution")
+    pivot = summary.pivot(index="channel", columns="outcome_id", values="volume_contribution")
     pivot = pivot.div(pivot.sum(axis=1), axis=0).add_suffix("_share")
     return total.merge(pivot.reset_index(), on="channel", how="left")
 
@@ -233,20 +234,20 @@ def contribution_waterfall(
     frame: Dict,
     meta: FHModelMeta,
     params: FHPosteriorParams,
-    segment: Optional[str] = None,
+    outcome_id: Optional[str] = None,
     contributions: Optional[Dict] = None,
     n_permutations: int = 200,
 ) -> pd.DataFrame:
     """
     Waterfall rows: baseline, then each channel's contribution, then total.
-    If `segment` is None, sums across all segments (total FH); otherwise a
-    single segment's waterfall.
+    If `outcome_id` is None, sums across all outcome_ids (total FH);
+    otherwise a single outcome_id's waterfall.
     """
     contributions = contributions or compute_shapley_contributions(frame, meta, params, n_permutations)
-    seg_idx = meta.segments.index(segment) if segment else None
+    out_idx = meta.outcome_ids.index(outcome_id) if outcome_id else None
 
     def total(arr: np.ndarray) -> float:
-        return float(arr[:, seg_idx].sum()) if seg_idx is not None else float(arr.sum())
+        return float(arr[:, out_idx].sum()) if out_idx is not None else float(arr.sum())
 
     rows = [{"category": "Baseline", "value": total(contributions["baseline"])}]
     for ch in meta.channels:

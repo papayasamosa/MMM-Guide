@@ -32,13 +32,13 @@ def _mape(actual: np.ndarray, pred: np.ndarray) -> float:
 
 
 def in_sample_fit(frame: Dict, meta: FHModelMeta, params: FHPosteriorParams) -> pd.DataFrame:
-    """R-squared and MAPE per segment, comparing posterior-mean prediction to actuals."""
+    """R-squared and MAPE per outcome_id, comparing posterior-mean prediction to actuals."""
     mu = predict_mu(frame, meta, params)
     Y = frame["Y"]
     rows = []
-    for i, seg in enumerate(meta.segments):
+    for i, oid in enumerate(meta.outcome_ids):
         rows.append({
-            "segment": seg,
+            "outcome_id": oid,
             "r_squared": _r_squared(Y[:, i], mu[:, i]),
             "mape_pct": _mape(Y[:, i], mu[:, i]),
             "actual_mean": float(Y[:, i].mean()),
@@ -55,16 +55,16 @@ def posterior_predictive_coverage(
 ) -> pd.DataFrame:
     """
     % of actual observations falling inside the posterior predictive credible
-    interval, per segment - computed analytically from the NegativeBinomial
+    interval, per outcome_id - computed analytically from the NegativeBinomial
     quantile function using posterior mu/alpha draws (no extra sampling pass).
     """
     Y = frame["Y"]
-    mu_draws = trace.posterior["mu"].stack(sample=("chain", "draw")).values  # (obs, segment, sample)
-    alpha_draws = trace.posterior["alpha"].stack(sample=("chain", "draw")).values  # (segment, sample)
+    mu_draws = trace.posterior["mu"].stack(sample=("chain", "draw")).values  # (obs, outcome, sample)
+    alpha_draws = trace.posterior["alpha"].stack(sample=("chain", "draw")).values  # (outcome, sample)
 
     lower_q, upper_q = (1 - credible_mass) / 2, 1 - (1 - credible_mass) / 2
     rows = []
-    for i, seg in enumerate(meta.segments):
+    for i, oid in enumerate(meta.outcome_ids):
         mu_i = mu_draws[:, i, :]        # (obs, sample)
         alpha_i = alpha_draws[i, :]     # (sample,)
         n_param = alpha_i[None, :]
@@ -77,7 +77,7 @@ def posterior_predictive_coverage(
 
         covered = (Y[:, i] >= lo_mean) & (Y[:, i] <= hi_mean)
         rows.append({
-            "segment": seg,
+            "outcome_id": oid,
             "credible_mass": credible_mass,
             "coverage_pct": float(covered.mean() * 100),
             "target_pct": credible_mass * 100,
@@ -126,14 +126,14 @@ def curve_plausibility_checks(
                            "looks fully saturated across the whole observed range.",
             })
 
-        for seg in meta.segments:
-            b_mean = float(beta_mean.sel(segment=seg, channel=ch).values)
-            b_std = float(beta_std.sel(segment=seg, channel=ch).values)
+        for oid in meta.outcome_ids:
+            b_mean = float(beta_mean.sel(outcome=oid, channel=ch).values)
+            b_std = float(beta_std.sel(outcome=oid, channel=ch).values)
             if b_mean > 0 and b_std / b_mean > 1.0:
                 issues.append({
                     "level": "warning",
                     "channel": ch,
-                    "message": f"'{ch}' effect on segment '{seg}' has high relative uncertainty "
+                    "message": f"'{ch}' effect on outcome '{oid}' has high relative uncertainty "
                                f"(std/mean = {b_std / b_mean:.1f}) - treat the point estimate cautiously.",
                 })
 
@@ -154,7 +154,7 @@ def _roi_plausibility_flag(ch, ci, lo, hi, trace, meta, frame):
     spend = frame["X_media"][:, ci]
     mean_spend = spend[spend > 0].mean() if (spend > 0).any() else 1.0
     slope = (S * (mean_spend ** (S - 1)) * (K ** S)) / ((K ** S + mean_spend ** S) ** 2)
-    beta_sum = float(trace.posterior["beta"].sel(channel=ch).mean().sum(dim=["chain", "draw", "segment"]).values)
+    beta_sum = float(trace.posterior["beta"].sel(channel=ch).mean().sum(dim=["chain", "draw", "outcome"]).values)
     approx_roi = slope * beta_sum
     if not (lo <= approx_roi <= hi):
         return {
@@ -178,8 +178,8 @@ def expanding_window_backtest(
     Out-of-sample / rolling forecast accuracy: expanding-window backtest.
 
     For each fold, trains on all rows up to a cutoff and evaluates on the
-    next held-out block. `fit_fold_fn(train_df, test_df) -> (r_squared_by_segment,
-    mape_by_segment)` is supplied by the caller (a page-level wrapper that
+    next held-out block. `fit_fold_fn(train_df, test_df) -> (r_squared_by_outcome_id,
+    mape_by_outcome_id)` is supplied by the caller (a page-level wrapper that
     fits the model on train_df and predicts test_df) - kept generic here so
     this module has no dependency on how long a real fit takes; n_folds=1
     gives a single holdout split, which is the cheapest useful check.
@@ -209,14 +209,14 @@ def expanding_window_backtest(
             continue
 
         r2_by_seg, mape_by_seg = fit_fold_fn(train_df, test_df)
-        for seg in r2_by_seg:
+        for oid in r2_by_seg:
             rows.append({
                 "fold": fold_i + 1,
                 "train_end": cutoff_date,
                 "test_end": test_end_date,
-                "segment": seg,
-                "r_squared": r2_by_seg[seg],
-                "mape_pct": mape_by_seg[seg],
+                "outcome_id": oid,
+                "r_squared": r2_by_seg[oid],
+                "mape_pct": mape_by_seg[oid],
             })
         prev_edge = edge
 

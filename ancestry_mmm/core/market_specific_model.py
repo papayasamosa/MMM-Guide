@@ -36,7 +36,7 @@ import numpy as np
 import pymc as pm
 import pytensor.tensor as pt
 
-from .hierarchical_model import FHModelMeta, _default_dna_segment, _market_grouped_lag, _resolve_direct_dna_segments
+from .hierarchical_model import FHModelMeta, _default_dna_outcome_id, _market_grouped_lag, _resolve_direct_dna_outcome_ids
 from .schema import ModelSpec
 from .transformations import pt_geometric_adstock_matrix, pt_hill_function
 
@@ -68,9 +68,9 @@ def build_fh_market_specific_model(
     frame: Dict[str, Any],
     spec: ModelSpec,
     dna_lag_weeks: int = 4,
-    dna_segment: Optional[str] = None,
+    dna_outcome_id: Optional[str] = None,
     prior_config: Optional[Dict] = None,
-    direct_dna_segments: Optional[List[str]] = None,
+    direct_dna_outcome_ids: Optional[List[str]] = None,
 ) -> "tuple[pm.Model, FHModelMeta]":
     """
     Build the market-specific, partially-pooled joint hierarchical FH model
@@ -78,11 +78,11 @@ def build_fh_market_specific_model(
     `FHModelMeta` return type as
     `core.hierarchical_model.build_fh_hierarchical_model` - nothing about the
     model's *structural* metadata (which channels are DNA channels, the halo
-    lag, market/segment/channel lists) differs between Model A and Model C;
-    only the shape of `hill_K` and `beta` in the fitted trace does, which is
-    why posterior extraction and curve replay need their own
+    lag, market/outcome_id/channel lists) differs between Model A and Model
+    C; only the shape of `hill_K` and `beta` in the fitted trace does, which
+    is why posterior extraction and curve replay need their own
     market-specific-aware code (core.market_specific_predict), not this
-    module. `direct_dna_segments` has the same meaning as Model A's - see
+    module. `direct_dna_outcome_ids` has the same meaning as Model A's - see
     that function's docstring.
 
     Requires at least 2 markets - partial pooling across a single market is
@@ -95,7 +95,7 @@ def build_fh_market_specific_model(
     market_bounds: List[tuple] = frame["market_bounds"]
     channels: List[str] = frame["channels"]
     dna_channel_idx: List[int] = frame["dna_channel_idx"]
-    segments: List[str] = frame["segments"]
+    outcome_ids: List[str] = frame["outcome_ids"]
     X_media: np.ndarray = frame["X_media"]
     Y: np.ndarray = frame["Y"]
     promo: np.ndarray = frame["promo"]
@@ -107,7 +107,7 @@ def build_fh_market_specific_model(
 
     n_obs, n_channels = X_media.shape
     n_markets = len(markets)
-    n_segments = len(segments)
+    n_outcomes = len(outcome_ids)
     n_fourier = fourier.shape[1]
     n_controls = X_controls.shape[1]
 
@@ -117,8 +117,8 @@ def build_fh_market_specific_model(
             "Use core.hierarchical_model.build_fh_hierarchical_model (Model A) for a single market."
         )
 
-    dna_segment = _default_dna_segment(segments, dna_segment)
-    direct_dna_segments = _resolve_direct_dna_segments(segments, dna_segment, direct_dna_segments)
+    dna_outcome_id = _default_dna_outcome_id(outcome_ids, dna_outcome_id)
+    direct_dna_outcome_ids = _resolve_direct_dna_outcome_ids(outcome_ids, dna_outcome_id, direct_dna_outcome_ids)
     non_dna_idx = [i for i, c in enumerate(channels) if i not in dna_channel_idx]
 
     channel_mean_spend = X_media.mean(axis=0)
@@ -127,7 +127,7 @@ def build_fh_market_specific_model(
     with pm.Model() as model:
         model.add_coord("obs", np.arange(n_obs))
         model.add_coord("market", markets)
-        model.add_coord("segment", segments)
+        model.add_coord("outcome", outcome_ids)
         model.add_coord("channel", channels)
         model.add_coord("fourier", np.arange(n_fourier))
 
@@ -226,56 +226,57 @@ def build_fh_market_specific_model(
         sigma_pool = pm.HalfNormal(
             "sigma_pool", sigma=prior_config.get("pooling_sigma_prior", 0.3), dims="channel",
         )
-        z_offset = pm.Normal("z_offset", mu=0, sigma=1, dims=("segment", "channel"))
-        segment_beta_dev = pm.Deterministic(
-            "segment_beta_dev", sigma_pool[None, :] * z_offset, dims=("segment", "channel")
+        z_offset = pm.Normal("z_offset", mu=0, sigma=1, dims=("outcome", "channel"))
+        outcome_beta_dev = pm.Deterministic(
+            "outcome_beta_dev", sigma_pool[None, :] * z_offset, dims=("outcome", "channel")
         )
 
         log_beta = pm.Deterministic(
             "log_beta",
-            mu_channel[None, None, :] + market_beta_dev[:, None, :] + segment_beta_dev[None, :, :],
-            dims=("market", "segment", "channel"),
+            mu_channel[None, None, :] + market_beta_dev[:, None, :] + outcome_beta_dev[None, :, :],
+            dims=("market", "outcome", "channel"),
         )
-        beta = pm.Deterministic("beta", pt.exp(log_beta), dims=("market", "segment", "channel"))
-        beta_by_market_idx = beta[market_idx]  # (obs, segment, channel) - this row's own market's beta
+        beta = pm.Deterministic("beta", pt.exp(log_beta), dims=("market", "outcome", "channel"))
+        beta_by_market_idx = beta[market_idx]  # (obs, outcome, channel) - this row's own market's beta
 
         # -----------------------------------------------------------------
-        # Direct vs. halo pathway coefficients, by segment - identical
+        # Direct vs. halo pathway coefficients, by outcome_id - identical
         # structure to Model A (halo_strength itself not market-specific in
         # this phase; a documented future extension, same as decay/S) - see
         # hierarchical_model.py's matching comment and
         # docs/dna_fh_causal_structure.md for the full rationale.
-        # `kit_only_segments` (DNA-product kit-sale segments) get only the
-        # direct term; `dna_segment` (FH DNA-cross-sell) gets both, with a
-        # regularised, shrunk-toward-zero halo term; every other segment
-        # gets only the halo term, unchanged from before this split.
+        # `kit_only_outcome_ids` (DNA-product kit-sale outcomes) get only
+        # the direct term; `dna_outcome_id` (FH DNA-cross-sell) gets both,
+        # with a regularised, shrunk-toward-zero halo term; every other
+        # outcome_id gets only the halo term, unchanged from before this
+        # split.
         # -----------------------------------------------------------------
         if dna_channel_idx:
-            kit_only_segments = [s for s in direct_dna_segments if s != dna_segment]
-            halo_eligible_segments = [s for s in segments if s not in kit_only_segments]
+            kit_only_outcome_ids = [s for s in direct_dna_outcome_ids if s != dna_outcome_id]
+            halo_eligible_outcome_ids = [s for s in outcome_ids if s not in kit_only_outcome_ids]
             halo_strength_est = pm.HalfNormal(
                 "halo_strength_est",
                 sigma=prior_config.get("dna_halo_sigma", 0.25),
-                shape=len(halo_eligible_segments),
+                shape=len(halo_eligible_outcome_ids),
             )
             halo_pieces = []
             j = 0
-            for s in segments:
-                if s in kit_only_segments:
+            for s in outcome_ids:
+                if s in kit_only_outcome_ids:
                     halo_pieces.append(pt.constant(0.0))
                 else:
                     halo_pieces.append(halo_strength_est[j])
                     j += 1
-            halo_strength = pm.Deterministic("halo_strength", pt.stack(halo_pieces), dims="segment")
+            halo_strength = pm.Deterministic("halo_strength", pt.stack(halo_pieces), dims="outcome")
 
-            has_direct = pt.constant(np.array([1.0 if s in direct_dna_segments else 0.0 for s in segments]))
+            has_direct = pt.constant(np.array([1.0 if s in direct_dna_outcome_ids else 0.0 for s in outcome_ids]))
 
             non_dna_beta = beta_by_market_idx[:, :, non_dna_idx] if non_dna_idx else None
             dna_beta = beta_by_market_idx[:, :, dna_channel_idx]
 
             eta_nondna = (
                 pt.sum(sat_media[:, None, non_dna_idx] * non_dna_beta, axis=2)
-                if non_dna_idx else pt.zeros((n_obs, n_segments))
+                if non_dna_idx else pt.zeros((n_obs, n_outcomes))
             )
             eta_dna_direct = pt.sum(dna_direct_media[:, None, :] * dna_beta, axis=2) * has_direct[None, :]
             eta_dna_halo = pt.sum(dna_halo_media[:, None, :] * dna_beta, axis=2) * halo_strength[None, :]
@@ -288,25 +289,25 @@ def build_fh_market_specific_model(
         # market baseline pooling, trend, seasonality, controls, likelihood.
         # -----------------------------------------------------------------
         promo_coef = pm.HalfNormal(
-            "promo_coef", sigma=prior_config.get("promo_sigma", 0.5), dims="segment"
+            "promo_coef", sigma=prior_config.get("promo_sigma", 0.5), dims="outcome"
         )
         eta_promo = promo * promo_coef[None, :]
 
         market_pool_sigma = pm.HalfNormal(
-            "market_pool_sigma", sigma=prior_config.get("market_pool_sigma_prior", 0.4), dims="segment"
+            "market_pool_sigma", sigma=prior_config.get("market_pool_sigma_prior", 0.4), dims="outcome"
         )
         unpooled_sigma_const = prior_config.get("unpooled_market_sigma", 2.0)
         sigma_rows = []
         for m in markets:
             if m in unpooled_markets:
-                sigma_rows.append(pt.as_tensor_variable(np.full(n_segments, unpooled_sigma_const)))
+                sigma_rows.append(pt.as_tensor_variable(np.full(n_outcomes, unpooled_sigma_const)))
             else:
                 sigma_rows.append(market_pool_sigma)
         market_sigma_stack = pt.stack(sigma_rows)
 
-        market_offset_raw = pm.Normal("market_offset_raw", mu=0, sigma=1, dims=("market", "segment"))
+        market_offset_raw = pm.Normal("market_offset_raw", mu=0, sigma=1, dims=("market", "outcome"))
         market_offset = pm.Deterministic(
-            "market_offset", market_offset_raw * market_sigma_stack, dims=("market", "segment")
+            "market_offset", market_offset_raw * market_sigma_stack, dims=("market", "outcome")
         )
         eta_market = market_offset[market_idx]
 
@@ -314,30 +315,30 @@ def build_fh_market_specific_model(
             "intercept",
             mu=prior_config.get("intercept_mu", np.log(np.clip(Y.mean(axis=0), 1, None))),
             sigma=prior_config.get("intercept_sigma", 1.0),
-            dims="segment",
+            dims="outcome",
         )
-        trend_coef = pm.Normal("trend_coef", mu=0, sigma=prior_config.get("trend_sigma", 0.5), dims="segment")
+        trend_coef = pm.Normal("trend_coef", mu=0, sigma=prior_config.get("trend_sigma", 0.5), dims="outcome")
         eta_trend = trend[:, None] * trend_coef[None, :]
 
         gamma_fourier = pm.Normal(
-            "gamma_fourier", mu=0, sigma=prior_config.get("fourier_sigma", 0.4), dims=("fourier", "segment")
+            "gamma_fourier", mu=0, sigma=prior_config.get("fourier_sigma", 0.4), dims=("fourier", "outcome")
         )
         eta_season = pm.math.dot(fourier, gamma_fourier)
 
         eta = intercept[None, :] + eta_market + eta_trend + eta_season + eta_channels + eta_promo
 
-        segment_controls = frame.get("segment_controls") or {}
-        segment_control_names = frame.get("segment_control_names") or {}
-        for seg, arr in segment_controls.items():
-            if seg not in segments:
+        outcome_controls = frame.get("outcome_controls") or {}
+        outcome_control_names = frame.get("outcome_control_names") or {}
+        for oid, arr in outcome_controls.items():
+            if oid not in outcome_ids:
                 continue
-            s_idx = segments.index(seg)
-            names = segment_control_names.get(seg, [f"ctrl_{i}" for i in range(arr.shape[1])])
-            coord_name = f"{seg}_control"
+            o_idx = outcome_ids.index(oid)
+            names = outcome_control_names.get(oid, [f"ctrl_{i}" for i in range(arr.shape[1])])
+            coord_name = f"{oid}_control"
             model.add_coord(coord_name, names)
-            coef = pm.Normal(f"segment_control_coef_{seg}", mu=0, sigma=prior_config.get("control_sigma", 0.5), dims=coord_name)
+            coef = pm.Normal(f"outcome_control_coef_{oid}", mu=0, sigma=prior_config.get("control_sigma", 0.5), dims=coord_name)
             contrib = pm.math.dot(pt.as_tensor_variable(arr), coef)
-            eta = pt.set_subtensor(eta[:, s_idx], eta[:, s_idx] + contrib)
+            eta = pt.set_subtensor(eta[:, o_idx], eta[:, o_idx] + contrib)
 
         if n_controls > 0:
             model.add_coord("control", control_names)
@@ -346,27 +347,35 @@ def build_fh_market_specific_model(
             )
             eta = eta + pm.math.dot(pt.as_tensor_variable(X_controls), control_coef)[:, None]
 
-        mu = pm.Deterministic("mu", pt.clip(pt.exp(eta), 1e-6, 1e9), dims=("obs", "segment"))
+        mu = pm.Deterministic("mu", pt.clip(pt.exp(eta), 1e-6, 1e9), dims=("obs", "outcome"))
 
         alpha = pm.Gamma(
             "alpha", alpha=prior_config.get("alpha_shape", 2.0), beta=prior_config.get("alpha_rate", 0.1),
-            dims="segment",
+            dims="outcome",
         )
 
-        pm.NegativeBinomial("y_obs", mu=mu, alpha=alpha[None, :], observed=Y, dims=("obs", "segment"))
+        pm.NegativeBinomial("y_obs", mu=mu, alpha=alpha[None, :], observed=Y, dims=("obs", "outcome"))
 
+    outcome_catalogue: List[Any] = frame.get("outcomes") or []
     meta = FHModelMeta(
         markets=markets,
-        segments=segments,
+        outcome_ids=outcome_ids,
         channels=channels,
         dna_channels=[channels[i] for i in dna_channel_idx],
         dna_channel_idx=dna_channel_idx,
         non_dna_idx=non_dna_idx,
-        dna_segment=dna_segment,
+        dna_outcome_id=dna_outcome_id,
         dna_lag_weeks=dna_lag_weeks,
         unpooled_markets=unpooled_markets,
         control_names=control_names,
-        segment_control_names=frame.get("segment_control_names") or {},
-        direct_dna_segments=direct_dna_segments,
+        outcome_id_to_segment={o.outcome_id: o.segment for o in outcome_catalogue},
+        outcome_id_to_product={o.outcome_id: o.product for o in outcome_catalogue},
+        outcome_id_to_metric={o.outcome_id: o.metric for o in outcome_catalogue},
+        outcome_id_to_unit={o.outcome_id: o.unit for o in outcome_catalogue},
+        outcome_id_to_role={o.outcome_id: o.role for o in outcome_catalogue},
+        outcome_id_to_source_column={o.outcome_id: o.source_column for o in outcome_catalogue},
+        outcome_catalogue_at_fit=outcome_catalogue,
+        outcome_control_names=frame.get("outcome_control_names") or {},
+        direct_dna_outcome_ids=direct_dna_outcome_ids,
     )
     return model, meta

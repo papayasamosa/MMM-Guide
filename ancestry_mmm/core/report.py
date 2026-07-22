@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import html as html_lib
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -125,12 +125,21 @@ def _outcomes_section(
     if spec is None:
         return ReportSection(title="Outcomes", paragraphs=["No model specification is available yet."])
     outcomes = resolve_outcome_definitions(outcome_definitions, spec.segment_outcomes, spec.segment_ltv)
+    if excluded_outcome_ids:
+        # Session-only override (pre-PR-E callers) applied on top of each
+        # outcome's own persisted `included_in_fit` - never mutates the
+        # underlying catalogue, just what this report displays.
+        excluded = set(excluded_outcome_ids)
+        outcomes = [
+            replace(o, included_in_fit=False) if o.outcome_id in excluded else o
+            for o in outcomes
+        ]
     available_columns = set(frame["df"].columns) if frame and frame.get("df") is not None else None
-    frame_segments = frame.get("segments") if frame else None
-    model_meta_segments = model_meta.segments if model_meta is not None else None
+    frame_outcome_ids = frame.get("outcome_ids") if frame else None
+    model_meta_outcome_ids = getattr(model_meta, "outcome_ids", None) if model_meta is not None else None
     table = outcomes_to_dataframe(
-        outcomes, excluded_outcome_ids=excluded_outcome_ids, available_columns=available_columns,
-        frame_segments=frame_segments, model_meta_segments=model_meta_segments,
+        outcomes, available_columns=available_columns,
+        frame_outcome_ids=frame_outcome_ids, model_meta_outcome_ids=model_meta_outcome_ids,
     )
     n_dna = sum(1 for o in outcomes if o.product == DNA)
     paragraphs = [

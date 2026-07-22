@@ -28,13 +28,13 @@ from .models import compute_model_diagnostics
 def in_sample_fit_market_specific(
     frame: Dict, meta: FHModelMeta, params: FHMarketSpecificPosteriorParams,
 ) -> pd.DataFrame:
-    """R-squared and MAPE per segment - Model C equivalent of core.diagnostics.in_sample_fit."""
+    """R-squared and MAPE per outcome_id - Model C equivalent of core.diagnostics.in_sample_fit."""
     mu = predict_mu_market_specific(frame, meta, params)
     Y = frame["Y"]
     rows = []
-    for i, seg in enumerate(meta.segments):
+    for i, oid in enumerate(meta.outcome_ids):
         rows.append({
-            "segment": seg,
+            "outcome_id": oid,
             "r_squared": _r_squared(Y[:, i], mu[:, i]),
             "mape_pct": _mape(Y[:, i], mu[:, i]),
             "actual_mean": float(Y[:, i].mean()),
@@ -56,7 +56,7 @@ def curve_plausibility_checks_market_specific(
     issues: List[Dict[str, str]] = []
 
     K_mean = trace.posterior["hill_K"].mean(dim=["chain", "draw"])   # (market, channel)
-    beta_mean = trace.posterior["beta"].mean(dim=["chain", "draw"])  # (market, segment, channel)
+    beta_mean = trace.posterior["beta"].mean(dim=["chain", "draw"])  # (market, outcome, channel)
     beta_std = trace.posterior["beta"].std(dim=["chain", "draw"])
 
     markets = frame["markets"]
@@ -87,14 +87,14 @@ def curve_plausibility_checks_market_specific(
                                "this market's whole observed range.",
                 })
 
-            for seg in meta.segments:
-                b_mean = float(beta_mean.sel(market=market, segment=seg, channel=ch).values)
-                b_std = float(beta_std.sel(market=market, segment=seg, channel=ch).values)
+            for oid in meta.outcome_ids:
+                b_mean = float(beta_mean.sel(market=market, outcome=oid, channel=ch).values)
+                b_std = float(beta_std.sel(market=market, outcome=oid, channel=ch).values)
                 if b_mean > 0 and b_std / b_mean > 1.0:
                     issues.append({
                         "level": "warning",
                         "channel": ch,
-                        "message": f"[{market}] '{ch}' effect on segment '{seg}' has high relative "
+                        "message": f"[{market}] '{ch}' effect on outcome '{oid}' has high relative "
                                    f"uncertainty (std/mean = {b_std / b_mean:.1f}) - treat the point "
                                    "estimate cautiously; this market may have insufficient local "
                                    "evidence (see docs/market_hierarchy.md section 4).",
@@ -107,7 +107,7 @@ def curve_plausibility_checks_market_specific(
                 slope = (S * (mean_spend ** (S - 1)) * (k_val ** S)) / ((k_val ** S + mean_spend ** S) ** 2)
                 beta_sum = float(
                     trace.posterior["beta"].sel(market=market, channel=ch)
-                    .mean(dim=["chain", "draw", "segment"]).values
+                    .mean(dim=["chain", "draw", "outcome"]).values
                 )
                 approx_roi = slope * beta_sum
                 if not (lo <= approx_roi <= hi):

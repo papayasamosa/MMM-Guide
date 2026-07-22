@@ -32,8 +32,8 @@ class FHMarketSpecificPosteriorParams:
     decay_rate: Dict[str, float]                          # decay_rate[channel] - shared
     hill_K: Dict[str, Dict[str, float]]                    # hill_K[market][channel]
     hill_S: Dict[str, float]                               # hill_S[channel] - shared
-    beta: Dict[str, Dict[str, Dict[str, float]]]           # beta[market][segment][channel]
-    halo_strength: Dict[str, float]                        # halo_strength[segment] - shared
+    beta: Dict[str, Dict[str, Dict[str, float]]]           # beta[market][outcome_id][channel]
+    halo_strength: Dict[str, float]                        # halo_strength[outcome_id] - shared
     promo_coef: Dict[str, float]
     market_offset: Dict[str, Dict[str, float]]
     intercept: Dict[str, float]
@@ -41,7 +41,7 @@ class FHMarketSpecificPosteriorParams:
     gamma_fourier: Dict[str, np.ndarray]
     alpha: Dict[str, float]
     control_coef: Dict[str, float]
-    segment_control_coef: Dict[str, Dict[str, float]]
+    outcome_control_coef: Dict[str, Dict[str, float]]
 
 
 def extract_market_specific_posterior_params(
@@ -68,12 +68,12 @@ def extract_market_specific_posterior_params(
 
     decay_rate = by_coord("decay_rate", "channel", meta.channels)
     hill_S = by_coord("hill_S", "channel", meta.channels)
-    intercept = by_coord("intercept", "segment", meta.segments)
-    trend_coef = by_coord("trend_coef", "segment", meta.segments)
-    promo_coef = by_coord("promo_coef", "segment", meta.segments)
-    alpha = by_coord("alpha", "segment", meta.segments)
-    halo_strength = by_coord("halo_strength", "segment", meta.segments) if meta.dna_channel_idx else {
-        s: 0.0 for s in meta.segments
+    intercept = by_coord("intercept", "outcome", meta.outcome_ids)
+    trend_coef = by_coord("trend_coef", "outcome", meta.outcome_ids)
+    promo_coef = by_coord("promo_coef", "outcome", meta.outcome_ids)
+    alpha = by_coord("alpha", "outcome", meta.outcome_ids)
+    halo_strength = by_coord("halo_strength", "outcome", meta.outcome_ids) if meta.dna_channel_idx else {
+        s: 0.0 for s in meta.outcome_ids
     }
 
     hill_K_reduced = _reduce(post["hill_K"])
@@ -85,39 +85,39 @@ def extract_market_specific_posterior_params(
     beta_reduced = _reduce(post["beta"])
     beta = {
         m: {
-            s: {c: float(beta_reduced.sel(market=m, segment=s, channel=c).values) for c in meta.channels}
-            for s in meta.segments
+            s: {c: float(beta_reduced.sel(market=m, outcome=s, channel=c).values) for c in meta.channels}
+            for s in meta.outcome_ids
         }
         for m in meta.markets
     }
 
     market_offset_reduced = _reduce(post["market_offset"])
     market_offset = {
-        m: {s: float(market_offset_reduced.sel(market=m, segment=s).values) for s in meta.segments}
+        m: {s: float(market_offset_reduced.sel(market=m, outcome=s).values) for s in meta.outcome_ids}
         for m in meta.markets
     }
 
     gamma_fourier_reduced = _reduce(post["gamma_fourier"])
-    gamma_fourier = {s: gamma_fourier_reduced.sel(segment=s).values for s in meta.segments}
+    gamma_fourier = {s: gamma_fourier_reduced.sel(outcome=s).values for s in meta.outcome_ids}
 
     control_coef = {}
     if meta.control_names and "control_coef" in post:
         cc_reduced = _reduce(post["control_coef"])
         control_coef = {c: float(cc_reduced.sel(control=c).values) for c in meta.control_names}
 
-    segment_control_coef: Dict[str, Dict[str, float]] = {}
-    for seg, names in meta.segment_control_names.items():
-        var_name = f"segment_control_coef_{seg}"
+    outcome_control_coef: Dict[str, Dict[str, float]] = {}
+    for oid, names in meta.outcome_control_names.items():
+        var_name = f"outcome_control_coef_{oid}"
         if var_name in post:
-            coord_name = f"{seg}_control"
+            coord_name = f"{oid}_control"
             v_reduced = _reduce(post[var_name])
-            segment_control_coef[seg] = {n: float(v_reduced.sel({coord_name: n}).values) for n in names}
+            outcome_control_coef[oid] = {n: float(v_reduced.sel({coord_name: n}).values) for n in names}
 
     return FHMarketSpecificPosteriorParams(
         decay_rate=decay_rate, hill_K=hill_K, hill_S=hill_S, beta=beta,
         halo_strength=halo_strength, promo_coef=promo_coef, market_offset=market_offset,
         intercept=intercept, trend_coef=trend_coef, gamma_fourier=gamma_fourier, alpha=alpha,
-        control_coef=control_coef, segment_control_coef=segment_control_coef,
+        control_coef=control_coef, outcome_control_coef=outcome_control_coef,
     )
 
 
@@ -146,69 +146,70 @@ def predict_mu_market_specific(
     params: FHMarketSpecificPosteriorParams,
 ) -> np.ndarray:
     """Replay Model C's full linear predictor in NumPy. Returns mu, shape
-    (n_obs, n_segments), matching frame["segments"] order - same contract as
-    core.predict.predict_mu."""
-    segments = meta.segments
+    (n_obs, n_outcomes), matching frame["outcome_ids"] order - same contract
+    as core.predict.predict_mu."""
+    outcome_ids = meta.outcome_ids
     markets = frame["markets"]
     n_obs = frame["X_media"].shape[0]
-    n_seg = len(segments)
+    n_out = len(outcome_ids)
 
     sat_media = adstock_saturate_frame_market_specific(
         frame["X_media"], frame["market_bounds"], markets, meta, params
     )
 
     market_idx = frame["market_idx"]
-    # beta_by_row[obs, segment, channel] - this row's own market's beta.
+    # beta_by_row[obs, outcome, channel] - this row's own market's beta.
     beta_stack = np.array([
-        [[params.beta[m][s][c] for c in meta.channels] for s in segments] for m in markets
-    ])  # (n_market, n_segment, n_channel)
-    beta_by_row = beta_stack[market_idx]  # (n_obs, n_segment, n_channel)
+        [[params.beta[m][s][c] for c in meta.channels] for s in outcome_ids] for m in markets
+    ])  # (n_market, n_outcome, n_channel)
+    beta_by_row = beta_stack[market_idx]  # (n_obs, n_outcome, n_channel)
 
     if meta.dna_channel_idx:
         dna_direct_media = sat_media[:, meta.dna_channel_idx]
         dna_halo_media = lag_frame(dna_direct_media, frame["market_bounds"], meta.dna_lag_weeks)
-        has_direct = np.array([1.0 if s in meta.direct_dna_segments else 0.0 for s in segments])
-        # Masked by halo_eligible_segments (not just trusting params.halo_strength
-        # to already be zero) so a kit-only segment structurally never picks up
-        # a halo contribution here, regardless of what's in params.
-        halo_eligible = set(meta.halo_eligible_segments)
-        halo = np.array([params.halo_strength.get(s, 0.0) if s in halo_eligible else 0.0 for s in segments])
+        has_direct = np.array([1.0 if s in meta.direct_dna_outcome_ids else 0.0 for s in outcome_ids])
+        # Masked by halo_eligible_outcome_ids (not just trusting
+        # params.halo_strength to already be zero) so a kit-only outcome_id
+        # structurally never picks up a halo contribution here, regardless
+        # of what's in params.
+        halo_eligible = set(meta.halo_eligible_outcome_ids)
+        halo = np.array([params.halo_strength.get(s, 0.0) if s in halo_eligible else 0.0 for s in outcome_ids])
         if meta.non_dna_idx:
             eta_nondna = np.einsum(
                 "oc,osc->os", sat_media[:, meta.non_dna_idx], beta_by_row[:, :, meta.non_dna_idx]
             )
         else:
-            eta_nondna = np.zeros((n_obs, n_seg))
+            eta_nondna = np.zeros((n_obs, n_out))
         eta_dna_direct = np.einsum("oc,osc->os", dna_direct_media, beta_by_row[:, :, meta.dna_channel_idx]) * has_direct[None, :]
         eta_dna_halo = np.einsum("oc,osc->os", dna_halo_media, beta_by_row[:, :, meta.dna_channel_idx]) * halo[None, :]
         eta_channels = eta_nondna + eta_dna_direct + eta_dna_halo
     else:
         eta_channels = np.einsum("oc,osc->os", sat_media, beta_by_row)
 
-    promo_coef = np.array([params.promo_coef[s] for s in segments])
+    promo_coef = np.array([params.promo_coef[s] for s in outcome_ids])
     eta_promo = frame["promo"] * promo_coef[None, :]
 
-    market_offset_matrix = np.array([[params.market_offset[m][s] for s in segments] for m in markets])
+    market_offset_matrix = np.array([[params.market_offset[m][s] for s in outcome_ids] for m in markets])
     eta_market = market_offset_matrix[market_idx]
 
-    intercept = np.array([params.intercept[s] for s in segments])
-    trend_coef = np.array([params.trend_coef[s] for s in segments])
+    intercept = np.array([params.intercept[s] for s in outcome_ids])
+    trend_coef = np.array([params.trend_coef[s] for s in outcome_ids])
     eta_trend = frame["trend"][:, None] * trend_coef[None, :]
 
-    gamma_fourier_matrix = np.column_stack([params.gamma_fourier[s] for s in segments])
+    gamma_fourier_matrix = np.column_stack([params.gamma_fourier[s] for s in outcome_ids])
     eta_season = frame["fourier"] @ gamma_fourier_matrix
 
     eta = intercept[None, :] + eta_market + eta_trend + eta_season + eta_channels + eta_promo
 
-    segment_controls = frame.get("segment_controls") or {}
-    segment_control_names = frame.get("segment_control_names") or {}
-    for seg, arr in segment_controls.items():
-        if seg not in segments or seg not in params.segment_control_coef:
+    outcome_controls = frame.get("outcome_controls") or {}
+    outcome_control_names = frame.get("outcome_control_names") or {}
+    for oid, arr in outcome_controls.items():
+        if oid not in outcome_ids or oid not in params.outcome_control_coef:
             continue
-        s_idx = segments.index(seg)
-        names = segment_control_names.get(seg, [])
-        coefs = np.array([params.segment_control_coef[seg].get(n, 0.0) for n in names])
-        eta[:, s_idx] += arr @ coefs
+        o_idx = outcome_ids.index(oid)
+        names = outcome_control_names.get(oid, [])
+        coefs = np.array([params.outcome_control_coef[oid].get(n, 0.0) for n in names])
+        eta[:, o_idx] += arr @ coefs
 
     control_names = frame.get("control_names") or []
     if control_names and params.control_coef:
@@ -229,7 +230,7 @@ def steady_state_segment_response_market_specific(
     """Market-specific-model equivalent of core.predict.steady_state_segment_response -
     same steady-state approximation, using `market`'s own K and beta."""
     reference_context = reference_context or {}
-    segments = meta.segments
+    outcome_ids = meta.outcome_ids
 
     sat = {}
     for c in meta.channels:
@@ -237,7 +238,7 @@ def steady_state_segment_response_market_specific(
         sat[c] = hill_function(np.array([x]), params.hill_K[market][c], params.hill_S[c])[0]
 
     eta = {}
-    for s in segments:
+    for s in outcome_ids:
         val = params.intercept[s]
         val += params.market_offset.get(market, {}).get(s, 0.0)
         val += params.trend_coef[s] * reference_context.get("trend", 1.0)
@@ -251,8 +252,8 @@ def steady_state_segment_response_market_specific(
             if c in meta.dna_channels:
                 # Steady-state collapse (dna_direct_media == dna_halo_media
                 # at constant spend) - see core.predict.steady_state_segment_response.
-                weight = params.halo_strength.get(s, 0.0) if s in meta.halo_eligible_segments else 0.0
-                if s in meta.direct_dna_segments:
+                weight = params.halo_strength.get(s, 0.0) if s in meta.halo_eligible_outcome_ids else 0.0
+                if s in meta.direct_dna_outcome_ids:
                     weight += 1.0
                 val += beta_val * sat[c] * weight
             else:
@@ -260,9 +261,9 @@ def steady_state_segment_response_market_specific(
 
         for name, coef in params.control_coef.items():
             val += coef * reference_context.get("controls", {}).get(name, 0.0)
-        if s in params.segment_control_coef:
-            for name, coef in params.segment_control_coef[s].items():
-                val += coef * reference_context.get("segment_controls", {}).get(s, {}).get(name, 0.0)
+        if s in params.outcome_control_coef:
+            for name, coef in params.outcome_control_coef[s].items():
+                val += coef * reference_context.get("outcome_controls", {}).get(s, {}).get(name, 0.0)
 
         eta[s] = val
 
@@ -280,20 +281,20 @@ def generate_market_channel_curve(
 ) -> pd.DataFrame:
     """
     Spend -> incremental response curve for one (market, channel), per
-    segment and overall - the "market-specific channel curve" and "overall
-    market-level curve" deliverables from docs/market_hierarchy.md section 3
-    and docs/segment_methodology.md's aggregation rule (overall = sum of
-    segment responses, never an independently fitted "Overall" outcome).
-    Also splits `overall_response` by product into `fh_response`/
+    outcome_id and overall - the "market-specific channel curve" and
+    "overall market-level curve" deliverables from docs/market_hierarchy.md
+    section 3 and docs/segment_methodology.md's aggregation rule (overall =
+    sum of outcome responses, never an independently fitted "Overall"
+    outcome). Also splits `overall_response` by product into `fh_response`/
     `dna_response` (docs/dna_fh_causal_structure.md's "never sum kits and
     GSAs as one volume") - see core.predict.generate_channel_curve's
-    docstring for the exact rule (`meta.kit_only_segments`).
+    docstring for the exact rule (`meta.kit_only_outcome_ids`).
 
     Steady-state approximation (see core.predict module docstring): channels
     don't interact in this model's linear predictor, so a channel's own
     curve doesn't depend on any other channel's spend level - each point is
-    just that channel's own Hill saturation curve, scaled by each segment's
-    beta (and, for a DNA channel, the halo strength).
+    just that channel's own Hill saturation curve, scaled by each
+    outcome_id's beta (and, for a DNA channel, the halo strength).
 
     Point estimates only (posterior means) - matching the existing curve
     bank/scenario planner convention (core.predict.steady_state_segment_response).
@@ -317,17 +318,17 @@ def generate_market_channel_curve(
         row = {"market": market, "channel": channel, "spend": float(spend), "saturation": sat}
         overall = 0.0
         dna_total = 0.0
-        for seg in meta.segments:
-            beta_val = params.beta[market][seg][channel]
+        for oid in meta.outcome_ids:
+            beta_val = params.beta[market][oid][channel]
             if is_dna:
-                weight = params.halo_strength.get(seg, 0.0) if seg in meta.halo_eligible_segments else 0.0
-                if seg in meta.direct_dna_segments:
+                weight = params.halo_strength.get(oid, 0.0) if oid in meta.halo_eligible_outcome_ids else 0.0
+                if oid in meta.direct_dna_outcome_ids:
                     weight += 1.0
                 beta_val = beta_val * weight
             value = beta_val * sat
-            row[f"{seg}_response"] = value
+            row[f"{oid}_response"] = value
             overall += value
-            if seg in meta.kit_only_segments:
+            if oid in meta.kit_only_outcome_ids:
                 dna_total += value
         row["overall_response"] = overall
         row["dna_response"] = dna_total

@@ -38,9 +38,9 @@ def spec() -> ModelSpec:
 @pytest.fixture
 def meta() -> FHModelMeta:
     return FHModelMeta(
-        markets=["UK"], segments=SEGMENTS, channels=CHANNELS,
+        markets=["UK"], outcome_ids=SEGMENTS, channels=CHANNELS,
         dna_channels=["TV"], dna_channel_idx=[0], non_dna_idx=[1],
-        dna_segment="DNA_CrossSell", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+        dna_outcome_id="DNA_CrossSell", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
     )
 
 
@@ -54,7 +54,7 @@ def params() -> FHPosteriorParams:
         market_offset={"UK": {"New": 0.0, "DNA_CrossSell": 0.0}}, intercept={"New": 3.0, "DNA_CrossSell": 2.0},
         trend_coef={"New": 0.0, "DNA_CrossSell": 0.0},
         gamma_fourier={"New": np.zeros(6), "DNA_CrossSell": np.zeros(6)},
-        alpha={"New": 5.0, "DNA_CrossSell": 5.0}, control_coef={}, segment_control_coef={},
+        alpha={"New": 5.0, "DNA_CrossSell": 5.0}, control_coef={}, outcome_control_coef={},
     )
 
 
@@ -75,15 +75,15 @@ def curve_bank_entries(meta, params, approval):
 def scorecard():
     return {
         "convergence": {"rhat_max": 1.01, "ess_min": 500, "divergences": 0, "converged": True},
-        "in_sample_fit": [{"segment": "New", "r_squared": 0.9, "mape_pct": 5.0}],
-        "ppc_coverage": [{"segment": "New", "coverage_pct": 90.0}],
+        "in_sample_fit": [{"outcome_id": "New", "r_squared": 0.9, "mape_pct": 5.0}],
+        "ppc_coverage": [{"outcome_id": "New", "coverage_pct": 90.0}],
         "plausibility_flags": [],
     }
 
 
 @pytest.fixture
 def scenarios():
-    predicted = pd.DataFrame({"month": ["2024-01"], "segment": ["New"], "predicted_gsa": [10.0], "value": [10.0]})
+    predicted = pd.DataFrame({"month": ["2024-01"], "outcome_id": ["New"], "predicted_outcome": [10.0], "value": [10.0]})
     return [{
         "name": "manual-uk", "market": "UK", "spend_plan": {"2024-01": {"TV": 100.0}},
         "objective": "value", "constraints": [], "notes": "manual", "predicted": predicted,
@@ -133,7 +133,7 @@ class TestBuildReportSectionsFullState:
         diagnostics = next(s for s in sections if s.title == "Diagnostics")
         assert "1.01" in diagnostics.paragraphs[0]
         assert diagnostics.table is not None
-        assert list(diagnostics.table["segment"]) == ["New"]
+        assert list(diagnostics.table["outcome_id"]) == ["New"]
 
     def test_approval_section_includes_approver_and_diagnostics_reviewed(self, spec, approval):
         sections = build_report_sections(spec=spec, approval=approval)
@@ -187,7 +187,7 @@ class TestOutcomesSection:
         ]
 
         class FakeMeta:
-            segments = ["New Customer"]
+            outcome_ids = ["dna_new_kit"]
 
         sections = build_report_sections(spec=spec, outcome_definitions=outcome_definitions, model_meta=FakeMeta())
         outcomes = next(s for s in sections if s.title == "Outcomes")
@@ -244,7 +244,7 @@ class TestRenderMarkdown:
     def test_renders_a_table_as_markdown_pipes(self, spec, scorecard):
         sections = build_report_sections(spec=spec, scorecard=scorecard)
         md = render_markdown("my-project", sections)
-        assert "| segment | r_squared | mape_pct |" in md
+        assert "| outcome_id | r_squared | mape_pct |" in md
         assert "| New | 0.9 | 5.0 |" in md
 
 

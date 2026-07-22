@@ -315,9 +315,9 @@ class TestMarketSpecificCpaTable:
     @pytest.fixture
     def meta(self) -> FHModelMeta:
         return FHModelMeta(
-            markets=self.MARKETS, segments=self.SEGMENTS, channels=self.CHANNELS,
+            markets=self.MARKETS, outcome_ids=self.SEGMENTS, channels=self.CHANNELS,
             dna_channels=["TV"], dna_channel_idx=[0], non_dna_idx=[1],
-            dna_segment="DNA_CrossSell", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+            dna_outcome_id="DNA_CrossSell", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
         )
 
     @pytest.fixture
@@ -331,7 +331,7 @@ class TestMarketSpecificCpaTable:
             market_offset={m: {"New": 0.0, "DNA_CrossSell": 0.0} for m in self.MARKETS},
             intercept={"New": 3.0, "DNA_CrossSell": 2.0}, trend_coef={"New": 0.0, "DNA_CrossSell": 0.0},
             gamma_fourier={"New": np.zeros(6), "DNA_CrossSell": np.zeros(6)},
-            alpha={"New": 5.0, "DNA_CrossSell": 5.0}, control_coef={}, segment_control_coef={},
+            alpha={"New": 5.0, "DNA_CrossSell": 5.0}, control_coef={}, outcome_control_coef={},
         )
 
     def test_covers_every_market_and_channel_by_default(self, meta, params):

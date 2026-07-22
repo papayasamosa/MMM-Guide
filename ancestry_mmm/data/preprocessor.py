@@ -5,6 +5,7 @@ import numpy as np
 from typing import List, Optional, Tuple, Dict, Any
 
 from ancestry_mmm.core.schema import ModelSpec
+from ancestry_mmm.core.outcomes import OutcomeDefinition, included_outcomes, resolve_outcome_definitions
 
 
 def prepare_data_for_modeling(
@@ -207,26 +208,57 @@ def create_fourier_features_from_calendar(
 
 
 def prepare_fh_modeling_frame(
-    df: pd.DataFrame, spec: ModelSpec, dna_kit_outcomes: Optional[Dict[str, str]] = None,
+    df: pd.DataFrame, spec: ModelSpec, outcomes: Optional[List[OutcomeDefinition]] = None,
 ) -> Dict[str, Any]:
     """
     Turn a joined, transformed DataFrame + ModelSpec into the arrays the
     joint hierarchical FH model needs: per-market index, media matrix,
-    segment outcome matrix, promo matrix, controls and calendar-anchored
+    outcome matrix, promo matrix, controls and calendar-anchored
     seasonality/trend features.
 
-    `dna_kit_outcomes` (segment key -> outcome column, same shape as
-    `spec.segment_outcomes`) optionally adds DNA-product kit-sale segments
-    (core.outcomes) to the fit alongside the Family History segments -
-    `ModelSpec.segment_outcomes` itself is untouched, so a project with no
-    DNA outcomes mapped behaves identically to before. Promo/segment-control
-    mapping for a DNA kit segment reuses `spec.promo_cols`/
-    `spec.segment_control_cols` exactly as for an FH segment - both are
-    already keyed by segment name generically, not FH-specific.
+    `outcomes` (the canonical `List[OutcomeDefinition]` - see core.outcomes)
+    is this fit's structural input: the model's identity dimension is
+    `outcome_id`, not segment, so two outcomes can share a `segment` (e.g. a
+    Family History sign-up and a Family History GSA both on segment "New")
+    and still get independent response curves. Only
+    `included_outcomes(outcomes)` (`included_in_fit=True`) actually reach
+    the frame - the rest stay in the catalogue but are excluded from this
+    fit. If `outcomes` is omitted, it's derived from
+    `spec.segment_outcomes`/`spec.segment_ltv` via `resolve_outcome_definitions`
+    (FH-only, matching every fit's behaviour before this schema existed) -
+    `ModelSpec.segment_outcomes` itself is untouched either way, it is now
+    purely a migration source.
+
+    Promo/segment-control mapping stays keyed by an outcome's `.segment`
+    (`spec.promo_cols`/`spec.segment_control_cols`) - both are segment-level
+    configuration, so every outcome sharing a segment gets the same promo
+    column / control columns applied to its own equation.
     """
+    explicit_outcomes = outcomes is not None
     errors = spec.validate()
+    if explicit_outcomes:
+        # `spec.validate()`'s "at least one FH segment outcome column"
+        # check is about `spec.segment_outcomes` specifically, which is now
+        # only a migration source (core.outcomes) - an explicit outcome
+        # catalogue with no FH entries in `segment_outcomes` (e.g. every
+        # outcome captured as a custom sign-up/GSA pair, not through the
+        # legacy segment_outcomes shape) is not itself invalid; the "at
+        # least one outcome is actually being fit" requirement is enforced
+        # below against the catalogue that was actually passed in instead.
+        errors = [e for e in errors if "FH segment outcome column" not in e]
     if errors:
         raise ValueError("Invalid model spec: " + "; ".join(errors))
+
+    if outcomes is None:
+        outcomes = resolve_outcome_definitions(None, spec.segment_outcomes, spec.segment_ltv)
+    fit_outcomes = included_outcomes(outcomes)
+    if not fit_outcomes:
+        raise ValueError("No outcomes are included in the fit - check included_in_fit on the outcome catalogue.")
+
+    outcome_ids = [o.outcome_id for o in fit_outcomes]
+    if len(set(outcome_ids)) != len(outcome_ids):
+        raise ValueError(f"Duplicate outcome_id(s) among the outcomes included in the fit: {outcome_ids}")
+    outcome_id_to_segment = {o.outcome_id: o.segment for o in fit_outcomes}
 
     data = df.copy()
     data[spec.date_col] = pd.to_datetime(data[spec.date_col])
@@ -255,33 +287,30 @@ def prepare_fh_modeling_frame(
         raise ValueError(f"Channel columns missing from data: {missing_channels}")
     X_media = data[spec.channels].to_numpy(dtype=float)
 
-    dna_kit_outcomes = dna_kit_outcomes or {}
-    colliding = set(spec.segment_outcomes) & set(dna_kit_outcomes)
-    if colliding:
-        raise ValueError(f"dna_kit_outcomes segment key(s) collide with existing FH segments: {sorted(colliding)}")
-    outcome_cols = {**spec.segment_outcomes, **dna_kit_outcomes}
-    segments = list(spec.segment_outcomes.keys()) + list(dna_kit_outcomes.keys())
-    missing_outcomes = [c for c in outcome_cols.values() if c not in data.columns]
+    missing_outcomes = [o.source_column for o in fit_outcomes if o.source_column not in data.columns]
     if missing_outcomes:
-        raise ValueError(f"Segment outcome columns missing from data: {missing_outcomes}")
-    Y = data[[outcome_cols[s] for s in segments]].to_numpy(dtype=float)
+        raise ValueError(f"Outcome source columns missing from data: {missing_outcomes}")
+    Y = data[[o.source_column for o in fit_outcomes]].to_numpy(dtype=float)
 
-    promo = np.zeros((len(data), len(segments)))
-    for i, seg in enumerate(segments):
-        col = spec.promo_cols.get(seg)
+    promo = np.zeros((len(data), len(outcome_ids)))
+    for i, oid in enumerate(outcome_ids):
+        col = spec.promo_cols.get(outcome_id_to_segment[oid])
         if col and col in data.columns:
             promo[:, i] = data[col].to_numpy(dtype=float)
 
     control_cols = [c for c in spec.control_cols if c in data.columns]
     X_controls = data[control_cols].to_numpy(dtype=float) if control_cols else np.zeros((len(data), 0))
 
-    segment_controls: Dict[str, np.ndarray] = {}
-    segment_control_names: Dict[str, List[str]] = {}
-    for seg, cols in (spec.segment_control_cols or {}).items():
+    outcome_controls: Dict[str, np.ndarray] = {}
+    outcome_control_names: Dict[str, List[str]] = {}
+    for oid in outcome_ids:
+        cols = (spec.segment_control_cols or {}).get(outcome_id_to_segment[oid])
+        if not cols:
+            continue
         present = [c for c in cols if c in data.columns]
         if present:
-            segment_controls[seg] = data[present].to_numpy(dtype=float)
-            segment_control_names[seg] = present
+            outcome_controls[oid] = data[present].to_numpy(dtype=float)
+            outcome_control_names[oid] = present
 
     fourier = create_fourier_features_from_calendar(
         data[spec.date_col], n_harmonics=spec.fourier_harmonics
@@ -304,14 +333,15 @@ def prepare_fh_modeling_frame(
         "market_bounds": market_bounds,
         "channels": spec.channels,
         "dna_channel_idx": dna_channel_idx,
-        "segments": segments,
+        "outcome_ids": outcome_ids,
+        "outcomes": fit_outcomes,
         "X_media": X_media,
         "Y": Y,
         "promo": promo,
         "X_controls": X_controls,
         "control_names": control_cols,
-        "segment_controls": segment_controls,
-        "segment_control_names": segment_control_names,
+        "outcome_controls": outcome_controls,
+        "outcome_control_names": outcome_control_names,
         "fourier": fourier,
         "trend": trend,
         "unpooled_markets": spec.unpooled_markets,

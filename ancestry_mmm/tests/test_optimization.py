@@ -18,8 +18,8 @@ IDENTITY = dict(
 @pytest.fixture
 def meta() -> FHModelMeta:
     return FHModelMeta(
-        markets=["UK"], segments=["New"], channels=["TV_Brand"], dna_channels=[],
-        dna_channel_idx=[], non_dna_idx=[0], dna_segment="New", dna_lag_weeks=4,
+        markets=["UK"], outcome_ids=["New"], channels=["TV_Brand"], dna_channels=[],
+        dna_channel_idx=[], non_dna_idx=[0], dna_outcome_id="New", dna_lag_weeks=4,
         unpooled_markets=[], control_names=[],
     )
 
@@ -30,7 +30,7 @@ def params() -> FHPosteriorParams:
         decay_rate={"TV_Brand": 0.5}, hill_K={"TV_Brand": 1000.0}, hill_S={"TV_Brand": 1.0},
         beta={"New": {"TV_Brand": 0.1}}, halo_strength={"New": 0.0}, promo_coef={"New": 0.1},
         market_offset={"UK": {"New": 0.0}}, intercept={"New": 3.0}, trend_coef={"New": 0.0},
-        gamma_fourier={"New": np.zeros(6)}, alpha={"New": 5.0}, control_coef={}, segment_control_coef={},
+        gamma_fourier={"New": np.zeros(6)}, alpha={"New": 5.0}, control_coef={}, outcome_control_coef={},
     )
 
 
@@ -41,7 +41,7 @@ def approval() -> ModelApproval:
 
 @pytest.fixture
 def reference_context():
-    return {"2024-01": {"trend": 1.0, "fourier": np.zeros(6), "promo": {"New": 0.0}, "controls": {}, "segment_controls": {}}}
+    return {"2024-01": {"trend": 1.0, "fourier": np.zeros(6), "promo": {"New": 0.0}, "controls": {}, "outcome_controls": {}}}
 
 
 @pytest.fixture
@@ -52,8 +52,8 @@ def spend_plan():
 @pytest.fixture
 def market_specific_meta() -> FHModelMeta:
     return FHModelMeta(
-        markets=["UK", "Australia"], segments=["New"], channels=["TV_Brand"], dna_channels=[],
-        dna_channel_idx=[], non_dna_idx=[0], dna_segment="New", dna_lag_weeks=4,
+        markets=["UK", "Australia"], outcome_ids=["New"], channels=["TV_Brand"], dna_channels=[],
+        dna_channel_idx=[], non_dna_idx=[0], dna_outcome_id="New", dna_lag_weeks=4,
         unpooled_markets=[], control_names=[],
     )
 
@@ -70,7 +70,7 @@ def market_specific_params() -> FHMarketSpecificPosteriorParams:
         market_offset={m: {"New": 0.0} for m in markets},
         intercept={"New": 3.0}, trend_coef={"New": 0.0},
         gamma_fourier={"New": np.zeros(6)}, alpha={"New": 5.0},
-        control_coef={}, segment_control_coef={},
+        control_coef={}, outcome_control_coef={},
     )
 
 
@@ -88,7 +88,7 @@ class TestEvaluateScenarioApprovalEnforcement:
             approval=approval, **IDENTITY,
         )
         assert not result.empty
-        assert set(result.columns) >= {"month", "segment", "predicted_gsa", "value"}
+        assert set(result.columns) >= {"month", "outcome_id", "predicted_outcome", "value"}
 
     def test_stale_approval_cannot_be_used(self, meta, params, approval, spend_plan, reference_context):
         stale_identity = dict(IDENTITY)
@@ -182,7 +182,7 @@ class TestModelTypeDispatch:
             model_type="market_specific", approval=approval, **IDENTITY,
         )
         # Different beta/K between markets -> different predicted GSAs for the same spend plan.
-        assert uk_result["predicted_gsa"].iloc[0] != pytest.approx(au_result["predicted_gsa"].iloc[0])
+        assert uk_result["predicted_outcome"].iloc[0] != pytest.approx(au_result["predicted_outcome"].iloc[0])
 
     def test_market_specific_optimize_scenario_runs_end_to_end(
         self, market_specific_meta, market_specific_params, approval, spend_plan, reference_context,
@@ -199,7 +199,7 @@ class TestAverageCpa:
     def test_avg_cpa_is_total_spend_over_total_predicted_gsa(self, meta, params, approval, spend_plan, reference_context):
         result = evaluate_scenario(spend_plan, "UK", meta, params, reference_context, approval=approval, **IDENTITY)
         total_spend = result["total_spend"].iloc[0]
-        total_gsa = result["predicted_gsa"].sum()
+        total_gsa = result["predicted_outcome"].sum()
         assert result["avg_cpa"].iloc[0] == pytest.approx(total_spend / total_gsa)
 
     def test_avg_cpa_is_repeated_across_every_segment_row_for_the_same_month(
@@ -208,8 +208,8 @@ class TestAverageCpa:
         # A multi-segment month should carry one avg_cpa value (computed from the
         # month's *total* predicted GSA across segments), not a different one per segment row.
         meta_two_segments = FHModelMeta(
-            markets=["UK"], segments=["New", "Winback"], channels=["TV_Brand"], dna_channels=[],
-            dna_channel_idx=[], non_dna_idx=[0], dna_segment="New", dna_lag_weeks=4,
+            markets=["UK"], outcome_ids=["New", "Winback"], channels=["TV_Brand"], dna_channels=[],
+            dna_channel_idx=[], non_dna_idx=[0], dna_outcome_id="New", dna_lag_weeks=4,
             unpooled_markets=[], control_names=[],
         )
         params = FHPosteriorParams(
@@ -219,9 +219,9 @@ class TestAverageCpa:
             market_offset={"UK": {"New": 0.0, "Winback": 0.0}}, intercept={"New": 3.0, "Winback": 2.0},
             trend_coef={"New": 0.0, "Winback": 0.0},
             gamma_fourier={"New": np.zeros(6), "Winback": np.zeros(6)},
-            alpha={"New": 5.0, "Winback": 5.0}, control_coef={}, segment_control_coef={},
+            alpha={"New": 5.0, "Winback": 5.0}, control_coef={}, outcome_control_coef={},
         )
-        ref = {"2024-01": {"trend": 1.0, "fourier": np.zeros(6), "promo": {"New": 0.0, "Winback": 0.0}, "controls": {}, "segment_controls": {}}}
+        ref = {"2024-01": {"trend": 1.0, "fourier": np.zeros(6), "promo": {"New": 0.0, "Winback": 0.0}, "controls": {}, "outcome_controls": {}}}
         result = evaluate_scenario(
             {"2024-01": {"TV_Brand": 1000.0}}, "UK", meta_two_segments, params, ref,
             approval=approval, **IDENTITY,
@@ -238,10 +238,10 @@ class TestProductAwareScenarioOutputs:
     @pytest.fixture
     def meta_with_kit_segment(self) -> FHModelMeta:
         return FHModelMeta(
-            markets=["UK"], segments=["New", "DNA_Kit"], channels=["TV_Brand", "DNA_Ad"],
+            markets=["UK"], outcome_ids=["New", "DNA_Kit"], channels=["TV_Brand", "DNA_Ad"],
             dna_channels=["DNA_Ad"], dna_channel_idx=[1], non_dna_idx=[0],
-            dna_segment="New", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
-            direct_dna_segments=["New", "DNA_Kit"],
+            dna_outcome_id="New", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+            direct_dna_outcome_ids=["New", "DNA_Kit"],
         )
 
     @pytest.fixture
@@ -255,22 +255,22 @@ class TestProductAwareScenarioOutputs:
             market_offset={"UK": {"New": 0.0, "DNA_Kit": 0.0}}, intercept={"New": 3.0, "DNA_Kit": 2.0},
             trend_coef={"New": 0.0, "DNA_Kit": 0.0},
             gamma_fourier={"New": np.zeros(6), "DNA_Kit": np.zeros(6)},
-            alpha={"New": 5.0, "DNA_Kit": 5.0}, control_coef={}, segment_control_coef={},
+            alpha={"New": 5.0, "DNA_Kit": 5.0}, control_coef={}, outcome_control_coef={},
         )
 
     @pytest.fixture
     def ref_with_kit_segment(self):
-        return {"2024-01": {"trend": 1.0, "fourier": np.zeros(6), "promo": {"New": 0.0, "DNA_Kit": 0.0}, "controls": {}, "segment_controls": {}}}
+        return {"2024-01": {"trend": 1.0, "fourier": np.zeros(6), "promo": {"New": 0.0, "DNA_Kit": 0.0}, "controls": {}, "outcome_controls": {}}}
 
     def test_fh_gsa_excludes_kit_only_segments_dna_kits_includes_only_them(
         self, meta_with_kit_segment, params_with_kit_segment, approval, ref_with_kit_segment,
     ):
         plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0}}
         result = evaluate_scenario(plan, "UK", meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment, approval=approval, **IDENTITY)
-        new_row = result[result["segment"] == "New"].iloc[0]
-        kit_row = result[result["segment"] == "DNA_Kit"].iloc[0]
-        assert new_row["fh_gsa"] == pytest.approx(new_row["predicted_gsa"])
-        assert new_row["dna_kits"] == pytest.approx(kit_row["predicted_gsa"])
+        new_row = result[result["outcome_id"] == "New"].iloc[0]
+        kit_row = result[result["outcome_id"] == "DNA_Kit"].iloc[0]
+        assert new_row["fh_gsa"] == pytest.approx(new_row["predicted_outcome"])
+        assert new_row["dna_kits"] == pytest.approx(kit_row["predicted_outcome"])
         # fh_gsa/dna_kits are month-level totals repeated on every row for that month.
         assert kit_row["fh_gsa"] == pytest.approx(new_row["fh_gsa"])
         assert kit_row["dna_kits"] == pytest.approx(new_row["dna_kits"])
@@ -323,7 +323,7 @@ class TestProductAwareScenarioOutputs:
         predicted = evaluate_scenario(spend_plan, "UK", meta, params, reference_context, approval=approval, **IDENTITY)
         legacy_predicted = predicted.drop(columns=["fh_gsa", "dna_kits"])
         compare_df = compare_scenarios([{"name": "Legacy", "market": "UK", "spend_plan": spend_plan, "predicted": legacy_predicted}])
-        assert compare_df["total_fh_gsa"].iloc[0] == pytest.approx(legacy_predicted["predicted_gsa"].sum())
+        assert compare_df["total_fh_gsa"].iloc[0] == pytest.approx(legacy_predicted["predicted_outcome"].sum())
         assert compare_df["total_dna_kits"].iloc[0] == pytest.approx(0.0)
 
 
@@ -335,10 +335,10 @@ class TestExplicitOptimisationObjectives:
     @pytest.fixture
     def meta_with_kit_segment(self) -> FHModelMeta:
         return FHModelMeta(
-            markets=["UK"], segments=["New", "DNA_Kit"], channels=["TV_Brand", "DNA_Ad"],
+            markets=["UK"], outcome_ids=["New", "DNA_Kit"], channels=["TV_Brand", "DNA_Ad"],
             dna_channels=["DNA_Ad"], dna_channel_idx=[1], non_dna_idx=[0],
-            dna_segment="New", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
-            direct_dna_segments=["New", "DNA_Kit"],
+            dna_outcome_id="New", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+            direct_dna_outcome_ids=["New", "DNA_Kit"],
         )
 
     @pytest.fixture
@@ -352,12 +352,12 @@ class TestExplicitOptimisationObjectives:
             market_offset={"UK": {"New": 0.0, "DNA_Kit": 0.0}}, intercept={"New": 3.0, "DNA_Kit": 2.0},
             trend_coef={"New": 0.0, "DNA_Kit": 0.0},
             gamma_fourier={"New": np.zeros(6), "DNA_Kit": np.zeros(6)},
-            alpha={"New": 5.0, "DNA_Kit": 5.0}, control_coef={}, segment_control_coef={},
+            alpha={"New": 5.0, "DNA_Kit": 5.0}, control_coef={}, outcome_control_coef={},
         )
 
     @pytest.fixture
     def ref_with_kit_segment(self):
-        return {"2024-01": {"trend": 1.0, "fourier": np.zeros(6), "promo": {"New": 0.0, "DNA_Kit": 0.0}, "controls": {}, "segment_controls": {}}}
+        return {"2024-01": {"trend": 1.0, "fourier": np.zeros(6), "promo": {"New": 0.0, "DNA_Kit": 0.0}, "controls": {}, "outcome_controls": {}}}
 
     @pytest.fixture
     def plan_with_kit_segment(self):
@@ -385,11 +385,11 @@ class TestExplicitOptimisationObjectives:
             approval=approval, **IDENTITY,
         )
         current_predicted = result["current_predicted"]
-        expected = float(current_predicted[current_predicted["segment"] == "New"]["predicted_gsa"].sum())
+        expected = float(current_predicted[current_predicted["outcome_id"] == "New"]["predicted_outcome"].sum())
         assert result["current_objective_value"] == pytest.approx(expected)
 
     def test_dna_kits_objective_raises_when_model_has_no_kit_only_segments(self, meta, params, approval, spend_plan, reference_context):
-        with pytest.raises(ValueError, match="no DNA-kit segments"):
+        with pytest.raises(ValueError, match="no DNA-kit outcomes"):
             optimize_scenario(
                 spend_plan, ["2024-01"], ["TV_Brand"], "UK", meta, params, reference_context,
                 objective="dna_kits", approval=approval, **IDENTITY,
@@ -404,7 +404,7 @@ class TestExplicitOptimisationObjectives:
             objective="dna_kits", approval=approval, **IDENTITY,
         )
         current_predicted = result["current_predicted"]
-        expected = float(current_predicted[current_predicted["segment"] == "DNA_Kit"]["predicted_gsa"].sum())
+        expected = float(current_predicted[current_predicted["outcome_id"] == "DNA_Kit"]["predicted_outcome"].sum())
         assert result["current_objective_value"] == pytest.approx(expected)
 
     def test_weighted_mix_without_weights_raises(self, meta, params, approval, spend_plan, reference_context):
@@ -428,16 +428,16 @@ class TestExplicitOptimisationObjectives:
         )
         assert "spend_plan" in result
 
-    def test_target_segments_narrows_fh_gsa_to_a_single_segment(
+    def test_target_outcome_ids_narrows_fh_gsa_to_a_single_segment(
         self, meta_with_kit_segment, params_with_kit_segment, approval, plan_with_kit_segment, ref_with_kit_segment,
     ):
         result = optimize_scenario(
             plan_with_kit_segment, ["2024-01"], ["TV_Brand", "DNA_Ad"], "UK",
             meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment,
-            objective="fh_gsa", target_segments=["New"], approval=approval, **IDENTITY,
+            objective="fh_gsa", target_outcome_ids=["New"], approval=approval, **IDENTITY,
         )
         current_predicted = result["current_predicted"]
-        expected = float(current_predicted[current_predicted["segment"] == "New"]["predicted_gsa"].sum())
+        expected = float(current_predicted[current_predicted["outcome_id"] == "New"]["predicted_outcome"].sum())
         assert result["current_objective_value"] == pytest.approx(expected)
 
     def test_a_segment_omitted_from_weighted_mix_contributes_nothing(
@@ -450,7 +450,7 @@ class TestExplicitOptimisationObjectives:
             objective="weighted_mix", weights={"New": 3.0}, approval=approval, **IDENTITY,
         )
         current_predicted = result["current_predicted"]
-        expected = 3.0 * float(current_predicted[current_predicted["segment"] == "New"]["predicted_gsa"].sum())
+        expected = 3.0 * float(current_predicted[current_predicted["outcome_id"] == "New"]["predicted_outcome"].sum())
         assert result["current_objective_value"] == pytest.approx(expected)
 
     def test_all_valid_objectives_are_exercised_above(self):
