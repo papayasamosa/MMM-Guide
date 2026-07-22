@@ -65,11 +65,17 @@
   argument (a UI number input pre-filled with the historical average, editable) rather than baking
   one in; the tool surfaces the assumption in use, it does not validate that the assumption is
   correct.
-- CPA's posterior uncertainty is not assessed directly (curves are point estimates only) -
-  `cpa_stability_flags` is a point-estimate proxy (flags curve regions that are
-  too flat to trust a marginal number from), not a credible interval on CPA itself. A real
-  uncertainty band on CPA needs per-draw curve generation, which remains a documented future
-  extension.
+- **Stale claim corrected (PR D audit):** this bullet previously said CPA's posterior uncertainty
+  "is not assessed directly" and that per-draw curve generation "remains a documented future
+  extension" - both wrong as of `core.uncertainty` (built for PR4, still current): a real credible
+  interval on CPA does exist, via `generate_channel_curve_with_uncertainty`/
+  `generate_market_channel_curve_with_uncertainty`, which re-run curve + `compute_cpa_by_product`
+  once per sampled posterior draw and summarize the resulting distribution
+  (`avg_cpa_mean`/`_median`/`_lower`/`_upper`, and `dna_avg_cpa_*` where applicable) - see the
+  "Scope boundaries" section below, which already described this correctly; these two sections had
+  drifted out of sync. `cpa_stability_flags` remains a separate, point-estimate-only proxy (flags
+  curve regions too flat to trust a marginal number from) - it is not itself the credible interval,
+  which is what the paragraph above conflated.
 
 ## Uncertainty in small markets
 
@@ -122,7 +128,5 @@
   reacts to changes there. It deliberately does **not** include market descriptors (population,
   awareness, etc.), since nothing downstream reads them; see `docs/decision_log.md` for the exact
   boundary.
-- CPA has no credible interval - point estimates only, same as the curves it's computed from; see the
-  "Inflation assumptions" section above.
 - Evidence-tier thresholds (`core.evidence_tiers`) are reasonable defaults, not yet
   validated against real Ancestry data - see `docs/decision_log.md`.
