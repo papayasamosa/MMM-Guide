@@ -171,13 +171,13 @@ def outcome_channel_summary(
     and (if `ltv` is given) LTV-weighted value contribution and value ROAS.
     `ltv` is keyed by outcome_id.
 
-    A *partial* `ltv` (priced some outcome_ids but not others) never
-    silently treats a missing entry as weight 1.0 (PR E.1 - the confirmed
-    "missing value_weight defaults to 1.0" defect) - `value_contribution`/
-    `value_roas` are `NaN` for that outcome_id instead. An entirely empty/
-    omitted `ltv` is not the defect case (no $-weighting was requested at
-    all) - `value_contribution` there equals raw volume (uniform weight
-    1.0), unchanged from this function's behaviour before PR E.1.
+    No `ltv` entry for an outcome_id - whether `ltv` is entirely omitted or
+    only partially populated - never silently treats it as weight 1.0
+    (PR E.2 - "stop calling raw units value": a GSA/sign-up/kit count is not
+    monetary value, so it must never be silently presented as one just
+    because no pricing was configured). `value_contribution`/`value_roas`
+    are `NaN` for any unpriced outcome_id, regardless of whether `ltv` was
+    omitted entirely or only partially covers this fit's outcome_ids.
     """
     contributions = contributions or compute_shapley_contributions(frame, meta, params, n_permutations)
     ltv = ltv or {}
@@ -186,7 +186,7 @@ def outcome_channel_summary(
         total_spend = float(frame["X_media"][:, ci].sum())
         for si, oid in enumerate(meta.outcome_ids):
             vol = float(contributions["channel_contributions"][ch][:, si].sum())
-            weight = ltv[oid] if oid in ltv else (1.0 if not ltv else np.nan)
+            weight = ltv[oid] if oid in ltv else np.nan
             value = vol * weight
             rows.append({
                 "channel": ch,

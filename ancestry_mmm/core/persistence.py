@@ -121,6 +121,7 @@ def export_project(
     market_spec_config: Optional[dict] = None,
     model_type: Optional[str] = None,
     outcome_definitions: Optional[List[dict]] = None,
+    funnel_links: Optional[List[dict]] = None,
 ) -> Path:
     output_path = Path(output_path)
     with tempfile.TemporaryDirectory() as tmp:
@@ -152,6 +153,8 @@ def export_project(
             (tmp / "config" / "model_type.json").write_text(json.dumps({"model_type": model_type}, indent=2))
         if outcome_definitions is not None:
             (tmp / "config" / "outcome_definitions.json").write_text(json.dumps(outcome_definitions, indent=2, default=str))
+        if funnel_links is not None:
+            (tmp / "config" / "funnel_links.json").write_text(json.dumps(funnel_links, indent=2, default=str))
 
         scenarios_meta = []
         for i, s in enumerate(scenarios):
@@ -203,6 +206,11 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         # core.outcomes.resolve_outcome_definitions(None, ...) derives an
         # equivalent FH-only outcome set from the imported model_spec.
         "outcome_definitions": None,
+        # Absent in bundles exported before PR E.2 - None (not an error);
+        # "no funnel links configured" is the correct legacy/default reading,
+        # not "funnel diagnostics are unavailable" (they still work with an
+        # empty list, just show no configured pairs).
+        "funnel_links": None,
     }
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
@@ -239,6 +247,8 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
             result["model_type"] = json.loads((config_dir / "model_type.json").read_text()).get("model_type", "shared")
         if (config_dir / "outcome_definitions.json").exists():
             result["outcome_definitions"] = json.loads((config_dir / "outcome_definitions.json").read_text())
+        if (config_dir / "funnel_links.json").exists():
+            result["funnel_links"] = json.loads((config_dir / "funnel_links.json").read_text())
         if (config_dir / "scenarios.json").exists():
             scenarios_meta = json.loads((config_dir / "scenarios.json").read_text())
             for i, s in enumerate(scenarios_meta):

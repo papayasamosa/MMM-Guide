@@ -74,6 +74,34 @@ class TestFHModelMetaOutcomeCatalogueDicts:
         assert meta.outcome_id_to_source_column == {"fh_new": "GSA_New"}
 
 
+class TestModelAModelCMetaConstructionParity:
+    """PR E.2 required test case: "Model A and Model C parity" for the new
+    metric_key/eligibility catalogue metadata. Both build_fh_hierarchical_model
+    (Model A) and build_fh_market_specific_model (Model C) populate
+    FHModelMeta.outcome_id_to_metric_key/outcome_id_to_eligibility from the
+    same `frame["outcomes"]` catalogue with the same expression - this
+    doesn't build a PyMC model (too slow for the suite, see this file's
+    module docstring), it inspects the actual source of both builders so a
+    future edit to one that forgets the other fails loudly here rather than
+    silently diverging."""
+
+    def test_both_builders_construct_the_new_fields_identically(self):
+        import inspect
+
+        from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
+        from ancestry_mmm.core.market_specific_model import build_fh_market_specific_model
+
+        source_a = inspect.getsource(build_fh_hierarchical_model)
+        source_c = inspect.getsource(build_fh_market_specific_model)
+
+        for field_expr in (
+            "outcome_id_to_metric_key={o.outcome_id: o.metric_key for o in outcome_catalogue},",
+            "outcome_id_to_eligibility={o.outcome_id: outcome_eligibility(o) for o in outcome_catalogue},",
+        ):
+            assert field_expr in source_a, f"Model A missing: {field_expr}"
+            assert field_expr in source_c, f"Model C missing: {field_expr}"
+
+
 class TestResolveDirectDnaOutcomeIds:
     OUTCOME_IDS = ["fh_new", "fh_dna_crosssell", "fh_winback", "dna_new_kit", "dna_existing_fh_kit"]
 

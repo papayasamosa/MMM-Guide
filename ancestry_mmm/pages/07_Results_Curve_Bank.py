@@ -9,10 +9,10 @@ import streamlit as st
 import pandas as pd
 
 from ancestry_mmm.utils import init_session_state, get_state, set_state, curve_bank_dir, dataframe_column_config, format_date, FIELD_HELP
-from ancestry_mmm.components import apply_theme, render_sidebar, render_page_header, render_next_step, render_empty_state
+from ancestry_mmm.components import apply_theme, render_sidebar, render_page_header, render_next_step, render_empty_state, render_drift_status
 from ancestry_mmm.core.approval import ApprovalMismatchError, ModelApproval
 from ancestry_mmm.core.fingerprint import fingerprint_dataframe, fingerprint_model_spec, fingerprint_posterior
-from ancestry_mmm.core.outcomes import fh_gsa_outcome_ids, fh_signup_outcome_ids, dna_kit_sale_outcome_ids, outcome_catalogue_fingerprint_payload
+from ancestry_mmm.core.outcomes import fh_gsa_outcome_ids, fh_signup_outcome_ids, dna_kit_sale_outcome_ids, outcome_catalogue_fingerprint_payload, resolve_outcome_definitions
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.market_config import MarketSpecConfig
 from ancestry_mmm.core.attribution import (
@@ -52,13 +52,16 @@ def _render_curve_with_cpa(curve_df: pd.DataFrame, title: str) -> None:
     cpa_df = compute_cpa_by_product(curve_df)
     st.markdown("**Spend curve with CPA**")
     st.caption(
+        "**Spend scope: channel-incremental** - this channel's own response curve at varying spend, "
+        "holding every other channel fixed (`channel_incremental_cost_per_fh_gsa`, alias `avg_cpa`/"
+        "`cost_per_fh_gsa`) - never a whole-plan number (see Scenario Planner for that scope instead). "
         "Average CPA = spend / incremental outcomes; marginal CPA = change in spend / change in "
         "incremental outcomes - both shown together since they diverge near saturation. Left blank "
-        "wherever response (or its change between points) is zero or negative. `avg_cpa` (alias "
-        "`cost_per_fh_gsa`) is against Family History GSA outcomes only; where this channel also has "
-        "a mapped DNA-kit outcome or a distinct FH sign-up outcome, `dna_avg_cpa`/`cost_per_dna_kit` "
-        "and `fh_signup_avg_cpa`/`cost_per_fh_signup` are shown separately - none of the three are "
-        "ever combined into one number (docs/dna_fh_causal_structure.md)."
+        "wherever response (or its change between points) is zero or negative. Against Family History "
+        "GSA outcomes only; where this channel also has a mapped DNA-kit outcome or a distinct FH "
+        "sign-up outcome, `dna_avg_cpa`/`cost_per_dna_kit` and `fh_signup_avg_cpa`/`cost_per_fh_signup` "
+        "are shown separately - none of the three are ever combined into one number "
+        "(docs/dna_fh_causal_structure.md)."
     )
     st.dataframe(cpa_df, width="stretch", column_config=dataframe_column_config(cpa_df))
     for f in cpa_stability_flags(curve_df)[:5]:
@@ -157,6 +160,9 @@ if trace is None or frame is None or meta is None or params is None:
 
 spec = ModelSpec.from_dict(spec_dict)
 ltv = spec.segment_ltv
+render_drift_status(
+    resolve_outcome_definitions(get_state("outcome_definitions"), spec.segment_outcomes, spec.segment_ltv), meta,
+)
 model_type = get_state("model_type", "shared")
 market_config = MarketSpecConfig.from_dict(get_state("market_spec_config"))
 

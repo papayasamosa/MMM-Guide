@@ -66,6 +66,30 @@ consecutive curve points, is zero or negative. `cpa_stability_flags` warns where
 enough that marginal CPA would be highly sensitive to small changes in the fitted curve (see above
 for what this proxy is and isn't).
 
+### CPA spend scope (PR E.2)
+
+A CPA number is only meaningful once its denominator and spend scope are explicit - a scenario-level
+"cost per GSA" that divides *whole-plan* spend (every channel, however targeted) by the GSA total is a
+legitimate whole-plan efficiency measure, but it is not the same measurement as a channel-specific CPA,
+an incremental CPA for one pathway, or an agency-reported observed-platform CPA, and showing a bare
+`avg_cpa` risks the three being conflated. `core.media_units.cpa_scope_metadata(denominator_metric,
+included_outcome_ids, spend_scope, included_channels=None, market=None, time_window=None,
+incremental_vs_observed="incremental")` returns the explicit metadata block every CPA output should
+carry, validating `spend_scope` against `CPA_SPEND_SCOPES` (`"whole_plan"`, `"channel_incremental"`,
+`"observed_platform"`) and `incremental_vs_observed` against `CPA_INCREMENTAL_VS_OBSERVED`
+(`"incremental"`, `"observed"`) - an unrecognised value raises rather than being silently accepted.
+
+Named, scope-explicit columns replace the bare `avg_cpa`/`marginal_cpa` wherever they're shown:
+`compute_cpa_by_product` gained `channel_incremental_cost_per_fh_gsa`/`_marginal_cost_per_fh_gsa` (and
+the sign-up/DNA-kit equivalents) - a curve-bank CPA is inherently channel-specific (one curve, one
+channel), so its scope is `"channel_incremental"`. `core.optimization.evaluate_scenario` gained
+`whole_plan_cost_per_fh_gsa`/`_fh_signup`/`_dna_kit` - a scenario's CPA divides that scenario's total
+spend across every channel, so its scope is `"whole_plan"`. Results & Curve Bank captions its CPA
+section "channel-incremental"; Scenario Planner captions its CPA metrics "whole-plan" and relabels them
+"Whole-plan avg CPA (...)" rather than a bare "Avg CPA". The legacy unscoped `avg_cpa`/`fh_signup_avg_cpa`/
+`dna_avg_cpa` column names are kept as aliases for backward compatibility, but the scope-explicit names
+are what the UI shows.
+
 ### Media inflation
 
 - **Historical cost relationship:** `core.media_units.extract_cost_per_unit_series` computes

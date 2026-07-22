@@ -17,6 +17,7 @@ from .ui import (
     render_empty_state,
     render_status_card,
     render_glossary,
+    render_drift_status,
 )
 
 __all__ = [
@@ -34,4 +35,5 @@ __all__ = [
     "render_empty_state",
     "render_status_card",
     "render_glossary",
+    "render_drift_status",
 ]

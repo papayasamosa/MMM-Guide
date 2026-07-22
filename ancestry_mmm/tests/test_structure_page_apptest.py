@@ -55,6 +55,69 @@ def test_page_loads_with_two_kpis_already_configured_on_one_segment():
     assert "(none)" in cross_sell[0].options
 
 
+def test_quick_start_wizard_seeds_the_catalogue_without_requiring_it(): # noqa: E501
+    # Required test case 19 / PR E.2 item 5 - the legacy per-segment wizard
+    # is optional and lives in an expander, not a required blocking section;
+    # clicking its button merges rows into the canonical catalogue's
+    # session-state stash (structure_outcome_rows), proving the primary
+    # workflow (the catalogue) is reachable and populatable without ever
+    # touching the wizard, and that the wizard itself works when used.
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.session_state["transformed_data"] = _transformed_data()
+    at.session_state["date_col"] = "date"
+    at.session_state["market_col"] = "market"
+    at.run()
+    assert not at.exception
+
+    # Page loads fine with a completely empty catalogue - no wizard used yet.
+    assert at.session_state["structure_outcome_rows"] == []
+
+    wizard_button = [b for b in at.button if b.label == "Create standard FH GSA outcomes"][0]
+    wizard_button.click().run()
+    assert not at.exception, f"wizard click raised: {at.exception}"
+
+    seeded = at.session_state["structure_outcome_rows"]
+    assert len(seeded) == 3
+    assert {row["outcome_id"] for row in seeded} == {"fh_new", "fh_dna_crosssell", "fh_winback"}
+    assert all(row["product"] == FAMILY_HISTORY and row["metric"] == METRIC_GSA for row in seeded)
+
+
+def test_bulk_apply_segment_mapping_to_every_outcome_in_it():
+    # Required test case 9 (PR E.2) - the explicit "apply to every outcome
+    # in this segment" bulk action, driven via real AppTest, proving the
+    # outcome-level promo override section renders and the bulk button
+    # actually seeds each outcome_id's widget from the segment-level value.
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    df = _transformed_data()
+    df["Promo_New"] = 0.0
+    at.session_state["transformed_data"] = df
+    at.session_state["date_col"] = "date"
+    at.session_state["market_col"] = "market"
+    at.session_state["outcome_definitions"] = [
+        {"outcome_id": "fh_new_gsa", "product": FAMILY_HISTORY, "segment": "New", "metric": METRIC_GSA, "source_column": "New", "unit": "GSA"},
+        {"outcome_id": "fh_new_signup", "product": FAMILY_HISTORY, "segment": "New", "metric": METRIC_SIGNUP, "source_column": "New_Signup", "unit": "sign-up"},
+    ]
+    at.run()
+    assert not at.exception
+
+    override_expander = [e for e in at.expander if "Outcome overrides for segment 'New'" in e.label]
+    assert override_expander, "outcome-level override expander not found for a segment with 2 outcomes"
+
+    promo_sb = [sb for sb in at.selectbox if sb.label == "Promo column for 'New' (or None)"][0]
+    promo_sb.select("Promo_New").run()
+    assert not at.exception
+
+    bulk_button = [b for b in at.button if "Apply segment 'New' mapping" in b.label][0]
+    bulk_button.click().run()
+    assert not at.exception, f"bulk apply raised: {at.exception}"
+
+    outcome_promo_selects = {
+        sb.label: sb.value for sb in at.selectbox if sb.label.startswith("Promo column for 'fh_new")
+    }
+    assert outcome_promo_selects["Promo column for 'fh_new_gsa' (or None)"] == "Promo_New"
+    assert outcome_promo_selects["Promo column for 'fh_new_signup' (or None)"] == "Promo_New"
+
+
 def test_save_succeeds_with_a_genuine_signup_and_gsa_on_the_same_segment():
     # Directly exercises the same row -> OutcomeDefinition -> validation
     # path the page's Save handler uses, seeded with the exact "two KPIs,

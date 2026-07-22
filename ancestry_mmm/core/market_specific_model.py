@@ -37,6 +37,7 @@ import pymc as pm
 import pytensor.tensor as pt
 
 from .hierarchical_model import FHModelMeta, _default_dna_outcome_id, _market_grouped_lag, _resolve_direct_dna_outcome_ids
+from .outcomes import outcome_eligibility
 from .schema import ModelSpec
 from .transformations import pt_geometric_adstock_matrix, pt_hill_function
 
@@ -371,8 +372,10 @@ def build_fh_market_specific_model(
         outcome_id_to_segment={o.outcome_id: o.segment for o in outcome_catalogue},
         outcome_id_to_product={o.outcome_id: o.product for o in outcome_catalogue},
         outcome_id_to_metric={o.outcome_id: o.metric for o in outcome_catalogue},
+        outcome_id_to_metric_key={o.outcome_id: o.metric_key for o in outcome_catalogue},
         outcome_id_to_unit={o.outcome_id: o.unit for o in outcome_catalogue},
         outcome_id_to_role={o.outcome_id: o.role for o in outcome_catalogue},
+        outcome_id_to_eligibility={o.outcome_id: outcome_eligibility(o) for o in outcome_catalogue},
         outcome_id_to_source_column={o.outcome_id: o.source_column for o in outcome_catalogue},
         outcome_catalogue_at_fit=outcome_catalogue,
         outcome_control_names=frame.get("outcome_control_names") or {},

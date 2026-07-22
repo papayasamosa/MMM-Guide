@@ -12,8 +12,11 @@ from ancestry_mmm.core.hierarchical_model import FHModelMeta
 from ancestry_mmm.core.market_config import ChannelMediaUnitConfig
 from ancestry_mmm.core.market_specific_predict import FHMarketSpecificPosteriorParams
 from ancestry_mmm.core.media_units import (
+    CPA_INCREMENTAL_VS_OBSERVED,
+    CPA_SPEND_SCOPES,
     compute_cpa,
     compute_cpa_by_product,
+    cpa_scope_metadata,
     cpa_stability_flags,
     equivalent_delivery,
     equivalent_response,
@@ -160,6 +163,81 @@ class TestComputeCpaByProduct:
         out = compute_cpa_by_product(self._mixed_curve())
         assert "cost_per_fh_signup" not in out.columns
         assert "fh_signup_avg_cpa" not in out.columns
+
+    def test_channel_incremental_aliases_match_the_bare_names(self):
+        # PR E.2 #8 - the explicit-spend-scope names must never silently
+        # diverge from the underlying avg_cpa/marginal_cpa numbers.
+        out = compute_cpa_by_product(self._mixed_curve())
+        assert np.array_equal(
+            out["channel_incremental_cost_per_fh_gsa"].to_numpy(), out["avg_cpa"].to_numpy(), equal_nan=True,
+        )
+        assert np.array_equal(
+            out["channel_incremental_marginal_cost_per_fh_gsa"].to_numpy(), out["marginal_cpa"].to_numpy(), equal_nan=True,
+        )
+        assert np.array_equal(
+            out["channel_incremental_cost_per_dna_kit"].to_numpy(), out["dna_avg_cpa"].to_numpy(), equal_nan=True,
+        )
+
+    def test_channel_incremental_signup_alias_present_only_with_signup_response(self):
+        df = pd.DataFrame({
+            "spend": [0.0, 100.0], "overall_response": [0.0, 25.0],
+            "fh_response": [0.0, 10.0], "fh_signup_response": [0.0, 15.0], "dna_response": [0.0, 0.0],
+        })
+        out = compute_cpa_by_product(df)
+        assert np.array_equal(
+            out["channel_incremental_cost_per_fh_signup"].to_numpy(), out["fh_signup_avg_cpa"].to_numpy(), equal_nan=True,
+        )
+        assert "channel_incremental_cost_per_fh_signup" not in compute_cpa_by_product(self._mixed_curve()).columns
+
+
+class TestCpaScopeMetadata:
+    """Required test case 14 (PR E.2): every CPA output must be presentable
+    with denominator and spend-scope metadata."""
+
+    def test_returns_all_required_fields(self):
+        meta = cpa_scope_metadata(
+            denominator_metric="fh_gsa", included_outcome_ids=["fh_new_gsa"],
+            spend_scope="whole_plan", included_channels=["TV_Brand"], market="UK",
+            time_window="2024-01", incremental_vs_observed="incremental",
+        )
+        assert meta == {
+            "denominator_metric": "fh_gsa",
+            "included_outcome_ids": ["fh_new_gsa"],
+            "spend_scope": "whole_plan",
+            "included_channels": ["TV_Brand"],
+            "market": "UK",
+            "time_window": "2024-01",
+            "incremental_vs_observed": "incremental",
+        }
+
+    def test_optional_fields_default_to_none(self):
+        meta = cpa_scope_metadata(denominator_metric="fh_gsa", included_outcome_ids=["fh_new_gsa"], spend_scope="channel_incremental")
+        assert meta["included_channels"] is None
+        assert meta["market"] is None
+        assert meta["time_window"] is None
+        assert meta["incremental_vs_observed"] == "incremental"
+
+    def test_invalid_spend_scope_raises(self):
+        with pytest.raises(ValueError, match="spend_scope"):
+            cpa_scope_metadata(denominator_metric="fh_gsa", included_outcome_ids=[], spend_scope="not_a_real_scope")
+
+    def test_invalid_incremental_vs_observed_raises(self):
+        with pytest.raises(ValueError, match="incremental_vs_observed"):
+            cpa_scope_metadata(
+                denominator_metric="fh_gsa", included_outcome_ids=[], spend_scope="whole_plan",
+                incremental_vs_observed="not_a_real_value",
+            )
+
+    def test_all_documented_spend_scopes_are_accepted(self):
+        for scope in CPA_SPEND_SCOPES:
+            cpa_scope_metadata(denominator_metric="fh_gsa", included_outcome_ids=[], spend_scope=scope)
+
+    def test_all_documented_incremental_vs_observed_values_are_accepted(self):
+        for value in CPA_INCREMENTAL_VS_OBSERVED:
+            cpa_scope_metadata(
+                denominator_metric="fh_gsa", included_outcome_ids=[], spend_scope="whole_plan",
+                incremental_vs_observed=value,
+            )
 
 
 class TestCpaStabilityFlags:

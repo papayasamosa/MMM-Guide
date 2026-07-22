@@ -284,6 +284,43 @@ class TestFingerprintModelSpecOutcomeCatalogue:
         assert fp_1 == fp_2
 
 
+class TestFingerprintModelSpecFunnelLinks:
+    """PR E.2: funnel links are diagnostic-only configuration but still
+    calculation-relevant to what's displayed, so they're fingerprinted the
+    same way as the outcome catalogue."""
+
+    def test_omitting_funnel_links_is_backward_compatible(self):
+        spec = {"markets": ["UK"]}
+        assert fingerprint_model_spec(spec, {}, 4) == fingerprint_model_spec(spec, {}, 4, funnel_links=None)
+        assert fingerprint_model_spec(spec, {}, 4) == fingerprint_model_spec(spec, {}, 4, funnel_links=[])
+
+    def test_adding_a_funnel_link_changes_the_fingerprint(self):
+        spec = {"markets": ["UK"]}
+        fp_none = fingerprint_model_spec(spec, {}, 4, funnel_links=[])
+        fp_one = fingerprint_model_spec(spec, {}, 4, funnel_links=[
+            {"upstream_outcome_id": "fh_new_signup", "downstream_outcome_id": "fh_new_gsa"},
+        ])
+        assert fp_none != fp_one
+
+    def test_link_order_does_not_matter(self):
+        spec = {"markets": ["UK"]}
+        a = {"upstream_outcome_id": "a_signup", "downstream_outcome_id": "a_gsa"}
+        b = {"upstream_outcome_id": "b_signup", "downstream_outcome_id": "b_gsa"}
+        fp_ab = fingerprint_model_spec(spec, {}, 4, funnel_links=[a, b])
+        fp_ba = fingerprint_model_spec(spec, {}, 4, funnel_links=[b, a])
+        assert fp_ab == fp_ba
+
+    def test_changing_a_link_pair_changes_the_fingerprint(self):
+        spec = {"markets": ["UK"]}
+        fp_a = fingerprint_model_spec(spec, {}, 4, funnel_links=[
+            {"upstream_outcome_id": "signup", "downstream_outcome_id": "gsa"},
+        ])
+        fp_b = fingerprint_model_spec(spec, {}, 4, funnel_links=[
+            {"upstream_outcome_id": "signup", "downstream_outcome_id": "other_gsa"},
+        ])
+        assert fp_a != fp_b
+
+
 class TestFingerprintModelSpecMarketConfig:
     def _config_with(self, *, currency=None, descriptors=None, media_unit=None) -> dict:
         profile = MarketProfile(

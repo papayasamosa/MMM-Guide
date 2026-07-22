@@ -12,6 +12,7 @@ from ancestry_mmm.utils.config import THEME_COLORS
 from ancestry_mmm.utils.display import GLOSSARY
 from ancestry_mmm.utils.session_state import get_workflow_progress
 from ancestry_mmm.utils.workflow import TOTAL_STEPS, get_step, next_step_key, sidebar_entries, step_number
+from ancestry_mmm.core.outcomes import BLOCKING_DRIFT_STATUSES, outcomes_drift_dataframe
 
 
 def apply_theme() -> None:
@@ -116,3 +117,46 @@ def render_glossary(terms: Optional[Iterable[str]] = None) -> None:
     with st.expander("Glossary"):
         for term, definition in entries.items():
             st.markdown(f"**{term}** - {definition}")
+
+
+def render_drift_status(
+    outcome_definitions: list, model_meta: object, *, available_columns: Optional[set] = None, blocking: bool = False,
+) -> bool:
+    """
+    Shared drift-status panel (PR E.2 requirement #10 - "make drift status
+    first-class in the UI") for every page that reads a fitted model against
+    a live outcome catalogue: Structure, Model Configuration, Model
+    Training, Diagnostics, Results & Curve Bank, Scenario Planner, Project
+    Export. Shows the exact changed fields per outcome_id
+    (`core.outcomes.outcomes_drift_dataframe`), not just a bare "stale"
+    flag. Returns `True` if calculation-relevant drift was found
+    (`core.outcomes.BLOCKING_DRIFT_STATUSES` - a changed or removed
+    outcome) so a caller can gate on it; `blocking=True` renders that case
+    as `st.error` instead of `st.warning`, for a page (Scenario Planner)
+    that must stop rather than just flag it.
+
+    No-op (returns `False`, renders nothing) when there's no fitted model
+    to compare against (`model_meta=None`) or nothing has drifted.
+    """
+    if model_meta is None:
+        return False
+    drift_df = outcomes_drift_dataframe(outcome_definitions, model_meta, available_columns=available_columns)
+    if drift_df.empty:
+        return False
+    drifted = drift_df[drift_df["drift_status"] != "Fitted and current"]
+    if drifted.empty:
+        return False
+    has_blocking = bool(drifted["drift_status"].isin(BLOCKING_DRIFT_STATUSES).any())
+    message = (
+        f"{len(drifted)} outcome(s) have drifted from the fitted model's catalogue: "
+        f"{', '.join(f'{row.outcome_id} ({row.drift_status})' for row in drifted.itertuples())}."
+    )
+    if has_blocking and blocking:
+        st.error(message + " Calculation-relevant drift - this must be resolved (re-fit, or revert the catalogue change) before continuing.")
+    elif has_blocking:
+        st.warning(message + " Calculation-relevant - numbers shown may no longer reflect the live catalogue.")
+    else:
+        st.info(message)
+    with st.expander("Drift detail"):
+        st.dataframe(drift_df[["outcome_id", "drift_status"]], width="stretch")
+    return has_blocking

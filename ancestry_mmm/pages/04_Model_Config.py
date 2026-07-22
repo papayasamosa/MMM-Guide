@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 import streamlit as st
 
 from ancestry_mmm.utils import init_session_state, get_state, set_state, clear_model_state, DEFAULT_FH_PRIORS, format_number, FIELD_HELP
-from ancestry_mmm.components import apply_theme, render_sidebar, render_page_header, render_next_step, render_empty_state
+from ancestry_mmm.components import apply_theme, render_sidebar, render_page_header, render_next_step, render_empty_state, render_drift_status
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.outcomes import resolve_outcome_definitions, dna_kit_outcome_columns, included_outcomes
 from ancestry_mmm.data import prepare_fh_modeling_frame
@@ -125,6 +125,7 @@ with st.expander("Advanced settings: MCMC sampling"):
     mcmc_target_accept = c4.slider("Target accept", 0.7, 0.99, float(get_state("mcmc_target_accept", 0.9)), 0.01, key="mcmc_target_accept_input")
 
 outcome_definitions = resolve_outcome_definitions(get_state("outcome_definitions"), spec.segment_outcomes, spec.segment_ltv)
+render_drift_status(outcome_definitions, get_state("model_meta"), available_columns=set(df.columns))
 included_outcome_definitions = included_outcomes(outcome_definitions)
 dna_kit_outcomes = dna_kit_outcome_columns(included_outcome_definitions)
 dna_kit_outcomes = {oid: col for oid, col in dna_kit_outcomes.items() if col in df.columns}

@@ -61,6 +61,84 @@ METRIC_KIT_SALE = "Kit sale"
 OUTCOME_ROLES = ("primary", "secondary", "funnel_intermediate", "diagnostic")
 
 
+# ---------------------------------------------------------------------------
+# Canonical metric registry (PR E.2)
+#
+# Confirmed pitfall this closes: `select_outcome_ids`/the named totals used
+# to match on the free-text `metric` display string exactly ("GSA",
+# "Sign-up", "Kit sale") - an analyst typing "Signup" or "Kit Sale" produced
+# an outcome that silently fell out of every selector, total and objective.
+# `metric_key` is the stable value all matching logic now uses; `metric`
+# stays a free-text display label, normalised into a `metric_key` only
+# through the small known-variant table below - never fuzzy-guessed into a
+# business KPI. `unit` defaults are also driven from here (not from
+# `product` alone - see `OutcomeDefinition.__post_init__`), since a Family
+# History *sign-up* outcome defaulting to unit "GSA" was itself a confirmed
+# pitfall.
+# ---------------------------------------------------------------------------
+
+METRIC_KEY_FH_GSA = "fh_gsa"
+METRIC_KEY_FH_SIGNUP = "fh_signup"
+METRIC_KEY_DNA_KIT_SALE = "dna_kit_sale"
+METRIC_KEY_CUSTOM = "custom"
+
+
+@dataclass(frozen=True)
+class MetricDefinition:
+    """One entry in `METRIC_REGISTRY`: what a stable `metric_key` means -
+    its default display label, its default unit, and (optionally) the one
+    product it's valid for."""
+
+    metric_key: str
+    display_name: str
+    default_unit: str
+    product: Optional[str] = None
+
+
+METRIC_REGISTRY: Dict[str, MetricDefinition] = {
+    METRIC_KEY_FH_GSA: MetricDefinition(
+        metric_key=METRIC_KEY_FH_GSA, display_name=METRIC_GSA, default_unit="GSA", product=FAMILY_HISTORY,
+    ),
+    METRIC_KEY_FH_SIGNUP: MetricDefinition(
+        metric_key=METRIC_KEY_FH_SIGNUP, display_name=METRIC_SIGNUP, default_unit="sign-up",
+        product=FAMILY_HISTORY,
+    ),
+    METRIC_KEY_DNA_KIT_SALE: MetricDefinition(
+        metric_key=METRIC_KEY_DNA_KIT_SALE, display_name=METRIC_KIT_SALE, default_unit="kit", product=DNA,
+    ),
+}
+
+# Known free-text display variants -> stable metric_key. Deliberately a
+# small, explicit table, not fuzzy matching: an unrecognised metric string
+# always normalises to METRIC_KEY_CUSTOM, never guessed into one of the
+# three built-in KPIs.
+_METRIC_LABEL_VARIANTS: Dict[str, str] = {
+    "gsa": METRIC_KEY_FH_GSA,
+    "family history gsa": METRIC_KEY_FH_GSA,
+    "fh gsa": METRIC_KEY_FH_GSA,
+    "sign-up": METRIC_KEY_FH_SIGNUP,
+    "sign up": METRIC_KEY_FH_SIGNUP,
+    "signup": METRIC_KEY_FH_SIGNUP,
+    "sign-ups": METRIC_KEY_FH_SIGNUP,
+    "sign ups": METRIC_KEY_FH_SIGNUP,
+    "signups": METRIC_KEY_FH_SIGNUP,
+    "kit sale": METRIC_KEY_DNA_KIT_SALE,
+    "kit sales": METRIC_KEY_DNA_KIT_SALE,
+    "kitsale": METRIC_KEY_DNA_KIT_SALE,
+    "dna kit sale": METRIC_KEY_DNA_KIT_SALE,
+    "dna kit sales": METRIC_KEY_DNA_KIT_SALE,
+}
+
+
+def normalize_metric_key(metric: str) -> str:
+    """Map a free-text `metric` display label to a stable `metric_key`,
+    case/whitespace-insensitively, through the small known-variant table
+    above. Anything not recognised - including genuinely custom KPIs -
+    normalises to `METRIC_KEY_CUSTOM`, never a guess at one of the three
+    built-in metrics."""
+    return _METRIC_LABEL_VARIANTS.get((metric or "").strip().lower(), METRIC_KEY_CUSTOM)
+
+
 @dataclass
 class OutcomeDefinition:
     """
@@ -74,26 +152,47 @@ class OutcomeDefinition:
     sign-up and a Family History GSA can both have `segment="New"` while
     being two entirely independent `outcome_id`s with independent fitted
     response curves. `product` distinguishes Family History from DNA.
-    `metric` is what's being counted (e.g. "GSA", "Sign-up", "Kit sale") -
-    kept distinct from `segment` specifically so "New/Sign-up" and
-    "New/GSA" are never conflated by sharing a segment. `source_column` is
+    `metric` is a free-text *display* label for what's being counted (e.g.
+    "GSA", "Sign-up", "Kit sale", or any custom KPI name) - kept distinct
+    from `segment` specifically so "New/Sign-up" and "New/GSA" are never
+    conflated by sharing a segment. `metric_key` (PR E.2) is the stable
+    value all matching logic (`select_outcome_ids`, the named totals) uses
+    instead of `metric` itself - derived automatically from `metric` via
+    `normalize_metric_key` if left blank, so a display label typo/variant
+    ("Signup" vs "Sign-up") can no longer make an outcome silently
+    disappear from a selector; see `METRIC_REGISTRY`. `source_column` is
     the source data column. `unit` is the counting unit this outcome's raw
-    numbers are in (derived from `product` if not given - see
-    `__post_init__` - so nothing is ever silently summed with something in
-    a different unit). `value_weight` is an optional per-unit value (LTV
-    for FH, an analogous per-kit value for DNA); `value_currency` names the
-    currency it's denominated in (e.g. "USD") - both persisted so a value
-    objective's interpretation is recorded, not just its number. `role` is
-    one of `OUTCOME_ROLES` and is now operational (PR E.1, `select_outcome_ids`/
-    the named total helpers below): `"primary"` outcomes are what every
-    default total/objective/CPA sums over; `"secondary"` outcomes are
-    reported separately and excluded from default totals; `"funnel_intermediate"`
-    outcomes (e.g. a sign-up that precedes a GSA) are excluded from GSA-style
-    totals but may still get their own CPA/diagnostics; `"diagnostic"`
-    outcomes are excluded from totals, value and optimisation entirely.
-    Fitting eligibility remains controlled separately by `included_in_fit` -
-    `role` never affects whether an outcome is part of a fit, only how its
-    numbers are aggregated afterwards.
+    numbers are in - derived from `metric_key` via `METRIC_REGISTRY` if not
+    given (see `__post_init__`; a custom/unrecognised metric_key gets no
+    default and must set `unit` explicitly) - so nothing is ever silently
+    summed with something in a different unit, and a Family History
+    sign-up outcome never defaults to unit "GSA" just because it's a
+    Family History outcome. `value_weight` is an optional per-unit value
+    (LTV for FH, an analogous per-kit value for DNA); `value_currency`
+    names the currency it's denominated in (e.g. "USD") - both persisted so
+    a value objective's interpretation is recorded, not just its number.
+    `role` is one of `OUTCOME_ROLES` and drives the *default* eligibility
+    flags below when they're left unset (PR E.1 introduced the vocabulary;
+    PR E.2 makes it a set of *defaults*, not the sole switch - see
+    `outcome_eligibility`): `"primary"` outcomes default to eligible for
+    everything; `"secondary"` outcomes default to reported/valued but
+    excluded from the official total and optimisation; `"funnel_intermediate"`
+    outcomes (e.g. a sign-up that precedes a GSA) default to reported in
+    their *own* metric's total/CPA but excluded from the official total,
+    value and optimisation; `"diagnostic"` outcomes default to excluded from
+    everything. Fitting eligibility remains controlled separately by
+    `included_in_fit` - `role` never affects whether an outcome is part of a
+    fit, only how its numbers are aggregated afterwards.
+    `include_in_default_reporting`/`include_in_official_total`/
+    `include_in_value`/`include_in_optimisation` (PR E.2) are the four
+    independent eligibility axes the instruction document requires,
+    replacing the old single role=="primary" gate: each is `None` by
+    default (meaning "use this outcome's role default"), but can be set
+    explicitly per outcome to override the role default in either
+    direction - e.g. a `secondary` outcome with `include_in_optimisation=True`
+    explicitly opted back in. Always resolve them through
+    `outcome_eligibility(outcome)`, never by reading a field directly (a
+    `None` there does not mean "excluded").
     `included_in_fit` is whether this outcome should be part of the *next*
     fit - the persisted replacement for the session-only
     `excluded_outcome_ids` mechanism (docs/decision_log.md); `False`
@@ -113,10 +212,26 @@ class OutcomeDefinition:
     role: str = "primary"
     included_in_fit: bool = True
     exclusion_reason: Optional[str] = None
+    metric_key: str = ""
+    include_in_default_reporting: Optional[bool] = None
+    include_in_official_total: Optional[bool] = None
+    include_in_value: Optional[bool] = None
+    include_in_optimisation: Optional[bool] = None
 
     def __post_init__(self) -> None:
+        # metric_key first: unit's default (below) is looked up by
+        # metric_key, not by product alone (PR E.2 - a Family History
+        # sign-up outcome must never default to unit "GSA" just because
+        # it's a Family History outcome).
+        if not self.metric_key:
+            self.metric_key = normalize_metric_key(self.metric)
         if not self.unit:
-            self.unit = "GSA" if self.product == FAMILY_HISTORY else "kit"
+            definition = METRIC_REGISTRY.get(self.metric_key)
+            if definition is not None:
+                self.unit = definition.default_unit
+            # else: a custom/unrecognised metric - unit stays blank rather
+            # than guessed; validate_outcome_definitions's "no unit set"
+            # check requires the analyst to set it explicitly.
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -136,6 +251,70 @@ class OutcomeDefinition:
             d["source_column"] = d.pop("column")
         known = set(cls.__dataclass_fields__)
         return cls(**{k: v for k, v in d.items() if k in known})
+
+
+# ---------------------------------------------------------------------------
+# Four-axis eligibility model (PR E.2)
+#
+# Confirmed pitfall this replaces: every named total/CPA/objective used to
+# gate on a single `role == "primary"` check, which meant a Family History
+# sign-up marked `funnel_intermediate` could be fitted but then vanish from
+# its *own* `fh_signups` total and cost-per-sign-up reporting - reporting
+# eligibility and "counts toward the official/headline total" eligibility
+# were never actually the same question. These four flags separate them;
+# `_ROLE_ELIGIBILITY_DEFAULTS` is exactly the table the instruction document
+# specifies, used only when a flag is left `None` (not explicitly configured
+# on the `OutcomeDefinition`).
+# ---------------------------------------------------------------------------
+
+ELIGIBILITY_FLAGS = (
+    "include_in_default_reporting",
+    "include_in_official_total",
+    "include_in_value",
+    "include_in_optimisation",
+)
+
+_ROLE_ELIGIBILITY_DEFAULTS: Dict[str, Dict[str, bool]] = {
+    "primary": {
+        "include_in_default_reporting": True,
+        "include_in_official_total": True,
+        "include_in_value": True,
+        "include_in_optimisation": True,
+    },
+    "secondary": {
+        "include_in_default_reporting": True,
+        "include_in_official_total": False,
+        "include_in_value": True,
+        "include_in_optimisation": False,
+    },
+    "funnel_intermediate": {
+        "include_in_default_reporting": True,
+        "include_in_official_total": False,
+        "include_in_value": False,
+        "include_in_optimisation": False,
+    },
+    "diagnostic": {
+        "include_in_default_reporting": False,
+        "include_in_official_total": False,
+        "include_in_value": False,
+        "include_in_optimisation": False,
+    },
+}
+
+
+def outcome_eligibility(outcome: OutcomeDefinition) -> Dict[str, bool]:
+    """Resolve all four eligibility flags for `outcome`: an explicitly-set
+    field (`True`/`False`) always wins; `None` (the field's default - "not
+    explicitly configured") falls back to `outcome.role`'s entry in
+    `_ROLE_ELIGIBILITY_DEFAULTS`. An unrecognised role falls back to the
+    "primary" row (matches `OutcomeDefinition.role`'s own "primary"
+    default) rather than raising - `validate_outcome_definitions` is where
+    an invalid role is actually rejected."""
+    defaults = _ROLE_ELIGIBILITY_DEFAULTS.get(outcome.role, _ROLE_ELIGIBILITY_DEFAULTS["primary"])
+    return {
+        flag: (getattr(outcome, flag) if getattr(outcome, flag) is not None else defaults[flag])
+        for flag in ELIGIBILITY_FLAGS
+    }
 
 
 def outcome_requires_opt_in(outcome: OutcomeDefinition) -> bool:
@@ -183,6 +362,7 @@ def select_outcome_ids(
     *,
     product: Optional[str] = None,
     metric: Optional[str] = None,
+    metric_key: Optional[str] = None,
     unit: Optional[str] = None,
     role: Optional[str] = None,
 ) -> List[str]:
@@ -200,12 +380,32 @@ def select_outcome_ids(
     (`FHModelMeta.outcome_catalogue_at_fit`), so this is always answering
     "what was this outcome_id's catalogue entry at fit time", not re-deriving
     it from a possibly-since-changed live catalogue.
+
+    `metric` (free-text display string, PR E.1) and `metric_key` (stable key,
+    PR E.2) are independent filters - prefer `metric_key` in new code, since
+    it's immune to display-label variants ("Signup" vs "Sign-up"). When
+    `metric_key` is given, this reads `model_meta.outcome_id_to_metric_key`
+    if present for an outcome_id; otherwise it derives the key live via
+    `normalize_metric_key(outcome_id_to_metric[...])`, so a `FHModelMeta` (or
+    test fixture) that only ever populated `outcome_id_to_metric` still
+    matches correctly.
     """
     ids = list(model_meta.outcome_ids)
     if product is not None:
         ids = [o for o in ids if model_meta.outcome_id_to_product.get(o) == product]
     if metric is not None:
         ids = [o for o in ids if model_meta.outcome_id_to_metric.get(o) == metric]
+    if metric_key is not None:
+        explicit_keys = getattr(model_meta, "outcome_id_to_metric_key", {}) or {}
+        display_metrics = getattr(model_meta, "outcome_id_to_metric", {}) or {}
+
+        def _metric_key_for(oid: str) -> str:
+            explicit = explicit_keys.get(oid)
+            if explicit:
+                return explicit
+            return normalize_metric_key(display_metrics.get(oid, ""))
+
+        ids = [o for o in ids if _metric_key_for(o) == metric_key]
     if unit is not None:
         ids = [o for o in ids if model_meta.outcome_id_to_unit.get(o) == unit]
     if role is not None:
@@ -217,15 +417,29 @@ def select_outcome_ids(
     return ids
 
 
-def _primary_role_only(model_meta: object, ids: List[str]) -> List[str]:
-    """Restrict `ids` to `role == "primary"` - the role semantics' "eligible
-    for official totals and default reporting" rule (docs/decision_log.md).
-    Every named total below applies this by default: a secondary/
-    funnel_intermediate/diagnostic outcome (e.g. a sign-up marked
-    funnel_intermediate) is deliberately excluded from the *default* GSA/kit
-    total even though it matches on product+metric, unless a caller asks for
-    it explicitly via `select_outcome_ids(..., role=...)`."""
-    return [o for o in ids if model_meta.outcome_id_to_role.get(o, "primary") == "primary"]
+def eligible_outcome_ids(model_meta: object, ids: List[str], flag: str) -> List[str]:
+    """Filter `ids` by one resolved eligibility flag (PR E.2 - replaces the
+    old role=="primary"-only `_primary_role_only` gate). Reads
+    `model_meta.outcome_id_to_eligibility` (the exact `outcome_eligibility()`
+    result captured at fit time) for an outcome_id when present; otherwise
+    re-derives the role-based default live from `outcome_id_to_role`, so a
+    `FHModelMeta` built before this field existed (or a hand-built test
+    fixture that only sets `outcome_id_to_role`) still gets correct
+    role-based behaviour - just without any per-outcome override that might
+    have been configured on the live catalogue."""
+    eligibility_map = getattr(model_meta, "outcome_id_to_eligibility", {}) or {}
+    role_map = getattr(model_meta, "outcome_id_to_role", {}) or {}
+    out = []
+    for o in ids:
+        resolved = eligibility_map.get(o)
+        if resolved is not None:
+            include = resolved.get(flag, True)
+        else:
+            role = role_map.get(o, "primary")
+            include = _ROLE_ELIGIBILITY_DEFAULTS.get(role, _ROLE_ELIGIBILITY_DEFAULTS["primary"])[flag]
+        if include:
+            out.append(o)
+    return out
 
 
 def _has_catalogue_metadata(model_meta: object) -> bool:
@@ -238,12 +452,15 @@ def _has_catalogue_metadata(model_meta: object) -> bool:
     return bool(model_meta.outcome_id_to_product)
 
 
-def fh_gsa_outcome_ids(model_meta: object, *, include_non_primary: bool = False) -> List[str]:
-    """`product=Family History, metric=GSA` - the instruction document's
-    named `fh_gsa` total. Deliberately NOT "every outcome_id that isn't a
-    DNA-kit outcome" - a Family History sign-up outcome must never be
-    silently counted in this total just because it also isn't a DNA-kit
-    outcome (the confirmed defect this replaces).
+def fh_gsa_outcome_ids(model_meta: object) -> List[str]:
+    """`metric_key=fh_gsa` - the instruction document's named `fh_gsa`
+    total. Deliberately NOT "every outcome_id that isn't a DNA-kit outcome" -
+    a Family History sign-up outcome must never be silently counted in this
+    total just because it also isn't a DNA-kit outcome (the confirmed defect
+    PR E.1 replaced). Gated by `include_in_default_reporting` (PR E.2 -
+    replaces the old role=="primary"-only gate: a `funnel_intermediate`
+    outcome now still appears in its own metric's default total; see
+    `official_total_outcome_ids` for the stricter, official-total-only gate).
 
     Legacy fallback: if `model_meta` has no catalogue metadata at all
     (`_has_catalogue_metadata` False), every outcome_id that isn't
@@ -256,37 +473,69 @@ def fh_gsa_outcome_ids(model_meta: object, *, include_non_primary: bool = False)
     if not _has_catalogue_metadata(model_meta):
         kit_only = set(getattr(model_meta, "kit_only_outcome_ids", []))
         return [o for o in model_meta.outcome_ids if o not in kit_only]
-    ids = select_outcome_ids(model_meta, product=FAMILY_HISTORY, metric=METRIC_GSA)
-    return ids if include_non_primary else _primary_role_only(model_meta, ids)
+    ids = select_outcome_ids(model_meta, metric_key=METRIC_KEY_FH_GSA)
+    return eligible_outcome_ids(model_meta, ids, "include_in_default_reporting")
 
 
-def fh_signup_outcome_ids(model_meta: object, *, include_non_primary: bool = False) -> List[str]:
-    """`product=Family History, metric=Sign-up` - the instruction document's
-    named `fh_signups` total, always disjoint from `fh_gsa_outcome_ids` even
-    when both share a `segment`. A fit with no catalogue metadata at all
-    (see `fh_gsa_outcome_ids`'s legacy fallback) never had a distinct
-    sign-up outcome to report, so this returns `[]` for it, not a guess."""
+def fh_signup_outcome_ids(model_meta: object) -> List[str]:
+    """`metric_key=fh_signup` - the instruction document's named
+    `fh_signups` total, always disjoint from `fh_gsa_outcome_ids` even when
+    both share a `segment`. Gated by `include_in_default_reporting` - a
+    `funnel_intermediate` sign-up (fitted, but marked as feeding a later
+    GSA) still appears here by default, since it's still eligible for its
+    *own* metric's reporting (PR E.2 requirement); it's excluded only from
+    the stricter `official_total_outcome_ids`. A fit with no catalogue
+    metadata at all (see `fh_gsa_outcome_ids`'s legacy fallback) never had a
+    distinct sign-up outcome to report, so this returns `[]` for it, not a
+    guess."""
     if not _has_catalogue_metadata(model_meta):
         return []
-    ids = select_outcome_ids(model_meta, product=FAMILY_HISTORY, metric=METRIC_SIGNUP)
-    return ids if include_non_primary else _primary_role_only(model_meta, ids)
+    ids = select_outcome_ids(model_meta, metric_key=METRIC_KEY_FH_SIGNUP)
+    return eligible_outcome_ids(model_meta, ids, "include_in_default_reporting")
 
 
-def dna_kit_sale_outcome_ids(model_meta: object, *, include_non_primary: bool = False) -> List[str]:
-    """`product=DNA, metric=Kit sale` - the instruction document's named
+def dna_kit_sale_outcome_ids(model_meta: object) -> List[str]:
+    """`metric_key=dna_kit_sale` - the instruction document's named
     `DNA kits` total. Named distinctly from `FHModelMeta.kit_only_outcome_ids`
     (a *structural* pathway concept - which outcome_ids get only the direct,
     non-halo DNA-media pathway) even though the two sets coincide for every
     outcome this codebase's own UI produces: this one is derived from the
-    catalogue's product/metric labels, the structural one from pathway
-    configuration - they are conceptually independent, and a hand-built or
-    future outcome could in principle diverge them. Falls back to
-    `model_meta.kit_only_outcome_ids` directly when there is no catalogue
-    metadata at all (see `fh_gsa_outcome_ids`'s legacy fallback)."""
+    catalogue's metric_key, the structural one from pathway configuration -
+    they are conceptually independent, and a hand-built or future outcome
+    could in principle diverge them. Gated by `include_in_default_reporting`.
+    Falls back to `model_meta.kit_only_outcome_ids` directly when there is no
+    catalogue metadata at all (see `fh_gsa_outcome_ids`'s legacy fallback)."""
     if not _has_catalogue_metadata(model_meta):
         return list(getattr(model_meta, "kit_only_outcome_ids", []))
-    ids = select_outcome_ids(model_meta, product=DNA, metric=METRIC_KIT_SALE)
-    return ids if include_non_primary else _primary_role_only(model_meta, ids)
+    ids = select_outcome_ids(model_meta, metric_key=METRIC_KEY_DNA_KIT_SALE)
+    return eligible_outcome_ids(model_meta, ids, "include_in_default_reporting")
+
+
+def official_total_outcome_ids(model_meta: object, *, metric_key: Optional[str] = None) -> List[str]:
+    """Outcome_ids eligible for a cross-reporting *official* total (PR E.2) -
+    gated by `include_in_official_total`, a stricter flag than the per-metric
+    named totals above (which gate on `include_in_default_reporting`). A
+    `funnel_intermediate` outcome, for instance, appears in its own metric's
+    default reporting total (`fh_signup_outcome_ids`, say) but never in the
+    official total - the instruction document's "funnel-intermediate
+    sign-ups stay out of official GSA totals" requirement, generalised: they
+    stay out of *any* metric's official total, not just GSA's. `metric_key=
+    None` returns every officially-eligible outcome_id regardless of metric;
+    pass a `METRIC_KEY_*` constant to scope to one metric. Legacy fallback:
+    with no catalogue metadata at all, every non-DNA-kit outcome_id is
+    treated as officially eligible (mirrors `fh_gsa_outcome_ids`'s
+    fallback), since a pre-PR-E.1 fit's outcomes were always "primary"."""
+    if not _has_catalogue_metadata(model_meta):
+        if metric_key not in (None, METRIC_KEY_FH_GSA):
+            return []
+        kit_only = set(getattr(model_meta, "kit_only_outcome_ids", []))
+        return [o for o in model_meta.outcome_ids if o not in kit_only]
+    ids = (
+        select_outcome_ids(model_meta, metric_key=metric_key)
+        if metric_key is not None
+        else list(model_meta.outcome_ids)
+    )
+    return eligible_outcome_ids(model_meta, ids, "include_in_official_total")
 
 
 OUTCOME_STATUSES = (
@@ -383,8 +632,18 @@ def validate_outcome_definitions(
     - mixed combined and split DNA outcomes
     - a KPI label that implies GSA when the source looks like sign-up
       data, or vice versa (see `_implies_conflicting_metric_label`)
+    - no outcome at all, or none `included_in_fit` (PR E.2 - this is now
+      the single place "does this project have anything to fit" is
+      enforced, since `ModelSpec.segment_outcomes` is no longer a required
+      field - a sign-up-only or GSA-only project is valid as long as its
+      outcome catalogue has at least one included outcome)
     """
     errors: List[str] = []
+    if not any(o.included_in_fit for o in outcomes):
+        errors.append(
+            "At least one outcome must be configured and included in the fit - the outcome catalogue "
+            "is empty, or every outcome in it is excluded."
+        )
     seen_ids = set()
     for o in outcomes:
         if not o.outcome_id:
@@ -540,8 +799,10 @@ def infer_legacy_fh_dna_cross_sell_outcome_id(
 # ---------------------------------------------------------------------------
 
 _FINGERPRINT_FIELDS = (
-    "outcome_id", "product", "segment", "metric", "unit", "source_column",
+    "outcome_id", "product", "segment", "metric", "metric_key", "unit", "source_column",
     "role", "included_in_fit", "value_weight", "value_currency",
+    "include_in_default_reporting", "include_in_official_total",
+    "include_in_value", "include_in_optimisation",
 )
 
 
@@ -584,7 +845,9 @@ DRIFT_STATUSES = (
 )
 
 _DRIFT_TRACKED_FIELDS = (
-    "source_column", "product", "segment", "metric", "unit", "role", "included_in_fit", "value_weight",
+    "source_column", "product", "segment", "metric", "metric_key", "unit", "role", "included_in_fit",
+    "value_weight", "include_in_default_reporting", "include_in_official_total",
+    "include_in_value", "include_in_optimisation",
 )
 
 
@@ -662,6 +925,49 @@ def outcomes_drift_dataframe(
         row["drift_status"] = status
         rows.append(row)
     return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------
+# Drift status as a first-class, blocking check (PR E.2 requirement #10)
+#
+# PR E.1 built exact drift detection (outcome_drift_status/
+# outcomes_drift_dataframe) but no page actually consumed it. This makes
+# "calculation-relevant drift" an explicit, reusable predicate every
+# downstream page (Structure/Model Config/Model Training/Diagnostics/
+# Results/Scenario Planner/Export) can check, and specifically what
+# Scenario Planner uses to block planning outright - a stale in-memory
+# trace must not be plannable against once the catalogue backing it has
+# genuinely changed, even though the trace object itself is unaffected.
+# ---------------------------------------------------------------------------
+
+BLOCKING_DRIFT_STATUSES = ("Changed since fit", "Removed since fit")
+
+
+def has_blocking_drift(
+    outcomes: List[OutcomeDefinition],
+    model_meta: Optional[object],
+    *,
+    available_columns: Optional[set] = None,
+) -> bool:
+    """
+    True if any outcome_id's catalogue entry has drifted from what
+    `model_meta` was actually fit on in a way that should block planning
+    against it (`BLOCKING_DRIFT_STATUSES` - a changed or removed outcome).
+    `"New since fit"` (not yet part of any fit) and `"Excluded from next
+    fit"` (a *future*-fit concern) deliberately do NOT block - they don't
+    make the *existing* fitted model's numbers wrong, only its catalogue
+    incomplete relative to what a *next* fit would use.
+
+    `model_meta=None` (no fitted model at all) returns `False` - there is
+    nothing to have drifted from yet; a caller checks this after already
+    establishing a fit exists.
+    """
+    if model_meta is None:
+        return False
+    drift_df = outcomes_drift_dataframe(outcomes, model_meta, available_columns=available_columns)
+    if drift_df.empty:
+        return False
+    return bool(drift_df["drift_status"].isin(BLOCKING_DRIFT_STATUSES).any())
 
 
 def fh_outcomes_from_spec(

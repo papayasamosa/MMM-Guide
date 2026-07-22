@@ -229,10 +229,18 @@ def prepare_fh_modeling_frame(
     `ModelSpec.segment_outcomes` itself is untouched either way, it is now
     purely a migration source.
 
-    Promo/segment-control mapping stays keyed by an outcome's `.segment`
-    (`spec.promo_cols`/`spec.segment_control_cols`) - both are segment-level
-    configuration, so every outcome sharing a segment gets the same promo
-    column / control columns applied to its own equation.
+    Promo/control mapping resolution (PR E.2 - outcome_id is now the primary
+    key, not segment): for each outcome_id, the promo column is
+    `spec.outcome_promo_cols[outcome_id]` if set, else the legacy
+    `spec.promo_cols[segment]` - so a sign-up and a GSA sharing a segment can
+    have genuinely different promo mappings once configured explicitly, but
+    a migrated/legacy project's segment-level mapping still applies to both
+    until then. Controls are additive across four levels: global
+    (`spec.control_cols`, every outcome), product-level
+    (`spec.product_control_cols[product]`), legacy segment-level
+    (`spec.segment_control_cols[segment]`), and outcome-level
+    (`spec.outcome_control_cols[outcome_id]`) - deduplicated, order
+    preserved.
     """
     explicit_outcomes = outcomes is not None
     errors = spec.validate()
@@ -259,6 +267,7 @@ def prepare_fh_modeling_frame(
     if len(set(outcome_ids)) != len(outcome_ids):
         raise ValueError(f"Duplicate outcome_id(s) among the outcomes included in the fit: {outcome_ids}")
     outcome_id_to_segment = {o.outcome_id: o.segment for o in fit_outcomes}
+    outcome_id_to_product = {o.outcome_id: o.product for o in fit_outcomes}
 
     data = df.copy()
     data[spec.date_col] = pd.to_datetime(data[spec.date_col])
@@ -294,7 +303,10 @@ def prepare_fh_modeling_frame(
 
     promo = np.zeros((len(data), len(outcome_ids)))
     for i, oid in enumerate(outcome_ids):
-        col = spec.promo_cols.get(outcome_id_to_segment[oid])
+        # Outcome-id-keyed mapping (PR E.2, canonical) wins when set; the
+        # legacy segment-keyed mapping is the fallback for a migrated
+        # project that hasn't configured this outcome_id explicitly yet.
+        col = (spec.outcome_promo_cols or {}).get(oid) or spec.promo_cols.get(outcome_id_to_segment[oid])
         if col and col in data.columns:
             promo[:, i] = data[col].to_numpy(dtype=float)
 
@@ -304,7 +316,13 @@ def prepare_fh_modeling_frame(
     outcome_controls: Dict[str, np.ndarray] = {}
     outcome_control_names: Dict[str, List[str]] = {}
     for oid in outcome_ids:
-        cols = (spec.segment_control_cols or {}).get(outcome_id_to_segment[oid])
+        # Additive across product-level, legacy segment-level, and
+        # outcome-level controls (PR E.2) - deduplicated, order preserved.
+        cols = list(dict.fromkeys(
+            list((spec.product_control_cols or {}).get(outcome_id_to_product[oid], []))
+            + list((spec.segment_control_cols or {}).get(outcome_id_to_segment[oid], []))
+            + list((spec.outcome_control_cols or {}).get(oid, []))
+        ))
         if not cols:
             continue
         present = [c for c in cols if c in data.columns]

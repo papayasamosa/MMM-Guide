@@ -13,10 +13,12 @@ from ancestry_mmm.utils import (
     init_session_state, get_state, set_state,
     dataframe_column_config, readable_label, CONSTRAINT_KIND_LABELS, FIELD_HELP,
 )
-from ancestry_mmm.components import apply_theme, render_sidebar, render_page_header, render_next_step, render_empty_state, render_glossary
+from ancestry_mmm.components import apply_theme, render_sidebar, render_page_header, render_next_step, render_empty_state, render_glossary, render_drift_status
 from ancestry_mmm.core.approval import ApprovalMismatchError, ModelApproval
 from ancestry_mmm.core.fingerprint import fingerprint_dataframe, fingerprint_model_spec, fingerprint_posterior
-from ancestry_mmm.core.outcomes import fh_signup_outcome_ids, dna_kit_sale_outcome_ids, outcome_catalogue_fingerprint_payload
+from ancestry_mmm.core.outcomes import (
+    fh_signup_outcome_ids, dna_kit_sale_outcome_ids, outcome_catalogue_fingerprint_payload, resolve_outcome_definitions,
+)
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.optimization import (
     SpendConstraint, evaluate_scenario, optimize_scenario, scenario_to_dict, compare_scenarios, WEEKS_PER_MONTH,
@@ -124,6 +126,18 @@ identity_kwargs = dict(model_type=model_type, approval=approval, **current_ident
 
 spec = ModelSpec.from_dict(spec_dict)
 ltv = spec.segment_ltv
+
+# PR E.2 requirement #10: block planning outright when the live outcome
+# catalogue has drifted from what `meta` was actually fit on in a
+# calculation-relevant way - a stale in-memory trace must not be plannable
+# against once its catalogue has genuinely changed, even though the trace
+# object itself is unaffected. Informational-only drift (new/excluded-from-
+# next-fit) does not block - see core.outcomes.has_blocking_drift.
+if render_drift_status(
+    resolve_outcome_definitions(get_state("outcome_definitions"), spec.segment_outcomes, spec.segment_ltv),
+    meta, blocking=True,
+):
+    st.stop()
 
 render_glossary(["Scenario", "Constraint", "Response curve", "Incremental outcome"])
 
@@ -310,11 +324,16 @@ with tab_manual:
     total_label, total_value = _objective_totals[objective]
     c1.metric(total_label, f"{total_value:,.0f}")
     cpa_summary = _scenario_cpa_summary(predicted)
-    c2.metric("Avg CPA (Family History GSAs)", f"{cpa_summary['fh_avg_cpa']:,.2f}" if cpa_summary["fh_avg_cpa"] is not None else "n/a")
+    st.caption(
+        "**Spend scope: whole-plan** - total spend across every channel in this plan, divided by "
+        "this plan's total for one KPI (`whole_plan_cost_per_fh_gsa` etc.) - not a channel-specific "
+        "number (see Results & Curve Bank for channel-incremental CPA instead)."
+    )
+    c2.metric("Whole-plan avg CPA (FH GSAs)", f"{cpa_summary['fh_avg_cpa']:,.2f}" if cpa_summary["fh_avg_cpa"] is not None else "n/a")
     if _has_fh_signup_outcomes:
-        c3.metric("Avg CPA (Family History sign-ups)", f"{cpa_summary.get('fh_signup_avg_cpa'):,.2f}" if cpa_summary.get("fh_signup_avg_cpa") is not None else "n/a")
+        c3.metric("Whole-plan avg CPA (FH sign-ups)", f"{cpa_summary.get('fh_signup_avg_cpa'):,.2f}" if cpa_summary.get("fh_signup_avg_cpa") is not None else "n/a")
     if _has_dna_kit_segments:
-        c4.metric("Avg CPA (DNA kits)", f"{cpa_summary['dna_avg_cpa']:,.2f}" if cpa_summary["dna_avg_cpa"] is not None else "n/a")
+        c4.metric("Whole-plan avg CPA (DNA kits)", f"{cpa_summary['dna_avg_cpa']:,.2f}" if cpa_summary["dna_avg_cpa"] is not None else "n/a")
 
     scenario_name = st.text_input("Scenario name *", value=f"manual-{market}-{months[0]}", key="manual_name")
     if st.button("Save this scenario"):
@@ -442,7 +461,7 @@ with tab_constrained:
         current_cpa = _scenario_cpa_summary(result["current_predicted"])
         optimised_cpa = _scenario_cpa_summary(result["predicted"])
         c3.metric(
-            "Avg CPA (FH GSAs)",
+            "Whole-plan avg CPA (FH GSAs)",
             f"{optimised_cpa['fh_avg_cpa']:,.2f}" if optimised_cpa["fh_avg_cpa"] is not None else "n/a",
             delta=f"{optimised_cpa['fh_avg_cpa'] - current_cpa['fh_avg_cpa']:,.2f}" if (optimised_cpa["fh_avg_cpa"] is not None and current_cpa["fh_avg_cpa"] is not None) else None,
             delta_color="inverse",  # lower CPA is an improvement
@@ -450,7 +469,7 @@ with tab_constrained:
         )
         if _has_dna_kit_segments:
             c4.metric(
-                "Avg CPA (DNA kits)",
+                "Whole-plan avg CPA (DNA kits)",
                 f"{optimised_cpa['dna_avg_cpa']:,.2f}" if optimised_cpa["dna_avg_cpa"] is not None else "n/a",
                 delta=f"{optimised_cpa['dna_avg_cpa'] - current_cpa['dna_avg_cpa']:,.2f}" if (optimised_cpa["dna_avg_cpa"] is not None and current_cpa["dna_avg_cpa"] is not None) else None,
                 delta_color="inverse",
@@ -502,7 +521,7 @@ with tab_unconstrained:
         current_cpa = _scenario_cpa_summary(result["current_predicted"])
         optimised_cpa = _scenario_cpa_summary(result["predicted"])
         c3.metric(
-            "Avg CPA (FH GSAs)",
+            "Whole-plan avg CPA (FH GSAs)",
             f"{optimised_cpa['fh_avg_cpa']:,.2f}" if optimised_cpa["fh_avg_cpa"] is not None else "n/a",
             delta=f"{optimised_cpa['fh_avg_cpa'] - current_cpa['fh_avg_cpa']:,.2f}" if (optimised_cpa["fh_avg_cpa"] is not None and current_cpa["fh_avg_cpa"] is not None) else None,
             delta_color="inverse",
@@ -510,7 +529,7 @@ with tab_unconstrained:
         )
         if _has_dna_kit_segments:
             c4.metric(
-                "Avg CPA (DNA kits)",
+                "Whole-plan avg CPA (DNA kits)",
                 f"{optimised_cpa['dna_avg_cpa']:,.2f}" if optimised_cpa["dna_avg_cpa"] is not None else "n/a",
                 delta=f"{optimised_cpa['dna_avg_cpa'] - current_cpa['dna_avg_cpa']:,.2f}" if (optimised_cpa["dna_avg_cpa"] is not None and current_cpa["dna_avg_cpa"] is not None) else None,
                 delta_color="inverse",

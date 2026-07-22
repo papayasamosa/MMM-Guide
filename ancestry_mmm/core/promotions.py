@@ -23,15 +23,43 @@ Not FH-specific - nothing here assumes a DNA segment - but this module
 exists because DNA promotions were the first place a structured event
 calendar (vs. a plain flag column) was actually required (docs/outcomes.md,
 docs/dna_fh_causal_structure.md).
+
+**Replayable pipeline steps (PR E.2 requirement #11):** the confirmed
+pitfall this closes is that promotion events used to modify
+`transformed_data` directly from the Structure page - a one-way mutation,
+not reproducible from anything durable. `event_id`/`product`/
+`affected_outcome_ids`/`market`/`transformation_version` (below) make each
+event a stable, versioned unit; `promotion_events_to_transform_steps`/
+`transform_steps_to_promotion_events` convert to/from
+`data.pipeline.TransformStep(op="promotion_event", ...)` entries in the
+same `pipeline_steps` list the rest of the transform pipeline uses, so
+re-importing a project (or refreshing raw data) can *replay* the event
+list to reproduce the derived promo columns, rather than trusting whatever
+values happen to already be sitting in an exported parquet.
 """
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
-from typing import Dict, List, Optional, Tuple
+import uuid
+from dataclasses import asdict, dataclass, field
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+
+if TYPE_CHECKING:
+    from ..data.pipeline import TransformStep
+
+# Schema version for the promotion-event pipeline-step encoding - bumped
+# whenever the fields captured or their replay semantics change, so a step
+# written by an older version of this codebase can be told apart from the
+# current one (docs/decision_log.md's "explicit migration, not silent
+# reinterpretation" convention).
+PROMOTION_EVENT_TRANSFORMATION_VERSION = 1
+
+
+def _new_event_id() -> str:
+    return uuid.uuid4().hex[:12]
 
 
 @dataclass
@@ -39,7 +67,18 @@ class PromotionEvent:
     """One promotional event. `segment` is required (not inferred) - which
     segment's promo_coef this event's derived series feeds. `intensity` is
     the weekly series value while the event is active (1.0 for a simple
-    on/off flag; a fractional value for a partial-strength promotion)."""
+    on/off flag; a fractional value for a partial-strength promotion).
+
+    `event_id` is this event's stable identity (auto-generated if left
+    blank) - what a re-save/re-import matches on to update rather than
+    duplicate an event, distinct from `event_name` (a free-text display
+    label that can change without changing identity). `product`/
+    `affected_outcome_ids`/`market` are optional, more precise targeting
+    than the legacy `segment` string alone - `affected_outcome_ids`, once
+    set, is what `promotion_weekly_series` prefers when deriving which
+    outcome_ids' promo columns this event should feed (see that function).
+    `transformation_version` records which version of this encoding/replay
+    semantics produced this event, for forward compatibility."""
 
     event_name: str
     start_date: str  # ISO 'YYYY-MM-DD'
@@ -48,6 +87,11 @@ class PromotionEvent:
     discount_depth: Optional[float] = None  # e.g. 0.20 for 20% off
     sale_price: Optional[float] = None
     intensity: float = 1.0
+    event_id: str = field(default_factory=_new_event_id)
+    product: Optional[str] = None
+    affected_outcome_ids: List[str] = field(default_factory=list)
+    market: Optional[str] = None
+    transformation_version: int = PROMOTION_EVENT_TRANSFORMATION_VERSION
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -132,5 +176,49 @@ def apply_promotion_events_to_frame(
 
 def promotion_events_to_dataframe(events: List[PromotionEvent]) -> pd.DataFrame:
     if not events:
-        return pd.DataFrame(columns=["event_name", "start_date", "end_date", "segment", "discount_depth", "sale_price", "intensity"])
+        return pd.DataFrame(columns=list(PromotionEvent.__dataclass_fields__))
     return pd.DataFrame([e.to_dict() for e in events])
+
+
+# ---------------------------------------------------------------------------
+# Replayable pipeline steps (PR E.2 requirement #11)
+# ---------------------------------------------------------------------------
+
+PROMOTION_EVENT_OP = "promotion_event"
+
+
+def promotion_events_to_transform_steps(
+    events: List[PromotionEvent], date_col: str, column_prefix: str = "_promo_event_",
+) -> List["TransformStep"]:
+    """
+    Encode each event as one `TransformStep(op="promotion_event", ...)`, in
+    the same `pipeline_steps` list the rest of the transform pipeline uses.
+    One step per event (not one step per segment) - `event_id` is each
+    step's stable identity, so re-saving the same event updates its step in
+    place (see the Structure page's save handler) rather than duplicating
+    it. `apply_step` gives every event op a matching derived column name
+    (`{column_prefix}{segment}`) and adds to it, so events replay with the
+    same compounding-overlap semantics as `promotion_weekly_series`.
+    """
+    from ..data.pipeline import TransformStep
+
+    steps = []
+    for e in events:
+        steps.append(
+            TransformStep(
+                op=PROMOTION_EVENT_OP,
+                params={"event": e.to_dict(), "date_col": date_col, "column_prefix": column_prefix},
+                description=f"Promotion event: {e.event_name or '(unnamed)'} ({e.segment})",
+            )
+        )
+    return steps
+
+
+def transform_steps_to_promotion_events(steps: List["TransformStep"]) -> List[PromotionEvent]:
+    """Recover the `PromotionEvent` list encoded by `promotion_events_to_transform_steps`,
+    ignoring any non-`promotion_event` steps in the same pipeline."""
+    return [
+        PromotionEvent.from_dict(step.params["event"])
+        for step in steps
+        if step.op == PROMOTION_EVENT_OP
+    ]

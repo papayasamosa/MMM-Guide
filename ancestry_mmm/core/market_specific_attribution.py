@@ -177,7 +177,9 @@ def outcome_channel_market_summary(
     `market` column since Model C's parameters (and hence contributions)
     genuinely differ by market. `ltv` is keyed by outcome_id. Same
     never-default-a-missing-weight-to-1.0 rule as
-    `core.attribution.outcome_channel_summary` (PR E.1) - see its docstring.
+    `core.attribution.outcome_channel_summary` (PR E.2) - see its docstring:
+    an unpriced outcome_id gets `NaN`, never weight 1.0, whether `ltv` is
+    entirely omitted or only partially populated.
     """
     contributions = contributions or compute_shapley_contributions_market_specific(frame, meta, params, n_permutations)
     ltv = ltv or {}
@@ -191,7 +193,7 @@ def outcome_channel_market_summary(
             market_spend = float(frame["X_media"][row_mask, ci].sum())
             for si, oid in enumerate(meta.outcome_ids):
                 vol = float(contributions["channel_contributions"][ch][row_mask, si].sum())
-                weight = ltv[oid] if oid in ltv else (1.0 if not ltv else np.nan)
+                weight = ltv[oid] if oid in ltv else np.nan
                 value = vol * weight
                 rows.append({
                     "market": market,

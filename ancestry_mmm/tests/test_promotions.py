@@ -5,12 +5,16 @@ import pandas as pd
 import pytest
 
 from ancestry_mmm.core.promotions import (
+    PROMOTION_EVENT_OP,
     PromotionEvent,
     apply_promotion_events_to_frame,
     promotion_events_to_dataframe,
+    promotion_events_to_transform_steps,
     promotion_weekly_series,
+    transform_steps_to_promotion_events,
     validate_promotion_events,
 )
+from ancestry_mmm.data.pipeline import TransformStep, apply_pipeline
 
 
 def _event(**overrides) -> PromotionEvent:
@@ -145,3 +149,123 @@ class TestPromotionEventsToDataframe:
         df = promotion_events_to_dataframe([_event(), _event(event_name="New Year Sale")])
         assert len(df) == 2
         assert set(df["event_name"]) == {"Christmas Sale", "New Year Sale"}
+
+
+class TestPromotionEventIdentityAndNewFields:
+    def test_event_id_is_auto_generated_and_unique(self):
+        a, b = _event(), _event()
+        assert a.event_id and b.event_id
+        assert a.event_id != b.event_id
+
+    def test_explicit_event_id_is_preserved(self):
+        event = _event(event_id="fixed-id")
+        assert event.event_id == "fixed-id"
+
+    def test_new_fields_default_to_unset(self):
+        event = _event()
+        assert event.product is None
+        assert event.affected_outcome_ids == []
+        assert event.market is None
+        assert event.transformation_version == 1
+
+
+class TestPromotionEventsToTransformSteps:
+    """PR E.2 #11 - promotion events must become replayable pipeline steps."""
+
+    def test_one_step_per_event(self):
+        events = [_event(), _event(event_name="New Year Sale")]
+        steps = promotion_events_to_transform_steps(events, date_col="date")
+        assert len(steps) == 2
+        assert all(isinstance(s, TransformStep) for s in steps)
+        assert all(s.op == PROMOTION_EVENT_OP for s in steps)
+
+    def test_step_params_carry_the_full_event_and_date_col(self):
+        event = _event(product="Family History", market="UK")
+        [step] = promotion_events_to_transform_steps([event], date_col="date")
+        assert step.params["event"] == event.to_dict()
+        assert step.params["date_col"] == "date"
+
+    def test_no_events_gives_no_steps(self):
+        assert promotion_events_to_transform_steps([], date_col="date") == []
+
+
+class TestTransformStepsToPromotionEvents:
+    def test_round_trips_the_event_list(self):
+        events = [_event(), _event(event_name="New Year Sale", segment="Existing FH Customer")]
+        steps = promotion_events_to_transform_steps(events, date_col="date")
+        recovered = transform_steps_to_promotion_events(steps)
+        assert recovered == events
+
+    def test_ignores_non_promotion_event_steps(self):
+        events = [_event()]
+        steps = promotion_events_to_transform_steps(events, date_col="date")
+        other_step = TransformStep(op="event_flag", params={"date_col": "date", "new_column": "x", "start": "2024-01-01", "end": "2024-01-02"})
+        recovered = transform_steps_to_promotion_events([other_step] + steps)
+        assert recovered == events
+
+    def test_empty_steps_gives_empty_events(self):
+        assert transform_steps_to_promotion_events([]) == []
+
+
+class TestResaveReplacesStalePromotionEventSteps:
+    """Mirrors the Structure page's Save handler: every save fully replaces
+    the prior promotion_event steps with the current event list (filter out
+    old promotion_event steps, append fresh ones), while leaving any other
+    step type (e.g. from the Transform Pipeline page) untouched. Makes
+    re-saving the same or an edited event list idempotent rather than
+    accumulating duplicate/stale steps forever."""
+
+    def test_other_step_types_survive_a_resave(self):
+        other_step = TransformStep(op="calculated_column", params={"new_column": "x", "expression": "1"})
+        old_promo_steps = promotion_events_to_transform_steps([_event()], date_col="date")
+        existing = [other_step] + old_promo_steps
+
+        non_promo = [s for s in existing if s.op != PROMOTION_EVENT_OP]
+        resaved = non_promo + promotion_events_to_transform_steps([_event(event_name="Updated")], date_col="date")
+
+        assert other_step in resaved
+        assert len([s for s in resaved if s.op == PROMOTION_EVENT_OP]) == 1
+
+    def test_removing_all_events_and_resaving_clears_promotion_event_steps(self):
+        existing = promotion_events_to_transform_steps([_event()], date_col="date")
+        non_promo = [s for s in existing if s.op != PROMOTION_EVENT_OP]
+        resaved = non_promo + promotion_events_to_transform_steps([], date_col="date")
+        assert resaved == []
+
+
+class TestPromotionEventPipelineReplay:
+    """Required test case: replaying promotion-event pipeline steps against
+    raw data reproduces the same derived columns as applying the event list
+    directly - the whole point of encoding events as TransformSteps."""
+
+    def test_replay_reproduces_apply_promotion_events_to_frame(self):
+        df = pd.DataFrame({"date": pd.date_range("2024-11-25", periods=8, freq="W-MON")})
+        events = [
+            _event(segment="New Customer", intensity=1.0, start_date="2024-12-01", end_date="2025-01-05"),
+            _event(event_name="Boxing Day", segment="New Customer", intensity=0.5, start_date="2024-12-26", end_date="2025-01-05"),
+            _event(event_name="FH Sale", segment="Existing FH Customer", intensity=0.3, start_date="2024-12-01", end_date="2024-12-31"),
+        ]
+
+        direct, column_by_segment = apply_promotion_events_to_frame(df, "date", events)
+
+        steps = promotion_events_to_transform_steps(events, date_col="date")
+        replayed = apply_pipeline(df, steps)
+
+        for seg, col in column_by_segment.items():
+            assert (replayed[col].to_numpy() == direct[col].to_numpy()).all(), seg
+
+    def test_replay_is_reproducible_on_refreshed_raw_data(self):
+        # The same recorded steps applied to a differently-shaped (but same
+        # date range) refreshed raw frame must reproduce the same promo
+        # series - the whole point of a *replayable* step, vs. a one-way
+        # mutation baked into a specific transformed_data snapshot.
+        df = pd.DataFrame({"date": pd.date_range("2024-11-25", periods=6, freq="W-MON"), "spend": [1.0] * 6})
+        events = [_event(segment="New Customer", start_date="2024-12-01", end_date="2024-12-31")]
+        steps = promotion_events_to_transform_steps(events, date_col="date")
+
+        result_1 = apply_pipeline(df, steps)
+        df_refreshed = df.copy()
+        df_refreshed["spend"] = df_refreshed["spend"] * 100
+        result_2 = apply_pipeline(df_refreshed, steps)
+
+        assert result_1["_promo_event_New Customer"].tolist() == result_2["_promo_event_New Customer"].tolist()
