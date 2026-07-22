@@ -26,6 +26,7 @@ from ancestry_mmm.core.funnel import FunnelLink, validate_funnel_links
 from ancestry_mmm.core.pathways import (
     PATHWAY_ROLES, MediaOutcomePathway, validate_media_outcome_pathways, pathways_drift_dataframe,
 )
+from ancestry_mmm.core.net_billthrough import NetBillthroughOfferRule, validate_offer_rules
 from ancestry_mmm.data import validate_modeling_frame, detect_column_types, pipeline_to_json, pipeline_from_json
 import pandas as pd
 
@@ -284,16 +285,18 @@ else:
 funnel_links = [FunnelLink.from_dict(fl) for fl in st.session_state["funnel_links"]]
 
 st.markdown("---")
-st.markdown("### Media-outcome pathway catalogue (optional, forward-looking)")
+st.markdown("### Media-outcome pathway catalogue")
 st.caption(
     "Declares which `(channel, target outcome)` relationships this project believes exist - a "
-    "primary direct effect, a trusted cross-product effect (e.g. DNA media's halo onto FH), or a "
-    "speculative/exploratory one not yet trusted for planning. Schema, validation, persistence and "
-    "drift detection only (PR F) - nothing here changes what gets fitted; `dna_channels` above "
-    "remains the actual structural input the model builders read. Can already target planned future "
-    "outcome_ids (e.g. a net bill-through count) the moment a matching row exists in the outcome "
-    "catalogue above, even before any dedicated transformation computes it - see "
-    "docs/media_outcome_pathways.md."
+    "primary direct effect, a trusted cross-product effect (e.g. DNA media's halo onto FH), an "
+    "exploratory one strongly shrunk toward zero and not trusted for planning by default, or an "
+    "excluded one with deterministically zero contribution. Operational since PR G1 "
+    "(core.pathways.resolve_pathway_masks) - both PyMC model builders read this catalogue directly "
+    "to decide which coefficients get estimated and how; a cell left uncovered here falls back to "
+    "the legacy default (`dna_channels` above drives that default exactly as before). Can already "
+    "target planned future outcome_ids (e.g. a net bill-through count) the moment a matching row "
+    "exists in the outcome catalogue above, even before any dedicated transformation computes it - "
+    "see docs/media_outcome_pathways.md."
 )
 if "media_outcome_pathways" not in st.session_state:
     st.session_state["media_outcome_pathways"] = get_state("media_outcome_pathways") or []
@@ -333,12 +336,41 @@ if get_state("model_meta") is not None and st.session_state["media_outcome_pathw
     if not _pathway_drift_df.empty:
         _changed_pathways = _pathway_drift_df[_pathway_drift_df["drift_status"] != "Fitted and current"]
         if not _changed_pathways.empty:
-            st.info(
-                f"{len(_changed_pathways)} pathway(s) differ from this fit's captured pathway metadata "
-                "(informational only - the pathway catalogue does not yet drive fitting)."
+            st.warning(
+                f"{len(_changed_pathways)} pathway(s) differ from this fit's captured pathway metadata - "
+                "since PR G1 the pathway catalogue drives which coefficients get estimated, so this fit's "
+                "results no longer reflect the catalogue shown above. Re-run Model Training to pick up "
+                "the change."
             )
             with st.expander("Pathway drift detail"):
                 st.dataframe(_pathway_drift_df, width="stretch")
+
+st.markdown("---")
+st.markdown("### Net bill-through offer rules")
+st.caption(
+    "Deterministic, analyst-configured maturity windows for `fh_net_billthrough_count` "
+    "(core.net_billthrough) - each `(market, offer_id)` pair's `maturity_days` is how long after a "
+    "cohort's signup date its eventual net bill-through outcome (did the customer stick around past "
+    "their trial/refund window) is considered determined. A cohort younger than that is excluded "
+    "from the reported series entirely, never zero-filled or guessed - see docs/net_billthrough.md."
+)
+if "net_billthrough_offer_rules" not in st.session_state:
+    st.session_state["net_billthrough_offer_rules"] = get_state("net_billthrough_offer_rules") or []
+_offer_rule_default_df = pd.DataFrame(st.session_state["net_billthrough_offer_rules"]) if st.session_state["net_billthrough_offer_rules"] else pd.DataFrame(
+    columns=["offer_id", "market", "maturity_days", "description"]
+)
+offer_rules_df = st.data_editor(
+    _offer_rule_default_df,
+    num_rows="dynamic",
+    column_config={
+        "offer_id": st.column_config.TextColumn("offer_id", required=True),
+        "market": st.column_config.SelectboxColumn("market", options=markets, required=True),
+        "maturity_days": st.column_config.NumberColumn("maturity_days", min_value=0, required=True),
+        "description": st.column_config.TextColumn("description"),
+    },
+    key="net_billthrough_offer_rules_editor",
+    width="stretch",
+)
 
 # `segment_outcomes`/`segment_ltv` (ModelSpec migration fields) and per-segment
 # promo/control mappings are now derived from the catalogue's own segments,
@@ -562,6 +594,13 @@ if st.button("Save structure and validate", type="primary"):
         media_outcome_pathways, channels=channels, outcome_ids=[o.outcome_id for o in outcome_definitions],
     )
 
+    net_billthrough_offer_rules = []
+    for row in offer_rules_df.to_dict("records"):
+        if not (row.get("offer_id") and row.get("market")):
+            continue  # a blank row added by the editor but never filled in
+        net_billthrough_offer_rules.append(NetBillthroughOfferRule.from_dict(row))
+    errors += validate_offer_rules(net_billthrough_offer_rules)
+
     if errors:
         for e in errors:
             st.error(e)
@@ -574,6 +613,7 @@ if st.button("Save structure and validate", type="primary"):
         set_state("pipeline_steps", pipeline_to_json(updated_pipeline_steps))
         set_state("funnel_links", [fl.to_dict() for fl in funnel_links])
         set_state("media_outcome_pathways", [p.to_dict() for p in media_outcome_pathways])
+        set_state("net_billthrough_offer_rules", [r.to_dict() for r in net_billthrough_offer_rules])
         clear_model_state()
         issues = validate_modeling_frame(
             df if market_col in df.columns else df.assign(**{market_col: "default"}),

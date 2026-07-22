@@ -22,7 +22,7 @@ budget optimisers use; it is documented here rather than hidden.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Protocol
 
 import numpy as np
 import pandas as pd
@@ -40,7 +40,14 @@ class FHPosteriorParams:
     hill_K: Dict[str, float]
     hill_S: Dict[str, float]
     beta: Dict[str, Dict[str, float]]          # beta[outcome_id][channel]
-    halo_strength: Dict[str, float]            # halo_strength[outcome_id]
+    pathway_strength: Dict[str, Dict[str, float]]  # pathway_strength[outcome_id][channel] - PR G1,
+    # generalises the old per-outcome-only `halo_strength` to per-(outcome,
+    # channel): the fitted active_cross_product/exploratory_cross_product
+    # multiplier for that cell, 0.0 for a primary_direct/excluded cell (see
+    # core.pathways.resolve_pathway_masks). Whichever of the two roles a
+    # cell actually has, its strength value lives here uniformly - callers
+    # don't need to know which sub-role produced it, only which cells
+    # (meta.pathway_masks.active_cells()/.exploratory_cells()) to apply it to.
     promo_coef: Dict[str, float]                # promo_coef[outcome_id]
     market_offset: Dict[str, Dict[str, float]]  # market_offset[market][outcome_id]
     intercept: Dict[str, float]
@@ -49,6 +56,48 @@ class FHPosteriorParams:
     alpha: Dict[str, float]
     control_coef: Dict[str, float]
     outcome_control_coef: Dict[str, Dict[str, float]]  # [outcome_id][control_name]
+
+
+def extract_pathway_strength(
+    trace: az.InferenceData, meta: FHModelMeta, at: Optional[tuple[int, int]] = None,
+) -> Dict[str, Dict[str, float]]:
+    """`pathway_strength[outcome_id][channel]` (PR G1) - shared by both
+    `extract_posterior_params` (Model A) and `core.market_specific_predict.
+    extract_market_specific_posterior_params` (Model C), since
+    `active_cross_product_strength`/`exploratory_cross_product_strength` are
+    fit with `dims=("outcome", "channel")` in *both* PyMC builders (no market
+    dimension - see hierarchical_model.py/market_specific_model.py's matching
+    comment). Missing from the trace (no active/exploratory cells at fit
+    time) reads as all-zero rather than raising, same as any other absent-
+    deterministic lookup in this module.
+
+    A cell is at most one of active_cross_product/exploratory_cross_product
+    (`core.pathways.resolve_pathway_masks`), so summing the two named
+    deterministics is safe - exactly one is ever nonzero for a given cell,
+    and both are zero for primary_direct/excluded cells.
+    """
+    post = trace.posterior
+
+    def _reduce(da):
+        if at is not None:
+            return da.isel(chain=at[0], draw=at[1])
+        return da.mean(dim=["chain", "draw"])
+
+    def _pathway_strength_var(var_name: str) -> Dict[str, Dict[str, float]]:
+        if var_name not in post:
+            return {s: {c: 0.0 for c in meta.channels} for s in meta.outcome_ids}
+        reduced = _reduce(post[var_name])
+        return {
+            s: {c: float(reduced.sel(outcome=s, channel=c).values) for c in meta.channels}
+            for s in meta.outcome_ids
+        }
+
+    active_strength = _pathway_strength_var("active_cross_product_strength")
+    exploratory_strength = _pathway_strength_var("exploratory_cross_product_strength")
+    return {
+        s: {c: active_strength[s][c] + exploratory_strength[s][c] for c in meta.channels}
+        for s in meta.outcome_ids
+    }
 
 
 def extract_posterior_params(
@@ -83,9 +132,8 @@ def extract_posterior_params(
     trend_coef = by_coord("trend_coef", "outcome", meta.outcome_ids)
     promo_coef = by_coord("promo_coef", "outcome", meta.outcome_ids)
     alpha = by_coord("alpha", "outcome", meta.outcome_ids)
-    halo_strength = by_coord("halo_strength", "outcome", meta.outcome_ids) if meta.dna_channel_idx else {
-        s: 0.0 for s in meta.outcome_ids
-    }
+
+    pathway_strength = extract_pathway_strength(trace, meta, at=at)
 
     beta_reduced = _reduce(post["beta"])
     beta = {
@@ -119,7 +167,7 @@ def extract_posterior_params(
 
     return FHPosteriorParams(
         decay_rate=decay_rate, hill_K=hill_K, hill_S=hill_S, beta=beta,
-        halo_strength=halo_strength, promo_coef=promo_coef, market_offset=market_offset,
+        pathway_strength=pathway_strength, promo_coef=promo_coef, market_offset=market_offset,
         intercept=intercept, trend_coef=trend_coef, gamma_fourier=gamma_fourier, alpha=alpha,
         control_coef=control_coef, outcome_control_coef=outcome_control_coef,
     )
@@ -156,6 +204,49 @@ def lag_frame(X: np.ndarray, market_bounds: List[tuple], lag_weeks: int) -> np.n
     return out
 
 
+class _HasPathwayStrength(Protocol):
+    """Structural type both `FHPosteriorParams` (Model A) and
+    `core.market_specific_predict.FHMarketSpecificPosteriorParams` (Model C)
+    satisfy - only `pathway_strength` is needed by the two helpers below, so
+    they work for either model's posterior params without predict.py having
+    to import market_specific_predict (which itself imports FROM predict.py -
+    a real import cycle, not just a style preference)."""
+    pathway_strength: Dict[str, Dict[str, float]]
+
+
+def _cross_product_strength_matrix(meta: FHModelMeta, params: _HasPathwayStrength) -> np.ndarray:
+    """`(n_outcome, n_channel)` array: `params.pathway_strength[outcome_id][channel]`
+    at every `active_cross_product`/`exploratory_cross_product` cell
+    (`core.pathways.resolve_pathway_masks`), `0.0` everywhere else -
+    structurally masked (not just trusting `params` to already be zero
+    elsewhere), same discipline the old `halo_eligible`-masked lookup used.
+    Shared by `predict_mu` (full replay) and the steady-state functions
+    below (via `_pathway_weight`, which adds the `primary_direct` `1.0`)."""
+    outcome_ids, channels = meta.outcome_ids, meta.channels
+    mat = np.zeros((len(outcome_ids), len(channels)), dtype=float)
+    for oi, ci in meta.pathway_masks.active_cells(outcome_ids, channels) + meta.pathway_masks.exploratory_cells(outcome_ids, channels):
+        mat[oi, ci] = params.pathway_strength.get(outcome_ids[oi], {}).get(channels[ci], 0.0)
+    return mat
+
+
+def _pathway_weight(meta: FHModelMeta, params: _HasPathwayStrength, outcome_id: str, channel: str) -> float:
+    """Total multiplier for one `(outcome_id, channel)` cell's channel
+    contribution at STEADY STATE - constant spend converges lagged and
+    unlagged media to the identical value, so the `primary_direct` and
+    cross-product weights simply add (see `predict_mu` for the general,
+    non-steady-state replay, which needs the lagged/unlagged media kept
+    separate). `1.0` if `channel` is `primary_direct` for `outcome_id`,
+    plus `params.pathway_strength[...]` if it's also (or instead)
+    `active_cross_product`/`exploratory_cross_product`, `0.0` for an
+    excluded cell (in neither)."""
+    weight = 1.0 if channel in meta.pathway_masks.primary_channels_by_outcome.get(outcome_id, []) else 0.0
+    is_active = channel in meta.pathway_masks.active_channels_by_outcome.get(outcome_id, [])
+    is_exploratory = channel in meta.pathway_masks.exploratory_channels_by_outcome.get(outcome_id, [])
+    if is_active or is_exploratory:
+        weight += params.pathway_strength.get(outcome_id, {}).get(channel, 0.0)
+    return weight
+
+
 def predict_mu(
     frame: Dict,
     meta: FHModelMeta,
@@ -175,22 +266,23 @@ def predict_mu(
     sat_media = adstock_saturate_frame(frame["X_media"], frame["market_bounds"], meta, params)
 
     beta_matrix = np.array([[params.beta[s][c] for c in meta.channels] for s in outcome_ids])  # (O, C)
-    if meta.dna_channel_idx:
-        dna_direct_media = sat_media[:, meta.dna_channel_idx]
-        dna_halo_media = lag_frame(dna_direct_media, frame["market_bounds"], meta.dna_lag_weeks)
-        eta_nondna = sat_media[:, meta.non_dna_idx] @ beta_matrix[:, meta.non_dna_idx].T if meta.non_dna_idx else np.zeros((n_obs, n_out))
-        has_direct = np.array([1.0 if s in meta.direct_dna_outcome_ids else 0.0 for s in outcome_ids])
-        # Masked by halo_eligible_outcome_ids (not just trusting
-        # params.halo_strength to already be zero) so a kit-only outcome_id
-        # structurally never picks up a halo contribution here, regardless
-        # of what's in params.
-        halo_eligible = set(meta.halo_eligible_outcome_ids)
-        halo = np.array([params.halo_strength.get(s, 0.0) if s in halo_eligible else 0.0 for s in outcome_ids])
-        eta_dna_direct = (dna_direct_media @ beta_matrix[:, meta.dna_channel_idx].T) * has_direct[None, :]
-        eta_dna_halo = (dna_halo_media @ beta_matrix[:, meta.dna_channel_idx].T) * halo[None, :]
-        eta_channels = eta_nondna + eta_dna_direct + eta_dna_halo
+
+    # Pathway-masked replay (PR G1) - mirrors core.hierarchical_model.
+    # build_fh_hierarchical_model's eta_primary/eta_active/eta_exploratory
+    # construction exactly (same masks, same media, same beta multiplication)
+    # so this NumPy replay can never silently diverge from what was fit.
+    primary_mask = meta.pathway_masks.primary_matrix(outcome_ids, meta.channels)  # (O, C)
+    eta_primary = sat_media @ (beta_matrix * primary_mask).T
+
+    cross_cells = meta.pathway_masks.active_cells(outcome_ids, meta.channels) + meta.pathway_masks.exploratory_cells(outcome_ids, meta.channels)
+    if cross_cells:
+        cross_product_lag_media = lag_frame(sat_media, frame["market_bounds"], meta.pathway_masks.cross_product_lag_weeks)
+        strength_matrix = _cross_product_strength_matrix(meta, params)
+        eta_cross = cross_product_lag_media @ (beta_matrix * strength_matrix).T
     else:
-        eta_channels = sat_media @ beta_matrix.T
+        eta_cross = np.zeros((n_obs, n_out))
+
+    eta_channels = eta_primary + eta_cross
 
     promo_coef = np.array([params.promo_coef[s] for s in outcome_ids])
     eta_promo = frame["promo"] * promo_coef[None, :]
@@ -260,20 +352,14 @@ def steady_state_outcome_response(
         val += params.promo_coef[s] * reference_context.get("promo", {}).get(s, 0.0)
 
         for c in meta.channels:
-            if c in meta.dna_channels:
-                # At steady state, spend is held constant forever, so
-                # dna_direct_media and dna_halo_media (a lag of that same
-                # constant series) converge to the identical value `sat[c]` -
-                # the two pathways collapse to one multiplier here, the sum
-                # of whichever of has_direct/halo_strength apply to `s`
-                # (both, for `dna_outcome_id`; exactly one, for everyone
-                # else - see core.hierarchical_model.FHModelMeta).
-                weight = params.halo_strength.get(s, 0.0) if s in meta.halo_eligible_outcome_ids else 0.0
-                if s in meta.direct_dna_outcome_ids:
-                    weight += 1.0
-                val += params.beta[s][c] * sat[c] * weight
-            else:
-                val += params.beta[s][c] * sat[c]
+            # At steady state, spend held constant forever converges the
+            # primary (unlagged) and cross-product (lagged) media to the
+            # identical value `sat[c]`, so `_pathway_weight`'s
+            # primary-plus-cross-product weight can be applied to one
+            # `sat[c]` term directly instead of needing two separate media
+            # series - see predict_mu for the general, non-steady-state
+            # replay where they must stay separate.
+            val += params.beta[s][c] * sat[c] * _pathway_weight(meta, params, s, c)
 
         for name, coef in params.control_coef.items():
             val += coef * reference_context.get("controls", {}).get(name, 0.0)
@@ -350,7 +436,6 @@ def generate_channel_curve(
         cap = max_spend if max_spend is not None else max(K * 3, 1.0)
         spend_range = np.linspace(0.0, cap, n_points)
 
-    is_dna = channel in meta.dna_channels
     gsa_ids = set(fh_gsa_outcome_ids(meta))
     signup_ids = set(fh_signup_outcome_ids(meta))
     dna_ids = set(dna_kit_sale_outcome_ids(meta))
@@ -363,15 +448,11 @@ def generate_channel_curve(
         fh_gsa_total = 0.0
         fh_signup_total = 0.0
         for oid in meta.outcome_ids:
-            beta_val = params.beta[oid][channel]
-            if is_dna:
-                # Same steady-state collapse as steady_state_outcome_response:
-                # dna_direct_media and dna_halo_media converge to the same
-                # constant `sat` here, so the two pathways' weights just add.
-                weight = params.halo_strength.get(oid, 0.0) if oid in meta.halo_eligible_outcome_ids else 0.0
-                if oid in meta.direct_dna_outcome_ids:
-                    weight += 1.0
-                beta_val = beta_val * weight
+            # Same steady-state collapse as steady_state_outcome_response:
+            # constant spend converges the primary and cross-product media to
+            # the same `sat` value, so `_pathway_weight`'s combined weight
+            # applies to this single curve point directly.
+            beta_val = params.beta[oid][channel] * _pathway_weight(meta, params, oid, channel)
             value = beta_val * sat
             row[f"{oid}_response"] = value
             overall += value

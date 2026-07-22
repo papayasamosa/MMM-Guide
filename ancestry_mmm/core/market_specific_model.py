@@ -38,6 +38,7 @@ import pytensor.tensor as pt
 
 from .hierarchical_model import FHModelMeta, _default_dna_outcome_id, _market_grouped_lag, _resolve_direct_dna_outcome_ids
 from .outcomes import outcome_eligibility
+from .pathways import MediaOutcomePathway, resolve_pathway_masks
 from .schema import ModelSpec
 from .transformations import pt_geometric_adstock_matrix, pt_hill_function
 
@@ -122,6 +123,18 @@ def build_fh_market_specific_model(
     direct_dna_outcome_ids = _resolve_direct_dna_outcome_ids(outcome_ids, dna_outcome_id, direct_dna_outcome_ids)
     non_dna_idx = [i for i, c in enumerate(channels) if i not in dna_channel_idx]
 
+    # Normalise to real MediaOutcomePathway instances defensively - see
+    # hierarchical_model.build_fh_hierarchical_model's matching comment.
+    pathway_catalogue: List[MediaOutcomePathway] = [
+        p if isinstance(p, MediaOutcomePathway) else MediaOutcomePathway.from_dict(p)
+        for p in (frame.get("media_outcome_pathways") or [])
+    ]
+    pathway_masks = resolve_pathway_masks(
+        outcome_ids, channels, pathway_catalogue,
+        dna_channel_idx=dna_channel_idx, dna_outcome_id=dna_outcome_id,
+        direct_dna_outcome_ids=direct_dna_outcome_ids, dna_lag_weeks=dna_lag_weeks,
+    )
+
     channel_mean_spend = X_media.mean(axis=0)
     channel_mean_spend = np.where(channel_mean_spend > 0, channel_mean_spend, 1.0)
 
@@ -186,21 +199,6 @@ def build_fh_market_specific_model(
             dims=("obs", "channel"),
         )
 
-        # Two genuinely separate DNA-media inputs - identical to Model A
-        # (hierarchical_model.py's matching comment,
-        # docs/dna_fh_causal_structure.md): `dna_direct_media` is the
-        # (market-specific) saturated DNA-channel series itself, no extra
-        # lag; `dna_halo_media` is that series with a further lag applied.
-        if dna_channel_idx:
-            dna_direct_media = sat_media[:, dna_channel_idx]
-            dna_halo_media = pm.Deterministic(
-                "dna_halo_media",
-                _market_grouped_lag(dna_direct_media, market_bounds, dna_lag_weeks),
-            )
-        else:
-            dna_direct_media = None
-            dna_halo_media = None
-
         # -----------------------------------------------------------------
         # Response strength: market- *and* segment-specific, additive on
         # the log scale - docs/market_hierarchy.md section 2.1 /
@@ -241,49 +239,44 @@ def build_fh_market_specific_model(
         beta_by_market_idx = beta[market_idx]  # (obs, outcome, channel) - this row's own market's beta
 
         # -----------------------------------------------------------------
-        # Direct vs. halo pathway coefficients, by outcome_id - identical
-        # structure to Model A (halo_strength itself not market-specific in
-        # this phase; a documented future extension, same as decay/S) - see
-        # hierarchical_model.py's matching comment and
-        # docs/dna_fh_causal_structure.md for the full rationale.
-        # `kit_only_outcome_ids` (DNA-product kit-sale outcomes) get only
-        # the direct term; `dna_outcome_id` (FH DNA-cross-sell) gets both,
-        # with a regularised, shrunk-toward-zero halo term; every other
-        # outcome_id gets only the halo term, unchanged from before this
-        # split.
+        # Pathway-driven channel contributions (PR G1) - identical structure
+        # to Model A (`active_cross_product`/`exploratory_cross_product`
+        # strengths themselves not market-specific in this phase, a
+        # documented future extension, same as decay/S) - see
+        # hierarchical_model.py's matching comment for the full rationale.
         # -----------------------------------------------------------------
-        if dna_channel_idx:
-            kit_only_outcome_ids = [s for s in direct_dna_outcome_ids if s != dna_outcome_id]
-            halo_eligible_outcome_ids = [s for s in outcome_ids if s not in kit_only_outcome_ids]
-            halo_strength_est = pm.HalfNormal(
-                "halo_strength_est",
-                sigma=prior_config.get("dna_halo_sigma", 0.25),
-                shape=len(halo_eligible_outcome_ids),
+        primary_mask = pt.constant(pathway_masks.primary_matrix(outcome_ids, channels))
+        eta_primary = pt.sum(sat_media[:, None, :] * beta_by_market_idx * primary_mask[None, :, :], axis=2)
+
+        active_cells = pathway_masks.active_cells(outcome_ids, channels)
+        exploratory_cells = pathway_masks.exploratory_cells(outcome_ids, channels)
+
+        if active_cells or exploratory_cells:
+            cross_product_lag_media = pm.Deterministic(
+                "cross_product_lag_media",
+                _market_grouped_lag(sat_media, market_bounds, pathway_masks.cross_product_lag_weeks),
+                dims=("obs", "channel"),
             )
-            halo_pieces = []
-            j = 0
-            for s in outcome_ids:
-                if s in kit_only_outcome_ids:
-                    halo_pieces.append(pt.constant(0.0))
-                else:
-                    halo_pieces.append(halo_strength_est[j])
-                    j += 1
-            halo_strength = pm.Deterministic("halo_strength", pt.stack(halo_pieces), dims="outcome")
-
-            has_direct = pt.constant(np.array([1.0 if s in direct_dna_outcome_ids else 0.0 for s in outcome_ids]))
-
-            non_dna_beta = beta_by_market_idx[:, :, non_dna_idx] if non_dna_idx else None
-            dna_beta = beta_by_market_idx[:, :, dna_channel_idx]
-
-            eta_nondna = (
-                pt.sum(sat_media[:, None, non_dna_idx] * non_dna_beta, axis=2)
-                if non_dna_idx else pt.zeros((n_obs, n_outcomes))
-            )
-            eta_dna_direct = pt.sum(dna_direct_media[:, None, :] * dna_beta, axis=2) * has_direct[None, :]
-            eta_dna_halo = pt.sum(dna_halo_media[:, None, :] * dna_beta, axis=2) * halo_strength[None, :]
-            eta_channels = eta_nondna + eta_dna_direct + eta_dna_halo
         else:
-            eta_channels = pt.sum(sat_media[:, None, :] * beta_by_market_idx, axis=2)
+            cross_product_lag_media = None
+
+        def _cross_product_eta(cells: list, var_name: str, sigma: float) -> pt.TensorVariable:
+            strength_est = pm.HalfNormal(f"{var_name}_est", sigma=sigma, shape=len(cells))
+            strength_matrix = pt.zeros((n_outcomes, n_channels))
+            for idx, (oi, ci) in enumerate(cells):
+                strength_matrix = pt.set_subtensor(strength_matrix[oi, ci], strength_est[idx])
+            strength_matrix = pm.Deterministic(var_name, strength_matrix, dims=("outcome", "channel"))
+            return pt.sum(cross_product_lag_media[:, None, :] * beta_by_market_idx * strength_matrix[None, :, :], axis=2)
+
+        eta_active = (
+            _cross_product_eta(active_cells, "active_cross_product_strength", prior_config.get("active_cross_product_sigma", 0.25))
+            if active_cells else pt.zeros((n_obs, n_outcomes))
+        )
+        eta_exploratory = (
+            _cross_product_eta(exploratory_cells, "exploratory_cross_product_strength", prior_config.get("exploratory_cross_product_sigma", 0.08))
+            if exploratory_cells else pt.zeros((n_obs, n_outcomes))
+        )
+        eta_channels = eta_primary + eta_active + eta_exploratory
 
         # -----------------------------------------------------------------
         # Everything below is identical to Model A: promo sensitivity,
@@ -380,6 +373,7 @@ def build_fh_market_specific_model(
         outcome_catalogue_at_fit=outcome_catalogue,
         outcome_control_names=frame.get("outcome_control_names") or {},
         direct_dna_outcome_ids=direct_dna_outcome_ids,
-        pathway_catalogue_at_fit=frame.get("media_outcome_pathways") or [],
+        pathway_catalogue_at_fit=pathway_catalogue,
+        pathway_masks=pathway_masks,
     )
     return model, meta

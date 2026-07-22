@@ -31,11 +31,13 @@ Shapley decomposition is a telescoping sum for every individual
 permutation, `baseline + sum(channel contributions) == mu_total` exactly,
 for every row - this holds regardless of whether `beta`/`hill_K` are shared
 or market-indexed, and is tested directly (`tests/test_market_specific_attribution.py`).
-The DNA halo is handled exactly like Model A: `meta.direct_dna_outcome_ids`
-gets DNA-targeted media's full, undamped response; every other outcome_id
-gets the shrunk halo response (docs/dna_fh_causal_structure.md) - unaffected
-by which market a row belongs to, since halo_strength is not
-market-specific in this model version (docs/decision_log.md).
+Pathway roles (PR G1 - `core.pathways.resolve_pathway_masks`) are handled
+exactly like Model A: a `primary_direct` cell gets the channel's full,
+undamped response; an `active_cross_product`/`exploratory_cross_product`
+cell gets the shrunk-toward-zero cross-product response - unaffected by
+which market a row belongs to, since `active_cross_product_strength`/
+`exploratory_cross_product_strength` are not market-specific in this model
+version (docs/decision_log.md).
 """
 
 from __future__ import annotations
@@ -51,7 +53,7 @@ from .market_specific_predict import (
     FHMarketSpecificPosteriorParams,
     adstock_saturate_frame_market_specific,
 )
-from .predict import lag_frame
+from .predict import _cross_product_strength_matrix, lag_frame
 
 
 def _channel_log_terms_market_specific(
@@ -62,11 +64,12 @@ def _channel_log_terms_market_specific(
     core.attribution._channel_log_terms, using each row's own market's
     `beta`/`hill_K` (via `market_idx`) rather than one shared value.
 
-    Same direct/halo split as core.attribution._channel_log_terms: a DNA
-    channel's term for an outcome_id sums its direct-pathway contribution
-    (`direct_dna_outcome_ids` members, `dna_direct_media`) and halo-pathway
-    contribution (`halo_eligible_outcome_ids` members, `dna_halo_media`) -
-    two genuinely separate media inputs, not one shared lagged series
+    Same pathway-masked split as core.attribution._channel_log_terms (PR G1 -
+    core.pathways.resolve_pathway_masks): a channel's term for an outcome_id
+    sums its primary_direct contribution (undelayed `sat_media`, masked by
+    `primary_matrix`) and its active/exploratory cross-product contribution
+    (`cross_product_lag_media`, scaled by `params.pathway_strength`) - two
+    genuinely separate media inputs, not one shared lagged series
     (docs/dna_fh_causal_structure.md)."""
     outcome_ids = meta.outcome_ids
     markets = frame["markets"]
@@ -77,11 +80,15 @@ def _channel_log_terms_market_specific(
     sat_media = adstock_saturate_frame_market_specific(
         frame["X_media"], frame["market_bounds"], markets, meta, params
     )
-    dna_direct_media = sat_media[:, meta.dna_channel_idx] if meta.dna_channel_idx else None
-    dna_halo_media = (
-        lag_frame(dna_direct_media, frame["market_bounds"], meta.dna_lag_weeks)
-        if meta.dna_channel_idx else None
-    )
+    primary_mask = meta.pathway_masks.primary_matrix(outcome_ids, meta.channels)  # (O, C)
+
+    cross_cells = meta.pathway_masks.active_cells(outcome_ids, meta.channels) + meta.pathway_masks.exploratory_cells(outcome_ids, meta.channels)
+    if cross_cells:
+        cross_product_lag_media = lag_frame(sat_media, frame["market_bounds"], meta.pathway_masks.cross_product_lag_weeks)
+        strength_matrix = _cross_product_strength_matrix(meta, params)
+    else:
+        cross_product_lag_media = None
+        strength_matrix = None
 
     # beta_by_row[obs, outcome, channel] - this row's own market's beta,
     # matching core.market_specific_predict.predict_mu_market_specific.
@@ -93,21 +100,12 @@ def _channel_log_terms_market_specific(
     terms: Dict[str, np.ndarray] = {}
     for ci, ch in enumerate(meta.channels):
         term = np.zeros((n_obs, n_out))
-        is_dna = ci in meta.dna_channel_idx
-        dna_pos = meta.dna_channel_idx.index(ci) if is_dna else None
         for si, oid in enumerate(outcome_ids):
             b = beta_by_row[:, si, ci]
-            if is_dna:
-                value = 0.0
-                if oid in meta.direct_dna_outcome_ids:
-                    value = value + b * dna_direct_media[:, dna_pos]
-                if oid in meta.halo_eligible_outcome_ids:
-                    halo = params.halo_strength.get(oid, 0.0)
-                    if halo:
-                        value = value + b * halo * dna_halo_media[:, dna_pos]
-                term[:, si] = value
-            else:
-                term[:, si] = b * sat_media[:, ci]
+            value = b * primary_mask[si, ci] * sat_media[:, ci]
+            if strength_matrix is not None and strength_matrix[si, ci]:
+                value = value + b * strength_matrix[si, ci] * cross_product_lag_media[:, ci]
+            term[:, si] = value
         terms[ch] = term
     return terms
 

@@ -463,7 +463,7 @@ class TestFingerprintPosterior:
 
         params = FHPosteriorParams(
             decay_rate={"TV": 0.5}, hill_K={"TV": 1000.0}, hill_S={"TV": 1.0},
-            beta={"New": {"TV": 0.1}}, halo_strength={"New": 0.0}, promo_coef={"New": 0.1},
+            beta={"New": {"TV": 0.1}}, pathway_strength={}, promo_coef={"New": 0.1},
             market_offset={"UK": {"New": 0.0}}, intercept={"New": 2.0}, trend_coef={"New": 0.0},
             gamma_fourier={"New": np.zeros(6)}, alpha={"New": 5.0}, control_coef={}, outcome_control_coef={},
         )

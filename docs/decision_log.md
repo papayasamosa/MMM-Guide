@@ -1523,3 +1523,99 @@ constrained funnel model, the DNA composition model, the causal DAG, Brand Searc
 dynamic planner and the UI theme remain explicitly out of scope, per the same instruction. See
 docs/media_outcome_pathways.md, docs/outcomes.md, docs/dna_fh_causal_structure.md and
 docs/limitations.md for the updated design records.
+
+---
+
+**Decision:** PR G1 ("statistically correct segment-level MMM" - the reprioritised roadmap's explicit
+instruction to make `MediaOutcomePathway` control which coefficients are estimated in Model A and Model
+C; build the deterministic Family History net bill-through count; add Brand Search treatment modes; and
+add model-comparison, multicollinearity and identification diagnostics) - implemented as follows:
+
+1. **`core.pathways.resolve_pathway_masks`/`ResolvedPathwayMasks`** - the pathway catalogue (PR F,
+   schema-only) is now operational: both PyMC builders read the same resolved masks to decide which
+   `(outcome, channel)` cells are `primary_direct`/`active_cross_product`/`exploratory_cross_product`/
+   `excluded`, replacing the old DNA-only direct/halo split with a general mechanism that works for any
+   channel. Proven exactly backward-compatible with the pre-PR-G1 legacy defaults when no pathway
+   catalogue is configured.
+2. **`hierarchical_model.py`/`market_specific_model.py`** - `eta_channels` built via masked matmuls
+   against `resolve_pathway_masks`'s output (same call, same construction pattern in both builders,
+   source-inspected for parity) - `excluded` cells contribute deterministically zero, not merely a
+   tight prior; `exploratory_cross_product` cells get a tighter default HalfNormal sigma (0.08 vs
+   `active_cross_product`'s 0.25).
+3. **`FHModelMeta.pathway_masks`** defaults to `None` (a "not supplied" sentinel, not a literal empty
+   value) and auto-resolves the legacy default in `__post_init__` when omitted, so a hand-built meta or
+   a pre-PR-G1 bundle never silently replays against an all-excluded mask set.
+4. **`predict.py`/`market_specific_predict.py`/`attribution.py`/`market_specific_attribution.py`** -
+   `FHPosteriorParams.halo_strength` (per-outcome) generalised to `pathway_strength` (per
+   `[outcome_id][channel]`); every NumPy replay/attribution function rewritten to mirror the PyMC
+   construction exactly via the same resolved masks, closing a pre-existing risk where the direct/halo
+   pattern was independently duplicated (and could silently diverge) across six files.
+5. **`core.net_billthrough`** - `NetBillthroughOfferRule` (analyst-configured maturity windows, no
+   safe default), `compute_net_billthrough_cohorts`/`net_billthrough_weekly_series` (deterministic,
+   signup-date-attributed, immature cohorts excluded not zero-filled), `immature_cohort_summary`.
+   `fh_gsa_finance_date` remains structurally untouched (the module has no import of `core.outcomes`).
+6. **`core.brand_search`** - four explicit treatment modes (`direct_channel`/`excluded`/
+   `demand_capture_mediator`/`experiment_calibrated_incremental`), mapping onto `core.pathways`'
+   `primary_direct`/`excluded` roles for fitting; `mediator_reallocation` deterministically splits a
+   Brand Search channel's fitted contribution across analyst-declared `mediator_of` upstream channels,
+   reconciling exactly to the original total.
+7. **`core.identification_diagnostics`** - channel-spend correlation matrix, media design-matrix
+   condition number, posterior coefficient-of-variation stability (works for both Model A's and Model
+   C's `beta` shape), and a caller-supplied-refit `leave_one_channel_out_sensitivity` helper (matching
+   `core.diagnostics.expanding_window_backtest`'s injection pattern - no new PyMC fit runs inside this
+   module); `identification_report` bundles all signals into one severity-ranked flag list.
+8. **UI** - Model Configuration gained `active_cross_product_sigma`/`exploratory_cross_product_sigma`
+   prior sliders (replacing the now-dead `dna_halo_sigma` control) and a Brand Search treatment-mode
+   editor; Structure gained a net bill-through offer-rule editor and updated pathway-catalogue
+   messaging (no longer "does not yet drive fitting" - it does, as of this PR); Diagnostics gained a
+   multicollinearity & weak-identification panel alongside the existing scorecard.
+
+**Reason:** The pathway catalogue built in PR F was explicitly schema-only ("nothing here changes what
+gets fitted") - a genuine statistical improvement to segment-level attribution required actually
+consuming it. Brand Search's last-click ambiguity and the net bill-through metric's signup-vs-event-date
+attribution ambiguity were both flagged as real, unresolved measurement gaps the roadmap named
+specifically; both needed deterministic, analyst-controlled treatments rather than either an unexamined
+default or a full causal model this PR explicitly does not build.
+**Alternatives considered:** Building a real causal DAG or a fitted mediation model for Brand Search
+(rejected - explicitly out of scope per the roadmap, "do not yet build ... causal DAG"; a full DAG needs
+its own dedicated design and is a large enough scope change to warrant its own PR). Zero-filling immature
+net bill-through cohorts so every week has a value (rejected - a fabricated number is worse than an
+honest gap; excluding immature cohorts, with `immature_cohort_summary` making the exclusion visible, was
+judged the only defensible default). Per-pathway custom `lag_weeks` values instead of one shared
+`cross_product_lag_weeks` (rejected for this PR - the pathway schema already stores `lag_weeks` per
+pathway for a future PR to read; building the per-pathway variable-lag PyMC machinery now was judged out
+of proportion to this PR's core deliverable and is documented as a explicit future extension). Refitting
+inside `leave_one_channel_out_sensitivity` itself rather than taking a caller-supplied refit function
+(rejected - matches `expanding_window_backtest`'s established injection pattern; a real refit is slow and
+belongs page-level/user-paced, not embedded in a diagnostics module).
+**Impact:** Every fitted model, persisted project bundle, and approval fingerprint from before this PR
+is invalidated the moment a pathway catalogue with any non-default role is configured - a project with
+no pathway catalogue at all is bit-for-bit behaviourally unchanged (the legacy-default equivalence
+proof). `CurveBankEntry.halo_strength` (the on-disk curve bank schema) keeps its field name for backward
+compatibility even though it now stores the generalised `pathway_strength` value - a documented,
+deliberate exception to this codebase's usual free-renaming convention, since this field is a persisted
+on-disk format, not just an internal identifier.
+**Verification:** 960 tests passing (873 -> 960 across this PR), `ruff check` clean throughout. Covers:
+`resolve_pathway_masks` legacy-default equivalence and explicit-override semantics; Model A/Model C
+parity (source-inspection, both for metadata construction and for the pathway-masking construction
+itself); every existing `halo_strength`-based test migrated to `pathway_strength` and still passing
+(proving the legacy invariants hold under the new mechanism); new excluded-pathway zero-contribution,
+active/exploratory replay-parity, and `None`-sentinel auto-resolution tests; net bill-through offer-rule
+validation, signup-date mapping, immature-cohort exclusion, and finance-date-GSA structural separation;
+Brand Search mode-to-pathway-role mapping, config validation, and mediator-reallocation reconciliation;
+multicollinearity/condition-number/coefficient-stability diagnostics (including a Model-C-shaped
+`beta` regression case); correlated-media Shapley credit-displacement recovery and mediator-allocation
+recovery against known ground truth; Streamlit AppTests for all three new UI editors (one of which
+caught and fixed a real bug - a list-typed `mediator_of` field cannot bind to a `TextColumn`). Both PyMC
+model builders re-verified offline (not committed, matching this codebase's established convention) to
+build cleanly and evaluate to a finite log-probability with excluded and exploratory pathways configured.
+**Owner:** Engineering.
+**Status:** Accepted; implemented in PR G1 (pathway-masked coefficient estimation, net bill-through
+transformation, Brand Search treatment modes, and multicollinearity/identification diagnostics, per the
+reprioritised roadmap's exact instruction). The full scenario planner, sequential optimisation, an
+automated geo-test pipeline, a brand-equity module, the DNA composition model, and the UI theme remain
+explicitly out of scope, per the same instruction - the roadmap's next PR is designed to consume this
+PR's `pathway_masks`/`pathway_strength`/`net_billthrough_weekly_series`/`identification_report` outputs
+directly for channel x segment saturation curves, average/marginal ROI and CPA, and a pathway-aware
+scenario planner. See docs/segment_level_estimation.md, docs/brand_search.md, docs/net_billthrough.md
+and docs/limitations.md for the updated design records.

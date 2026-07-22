@@ -11,6 +11,7 @@ import pytest
 from ancestry_mmm.core.attribution import compute_shapley_contributions, segment_channel_summary, total_fh_contribution
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
 from ancestry_mmm.core.predict import FHPosteriorParams
+from ancestry_mmm.tests.conftest import pathway_strength_from_flat
 
 OUTCOME_IDS = ["New", "DNA_CrossSell", "Winback", "New Customer"]
 CHANNELS = ["TV", "DNA_Media"]
@@ -38,11 +39,11 @@ def params() -> FHPosteriorParams:
             "Winback": {"TV": 0.03, "DNA_Media": 0.06},
             "New Customer": {"TV": 0.01, "DNA_Media": 0.50},
         },
-        # "New Customer" carries a low halo_strength deliberately - when it's
+        # "New Customer" carries a low pathway_strength deliberately - when it's
         # NOT a direct segment (see the halo_meta variant below), this value
         # is what its DNA_Media contribution gets shrunk by; when it IS
         # direct, this value is bypassed entirely (full beta, no shrinkage).
-        halo_strength={"New": 0.15, "DNA_CrossSell": 1.0, "Winback": 0.10, "New Customer": 0.2},
+        pathway_strength=pathway_strength_from_flat({"New": 0.15, "DNA_CrossSell": 1.0, "Winback": 0.10, "New Customer": 0.2}, "DNA_Media"),
         promo_coef={"New": 0.0, "DNA_CrossSell": 0.0, "Winback": 0.0, "New Customer": 0.0},
         market_offset={"UK": {s: 0.0 for s in OUTCOME_IDS}},
         intercept={"New": 3.0, "DNA_CrossSell": 2.0, "Winback": 1.5, "New Customer": 2.5},
@@ -160,7 +161,7 @@ class TestShapleyDirectHaloSeparation:
                 "DNA_CrossSell": {"DNA_Media": 1.0},
                 "New Customer": {"DNA_Media": 1.0},
             },
-            halo_strength={"New": 0.5, "DNA_CrossSell": 0.5, "New Customer": 0.0},
+            pathway_strength=pathway_strength_from_flat({"New": 0.5, "DNA_CrossSell": 0.5, "New Customer": 0.0}, "DNA_Media"),
             promo_coef={s: 0.0 for s in self.OUTCOME_IDS},
             market_offset={"UK": {s: 0.0 for s in self.OUTCOME_IDS}},
             intercept={s: 0.0 for s in self.OUTCOME_IDS},

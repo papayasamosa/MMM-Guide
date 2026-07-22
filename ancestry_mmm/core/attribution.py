@@ -22,7 +22,7 @@ import numpy as np
 import pandas as pd
 
 from .hierarchical_model import FHModelMeta
-from .predict import FHPosteriorParams, adstock_saturate_frame, lag_frame
+from .predict import FHPosteriorParams, _cross_product_strength_matrix, adstock_saturate_frame, lag_frame
 
 
 # ---------------------------------------------------------------------------
@@ -69,45 +69,44 @@ def _baseline_eta(frame: Dict, meta: FHModelMeta, params: FHPosteriorParams) -> 
 def _channel_log_terms(frame: Dict, meta: FHModelMeta, params: FHPosteriorParams) -> Dict[str, np.ndarray]:
     """Per-channel additive log-mu contribution, shape (n_obs, n_outcomes), before the final exp().
 
-    For a DNA channel, an outcome_id's term is the sum of its direct-pathway
-    contribution (`beta * dna_direct_media`, for `direct_dna_outcome_ids`
-    members) and its halo-pathway contribution (`beta * halo_strength *
-    dna_halo_media`, for `halo_eligible_outcome_ids` members) - the same two
-    genuinely separate media inputs core.hierarchical_model's likelihood
-    uses, not one shared lagged series (docs/dna_fh_causal_structure.md).
-    Both pathways are summed into the channel's single term here (Shapley
-    permutes whole channels, not pathways within a channel), so
-    `dna_outcome_id` correctly gets credit for both without either being
-    double-counted."""
+    Mirrors `core.predict.predict_mu`'s pathway-masked construction (PR G1 -
+    `core.pathways.resolve_pathway_masks`) channel by channel: a channel's
+    term for outcome_id `oid` is `beta[oid][channel] * primary_mask[oid,
+    channel] * sat_media[:, channel]` (the undelayed `primary_direct`
+    pathway) plus `beta[oid][channel] * pathway_strength[oid][channel] *
+    cross_product_lag_media[:, channel]` (the `active_cross_product`/
+    `exploratory_cross_product` pathway, on the shared cross-product lag) -
+    the same two genuinely separate media inputs the PyMC likelihood uses,
+    not one shared lagged series (docs/dna_fh_causal_structure.md). Both
+    pathways are summed into the channel's single term here (Shapley permutes
+    whole channels, not pathways within a channel), so a cell that's both
+    `primary_direct` and cross-product at once (e.g. the DNA cross-sell
+    outcome's own DNA channel, by legacy default) correctly gets credit for
+    both without either being double-counted."""
     outcome_ids = meta.outcome_ids
     n_obs = frame["X_media"].shape[0]
     n_out = len(outcome_ids)
 
     sat_media = adstock_saturate_frame(frame["X_media"], frame["market_bounds"], meta, params)
-    dna_direct_media = sat_media[:, meta.dna_channel_idx] if meta.dna_channel_idx else None
-    dna_halo_media = (
-        lag_frame(dna_direct_media, frame["market_bounds"], meta.dna_lag_weeks)
-        if meta.dna_channel_idx else None
-    )
+    primary_mask = meta.pathway_masks.primary_matrix(outcome_ids, meta.channels)  # (O, C)
+
+    cross_cells = meta.pathway_masks.active_cells(outcome_ids, meta.channels) + meta.pathway_masks.exploratory_cells(outcome_ids, meta.channels)
+    if cross_cells:
+        cross_product_lag_media = lag_frame(sat_media, frame["market_bounds"], meta.pathway_masks.cross_product_lag_weeks)
+        strength_matrix = _cross_product_strength_matrix(meta, params)
+    else:
+        cross_product_lag_media = None
+        strength_matrix = None
 
     terms: Dict[str, np.ndarray] = {}
     for ci, ch in enumerate(meta.channels):
         term = np.zeros((n_obs, n_out))
-        is_dna = ci in meta.dna_channel_idx
-        dna_pos = meta.dna_channel_idx.index(ci) if is_dna else None
         for si, oid in enumerate(outcome_ids):
             b = params.beta[oid][ch]
-            if is_dna:
-                value = 0.0
-                if oid in meta.direct_dna_outcome_ids:
-                    value = value + b * dna_direct_media[:, dna_pos]
-                if oid in meta.halo_eligible_outcome_ids:
-                    halo = params.halo_strength.get(oid, 0.0)
-                    if halo:
-                        value = value + b * halo * dna_halo_media[:, dna_pos]
-                term[:, si] = value
-            else:
-                term[:, si] = b * sat_media[:, ci]
+            value = b * primary_mask[si, ci] * sat_media[:, ci]
+            if strength_matrix is not None and strength_matrix[si, ci]:
+                value = value + b * strength_matrix[si, ci] * cross_product_lag_media[:, ci]
+            term[:, si] = value
         terms[ch] = term
     return terms
 

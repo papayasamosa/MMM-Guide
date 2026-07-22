@@ -3,6 +3,43 @@
 Entries by pull request, most recent first. Predates this file: see git history for anything
 earlier than the entries below.
 
+## Unreleased - PR G1: Pathway-Masked Estimation, Net Bill-Through, Brand Search, Identification Diagnostics
+
+- `core.pathways.resolve_pathway_masks`/`ResolvedPathwayMasks` made the PR F pathway catalogue
+  operational: both `build_fh_hierarchical_model` (Model A) and `build_fh_market_specific_model`
+  (Model C) now read the same resolved masks to decide which `(outcome, channel)` coefficients get
+  estimated and how (`primary_direct`/`active_cross_product`/`exploratory_cross_product`/`excluded`),
+  replacing the old DNA-only direct/halo split with a general mechanism. Exactly backward-compatible
+  with the pre-PR-G1 legacy defaults when no pathway catalogue is configured. See
+  `docs/segment_level_estimation.md`.
+- `FHPosteriorParams.halo_strength` (per-outcome) generalised to `pathway_strength` (per
+  `[outcome_id][channel]`) across `core.predict`, `core.market_specific_predict`, `core.attribution`,
+  `core.market_specific_attribution` - every NumPy replay/attribution function now mirrors the PyMC
+  construction exactly via the shared resolved masks.
+- Added `core.net_billthrough`: deterministic `fh_net_billthrough_count` weekly series, attributed to
+  signup date with analyst-configured per-`(market, offer_id)` maturity windows - immature cohorts
+  excluded, never zero-filled. `fh_gsa_finance_date` remains structurally untouched. See
+  `docs/net_billthrough.md`.
+- Added `core.brand_search`: four explicit Brand Search treatment modes (`direct_channel`/`excluded`/
+  `demand_capture_mediator`/`experiment_calibrated_incremental`), a deterministic mediator-reallocation
+  helper reconciling exactly to the fitted contribution. See `docs/brand_search.md`.
+- Added `core.identification_diagnostics`: channel-spend correlation matrix, media design-matrix
+  condition number, posterior coefficient-of-variation stability, leave-one-channel-out sensitivity
+  (caller-supplied refit), and a structured `identification_report`.
+- UI: Model Configuration gained `active_cross_product_sigma`/`exploratory_cross_product_sigma` prior
+  sliders (replacing the dead `dna_halo_sigma` control) and a Brand Search treatment-mode editor;
+  Structure gained a net bill-through offer-rule editor and corrected pathway-catalogue drift messaging
+  (it now drives fitting); Diagnostics gained a multicollinearity & weak-identification panel.
+- 87 new tests across `test_pathways.py`, `test_hierarchical_model.py`, `test_market_specific_model.py`,
+  `test_predict.py`, `test_market_specific_predict.py`, `test_attribution.py`,
+  `test_market_specific_attribution.py`, `test_predict_pathway_masks.py`, `test_net_billthrough.py`,
+  `test_brand_search.py`, `test_identification_diagnostics.py`, `test_simulation_recovery.py`, and three
+  new AppTest files - 873 -> 960 total.
+- No change to fitted coefficients for any project with no pathway catalogue configured (the
+  legacy-default equivalence guarantee); a project with a non-default pathway role configured gets
+  genuinely different, statistically improved segment-level estimation - see `docs/decision_log.md` for
+  the full impact/invalidation statement.
+
 ## Unreleased - Market-Specific MMM Redesign, Phase 4 (this PR)
 
 - Added `core.report`: `build_report_sections`/`render_markdown`/`render_html` - a reproducible

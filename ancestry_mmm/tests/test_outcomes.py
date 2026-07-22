@@ -946,7 +946,7 @@ class TestFhChannelLogTermsIndependentDimensions:
         params = FHPosteriorParams(
             decay_rate={"tv": 0.5}, hill_K={"tv": 1000.0}, hill_S={"tv": 1.0},
             beta={"fh_new_gsa": {"tv": 0.1}, "fh_new_signup": {"tv": 0.4}},
-            halo_strength={}, promo_coef={"fh_new_gsa": 0.0, "fh_new_signup": 0.0},
+            pathway_strength={}, promo_coef={"fh_new_gsa": 0.0, "fh_new_signup": 0.0},
             market_offset={"UK": {"fh_new_gsa": 0.0, "fh_new_signup": 0.0}},
             intercept={"fh_new_gsa": 3.0, "fh_new_signup": 3.0},
             trend_coef={"fh_new_gsa": 0.0, "fh_new_signup": 0.0},

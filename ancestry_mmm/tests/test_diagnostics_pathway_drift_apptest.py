@@ -92,4 +92,4 @@ def test_changed_pathway_role_shows_drift_info():
     at.session_state["model_spec"] = _spec_dict()
     at.run()
     assert not at.exception, f"page raised: {at.exception}"
-    assert any("1 media-outcome pathway(s) differ" in (i.value or "") for i in at.info)
+    assert any("1 media-outcome pathway(s) differ" in (w.value or "") for w in at.warning)

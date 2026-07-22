@@ -16,6 +16,7 @@ from ancestry_mmm.core.market_config import (
 from ancestry_mmm.core.predict import FHPosteriorParams
 from ancestry_mmm.core.report import build_report_sections, render_html, render_markdown
 from ancestry_mmm.core.schema import ModelSpec
+from ancestry_mmm.tests.conftest import pathway_strength_from_flat
 
 SEGMENTS = ["New", "DNA_CrossSell"]
 CHANNELS = ["TV", "Search"]
@@ -50,7 +51,7 @@ def params() -> FHPosteriorParams:
         decay_rate={"TV": 0.5, "Search": 0.3}, hill_K={"TV": 1000.0, "Search": 500.0},
         hill_S={"TV": 1.0, "Search": 1.0},
         beta={"New": {"TV": 0.1, "Search": 0.05}, "DNA_CrossSell": {"TV": 0.02, "Search": 0.01}},
-        halo_strength={"New": 0.1, "DNA_CrossSell": 1.0}, promo_coef={"New": 0.1, "DNA_CrossSell": 0.1},
+        pathway_strength=pathway_strength_from_flat({"New": 0.1, "DNA_CrossSell": 1.0}, "TV"), promo_coef={"New": 0.1, "DNA_CrossSell": 0.1},
         market_offset={"UK": {"New": 0.0, "DNA_CrossSell": 0.0}}, intercept={"New": 3.0, "DNA_CrossSell": 2.0},
         trend_coef={"New": 0.0, "DNA_CrossSell": 0.0},
         gamma_fourier={"New": np.zeros(6), "DNA_CrossSell": np.zeros(6)},

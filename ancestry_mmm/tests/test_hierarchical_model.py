@@ -105,7 +105,37 @@ class TestModelAModelCMetaConstructionParity:
         for field_expr in (
             "outcome_id_to_metric_key={o.outcome_id: o.metric_key for o in outcome_catalogue},",
             "outcome_id_to_eligibility={o.outcome_id: outcome_eligibility(o) for o in outcome_catalogue},",
-            'pathway_catalogue_at_fit=frame.get("media_outcome_pathways") or [],',
+            "pathway_catalogue_at_fit=pathway_catalogue,",
+            "pathway_masks=pathway_masks,",
+        ):
+            assert field_expr in source_a, f"Model A missing: {field_expr}"
+            assert field_expr in source_c, f"Model C missing: {field_expr}"
+
+    def test_both_builders_resolve_pathway_masks_identically(self):
+        """PR G1 required test case: "Model A and Model C parity" for the
+        operational pathway masking itself - both builders must call
+        resolve_pathway_masks with the same arguments and derive the same
+        primary/active/exploratory masks from beta before summing over
+        channels, not just share the metadata-population lines checked
+        above."""
+        import inspect
+
+        from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
+        from ancestry_mmm.core.market_specific_model import build_fh_market_specific_model
+
+        source_a = inspect.getsource(build_fh_hierarchical_model)
+        source_c = inspect.getsource(build_fh_market_specific_model)
+
+        for field_expr in (
+            "pathway_masks = resolve_pathway_masks(",
+            "outcome_ids, channels, pathway_catalogue,",
+            "dna_channel_idx=dna_channel_idx, dna_outcome_id=dna_outcome_id,",
+            "direct_dna_outcome_ids=direct_dna_outcome_ids, dna_lag_weeks=dna_lag_weeks,",
+            "primary_mask = pt.constant(pathway_masks.primary_matrix(outcome_ids, channels))",
+            "active_cells = pathway_masks.active_cells(outcome_ids, channels)",
+            "exploratory_cells = pathway_masks.exploratory_cells(outcome_ids, channels)",
+            'prior_config.get("active_cross_product_sigma", 0.25)',
+            'prior_config.get("exploratory_cross_product_sigma", 0.08)',
         ):
             assert field_expr in source_a, f"Model A missing: {field_expr}"
             assert field_expr in source_c, f"Model C missing: {field_expr}"

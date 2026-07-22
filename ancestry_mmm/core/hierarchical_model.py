@@ -30,6 +30,7 @@ import pytensor.tensor as pt
 from .transformations import pt_geometric_adstock_matrix, pt_hill_function
 from .schema import ModelSpec
 from .outcomes import outcome_eligibility
+from .pathways import MediaOutcomePathway, ResolvedPathwayMasks, resolve_pathway_masks
 
 
 @dataclass
@@ -61,33 +62,50 @@ class FHModelMeta:
     (`core.pathways`) captured when this fit was built, if a pathway
     catalogue was configured - pure pass-through metadata for
     `core.pathways.pathway_drift_status`'s drift detection, exactly like
-    `outcome_catalogue_at_fit` but for the pathway catalogue. Nothing in this
-    builder reads `pathway_catalogue_at_fit` to change fitting behaviour -
-    it is captured here purely so a future estimation PR (PR G) can compare
-    "what pathways were assumed at fit time" against the live catalogue,
-    without waiting for that PR to add the capture mechanism too.
+    `outcome_catalogue_at_fit` but for the pathway catalogue.
+
+    `pathway_masks` (PR G1) is the *operational* resolution of that
+    catalogue - `core.pathways.resolve_pathway_masks`'s output, computed
+    once at build time and reused both by this builder (to construct the
+    right priors/masks) and by `core.predict`/`core.market_specific_predict`/
+    `core.attribution`/`core.market_specific_attribution` (to replay the
+    identical structure in NumPy) - the single source of truth for which
+    `(outcome, channel)` cells are `primary_direct`/`active_cross_product`/
+    `exploratory_cross_product`/excluded, so a fitted model's curves/
+    attribution/scenario numbers can never silently diverge from what was
+    actually fit. See docs/media_outcome_pathways.md and this file's
+    `build_fh_hierarchical_model` for the full behaviour.
 
     `dna_outcome_id` is specifically the Family History DNA-cross-sell
-    outcome - the halo pathway's traditional target. `direct_dna_outcome_ids`
-    lists every outcome_id that gets a *direct* pathway from DNA-targeted
-    media - `dna_outcome_id` is always a member; DNA-product outcomes (kit
-    sales - see core.outcomes) are the other members once they're included
-    in a fit.
+    outcome - the halo/cross-product pathway's traditional target.
+    `direct_dna_outcome_ids` lists every outcome_id that gets a *direct*
+    (`primary_direct`, per `pathway_masks`) pathway from DNA-targeted media -
+    `dna_outcome_id` is always a member; DNA-product outcomes (kit sales -
+    see core.outcomes) are the other members once they're included in a fit.
 
-    Two genuinely separate media inputs feed these pathways (not one shared
-    lagged series gated by a multiplier - see docs/dna_fh_causal_structure.md
-    and docs/decision_log.md for why the older `halo_strength = 1` encoding
-    of "direct" was replaced): `dna_direct_media` (adstocked + saturated DNA
-    spend, no extra lag - a purchase-driven response) for
-    `direct_dna_outcome_ids`, and `dna_halo_media` (`dna_direct_media`
-    further lagged by `dna_lag_weeks` - a delayed, decision-cycle response)
-    for `halo_eligible_outcome_ids`. `dna_outcome_id` is the one outcome
-    that can use *both* pathways simultaneously (`kit_only_outcome_ids`
-    excludes it) - a DNA-kit outcome genuinely has no halo pathway onto
-    itself, but the FH DNA-cross-sell outcome may plausibly respond to DNA
-    media both immediately and with a delay, so both terms are estimated
-    (regularised, shrunk toward zero by default - see `halo_strength_est`'s
-    prior in the model builders) and summed.
+    PR G1 (`core.pathways.resolve_pathway_masks`) generalised what were once
+    two DNA-specific media inputs into the general `primary_mask`/
+    `cross_product_lag_media` machinery every channel now shares - see this
+    module's `build_fh_hierarchical_model` and `pathway_masks`'s docstring
+    below for the operational detail; `direct_dna_outcome_ids`/
+    `kit_only_outcome_ids`/`halo_eligible_outcome_ids` remain as this fit's
+    *legacy-default* DNA routing (used only when no pathway catalogue
+    overrides a DNA-channel cell), not a separate mechanism from
+    `pathway_masks` itself. Two genuinely separate media inputs still feed
+    the legacy-default DNA routing (not one shared lagged series gated by a
+    multiplier - see docs/dna_fh_causal_structure.md and docs/decision_log.md
+    for why the older `halo_strength = 1` encoding of "direct" was replaced):
+    the undelayed saturated DNA spend (a purchase-driven response) for
+    `direct_dna_outcome_ids`, and that same spend further lagged by
+    `dna_lag_weeks` (a delayed, decision-cycle response) for
+    `halo_eligible_outcome_ids`. `dna_outcome_id` is the one outcome that
+    gets *both* pathways simultaneously by legacy default (`kit_only_outcome_ids`
+    excludes it) - a DNA-kit outcome genuinely has no halo/cross-product
+    pathway onto itself, but the FH DNA-cross-sell outcome may plausibly
+    respond to DNA media both immediately and with a delay, so both terms are
+    estimated (the delayed one regularised, shrunk toward zero by default -
+    see `active_cross_product_strength_est`'s prior in the model builders)
+    and summed.
     """
     markets: List[str]
     outcome_ids: List[str]
@@ -111,10 +129,46 @@ class FHModelMeta:
     outcome_control_names: Dict[str, List[str]] = field(default_factory=dict)
     direct_dna_outcome_ids: List[str] = field(default_factory=list)
     pathway_catalogue_at_fit: List[Any] = field(default_factory=list)
+    # None (the default) means "not supplied - resolve the legacy default for
+    # me" (see __post_init__); it is never left as None after construction.
+    # Deliberately not `field(default_factory=ResolvedPathwayMasks)` - that
+    # would make "not supplied" indistinguishable from "resolved to
+    # genuinely no primary/active/exploratory cells at all" (a real, if
+    # unusual, outcome when a pathway catalogue explicitly excludes every
+    # channel for every outcome), which __post_init__ would then incorrectly
+    # overwrite with the legacy default instead of respecting it.
+    pathway_masks: Optional[ResolvedPathwayMasks] = None
 
     def __post_init__(self) -> None:
         if not self.direct_dna_outcome_ids:
             self.direct_dna_outcome_ids = [self.dna_outcome_id]
+        # A bundle round-tripped through JSON (core.persistence) - or a
+        # hand-built test fixture - may pass a plain dict here rather than a
+        # real ResolvedPathwayMasks instance; normalise defensively rather
+        # than requiring every caller to know about this field.
+        if isinstance(self.pathway_masks, dict):
+            self.pathway_masks = ResolvedPathwayMasks.from_dict(self.pathway_masks)
+        # A caller that never mentions pathway_masks at all (a bundle saved
+        # before PR G1 with no such key at all, or a FHModelMeta built by
+        # hand rather than through build_fh_hierarchical_model/
+        # build_fh_market_specific_model - e.g. a test fixture, or curve-
+        # replay code reconstructing meta from stored fields) leaves this
+        # None - resolve the legacy default for it here, exactly reproducing
+        # what build_fh_hierarchical_model/build_fh_market_specific_model
+        # compute when no pathway catalogue is configured (see
+        # resolve_pathway_masks's docstring). An *explicitly* passed
+        # ResolvedPathwayMasks - including a genuinely empty one, e.g. a
+        # catalogue that excludes every channel for every outcome - is never
+        # overwritten; only None (truly unset) triggers this.
+        if self.pathway_masks is None:
+            self.pathway_masks = (
+                resolve_pathway_masks(
+                    self.outcome_ids, self.channels, [],
+                    dna_channel_idx=self.dna_channel_idx, dna_outcome_id=self.dna_outcome_id,
+                    direct_dna_outcome_ids=self.direct_dna_outcome_ids, dna_lag_weeks=self.dna_lag_weeks,
+                )
+                if self.outcome_ids and self.channels else ResolvedPathwayMasks()
+            )
 
     @property
     def kit_only_outcome_ids(self) -> List[str]:
@@ -290,6 +344,20 @@ def build_fh_hierarchical_model(
     direct_dna_outcome_ids = _resolve_direct_dna_outcome_ids(outcome_ids, dna_outcome_id, direct_dna_outcome_ids)
     non_dna_idx = [i for i, c in enumerate(channels) if i not in dna_channel_idx]
 
+    # Normalise to real MediaOutcomePathway instances defensively - a caller
+    # may have passed plain dicts (e.g. straight from session state) rather
+    # than converting them first (PR G1 - core.pathways.resolve_pathway_masks
+    # is what makes this catalogue operational; see FHModelMeta's docstring).
+    pathway_catalogue: List[MediaOutcomePathway] = [
+        p if isinstance(p, MediaOutcomePathway) else MediaOutcomePathway.from_dict(p)
+        for p in (frame.get("media_outcome_pathways") or [])
+    ]
+    pathway_masks = resolve_pathway_masks(
+        outcome_ids, channels, pathway_catalogue,
+        dna_channel_idx=dna_channel_idx, dna_outcome_id=dna_outcome_id,
+        direct_dna_outcome_ids=direct_dna_outcome_ids, dna_lag_weeks=dna_lag_weeks,
+    )
+
     channel_mean_spend = X_media.mean(axis=0)
     channel_mean_spend = np.where(channel_mean_spend > 0, channel_mean_spend, 1.0)
 
@@ -336,26 +404,6 @@ def build_fh_hierarchical_model(
             dims=("obs", "channel"),
         )
 
-        # Two genuinely separate DNA-media inputs (docs/dna_fh_causal_structure.md,
-        # docs/decision_log.md - replaces the older single-lagged-series-plus-
-        # multiplier encoding): `dna_direct_media` is DNA-targeted channels'
-        # own saturated series, no extra lag - a purchase-driven response
-        # (DNA kit sales, and optionally the FH DNA-cross-sell segment's
-        # direct component). `dna_halo_media` is that same series with a
-        # *further* lag applied (decision-time lag beyond adstock carryover,
-        # reset at each market boundary) - a delayed response (ordinary FH
-        # halo recipients, and optionally the FH DNA-cross-sell segment's
-        # delayed component).
-        if dna_channel_idx:
-            dna_direct_media = sat_media[:, dna_channel_idx]
-            dna_halo_media = pm.Deterministic(
-                "dna_halo_media",
-                _market_grouped_lag(dna_direct_media, market_bounds, dna_lag_weeks),
-            )
-        else:
-            dna_direct_media = None
-            dna_halo_media = None
-
         # -----------------------------------------------------------------
         # Outcome-specific response multipliers via partial pooling.
         # log_beta[o, c] = mu_channel[c] + sigma_pool[c] * z[o, c]
@@ -379,60 +427,73 @@ def build_fh_hierarchical_model(
         beta = pm.Deterministic("beta", pt.exp(log_beta), dims=("outcome", "channel"))
 
         # -----------------------------------------------------------------
-        # Direct vs. halo pathway coefficients, by outcome_id
-        # (docs/dna_fh_causal_structure.md, docs/decision_log.md):
+        # Pathway-driven channel contributions (PR G1 - core.pathways.
+        # resolve_pathway_masks, called once above as `pathway_masks`,
+        # generalises the old DNA-only direct/halo split to every channel):
         #
-        # - `kit_only_outcome_ids` (direct_dna_outcome_ids minus
-        #   dna_outcome_id - the DNA-product kit-sale outcomes) get ONLY the
-        #   direct pathway: `beta[o, dna_channel] * dna_direct_media`, full
-        #   weight, no shrinkage - a kit sale isn't a delayed response onto
-        #   itself, so there is no halo term to estimate for these outcomes
-        #   at all.
-        # - `dna_outcome_id` (the FH DNA-cross-sell outcome) gets BOTH: the
-        #   same direct term above, *plus* a halo term
-        #   `beta[o, dna_channel] * halo_strength[o] * dna_halo_media`,
-        #   letting the data decide the direct/delayed split rather than
-        #   assuming one - `halo_strength` is regularised toward zero by a
-        #   HalfNormal prior, so the documented default is "primarily
-        #   direct, with a delayed component only where the data supports
-        #   it" (the same shrink-toward-zero default every other halo
-        #   outcome gets).
-        # - Every other outcome_id (ordinary FH outcomes not in
-        #   `direct_dna_outcome_ids`) gets ONLY the halo term, exactly as
-        #   before - this pathway's numbers are unchanged by this
-        #   direct/halo split.
+        # - `primary_direct` cells (the vast majority - every non-DNA
+        #   channel's relationship to every outcome by legacy default, plus
+        #   a DNA channel's relationship to its own direct_dna_outcome_ids)
+        #   get `beta[o, c]` at full weight, no extra shrinkage, on the
+        #   *undelayed* saturated media - `eta_primary`, one masked matmul
+        #   for every such cell at once.
+        # - `active_cross_product` cells (the old unconditional DNA-halo
+        #   pathway, generalised) get `beta[o, c] * active_strength[o, c]`
+        #   on `cross_product_lag_media` (saturated media further lagged by
+        #   `pathway_masks.cross_product_lag_weeks`) - `active_strength` is
+        #   a HalfNormal-shrunk-toward-zero multiplier, one per active cell
+        #   (not shared across channels the way the old per-outcome-only
+        #   `halo_strength` was, when a fit has more than one DNA channel -
+        #   a deliberate refinement, see docs/decision_log.md).
+        # - `exploratory_cross_product` cells use the same structure as
+        #   `active_cross_product` but a *tighter* HalfNormal sigma by
+        #   default (`exploratory_cross_product_sigma` <
+        #   `active_cross_product_sigma`) - "strongly shrunk toward zero",
+        #   per the instruction document.
+        # - `excluded` cells appear in none of the three masks, so they
+        #   never enter any matmul above - zero contribution, deterministically,
+        #   not merely a tight prior (required test: "excluded pathways
+        #   produce no coefficient or contribution").
         #
-        # `halo_strength` is reported as a first-class, inspectable
-        # parameter for every outcome_id - fixed at exactly 0 (not the old
-        # placeholder 1) for kit-only outcomes, since they have no halo
-        # pathway to report a strength for.
+        # With no pathway catalogue configured, `pathway_masks` resolves to
+        # exactly this codebase's pre-PR-G1 legacy defaults (see
+        # `resolve_pathway_masks`'s docstring and its equivalence tests) -
+        # `dna_outcome_id` on a DNA channel is the one cell legitimately in
+        # both `primary` and `active`, reproducing the old "gets both a
+        # direct and a halo term" treatment exactly.
         # -----------------------------------------------------------------
-        if dna_channel_idx:
-            kit_only_outcome_ids = [s for s in direct_dna_outcome_ids if s != dna_outcome_id]
-            halo_eligible_outcome_ids = [s for s in outcome_ids if s not in kit_only_outcome_ids]
-            halo_strength_est = pm.HalfNormal(
-                "halo_strength_est",
-                sigma=prior_config.get("dna_halo_sigma", 0.25),
-                shape=len(halo_eligible_outcome_ids),
+        primary_mask = pt.constant(pathway_masks.primary_matrix(outcome_ids, channels))
+        eta_primary = pm.math.dot(sat_media, (beta * primary_mask).T)
+
+        active_cells = pathway_masks.active_cells(outcome_ids, channels)
+        exploratory_cells = pathway_masks.exploratory_cells(outcome_ids, channels)
+
+        if active_cells or exploratory_cells:
+            cross_product_lag_media = pm.Deterministic(
+                "cross_product_lag_media",
+                _market_grouped_lag(sat_media, market_bounds, pathway_masks.cross_product_lag_weeks),
+                dims=("obs", "channel"),
             )
-            halo_pieces = []
-            j = 0
-            for s in outcome_ids:
-                if s in kit_only_outcome_ids:
-                    halo_pieces.append(pt.constant(0.0))
-                else:
-                    halo_pieces.append(halo_strength_est[j])
-                    j += 1
-            halo_strength = pm.Deterministic("halo_strength", pt.stack(halo_pieces), dims="outcome")
-
-            has_direct = pt.constant(np.array([1.0 if s in direct_dna_outcome_ids else 0.0 for s in outcome_ids]))
-
-            eta_nondna = pm.math.dot(sat_media[:, non_dna_idx], beta[:, non_dna_idx].T) if non_dna_idx else pt.zeros((n_obs, n_outcomes))
-            eta_dna_direct = pm.math.dot(dna_direct_media, beta[:, dna_channel_idx].T) * has_direct[None, :]
-            eta_dna_halo = pm.math.dot(dna_halo_media, beta[:, dna_channel_idx].T) * halo_strength[None, :]
-            eta_channels = eta_nondna + eta_dna_direct + eta_dna_halo
         else:
-            eta_channels = pm.math.dot(sat_media, beta.T)
+            cross_product_lag_media = None
+
+        def _cross_product_eta(cells: list, var_name: str, sigma: float) -> pt.TensorVariable:
+            strength_est = pm.HalfNormal(f"{var_name}_est", sigma=sigma, shape=len(cells))
+            strength_matrix = pt.zeros((n_outcomes, n_channels))
+            for idx, (oi, ci) in enumerate(cells):
+                strength_matrix = pt.set_subtensor(strength_matrix[oi, ci], strength_est[idx])
+            strength_matrix = pm.Deterministic(var_name, strength_matrix, dims=("outcome", "channel"))
+            return pm.math.dot(cross_product_lag_media, (beta * strength_matrix).T)
+
+        eta_active = (
+            _cross_product_eta(active_cells, "active_cross_product_strength", prior_config.get("active_cross_product_sigma", 0.25))
+            if active_cells else pt.zeros((n_obs, n_outcomes))
+        )
+        eta_exploratory = (
+            _cross_product_eta(exploratory_cells, "exploratory_cross_product_strength", prior_config.get("exploratory_cross_product_sigma", 0.08))
+            if exploratory_cells else pt.zeros((n_obs, n_outcomes))
+        )
+        eta_channels = eta_primary + eta_active + eta_exploratory
 
         # -----------------------------------------------------------------
         # Outcome-specific promotional sensitivity (non-negative: promos lift).
@@ -549,6 +610,7 @@ def build_fh_hierarchical_model(
         outcome_catalogue_at_fit=outcome_catalogue,
         outcome_control_names=frame.get("outcome_control_names") or {},
         direct_dna_outcome_ids=direct_dna_outcome_ids,
-        pathway_catalogue_at_fit=frame.get("media_outcome_pathways") or [],
+        pathway_catalogue_at_fit=pathway_catalogue,
+        pathway_masks=pathway_masks,
     )
     return model, meta

@@ -14,6 +14,7 @@ from ancestry_mmm.core.market_specific_diagnostics import (
     in_sample_fit_market_specific,
 )
 from ancestry_mmm.core.market_specific_predict import FHMarketSpecificPosteriorParams
+from ancestry_mmm.tests.conftest import pathway_strength_from_flat
 
 MARKETS = ["UK", "AU"]
 OUTCOME_IDS = ["New", "DNA_CrossSell"]
@@ -40,7 +41,7 @@ def params() -> FHMarketSpecificPosteriorParams:
             "UK": {"New": {"TV": 0.10, "DNA_Media": 0.05}, "DNA_CrossSell": {"TV": 0.02, "DNA_Media": 0.20}},
             "AU": {"New": {"TV": 0.08, "DNA_Media": 0.04}, "DNA_CrossSell": {"TV": 0.015, "DNA_Media": 0.18}},
         },
-        halo_strength={"New": 0.15, "DNA_CrossSell": 1.0},
+        pathway_strength=pathway_strength_from_flat({"New": 0.15, "DNA_CrossSell": 1.0}, "DNA_Media"),
         promo_coef={"New": 0.2, "DNA_CrossSell": 0.3},
         market_offset={"UK": {"New": 0.0, "DNA_CrossSell": 0.0}, "AU": {"New": 0.1, "DNA_CrossSell": -0.1}},
         intercept={"New": 3.0, "DNA_CrossSell": 2.0},
@@ -104,7 +105,6 @@ def trace(params) -> az.InferenceData:
     intercept = jittered([params.intercept[s] for s in OUTCOME_IDS])
     trend_coef = jittered([params.trend_coef[s] for s in OUTCOME_IDS])
     gamma_fourier = additive_jitter(np.zeros((4, len(OUTCOME_IDS))))
-    halo_strength = additive_jitter([params.halo_strength[s] for s in OUTCOME_IDS])
     # A plausible mu: positive, roughly tracking Y so in-sample fit isn't nonsensical.
     mu = jittered(np.full((N_OBS, len(OUTCOME_IDS)), 20.0), noise=0.05)
 
@@ -112,14 +112,12 @@ def trace(params) -> az.InferenceData:
         "hill_K": hill_K, "beta": beta, "hill_S": hill_S, "alpha": alpha, "mu": mu,
         "decay_rate": decay_rate, "promo_coef": promo_coef, "market_offset": market_offset,
         "intercept": intercept, "trend_coef": trend_coef, "gamma_fourier": gamma_fourier,
-        "halo_strength": halo_strength,
     }
     dims = {
         "hill_K": ["market", "channel"], "beta": ["market", "outcome", "channel"],
         "hill_S": ["channel"], "alpha": ["outcome"], "mu": ["obs", "outcome"],
         "decay_rate": ["channel"], "promo_coef": ["outcome"], "market_offset": ["market", "outcome"],
         "intercept": ["outcome"], "trend_coef": ["outcome"], "gamma_fourier": ["fourier", "outcome"],
-        "halo_strength": ["outcome"],
     }
     return az.from_dict(posterior=posterior, coords=coords, dims=dims)
 

@@ -17,6 +17,7 @@ from ancestry_mmm.core.curve_bank import (
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
 from ancestry_mmm.core.market_specific_predict import FHMarketSpecificPosteriorParams
 from ancestry_mmm.core.predict import FHPosteriorParams
+from ancestry_mmm.tests.conftest import pathway_strength_from_flat
 
 SEGMENTS = ["New", "DNA_CrossSell"]
 CHANNELS = ["TV_Brand", "DNA_Media"]
@@ -38,7 +39,7 @@ def shared_params() -> FHPosteriorParams:
         hill_K={"TV_Brand": 40000.0, "DNA_Media": 15000.0},
         hill_S={"TV_Brand": 1.2, "DNA_Media": 1.0},
         beta={s: {c: 0.1 for c in CHANNELS} for s in SEGMENTS},
-        halo_strength={"New": 0.15, "DNA_CrossSell": 1.0},
+        pathway_strength=pathway_strength_from_flat({"New": 0.15, "DNA_CrossSell": 1.0}, "DNA_Media"),
         promo_coef={"New": 0.2, "DNA_CrossSell": 0.3},
         market_offset={"UK": {"New": 0.0, "DNA_CrossSell": 0.0}},
         intercept={"New": 3.0, "DNA_CrossSell": 2.0},
@@ -66,7 +67,7 @@ def market_specific_params() -> FHMarketSpecificPosteriorParams:
         hill_K={m: {"TV_Brand": 40000.0, "DNA_Media": 15000.0} for m in markets},
         hill_S={"TV_Brand": 1.2, "DNA_Media": 1.0},
         beta={m: {s: {c: 0.1 for c in CHANNELS} for s in SEGMENTS} for m in markets},
-        halo_strength={"New": 0.15, "DNA_CrossSell": 1.0},
+        pathway_strength=pathway_strength_from_flat({"New": 0.15, "DNA_CrossSell": 1.0}, "DNA_Media"),
         promo_coef={"New": 0.2, "DNA_CrossSell": 0.3},
         market_offset={m: {"New": 0.0, "DNA_CrossSell": 0.0} for m in markets},
         intercept={"New": 3.0, "DNA_CrossSell": 2.0},
@@ -252,7 +253,7 @@ class TestMakeEntriesMarketSpecificModel:
                 "UK": {s: {c: 0.2 for c in CHANNELS} for s in SEGMENTS},
                 "Australia": {s: {c: 0.05 for c in CHANNELS} for s in SEGMENTS},
             },
-            halo_strength={"New": 0.15, "DNA_CrossSell": 1.0},
+            pathway_strength=pathway_strength_from_flat({"New": 0.15, "DNA_CrossSell": 1.0}, "DNA_Media"),
             promo_coef={"New": 0.2, "DNA_CrossSell": 0.3},
             market_offset={m: {"New": 0.0, "DNA_CrossSell": 0.0} for m in markets},
             intercept={"New": 3.0, "DNA_CrossSell": 2.0},

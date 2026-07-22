@@ -72,6 +72,12 @@ class CurveBankEntry:
     hill_K: float
     hill_S: float
     beta: float
+    # Kept named `halo_strength` on-disk (this schema's own backward-
+    # compatibility promise - see module docstring) even though PR G1
+    # generalised the underlying concept to `pathway_strength` (any
+    # active_cross_product/exploratory_cross_product cell, not only a DNA
+    # channel's halo) - it holds `params.pathway_strength[segment][channel]`
+    # for a cross-product cell, `None` for a primary-only or excluded one.
     halo_strength: Optional[float]
 
     # "spend" (always) or "media_unit" (Phase 3b, only where a media-unit
@@ -295,11 +301,15 @@ def make_entries(
                 currency = None
 
             for segment, beta_val in beta_by_segment.items():
+                is_cross_product_cell = (
+                    channel in meta.pathway_masks.active_channels_by_outcome.get(segment, [])
+                    or channel in meta.pathway_masks.exploratory_channels_by_outcome.get(segment, [])
+                )
                 entries.append(CurveBankEntry(
                     entry_id=str(uuid.uuid4()), market=market, channel=channel,
                     segment_or_overall=segment, dna_channel=is_dna, curve_status=curve_status,
                     decay_rate=decay_rate, hill_K=hill_K, hill_S=hill_S, beta=beta_val,
-                    halo_strength=params.halo_strength.get(segment) if is_dna else None,
+                    halo_strength=params.pathway_strength.get(segment, {}).get(channel) if is_cross_product_cell else None,
                     currency=currency, **shared_fields,
                 ))
             entries.append(CurveBankEntry(
