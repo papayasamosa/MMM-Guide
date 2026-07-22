@@ -160,9 +160,9 @@ if get_state("trace") is not None and get_state("model_spec"):
 
         if model_type_for_export == "shared":
             contributions = compute_shapley_contributions(frame, meta, params, n_permutations=100)
-            dna_kit_segments_in_fit = [s for s in meta.direct_dna_segments if s != meta.dna_segment]
-            fh_segments_in_fit = [s for s in meta.segments if s not in dna_kit_segments_in_fit]
-            total_df = total_fh_contribution(frame, meta, params, contributions, spec.segment_ltv, segments=fh_segments_in_fit)
+            dna_kit_outcomes_in_fit = [s for s in meta.direct_dna_outcome_ids if s != meta.dna_outcome_id]
+            fh_outcomes_in_fit = [s for s in meta.outcome_ids if s not in dna_kit_outcomes_in_fit]
+            total_df = total_fh_contribution(frame, meta, params, contributions, spec.segment_ltv, outcome_ids=fh_outcomes_in_fit)
             seg_df = segment_channel_summary(frame, meta, params, contributions, spec.segment_ltv)
             sheets = {
                 "Total FH Contribution": total_df,
@@ -177,10 +177,10 @@ if get_state("trace") is not None and get_state("model_spec"):
             scenarios = get_state("scenarios") or []
             scenarios_df = compare_scenarios(scenarios) if scenarios else None
             ms_contributions = compute_shapley_contributions_market_specific(frame, meta, params, n_permutations=100)
-            dna_kit_segments_in_fit = [s for s in meta.direct_dna_segments if s != meta.dna_segment]
-            fh_segments_in_fit = [s for s in meta.segments if s not in dna_kit_segments_in_fit]
+            dna_kit_outcomes_in_fit = [s for s in meta.direct_dna_outcome_ids if s != meta.dna_outcome_id]
+            fh_outcomes_in_fit = [s for s in meta.outcome_ids if s not in dna_kit_outcomes_in_fit]
             ms_total_df = total_contribution_market_specific(
-                frame, meta, params, ms_contributions, spec.segment_ltv, segments=fh_segments_in_fit, by_market=True,
+                frame, meta, params, ms_contributions, spec.segment_ltv, outcome_ids=fh_outcomes_in_fit, by_market=True,
             )
             ms_seg_df = segment_channel_market_summary(frame, meta, params, ms_contributions, spec.segment_ltv)
             sheets = {

@@ -13,7 +13,7 @@ unconstrained-benchmark planning modes work for **either model type**:
   plan - `core.optimization` dispatches to `steady_state_segment_response_market_specific` instead
   of the Model A version based on `model_type`, with identical planning math (constraints, bounds,
   the optimiser objective) either way, since both response functions share the same
-  `(market, spend_by_channel, meta, params, reference_context) -> {segment: rate}` contract. The
+  `(market, spend_by_channel, meta, params, reference_context) -> {outcome_id: rate}` contract. The
   planner shows each planned channel's evidence tier (`docs/market_hierarchy.md` section 4) for the
   selected market in an expander, so a planner can see when they're planning against a transferred
   estimate rather than a locally estimated curve.
@@ -54,7 +54,7 @@ objective's scope contributes 0 to it, never an implicit 1.
 - "Minimise CPA," "maintain response under inflation," "maintain delivery under inflation" as
   distinct optimiser objectives - `avg_cpa`/`dna_avg_cpa` are reported as output metrics, not
   (yet) optimisation targets in their own right.
-- `"weighted_mix"` and per-segment `target_segments` (e.g. "maximise FH New" only) are implemented
+- `"weighted_mix"` and per-outcome `target_outcome_ids` (e.g. "maximise FH New" only) are implemented
   in `core.optimization` but not yet exposed as UI controls on this page - the radio only offers
   `"fh_gsa"`/`"dna_kits"`/`"expected_value"`.
 - Marginal CPA as a scenario-level metric - the planner's optimiser always conserves total budget

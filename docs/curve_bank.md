@@ -9,6 +9,12 @@ Each curve bank entry (`core.curve_bank.CurveBankEntry`) is one *curve* - a
 model_run_id, market, channel, segment_or_overall, curve_status, input_type, currency, unit_type
 ```
 
+Since PR E, the field name `segment_or_overall` is kept as-is (it is a persisted, exported field -
+renaming it would ripple through every page that reads or filters curve bank JSON), but its
+populated values are `outcome_id`s, not segment names - two outcomes that share a `segment` (e.g. an
+FH sign-up and an FH GSA both mapped to `segment="New"`) now appear as two distinct
+`segment_or_overall` rows, not one.
+
 Per-record model metadata: `decay_rate`, `hill_K`, `hill_S`, `beta`, `halo_strength` (DNA channels
 only), approval metadata (approver, timestamp, notes, limitations, diagnostics reviewed), data
 fingerprint, model specification fingerprint, posterior fingerprint (`core.fingerprint` - a run's

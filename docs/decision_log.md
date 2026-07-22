@@ -1016,3 +1016,91 @@ segment sets rather than coincidentally computing the same number).
 **Status:** Accepted; implemented in PR C (outcome-aware semantics, per the post-merge correctness
 audit's PR ordering). See docs/outcomes.md, docs/dna_fh_causal_structure.md, docs/scenario_planner.md,
 docs/media_units_and_inflation.md and docs/limitations.md for the updated design records.
+
+---
+
+**Date:** 2026-07-22
+**Decision:** PR E ("Canonical outcome schema and outcome_id model identity", per the instruction
+document's PR ordering) - make `OutcomeDefinition` the model's sole fitting schema and `outcome_id`
+(not `segment`) the identity dimension carried through every stage of the pipeline, so a Family
+History sign-up and a Family History GSA in the same customer segment fit as two fully independent
+outcomes instead of colliding.
+1. `ModelSpec.segment_outcomes`/`segment_ltv`/`segment_control_cols` remain in `core/schema.py` but
+   are now purely a migration source (`resolve_outcome_definitions` still reads them for legacy
+   projects); the actual fitting path takes an explicit `outcomes: List[OutcomeDefinition]` and never
+   re-derives identity from `segment` once a catalogue exists. `prepare_fh_modeling_frame(df, spec,
+   outcomes=None)` filters the catalogue through a new `included_outcomes()` helper and raises if
+   nothing survives, rather than silently fitting on `spec.segment_outcomes` alone.
+2. `OutcomeDefinition` gains two new persisted fields, `included_in_fit` and `exclusion_reason`,
+   replacing the old session-only `excluded_outcome_ids` mechanism the PR C entry above flagged as a
+   documented residual gap ("adding a new persisted field is better scoped as its own small change").
+   Exclusion is now data the project bundle carries across export/import, not UI state that resets on
+   reload. `OutcomeDefinition.column` is renamed `source_column`, with `from_dict` translating the
+   legacy `"column"` key so older exported bundles still import cleanly.
+3. Every PyMC coordinate, NumPy replay dict, and downstream key that was `segment` is now
+   `outcome_id`: the model builders' PyMC coord (`"segment"` -> `"outcome"`), `FHModelMeta`
+   (`segments`/`dna_segment`/`direct_dna_segments`/`kit_only_segments`/`halo_eligible_segments`/
+   `segment_control_names` -> `outcome_ids`/`dna_outcome_id`/`direct_dna_outcome_ids`/
+   `kit_only_outcome_ids`/`halo_eligible_outcome_ids`/`outcome_control_names`, plus new
+   `outcome_id_to_segment`/`outcome_id_to_product`/`outcome_id_to_metric`/`outcome_id_to_unit`/
+   `outcome_id_to_role`/`outcome_id_to_source_column`/`outcome_catalogue_at_fit` fields recording the
+   exact `OutcomeDefinition` list a fit was built from), `FHPosteriorParams.segment_control_coef` ->
+   `outcome_control_coef`, attribution/optimisation/diagnostics/evidence-tier/curve-bank output
+   columns (`"segment"` -> `"outcome_id"`, `evaluate_scenario`'s `"predicted_gsa"` ->
+   `"predicted_outcome"`), and function parameters (`total_fh_contribution`/
+   `total_contribution_market_specific`'s `segments=` -> `outcome_ids=`, `contribution_waterfall`'s
+   `segment=` -> `outcome_id=`, `optimize_scenario`'s `target_segments` -> `target_outcome_ids`,
+   `fingerprint_model_spec`'s `direct_dna_segments` -> `direct_dna_outcome_ids`). This closes the
+   naming confusion the instruction document called out directly: a generic "GSA" total or a bare
+   `segment` key can no longer imply a single KPI when two distinct KPIs share a segment.
+4. `core/curve_bank.py`'s persisted `CurveBankEntry.segment_or_overall` field name was deliberately
+   left unchanged - it is written to exported curve bank JSON, and renaming it is a much larger,
+   riskier change (every page reading/filtering that column) for no correctness benefit within this
+   PR's scope. Only the code that populates the field was changed to write outcome_ids instead of
+   segment names.
+5. Two modules outside the instruction document's originally listed scope, `core/diagnostics.py` /
+   `core/market_specific_diagnostics.py` and `core/evidence_tiers.py`, were found still reading
+   `meta.segments` after the `FHModelMeta` rename and would have broken at runtime; fixed in place
+   since they are directly coupled to `FHModelMeta`'s shape.
+6. UI pages 03-09 were updated in lockstep: page 03's save handler now applies
+   `included_in_fit=False, exclusion_reason=...` onto matching outcomes via `dataclasses.replace`
+   instead of writing session-only `excluded_outcome_ids`; page 04 builds the frame from
+   `included_outcomes(outcome_definitions)`; pages 05/06/07/08/09 all pass and read
+   `outcome_ids`/`direct_dna_outcome_ids`/`outcome_controls` instead of the old segment-named
+   equivalents.
+**Reason:** The instruction document required Family History sign-ups and GSAs to be modellable as
+distinct KPIs within the same customer segment - impossible under the old schema, where `segment` was
+simultaneously "customer cohort" and "the model's fitting identity," so two KPIs sharing a segment
+could not both be fit independently. Making `OutcomeDefinition`/`outcome_id` canonical removes that
+conflation at the source instead of adding another special case on top of `segment`.
+**Alternatives considered:** Keep `segment` as the fitting identity and add a secondary `metric`/
+`kpi` disambiguator only where two outcomes collide (rejected - this leaves every existing "segment"
+key in attribution, optimisation, persistence and the UI ambiguous about which axis it means, and
+only defers the same rename to whichever call site hits the first real collision). Renaming
+`CurveBankEntry.segment_or_overall` to match (rejected for this PR - persisted-file field name,
+larger blast radius than the correctness gain justifies; documented as a residual naming
+inconsistency instead).
+**Impact:** Every fitted model, persisted project bundle, and approval fingerprint from before this
+PR uses segment-keyed identity and is not compatible with the outcome_id-keyed code paths this PR
+introduces - existing bundles must be re-fit and re-approved, consistent with this log's established
+"a genuinely model-relevant schema change is an intentional breaking change" pattern. `included_in_fit`
+defaults to `True` on legacy `OutcomeDefinition.from_dict` loads, so previously-included outcomes stay
+included after migration.
+**Verification:** Core layer test suites rewritten and passing across every touched module
+(`test_outcomes.py`, `test_preprocessor.py`, `test_hierarchical_model.py`,
+`test_market_specific_model.py`, `test_predict.py`, `test_market_specific_predict.py`,
+`test_attribution.py`, `test_market_specific_attribution.py`, `test_optimization.py`,
+`test_media_units.py`, `test_uncertainty.py`, `test_market_specific_diagnostics.py`,
+`test_evidence_tiers.py`, `test_curve_bank.py`, `test_persistence.py`, `test_fingerprint.py`,
+`test_report.py`); full suite green and `ruff check` clean after each step. Two offline (not
+committed, matching this codebase's established convention for anything requiring real PyMC
+sampling) real-MCMC scripts additionally proved the architecture end-to-end: one fits Model A and
+Model C on data with an FH sign-up and an FH GSA sharing one segment plus a DNA-kit outcome, and
+confirms each outcome gets its own independent posterior and response curve; the other walks every
+core-function call sequence pages 03-09 actually make (structure -> config -> training -> diagnostics
+-> results/curve bank -> scenario planner -> export/import/verify-approval/report), for both model
+types, with zero exceptions.
+**Owner:** Engineering.
+**Status:** Accepted; implemented in PR E (canonical outcomes and outcome_id model identity, per the
+post-merge correctness audit's PR ordering). See docs/outcomes.md and
+docs/dna_fh_causal_structure.md for the updated design records.

@@ -16,11 +16,18 @@ promotional sensitivity, and the DNA halo pathway are all estimated with partial
 segments: segments borrow strength from each other where data is thin, and diverge where the data
 supports it (`core/hierarchical_model.py`).
 
+Since PR E, `segment` is a descriptive grouping only - the model's actual fitting identity is
+`outcome_id` (`docs/outcomes.md`). A segment can carry more than one independently-fitted outcome
+(e.g. a "New" sign-up KPI and a "New" GSA KPI both with `segment="New"` but distinct `outcome_id`s),
+so every `beta`/`halo_strength` reference below is really indexed by `outcome_id`, not by segment
+name.
+
 ## The DNA halo pathway
 
 DNA-targeted channels (`ModelSpec.dna_channels`) get an explicit halo term: their effect on the DNA
 cross-sell segment is fixed at full weight (1.0), and their effect on the other two segments is a
-separate, partially-pooled parameter (`halo_strength[segment]`), shrunk toward zero by default and
+separate, partially-pooled parameter (`halo_strength[outcome]`, PyMC coord `"outcome"`), shrunk
+toward zero by default and
 only pulled away from zero where the data supports it, with an additional decision-time lag
 (`dna_lag_weeks`) beyond normal adstock carryover. This is deliberately explicit rather than folded
 into the channel's regular coefficient, so the halo effect is visible and auditable on its own
@@ -30,10 +37,10 @@ into the channel's regular coefficient, so the halo effect is visible and audita
 
 | | Today | Phase 2+ |
 |---|---|---|
-| Response strength | `beta[segment, channel]` - varies by segment, shared across markets | `beta[market, segment, channel]` - varies by both |
-| Saturation (`K`), decay, shape (`S`) | Shared across segments *and* markets | Market-specific (`K`); decay/`S` stay channel-level initially (`docs/modelling_methodology.md`) |
-| DNA halo | `halo_strength[segment]`, shared across markets | Unchanged in Phase 2 scope - a documented future extension, not part of the current redesign |
-| Segment reporting | Segment x channel detail, total-FH contribution, contribution waterfall | Same reports, market-filterable |
+| Response strength | `beta[outcome, channel]` - varies by outcome, shared across markets | `beta[market, outcome, channel]` - varies by both |
+| Saturation (`K`), decay, shape (`S`) | Shared across outcomes *and* markets | Market-specific (`K`); decay/`S` stay channel-level initially (`docs/modelling_methodology.md`) |
+| DNA halo | `halo_strength[outcome]`, shared across markets | Unchanged in Phase 2 scope - a documented future extension, not part of the current redesign |
+| Segment reporting | Outcome x channel detail, total-FH contribution, contribution waterfall | Same reports, market-filterable |
 
 ## Overall (total-FH) aggregation
 

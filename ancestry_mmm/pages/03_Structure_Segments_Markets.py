@@ -10,6 +10,8 @@ import streamlit as st
 from ancestry_mmm.utils import init_session_state, get_state, set_state, clear_model_state, readable_label, FIELD_HELP, dataframe_column_config
 from ancestry_mmm.components import apply_theme, render_sidebar, render_page_header, render_next_step, render_empty_state
 from ancestry_mmm.core.schema import ModelSpec, DEFAULT_SEGMENTS
+from dataclasses import replace as dataclass_replace
+
 from ancestry_mmm.core.outcomes import (
     DNA_SEGMENT_NEW, DNA_SEGMENT_EXISTING_FH, DNA_SEGMENT_COMBINED,
     fh_outcomes_from_spec, dna_outcomes_from_columns, validate_outcome_definitions, outcomes_to_dataframe,
@@ -280,6 +282,16 @@ if st.button("Save structure and validate", type="primary"):
         new_customer_column=dna_new_col, existing_fh_column=dna_existing_col, combined_column=dna_combined_col,
         value_weight_new=dna_new_weight, value_weight_existing=dna_existing_weight, value_weight_combined=dna_combined_weight,
     )
+    # Exclusion is a persisted property of each OutcomeDefinition itself
+    # (included_in_fit - PR E), not session-only state - applied here so it
+    # round-trips through export/import and survives to the next fit exactly
+    # as configured, rather than needing to be re-applied from a separate
+    # excluded_outcome_ids list every time the catalogue is used.
+    outcome_definitions = [
+        dataclass_replace(o, included_in_fit=False, exclusion_reason="Excluded on Structure page")
+        if o.outcome_id in excluded_outcome_ids else o
+        for o in outcome_definitions
+    ]
     errors += validate_outcome_definitions(outcome_definitions)
 
     if errors:
@@ -290,7 +302,6 @@ if st.button("Save structure and validate", type="primary"):
             set_state("transformed_data", updated_df)
         set_state("model_spec", spec.to_dict())
         set_state("outcome_definitions", [o.to_dict() for o in outcome_definitions])
-        set_state("excluded_outcome_ids", excluded_outcome_ids)
         set_state("dna_promotion_events", [e.to_dict() for e in dna_promotion_events])
         clear_model_state()
         issues = validate_modeling_frame(
@@ -318,10 +329,9 @@ if st.button("Save structure and validate", type="primary"):
         )
         outcomes_df = outcomes_to_dataframe(
             outcome_definitions,
-            excluded_outcome_ids=excluded_outcome_ids,
             available_columns=set(df.columns),
-            frame_segments=(get_state("frame") or {}).get("segments"),
-            model_meta_segments=getattr(get_state("model_meta"), "segments", None),
+            frame_outcome_ids=(get_state("frame") or {}).get("outcome_ids"),
+            model_meta_outcome_ids=getattr(get_state("model_meta"), "outcome_ids", None),
         )
         st.dataframe(outcomes_df, width="stretch", column_config=dataframe_column_config(outcomes_df))
 

@@ -10,7 +10,7 @@ import streamlit as st
 from ancestry_mmm.utils import init_session_state, get_state, set_state, clear_model_state, DEFAULT_FH_PRIORS, format_number, FIELD_HELP
 from ancestry_mmm.components import apply_theme, render_sidebar, render_page_header, render_next_step, render_empty_state
 from ancestry_mmm.core.schema import ModelSpec
-from ancestry_mmm.core.outcomes import resolve_outcome_definitions, dna_kit_outcome_columns
+from ancestry_mmm.core.outcomes import resolve_outcome_definitions, dna_kit_outcome_columns, included_outcomes
 from ancestry_mmm.data import prepare_fh_modeling_frame
 
 st.set_page_config(page_title="Model Configuration - Ancestry FH MMM", page_icon="🧬", layout="wide")
@@ -125,16 +125,15 @@ with st.expander("Advanced settings: MCMC sampling"):
     mcmc_target_accept = c4.slider("Target accept", 0.7, 0.99, float(get_state("mcmc_target_accept", 0.9)), 0.01, key="mcmc_target_accept_input")
 
 outcome_definitions = resolve_outcome_definitions(get_state("outcome_definitions"), spec.segment_outcomes, spec.segment_ltv)
-excluded_outcome_ids = set(get_state("excluded_outcome_ids") or [])
-included_outcome_definitions = [o for o in outcome_definitions if o.outcome_id not in excluded_outcome_ids]
+included_outcome_definitions = included_outcomes(outcome_definitions)
 dna_kit_outcomes = dna_kit_outcome_columns(included_outcome_definitions)
-dna_kit_outcomes = {seg: col for seg, col in dna_kit_outcomes.items() if col in df.columns}
-excluded_dna_outcomes = [o for o in outcome_definitions if o.outcome_id in excluded_outcome_ids]
+dna_kit_outcomes = {oid: col for oid, col in dna_kit_outcomes.items() if col in df.columns}
+excluded_dna_outcomes = [o for o in outcome_definitions if not o.included_in_fit]
 
 st.markdown("---")
 if excluded_dna_outcomes:
     st.caption(
-        f"Excluded from this fit (see Structure): {', '.join(o.segment for o in excluded_dna_outcomes)}."
+        f"Excluded from this fit (see Structure): {', '.join(o.outcome_id for o in excluded_dna_outcomes)}."
     )
 if dna_kit_outcomes:
     st.info(
@@ -150,7 +149,7 @@ else:
 
 if st.button("Prepare modelling frame", type="primary"):
     try:
-        frame = prepare_fh_modeling_frame(df, spec, dna_kit_outcomes=dna_kit_outcomes)
+        frame = prepare_fh_modeling_frame(df, spec, outcomes=outcome_definitions)
         set_state("frame", frame)
         set_state("prior_config", prior_config)
         set_state("dna_lag_weeks", int(dna_lag_weeks))
@@ -159,12 +158,12 @@ if st.button("Prepare modelling frame", type="primary"):
         set_state("mcmc_chains", int(mcmc_chains))
         set_state("mcmc_target_accept", float(mcmc_target_accept))
         set_state("model_type", model_type)
-        set_state("direct_dna_segments", list(dna_kit_outcomes.keys()))
+        set_state("direct_dna_outcome_ids", list(dna_kit_outcomes.keys()))
         clear_model_state()
         set_state("frame", frame)  # clear_model_state wipes frame too - reset after
         st.success(
             f"Frame prepared: {format_number(frame['X_media'].shape[0])} observations, "
-            f"{len(frame['channels'])} channels, {len(frame['segments'])} segments, "
+            f"{len(frame['channels'])} channels, {len(frame['outcome_ids'])} outcomes, "
             f"{len(frame['markets'])} market(s). Model structure: {model_type_labels[model_type]}."
         )
     except ValueError as e:
