@@ -107,7 +107,7 @@ if model_run_id and posterior_params is not None and model_spec_dict is not None
         "model_spec_fingerprint": fingerprint_model_spec(
             model_spec_dict, prior_config, dna_lag_weeks, model_type=model_type,
             pipeline_steps=get_state("pipeline_steps") or [], market_spec_config=get_state("market_spec_config"),
-            direct_dna_segments=meta.direct_dna_segments if meta is not None else None,
+            direct_dna_outcome_ids=meta.direct_dna_outcome_ids if meta is not None else None,
         ),
         "posterior_fingerprint": fingerprint_posterior(posterior_params),
     }
@@ -220,13 +220,13 @@ if st.button("Run backtest"):
             mu_test = predict_mu(test_frame, fold_meta, fold_params)
 
         r2_by_seg, mape_by_seg = {}, {}
-        for i, seg in enumerate(fold_meta.segments):
+        for i, oid in enumerate(fold_meta.outcome_ids):
             actual, pred = test_frame["Y"][:, i], mu_test[:, i]
             ss_res = ((actual - pred) ** 2).sum()
             ss_tot = ((actual - actual.mean()) ** 2).sum()
-            r2_by_seg[seg] = float(1 - ss_res / ss_tot) if ss_tot > 0 else float("nan")
+            r2_by_seg[oid] = float(1 - ss_res / ss_tot) if ss_tot > 0 else float("nan")
             mask = actual != 0
-            mape_by_seg[seg] = float((abs((actual[mask] - pred[mask]) / actual[mask])).mean() * 100) if mask.any() else float("nan")
+            mape_by_seg[oid] = float((abs((actual[mask] - pred[mask]) / actual[mask])).mean() * 100) if mask.any() else float("nan")
         return r2_by_seg, mape_by_seg
 
     with st.spinner(f"Running {n_folds}-fold backtest (this refits the model per fold)..."):

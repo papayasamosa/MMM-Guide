@@ -125,9 +125,9 @@ def generate_channel_curve_with_uncertainty(
     posterior mean if not given, so every draw is evaluated at the same
     spend points - required for the per-point summary below to compare
     like with like), then summarized into `saturation_*`,
-    `{segment}_response_*`, `overall_response_*`, `fh_response_*`,
+    `{outcome_id}_response_*`, `overall_response_*`, `fh_response_*`,
     `dna_response_*`, `avg_cpa_*` (against FH GSAs), `marginal_cpa_*`, and
-    - where the channel has a mapped DNA-kit segment - `dna_avg_cpa_*`/
+    - where the channel has a mapped DNA-kit outcome - `dna_avg_cpa_*`/
     `dna_marginal_cpa_*` (against DNA kits) columns.
     """
     if spend_range is None:
@@ -174,18 +174,18 @@ def generate_market_channel_curve_with_uncertainty(
 
 
 def _summarize_scenario_draws(draws: List[pd.DataFrame], cred_mass: float) -> pd.DataFrame:
-    """Per (month, segment) draw summary. `avg_cpa`/`dna_avg_cpa` are
+    """Per (month, outcome_id) draw summary. `avg_cpa`/`dna_avg_cpa` are
     product-aware (see core.optimization.evaluate_scenario's docstring) -
     each summarized independently across draws, never combined into one
     number here either."""
     tail = (1.0 - cred_mass) / 2.0
     combined = pd.concat(draws, ignore_index=True)
-    grouped = combined.groupby(["month", "segment"], sort=False)
+    grouped = combined.groupby(["month", "outcome_id"], sort=False)
     summary = grouped.agg(
-        predicted_gsa_mean=("predicted_gsa", "mean"),
-        predicted_gsa_median=("predicted_gsa", "median"),
-        predicted_gsa_lower=("predicted_gsa", lambda s: s.quantile(tail)),
-        predicted_gsa_upper=("predicted_gsa", lambda s: s.quantile(1.0 - tail)),
+        predicted_outcome_mean=("predicted_outcome", "mean"),
+        predicted_outcome_median=("predicted_outcome", "median"),
+        predicted_outcome_lower=("predicted_outcome", lambda s: s.quantile(tail)),
+        predicted_outcome_upper=("predicted_outcome", lambda s: s.quantile(1.0 - tail)),
         value_mean=("value", "mean"),
         value_median=("value", "median"),
         value_lower=("value", lambda s: s.quantile(tail)),
@@ -228,8 +228,8 @@ def evaluate_scenario_with_uncertainty(
     """
     Per-draw scenario evaluation: `core.optimization.evaluate_scenario` run
     once per sampled posterior draw, summarized into
-    `predicted_gsa`/`value`/`avg_cpa` `_mean`/`_median`/`_lower`/`_upper`
-    per (month, segment).
+    `predicted_outcome`/`value`/`avg_cpa` `_mean`/`_median`/`_lower`/`_upper`
+    per (month, outcome_id).
 
     If `baseline_spend_plan` is given (typically the current/live plan), it
     is evaluated under the *same* draw indices as `spend_plan` (paired, not

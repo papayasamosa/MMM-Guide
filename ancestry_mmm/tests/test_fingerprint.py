@@ -174,19 +174,19 @@ class TestFingerprintModelSpecDirectDnaSegments:
 
     def test_no_direct_dna_segments_is_backward_compatible_with_omitting_the_argument(self):
         spec = {"markets": ["UK"]}
-        assert fingerprint_model_spec(spec, {}, 4) == fingerprint_model_spec(spec, {}, 4, direct_dna_segments=None)
-        assert fingerprint_model_spec(spec, {}, 4) == fingerprint_model_spec(spec, {}, 4, direct_dna_segments=[])
+        assert fingerprint_model_spec(spec, {}, 4) == fingerprint_model_spec(spec, {}, 4, direct_dna_outcome_ids=None)
+        assert fingerprint_model_spec(spec, {}, 4) == fingerprint_model_spec(spec, {}, 4, direct_dna_outcome_ids=[])
 
     def test_adding_a_dna_kit_segment_changes_the_fingerprint(self):
         spec = {"markets": ["UK"]}
-        fp_none = fingerprint_model_spec(spec, {}, 4, direct_dna_segments=["DNA_CrossSell"])
-        fp_with_kit = fingerprint_model_spec(spec, {}, 4, direct_dna_segments=["DNA_CrossSell", "New Customer"])
+        fp_none = fingerprint_model_spec(spec, {}, 4, direct_dna_outcome_ids=["DNA_CrossSell"])
+        fp_with_kit = fingerprint_model_spec(spec, {}, 4, direct_dna_outcome_ids=["DNA_CrossSell", "New Customer"])
         assert fp_none != fp_with_kit
 
     def test_segment_list_order_does_not_matter(self):
         spec = {"markets": ["UK"]}
-        fp_a = fingerprint_model_spec(spec, {}, 4, direct_dna_segments=["A", "B"])
-        fp_b = fingerprint_model_spec(spec, {}, 4, direct_dna_segments=["B", "A"])
+        fp_a = fingerprint_model_spec(spec, {}, 4, direct_dna_outcome_ids=["A", "B"])
+        fp_b = fingerprint_model_spec(spec, {}, 4, direct_dna_outcome_ids=["B", "A"])
         assert fp_a == fp_b
 
     def test_excluding_a_previously_included_dna_outcome_changes_the_fingerprint(self):
@@ -194,8 +194,8 @@ class TestFingerprintModelSpecDirectDnaSegments:
         # page's "exclude from fit" control changes which segments a fit
         # actually has, with model_spec itself untouched.
         spec = {"markets": ["UK"], "segment_outcomes": {"New": "fh_new_gsa"}}
-        fp_included = fingerprint_model_spec(spec, {}, 4, direct_dna_segments=["New", "New Customer"])
-        fp_excluded = fingerprint_model_spec(spec, {}, 4, direct_dna_segments=["New"])
+        fp_included = fingerprint_model_spec(spec, {}, 4, direct_dna_outcome_ids=["New", "New Customer"])
+        fp_excluded = fingerprint_model_spec(spec, {}, 4, direct_dna_outcome_ids=["New"])
         assert fp_included != fp_excluded
 
 
@@ -306,7 +306,7 @@ class TestFingerprintPosterior:
             decay_rate={"TV": 0.5}, hill_K={"TV": 1000.0}, hill_S={"TV": 1.0},
             beta={"New": {"TV": 0.1}}, halo_strength={"New": 0.0}, promo_coef={"New": 0.1},
             market_offset={"UK": {"New": 0.0}}, intercept={"New": 2.0}, trend_coef={"New": 0.0},
-            gamma_fourier={"New": np.zeros(6)}, alpha={"New": 5.0}, control_coef={}, segment_control_coef={},
+            gamma_fourier={"New": np.zeros(6)}, alpha={"New": 5.0}, control_coef={}, outcome_control_coef={},
         )
         fp1 = fingerprint_posterior(params)
         fp2 = fingerprint_posterior(params)

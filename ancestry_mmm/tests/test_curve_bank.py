@@ -25,9 +25,9 @@ CHANNELS = ["TV_Brand", "DNA_Media"]
 @pytest.fixture
 def shared_meta() -> FHModelMeta:
     return FHModelMeta(
-        markets=["UK"], segments=SEGMENTS, channels=CHANNELS,
+        markets=["UK"], outcome_ids=SEGMENTS, channels=CHANNELS,
         dna_channels=["DNA_Media"], dna_channel_idx=[1], non_dna_idx=[0],
-        dna_segment="DNA_CrossSell", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+        dna_outcome_id="DNA_CrossSell", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
     )
 
 
@@ -45,16 +45,16 @@ def shared_params() -> FHPosteriorParams:
         trend_coef={"New": 0.1, "DNA_CrossSell": 0.05},
         gamma_fourier={"New": np.zeros(6), "DNA_CrossSell": np.zeros(6)},
         alpha={"New": 5.0, "DNA_CrossSell": 5.0},
-        control_coef={}, segment_control_coef={},
+        control_coef={}, outcome_control_coef={},
     )
 
 
 @pytest.fixture
 def market_specific_meta() -> FHModelMeta:
     return FHModelMeta(
-        markets=["UK", "Australia"], segments=SEGMENTS, channels=CHANNELS,
+        markets=["UK", "Australia"], outcome_ids=SEGMENTS, channels=CHANNELS,
         dna_channels=["DNA_Media"], dna_channel_idx=[1], non_dna_idx=[0],
-        dna_segment="DNA_CrossSell", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+        dna_outcome_id="DNA_CrossSell", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
     )
 
 
@@ -73,7 +73,7 @@ def market_specific_params() -> FHMarketSpecificPosteriorParams:
         trend_coef={"New": 0.1, "DNA_CrossSell": 0.05},
         gamma_fourier={"New": np.zeros(6), "DNA_CrossSell": np.zeros(6)},
         alpha={"New": 5.0, "DNA_CrossSell": 5.0},
-        control_coef={}, segment_control_coef={},
+        control_coef={}, outcome_control_coef={},
     )
 
 
@@ -259,7 +259,7 @@ class TestMakeEntriesMarketSpecificModel:
             trend_coef={"New": 0.1, "DNA_CrossSell": 0.05},
             gamma_fourier={"New": np.zeros(6), "DNA_CrossSell": np.zeros(6)},
             alpha={"New": 5.0, "DNA_CrossSell": 5.0},
-            control_coef={}, segment_control_coef={},
+            control_coef={}, outcome_control_coef={},
         )
         entries = make_entries(
             market_specific_meta, params, ("2024-01-01", "2024-12-31"), "uk-au-v1", approval,

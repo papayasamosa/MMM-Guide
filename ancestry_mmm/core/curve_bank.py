@@ -64,7 +64,7 @@ class CurveBankEntry:
     model_type: str            # "shared" (Model A) | "market_specific" (Model C)
     market: Optional[str]      # None for a shared curve; a market name for Model C
     channel: str
-    segment_or_overall: str    # one of the model's segments, or OVERALL
+    segment_or_overall: str    # one of the model's outcome_ids, or OVERALL
     dna_channel: bool
     curve_status: str          # one of the CURVE_STATUS_* constants above
 
@@ -283,14 +283,14 @@ def make_entries(
                 decay_rate = params.decay_rate[channel]
                 hill_K = params.hill_K[market][channel]
                 hill_S = params.hill_S[channel]
-                beta_by_segment = {s: params.beta[market][s][channel] for s in meta.segments}
+                beta_by_segment = {s: params.beta[market][s][channel] for s in meta.outcome_ids}
                 curve_status = evidence_tiers[market][channel]
                 currency = currency_by_market.get(market)
             else:
                 decay_rate = params.decay_rate[channel]
                 hill_K = params.hill_K[channel]
                 hill_S = params.hill_S[channel]
-                beta_by_segment = {s: params.beta[s][channel] for s in meta.segments}
+                beta_by_segment = {s: params.beta[s][channel] for s in meta.outcome_ids}
                 curve_status = CURVE_STATUS_SHARED
                 currency = None
 

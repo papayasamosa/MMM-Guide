@@ -4,29 +4,43 @@ Design record for `core.outcomes` - the generalised outcome catalogue that lets 
 *what's being measured* (product, segment, metric, source column, value weight) as explicit
 dimensions, rather than assuming every measurable outcome is a Family History segment.
 
+**`outcome_id` is the model's canonical identity dimension (PR E, "make `OutcomeDefinition` the
+canonical modelling schema" - see `docs/decision_log.md`), not `segment`.** Every fitted model, curve,
+attribution, scenario, and persisted bundle keys on `outcome_id`, never on `segment` membership. This
+is what makes it possible to fit two distinct KPIs on the *same* customer segment - e.g. a Family
+History **sign-up** (`outcome_id="fh_new_signup"`) and a Family History **GSA**
+(`outcome_id="fh_new_gsa"`), both `segment="New"` - as two independent outcome_ids with independent
+fitted response curves, rather than conflating them because they happen to share a segment name.
+`segment` remains a *descriptive* grouping field (which customer segment this outcome belongs to), not
+a unique key.
+
 ## Why this exists
 
 Before this schema, "outcome" meant exactly one thing: an entry in `ModelSpec.segment_outcomes`,
 implicitly a Family History GSA column. That's correct for what the fitted model predicts today, but
 it can't represent DNA kit purchases - a genuinely different business outcome (a product sale, not a
-Family History signup) with its own economics. `core.outcomes.OutcomeDefinition` adds an explicit
-`product` dimension (`"Family History"` or `"DNA"`) alongside `segment`, `metric`, `column`, and an
-optional `value_weight`, so the catalogue can describe both without forcing DNA data into a shape
-built for FH segments.
+Family History signup) with its own economics - or two distinct KPIs (a sign-up funnel step and its
+downstream GSA) on the same customer segment. `core.outcomes.OutcomeDefinition` adds an explicit
+`product` dimension (`"Family History"` or `"DNA"`) alongside `segment`, `metric`, `source_column`, and
+an optional `value_weight`, so the catalogue can describe all of these without forcing the data into a
+shape built for one-outcome-per-segment.
 
 ## Scope boundary: captured always, modelled once mapped
 
-`ModelSpec.segment_outcomes` is unchanged and still means exactly what it always has - the Family
-History segments the joint model fits automatically, no configuration needed. DNA-product outcomes
-are **opt-in**: mapping one on Structure: Segments & Markets does not, by itself, retroactively
-change any existing fit, but the next time the modelling frame is prepared on Model Configuration,
-`core.outcomes.dna_kit_outcome_columns` feeds the mapped DNA segment(s) into
-`data.preprocessor.prepare_fh_modeling_frame`'s `dna_kit_outcomes` parameter, and from there into
-`core.hierarchical_model.build_fh_hierarchical_model`/`core.market_specific_model.
-build_fh_market_specific_model`'s `direct_dna_segments` - DNA-targeted media then gets full, direct
-response on that segment, not the shrunk-toward-zero halo pathway other segments get. See
-`docs/dna_fh_causal_structure.md` for the full equation-level treatment and how double counting
-between DNA kit sales and FH cross-sell is avoided.
+`ModelSpec.segment_outcomes` is now purely a **migration source** - `core.outcomes.fh_outcomes_from_spec`
+derives an equivalent outcome catalogue from it for any project that predates this schema. The actual
+frame-preparation and model-building path (`data.preprocessor.prepare_fh_modeling_frame`,
+`core.hierarchical_model.build_fh_hierarchical_model`, `core.market_specific_model.
+build_fh_market_specific_model`) takes an explicit outcome catalogue (`outcomes=`, a
+`List[OutcomeDefinition]`) as its structural input, not `spec.segment_outcomes` directly. DNA-product
+outcomes are **opt-in**: mapping one on Structure: Segments & Markets does not, by itself,
+retroactively change any existing fit, but the next time the modelling frame is prepared on Model
+Configuration, `core.outcomes.dna_kit_outcome_columns` feeds the mapped DNA outcome_id(s) into
+`prepare_fh_modeling_frame`'s `outcomes` parameter, and from there into the model builders'
+`direct_dna_outcome_ids` - DNA-targeted media then gets full, direct response on that outcome_id, not
+the shrunk-toward-zero halo pathway other outcomes get. See `docs/dna_fh_causal_structure.md` for the
+full equation-level treatment and how double counting between DNA kit sales and FH cross-sell is
+avoided.
 
 `core.outcomes.outcome_requires_opt_in(outcome)` reflects the *automatic-vs-opt-in* distinction
 specifically - `True` for any non-`"Family History"`-product outcome (today, any DNA outcome), since
@@ -34,36 +48,51 @@ FH is the only kind that's part of every fit with no extra step. It is a static,
 ("does this *kind* of outcome ever need a config step?") answerable from the outcome alone.
 
 Whether a *specific* past run actually included a given outcome is a different, run-aware question -
-answered by `core.outcomes.outcome_was_modelled(outcome, model_meta)` (`True` iff `outcome.segment` is
-in the given `FHModelMeta.segments` - `None` for `model_meta` always means `False`, never an error) -
-and, more granularly, `core.outcomes.outcome_status(...)`, which returns one of six states
-(`OUTCOME_STATUSES`): `Configured`, `Included in prepared frame`, `Included in fitted run`, `Missing
-source column`, `Excluded`, `Stale after configuration changes`. A single collapsed boolean can't
-distinguish "mapped but never fit" from "excluded from this fit on purpose" from "fit before, but its
-source column has since disappeared" - `outcome_status` can, so every place the outcome catalogue
-reaches the UI (Structure page, project report) shows this richer status rather than a boolean, and a
-DNA row is never presented as if it's unconditionally influencing every fit's outputs.
+answered by `core.outcomes.outcome_was_modelled(outcome, model_meta)` (`True` iff `outcome.outcome_id`
+is in the given `FHModelMeta.outcome_ids` - `None` for `model_meta` always means `False`, never an
+error - keyed on `outcome_id`, never `segment`, since two outcomes can share a segment and still need
+to be distinguishable: a sign-up outcome must not read as "modelled" just because its sibling GSA
+outcome on the same segment was) - and, more granularly, `core.outcomes.outcome_status(...)`, which
+returns one of six states (`OUTCOME_STATUSES`): `Configured`, `Included in prepared frame`, `Included
+in fitted run`, `Missing source column`, `Excluded`, `Stale after configuration changes`. A single
+collapsed boolean can't distinguish "mapped but never fit" from "excluded from this fit on purpose"
+from "fit before, but its source column has since disappeared" - `outcome_status` can, so every place
+the outcome catalogue reaches the UI (Structure page, project report) shows this richer status rather
+than a boolean, and a DNA row is never presented as if it's unconditionally influencing every fit's
+outputs.
 
 The Structure page also has a genuine "exclude this DNA outcome from the next fit" control (a
-`st.multiselect`, stored as `excluded_outcome_ids` in session state) - captured and validated either
-way, but a real, consumed choice: `pages/04_Model_Config.py` filters `dna_kit_outcomes` by it before
-preparing the modelling frame, and it feeds `outcome_status`'s `Excluded` state. Known residual gap:
-`excluded_outcome_ids` is a session-state preference, not yet persisted in the project bundle (see
-"Persistence" below) - a reimported project re-includes every mapped DNA outcome regardless of
-exclusions in effect when it was saved.
+`st.multiselect`). As of PR E, exclusion is a **persisted property of the outcome itself** -
+`OutcomeDefinition.included_in_fit` (plus an optional free-text `exclusion_reason`) - not session-only
+state: the Structure page applies the multiselect's choice directly onto each outcome's
+`included_in_fit` before saving the catalogue, `prepare_fh_modeling_frame` filters to
+`included_outcomes(outcomes)` internally, and a reimported project now reconstructs the *exact* set of
+outcomes that were included at fit time, closing the persistence gap the pre-PR-E
+`excluded_outcome_ids` session-state mechanism left open.
 
 ## The schema
 
 ```python
 OutcomeDefinition(
-    outcome_id="fh_new",
+    outcome_id="fh_new_signup",
     product="Family History",
     segment="New",
+    metric="Sign-up",
+    source_column="Signup_New",
+    unit="sign-up",
+    value_weight=None,
+    role="funnel_intermediate",
+)
+
+OutcomeDefinition(
+    outcome_id="fh_new_gsa",
+    product="Family History",
+    segment="New",             # same segment as the sign-up above - a distinct outcome_id, not a conflict
     metric="GSA",
-    column="GSA_New",
-    unit="GSA",           # derived default - "GSA" for Family History, "kit" for DNA
-    value_weight=180.0,   # LTV - optional
-    role="primary",       # default - free-text, not yet a fixed enum
+    source_column="GSA_New",
+    unit="GSA",            # derived default - "GSA" for Family History, "kit" for DNA
+    value_weight=180.0,    # LTV - optional
+    role="primary",        # default
 )
 
 OutcomeDefinition(
@@ -71,21 +100,32 @@ OutcomeDefinition(
     product="DNA",
     segment="New Customer",
     metric="Kit sale",
-    column="DNA_Kit_New_Customer",
+    source_column="DNA_Kit_New_Customer",
     unit="kit",
-    value_weight=90.0,    # value per kit - optional
+    value_weight=90.0,     # value per kit - optional
     role="primary",
+    included_in_fit=True,  # persisted exclusion flag - see "Scope boundary" above
+    exclusion_reason=None,
 )
 ```
 
-`product` is one of `core.outcomes.FAMILY_HISTORY` / `core.outcomes.DNA`. DNA `segment` is one of
-`DNA_SEGMENT_NEW` ("New Customer"), `DNA_SEGMENT_EXISTING_FH` ("Existing FH Customer"), or
-`DNA_SEGMENT_COMBINED` ("Combined") - see below. `unit` and `role` are migration-safe additions: a
-bundle saved before these fields existed just falls back to `unit`'s derived default and `role`'s
-`"primary"` default (`OutcomeDefinition.from_dict` filters to known dataclass fields, so an
-older/missing key never raises, it just uses the field default) - nothing to migrate explicitly.
-`unit` is what every product-aware output downstream keeps separate (see "Product-aware outputs"
-below); `role` is currently free text, not yet consumed by any calculation.
+`outcome_id` is the stable identity every fitted model, curve, attribution, scenario, and persisted
+bundle keys on - it is never re-derived from `segment`. `product` is one of
+`core.outcomes.FAMILY_HISTORY` / `core.outcomes.DNA`. DNA `segment` is one of `DNA_SEGMENT_NEW` ("New
+Customer"), `DNA_SEGMENT_EXISTING_FH` ("Existing FH Customer"), or `DNA_SEGMENT_COMBINED` ("Combined")
+- see below. `unit`, `role`, `included_in_fit` and `exclusion_reason` are migration-safe additions: a
+bundle saved before these fields existed just falls back to `unit`'s derived default, `role`'s
+`"primary"` default, and `included_in_fit=True` (`OutcomeDefinition.from_dict` filters to known
+dataclass fields and translates the legacy `column` key to `source_column`, so an older/missing key
+never raises, it just uses the field default) - nothing to migrate explicitly. `unit` is what every
+product-aware output downstream keeps separate (see "Product-aware outputs" below); `role` is one of
+`OUTCOME_ROLES` (`"primary"`, `"secondary"`, `"funnel_intermediate"`, `"diagnostic"`) - validated and
+always visible, but not yet a fitting-behaviour change in this PR.
+
+A validation heuristic (`_implies_conflicting_metric_label`) string-matches `outcome_id`/`source_column`
+against `metric` and flags an outcome whose id/column implies "signup" while its metric says "GSA" (or
+the reverse) - a guard against exactly the mislabelling risk two distinct KPIs on one segment could
+otherwise introduce. It is a heuristic (string patterns, not data semantics), documented as such.
 
 ## Backward compatibility: every project has a catalogue, not just ones that set one up
 
@@ -137,16 +177,17 @@ workflow.
 Every response/CPA/scenario/optimisation output that could combine Family History GSAs and DNA kit
 sales keeps them separate instead - the instruction document's "do not expose a generic total volume
 that adds kits and GSAs" / "CPA must identify its denominator" requirements, and the audit-confirmed
-`volume_objective_mixes_units` defect this closed. `meta.kit_only_segments` (`direct_dna_segments`
-minus `dna_segment`) is, by construction, exactly the set of segments with `OutcomeDefinition.product
-== DNA` - so `core.predict`/`core.market_specific_predict` can split `fh_response`/`dna_response` on
-every curve using only `FHModelMeta`, without importing `core.outcomes` (avoids a new coupling/import-
-cycle risk). From there: `core.media_units.compute_cpa_by_product` (never `compute_cpa`'s bare
-`"overall_response"` default on a curve that genuinely mixes both - it raises unless the caller passes
-`allow_mixed=True`), `core.optimization.evaluate_scenario`'s `fh_gsa`/`dna_kits`/`avg_cpa`/
-`dna_avg_cpa`/`total_value` columns, and `core.optimization.VALID_OBJECTIVES` (`"fh_gsa"`,
-`"dna_kits"`, `"weighted_mix"`, `"expected_value"` - no generic "maximise volume") all follow the same
-discipline. See `docs/dna_fh_causal_structure.md` and `docs/decision_log.md` for the full treatment.
+`volume_objective_mixes_units` defect this closed. `meta.kit_only_outcome_ids`
+(`direct_dna_outcome_ids` minus `dna_outcome_id`) is, by construction, exactly the set of outcome_ids
+with `OutcomeDefinition.product == DNA` - so `core.predict`/`core.market_specific_predict` can split
+`fh_response`/`dna_response` on every curve using only `FHModelMeta`, without importing
+`core.outcomes` (avoids a new coupling/import-cycle risk). From there:
+`core.media_units.compute_cpa_by_product` (never `compute_cpa`'s bare `"overall_response"` default on
+a curve that genuinely mixes both - it raises unless the caller passes `allow_mixed=True`),
+`core.optimization.evaluate_scenario`'s `fh_gsa`/`dna_kits`/`avg_cpa`/`dna_avg_cpa`/`total_value`
+columns, and `core.optimization.VALID_OBJECTIVES` (`"fh_gsa"`, `"dna_kits"`, `"weighted_mix"`,
+`"expected_value"` - no generic "maximise volume") all follow the same discipline. See
+`docs/dna_fh_causal_structure.md` and `docs/decision_log.md` for the full treatment.
 
 ## Persistence
 
@@ -156,30 +197,32 @@ discipline. See `docs/dna_fh_causal_structure.md` and `docs/decision_log.md` for
 has no such file, `import_project` reports `outcome_definitions: None`, and every downstream reader
 calls `resolve_outcome_definitions` rather than assuming the key is populated.
 
-`core.persistence.reconstruct_model_state` rebuilds a reimported project's modelling frame with the
-*same* DNA-kit outcomes the original fit used - recomputed from the bundle's own
-`outcome_definitions` via `resolve_outcome_definitions` + `dna_kit_outcome_columns`, the identical
-derivation `pages/04_Model_Config.py` uses when first preparing a frame. Before this, reconstruction
-rebuilt the frame from `transformed_data` + `model_spec` alone, silently dropping every DNA-kit
-segment - a reimported FH-plus-DNA project's frame came back FH-only, disagreeing with
-`model_meta.segments` from the same bundle (the audit's `reimport_frame_matches_meta_segments: False`
-finding). `excluded_outcome_ids` isn't part of the bundle yet (see "Scope boundary" above), so
-reconstruction re-includes every mapped DNA outcome regardless of exclusions in effect when the
-project was saved - a documented residual gap, not the silent-segment-loss defect this fixed.
+`core.persistence.reconstruct_model_state` rebuilds a reimported project's modelling frame from the
+*same* outcome catalogue the original fit used - `resolve_outcome_definitions(imported.get(
+"outcome_definitions"), ...)`, filtered to outcomes whose `source_column` is still present in
+`transformed_data`, passed as `prepare_fh_modeling_frame`'s `outcomes=` argument (which itself filters
+to `included_in_fit=True` via `included_outcomes()`). Because `included_in_fit` is now persisted on
+each `OutcomeDefinition` rather than being session-only state, a reimported project reconstructs the
+*exact* set of outcomes that were included at fit time - both the pre-PR-E "reconstruction silently
+drops DNA-kit segments" defect and the "excluded_outcome_ids isn't persisted" gap are closed by the
+same change: exclusion is now data the bundle carries, not a preference the session held.
+`outcome_catalogue_at_fit` on `FHModelMeta` (round-tripped through the bundle as part of `model_meta.json`,
+restored to real `OutcomeDefinition` instances on import) additionally records the *exact* catalogue a
+fit was built from, for future staleness-detection use.
 
-**Which DNA outcomes are included IS part of the model-specification fingerprint.** Once DNA response
+**Which outcome_ids are included IS part of the model-specification fingerprint.** Once DNA response
 equations shipped (the direct/halo pathway split, `docs/dna_fh_causal_structure.md`), which DNA-kit
 outcomes are actually included in a fit became genuinely model-relevant: it changes
-`FHModelMeta.segments`/`direct_dna_segments` without touching `model_spec`, prior config, pipeline
-steps, or the raw data at all. `core.fingerprint.fingerprint_model_spec`'s `direct_dna_segments`
-parameter (fed the fitted model's own `meta.direct_dna_segments`, sorted so segment order never
-matters) covers this - closing a gap the instruction document's post-merge audit confirmed: an
-approval used to stay "matching" across two fits that differed only in which DNA-kit outcomes were
-included. Editing the outcome catalogue's *descriptive* fields (metric label, value weight) without
-changing which segments actually get fit still does not touch the fingerprint - only a change to what
-gets included in the next fit does, via `direct_dna_segments`. Not yet fingerprinted: the exact
-source column mapped to each included DNA-kit segment (only *which segments* are included is
-covered) - a documented residual gap, see `core.fingerprint.fingerprint_model_spec`'s docstring.
+`FHModelMeta.outcome_ids`/`direct_dna_outcome_ids` without touching `model_spec`, prior config,
+pipeline steps, or the raw data at all. `core.fingerprint.fingerprint_model_spec`'s
+`direct_dna_outcome_ids` parameter (fed the fitted model's own `meta.direct_dna_outcome_ids`, sorted so
+order never matters) covers this - an approval never stays "matching" across two fits that differed
+only in which DNA-kit outcomes were included. Editing the outcome catalogue's *descriptive* fields
+(metric label, value weight) without changing which outcome_ids actually get fit still does not touch
+the fingerprint - only a change to what gets included in the next fit does, via
+`direct_dna_outcome_ids`. Not yet fingerprinted: the exact source column mapped to each included
+outcome_id (only *which outcome_ids* are included is covered) - a documented residual gap, see
+`core.fingerprint.fingerprint_model_spec`'s docstring.
 
 ## Project report
 

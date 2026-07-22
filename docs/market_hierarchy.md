@@ -33,9 +33,9 @@ market_saturation[market, channel]
 - No market is forced to be identical to another, but none is estimated in total isolation either.
 
 **Built in Phase 2** as `core.market_specific_model.build_fh_market_specific_model` ("Model C") -
-see `docs/modelling_methodology.md` for the exact parameterisation. `beta[market, segment, channel]`
-follows the same partial-pooling idea, additively (`mu_channel + market_dev + segment_dev`, no free
-interaction term).
+see `docs/modelling_methodology.md` for the exact parameterisation. `beta[market, outcome, channel]`
+follows the same partial-pooling idea, additively (`mu_channel + market_dev + outcome_beta_dev`, no
+free interaction term).
 
 ## 4. Market evidence tiers
 

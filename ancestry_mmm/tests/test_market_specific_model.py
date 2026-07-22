@@ -18,7 +18,7 @@ from ancestry_mmm.core.schema import ModelSpec
 def _single_market_frame():
     return {
         "markets": ["UK"], "market_idx": np.array([0, 0]), "market_bounds": [(0, 2)],
-        "channels": ["TV"], "dna_channel_idx": [], "segments": ["New"],
+        "channels": ["TV"], "dna_channel_idx": [], "outcome_ids": ["fh_new"],
         "X_media": np.array([[100.0], [200.0]]), "Y": np.array([[10.0], [12.0]]),
         "promo": np.zeros((2, 1)), "X_controls": np.zeros((2, 0)), "control_names": [],
         "fourier": np.zeros((2, 2)), "trend": np.array([1.0, 1.1]), "unpooled_markets": [],

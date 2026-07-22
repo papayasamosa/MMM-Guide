@@ -18,8 +18,8 @@
   version" - see `docs/decision_log.md`) means the model cannot yet distinguish "this market's
   media carries over longer" from "this market's saturation point is higher" - both currently only
   show up through the shared parameters or the market-specific `K`.
-- `beta[market, segment, channel]` is built as an additive form (global + market deviation + segment
-  deviation) with no free market x segment x channel interaction term - by design (`docs/decision_log.md`),
+- `beta[market, outcome, channel]` is built as an additive form (global + market deviation + outcome
+  deviation) with no free market x outcome x channel interaction term - by design (`docs/decision_log.md`),
   not because an interaction was ruled out; it's a documented next step once diagnostics on real
   data motivate it.
 - Simulation-based recovery testing (`core.simulation`) validates that the model *can* recover known
@@ -115,8 +115,8 @@
   delivery under inflation" from the original redesign brief aren't built; `objective` is explicit
   (`core.optimization.VALID_OBJECTIVES`: `"fh_gsa"`, `"dna_kits"`, `"weighted_mix"`,
   `"expected_value"` - no generic "maximise volume" that would mix FH GSAs and DNA kits), with
-  `avg_cpa`/`dna_avg_cpa` reported as output metrics only. `"weighted_mix"` and per-segment
-  `target_segments` are implemented in `core.optimization` but not yet exposed as UI controls on
+  `avg_cpa`/`dna_avg_cpa` reported as output metrics only. `"weighted_mix"` and per-outcome
+  `target_outcome_ids` are implemented in `core.optimization` but not yet exposed as UI controls on
   the Scenario Planner page.
 - Media-unit curve bank entries (`input_type="media_unit"`) are only auto-saved for a
   market-specific fit - a shared curve's cost-per-unit context is inherently market-specific with no

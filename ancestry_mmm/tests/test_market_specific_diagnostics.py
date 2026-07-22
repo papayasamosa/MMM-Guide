@@ -16,7 +16,7 @@ from ancestry_mmm.core.market_specific_diagnostics import (
 from ancestry_mmm.core.market_specific_predict import FHMarketSpecificPosteriorParams
 
 MARKETS = ["UK", "AU"]
-SEGMENTS = ["New", "DNA_CrossSell"]
+OUTCOME_IDS = ["New", "DNA_CrossSell"]
 CHANNELS = ["TV", "DNA_Media"]
 N_OBS = 6
 
@@ -24,9 +24,9 @@ N_OBS = 6
 @pytest.fixture
 def meta() -> FHModelMeta:
     return FHModelMeta(
-        markets=MARKETS, segments=SEGMENTS, channels=CHANNELS,
+        markets=MARKETS, outcome_ids=OUTCOME_IDS, channels=CHANNELS,
         dna_channels=["DNA_Media"], dna_channel_idx=[1], non_dna_idx=[0],
-        dna_segment="DNA_CrossSell", dna_lag_weeks=1, unpooled_markets=[], control_names=[],
+        dna_outcome_id="DNA_CrossSell", dna_lag_weeks=1, unpooled_markets=[], control_names=[],
     )
 
 
@@ -48,7 +48,7 @@ def params() -> FHMarketSpecificPosteriorParams:
         gamma_fourier={"New": np.zeros(4), "DNA_CrossSell": np.zeros(4)},
         alpha={"New": 5.0, "DNA_CrossSell": 5.0},
         control_coef={},
-        segment_control_coef={},
+        outcome_control_coef={},
     )
 
 
@@ -66,8 +66,8 @@ def frame():
         "fourier": rng.normal(size=(N_OBS, 4)),
         "control_names": [],
         "X_controls": np.zeros((N_OBS, 0)),
-        "segment_controls": {},
-        "segment_control_names": {},
+        "outcome_controls": {},
+        "outcome_control_names": {},
     }
 
 
@@ -80,7 +80,7 @@ def trace(params) -> az.InferenceData:
     n_chain, n_draw = 2, 8
     rng = np.random.default_rng(2)
     coords = {
-        "market": MARKETS, "channel": CHANNELS, "segment": SEGMENTS,
+        "market": MARKETS, "channel": CHANNELS, "outcome": OUTCOME_IDS,
         "obs": list(range(N_OBS)), "fourier": [0, 1, 2, 3],
     }
 
@@ -95,18 +95,18 @@ def trace(params) -> az.InferenceData:
         return base + rng.normal(0, noise, size=base.shape)
 
     hill_K = jittered([[params.hill_K[m][c] for c in CHANNELS] for m in MARKETS])
-    beta = jittered([[[params.beta[m][s][c] for c in CHANNELS] for s in SEGMENTS] for m in MARKETS])
+    beta = jittered([[[params.beta[m][s][c] for c in CHANNELS] for s in OUTCOME_IDS] for m in MARKETS])
     hill_S = jittered([params.hill_S[c] for c in CHANNELS])
-    alpha = jittered([params.alpha[s] for s in SEGMENTS])
+    alpha = jittered([params.alpha[s] for s in OUTCOME_IDS])
     decay_rate = jittered([params.decay_rate[c] for c in CHANNELS])
-    promo_coef = jittered([params.promo_coef[s] for s in SEGMENTS])
-    market_offset = additive_jitter([[params.market_offset[m][s] for s in SEGMENTS] for m in MARKETS])
-    intercept = jittered([params.intercept[s] for s in SEGMENTS])
-    trend_coef = jittered([params.trend_coef[s] for s in SEGMENTS])
-    gamma_fourier = additive_jitter(np.zeros((4, len(SEGMENTS))))
-    halo_strength = additive_jitter([params.halo_strength[s] for s in SEGMENTS])
+    promo_coef = jittered([params.promo_coef[s] for s in OUTCOME_IDS])
+    market_offset = additive_jitter([[params.market_offset[m][s] for s in OUTCOME_IDS] for m in MARKETS])
+    intercept = jittered([params.intercept[s] for s in OUTCOME_IDS])
+    trend_coef = jittered([params.trend_coef[s] for s in OUTCOME_IDS])
+    gamma_fourier = additive_jitter(np.zeros((4, len(OUTCOME_IDS))))
+    halo_strength = additive_jitter([params.halo_strength[s] for s in OUTCOME_IDS])
     # A plausible mu: positive, roughly tracking Y so in-sample fit isn't nonsensical.
-    mu = jittered(np.full((N_OBS, len(SEGMENTS)), 20.0), noise=0.05)
+    mu = jittered(np.full((N_OBS, len(OUTCOME_IDS)), 20.0), noise=0.05)
 
     posterior = {
         "hill_K": hill_K, "beta": beta, "hill_S": hill_S, "alpha": alpha, "mu": mu,
@@ -115,11 +115,11 @@ def trace(params) -> az.InferenceData:
         "halo_strength": halo_strength,
     }
     dims = {
-        "hill_K": ["market", "channel"], "beta": ["market", "segment", "channel"],
-        "hill_S": ["channel"], "alpha": ["segment"], "mu": ["obs", "segment"],
-        "decay_rate": ["channel"], "promo_coef": ["segment"], "market_offset": ["market", "segment"],
-        "intercept": ["segment"], "trend_coef": ["segment"], "gamma_fourier": ["fourier", "segment"],
-        "halo_strength": ["segment"],
+        "hill_K": ["market", "channel"], "beta": ["market", "outcome", "channel"],
+        "hill_S": ["channel"], "alpha": ["outcome"], "mu": ["obs", "outcome"],
+        "decay_rate": ["channel"], "promo_coef": ["outcome"], "market_offset": ["market", "outcome"],
+        "intercept": ["outcome"], "trend_coef": ["outcome"], "gamma_fourier": ["fourier", "outcome"],
+        "halo_strength": ["outcome"],
     }
     return az.from_dict(posterior=posterior, coords=coords, dims=dims)
 
@@ -127,7 +127,7 @@ def trace(params) -> az.InferenceData:
 class TestInSampleFitMarketSpecific:
     def test_returns_one_row_per_segment_with_expected_columns(self, meta, params, frame):
         df = in_sample_fit_market_specific(frame, meta, params)
-        assert list(df["segment"]) == SEGMENTS
+        assert list(df["outcome_id"]) == OUTCOME_IDS
         assert {"r_squared", "mape_pct", "actual_mean", "predicted_mean"} <= set(df.columns)
 
 
@@ -151,5 +151,5 @@ class TestComputeScorecardMarketSpecific:
         scorecard = compute_scorecard_market_specific(trace, frame, meta)
         assert set(scorecard) == {"convergence", "in_sample_fit", "ppc_coverage", "plausibility_flags"}
         assert "converged" in scorecard["convergence"]
-        assert len(scorecard["in_sample_fit"]) == len(SEGMENTS)
-        assert len(scorecard["ppc_coverage"]) == len(SEGMENTS)
+        assert len(scorecard["in_sample_fit"]) == len(OUTCOME_IDS)
+        assert len(scorecard["ppc_coverage"]) == len(OUTCOME_IDS)

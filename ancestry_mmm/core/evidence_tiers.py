@@ -47,11 +47,11 @@ DEFAULT_MAX_RELATIVE_UNCERTAINTY_FOR_LOCAL = 0.5
 
 
 def _relative_uncertainty(
-    trace: az.InferenceData, var: str, market: str, channel: str, segment: Optional[str] = None,
+    trace: az.InferenceData, var: str, market: str, channel: str, outcome_id: Optional[str] = None,
 ) -> float:
     selector = {"market": market, "channel": channel}
-    if segment is not None:
-        selector["segment"] = segment
+    if outcome_id is not None:
+        selector["outcome"] = outcome_id
     draws = trace.posterior[var].sel(**selector)
     mean = float(draws.mean())
     std = float(draws.std())
@@ -94,7 +94,7 @@ def classify_market_evidence(
         return TRANSFERRED_ESTIMATE
 
     beta_rel_uncertainties = [
-        _relative_uncertainty(trace, "beta", market, channel, segment=seg) for seg in meta.segments
+        _relative_uncertainty(trace, "beta", market, channel, outcome_id=oid) for oid in meta.outcome_ids
     ]
     rel_uncertainty = max([_relative_uncertainty(trace, "hill_K", market, channel)] + beta_rel_uncertainties)
 

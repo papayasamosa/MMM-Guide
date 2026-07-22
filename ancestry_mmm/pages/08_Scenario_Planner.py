@@ -81,7 +81,7 @@ if model_run_id and spec_dict is not None:
         "model_spec_fingerprint": fingerprint_model_spec(
             spec_dict, prior_config, dna_lag_weeks, model_type=model_type,
             pipeline_steps=get_state("pipeline_steps") or [], market_spec_config=get_state("market_spec_config"),
-            direct_dna_segments=meta.direct_dna_segments if meta is not None else None,
+            direct_dna_outcome_ids=meta.direct_dna_outcome_ids if meta is not None else None,
         ),
         "posterior_fingerprint": fingerprint_posterior(params),
     }
@@ -157,13 +157,13 @@ months = [d.strftime("%Y-%m") for d in month_dates]
 # future promo/control values.
 market_mask = np.array(frame["df"][spec.market_col] == market)
 last_trend = float(frame["trend"][market_mask][-1]) if market_mask.any() else 1.0
-mean_promo = {seg: float(frame["promo"][market_mask, i].mean()) if market_mask.any() else 0.0 for i, seg in enumerate(meta.segments)}
+mean_promo = {oid: float(frame["promo"][market_mask, i].mean()) if market_mask.any() else 0.0 for i, oid in enumerate(meta.outcome_ids)}
 mean_controls = {name: float(frame["X_controls"][market_mask, i].mean()) if (market_mask.any() and frame["X_controls"].shape[1]) else 0.0
                   for i, name in enumerate(frame.get("control_names") or [])}
-mean_segment_controls = {
-    seg: {name: float(frame["segment_controls"][seg][market_mask, i].mean()) if market_mask.any() else 0.0
-          for i, name in enumerate(frame.get("segment_control_names", {}).get(seg, []))}
-    for seg in (frame.get("segment_controls") or {})
+mean_outcome_controls = {
+    oid: {name: float(frame["outcome_controls"][oid][market_mask, i].mean()) if market_mask.any() else 0.0
+          for i, name in enumerate(frame.get("outcome_control_names", {}).get(oid, []))}
+    for oid in (frame.get("outcome_controls") or {})
 }
 
 reference_context_by_month = {}
@@ -171,7 +171,7 @@ for d, m in zip(month_dates, months):
     fourier_vec = create_fourier_features_from_calendar(pd.Series([d]), n_harmonics=spec.fourier_harmonics)[0]
     reference_context_by_month[m] = {
         "trend": last_trend, "fourier": fourier_vec, "promo": mean_promo,
-        "controls": mean_controls, "segment_controls": mean_segment_controls,
+        "controls": mean_controls, "outcome_controls": mean_outcome_controls,
     }
 
 # --- Current/baseline spend plan: recent average weekly spend for this market, held flat.
@@ -244,7 +244,7 @@ else:
 st.session_state[plan_key] = edited
 spend_plan = {m: {c: float(edited.loc[m, c]) for c in meta.channels} for m in months}
 
-_has_dna_kit_segments = bool(meta.kit_only_segments)
+_has_dna_kit_segments = bool(meta.kit_only_outcome_ids)
 _objective_options = ["fh_gsa", "expected_value"] + (["dna_kits"] if _has_dna_kit_segments else [])
 _objective_labels = {
     "fh_gsa": "Maximise Family History GSAs",
@@ -276,8 +276,8 @@ with tab_manual:
         st.error(f"Cannot evaluate this scenario: {e}")
         st.stop()
     st.dataframe(predicted, width="stretch", column_config=dataframe_column_config(predicted))
-    totals = predicted.groupby("segment")[["predicted_gsa", "value"]].sum().reset_index()
-    st.markdown("**Totals by segment**")
+    totals = predicted.groupby("outcome_id")[["predicted_outcome", "value"]].sum().reset_index()
+    st.markdown("**Totals by outcome**")
     st.dataframe(totals, width="stretch", column_config=dataframe_column_config(totals))
     by_month_totals = predicted.groupby("month")[["fh_gsa", "dna_kits"]].first()
     _objective_totals = {

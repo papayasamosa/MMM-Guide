@@ -20,7 +20,7 @@ from ancestry_mmm.core.uncertainty import (
     summarize_distribution,
 )
 
-SEGMENTS = ["New", "DNA_CrossSell"]
+OUTCOME_IDS = ["New", "DNA_CrossSell"]
 CHANNELS = ["TV_Brand", "DNA_Media"]
 MARKETS = ["UK", "AU"]
 
@@ -40,9 +40,9 @@ def _const_broadcast(value, n_chain, n_draw):
 @pytest.fixture
 def meta() -> FHModelMeta:
     return FHModelMeta(
-        markets=MARKETS, segments=SEGMENTS, channels=CHANNELS,
+        markets=MARKETS, outcome_ids=OUTCOME_IDS, channels=CHANNELS,
         dna_channels=["DNA_Media"], dna_channel_idx=[1], non_dna_idx=[0],
-        dna_segment="DNA_CrossSell", dna_lag_weeks=1, unpooled_markets=[], control_names=[],
+        dna_outcome_id="DNA_CrossSell", dna_lag_weeks=1, unpooled_markets=[], control_names=[],
     )
 
 
@@ -51,7 +51,7 @@ def trace() -> az.InferenceData:
     """Model A ("shared curve") shaped posterior - `beta`/`hill_K` have no
     market dimension, matching `core.predict.extract_posterior_params`."""
     n_chain, n_draw = 2, 20
-    coords = {"segment": SEGMENTS, "channel": CHANNELS, "market": MARKETS, "fourier": list(range(4))}
+    coords = {"outcome": OUTCOME_IDS, "channel": CHANNELS, "market": MARKETS, "fourier": list(range(4))}
     rng = np.random.default_rng(3)
 
     def const(value):
@@ -74,10 +74,10 @@ def trace() -> az.InferenceData:
     }
     dims = {
         "decay_rate": ["channel"], "hill_K": ["channel"], "hill_S": ["channel"],
-        "beta": ["segment", "channel"], "halo_strength": ["segment"],
-        "promo_coef": ["segment"], "market_offset": ["market", "segment"],
-        "intercept": ["segment"], "trend_coef": ["segment"],
-        "gamma_fourier": ["fourier", "segment"], "alpha": ["segment"],
+        "beta": ["outcome", "channel"], "halo_strength": ["outcome"],
+        "promo_coef": ["outcome"], "market_offset": ["market", "outcome"],
+        "intercept": ["outcome"], "trend_coef": ["outcome"],
+        "gamma_fourier": ["fourier", "outcome"], "alpha": ["outcome"],
     }
     return az.from_dict(posterior=posterior, coords=coords, dims=dims)
 
@@ -87,7 +87,7 @@ def market_trace() -> az.InferenceData:
     """Model C ("market-specific") shaped posterior - `beta`/`hill_K` are
     market-indexed, matching `core.market_specific_predict.extract_market_specific_posterior_params`."""
     n_chain, n_draw = 2, 20
-    coords = {"segment": SEGMENTS, "channel": CHANNELS, "market": MARKETS, "fourier": list(range(4))}
+    coords = {"outcome": OUTCOME_IDS, "channel": CHANNELS, "market": MARKETS, "fourier": list(range(4))}
     rng = np.random.default_rng(3)
 
     def const(value):
@@ -109,10 +109,10 @@ def market_trace() -> az.InferenceData:
     }
     dims = {
         "decay_rate": ["channel"], "hill_K": ["market", "channel"], "hill_S": ["channel"],
-        "beta": ["market", "segment", "channel"], "halo_strength": ["segment"],
-        "promo_coef": ["segment"], "market_offset": ["market", "segment"],
-        "intercept": ["segment"], "trend_coef": ["segment"],
-        "gamma_fourier": ["fourier", "segment"], "alpha": ["segment"],
+        "beta": ["market", "outcome", "channel"], "halo_strength": ["outcome"],
+        "promo_coef": ["outcome"], "market_offset": ["market", "outcome"],
+        "intercept": ["outcome"], "trend_coef": ["outcome"],
+        "gamma_fourier": ["fourier", "outcome"], "alpha": ["outcome"],
     }
     return az.from_dict(posterior=posterior, coords=coords, dims=dims)
 
@@ -205,7 +205,7 @@ class TestEvaluateScenarioWithUncertainty:
 
     @pytest.fixture
     def reference_context(self):
-        return {"2024-01": {"trend": 1.0, "fourier": np.zeros(4), "promo": {s: 0.0 for s in SEGMENTS}, "controls": {}, "segment_controls": {}}}
+        return {"2024-01": {"trend": 1.0, "fourier": np.zeros(4), "promo": {s: 0.0 for s in OUTCOME_IDS}, "controls": {}, "outcome_controls": {}}}
 
     def test_summary_has_lower_le_mean_le_upper_for_value(self, meta, market_trace, approval, reference_context):
         spend_plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Media": 200.0}}

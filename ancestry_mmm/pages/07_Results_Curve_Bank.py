@@ -160,20 +160,20 @@ if model_type == "market_specific":
         ms_contributions = compute_shapley_contributions_market_specific(frame, meta, params, n_permutations=100)
 
     st.markdown("### Total contribution by channel")
-    dna_kit_segments_in_fit = [s for s in meta.direct_dna_segments if s != meta.dna_segment]
-    fh_segments_in_fit = [s for s in meta.segments if s not in dna_kit_segments_in_fit]
-    if dna_kit_segments_in_fit:
+    dna_kit_outcomes_in_fit = [s for s in meta.direct_dna_outcome_ids if s != meta.dna_outcome_id]
+    fh_outcomes_in_fit = [s for s in meta.outcome_ids if s not in dna_kit_outcomes_in_fit]
+    if dna_kit_outcomes_in_fit:
         st.caption(
-            f"Total impact per channel across FH segments only ({', '.join(fh_segments_in_fit)}) - "
-            f"DNA-product segments ({', '.join(dna_kit_segments_in_fit)}) are excluded from this total "
+            f"Total impact per channel across FH outcomes only ({', '.join(fh_outcomes_in_fit)}) - "
+            f"DNA-product outcomes ({', '.join(dna_kit_outcomes_in_fit)}) are excluded from this total "
             "since a kit-sale count and a GSA count aren't the same unit; see their own rows in the "
-            "market x segment x channel detail below."
+            "market x outcome x channel detail below."
         )
     else:
-        st.caption("Total impact per channel across all markets and segments, plus LTV-weighted value.")
+        st.caption("Total impact per channel across all markets and outcomes, plus LTV-weighted value.")
     by_market_total = st.checkbox("Break totals out by market", value=False)
     ms_total_df = total_contribution_market_specific(
-        frame, meta, params, ms_contributions, ltv, segments=fh_segments_in_fit, by_market=by_market_total,
+        frame, meta, params, ms_contributions, ltv, outcome_ids=fh_outcomes_in_fit, by_market=by_market_total,
     )
     st.dataframe(ms_total_df, width="stretch", column_config=dataframe_column_config(ms_total_df))
 
@@ -186,8 +186,8 @@ if model_type == "market_specific":
     st.markdown("### Contribution waterfall")
     c1, c2 = st.columns(2)
     waterfall_market = c1.selectbox("Market", meta.markets, key="ms_waterfall_market")
-    waterfall_scope = c2.selectbox("Scope", ["Total FH"] + meta.segments, key="ms_waterfall_scope")
-    segment_arg = None if waterfall_scope == "Total FH" else waterfall_scope
+    waterfall_scope = c2.selectbox("Scope", ["Total FH"] + meta.outcome_ids, key="ms_waterfall_scope")
+    outcome_id_arg = None if waterfall_scope == "Total FH" else waterfall_scope
     market_row_mask = ms_contributions["market_idx"] == meta.markets.index(waterfall_market)
     market_contributions = {
         "baseline": ms_contributions["baseline"][market_row_mask],
@@ -196,7 +196,7 @@ if model_type == "market_specific":
     }
     # `contributions` is always given below, so `frame` is unused by
     # contribution_waterfall in that path - passed only to satisfy its signature.
-    waterfall_df = contribution_waterfall(frame, meta, params, segment=segment_arg, contributions=market_contributions)
+    waterfall_df = contribution_waterfall(frame, meta, params, outcome_id=outcome_id_arg, contributions=market_contributions)
     st.plotly_chart(
         create_waterfall_chart(
             waterfall_df["category"].tolist(), waterfall_df["value"].tolist(),
@@ -250,9 +250,9 @@ if model_type == "market_specific":
     _render_media_unit_section(curve_df, market_config, viewer_market, viewer_channel)
 
     st.markdown("---")
-    st.markdown("### DNA halo strength by segment")
+    st.markdown("### DNA halo strength by outcome")
     st.caption("Shared across markets in this model structure (only K and beta are market-specific).")
-    halo_df = pd.DataFrame([{"segment": s, "halo_strength": params.halo_strength.get(s)} for s in meta.segments])
+    halo_df = pd.DataFrame([{"outcome_id": s, "halo_strength": params.halo_strength.get(s)} for s in meta.outcome_ids])
     st.dataframe(halo_df, width="stretch", column_config=dataframe_column_config(halo_df))
 
 else:
@@ -261,30 +261,30 @@ else:
         contributions = compute_shapley_contributions(frame, meta, params, n_permutations=100)
 
     st.markdown("### Total-FH contribution by channel")
-    dna_kit_segments_in_fit = [s for s in meta.direct_dna_segments if s != meta.dna_segment]
-    fh_segments_in_fit = [s for s in meta.segments if s not in dna_kit_segments_in_fit]
-    if dna_kit_segments_in_fit:
+    dna_kit_outcomes_in_fit = [s for s in meta.direct_dna_outcome_ids if s != meta.dna_outcome_id]
+    fh_outcomes_in_fit = [s for s in meta.outcome_ids if s not in dna_kit_outcomes_in_fit]
+    if dna_kit_outcomes_in_fit:
         st.caption(
-            f"Total impact per FH channel across FH segments only ({', '.join(fh_segments_in_fit)}) - "
-            f"DNA-product segments ({', '.join(dna_kit_segments_in_fit)}) are excluded from this total "
+            f"Total impact per FH channel across FH outcomes only ({', '.join(fh_outcomes_in_fit)}) - "
+            f"DNA-product outcomes ({', '.join(dna_kit_outcomes_in_fit)}) are excluded from this total "
             "since a kit-sale count and a GSA count aren't the same unit; see their own rows in the "
-            "segment x channel detail below."
+            "outcome x channel detail below."
         )
     else:
-        st.caption("Total impact per channel across all segments, plus which segment that impact falls into and LTV-weighted value.")
-    total_df = total_fh_contribution(frame, meta, params, contributions, ltv, segments=fh_segments_in_fit)
+        st.caption("Total impact per channel across all outcomes, plus which outcome that impact falls into and LTV-weighted value.")
+    total_df = total_fh_contribution(frame, meta, params, contributions, ltv, outcome_ids=fh_outcomes_in_fit)
     st.dataframe(total_df, width="stretch", column_config=dataframe_column_config(total_df))
 
     st.markdown("---")
-    st.markdown("### Segment x channel detail")
+    st.markdown("### Outcome x channel detail")
     seg_df = segment_channel_summary(frame, meta, params, contributions, ltv)
     st.dataframe(seg_df, width="stretch", column_config=dataframe_column_config(seg_df))
 
     st.markdown("---")
     st.markdown("### Contribution waterfall")
-    waterfall_scope = st.selectbox("Scope", ["Total FH"] + meta.segments)
-    segment_arg = None if waterfall_scope == "Total FH" else waterfall_scope
-    waterfall_df = contribution_waterfall(frame, meta, params, segment=segment_arg, contributions=contributions)
+    waterfall_scope = st.selectbox("Scope", ["Total FH"] + meta.outcome_ids)
+    outcome_id_arg = None if waterfall_scope == "Total FH" else waterfall_scope
+    waterfall_df = contribution_waterfall(frame, meta, params, outcome_id=outcome_id_arg, contributions=contributions)
     st.plotly_chart(
         create_waterfall_chart(waterfall_df["category"].tolist(), waterfall_df["value"].tolist(), title=f"{waterfall_scope} contribution waterfall"),
         width="stretch",
@@ -337,12 +337,12 @@ else:
     _render_media_unit_section(curve_df, market_config, viewer_market, viewer_channel)
 
     st.markdown("---")
-    st.markdown("### DNA halo strength by segment")
-    halo_df = pd.DataFrame([{"segment": s, "halo_strength": params.halo_strength.get(s)} for s in meta.segments])
+    st.markdown("### DNA halo strength by outcome")
+    halo_df = pd.DataFrame([{"outcome_id": s, "halo_strength": params.halo_strength.get(s)} for s in meta.outcome_ids])
     st.dataframe(halo_df, width="stretch", column_config=dataframe_column_config(halo_df))
     st.caption(
-        f"DNA cross-sell segment ('{meta.dna_segment}') is fixed at 1.0 (full weight). "
-        "Other segments' values are the estimated halo effect strength, shrunk toward zero by prior "
+        f"DNA cross-sell outcome ('{meta.dna_outcome_id}') is fixed at 1.0 (full weight). "
+        "Other outcomes' values are the estimated halo effect strength, shrunk toward zero by prior "
         "default and only pulled away from zero where the data supports it."
     )
 
@@ -372,7 +372,7 @@ if model_run_id and spec_dict is not None:
         "model_spec_fingerprint": fingerprint_model_spec(
             spec_dict, prior_config, dna_lag_weeks, model_type=model_type,
             pipeline_steps=get_state("pipeline_steps") or [], market_spec_config=get_state("market_spec_config"),
-            direct_dna_segments=meta.direct_dna_segments if meta is not None else None,
+            direct_dna_outcome_ids=meta.direct_dna_outcome_ids if meta is not None else None,
         ),
         "posterior_fingerprint": fingerprint_posterior(params),
     }

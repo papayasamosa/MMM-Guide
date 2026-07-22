@@ -24,9 +24,9 @@ CHANNELS = ["TV", "Search"]
 @pytest.fixture
 def meta() -> FHModelMeta:
     return FHModelMeta(
-        markets=MARKETS, segments=SEGMENTS, channels=CHANNELS,
+        markets=MARKETS, outcome_ids=SEGMENTS, channels=CHANNELS,
         dna_channels=[], dna_channel_idx=[], non_dna_idx=[0, 1],
-        dna_segment="New", dna_lag_weeks=1, unpooled_markets=[], control_names=[],
+        dna_outcome_id="New", dna_lag_weeks=1, unpooled_markets=[], control_names=[],
     )
 
 
@@ -46,7 +46,7 @@ def _trace(rel_uncertainty_by_market, n_chain=2, n_draw=10):
     mean) is controlled directly, so the classifier's uncertainty signal is
     deterministic and easy to assert against."""
     rng = np.random.default_rng(0)
-    coords = {"market": MARKETS, "channel": CHANNELS, "segment": SEGMENTS}
+    coords = {"market": MARKETS, "channel": CHANNELS, "outcome": SEGMENTS}
 
     def var(mean_value):
         base = np.full((n_chain, n_draw, len(MARKETS), len(CHANNELS)), mean_value)
@@ -59,7 +59,7 @@ def _trace(rel_uncertainty_by_market, n_chain=2, n_draw=10):
     beta = np.stack([var(0.1) for _ in SEGMENTS], axis=3)  # (chain, draw, market, segment, channel)
 
     posterior = {"hill_K": hill_K, "beta": beta}
-    dims = {"hill_K": ["market", "channel"], "beta": ["market", "segment", "channel"]}
+    dims = {"hill_K": ["market", "channel"], "beta": ["market", "outcome", "channel"]}
     return az.from_dict(posterior=posterior, coords=coords, dims=dims)
 
 

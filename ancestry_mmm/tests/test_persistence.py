@@ -256,8 +256,8 @@ def test_legacy_bundle_without_model_type_imports_as_shared(tmp_path, sample_pro
 
 def test_export_then_import_reproduces_outcome_definitions(tmp_path, sample_project):
     outcome_definitions = [
-        OutcomeDefinition(outcome_id="fh_new", product=FAMILY_HISTORY, segment="New", metric="GSA", column="fh_new_gsa", value_weight=180.0).to_dict(),
-        OutcomeDefinition(outcome_id="dna_new_kit", product=DNA, segment="New Customer", metric="Kit sale", column="DNA_Kit_New").to_dict(),
+        OutcomeDefinition(outcome_id="fh_new", product=FAMILY_HISTORY, segment="New", metric="GSA", source_column="fh_new_gsa", value_weight=180.0).to_dict(),
+        OutcomeDefinition(outcome_id="dna_new_kit", product=DNA, segment="New Customer", metric="Kit sale", source_column="DNA_Kit_New").to_dict(),
     ]
     sample_project = dict(sample_project)
     sample_project["outcome_definitions"] = outcome_definitions
@@ -332,8 +332,8 @@ def test_export_excel_summary_writes_every_non_empty_sheet(tmp_path):
 
 def _make_consistent_meta() -> FHModelMeta:
     return FHModelMeta(
-        markets=["UK"], segments=["New"], channels=["TV_Brand"], dna_channels=[],
-        dna_channel_idx=[], non_dna_idx=[0], dna_segment="New", dna_lag_weeks=4,
+        markets=["UK"], outcome_ids=["New"], channels=["TV_Brand"], dna_channels=[],
+        dna_channel_idx=[], non_dna_idx=[0], dna_outcome_id="New", dna_lag_weeks=4,
         unpooled_markets=[], control_names=[],
     )
 
@@ -344,7 +344,7 @@ def _make_trace(meta: FHModelMeta, n_fourier: int = 6, chains: int = 2, draws: i
     with no DNA channels/control columns (so halo_strength/control_coef/
     segment_control_coef aren't required)."""
     rng = np.random.default_rng(seed)
-    n_ch, n_seg, n_mkt = len(meta.channels), len(meta.segments), len(meta.markets)
+    n_ch, n_seg, n_mkt = len(meta.channels), len(meta.outcome_ids), len(meta.markets)
     posterior = {
         "decay_rate": rng.uniform(0.1, 0.9, size=(chains, draws, n_ch)),
         "hill_K": rng.uniform(500, 2000, size=(chains, draws, n_ch)),
@@ -357,11 +357,11 @@ def _make_trace(meta: FHModelMeta, n_fourier: int = 6, chains: int = 2, draws: i
         "market_offset": rng.normal(size=(chains, draws, n_mkt, n_seg)),
         "gamma_fourier": rng.normal(size=(chains, draws, n_fourier, n_seg)),
     }
-    coords = {"channel": meta.channels, "segment": meta.segments, "market": meta.markets, "fourier": list(range(n_fourier))}
+    coords = {"channel": meta.channels, "outcome": meta.outcome_ids, "market": meta.markets, "fourier": list(range(n_fourier))}
     dims = {
         "decay_rate": ["channel"], "hill_K": ["channel"], "hill_S": ["channel"],
-        "intercept": ["segment"], "trend_coef": ["segment"], "promo_coef": ["segment"], "alpha": ["segment"],
-        "beta": ["segment", "channel"], "market_offset": ["market", "segment"], "gamma_fourier": ["fourier", "segment"],
+        "intercept": ["outcome"], "trend_coef": ["outcome"], "promo_coef": ["outcome"], "alpha": ["outcome"],
+        "beta": ["outcome", "channel"], "market_offset": ["market", "outcome"], "gamma_fourier": ["fourier", "outcome"],
     }
     return az.from_dict(posterior=posterior, coords=coords, dims=dims)
 
@@ -404,7 +404,7 @@ def consistent_project(consistent_meta, consistent_trace):
         model_run_id=model_run_id,
         data_fingerprint=fingerprint_dataframe(frame["df"]),
         model_spec_fingerprint=fingerprint_model_spec(
-            model_spec_dict, prior_config, dna_lag_weeks, direct_dna_segments=consistent_meta.direct_dna_segments,
+            model_spec_dict, prior_config, dna_lag_weeks, direct_dna_outcome_ids=consistent_meta.direct_dna_outcome_ids,
         ),
         posterior_fingerprint=fingerprint_posterior(posterior_params),
     )
@@ -465,17 +465,17 @@ class TestReconstructModelStateWithDnaKitOutcomes:
         ).to_dict()
         outcome_definitions = [
             OutcomeDefinition(
-                outcome_id="fh_new", product=FAMILY_HISTORY, segment="New", metric="gsa", column="fh_new_gsa",
+                outcome_id="fh_new", product=FAMILY_HISTORY, segment="New", metric="gsa", source_column="fh_new_gsa",
             ).to_dict(),
             OutcomeDefinition(
                 outcome_id="dna_new_customer", product=DNA, segment="New Customer", metric="kits",
-                column="dna_kit_sales",
+                source_column="dna_kit_sales",
             ).to_dict(),
         ]
         meta = FHModelMeta(
-            markets=["UK"], segments=["New", "New Customer"], channels=["TV_Brand", "DNA_Ad"],
-            dna_channels=["DNA_Ad"], dna_channel_idx=[1], non_dna_idx=[0], dna_segment="New", dna_lag_weeks=4,
-            unpooled_markets=[], control_names=[], direct_dna_segments=["New", "New Customer"],
+            markets=["UK"], outcome_ids=["fh_new", "dna_new_customer"], channels=["TV_Brand", "DNA_Ad"],
+            dna_channels=["DNA_Ad"], dna_channel_idx=[1], non_dna_idx=[0], dna_outcome_id="fh_new", dna_lag_weeks=4,
+            unpooled_markets=[], control_names=[], direct_dna_outcome_ids=["fh_new", "dna_new_customer"],
         )
         return dict(
             raw_sources={}, transformed_data=transformed_data, pipeline_steps=[],
@@ -489,8 +489,8 @@ class TestReconstructModelStateWithDnaKitOutcomes:
 
         reconstructed = reconstruct_model_state(imported)
         assert reconstructed["frame"] is not None
-        assert set(reconstructed["frame"]["segments"]) == set(reconstructed["model_meta"].segments)
-        assert "New Customer" in reconstructed["frame"]["segments"]
+        assert set(reconstructed["frame"]["outcome_ids"]) == set(reconstructed["model_meta"].outcome_ids)
+        assert "dna_new_customer" in reconstructed["frame"]["outcome_ids"]
 
     def test_a_legacy_bundle_with_no_outcome_definitions_still_reconstructs_fh_only(self, tmp_path, dna_kit_project):
         # No outcome_definitions.json in the bundle (pre-PR2 export) - must
@@ -503,8 +503,8 @@ class TestReconstructModelStateWithDnaKitOutcomes:
 
         reconstructed = reconstruct_model_state(imported)
         assert reconstructed["frame"] is not None
-        assert "New Customer" not in reconstructed["frame"]["segments"]
-        assert reconstructed["frame"]["segments"] == ["New"]
+        assert "dna_new_customer" not in reconstructed["frame"]["outcome_ids"]
+        assert reconstructed["frame"]["outcome_ids"] == ["fh_new"]
 
 
 class TestVerifyImportedApproval:

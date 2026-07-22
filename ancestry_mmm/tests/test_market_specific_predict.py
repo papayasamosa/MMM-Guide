@@ -17,16 +17,16 @@ from ancestry_mmm.core.market_specific_predict import (
 )
 
 MARKETS = ["UK", "AU"]
-SEGMENTS = ["New", "DNA_CrossSell"]
+OUTCOME_IDS = ["New", "DNA_CrossSell"]
 CHANNELS = ["TV", "DNA_Media"]
 
 
 @pytest.fixture
 def meta() -> FHModelMeta:
     return FHModelMeta(
-        markets=MARKETS, segments=SEGMENTS, channels=CHANNELS,
+        markets=MARKETS, outcome_ids=OUTCOME_IDS, channels=CHANNELS,
         dna_channels=["DNA_Media"], dna_channel_idx=[1], non_dna_idx=[0],
-        dna_segment="DNA_CrossSell", dna_lag_weeks=1, unpooled_markets=[], control_names=[],
+        dna_outcome_id="DNA_CrossSell", dna_lag_weeks=1, unpooled_markets=[], control_names=[],
     )
 
 
@@ -48,7 +48,7 @@ def params() -> FHMarketSpecificPosteriorParams:
         gamma_fourier={"New": np.zeros(4), "DNA_CrossSell": np.zeros(4)},
         alpha={"New": 5.0, "DNA_CrossSell": 5.0},
         control_coef={},
-        segment_control_coef={},
+        outcome_control_coef={},
     )
 
 
@@ -67,8 +67,8 @@ def frame():
         "fourier": rng.normal(size=(n, 4)),
         "control_names": [],
         "X_controls": np.zeros((n, 0)),
-        "segment_controls": {},
-        "segment_control_names": {},
+        "outcome_controls": {},
+        "outcome_control_names": {},
     }
 
 
@@ -76,7 +76,7 @@ class TestExtractMarketSpecificPosteriorParams:
     @pytest.fixture
     def trace(self) -> az.InferenceData:
         n_chain, n_draw = 2, 5
-        coords = {"market": MARKETS, "channel": CHANNELS, "segment": SEGMENTS, "fourier": [0, 1, 2, 3]}
+        coords = {"market": MARKETS, "channel": CHANNELS, "outcome": OUTCOME_IDS, "fourier": [0, 1, 2, 3]}
         rng = np.random.default_rng(1)
 
         def const(value):
@@ -98,10 +98,10 @@ class TestExtractMarketSpecificPosteriorParams:
         }
         dims = {
             "decay_rate": ["channel"], "hill_K": ["market", "channel"], "hill_S": ["channel"],
-            "beta": ["market", "segment", "channel"], "halo_strength": ["segment"],
-            "promo_coef": ["segment"], "market_offset": ["market", "segment"],
-            "intercept": ["segment"], "trend_coef": ["segment"],
-            "gamma_fourier": ["fourier", "segment"], "alpha": ["segment"],
+            "beta": ["market", "outcome", "channel"], "halo_strength": ["outcome"],
+            "promo_coef": ["outcome"], "market_offset": ["market", "outcome"],
+            "intercept": ["outcome"], "trend_coef": ["outcome"],
+            "gamma_fourier": ["fourier", "outcome"], "alpha": ["outcome"],
         }
         return az.from_dict(posterior=posterior, coords=coords, dims=dims)
 
@@ -205,7 +205,7 @@ class TestGenerateMarketChannelCurve:
 
     def test_overall_response_is_sum_of_segment_responses(self, meta, params):
         df = generate_market_channel_curve("UK", "DNA_Media", meta, params, spend_range=np.array([0.0, 250.0, 1000.0]))
-        seg_cols = [f"{s}_response" for s in SEGMENTS]
+        seg_cols = [f"{s}_response" for s in OUTCOME_IDS]
         np.testing.assert_allclose(df["overall_response"], df[seg_cols].sum(axis=1))
 
     def test_dna_channel_halo_scales_non_dna_segment_response(self, meta, params):
@@ -230,10 +230,10 @@ class TestGenerateMarketChannelCurveDirectDnaSegments:
     @pytest.fixture
     def meta_with_dna_kit_segment(self) -> FHModelMeta:
         return FHModelMeta(
-            markets=MARKETS, segments=SEGMENTS + ["New Customer"], channels=CHANNELS,
+            markets=MARKETS, outcome_ids=OUTCOME_IDS + ["New Customer"], channels=CHANNELS,
             dna_channels=["DNA_Media"], dna_channel_idx=[1], non_dna_idx=[0],
-            dna_segment="DNA_CrossSell", dna_lag_weeks=1, unpooled_markets=[], control_names=[],
-            direct_dna_segments=["DNA_CrossSell", "New Customer"],
+            dna_outcome_id="DNA_CrossSell", dna_lag_weeks=1, unpooled_markets=[], control_names=[],
+            direct_dna_outcome_ids=["DNA_CrossSell", "New Customer"],
         )
 
     @pytest.fixture
@@ -263,18 +263,18 @@ class TestPredictMuMarketSpecificDirectHaloSeparation:
     observe a lag at all (a lag of a constant series is that same constant).
     See that class's docstring for the full design rationale."""
 
-    SEGMENTS = ["New", "DNA_CrossSell", "New Customer"]
+    OUTCOME_IDS = ["New", "DNA_CrossSell", "New Customer"]
     CHANNELS = ["TV", "DNA_Media"]
     N_WEEKS = 10
     SPIKE_WEEK = 3
 
     def _meta(self, dna_lag_weeks: int) -> FHModelMeta:
         return FHModelMeta(
-            markets=["UK"], segments=self.SEGMENTS, channels=self.CHANNELS,
+            markets=["UK"], outcome_ids=self.OUTCOME_IDS, channels=self.CHANNELS,
             dna_channels=["DNA_Media"], dna_channel_idx=[1], non_dna_idx=[0],
-            dna_segment="DNA_CrossSell", dna_lag_weeks=dna_lag_weeks,
+            dna_outcome_id="DNA_CrossSell", dna_lag_weeks=dna_lag_weeks,
             unpooled_markets=[], control_names=[],
-            direct_dna_segments=["DNA_CrossSell", "New Customer"],
+            direct_dna_outcome_ids=["DNA_CrossSell", "New Customer"],
         )
 
     def _params(self) -> FHMarketSpecificPosteriorParams:
@@ -289,13 +289,13 @@ class TestPredictMuMarketSpecificDirectHaloSeparation:
             hill_S={"TV": 1.0, "DNA_Media": 1.0},
             beta={"UK": beta_uk},
             halo_strength={"New": 0.5, "DNA_CrossSell": 0.5, "New Customer": 0.0},
-            promo_coef={s: 0.0 for s in self.SEGMENTS},
-            market_offset={"UK": {s: 0.0 for s in self.SEGMENTS}},
-            intercept={s: 0.0 for s in self.SEGMENTS},
-            trend_coef={s: 0.0 for s in self.SEGMENTS},
-            gamma_fourier={s: np.zeros(4) for s in self.SEGMENTS},
-            alpha={s: 5.0 for s in self.SEGMENTS},
-            control_coef={}, segment_control_coef={},
+            promo_coef={s: 0.0 for s in self.OUTCOME_IDS},
+            market_offset={"UK": {s: 0.0 for s in self.OUTCOME_IDS}},
+            intercept={s: 0.0 for s in self.OUTCOME_IDS},
+            trend_coef={s: 0.0 for s in self.OUTCOME_IDS},
+            gamma_fourier={s: np.zeros(4) for s in self.OUTCOME_IDS},
+            alpha={s: 5.0 for s in self.OUTCOME_IDS},
+            control_coef={}, outcome_control_coef={},
         )
 
     def _frame(self):
@@ -304,17 +304,17 @@ class TestPredictMuMarketSpecificDirectHaloSeparation:
         X_media[self.SPIKE_WEEK, 1] = 500.0
         return {
             "markets": ["UK"], "market_idx": np.zeros(n, dtype=int), "market_bounds": [(0, n)],
-            "X_media": X_media, "promo": np.zeros((n, len(self.SEGMENTS))),
+            "X_media": X_media, "promo": np.zeros((n, len(self.OUTCOME_IDS))),
             "trend": np.zeros(n), "fourier": np.zeros((n, 4)),
             "control_names": [], "X_controls": np.zeros((n, 0)),
-            "segment_controls": {}, "segment_control_names": {},
+            "outcome_controls": {}, "outcome_control_names": {},
         }
 
     def test_kit_only_segment_does_not_inherit_the_extra_halo_lag(self):
         lag = 2
         meta = self._meta(dna_lag_weeks=lag)
         mu = predict_mu_market_specific(self._frame(), meta, self._params())
-        seg_idx = meta.segments.index("New Customer")
+        seg_idx = meta.outcome_ids.index("New Customer")
         baseline = mu[0, seg_idx]
         assert mu[self.SPIKE_WEEK, seg_idx] > baseline
         assert mu[self.SPIKE_WEEK + lag, seg_idx] == pytest.approx(baseline)
@@ -323,7 +323,7 @@ class TestPredictMuMarketSpecificDirectHaloSeparation:
         lag = 2
         meta = self._meta(dna_lag_weeks=lag)
         mu = predict_mu_market_specific(self._frame(), meta, self._params())
-        seg_idx = meta.segments.index("New")
+        seg_idx = meta.outcome_ids.index("New")
         baseline = mu[0, seg_idx]
         assert mu[self.SPIKE_WEEK, seg_idx] == pytest.approx(baseline)
         assert mu[self.SPIKE_WEEK + lag, seg_idx] > baseline
@@ -331,7 +331,7 @@ class TestPredictMuMarketSpecificDirectHaloSeparation:
     def test_changing_halo_lag_does_not_alter_the_direct_kit_response(self):
         params = self._params()
         frame = self._frame()
-        seg_idx = self.SEGMENTS.index("New Customer")
+        seg_idx = self.OUTCOME_IDS.index("New Customer")
         mu_lag2 = predict_mu_market_specific(frame, self._meta(dna_lag_weeks=2), params)
         mu_lag5 = predict_mu_market_specific(frame, self._meta(dna_lag_weeks=5), params)
         np.testing.assert_allclose(mu_lag2[:, seg_idx], mu_lag5[:, seg_idx])
@@ -341,9 +341,9 @@ class TestPredictMuMarketSpecificDirectHaloSeparation:
         meta = self._meta(dna_lag_weeks=lag)
         mu = predict_mu_market_specific(self._frame(), meta, self._params())
 
-        cross_idx = meta.segments.index("DNA_CrossSell")
-        kit_idx = meta.segments.index("New Customer")
-        halo_idx = meta.segments.index("New")
+        cross_idx = meta.outcome_ids.index("DNA_CrossSell")
+        kit_idx = meta.outcome_ids.index("New Customer")
+        halo_idx = meta.outcome_ids.index("New")
 
         assert mu[self.SPIKE_WEEK, cross_idx] == pytest.approx(mu[self.SPIKE_WEEK, kit_idx])
         assert mu[self.SPIKE_WEEK + lag, cross_idx] == pytest.approx(mu[self.SPIKE_WEEK + lag, halo_idx])

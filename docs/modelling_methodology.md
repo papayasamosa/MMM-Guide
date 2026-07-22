@@ -14,13 +14,15 @@
 - **Hierarchy / pooling:** segment response strength and DNA halo strength are partially pooled
   across the three FH segments via `pooling_sigma_prior`; markets are partially pooled by default,
   with an explicit per-market "unpooled" override (`ModelSpec.unpooled_markets`).
-- **Segment effects:** each segment has its own intercept, trend coefficient, promo sensitivity, and
-  channel response strength (`beta[segment, channel]`), drawn from a shared distribution.
+- **Outcome effects:** each fitted outcome (`outcome_id` - e.g. an FH segment's sign-up KPI, its GSA
+  KPI, or a DNA-kit outcome, all independently identified even when they share a `segment`) has its
+  own intercept, trend coefficient, promo sensitivity, and channel response strength
+  (`beta[outcome, channel]`, PyMC coord `"outcome"`), drawn from a shared distribution.
 - **DNA direct/halo:** two genuinely separate media inputs from DNA-targeted channels -
-  `dna_direct_media` (no extra lag, for `direct_dna_segments`: the DNA cross-sell segment and any
-  DNA-product kit-sale segments) and `dna_halo_media` (a further-lagged version, for every other
-  segment). The DNA cross-sell segment can use both simultaneously, with an explicit
-  `halo_strength[segment]` pathway (estimated, partially pooled toward zero) on top of its direct
+  `dna_direct_media` (no extra lag, for `direct_dna_outcome_ids`: the DNA cross-sell outcome and any
+  DNA-product kit-sale outcomes) and `dna_halo_media` (a further-lagged version, for every other
+  outcome). The DNA cross-sell outcome can use both simultaneously, with an explicit
+  `halo_strength[outcome]` pathway (estimated, partially pooled toward zero) on top of its direct
   term - see docs/dna_fh_causal_structure.md for the full mechanics and why a single lagged series
   scaled by a multiplier was replaced with this.
 - **Controls:** global (all-segment) and segment-specific numeric controls, plus Fourier seasonality
@@ -38,8 +40,8 @@
   (`core/approval.py`, `core/fingerprint.py`).
 
 The key limitation this redesign addresses: **`decay`, `K`, `S`, and (indirectly, through the
-shared `K`/`S`) the saturation shape are identical across every market.** Only segment-level
-response (`beta[segment, channel]`) and the DNA halo already vary within a market. Two markets with
+shared `K`/`S`) the saturation shape are identical across every market.** Only outcome-level
+response (`beta[outcome, channel]`) and the DNA halo already vary within a market. Two markets with
 very different audience sizes, media costs, and channel maturity are forced onto the same curve.
 
 ## Market-specific model - "Model C" (Phase 2 - built)
@@ -51,14 +53,14 @@ terms, market baseline pooling) except for two parameters:
 ```
 Global channel pattern
     -> Market-specific channel curve
-        -> Segment-specific response within each market
+        -> Outcome-specific response within each market
 ```
 
-- **Response strength:** `beta[market, segment, channel]`, built as the simplest identifiable
-  additive form on the log scale - `log_beta[market, segment, channel] = mu_channel[channel] +
-  market_dev[market, channel] + segment_dev[segment, channel]` - deliberately with **no free
-  market x segment x channel interaction term**, per the redesign brief's own "start simple"
-  guidance. Both `market_dev` and `segment_dev` are hierarchically pooled (non-centered
+- **Response strength:** `beta[market, outcome, channel]`, built as the simplest identifiable
+  additive form on the log scale - `log_beta[market, outcome, channel] = mu_channel[channel] +
+  market_dev[market, channel] + outcome_beta_dev[outcome, channel]` - deliberately with **no free
+  market x outcome x channel interaction term**, per the redesign brief's own "start simple"
+  guidance. Both `market_dev` and `outcome_beta_dev` are hierarchically pooled (non-centered
   parameterisation: `sigma * z_offset`, `sigma ~ HalfNormal`).
 - **Saturation point:** `K[market, channel]`, on the log scale:
   `log_K[market, channel] ~ Normal(global_log_K[channel], market_K_sigma[channel])`, implemented as
@@ -72,7 +74,7 @@ Global channel pattern
   (`docs/decision_log.md`).
 - **Hill slope:** `S[channel]` stays shared, same reasoning; `S[market, channel]` only once
   diagnostics/simulation recovery justify it.
-- **Baseline:** `market_offset[market, segment]` - unchanged from Model A (already market-specific
+- **Baseline:** `market_offset[market, outcome]` - unchanged from Model A (already market-specific
   there via the existing market pooling mechanism).
 
 Model A (`build_fh_hierarchical_model`) is untouched and remains fully available side by side - both
