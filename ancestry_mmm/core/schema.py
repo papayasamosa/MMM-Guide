@@ -12,7 +12,7 @@ serialise a project as human-readable JSON per the persistence requirement.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 
 DEFAULT_SEGMENTS = ["New", "DNA_CrossSell", "Winback"]
@@ -31,6 +31,13 @@ class ModelSpec:
     channels: List[str] = field(default_factory=list)
     # subset of `channels` treated as DNA-targeted media for the halo pathway
     dna_channels: List[str] = field(default_factory=list)
+    # explicit outcome_id of the Family History DNA cross-sell outcome (the
+    # halo pathway's traditional target) - PR E.1 replaces substring-based
+    # inference ("the first outcome_id containing 'dna'") with this required,
+    # validated field (core.outcomes.validate_fh_dna_cross_sell_outcome_id).
+    # None until configured on the Structure page, or for legacy projects
+    # that haven't been migrated yet.
+    fh_dna_cross_sell_outcome_id: Optional[str] = None
 
     # segment key -> promo flag/intensity column (optional per segment)
     promo_cols: Dict[str, str] = field(default_factory=dict)

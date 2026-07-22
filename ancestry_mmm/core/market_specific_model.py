@@ -117,7 +117,7 @@ def build_fh_market_specific_model(
             "Use core.hierarchical_model.build_fh_hierarchical_model (Model A) for a single market."
         )
 
-    dna_outcome_id = _default_dna_outcome_id(outcome_ids, dna_outcome_id)
+    dna_outcome_id = _default_dna_outcome_id(outcome_ids, dna_outcome_id, dna_channel_idx)
     direct_dna_outcome_ids = _resolve_direct_dna_outcome_ids(outcome_ids, dna_outcome_id, direct_dna_outcome_ids)
     non_dna_idx = [i for i, c in enumerate(channels) if i not in dna_channel_idx]
 

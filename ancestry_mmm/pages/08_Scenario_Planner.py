@@ -16,6 +16,7 @@ from ancestry_mmm.utils import (
 from ancestry_mmm.components import apply_theme, render_sidebar, render_page_header, render_next_step, render_empty_state, render_glossary
 from ancestry_mmm.core.approval import ApprovalMismatchError, ModelApproval
 from ancestry_mmm.core.fingerprint import fingerprint_dataframe, fingerprint_model_spec, fingerprint_posterior
+from ancestry_mmm.core.outcomes import fh_signup_outcome_ids, dna_kit_sale_outcome_ids, outcome_catalogue_fingerprint_payload
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.optimization import (
     SpendConstraint, evaluate_scenario, optimize_scenario, scenario_to_dict, compare_scenarios, WEEKS_PER_MONTH,
@@ -28,20 +29,25 @@ from ancestry_mmm.data.preprocessor import create_fourier_features_from_calendar
 
 
 def _scenario_cpa_summary(predicted_df: pd.DataFrame) -> dict:
-    """Product-aware average CPA across a whole predicted-outcomes
-    DataFrame (every month, every segment) - never a blended total-spend /
-    (FH-GSAs-plus-DNA-kits) number (docs/dna_fh_causal_structure.md).
-    `total_spend`/`fh_gsa`/`dna_kits` are month-level totals repeated per
-    segment row (core.optimization.evaluate_scenario), so de-duplicated by
-    month before summing across the whole plan."""
-    by_month = predicted_df.groupby("month")[["total_spend", "fh_gsa", "dna_kits"]].first()
+    """Metric-aware average CPA across a whole predicted-outcomes DataFrame
+    (every month, every outcome) - never a blended total-spend /
+    (FH-GSAs-plus-sign-ups-plus-DNA-kits) number (docs/dna_fh_causal_structure.md,
+    PR E.1). `total_spend`/`fh_gsa`/`fh_signups`/`dna_kits` are month-level
+    totals repeated per outcome_id row (core.optimization.evaluate_scenario),
+    so de-duplicated by month before summing across the whole plan."""
+    cols = ["total_spend", "fh_gsa", "dna_kits"] + (["fh_signups"] if "fh_signups" in predicted_df.columns else [])
+    by_month = predicted_df.groupby("month")[cols].first()
     total_spend = by_month["total_spend"].sum()
     fh_gsa = by_month["fh_gsa"].sum()
     dna_kits = by_month["dna_kits"].sum()
-    return {
+    result = {
         "fh_avg_cpa": float(total_spend / fh_gsa) if fh_gsa > 0 else None,
         "dna_avg_cpa": float(total_spend / dna_kits) if dna_kits > 0 else None,
     }
+    if "fh_signups" in cols:
+        fh_signups = by_month["fh_signups"].sum()
+        result["fh_signup_avg_cpa"] = float(total_spend / fh_signups) if fh_signups > 0 else None
+    return result
 
 
 st.set_page_config(page_title="Scenario Planner - Ancestry FH MMM", page_icon="🧬", layout="wide")
@@ -82,6 +88,7 @@ if model_run_id and spec_dict is not None:
             spec_dict, prior_config, dna_lag_weeks, model_type=model_type,
             pipeline_steps=get_state("pipeline_steps") or [], market_spec_config=get_state("market_spec_config"),
             direct_dna_outcome_ids=meta.direct_dna_outcome_ids if meta is not None else None,
+            outcome_catalogue=outcome_catalogue_fingerprint_payload(meta.outcome_catalogue_at_fit) if meta is not None else None,
         ),
         "posterior_fingerprint": fingerprint_posterior(params),
     }
@@ -244,10 +251,14 @@ else:
 st.session_state[plan_key] = edited
 spend_plan = {m: {c: float(edited.loc[m, c]) for c in meta.channels} for m in months}
 
-_has_dna_kit_segments = bool(meta.kit_only_outcome_ids)
-_objective_options = ["fh_gsa", "expected_value"] + (["dna_kits"] if _has_dna_kit_segments else [])
+_has_dna_kit_segments = bool(dna_kit_sale_outcome_ids(meta))
+_has_fh_signup_outcomes = bool(fh_signup_outcome_ids(meta))
+_objective_options = ["fh_gsa", "expected_value"] + (["dna_kits"] if _has_dna_kit_segments else []) + (
+    ["fh_signups"] if _has_fh_signup_outcomes else []
+)
 _objective_labels = {
     "fh_gsa": "Maximise Family History GSAs",
+    "fh_signups": "Maximise Family History sign-ups",
     "dna_kits": "Maximise DNA kit sales",
     "expected_value": "Maximise LTV-weighted expected value",
 }
@@ -256,8 +267,9 @@ objective = st.radio(
     format_func=lambda x: _objective_labels[x], help=FIELD_HELP["ltv"],
 )
 st.caption(
-    "Each objective states exactly what it maximises - Family History GSAs and DNA kit sales are "
-    "never silently combined into one generic 'volume' number (docs/dna_fh_causal_structure.md)."
+    "Each objective states exactly what it maximises - Family History GSAs, Family History sign-ups "
+    "and DNA kit sales are never silently combined into one generic 'volume' number "
+    "(docs/dna_fh_causal_structure.md)."
 )
 if objective == "expected_value" and not ltv:
     st.warning(
@@ -279,19 +291,30 @@ with tab_manual:
     totals = predicted.groupby("outcome_id")[["predicted_outcome", "value"]].sum().reset_index()
     st.markdown("**Totals by outcome**")
     st.dataframe(totals, width="stretch", column_config=dataframe_column_config(totals))
-    by_month_totals = predicted.groupby("month")[["fh_gsa", "dna_kits"]].first()
+    if "total_value_is_complete" in predicted.columns and not predicted["total_value_is_complete"].all():
+        st.caption(
+            "Total predicted value excludes outcome_id(s) with no LTV weight configured (never "
+            "silently treated as $1) - set a value weight for every outcome on the Structure page "
+            "for a complete total."
+        )
+    by_month_cols = ["fh_gsa", "dna_kits"] + (["fh_signups"] if "fh_signups" in predicted.columns else [])
+    by_month_totals = predicted.groupby("month")[by_month_cols].first()
     _objective_totals = {
         "fh_gsa": ("Total predicted FH GSAs", float(by_month_totals["fh_gsa"].sum())),
         "dna_kits": ("Total predicted DNA kits", float(by_month_totals["dna_kits"].sum())),
         "expected_value": ("Total predicted value", float(predicted["value"].sum())),
     }
-    c1, c2, c3 = st.columns(3)
+    if "fh_signups" in by_month_cols:
+        _objective_totals["fh_signups"] = ("Total predicted FH sign-ups", float(by_month_totals["fh_signups"].sum()))
+    c1, c2, c3, c4 = st.columns(4)
     total_label, total_value = _objective_totals[objective]
     c1.metric(total_label, f"{total_value:,.0f}")
     cpa_summary = _scenario_cpa_summary(predicted)
     c2.metric("Avg CPA (Family History GSAs)", f"{cpa_summary['fh_avg_cpa']:,.2f}" if cpa_summary["fh_avg_cpa"] is not None else "n/a")
+    if _has_fh_signup_outcomes:
+        c3.metric("Avg CPA (Family History sign-ups)", f"{cpa_summary.get('fh_signup_avg_cpa'):,.2f}" if cpa_summary.get("fh_signup_avg_cpa") is not None else "n/a")
     if _has_dna_kit_segments:
-        c3.metric("Avg CPA (DNA kits)", f"{cpa_summary['dna_avg_cpa']:,.2f}" if cpa_summary["dna_avg_cpa"] is not None else "n/a")
+        c4.metric("Avg CPA (DNA kits)", f"{cpa_summary['dna_avg_cpa']:,.2f}" if cpa_summary["dna_avg_cpa"] is not None else "n/a")
 
     scenario_name = st.text_input("Scenario name *", value=f"manual-{market}-{months[0]}", key="manual_name")
     if st.button("Save this scenario"):

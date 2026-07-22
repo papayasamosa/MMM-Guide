@@ -111,6 +111,7 @@ def fingerprint_model_spec(
     pipeline_steps: Optional[List[Dict[str, Any]]] = None,
     market_spec_config: Optional[Dict[str, Any]] = None,
     direct_dna_outcome_ids: Optional[List[str]] = None,
+    outcome_catalogue: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     """
     Fingerprint the full set of inputs that determine how the model is
@@ -120,54 +121,65 @@ def fingerprint_model_spec(
     produced the modelling data (`pipeline_steps`), the calculation-
     relevant subset of market/channel configuration (`market_spec_config`,
     filtered by `_model_relevant_market_config` - see that function's
-    docstring for the descriptive/model-relevant boundary), and which
+    docstring for the descriptive/model-relevant boundary), which
     outcome_ids get a direct DNA-media pathway (`direct_dna_outcome_ids` -
     the DNA-kit outcome_ids actually included in this fit, per
     `core.outcomes`/the Structure page's exclude-from-fit control; see
-    `FHModelMeta.kit_only_outcome_ids`/`docs/dna_fh_causal_structure.md`) -
-    i.e. everything that determines the fitted model and what it's used to
-    calculate, besides the data values themselves (those are covered
-    separately by `fingerprint_dataframe`). A changed prior therefore
-    changes this fingerprint, since priors are part of the fitted model's
-    identity - and so does switching model structure (`model_type`): a
-    shared-curve fit and a market-specific fit of the *same* data/spec/
-    priors are not the same fitted model, and an approval granted for one
-    must not be treated as valid for the other (docs/decision_log.md,
-    market-specific redesign). Likewise, toggling which DNA-kit outcomes
-    are excluded from a fit (Structure page) changes `meta.outcome_ids` and
-    `meta.kit_only_outcome_ids` without touching `model_spec`/`prior_config`/
-    the raw data at all - `direct_dna_outcome_ids` is what makes that a
-    fingerprint-breaking change too, closing a gap the instruction
-    document's audit confirmed (an approval could otherwise stay
-    "matching" across two structurally different fits).
+    `FHModelMeta.kit_only_outcome_ids`/`docs/dna_fh_causal_structure.md`),
+    and the full canonical outcome catalogue (`outcome_catalogue` - PR E.1;
+    pass `core.outcomes.outcome_catalogue_fingerprint_payload(outcomes)`,
+    already sorted by outcome_id with only the calculation-relevant fields:
+    outcome_id/product/segment/metric/unit/source_column/role/
+    included_in_fit/value_weight/value_currency) - i.e. everything that
+    determines the fitted model and what it's used to calculate, besides
+    the data values themselves (those are covered separately by
+    `fingerprint_dataframe`). A changed prior therefore changes this
+    fingerprint, since priors are part of the fitted model's identity - and
+    so does switching model structure (`model_type`): a shared-curve fit
+    and a market-specific fit of the *same* data/spec/priors are not the
+    same fitted model, and an approval granted for one must not be treated
+    as valid for the other (docs/decision_log.md, market-specific
+    redesign). Likewise, `outcome_catalogue` is what makes adding/removing
+    a non-DNA FH outcome, changing sign-up to GSA, changing unit/source
+    column/role/inclusion, or changing the value weight used in planning,
+    into a fingerprint-breaking change - closing the gap the instruction
+    document's audit confirmed: `direct_dna_outcome_ids` alone only covered
+    DNA-kit outcome membership, not any of the rest of an outcome's
+    identity, so e.g. relabelling a GSA outcome as a sign-up outcome (or
+    vice versa) could previously leave an approval "matching" a
+    structurally different fit.
 
     `model_type` defaults to `"shared"` (core.hierarchical_model's model,
     "Model A") so existing call sites that don't pass it keep fingerprinting
     that model type explicitly, not omitting model identity from the hash.
-    `pipeline_steps`, `market_spec_config` and `direct_dna_outcome_ids`
-    default to `None` (treated as empty) for the same reason - a caller with
-    nothing to pass still gets a deterministic, explicit fingerprint rather
-    than an error. `direct_dna_outcome_ids` is sorted before hashing - it
-    names an unordered set of outcome_ids, so two calls listing the same
-    outcome_ids in a different order must fingerprint identically.
+    `pipeline_steps`, `market_spec_config`, `direct_dna_outcome_ids` and
+    `outcome_catalogue` default to `None` (treated as empty) for the same
+    reason - a caller with nothing to pass still gets a deterministic,
+    explicit fingerprint rather than an error. `direct_dna_outcome_ids` is
+    sorted before hashing - it names an unordered set of outcome_ids, so two
+    calls listing the same outcome_ids in a different order must fingerprint
+    identically; `outcome_catalogue` is likewise re-sorted by its own
+    `outcome_id` key here (defensively - callers are expected to already
+    pass it pre-sorted) for the same reason.
 
-    Note: adding `pipeline_steps`, `market_spec_config` and
-    `direct_dna_outcome_ids` to this payload is an intentional breaking
-    change to every fingerprint this function produces, including for
-    callers who pass none of them (the payload always carries
-    `"pipeline_steps": []`, `"market_relevant_config": {}` and
-    `"direct_dna_outcome_ids": []` keys now) - the same pattern used when
-    `model_type` was added (docs/decision_log.md). Every pre-existing
-    approval is invalidated by upgrading to this version, which is correct:
-    an approval bound to a fingerprint that didn't cover the transformation
-    recipe, media-unit/currency config, or DNA-kit outcome membership was
-    never actually binding on them, so forcing re-review is the honest
-    behaviour, not a regression.
+    Note: adding `pipeline_steps`, `market_spec_config`,
+    `direct_dna_outcome_ids` and `outcome_catalogue` to this payload is an
+    intentional breaking change to every fingerprint this function produces,
+    including for callers who pass none of them (the payload always carries
+    `"pipeline_steps": []`, `"market_relevant_config": {}`,
+    `"direct_dna_outcome_ids": []` and `"outcome_catalogue": []` keys now) -
+    the same pattern used when `model_type` was added (docs/decision_log.md).
+    Every pre-existing approval is invalidated by upgrading to this version,
+    which is correct: an approval bound to a fingerprint that didn't cover
+    the transformation recipe, media-unit/currency config, DNA-kit outcome
+    membership, or the full outcome catalogue was never actually binding on
+    them, so forcing re-review is the honest behaviour, not a regression.
 
     Canonical JSON with sorted dict keys, so insertion order never matters;
     list order is preserved (json.dumps does not reorder lists), since list
     order is meaningful (e.g. `channels`, `pipeline_steps`) - except
-    `direct_dna_outcome_ids`, sorted explicitly above for exactly that reason.
+    `direct_dna_outcome_ids`/`outcome_catalogue`, sorted explicitly above for
+    exactly that reason.
     """
     payload = {
         "model_spec": model_spec,
@@ -177,6 +189,9 @@ def fingerprint_model_spec(
         "pipeline_steps": pipeline_steps or [],
         "market_relevant_config": _model_relevant_market_config(market_spec_config),
         "direct_dna_outcome_ids": sorted(direct_dna_outcome_ids) if direct_dna_outcome_ids else [],
+        "outcome_catalogue": (
+            sorted(outcome_catalogue, key=lambda o: o.get("outcome_id", "")) if outcome_catalogue else []
+        ),
     }
     blob = _canonical_json(payload)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()

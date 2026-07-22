@@ -1,26 +1,56 @@
 """Tests for core.outcomes - the canonical outcome schema (PR E, "make
 OutcomeDefinition the source of truth" - see docs/decision_log.md)."""
 
+from types import SimpleNamespace
+
 from ancestry_mmm.core.outcomes import (
     DNA,
     DNA_SEGMENT_COMBINED,
     DNA_SEGMENT_EXISTING_FH,
     DNA_SEGMENT_NEW,
     FAMILY_HISTORY,
+    METRIC_GSA,
+    METRIC_KIT_SALE,
+    METRIC_SIGNUP,
     OUTCOME_ROLES,
     OUTCOME_STATUSES,
+    DRIFT_STATUSES,
     OutcomeDefinition,
     dna_kit_outcome_columns,
     dna_outcomes_from_columns,
+    dna_kit_sale_outcome_ids,
+    fh_gsa_outcome_ids,
     fh_outcomes_from_spec,
+    fh_signup_outcome_ids,
     included_outcomes,
+    infer_legacy_fh_dna_cross_sell_outcome_id,
+    outcome_catalogue_at_fit_by_id,
+    outcome_catalogue_fingerprint_payload,
+    outcome_drift_status,
     outcome_requires_opt_in,
     outcome_status,
     outcome_was_modelled,
+    outcomes_drift_dataframe,
     outcomes_to_dataframe,
     resolve_outcome_definitions,
+    select_outcome_ids,
+    validate_fh_dna_cross_sell_outcome_id,
     validate_outcome_definitions,
 )
+
+
+def _meta(outcome_ids, id_to_product, id_to_metric, id_to_role=None, kit_only=None):
+    """Minimal FHModelMeta-shaped stand-in - select_outcome_ids/the named
+    totals only ever read these attributes, so a real FHModelMeta (which
+    would pull in core.hierarchical_model) isn't needed here."""
+    return SimpleNamespace(
+        outcome_ids=outcome_ids,
+        outcome_id_to_product=id_to_product,
+        outcome_id_to_metric=id_to_metric,
+        outcome_id_to_unit={},
+        outcome_id_to_role=id_to_role or {},
+        kit_only_outcome_ids=kit_only or [],
+    )
 
 
 class TestOutcomeDefinitionRoundTrip:
@@ -456,3 +486,323 @@ class TestDnaKitOutcomeColumns:
     def test_no_dna_outcomes_gives_empty_dict(self):
         outcomes = fh_outcomes_from_spec({"New": "GSA_New", "Winback": "GSA_Winback"})
         assert dna_kit_outcome_columns(outcomes) == {}
+
+
+# ---------------------------------------------------------------------------
+# PR E.1: metric-aware selection - the required test cases from the
+# instruction document ("FH New GSA only", "FH New sign-up only", "FH New
+# GSA and FH New sign-up together", "multiple FH segments each with sign-up
+# and GSA", "FH plus DNA kits", "same segment/different KPIs/independent
+# dimensions", "GSA objective GSA-only", "sign-up objective signup-only" -
+# the last two are exercised in test_optimization.py against these same
+# selectors).
+# ---------------------------------------------------------------------------
+
+class TestSelectOutcomeIds:
+    def test_fh_gsa_only_project_selects_correctly(self):
+        meta = _meta(
+            ["fh_new"], {"fh_new": FAMILY_HISTORY}, {"fh_new": METRIC_GSA},
+        )
+        assert fh_gsa_outcome_ids(meta) == ["fh_new"]
+        assert fh_signup_outcome_ids(meta) == []
+        assert dna_kit_sale_outcome_ids(meta) == []
+
+    def test_fh_signup_only_project_selects_correctly(self):
+        meta = _meta(
+            ["fh_new_signup"], {"fh_new_signup": FAMILY_HISTORY}, {"fh_new_signup": METRIC_SIGNUP},
+        )
+        assert fh_gsa_outcome_ids(meta) == []
+        assert fh_signup_outcome_ids(meta) == ["fh_new_signup"]
+        assert dna_kit_sale_outcome_ids(meta) == []
+
+    def test_gsa_and_signup_on_same_segment_are_disjoint_and_both_selected(self):
+        # The exact scenario the instruction document's confirmed defect was
+        # about: two outcome_ids sharing segment="New" must never collapse
+        # into one total.
+        meta = _meta(
+            ["fh_new_gsa", "fh_new_signup"],
+            {"fh_new_gsa": FAMILY_HISTORY, "fh_new_signup": FAMILY_HISTORY},
+            {"fh_new_gsa": METRIC_GSA, "fh_new_signup": METRIC_SIGNUP},
+        )
+        gsa = fh_gsa_outcome_ids(meta)
+        signup = fh_signup_outcome_ids(meta)
+        assert gsa == ["fh_new_gsa"]
+        assert signup == ["fh_new_signup"]
+        assert set(gsa) & set(signup) == set()
+
+    def test_multiple_fh_segments_each_with_signup_and_gsa(self):
+        outcome_ids = ["fh_new_gsa", "fh_new_signup", "fh_winback_gsa", "fh_winback_signup"]
+        products = {oid: FAMILY_HISTORY for oid in outcome_ids}
+        metrics = {
+            "fh_new_gsa": METRIC_GSA, "fh_new_signup": METRIC_SIGNUP,
+            "fh_winback_gsa": METRIC_GSA, "fh_winback_signup": METRIC_SIGNUP,
+        }
+        meta = _meta(outcome_ids, products, metrics)
+        assert set(fh_gsa_outcome_ids(meta)) == {"fh_new_gsa", "fh_winback_gsa"}
+        assert set(fh_signup_outcome_ids(meta)) == {"fh_new_signup", "fh_winback_signup"}
+
+    def test_fh_plus_dna_kits_never_mixed(self):
+        meta = _meta(
+            ["fh_new_gsa", "dna_new_kit"],
+            {"fh_new_gsa": FAMILY_HISTORY, "dna_new_kit": DNA},
+            {"fh_new_gsa": METRIC_GSA, "dna_new_kit": METRIC_KIT_SALE},
+        )
+        assert fh_gsa_outcome_ids(meta) == ["fh_new_gsa"]
+        assert dna_kit_sale_outcome_ids(meta) == ["dna_new_kit"]
+
+    def test_select_outcome_ids_filters_by_arbitrary_combination(self):
+        meta = _meta(
+            ["a", "b", "c"],
+            {"a": FAMILY_HISTORY, "b": FAMILY_HISTORY, "c": DNA},
+            {"a": METRIC_GSA, "b": METRIC_SIGNUP, "c": METRIC_KIT_SALE},
+            id_to_role={"a": "primary", "b": "secondary", "c": "primary"},
+        )
+        assert select_outcome_ids(meta) == ["a", "b", "c"]
+        assert select_outcome_ids(meta, product=FAMILY_HISTORY) == ["a", "b"]
+        assert select_outcome_ids(meta, product=FAMILY_HISTORY, metric=METRIC_GSA) == ["a"]
+        assert select_outcome_ids(meta, role="secondary") == ["b"]
+
+    def test_role_defaults_named_totals_to_primary_only(self):
+        meta = _meta(
+            ["fh_new_gsa", "fh_new_signup"],
+            {"fh_new_gsa": FAMILY_HISTORY, "fh_new_signup": FAMILY_HISTORY},
+            {"fh_new_gsa": METRIC_GSA, "fh_new_signup": METRIC_SIGNUP},
+            id_to_role={"fh_new_gsa": "primary", "fh_new_signup": "funnel_intermediate"},
+        )
+        # funnel_intermediate is explicitly "excluded from GSA-style totals"
+        # per the instruction document's role semantics - default named
+        # totals therefore never include it, even though it matches on
+        # product+metric.
+        assert fh_signup_outcome_ids(meta) == []
+        assert fh_signup_outcome_ids(meta, include_non_primary=True) == ["fh_new_signup"]
+
+    def test_legacy_meta_with_no_catalogue_metadata_falls_back_to_kit_only(self):
+        # A FHModelMeta reconstructed from a bundle exported before
+        # outcome_catalogue_at_fit existed has outcome_id_to_product == {}
+        # for every outcome_id - the pre-PR-E.1 "everything non-DNA-kit is
+        # the GSA total" behaviour must still work for it (test case 14,
+        # "legacy bundles migrate safely").
+        meta = _meta(
+            ["New", "DNA_CrossSell", "Winback", "dna_new_kit"],
+            {}, {},
+            kit_only=["dna_new_kit"],
+        )
+        assert set(fh_gsa_outcome_ids(meta)) == {"New", "DNA_CrossSell", "Winback"}
+        assert fh_signup_outcome_ids(meta) == []
+        assert dna_kit_sale_outcome_ids(meta) == ["dna_new_kit"]
+
+
+class TestFhChannelLogTermsIndependentDimensions:
+    def test_gsa_and_signup_have_independent_posterior_dimensions(self):
+        # "Same segment, different KPIs, independent posterior dimensions"
+        # (test case 6) - proven at the curve-generation level: two
+        # outcome_ids sharing a segment get their own beta and produce
+        # different response curves, not one shared number. The full
+        # real-MCMC version of this proof (both outcomes actually get
+        # independently *fitted* posteriors, not just independently
+        # *replayed* ones) is the offline recovery check, matching this
+        # codebase's established convention for anything requiring real
+        # PyMC sampling (docs/decision_log.md).
+        from ancestry_mmm.core.hierarchical_model import FHModelMeta
+        from ancestry_mmm.core.predict import FHPosteriorParams, generate_channel_curve
+        import numpy as np
+
+        outcome_ids = ["fh_new_gsa", "fh_new_signup"]
+        meta = FHModelMeta(
+            markets=["UK"], outcome_ids=outcome_ids, channels=["tv"], dna_channels=[],
+            dna_channel_idx=[], non_dna_idx=[0], dna_outcome_id="fh_new_gsa", dna_lag_weeks=0,
+            unpooled_markets=[], control_names=[],
+            outcome_id_to_product={"fh_new_gsa": FAMILY_HISTORY, "fh_new_signup": FAMILY_HISTORY},
+            outcome_id_to_metric={"fh_new_gsa": METRIC_GSA, "fh_new_signup": METRIC_SIGNUP},
+            outcome_id_to_segment={"fh_new_gsa": "New", "fh_new_signup": "New"},
+        )
+        params = FHPosteriorParams(
+            decay_rate={"tv": 0.5}, hill_K={"tv": 1000.0}, hill_S={"tv": 1.0},
+            beta={"fh_new_gsa": {"tv": 0.1}, "fh_new_signup": {"tv": 0.4}},
+            halo_strength={}, promo_coef={"fh_new_gsa": 0.0, "fh_new_signup": 0.0},
+            market_offset={"UK": {"fh_new_gsa": 0.0, "fh_new_signup": 0.0}},
+            intercept={"fh_new_gsa": 3.0, "fh_new_signup": 3.0},
+            trend_coef={"fh_new_gsa": 0.0, "fh_new_signup": 0.0},
+            gamma_fourier={"fh_new_gsa": np.zeros(6), "fh_new_signup": np.zeros(6)},
+            alpha={"fh_new_gsa": 5.0, "fh_new_signup": 5.0},
+            control_coef={}, outcome_control_coef={},
+        )
+        curve = generate_channel_curve("tv", meta, params, spend_range=np.array([0.0, 500.0, 1000.0]))
+        gsa_response = curve["fh_new_gsa_response"].to_numpy()
+        signup_response = curve["fh_new_signup_response"].to_numpy()
+        assert not np.allclose(gsa_response, signup_response), (
+            "Two outcome_ids on the same segment with different betas must produce different "
+            "response curves - they are independent dimensions, not one shared number."
+        )
+        assert curve["fh_response"].tolist() == gsa_response.tolist()
+        assert curve["fh_signup_response"].tolist() == signup_response.tolist()
+
+
+class TestExplicitFhDnaCrossSellOutcome:
+    def _outcomes(self):
+        return [
+            OutcomeDefinition(outcome_id="fh_new_gsa", product=FAMILY_HISTORY, segment="New", metric=METRIC_GSA, source_column="col_gsa"),
+            OutcomeDefinition(outcome_id="dna_new_kit", product=DNA, segment=DNA_SEGMENT_NEW, metric=METRIC_KIT_SALE, source_column="col_kit"),
+        ]
+
+    def test_none_is_valid_when_no_candidate_configured(self):
+        assert validate_fh_dna_cross_sell_outcome_id(None, self._outcomes()) == []
+
+    def test_valid_fh_outcome_passes(self):
+        assert validate_fh_dna_cross_sell_outcome_id("fh_new_gsa", self._outcomes()) == []
+
+    def test_unknown_outcome_id_rejected(self):
+        errors = validate_fh_dna_cross_sell_outcome_id("not_a_real_outcome", self._outcomes())
+        assert errors and "not_a_real_outcome" in errors[0]
+
+    def test_dna_kit_outcome_rejected_as_cross_sell_target(self):
+        # A kit sale has no halo pathway onto itself - it must never be
+        # accepted as the FH DNA cross-sell target.
+        errors = validate_fh_dna_cross_sell_outcome_id("dna_new_kit", self._outcomes())
+        assert errors and any("Family History" in e for e in errors)
+
+    def test_excluded_outcome_rejected(self):
+        outcomes = self._outcomes()
+        outcomes[0].included_in_fit = False
+        errors = validate_fh_dna_cross_sell_outcome_id("fh_new_gsa", outcomes)
+        assert errors and "excluded" in errors[0]
+
+    def test_infer_legacy_returns_none_when_no_candidates(self):
+        outcomes = [OutcomeDefinition(outcome_id="fh_new", product=FAMILY_HISTORY, segment="New", metric=METRIC_GSA, source_column="c")]
+        candidate, warning = infer_legacy_fh_dna_cross_sell_outcome_id(outcomes)
+        assert candidate is None and warning is None
+
+    def test_infer_legacy_finds_single_candidate_with_warning(self):
+        outcomes = [
+            OutcomeDefinition(outcome_id="fh_dna_crosssell", product=FAMILY_HISTORY, segment="DNA_CrossSell", metric=METRIC_GSA, source_column="c"),
+            OutcomeDefinition(outcome_id="fh_new", product=FAMILY_HISTORY, segment="New", metric=METRIC_GSA, source_column="c2"),
+        ]
+        candidate, warning = infer_legacy_fh_dna_cross_sell_outcome_id(outcomes)
+        assert candidate == "fh_dna_crosssell"
+        assert warning is not None and "inferred" in warning
+
+    def test_infer_legacy_ambiguous_with_multiple_candidates_returns_none(self):
+        outcomes = [
+            OutcomeDefinition(outcome_id="fh_dna_a", product=FAMILY_HISTORY, segment="A", metric=METRIC_GSA, source_column="c"),
+            OutcomeDefinition(outcome_id="fh_dna_b", product=FAMILY_HISTORY, segment="B", metric=METRIC_GSA, source_column="c2"),
+        ]
+        candidate, warning = infer_legacy_fh_dna_cross_sell_outcome_id(outcomes)
+        assert candidate is None
+        assert warning is not None
+        assert "fh_dna_a" in warning and "fh_dna_b" in warning
+
+    def test_builder_requires_explicit_target_when_dna_channels_configured(self):
+        # The confirmed defect this closes: substring-based inference used
+        # to silently pick a DNA cross-sell target; it must now raise
+        # instead when no explicit dna_outcome_id is resolvable and DNA
+        # channels are configured.
+        from ancestry_mmm.core.hierarchical_model import _default_dna_outcome_id
+        import pytest
+
+        with pytest.raises(ValueError, match="explicit"):
+            _default_dna_outcome_id(["dna_new_kit", "fh_new"], None, dna_channel_idx=[0])
+
+    def test_builder_does_not_require_target_without_dna_channels(self):
+        from ancestry_mmm.core.hierarchical_model import _default_dna_outcome_id
+
+        # No DNA-targeted channels at all - nothing to target, so an
+        # unresolved id is harmless (never read by any pathway-dependent
+        # code) rather than blocking an unrelated FH-only fit.
+        assert _default_dna_outcome_id(["fh_new"], None, dna_channel_idx=[]) == "fh_new"
+
+
+class TestOutcomeDriftStatus:
+    def _outcome(self, **overrides):
+        base = dict(outcome_id="fh_new", product=FAMILY_HISTORY, segment="New", metric=METRIC_GSA, source_column="col_a", value_weight=100.0)
+        base.update(overrides)
+        return OutcomeDefinition(**base)
+
+    def test_unchanged_outcome_is_fitted_and_current(self):
+        current = self._outcome()
+        fit_time = self._outcome()
+        assert outcome_drift_status(current, fit_time) == "Fitted and current"
+
+    def test_valid_column_remap_is_detected_as_changed_not_silently_unchanged(self):
+        # The exact gap outcome_status (column-disappearing only) can't
+        # catch: the mapping changed to a *different, still-present*
+        # column - test case "valid-column remapping is detected as stale".
+        current = self._outcome(source_column="col_b")
+        fit_time = self._outcome(source_column="col_a")
+        status = outcome_drift_status(current, fit_time, available_columns={"col_a", "col_b"})
+        assert status == "Changed since fit"
+
+    def test_metric_change_is_detected(self):
+        current = self._outcome(metric=METRIC_SIGNUP)
+        fit_time = self._outcome(metric=METRIC_GSA)
+        assert outcome_drift_status(current, fit_time) == "Changed since fit"
+
+    def test_missing_source_column_detected(self):
+        current = self._outcome(source_column="col_a")
+        fit_time = self._outcome(source_column="col_a")
+        status = outcome_drift_status(current, fit_time, available_columns={"col_b"})
+        assert status == "Missing source column"
+
+    def test_excluded_from_next_fit_detected(self):
+        current = self._outcome(included_in_fit=False)
+        fit_time = self._outcome(included_in_fit=True)
+        assert outcome_drift_status(current, fit_time) == "Excluded from next fit"
+
+    def test_new_since_fit(self):
+        current = self._outcome()
+        assert outcome_drift_status(current, None) == "New since fit"
+
+    def test_removed_since_fit(self):
+        fit_time = self._outcome()
+        assert outcome_drift_status(None, fit_time) == "Removed since fit"
+
+    def test_all_drift_statuses_are_reachable(self):
+        # Documentation-level check mirroring the instruction document's
+        # required status list verbatim.
+        assert set(DRIFT_STATUSES) == {
+            "Fitted and current", "Excluded from next fit", "Changed since fit",
+            "Missing source column", "New since fit", "Removed since fit",
+        }
+
+    def test_outcomes_drift_dataframe_covers_union_of_current_and_fit_time(self):
+        current = [self._outcome(outcome_id="a"), self._outcome(outcome_id="c", metric=METRIC_SIGNUP)]
+        fit_time = [self._outcome(outcome_id="a"), self._outcome(outcome_id="b")]
+        model_meta = SimpleNamespace(outcome_catalogue_at_fit=fit_time)
+        df = outcomes_drift_dataframe(current, model_meta)
+        statuses = dict(zip(df["outcome_id"], df["drift_status"]))
+        assert statuses["a"] == "Fitted and current"
+        assert statuses["b"] == "Removed since fit"
+        assert statuses["c"] == "New since fit"
+
+    def test_outcomes_drift_dataframe_empty_without_model_meta(self):
+        df = outcomes_drift_dataframe([self._outcome()], None)
+        assert df.empty
+
+    def test_outcome_catalogue_at_fit_by_id_keys_by_outcome_id(self):
+        fit_time = [self._outcome(outcome_id="a"), self._outcome(outcome_id="b")]
+        model_meta = SimpleNamespace(outcome_catalogue_at_fit=fit_time)
+        by_id = outcome_catalogue_at_fit_by_id(model_meta)
+        assert set(by_id) == {"a", "b"}
+
+    def test_outcome_catalogue_at_fit_by_id_none_meta_gives_empty(self):
+        assert outcome_catalogue_at_fit_by_id(None) == {}
+
+
+class TestOutcomeCatalogueFingerprintPayload:
+    def test_sorted_by_outcome_id(self):
+        outcomes = [
+            OutcomeDefinition(outcome_id="z", product=FAMILY_HISTORY, segment="S", metric=METRIC_GSA, source_column="c"),
+            OutcomeDefinition(outcome_id="a", product=FAMILY_HISTORY, segment="S", metric=METRIC_GSA, source_column="c"),
+        ]
+        payload = outcome_catalogue_fingerprint_payload(outcomes)
+        assert [p["outcome_id"] for p in payload] == ["a", "z"]
+
+    def test_only_fingerprint_relevant_fields_included(self):
+        outcomes = [OutcomeDefinition(
+            outcome_id="a", product=FAMILY_HISTORY, segment="S", metric=METRIC_GSA, source_column="c",
+            value_weight=1.0, value_currency="USD", role="primary", included_in_fit=True, exclusion_reason="x",
+        )]
+        payload = outcome_catalogue_fingerprint_payload(outcomes)[0]
+        assert set(payload) == {
+            "outcome_id", "product", "segment", "metric", "unit", "source_column",
+            "role", "included_in_fit", "value_weight", "value_currency",
+        }

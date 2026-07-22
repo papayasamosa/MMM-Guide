@@ -118,16 +118,39 @@ class FHModelMeta:
         return [s for s in self.outcome_ids if s not in kit_only]
 
 
-def _default_dna_outcome_id(outcome_ids: List[str], dna_outcome_id: Optional[str]) -> str:
+def _default_dna_outcome_id(
+    outcome_ids: List[str], dna_outcome_id: Optional[str], dna_channel_idx: Optional[List[int]] = None,
+) -> str:
+    """
+    Resolve which outcome_id is the FH DNA cross-sell outcome (the halo
+    pathway's traditional target). PR E.1 removed the old substring-based
+    fallback ("the first outcome_id containing 'dna'") - with DNA-product
+    kit-sale outcomes now in the same catalogue (e.g. `dna_new_kit`), that
+    heuristic is genuinely ambiguous and was never validated to point at a
+    Family History outcome at all
+    (`core.outcomes.validate_fh_dna_cross_sell_outcome_id`/
+    `infer_legacy_fh_dna_cross_sell_outcome_id` is the migration-only
+    replacement, used by the Structure page - never called from here).
+
+    `dna_outcome_id` must be passed explicitly (typically
+    `spec.fh_dna_cross_sell_outcome_id`) whenever this fit actually has
+    DNA-targeted channels (`dna_channel_idx` non-empty) - a fit with no DNA
+    channels at all has no halo/direct-DNA pathway to target, so an
+    unresolved id is harmless (defaults to `outcome_ids[0]`, never read by
+    any pathway-dependent code) rather than blocking a plain FH-only fit
+    with an unrelated configuration requirement.
+    """
     if dna_outcome_id is not None:
         if dna_outcome_id not in outcome_ids:
             raise ValueError(f"dna_outcome_id '{dna_outcome_id}' is not one of the model's outcome_ids: {outcome_ids}")
         return dna_outcome_id
-    for s in outcome_ids:
-        if "dna" in s.lower():
-            return s
+    if not dna_channel_idx:
+        return outcome_ids[0]
     raise ValueError(
-        "Could not infer which outcome_id is the DNA cross-sell outcome; pass dna_outcome_id explicitly."
+        "This fit has DNA-targeted channels but no FH DNA cross-sell outcome was given. Pass "
+        "dna_outcome_id explicitly (typically spec.fh_dna_cross_sell_outcome_id, configured on the "
+        "Structure page) - automatic substring-based inference has been removed as ambiguous now "
+        "that DNA-product kit-sale outcomes can also be in the catalogue."
     )
 
 
@@ -246,7 +269,7 @@ def build_fh_hierarchical_model(
     n_fourier = fourier.shape[1]
     n_controls = X_controls.shape[1]
 
-    dna_outcome_id = _default_dna_outcome_id(outcome_ids, dna_outcome_id)
+    dna_outcome_id = _default_dna_outcome_id(outcome_ids, dna_outcome_id, dna_channel_idx)
     direct_dna_outcome_ids = _resolve_direct_dna_outcome_ids(outcome_ids, dna_outcome_id, direct_dna_outcome_ids)
     non_dna_idx = [i for i, c in enumerate(channels) if i not in dna_channel_idx]
 

@@ -95,22 +95,26 @@ def compute_cpa(
 
 def compute_cpa_by_product(curve_df: pd.DataFrame) -> pd.DataFrame:
     """
-    Product-aware CPA: computes `avg_cpa`/`marginal_cpa` against
-    `fh_response` (Family History GSAs, including the FH DNA-cross-sell
-    segment), and - only where the curve actually has a non-trivial
-    `dna_response` (a DNA-targeted channel with a mapped DNA-kit segment
-    fit alongside it) - *additionally* `dna_avg_cpa`/`dna_marginal_cpa`
-    against `dna_response`, prefixed so neither denominator is silently
-    mixed into the other (the instruction document's "CPA must identify
-    its denominator" requirement).
+    Metric-aware CPA (PR E.1): computes `avg_cpa`/`marginal_cpa` (aliases
+    `cost_per_fh_gsa`/`fh_gsa_marginal_cpa`) against `fh_response` (Family
+    History GSA outcomes, `core.outcomes.fh_gsa_outcome_ids` - a sign-up
+    outcome on the same segment is never included), and - only where the
+    curve actually has a non-trivial `dna_response`/`fh_signup_response` (a
+    DNA-kit outcome, or a distinct sign-up outcome, fit alongside it) -
+    *additionally* `dna_avg_cpa`/`dna_marginal_cpa` (alias
+    `cost_per_dna_kit`) against `dna_response`, and `fh_signup_avg_cpa`/
+    `fh_signup_marginal_cpa` (alias `cost_per_fh_signup`) against
+    `fh_signup_response`, prefixed so no denominator is silently mixed into
+    another (the instruction document's "CPA must identify its
+    denominator" requirement).
 
-    The overwhelming majority of curves (no DNA-kit segments in the fit)
-    get exactly the same `avg_cpa`/`marginal_cpa` columns as before, with
-    the same values (`fh_response == overall_response` when `dna_response`
-    is identically zero) - this is the safe default entry point for UI/
-    export code that used to call `compute_cpa(curve_df)` with no
-    `response_col`, which would now raise on a genuinely mixed curve
-    instead of silently mixing units.
+    The overwhelming majority of curves (no DNA-kit outcomes, no distinct
+    sign-up outcome) get exactly the same `avg_cpa`/`marginal_cpa` columns
+    as before, with the same values (`fh_response == overall_response` when
+    `dna_response`/`fh_signup_response` are identically zero) - this is the
+    safe default entry point for UI/export code that used to call
+    `compute_cpa(curve_df)` with no `response_col`, which would now raise on
+    a genuinely mixed curve instead of silently mixing units.
     """
     if "fh_response" not in curve_df.columns:
         # Curve predates the fh_response/dna_response split (shouldn't
@@ -120,11 +124,20 @@ def compute_cpa_by_product(curve_df: pd.DataFrame) -> pd.DataFrame:
         return compute_cpa(curve_df, "overall_response", allow_mixed=True)
 
     out = compute_cpa(curve_df, "fh_response", allow_mixed=True)
+    out["cost_per_fh_gsa"] = out["avg_cpa"]
+    out["fh_gsa_marginal_cpa"] = out["marginal_cpa"]
     has_dna = "dna_response" in curve_df.columns and (curve_df["dna_response"] > 0).any()
     if has_dna:
         dna_cpa = compute_cpa(curve_df, "dna_response", allow_mixed=True, column_prefix="dna_")
         out["dna_avg_cpa"] = dna_cpa["dna_avg_cpa"]
         out["dna_marginal_cpa"] = dna_cpa["dna_marginal_cpa"]
+        out["cost_per_dna_kit"] = dna_cpa["dna_avg_cpa"]
+    has_signup = "fh_signup_response" in curve_df.columns and (curve_df["fh_signup_response"] > 0).any()
+    if has_signup:
+        signup_cpa = compute_cpa(curve_df, "fh_signup_response", allow_mixed=True, column_prefix="fh_signup_")
+        out["fh_signup_avg_cpa"] = signup_cpa["fh_signup_avg_cpa"]
+        out["fh_signup_marginal_cpa"] = signup_cpa["fh_signup_marginal_cpa"]
+        out["cost_per_fh_signup"] = signup_cpa["fh_signup_avg_cpa"]
     return out
 
 
@@ -342,7 +355,10 @@ def market_specific_cpa_table(
             rows.append(cpa_df)
     if not rows:
         return pd.DataFrame(columns=[
-            "market", "channel", "spend", "saturation", "overall_response", "fh_response", "dna_response",
-            "avg_cpa", "marginal_cpa", "dna_avg_cpa", "dna_marginal_cpa",
+            "market", "channel", "spend", "saturation", "overall_response", "fh_response",
+            "fh_signup_response", "dna_response",
+            "avg_cpa", "marginal_cpa", "cost_per_fh_gsa", "fh_gsa_marginal_cpa",
+            "dna_avg_cpa", "dna_marginal_cpa", "cost_per_dna_kit",
+            "fh_signup_avg_cpa", "fh_signup_marginal_cpa", "cost_per_fh_signup",
         ])
     return pd.concat(rows, ignore_index=True)

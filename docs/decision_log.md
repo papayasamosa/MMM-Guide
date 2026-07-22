@@ -1104,3 +1104,138 @@ types, with zero exceptions.
 **Status:** Accepted; implemented in PR E (canonical outcomes and outcome_id model identity, per the
 post-merge correctness audit's PR ordering). See docs/outcomes.md and
 docs/dna_fh_causal_structure.md for the updated design records.
+
+---
+
+**Date:** 2026-07-22
+**Decision:** PR E.1 ("Correctness hardening on top of the canonical-outcome refactor" - the
+instruction document's explicit "do this before implementing the media-pathway schema" directive) -
+close the gap PR E left open: the core model could already fit an FH sign-up and an FH GSA as
+independent outcome_ids, but aggregation/CPA/optimiser/fingerprint/drift-detection code still keyed
+off "is this outcome_id a DNA-kit outcome" rather than the catalogue's actual product/metric/role
+labels, so a sign-up outcome could still be silently folded into a total labelled `fh_gsa`.
+1. `core.outcomes.select_outcome_ids(model_meta, *, product=None, metric=None, unit=None, role=None)`
+   is now the single place every total/CPA/objective goes to decide which outcome_ids belong in a
+   named number, reading `FHModelMeta.outcome_id_to_product`/`_metric`/`_unit`/`_role` (the exact
+   fit-time catalogue). Three named totals build on it - `fh_gsa_outcome_ids`
+   (product=Family History, metric=GSA), `fh_signup_outcome_ids` (metric=Sign-up),
+   `dna_kit_sale_outcome_ids` (product=DNA, metric=Kit sale) - each defaulting to `role="primary"`
+   only, per the newly-operational role semantics (`"secondary"`/`"funnel_intermediate"`/
+   `"diagnostic"` are excluded from default totals; `included_in_fit` remains the separate axis
+   controlling fitting eligibility). A `FHModelMeta` with no catalogue metadata at all (a bundle
+   exported before `outcome_catalogue_at_fit` existed, or a hand-built test fixture) falls back to the
+   pre-PR-E.1 "every outcome_id that isn't structurally DNA-kit-only is the GSA total" behaviour,
+   preserving backward compatibility for every legacy fit and this codebase's own pre-existing test
+   fixtures without a mass rewrite.
+2. `core.predict.generate_channel_curve`/`core.market_specific_predict.generate_market_channel_curve`
+   split `overall_response` into `fh_response` (GSA-metric only, not "every non-DNA-kit outcome" as
+   before), a new `fh_signup_response` column, and `dna_response`. `core.media_units.
+   compute_cpa_by_product` gained `fh_signup_avg_cpa`/`cost_per_fh_signup` alongside the renamed-as-
+   aliased `cost_per_fh_gsa`/`cost_per_dna_kit` (`"CPA must identify its denominator"` - the
+   instruction document's explicit requirement, extended from product-aware to metric-aware).
+   `core.optimization.evaluate_scenario` gained an `fh_signups` column (never summed into `fh_gsa`)
+   and `VALID_OBJECTIVES` gained `"fh_signups"` (Family History sign-up outcomes only), wired into the
+   Scenario Planner's objective radio alongside `"fh_gsa"`/`"dna_kits"`/`"expected_value"`.
+3. **Value weights never silently default to 1.0** (the second confirmed defect). A *partial* `ltv`
+   dict (some outcome_ids priced, others not) used to backfill missing entries with weight 1.0 when
+   computing `value`/`total_value`/`value_contribution` in `evaluate_scenario` and
+   `outcome_channel_summary` (renamed from `segment_channel_summary`) - now a missing entry makes that
+   row's value `None`/`NaN`, and `evaluate_scenario` carries a `total_value_is_complete` flag
+   (`compare_scenarios` propagates it) so a caller can show an explicit incomplete-value warning. An
+   **entirely omitted** `ltv` is not this defect (no $-weighting was requested at all) - `value`
+   there is simply raw predicted units, unchanged from pre-PR-E.1 behaviour. `core.optimization`'s
+   `"expected_value"` objective goes further and fails closed: it now raises if any eligible outcome
+   has no finite, non-negative `ltv` entry, rather than silently zero- or one-weighting it.
+4. **General outcome catalogue editor** on the Structure page (`st.data_editor`, one row per outcome)
+   replaces the legacy per-segment "map one weekly GSA column" mapper as the actual saved source of
+   truth - the FH segment mapper and DNA-column mapper still exist as convenient defaults that seed
+   the table, but the edited table's rows (converted to `OutcomeDefinition`s) are what gets persisted,
+   closing the confirmed gap that the core model could fit two KPIs per segment but the UI could never
+   actually configure that. `included_in_fit` is now an editable checkbox column in the same table,
+   replacing the old separate "exclude this DNA outcome" multiselect. Removed the "FH DNA-cross-sell
+   signup GSA" wording the instruction document flagged directly - a row is now either a sign-up KPI
+   or a GSA KPI, never described as both.
+5. **Explicit FH DNA cross-sell target** (`ModelSpec.fh_dna_cross_sell_outcome_id`) replaces
+   `core.hierarchical_model._default_dna_outcome_id`'s substring-based fallback ("the first outcome_id
+   containing 'dna'") - genuinely ambiguous now that DNA-product kit-sale outcome_ids (e.g.
+   `dna_new_kit`) are also in the catalogue, and never validated to point at a Family History outcome
+   at all. `core.outcomes.validate_fh_dna_cross_sell_outcome_id` checks it exists among included
+   outcomes, belongs to Family History, and isn't a DNA-kit outcome; both model builders now **raise**
+   if DNA-targeted channels are configured and no `dna_outcome_id` is resolvable, instead of guessing.
+   `infer_legacy_fh_dna_cross_sell_outcome_id` offers the old substring heuristic as a one-time,
+   visibly-flagged migration suggestion only for legacy projects - never a runtime fallback.
+6. **Role made operational.** `OutcomeDefinition.role` (`"primary"`/`"secondary"`/
+   `"funnel_intermediate"`/`"diagnostic"`, validated since PR C but not previously read anywhere) now
+   controls default-total eligibility via the named selectors above - a sign-up outcome marked
+   `funnel_intermediate`, for instance, is excluded from the default `fh_signups` total unless a
+   caller explicitly asks for non-primary roles.
+7. **Full outcome catalogue fingerprinted**, not just DNA-kit membership. PR E's
+   `direct_dna_outcome_ids` fingerprint parameter only covered which DNA-kit outcomes were included -
+   it missed adding/removing a non-DNA FH outcome, changing sign-up to GSA, changing unit/source
+   column/role/inclusion, or changing the value weight used in planning. `core.fingerprint.
+   fingerprint_model_spec`'s new `outcome_catalogue` parameter (fed
+   `core.outcomes.outcome_catalogue_fingerprint_payload(meta.outcome_catalogue_at_fit)` - sorted by
+   outcome_id, calculation-relevant fields only) closes this; every production call site (Diagnostics,
+   Results & Curve Bank, Scenario Planner, `verify_imported_approval`) now fingerprints the fitted
+   model's own fit-time catalogue, not the project's possibly-since-edited current one. Every
+   pre-existing approval is invalidated by this change - the same "adding a genuinely model-relevant
+   field is an intentional breaking change" pattern used for every prior fingerprint addition in this
+   log.
+8. **Exact fit-time drift detection.** `outcome_status` (PR C) only detects a mapped source column
+   disappearing - it can't tell "the mapping changed to a different, still-present column" from
+   "unchanged". `core.outcomes.outcome_drift_status`/`outcomes_drift_dataframe` compare the current
+   catalogue against `FHModelMeta.outcome_catalogue_at_fit` field-by-field
+   (source_column/product/segment/metric/unit/role/included_in_fit/value_weight), returning one of six
+   named statuses (`Fitted and current`, `Excluded from next fit`, `Changed since fit`, `Missing
+   source column`, `New since fit`, `Removed since fit`) - the instruction document's required
+   vocabulary verbatim.
+9. **Segment-era API renames**, with deprecated aliases retained where an existing import might still
+   reference the old name: `steady_state_segment_response`/`_market_specific` ->
+   `steady_state_outcome_response`/`_market_specific`; `segment_channel_summary`/
+   `segment_channel_market_summary` -> `outcome_channel_summary`/`outcome_channel_market_summary`.
+   `CurveBankEntry.segment_or_overall` was deliberately left unrenamed again (same persisted-field
+   blast-radius reasoning as PR E) - documented in `docs/curve_bank.md`.
+**Reason:** The instruction document's own audit of the merged PR E found that "make `OutcomeDefinition`
+canonical" and "make `outcome_id` the identity dimension" were necessary but not sufficient - a fit
+could have two independent KPIs on one segment, but every consumer of that fit (scenario evaluation,
+optimisation, CPA, the fingerprint, drift detection, and the Structure page's own editor) still
+reasoned about outcomes at the product level or the legacy segment level, so the two-KPI capability
+was fitted but not actually usable or safe to plan against. Each of the nine points above closes one
+specific way that gap could silently produce a wrong or misleadingly-labelled number.
+**Alternatives considered:** Keeping `meta.kit_only_outcome_ids`-based selection and adding a second,
+separate signup-specific filter only where a collision is hit (rejected - same reasoning as PR E's
+segment/outcome_id conflation: defers the fix to whichever call site hits the first real two-KPI
+project, rather than closing it at the source). Treating an entirely-omitted `ltv` the same as a
+partially-populated one (i.e. always requiring complete coverage) for `evaluate_scenario`'s display-
+only `value` column (rejected - would break the common "I don't want $-weighting, just show me
+volume" usage for no correctness benefit; the actual defect is specifically the *partial*-coverage
+silent-1.0 case, which `core.optimization`'s `"expected_value"` objective already fails closed on).
+Renaming `CurveBankEntry.segment_or_overall` alongside the other segment-era API renames (rejected for
+this PR - same persisted-file blast-radius reasoning as PR E).
+**Impact:** Every fitted model, persisted project bundle, and approval fingerprint from before this PR
+is invalidated by the new `outcome_catalogue` fingerprint payload - existing bundles must be re-fit and
+re-approved. A project with DNA-targeted channels configured but no `fh_dna_cross_sell_outcome_id` set
+will now fail to train (previously it silently guessed) until the analyst sets it explicitly on the
+Structure page - a deliberate fail-closed change, not a regression. `evaluate_scenario`'s `value`
+column can now be `None` for individual rows where `ltv` is partially incomplete - any caller reading
+it must handle that (`total_value_is_complete` is the flag to check).
+**Verification:** 672 tests passing (604 -> 672 across this PR's steps), `ruff check` clean throughout.
+All 17 of the instruction document's required test cases are covered: FH GSA only / FH sign-up only /
+both together / multiple segments each with both / FH plus DNA kits / same-segment independent
+posterior dimensions / GSA-only and sign-up-only optimisation objectives / named CPA denominators /
+missing value weights never silently 1.0 / catalogue-change invalidates approval / valid-column remap
+detected as stale / explicit FH DNA cross-sell target required / legacy bundles migrate safely / Model
+A and Model C parity / a Streamlit AppTest exercising the Structure page with two KPIs already
+configured on one segment / export-import round trip preserving the exact outcome catalogue
+bit-for-bit. Two offline (not committed, matching this codebase's established convention for anything
+requiring real PyMC sampling) real-MCMC scripts additionally proved: (a) Model A and Model C both fit
+an FH sign-up, an FH GSA (same segment), and a DNA-kit outcome successfully with an explicit
+`dna_outcome_id`, with `select_outcome_ids`/`evaluate_scenario`/`optimize_scenario` all correctly
+scoped per metric and `fingerprint_model_spec` correctly order-independent yet sensitive to a
+GSA-to-sign-up relabel; (b) the Structure page's outcome catalogue editor end-to-end, seeded from the
+legacy mappers, saves correctly with the new `fh_dna_cross_sell_outcome_id` selectbox wired through.
+**Owner:** Engineering.
+**Status:** Accepted; implemented in PR E.1 (correctness hardening on the canonical-outcome refactor,
+per the instruction document's explicit pre-media-pathway-schema requirement). See docs/outcomes.md,
+docs/dna_fh_causal_structure.md, docs/scenario_planner.md, docs/media_units_and_inflation.md and
+docs/limitations.md for the updated design records.

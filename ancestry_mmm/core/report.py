@@ -86,6 +86,9 @@ def _data_section(
         bullets.append(f"Channels ({len(spec.channels)}): {', '.join(spec.channels) or '(none)'}")
         if spec.dna_channels:
             bullets.append(f"DNA-targeted channels: {', '.join(spec.dna_channels)}")
+            bullets.append(
+                f"FH DNA cross-sell outcome: {spec.fh_dna_cross_sell_outcome_id or '(not set - required before fitting)'}"
+            )
         bullets.append(f"Transformation pipeline steps applied: {len(pipeline_steps)}")
     if data_window:
         bullets.append(f"Data window: {data_window[0]} to {data_window[1]}")

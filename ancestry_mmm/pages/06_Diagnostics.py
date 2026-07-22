@@ -13,6 +13,7 @@ from ancestry_mmm.components import apply_theme, render_sidebar, render_page_hea
 from ancestry_mmm.core.approval import ModelApproval
 from ancestry_mmm.core.diagnostics import compute_scorecard, expanding_window_backtest
 from ancestry_mmm.core.fingerprint import fingerprint_dataframe, fingerprint_model_spec, fingerprint_posterior
+from ancestry_mmm.core.outcomes import outcome_catalogue_fingerprint_payload
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
 from ancestry_mmm.core.market_specific_model import build_fh_market_specific_model
@@ -108,6 +109,7 @@ if model_run_id and posterior_params is not None and model_spec_dict is not None
             model_spec_dict, prior_config, dna_lag_weeks, model_type=model_type,
             pipeline_steps=get_state("pipeline_steps") or [], market_spec_config=get_state("market_spec_config"),
             direct_dna_outcome_ids=meta.direct_dna_outcome_ids if meta is not None else None,
+            outcome_catalogue=outcome_catalogue_fingerprint_payload(meta.outcome_catalogue_at_fit) if meta is not None else None,
         ),
         "posterior_fingerprint": fingerprint_posterior(posterior_params),
     }
@@ -206,9 +208,15 @@ if st.button("Run backtest"):
     def fit_fold(train_df, test_df):
         train_frame = prepare_fh_modeling_frame(train_df, spec)
         if model_type == "market_specific" and len(train_frame["markets"]) >= 2:
-            fold_model, fold_meta = build_fh_market_specific_model(train_frame, spec, dna_lag_weeks=dna_lag_weeks, prior_config=prior_config)
+            fold_model, fold_meta = build_fh_market_specific_model(
+                train_frame, spec, dna_lag_weeks=dna_lag_weeks, prior_config=prior_config,
+                dna_outcome_id=spec.fh_dna_cross_sell_outcome_id,
+            )
         else:
-            fold_model, fold_meta = build_fh_hierarchical_model(train_frame, spec, dna_lag_weeks=dna_lag_weeks, prior_config=prior_config)
+            fold_model, fold_meta = build_fh_hierarchical_model(
+                train_frame, spec, dna_lag_weeks=dna_lag_weeks, prior_config=prior_config,
+                dna_outcome_id=spec.fh_dna_cross_sell_outcome_id,
+            )
         fold_trace = fit_model(fold_model, draws=int(fold_draws), tune=int(fold_draws), chains=2, cores=1, target_accept=0.9)
 
         test_frame = prepare_fh_modeling_frame(test_df, spec)

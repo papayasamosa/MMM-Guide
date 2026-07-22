@@ -131,6 +131,36 @@ class TestComputeCpaByProduct:
         out = compute_cpa_by_product(df)
         assert out["avg_cpa"].iloc[1] == pytest.approx(10.0)
 
+    def test_cost_per_x_aliases_match_the_bare_names(self):
+        # PR E.1 requires named denominators (cost_per_fh_gsa/cost_per_fh_signup/
+        # cost_per_dna_kit) - kept as aliases of the existing avg_cpa/
+        # dna_avg_cpa/fh_signup_avg_cpa columns, never a separate computation
+        # that could silently diverge from them.
+        out = compute_cpa_by_product(self._mixed_curve())
+        assert np.array_equal(out["cost_per_fh_gsa"].to_numpy(), out["avg_cpa"].to_numpy(), equal_nan=True)
+        assert np.array_equal(out["cost_per_dna_kit"].to_numpy(), out["dna_avg_cpa"].to_numpy(), equal_nan=True)
+
+    def test_signup_response_gets_its_own_named_denominator_never_mixed_with_gsa(self):
+        df = pd.DataFrame({
+            "spend": [0.0, 100.0, 200.0], "overall_response": [0.0, 25.0, 47.0],
+            "fh_response": [0.0, 10.0, 17.0], "fh_signup_response": [0.0, 15.0, 30.0],
+            "dna_response": [0.0, 0.0, 0.0],
+        })
+        out = compute_cpa_by_product(df)
+        assert out["cost_per_fh_gsa"].iloc[1] == pytest.approx(100.0 / 10.0)
+        assert out["cost_per_fh_signup"].iloc[1] == pytest.approx(100.0 / 15.0)
+        # The two denominators must never be equal to a CPA computed against
+        # their sum - proof they're genuinely separate, not coincidentally
+        # the same number.
+        assert out["cost_per_fh_gsa"].iloc[1] != pytest.approx(100.0 / 25.0)
+        assert out["cost_per_fh_signup"].iloc[1] != pytest.approx(100.0 / 25.0)
+        assert "cost_per_dna_kit" not in out.columns  # no non-trivial dna_response here
+
+    def test_curve_with_no_signup_response_has_no_signup_cpa_columns(self):
+        out = compute_cpa_by_product(self._mixed_curve())
+        assert "cost_per_fh_signup" not in out.columns
+        assert "fh_signup_avg_cpa" not in out.columns
+
 
 class TestCpaStabilityFlags:
     def test_flags_flat_regions_of_the_curve(self):

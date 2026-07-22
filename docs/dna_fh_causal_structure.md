@@ -60,7 +60,14 @@ docs/decision_log.md for the review and the fix) and it was corrected to the des
 
 `FHModelMeta.dna_outcome_id` (a single Family History outcome_id) predates this work in intent -
 originally `dna_segment` - and is unchanged in meaning, renamed for PR E's outcome_id-as-identity
-redesign. `FHModelMeta.direct_dna_outcome_ids` lists every outcome_id that gets a **direct** pathway
+redesign. Which outcome_id it resolves to used to be inferred by substring-matching outcome_ids for
+`"dna"` when not passed explicitly - PR E.1 removed that fallback (a DNA-product kit-sale outcome_id
+like `dna_new_kit` also contains "dna", making the heuristic genuinely ambiguous once DNA-product
+outcomes exist in the same catalogue) in favour of an explicit, validated `ModelSpec.
+fh_dna_cross_sell_outcome_id` config field (`core.outcomes.validate_fh_dna_cross_sell_outcome_id`) -
+the model builders now raise if a fit has DNA-targeted channels and no `dna_outcome_id` is resolvable,
+rather than guessing. See `docs/outcomes.md`'s "Explicit FH DNA cross-sell target" section.
+`FHModelMeta.direct_dna_outcome_ids` lists every outcome_id that gets a **direct** pathway
 from DNA-targeted media - `dna_outcome_id` is always a member, whether or not the caller lists it
 explicitly (`_resolve_direct_dna_outcome_ids` enforces this); DNA-product kit-sale outcome_ids are the
 other members once mapped. Two properties on `FHModelMeta` classify outcome_ids for this purpose:
@@ -163,12 +170,14 @@ quantified causal pathway. This is a documented limitation, not a silent gap - s
   responses are checked to land on disjoint weeks, and `dna_outcome_id`'s response at each of those
   weeks is checked to exactly equal the corresponding single-pathway outcome_id's).
 - `core.attribution.total_fh_contribution` takes an `outcome_ids` parameter specifically for this:
-  pages that build a "total FH" view (Results & Curve Bank, Project Export) pass only the FH
-  outcome_ids actually in the fit (`[s for s in meta.outcome_ids if s not in
-  meta.direct_dna_outcome_ids or s == meta.dna_outcome_id]`, i.e. excluding DNA-product outcomes), so
-  a kit-sale count is never summed into an "FH total" and reported as one meaningless combined unit.
-  `segment_channel_summary`'s per-outcome_id table is unaffected - a DNA outcome's own contribution is
-  shown in its own right, which is correct and desired.
+  pages that build a "total FH GSA" view (Results & Curve Bank, Project Export) pass
+  `core.outcomes.fh_gsa_outcome_ids(meta)` - PR E.1 replaced the earlier "every outcome_id that isn't a
+  DNA-product outcome" filter (which would have silently folded a distinct FH sign-up outcome into the
+  same total as the GSA outcome) with an explicit `product=Family History, metric=GSA` selector, so a
+  kit-sale count *and* a sign-up count are both kept out of the GSA total, never summed into it and
+  reported as one meaningless combined unit. `outcome_channel_summary`'s per-outcome_id table (renamed
+  from `segment_channel_summary`) is unaffected - a DNA or sign-up outcome's own contribution is shown
+  in its own right, which is correct and desired.
 - There is currently no cross-product **value** combination (e.g. "total business value across FH and
   DNA") - `OutcomeDefinition.value_weight` exists per outcome, but nothing sums FH value and DNA value
   together yet. That combination is future work (the instruction document's section 4.4, not part of

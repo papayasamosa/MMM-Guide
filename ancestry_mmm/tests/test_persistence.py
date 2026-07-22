@@ -507,6 +507,106 @@ class TestReconstructModelStateWithDnaKitOutcomes:
         assert reconstructed["frame"]["outcome_ids"] == ["fh_new"]
 
 
+class TestOutcomeCatalogueExportImportRoundTrip:
+    """PR E.1 test case: 'export/import round trip preserves exact outcome
+    catalogue' - every field (including the new value_currency/role) must
+    survive a bundle round trip bit-for-bit, not just the fields that
+    existed before this PR."""
+
+    @pytest.fixture
+    def full_catalogue_project(self):
+        transformed_data = pd.DataFrame({
+            "date": pd.date_range("2024-01-01", periods=8, freq="W"),
+            "market": ["UK"] * 8,
+            "TV_Brand": [100.0] * 8,
+            "fh_new_gsa": [10] * 8,
+            "fh_new_signup": [20] * 8,
+            "dna_new_kit": [3] * 8,
+        })
+        model_spec_dict = ModelSpec(
+            date_col="date", market_col="market", markets=["UK"],
+            segment_outcomes={"New": "fh_new_gsa"}, channels=["TV_Brand"],
+            fh_dna_cross_sell_outcome_id="fh_new_gsa",
+        ).to_dict()
+        outcome_definitions = [
+            OutcomeDefinition(
+                outcome_id="fh_new_gsa", product=FAMILY_HISTORY, segment="New", metric="GSA",
+                source_column="fh_new_gsa", value_weight=100.0, value_currency="USD",
+                role="primary", included_in_fit=True,
+            ).to_dict(),
+            OutcomeDefinition(
+                outcome_id="fh_new_signup", product=FAMILY_HISTORY, segment="New", metric="Sign-up",
+                source_column="fh_new_signup", value_weight=20.0, value_currency="USD",
+                role="funnel_intermediate", included_in_fit=True,
+            ).to_dict(),
+            OutcomeDefinition(
+                outcome_id="dna_new_kit", product=DNA, segment="New Customer", metric="Kit sale",
+                source_column="dna_new_kit", value_weight=80.0, value_currency="GBP",
+                role="secondary", included_in_fit=False, exclusion_reason="held back this run",
+            ).to_dict(),
+        ]
+        return dict(
+            raw_sources={}, transformed_data=transformed_data, pipeline_steps=[],
+            model_spec=model_spec_dict, prior_config={}, dna_lag_weeks=4,
+            trace=None, scenarios=[], outcome_definitions=outcome_definitions,
+        )
+
+    def test_every_outcome_field_survives_the_round_trip_exactly(self, tmp_path, full_catalogue_project):
+        output_path = export_project(tmp_path / "bundle.zip", **full_catalogue_project)
+        imported = import_project(output_path)
+        assert imported["outcome_definitions"] == full_catalogue_project["outcome_definitions"]
+
+    def test_fh_dna_cross_sell_outcome_id_survives_the_round_trip(self, tmp_path, full_catalogue_project):
+        output_path = export_project(tmp_path / "bundle.zip", **full_catalogue_project)
+        imported = import_project(output_path)
+        assert imported["model_spec"]["fh_dna_cross_sell_outcome_id"] == "fh_new_gsa"
+
+    def test_reconstructed_outcome_definitions_round_trip_through_OutcomeDefinition(self, tmp_path, full_catalogue_project):
+        output_path = export_project(tmp_path / "bundle.zip", **full_catalogue_project)
+        imported = import_project(output_path)
+        restored = [OutcomeDefinition.from_dict(d) for d in imported["outcome_definitions"]]
+        original = [OutcomeDefinition.from_dict(d) for d in full_catalogue_project["outcome_definitions"]]
+        assert restored == original
+        signup = next(o for o in restored if o.outcome_id == "fh_new_signup")
+        assert signup.metric == "Sign-up" and signup.role == "funnel_intermediate"
+        excluded = next(o for o in restored if o.outcome_id == "dna_new_kit")
+        assert excluded.included_in_fit is False and excluded.exclusion_reason == "held back this run"
+
+
+class TestLegacyBundleMigratesSafely:
+    """PR E.1 test case: 'legacy bundles migrate safely' - a bundle from
+    before this PR (no fh_dna_cross_sell_outcome_id in model_spec, no
+    outcome_catalogue_at_fit on model_meta) must still reconstruct without
+    raising, with sensible legacy-fallback behaviour rather than an error."""
+
+    def test_model_spec_without_fh_dna_cross_sell_outcome_id_defaults_to_none(self):
+        legacy_dict = {"date_col": "date", "market_col": "market", "markets": ["UK"]}
+        spec = ModelSpec.from_dict(legacy_dict)
+        assert spec.fh_dna_cross_sell_outcome_id is None
+
+    def test_legacy_model_meta_with_no_outcome_catalogue_at_fit_reconstructs(self, tmp_path, consistent_project):
+        # consistent_project's meta already has an empty outcome_catalogue_at_fit
+        # (the default before this field existed) - export/import/reconstruct
+        # must all still work, not raise on the missing field.
+        output_path = export_project(tmp_path / "bundle.zip", **consistent_project)
+        imported = import_project(output_path)
+        reconstructed = reconstruct_model_state(imported)
+        assert reconstructed["frame"] is not None
+        assert reconstructed["model_meta"].outcome_catalogue_at_fit == []
+
+    def test_legacy_meta_fingerprint_verification_still_matches(self, tmp_path, consistent_project):
+        # verify_imported_approval now always passes outcome_catalogue= to
+        # fingerprint_model_spec - for a legacy meta with no catalogue at
+        # all, this must resolve to the same fingerprint as when the
+        # approval was originally granted (also with no catalogue), not a
+        # spurious mismatch.
+        output_path = export_project(tmp_path / "bundle.zip", **consistent_project)
+        imported = import_project(output_path)
+        reconstructed = reconstruct_model_state(imported)
+        approval, message = verify_imported_approval(imported, reconstructed)
+        assert approval is not None, message
+
+
 class TestVerifyImportedApproval:
     def test_matching_imported_approval_is_verified(self, tmp_path, consistent_project):
         output_path = export_project(tmp_path / "bundle.zip", **consistent_project)
@@ -547,6 +647,77 @@ class TestVerifyImportedApproval:
         approval, message = verify_imported_approval(imported, reconstructed)
         assert approval is None
         assert "does not match" in message.lower()
+
+    def test_rejected_when_fit_time_outcome_catalogue_differs(self, tmp_path):
+        # PR E.1 test case: "outcome catalogue change invalidates approval",
+        # exercised at the full persistence layer (not just fingerprint_model_spec
+        # directly) - an approval granted for one outcome_catalogue_at_fit
+        # must not verify against a reimport where that catalogue has since
+        # changed (e.g. a GSA outcome relabelled as a sign-up outcome).
+        transformed_data = pd.DataFrame({
+            "date": pd.date_range("2024-01-01", periods=8, freq="W"),
+            "market": ["UK"] * 8,
+            "TV_Brand": [100.0, 120.0, 90.0, 110.0, 130.0, 95.0, 105.0, 115.0],
+            "fh_new_gsa": [10, 12, 9, 11, 13, 9, 10, 11],
+        })
+        model_spec_dict = ModelSpec(
+            date_col="date", market_col="market", markets=["UK"],
+            segment_outcomes={"New": "fh_new_gsa"}, channels=["TV_Brand"],
+        ).to_dict()
+        prior_config = {"decay_mu": 0.5}
+        dna_lag_weeks = 4
+        spec = ModelSpec.from_dict(model_spec_dict)
+        frame = prepare_fh_modeling_frame(transformed_data, spec)
+
+        outcome_at_fit = OutcomeDefinition(
+            outcome_id="fh_new", product=FAMILY_HISTORY, segment="New", metric="GSA", source_column="fh_new_gsa",
+        )
+        meta = FHModelMeta(
+            markets=["UK"], outcome_ids=["fh_new"], channels=["TV_Brand"], dna_channels=[],
+            dna_channel_idx=[], non_dna_idx=[0], dna_outcome_id="fh_new", dna_lag_weeks=4,
+            unpooled_markets=[], control_names=[], outcome_catalogue_at_fit=[outcome_at_fit],
+        )
+        trace = _make_trace(meta)
+        posterior_params = extract_posterior_params(trace, meta)
+
+        from ancestry_mmm.core.outcomes import outcome_catalogue_fingerprint_payload
+
+        model_run_id = "run-catalogue-1"
+        approval = ModelApproval(
+            approved_by="Jane Analyst",
+            model_run_id=model_run_id,
+            data_fingerprint=fingerprint_dataframe(frame["df"]),
+            model_spec_fingerprint=fingerprint_model_spec(
+                model_spec_dict, prior_config, dna_lag_weeks, direct_dna_outcome_ids=meta.direct_dna_outcome_ids,
+                outcome_catalogue=outcome_catalogue_fingerprint_payload([outcome_at_fit]),
+            ),
+            posterior_fingerprint=fingerprint_posterior(posterior_params),
+        )
+        project = dict(
+            raw_sources={}, transformed_data=transformed_data, pipeline_steps=[],
+            model_spec=model_spec_dict, prior_config=prior_config, dna_lag_weeks=dna_lag_weeks,
+            trace=trace, scenarios=[], model_approval=approval.to_dict(),
+            model_run_id=model_run_id, model_meta=meta,
+        )
+
+        output_path = export_project(tmp_path / "bundle.zip", **project)
+        imported = import_project(output_path)
+        reconstructed = reconstruct_model_state(imported)
+
+        # Sanity: as exported, it verifies cleanly.
+        ok_approval, ok_message = verify_imported_approval(imported, reconstructed)
+        assert ok_approval is not None, ok_message
+
+        # Now simulate the catalogue having changed since the fit (e.g. the
+        # imported bundle's model_meta reflects a later relabel) - approval
+        # must no longer verify.
+        from dataclasses import replace as dc_replace
+        relabelled = dc_replace(outcome_at_fit, metric="Sign-up")
+        reconstructed["model_meta"] = dc_replace(reconstructed["model_meta"], outcome_catalogue_at_fit=[relabelled])
+
+        approval_after, message_after = verify_imported_approval(imported, reconstructed)
+        assert approval_after is None
+        assert "does not match" in message_after.lower()
 
     def test_no_approval_in_bundle(self, tmp_path, consistent_project):
         consistent_project = dict(consistent_project)

@@ -199,6 +199,91 @@ class TestFingerprintModelSpecDirectDnaSegments:
         assert fp_included != fp_excluded
 
 
+class TestFingerprintModelSpecOutcomeCatalogue:
+    """PR E.1: the full canonical outcome catalogue must be fingerprinted -
+    direct_dna_outcome_ids alone only covers DNA-kit membership, not a
+    relabelled metric/unit/role/source_column/value_weight, so those changes
+    used to leave an approval wrongly "matching" a structurally different
+    fit (test case: "outcome catalogue change invalidates approval")."""
+
+    def _catalogue(self, **overrides):
+        row = {
+            "outcome_id": "fh_new_gsa", "product": "Family History", "segment": "New", "metric": "GSA",
+            "unit": "GSA", "source_column": "col_a", "role": "primary", "included_in_fit": True,
+            "value_weight": 100.0, "value_currency": "USD",
+        }
+        row.update(overrides)
+        return [row]
+
+    def test_omitting_outcome_catalogue_is_backward_compatible(self):
+        spec = {"markets": ["UK"]}
+        assert fingerprint_model_spec(spec, {}, 4) == fingerprint_model_spec(spec, {}, 4, outcome_catalogue=None)
+        assert fingerprint_model_spec(spec, {}, 4) == fingerprint_model_spec(spec, {}, 4, outcome_catalogue=[])
+
+    def test_adding_an_outcome_changes_the_fingerprint(self):
+        spec = {"markets": ["UK"]}
+        fp_one = fingerprint_model_spec(spec, {}, 4, outcome_catalogue=self._catalogue())
+        two = self._catalogue() + [{
+            "outcome_id": "fh_new_signup", "product": "Family History", "segment": "New", "metric": "Sign-up",
+            "unit": "Sign-up", "source_column": "col_b", "role": "primary", "included_in_fit": True,
+            "value_weight": 20.0, "value_currency": "USD",
+        }]
+        fp_two = fingerprint_model_spec(spec, {}, 4, outcome_catalogue=two)
+        assert fp_one != fp_two
+
+    def test_relabelling_gsa_to_signup_changes_the_fingerprint(self):
+        # Exactly the scenario the instruction document calls out:
+        # "changing sign-up to GSA" must invalidate approval.
+        spec = {"markets": ["UK"]}
+        fp_gsa = fingerprint_model_spec(spec, {}, 4, outcome_catalogue=self._catalogue(metric="GSA"))
+        fp_signup = fingerprint_model_spec(spec, {}, 4, outcome_catalogue=self._catalogue(metric="Sign-up"))
+        assert fp_gsa != fp_signup
+
+    def test_changing_source_column_changes_the_fingerprint(self):
+        spec = {"markets": ["UK"]}
+        fp_a = fingerprint_model_spec(spec, {}, 4, outcome_catalogue=self._catalogue(source_column="col_a"))
+        fp_b = fingerprint_model_spec(spec, {}, 4, outcome_catalogue=self._catalogue(source_column="col_b"))
+        assert fp_a != fp_b
+
+    def test_changing_unit_changes_the_fingerprint(self):
+        spec = {"markets": ["UK"]}
+        fp_a = fingerprint_model_spec(spec, {}, 4, outcome_catalogue=self._catalogue(unit="GSA"))
+        fp_b = fingerprint_model_spec(spec, {}, 4, outcome_catalogue=self._catalogue(unit="count"))
+        assert fp_a != fp_b
+
+    def test_changing_role_changes_the_fingerprint(self):
+        spec = {"markets": ["UK"]}
+        fp_a = fingerprint_model_spec(spec, {}, 4, outcome_catalogue=self._catalogue(role="primary"))
+        fp_b = fingerprint_model_spec(spec, {}, 4, outcome_catalogue=self._catalogue(role="secondary"))
+        assert fp_a != fp_b
+
+    def test_toggling_included_in_fit_changes_the_fingerprint(self):
+        spec = {"markets": ["UK"]}
+        fp_a = fingerprint_model_spec(spec, {}, 4, outcome_catalogue=self._catalogue(included_in_fit=True))
+        fp_b = fingerprint_model_spec(spec, {}, 4, outcome_catalogue=self._catalogue(included_in_fit=False))
+        assert fp_a != fp_b
+
+    def test_changing_value_weight_changes_the_fingerprint(self):
+        spec = {"markets": ["UK"]}
+        fp_a = fingerprint_model_spec(spec, {}, 4, outcome_catalogue=self._catalogue(value_weight=100.0))
+        fp_b = fingerprint_model_spec(spec, {}, 4, outcome_catalogue=self._catalogue(value_weight=150.0))
+        assert fp_a != fp_b
+
+    def test_catalogue_order_does_not_matter(self):
+        spec = {"markets": ["UK"]}
+        one = self._catalogue(outcome_id="a")[0]
+        two = self._catalogue(outcome_id="b")[0]
+        fp_ab = fingerprint_model_spec(spec, {}, 4, outcome_catalogue=[one, two])
+        fp_ba = fingerprint_model_spec(spec, {}, 4, outcome_catalogue=[two, one])
+        assert fp_ab == fp_ba
+
+    def test_unchanged_catalogue_leaves_fingerprint_identical(self):
+        spec = {"markets": ["UK"]}
+        fp_1 = fingerprint_model_spec(spec, {}, 4, outcome_catalogue=self._catalogue())
+        fp_2 = fingerprint_model_spec(spec, {}, 4, outcome_catalogue=self._catalogue())
+        assert fp_1 == fp_2
+
+
 class TestFingerprintModelSpecMarketConfig:
     def _config_with(self, *, currency=None, descriptors=None, media_unit=None) -> dict:
         profile = MarketProfile(

@@ -158,7 +158,7 @@ def compute_shapley_contributions(
     }
 
 
-def segment_channel_summary(
+def outcome_channel_summary(
     frame: Dict,
     meta: FHModelMeta,
     params: FHPosteriorParams,
@@ -170,6 +170,14 @@ def segment_channel_summary(
     Channel x outcome_id summary: total volume contribution, spend, ROAS/CPA,
     and (if `ltv` is given) LTV-weighted value contribution and value ROAS.
     `ltv` is keyed by outcome_id.
+
+    A *partial* `ltv` (priced some outcome_ids but not others) never
+    silently treats a missing entry as weight 1.0 (PR E.1 - the confirmed
+    "missing value_weight defaults to 1.0" defect) - `value_contribution`/
+    `value_roas` are `NaN` for that outcome_id instead. An entirely empty/
+    omitted `ltv` is not the defect case (no $-weighting was requested at
+    all) - `value_contribution` there equals raw volume (uniform weight
+    1.0), unchanged from this function's behaviour before PR E.1.
     """
     contributions = contributions or compute_shapley_contributions(frame, meta, params, n_permutations)
     ltv = ltv or {}
@@ -178,7 +186,8 @@ def segment_channel_summary(
         total_spend = float(frame["X_media"][:, ci].sum())
         for si, oid in enumerate(meta.outcome_ids):
             vol = float(contributions["channel_contributions"][ch][:, si].sum())
-            value = vol * ltv.get(oid, 1.0)
+            weight = ltv[oid] if oid in ltv else (1.0 if not ltv else np.nan)
+            value = vol * weight
             rows.append({
                 "channel": ch,
                 "outcome_id": oid,
@@ -191,6 +200,11 @@ def segment_channel_summary(
                 "value_roas": value / total_spend if total_spend > 0 else np.nan,
             })
     return pd.DataFrame(rows)
+
+
+# Deprecated alias (PR E.1 segment-era rename) - see core.predict's identical
+# alias pattern for steady_state_outcome_response.
+segment_channel_summary = outcome_channel_summary
 
 
 def total_fh_contribution(
@@ -214,7 +228,7 @@ def total_fh_contribution(
     behaviour for a fit with no DNA outcomes (where "every outcome_id"
     already means "every FH outcome_id").
     """
-    summary = segment_channel_summary(frame, meta, params, contributions, ltv, n_permutations)
+    summary = outcome_channel_summary(frame, meta, params, contributions, ltv, n_permutations)
     if outcome_ids is not None:
         summary = summary[summary["outcome_id"].isin(outcome_ids)]
     total = summary.groupby("channel").agg(

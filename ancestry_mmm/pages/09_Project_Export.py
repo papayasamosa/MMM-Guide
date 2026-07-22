@@ -19,15 +19,16 @@ from ancestry_mmm.core.persistence import (
     UnsafeZipEntryError,
 )
 from ancestry_mmm.core.curve_bank import load_all_entries, entries_to_dataframe
-from ancestry_mmm.core.attribution import compute_shapley_contributions, total_fh_contribution, segment_channel_summary
+from ancestry_mmm.core.attribution import compute_shapley_contributions, total_fh_contribution, outcome_channel_summary
 from ancestry_mmm.core.market_specific_attribution import (
-    compute_shapley_contributions_market_specific, total_contribution_market_specific, segment_channel_market_summary,
+    compute_shapley_contributions_market_specific, total_contribution_market_specific, outcome_channel_market_summary,
 )
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.approval import ModelApproval
 from ancestry_mmm.core.market_config import MarketSpecConfig
 from ancestry_mmm.core.evidence_tiers import evidence_tiers_dataframe
 from ancestry_mmm.core.media_units import market_specific_cpa_table
+from ancestry_mmm.core.outcomes import fh_gsa_outcome_ids
 from ancestry_mmm.core.optimization import compare_scenarios
 from ancestry_mmm.core.report import build_report_sections, render_markdown, render_html
 
@@ -160,10 +161,8 @@ if get_state("trace") is not None and get_state("model_spec"):
 
         if model_type_for_export == "shared":
             contributions = compute_shapley_contributions(frame, meta, params, n_permutations=100)
-            dna_kit_outcomes_in_fit = [s for s in meta.direct_dna_outcome_ids if s != meta.dna_outcome_id]
-            fh_outcomes_in_fit = [s for s in meta.outcome_ids if s not in dna_kit_outcomes_in_fit]
-            total_df = total_fh_contribution(frame, meta, params, contributions, spec.segment_ltv, outcome_ids=fh_outcomes_in_fit)
-            seg_df = segment_channel_summary(frame, meta, params, contributions, spec.segment_ltv)
+            total_df = total_fh_contribution(frame, meta, params, contributions, spec.segment_ltv, outcome_ids=fh_gsa_outcome_ids(meta))
+            seg_df = outcome_channel_summary(frame, meta, params, contributions, spec.segment_ltv)
             sheets = {
                 "Total FH Contribution": total_df,
                 "Segment x Channel": seg_df,
@@ -177,12 +176,10 @@ if get_state("trace") is not None and get_state("model_spec"):
             scenarios = get_state("scenarios") or []
             scenarios_df = compare_scenarios(scenarios) if scenarios else None
             ms_contributions = compute_shapley_contributions_market_specific(frame, meta, params, n_permutations=100)
-            dna_kit_outcomes_in_fit = [s for s in meta.direct_dna_outcome_ids if s != meta.dna_outcome_id]
-            fh_outcomes_in_fit = [s for s in meta.outcome_ids if s not in dna_kit_outcomes_in_fit]
             ms_total_df = total_contribution_market_specific(
-                frame, meta, params, ms_contributions, spec.segment_ltv, outcome_ids=fh_outcomes_in_fit, by_market=True,
+                frame, meta, params, ms_contributions, spec.segment_ltv, outcome_ids=fh_gsa_outcome_ids(meta), by_market=True,
             )
-            ms_seg_df = segment_channel_market_summary(frame, meta, params, ms_contributions, spec.segment_ltv)
+            ms_seg_df = outcome_channel_market_summary(frame, meta, params, ms_contributions, spec.segment_ltv)
             sheets = {
                 "Curve Bank": entries_df,
                 "Evidence Tiers": evidence_tiers_dataframe(trace, frame, meta),
