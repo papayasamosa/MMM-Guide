@@ -25,6 +25,7 @@ from ancestry_mmm.core.media_units import (
     market_specific_cpa_table,
     response_unit_curve,
 )
+from ancestry_mmm.tests.conftest import pathway_strength_from_flat
 
 
 def _curve_df(spend, overall_response):
@@ -435,7 +436,7 @@ class TestMarketSpecificCpaTable:
             hill_K={m: {"TV": 1000.0, "Search": 500.0} for m in self.MARKETS},
             hill_S={"TV": 1.0, "Search": 1.0},
             beta={m: {s: {c: 0.1 for c in self.CHANNELS} for s in self.SEGMENTS} for m in self.MARKETS},
-            halo_strength={"New": 0.1, "DNA_CrossSell": 1.0}, promo_coef={"New": 0.1, "DNA_CrossSell": 0.1},
+            pathway_strength=pathway_strength_from_flat({"New": 0.1, "DNA_CrossSell": 1.0}, "TV"), promo_coef={"New": 0.1, "DNA_CrossSell": 0.1},
             market_offset={m: {"New": 0.0, "DNA_CrossSell": 0.0} for m in self.MARKETS},
             intercept={"New": 3.0, "DNA_CrossSell": 2.0}, trend_coef={"New": 0.0, "DNA_CrossSell": 0.0},
             gamma_fourier={"New": np.zeros(6), "DNA_CrossSell": np.zeros(6)},

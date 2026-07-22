@@ -15,6 +15,7 @@ from ancestry_mmm.core.market_specific_predict import (
     predict_mu_market_specific,
     steady_state_segment_response_market_specific,
 )
+from ancestry_mmm.tests.conftest import pathway_strength_from_flat
 
 MARKETS = ["UK", "AU"]
 OUTCOME_IDS = ["New", "DNA_CrossSell"]
@@ -40,7 +41,7 @@ def params() -> FHMarketSpecificPosteriorParams:
             "UK": {"New": {"TV": 0.10, "DNA_Media": 0.05}, "DNA_CrossSell": {"TV": 0.02, "DNA_Media": 0.20}},
             "AU": {"New": {"TV": 0.08, "DNA_Media": 0.04}, "DNA_CrossSell": {"TV": 0.015, "DNA_Media": 0.18}},
         },
-        halo_strength={"New": 0.15, "DNA_CrossSell": 1.0},
+        pathway_strength=pathway_strength_from_flat({"New": 0.15, "DNA_CrossSell": 1.0}, "DNA_Media"),
         promo_coef={"New": 0.2, "DNA_CrossSell": 0.3},
         market_offset={"UK": {"New": 0.0, "DNA_CrossSell": 0.0}, "AU": {"New": 0.1, "DNA_CrossSell": -0.1}},
         intercept={"New": 3.0, "DNA_CrossSell": 2.0},
@@ -88,7 +89,6 @@ class TestExtractMarketSpecificPosteriorParams:
             "hill_K": const([[1000.0, 500.0], [800.0, 300.0]]),
             "hill_S": const([1.1, 1.1]),
             "beta": const([[[0.10, 0.05], [0.02, 0.20]], [[0.08, 0.04], [0.015, 0.18]]]),
-            "halo_strength": const([0.15, 1.0]),
             "promo_coef": const([0.2, 0.3]),
             "market_offset": const([[0.0, 0.0], [0.1, -0.1]]),
             "intercept": const([3.0, 2.0]),
@@ -98,7 +98,7 @@ class TestExtractMarketSpecificPosteriorParams:
         }
         dims = {
             "decay_rate": ["channel"], "hill_K": ["market", "channel"], "hill_S": ["channel"],
-            "beta": ["market", "outcome", "channel"], "halo_strength": ["outcome"],
+            "beta": ["market", "outcome", "channel"],
             "promo_coef": ["outcome"], "market_offset": ["market", "outcome"],
             "intercept": ["outcome"], "trend_coef": ["outcome"],
             "gamma_fourier": ["fourier", "outcome"], "alpha": ["outcome"],
@@ -214,7 +214,7 @@ class TestGenerateMarketChannelCurve:
         df = generate_market_channel_curve("UK", "DNA_Media", meta, params, spend_range=np.array([500.0]))
         row = df.iloc[0]
         raw_new = params.beta["UK"]["New"]["DNA_Media"] * row["saturation"]
-        assert row["New_response"] == pytest.approx(raw_new * params.halo_strength["New"])
+        assert row["New_response"] == pytest.approx(raw_new * params.pathway_strength["New"]["DNA_Media"])
 
     def test_response_increases_with_spend(self, meta, params):
         df = generate_market_channel_curve("UK", "TV", meta, params, spend_range=np.array([0.0, 500.0, 5000.0]))
@@ -240,20 +240,20 @@ class TestGenerateMarketChannelCurveDirectDnaSegments:
     def params_with_dna_kit_segment(self, params) -> FHMarketSpecificPosteriorParams:
         for market in MARKETS:
             params.beta[market]["New Customer"] = {"TV": 0.03, "DNA_Media": 0.5}
-        params.halo_strength["New Customer"] = 0.2
+        params.pathway_strength["New Customer"] = {"DNA_Media": 0.2}
         return params
 
     def test_dna_kit_segment_gets_full_response_not_halo_shrunk(self, meta_with_dna_kit_segment, params_with_dna_kit_segment):
         df = generate_market_channel_curve("UK", "DNA_Media", meta_with_dna_kit_segment, params_with_dna_kit_segment, spend_range=np.array([500.0]))
         row = df.iloc[0]
         raw = params_with_dna_kit_segment.beta["UK"]["New Customer"]["DNA_Media"] * row["saturation"]
-        assert row["New Customer_response"] == pytest.approx(raw)  # NOT raw * halo_strength
+        assert row["New Customer_response"] == pytest.approx(raw)  # NOT raw * pathway_strength
 
     def test_ordinary_non_direct_segment_is_still_halo_shrunk(self, meta_with_dna_kit_segment, params_with_dna_kit_segment):
         df = generate_market_channel_curve("UK", "DNA_Media", meta_with_dna_kit_segment, params_with_dna_kit_segment, spend_range=np.array([500.0]))
         row = df.iloc[0]
         raw_new = params_with_dna_kit_segment.beta["UK"]["New"]["DNA_Media"] * row["saturation"]
-        assert row["New_response"] == pytest.approx(raw_new * params_with_dna_kit_segment.halo_strength["New"])
+        assert row["New_response"] == pytest.approx(raw_new * params_with_dna_kit_segment.pathway_strength["New"]["DNA_Media"])
 
 
 class TestPredictMuMarketSpecificDirectHaloSeparation:
@@ -288,7 +288,7 @@ class TestPredictMuMarketSpecificDirectHaloSeparation:
             hill_K={"UK": {"TV": 1000.0, "DNA_Media": 1000.0}},
             hill_S={"TV": 1.0, "DNA_Media": 1.0},
             beta={"UK": beta_uk},
-            halo_strength={"New": 0.5, "DNA_CrossSell": 0.5, "New Customer": 0.0},
+            pathway_strength=pathway_strength_from_flat({"New": 0.5, "DNA_CrossSell": 0.5, "New Customer": 0.0}, "DNA_Media"),
             promo_coef={s: 0.0 for s in self.OUTCOME_IDS},
             market_offset={"UK": {s: 0.0 for s in self.OUTCOME_IDS}},
             intercept={s: 0.0 for s in self.OUTCOME_IDS},

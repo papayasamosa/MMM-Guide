@@ -18,11 +18,13 @@ from ancestry_mmm.core.pathways import (
     RECONCILIATION_RELATIONS,
     MediaOutcomePathway,
     OutcomeReconciliationGroup,
+    ResolvedPathwayMasks,
     pathway_catalogue_at_fit_by_id,
     pathway_catalogue_fingerprint_payload,
     pathway_drift_status,
     pathways_drift_dataframe,
     reconciliation_group_diagnostics,
+    resolve_pathway_masks,
     validate_media_outcome_pathways,
     validate_reconciliation_groups,
 )
@@ -395,3 +397,145 @@ class TestReconciliationGroupDiagnostics:
         values = {"fh_net_billthrough_count": 40.0, "fh_signup_count": 0.0}
         result = reconciliation_group_diagnostics(group, values)
         assert "implied_ratio" not in result
+
+
+# ---------------------------------------------------------------------------
+# resolve_pathway_masks (PR G1) - the legacy-default equivalence proven here
+# is what "no pathway catalogue configured" backward compatibility rests on;
+# core.hierarchical_model/core.market_specific_model call this exact
+# function to build the operational masks.
+# ---------------------------------------------------------------------------
+
+OUTCOME_IDS = ["fh_new", "fh_dna_crosssell", "fh_winback", "dna_new_kit"]
+CHANNELS = ["TV", "Search", "DNA_Media"]
+DNA_CHANNEL_IDX = [2]  # "DNA_Media"
+DNA_OUTCOME_ID = "fh_dna_crosssell"
+DIRECT_DNA_OUTCOME_IDS = ["fh_dna_crosssell", "dna_new_kit"]
+DNA_LAG_WEEKS = 4
+
+
+def _resolve(pathways=None):
+    return resolve_pathway_masks(
+        OUTCOME_IDS, CHANNELS, pathways or [],
+        dna_channel_idx=DNA_CHANNEL_IDX, dna_outcome_id=DNA_OUTCOME_ID,
+        direct_dna_outcome_ids=DIRECT_DNA_OUTCOME_IDS, dna_lag_weeks=DNA_LAG_WEEKS,
+    )
+
+
+class TestResolvePathwayMasksLegacyDefaults:
+    """No pathway catalogue configured - every cell must resolve to exactly
+    what this codebase fit before PR G1 (the backward-compatibility
+    guarantee the whole design rests on)."""
+
+    def test_non_dna_channel_is_primary_direct_for_every_outcome(self):
+        masks = _resolve()
+        for oid in OUTCOME_IDS:
+            assert "TV" in masks.primary_channels_by_outcome.get(oid, [])
+            assert "Search" in masks.primary_channels_by_outcome.get(oid, [])
+            assert "TV" not in masks.active_channels_by_outcome.get(oid, [])
+            assert "TV" not in masks.exploratory_channels_by_outcome.get(oid, [])
+
+    def test_dna_channel_kit_only_outcome_is_primary_only(self):
+        masks = _resolve()
+        assert "DNA_Media" in masks.primary_channels_by_outcome.get("dna_new_kit", [])
+        assert "DNA_Media" not in masks.active_channels_by_outcome.get("dna_new_kit", [])
+
+    def test_dna_channel_dna_outcome_id_gets_both_primary_and_active(self):
+        masks = _resolve()
+        assert "DNA_Media" in masks.primary_channels_by_outcome.get(DNA_OUTCOME_ID, [])
+        assert "DNA_Media" in masks.active_channels_by_outcome.get(DNA_OUTCOME_ID, [])
+
+    def test_dna_channel_ordinary_outcome_is_active_only(self):
+        masks = _resolve()
+        assert "DNA_Media" not in masks.primary_channels_by_outcome.get("fh_new", [])
+        assert "DNA_Media" in masks.active_channels_by_outcome.get("fh_new", [])
+        assert "DNA_Media" not in masks.primary_channels_by_outcome.get("fh_winback", [])
+        assert "DNA_Media" in masks.active_channels_by_outcome.get("fh_winback", [])
+
+    def test_no_exploratory_cells_by_default(self):
+        masks = _resolve()
+        assert masks.exploratory_channels_by_outcome == {}
+
+    def test_cross_product_lag_weeks_matches_dna_lag_weeks(self):
+        assert _resolve().cross_product_lag_weeks == DNA_LAG_WEEKS
+
+    def test_no_dna_channels_at_all_is_primary_direct_everywhere(self):
+        masks = resolve_pathway_masks(
+            OUTCOME_IDS, CHANNELS, [], dna_channel_idx=[], dna_outcome_id=None,
+            direct_dna_outcome_ids=[], dna_lag_weeks=DNA_LAG_WEEKS,
+        )
+        for oid in OUTCOME_IDS:
+            assert set(masks.primary_channels_by_outcome.get(oid, [])) == set(CHANNELS)
+        assert masks.active_channels_by_outcome == {}
+
+
+class TestResolvePathwayMasksExplicitOverrides:
+    def test_explicit_excluded_pathway_removes_cell_from_every_bucket(self):
+        pathway = MediaOutcomePathway(channel="TV", source_product=FAMILY_HISTORY, target_outcome_id="fh_new", role=PATHWAY_ROLE_EXCLUDED)
+        masks = _resolve([pathway])
+        assert "TV" not in masks.primary_channels_by_outcome.get("fh_new", [])
+        assert "TV" not in masks.active_channels_by_outcome.get("fh_new", [])
+        assert "TV" not in masks.exploratory_channels_by_outcome.get("fh_new", [])
+        # Every other (outcome, TV) cell is untouched by this one exclusion.
+        assert "TV" in masks.primary_channels_by_outcome.get("fh_winback", [])
+
+    def test_explicit_exploratory_pathway_on_a_non_dna_channel(self):
+        pathway = MediaOutcomePathway(
+            channel="TV", source_product=FAMILY_HISTORY, target_outcome_id="dna_new_kit",
+            role=PATHWAY_ROLE_EXPLORATORY_CROSS_PRODUCT,
+        )
+        masks = _resolve([pathway])
+        assert "TV" in masks.exploratory_channels_by_outcome.get("dna_new_kit", [])
+        assert "TV" not in masks.primary_channels_by_outcome.get("dna_new_kit", [])
+        # Untouched: TV -> dna_new_kit was primary_direct by legacy default
+        # for every OTHER outcome (non-DNA channel), unaffected by this
+        # single-cell override.
+        assert "TV" in masks.primary_channels_by_outcome.get("fh_new", [])
+
+    def test_explicit_pathway_on_a_dna_cell_replaces_the_legacy_combined_default(self):
+        # dna_outcome_id x DNA_Media legacy-defaults to BOTH primary and
+        # active; an explicit pathway for that exact cell reduces it to just
+        # the one specified role (documented simplification).
+        pathway = MediaOutcomePathway(
+            channel="DNA_Media", source_product=DNA, target_outcome_id=DNA_OUTCOME_ID,
+            role=PATHWAY_ROLE_ACTIVE_CROSS_PRODUCT,
+        )
+        masks = _resolve([pathway])
+        assert "DNA_Media" in masks.active_channels_by_outcome.get(DNA_OUTCOME_ID, [])
+        assert "DNA_Media" not in masks.primary_channels_by_outcome.get(DNA_OUTCOME_ID, [])
+
+    def test_explicit_primary_direct_pathway_is_a_no_op_when_it_matches_the_legacy_default(self):
+        pathway = MediaOutcomePathway(channel="TV", source_product=FAMILY_HISTORY, target_outcome_id="fh_new", role=PATHWAY_ROLE_PRIMARY_DIRECT)
+        assert _resolve([pathway]).primary_channels_by_outcome == _resolve([]).primary_channels_by_outcome
+
+
+class TestResolvedPathwayMasksConversionHelpers:
+    def test_primary_matrix_shape_and_values(self):
+        masks = _resolve()
+        mat = masks.primary_matrix(OUTCOME_IDS, CHANNELS)
+        assert mat.shape == (len(OUTCOME_IDS), len(CHANNELS))
+        # fh_new / TV -> primary (1.0)
+        assert mat[OUTCOME_IDS.index("fh_new"), CHANNELS.index("TV")] == 1.0
+        # fh_new / DNA_Media -> not primary (0.0)
+        assert mat[OUTCOME_IDS.index("fh_new"), CHANNELS.index("DNA_Media")] == 0.0
+
+    def test_active_cells_are_outcome_channel_index_pairs(self):
+        masks = _resolve()
+        cells = masks.active_cells(OUTCOME_IDS, CHANNELS)
+        expected = {
+            (OUTCOME_IDS.index("fh_new"), CHANNELS.index("DNA_Media")),
+            (OUTCOME_IDS.index(DNA_OUTCOME_ID), CHANNELS.index("DNA_Media")),
+            (OUTCOME_IDS.index("fh_winback"), CHANNELS.index("DNA_Media")),
+        }
+        assert set(cells) == expected
+
+    def test_exploratory_cells_empty_by_default(self):
+        assert _resolve().exploratory_cells(OUTCOME_IDS, CHANNELS) == []
+
+    def test_to_dict_from_dict_round_trips(self):
+        masks = _resolve()
+        restored = ResolvedPathwayMasks.from_dict(masks.to_dict())
+        assert restored == masks
+
+    def test_from_dict_none_gives_empty_masks(self):
+        assert ResolvedPathwayMasks.from_dict(None) == ResolvedPathwayMasks()

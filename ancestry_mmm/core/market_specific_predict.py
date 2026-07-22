@@ -21,7 +21,7 @@ import pandas as pd
 
 from .hierarchical_model import FHModelMeta
 from .outcomes import fh_gsa_outcome_ids, fh_signup_outcome_ids, dna_kit_sale_outcome_ids
-from .predict import lag_frame
+from .predict import _cross_product_strength_matrix, _pathway_weight, extract_pathway_strength, lag_frame
 from .transformations import geometric_adstock_matrix, hill_function
 
 
@@ -34,7 +34,10 @@ class FHMarketSpecificPosteriorParams:
     hill_K: Dict[str, Dict[str, float]]                    # hill_K[market][channel]
     hill_S: Dict[str, float]                               # hill_S[channel] - shared
     beta: Dict[str, Dict[str, Dict[str, float]]]           # beta[market][outcome_id][channel]
-    halo_strength: Dict[str, float]                        # halo_strength[outcome_id] - shared
+    pathway_strength: Dict[str, Dict[str, float]]          # pathway_strength[outcome_id][channel] - PR G1,
+    # not market-specific - active_cross_product_strength/exploratory_cross_product_strength
+    # are fit with dims=("outcome", "channel") in build_fh_market_specific_model,
+    # same as Model A (see core.predict.FHPosteriorParams.pathway_strength).
     promo_coef: Dict[str, float]
     market_offset: Dict[str, Dict[str, float]]
     intercept: Dict[str, float]
@@ -73,9 +76,7 @@ def extract_market_specific_posterior_params(
     trend_coef = by_coord("trend_coef", "outcome", meta.outcome_ids)
     promo_coef = by_coord("promo_coef", "outcome", meta.outcome_ids)
     alpha = by_coord("alpha", "outcome", meta.outcome_ids)
-    halo_strength = by_coord("halo_strength", "outcome", meta.outcome_ids) if meta.dna_channel_idx else {
-        s: 0.0 for s in meta.outcome_ids
-    }
+    pathway_strength = extract_pathway_strength(trace, meta, at=at)
 
     hill_K_reduced = _reduce(post["hill_K"])
     hill_K = {
@@ -116,7 +117,7 @@ def extract_market_specific_posterior_params(
 
     return FHMarketSpecificPosteriorParams(
         decay_rate=decay_rate, hill_K=hill_K, hill_S=hill_S, beta=beta,
-        halo_strength=halo_strength, promo_coef=promo_coef, market_offset=market_offset,
+        pathway_strength=pathway_strength, promo_coef=promo_coef, market_offset=market_offset,
         intercept=intercept, trend_coef=trend_coef, gamma_fourier=gamma_fourier, alpha=alpha,
         control_coef=control_coef, outcome_control_coef=outcome_control_coef,
     )
@@ -165,27 +166,23 @@ def predict_mu_market_specific(
     ])  # (n_market, n_outcome, n_channel)
     beta_by_row = beta_stack[market_idx]  # (n_obs, n_outcome, n_channel)
 
-    if meta.dna_channel_idx:
-        dna_direct_media = sat_media[:, meta.dna_channel_idx]
-        dna_halo_media = lag_frame(dna_direct_media, frame["market_bounds"], meta.dna_lag_weeks)
-        has_direct = np.array([1.0 if s in meta.direct_dna_outcome_ids else 0.0 for s in outcome_ids])
-        # Masked by halo_eligible_outcome_ids (not just trusting
-        # params.halo_strength to already be zero) so a kit-only outcome_id
-        # structurally never picks up a halo contribution here, regardless
-        # of what's in params.
-        halo_eligible = set(meta.halo_eligible_outcome_ids)
-        halo = np.array([params.halo_strength.get(s, 0.0) if s in halo_eligible else 0.0 for s in outcome_ids])
-        if meta.non_dna_idx:
-            eta_nondna = np.einsum(
-                "oc,osc->os", sat_media[:, meta.non_dna_idx], beta_by_row[:, :, meta.non_dna_idx]
-            )
-        else:
-            eta_nondna = np.zeros((n_obs, n_out))
-        eta_dna_direct = np.einsum("oc,osc->os", dna_direct_media, beta_by_row[:, :, meta.dna_channel_idx]) * has_direct[None, :]
-        eta_dna_halo = np.einsum("oc,osc->os", dna_halo_media, beta_by_row[:, :, meta.dna_channel_idx]) * halo[None, :]
-        eta_channels = eta_nondna + eta_dna_direct + eta_dna_halo
+    # Pathway-masked replay (PR G1) - mirrors core.market_specific_model.
+    # build_fh_market_specific_model's eta_primary/eta_active/eta_exploratory
+    # construction exactly (same masks, same media, same beta multiplication,
+    # same einsum contraction pattern) - see core.predict.predict_mu's
+    # matching comment.
+    primary_mask = meta.pathway_masks.primary_matrix(outcome_ids, meta.channels)  # (O, C)
+    eta_primary = np.einsum("oc,osc->os", sat_media, beta_by_row * primary_mask[None, :, :])
+
+    cross_cells = meta.pathway_masks.active_cells(outcome_ids, meta.channels) + meta.pathway_masks.exploratory_cells(outcome_ids, meta.channels)
+    if cross_cells:
+        cross_product_lag_media = lag_frame(sat_media, frame["market_bounds"], meta.pathway_masks.cross_product_lag_weeks)
+        strength_matrix = _cross_product_strength_matrix(meta, params)
+        eta_cross = np.einsum("oc,osc->os", cross_product_lag_media, beta_by_row * strength_matrix[None, :, :])
     else:
-        eta_channels = np.einsum("oc,osc->os", sat_media, beta_by_row)
+        eta_cross = np.zeros((n_obs, n_out))
+
+    eta_channels = eta_primary + eta_cross
 
     promo_coef = np.array([params.promo_coef[s] for s in outcome_ids])
     eta_promo = frame["promo"] * promo_coef[None, :]
@@ -249,16 +246,9 @@ def steady_state_outcome_response_market_specific(
         val += params.promo_coef[s] * reference_context.get("promo", {}).get(s, 0.0)
 
         for c in meta.channels:
-            beta_val = params.beta[market][s][c]
-            if c in meta.dna_channels:
-                # Steady-state collapse (dna_direct_media == dna_halo_media
-                # at constant spend) - see core.predict.steady_state_outcome_response.
-                weight = params.halo_strength.get(s, 0.0) if s in meta.halo_eligible_outcome_ids else 0.0
-                if s in meta.direct_dna_outcome_ids:
-                    weight += 1.0
-                val += beta_val * sat[c] * weight
-            else:
-                val += beta_val * sat[c]
+            # Steady-state collapse (primary and cross-product media converge
+            # at constant spend) - see core.predict.steady_state_outcome_response.
+            val += params.beta[market][s][c] * sat[c] * _pathway_weight(meta, params, s, c)
 
         for name, coef in params.control_coef.items():
             val += coef * reference_context.get("controls", {}).get(name, 0.0)
@@ -320,7 +310,6 @@ def generate_market_channel_curve(
         cap = max_spend if max_spend is not None else max(K * 3, 1.0)
         spend_range = np.linspace(0.0, cap, n_points)
 
-    is_dna = channel in meta.dna_channels
     gsa_ids = set(fh_gsa_outcome_ids(meta))
     signup_ids = set(fh_signup_outcome_ids(meta))
     dna_ids = set(dna_kit_sale_outcome_ids(meta))
@@ -333,12 +322,8 @@ def generate_market_channel_curve(
         fh_gsa_total = 0.0
         fh_signup_total = 0.0
         for oid in meta.outcome_ids:
-            beta_val = params.beta[market][oid][channel]
-            if is_dna:
-                weight = params.halo_strength.get(oid, 0.0) if oid in meta.halo_eligible_outcome_ids else 0.0
-                if oid in meta.direct_dna_outcome_ids:
-                    weight += 1.0
-                beta_val = beta_val * weight
+            # Steady-state collapse - see steady_state_outcome_response_market_specific.
+            beta_val = params.beta[market][oid][channel] * _pathway_weight(meta, params, oid, channel)
             value = beta_val * sat
             row[f"{oid}_response"] = value
             overall += value

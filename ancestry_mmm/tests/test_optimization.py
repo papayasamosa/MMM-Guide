@@ -8,6 +8,7 @@ from ancestry_mmm.core.market_specific_predict import FHMarketSpecificPosteriorP
 from ancestry_mmm.core.optimization import compare_scenarios, evaluate_scenario, optimize_scenario, VALID_OBJECTIVES
 from ancestry_mmm.core.outcomes import FAMILY_HISTORY, DNA, METRIC_GSA, METRIC_KIT_SALE, OutcomeDefinition
 from ancestry_mmm.core.predict import FHPosteriorParams
+from ancestry_mmm.tests.conftest import pathway_strength_from_flat
 
 IDENTITY = dict(
     model_run_id="run-abc123",
@@ -30,7 +31,7 @@ def meta() -> FHModelMeta:
 def params() -> FHPosteriorParams:
     return FHPosteriorParams(
         decay_rate={"TV_Brand": 0.5}, hill_K={"TV_Brand": 1000.0}, hill_S={"TV_Brand": 1.0},
-        beta={"New": {"TV_Brand": 0.1}}, halo_strength={"New": 0.0}, promo_coef={"New": 0.1},
+        beta={"New": {"TV_Brand": 0.1}}, pathway_strength={}, promo_coef={"New": 0.1},
         market_offset={"UK": {"New": 0.0}}, intercept={"New": 3.0}, trend_coef={"New": 0.0},
         gamma_fourier={"New": np.zeros(6)}, alpha={"New": 5.0}, control_coef={}, outcome_control_coef={},
     )
@@ -68,7 +69,7 @@ def market_specific_params() -> FHMarketSpecificPosteriorParams:
         hill_K={"UK": {"TV_Brand": 1000.0}, "Australia": {"TV_Brand": 600.0}},
         hill_S={"TV_Brand": 1.0},
         beta={"UK": {"New": {"TV_Brand": 0.1}}, "Australia": {"New": {"TV_Brand": 0.15}}},
-        halo_strength={"New": 0.0}, promo_coef={"New": 0.1},
+        pathway_strength={}, promo_coef={"New": 0.1},
         market_offset={m: {"New": 0.0} for m in markets},
         intercept={"New": 3.0}, trend_coef={"New": 0.0},
         gamma_fourier={"New": np.zeros(6)}, alpha={"New": 5.0},
@@ -217,7 +218,7 @@ class TestAverageCpa:
         params = FHPosteriorParams(
             decay_rate={"TV_Brand": 0.5}, hill_K={"TV_Brand": 1000.0}, hill_S={"TV_Brand": 1.0},
             beta={"New": {"TV_Brand": 0.1}, "Winback": {"TV_Brand": 0.05}},
-            halo_strength={"New": 0.0, "Winback": 0.0}, promo_coef={"New": 0.1, "Winback": 0.1},
+            pathway_strength={}, promo_coef={"New": 0.1, "Winback": 0.1},
             market_offset={"UK": {"New": 0.0, "Winback": 0.0}}, intercept={"New": 3.0, "Winback": 2.0},
             trend_coef={"New": 0.0, "Winback": 0.0},
             gamma_fourier={"New": np.zeros(6), "Winback": np.zeros(6)},
@@ -261,7 +262,7 @@ class TestProductAwareScenarioOutputs:
             hill_K={"TV_Brand": 1000.0, "DNA_Ad": 500.0},
             hill_S={"TV_Brand": 1.0, "DNA_Ad": 1.0},
             beta={"New": {"TV_Brand": 0.1, "DNA_Ad": 0.05}, "DNA_Kit": {"TV_Brand": 0.0, "DNA_Ad": 0.2}},
-            halo_strength={"New": 0.3, "DNA_Kit": 0.0}, promo_coef={"New": 0.1, "DNA_Kit": 0.1},
+            pathway_strength=pathway_strength_from_flat({"New": 0.3, "DNA_Kit": 0.0}, "DNA_Ad"), promo_coef={"New": 0.1, "DNA_Kit": 0.1},
             market_offset={"UK": {"New": 0.0, "DNA_Kit": 0.0}}, intercept={"New": 3.0, "DNA_Kit": 2.0},
             trend_coef={"New": 0.0, "DNA_Kit": 0.0},
             gamma_fourier={"New": np.zeros(6), "DNA_Kit": np.zeros(6)},
@@ -363,7 +364,7 @@ class TestExplicitOptimisationObjectives:
             hill_K={"TV_Brand": 1000.0, "DNA_Ad": 500.0},
             hill_S={"TV_Brand": 1.0, "DNA_Ad": 1.0},
             beta={"New": {"TV_Brand": 0.1, "DNA_Ad": 0.05}, "DNA_Kit": {"TV_Brand": 0.0, "DNA_Ad": 0.2}},
-            halo_strength={"New": 0.3, "DNA_Kit": 0.0}, promo_coef={"New": 0.1, "DNA_Kit": 0.1},
+            pathway_strength=pathway_strength_from_flat({"New": 0.3, "DNA_Kit": 0.0}, "DNA_Ad"), promo_coef={"New": 0.1, "DNA_Kit": 0.1},
             market_offset={"UK": {"New": 0.0, "DNA_Kit": 0.0}}, intercept={"New": 3.0, "DNA_Kit": 2.0},
             trend_coef={"New": 0.0, "DNA_Kit": 0.0},
             gamma_fourier={"New": np.zeros(6), "DNA_Kit": np.zeros(6)},
@@ -500,7 +501,7 @@ class TestFhSignupVsGsaObjectives:
         return FHPosteriorParams(
             decay_rate={"TV_Brand": 0.5}, hill_K={"TV_Brand": 1000.0}, hill_S={"TV_Brand": 1.0},
             beta={"fh_new_gsa": {"TV_Brand": 0.1}, "fh_new_signup": {"TV_Brand": 0.4}},
-            halo_strength={"fh_new_gsa": 0.0, "fh_new_signup": 0.0},
+            pathway_strength={},
             promo_coef={"fh_new_gsa": 0.1, "fh_new_signup": 0.1},
             market_offset={"UK": {"fh_new_gsa": 0.0, "fh_new_signup": 0.0}},
             intercept={"fh_new_gsa": 3.0, "fh_new_signup": 3.5}, trend_coef={"fh_new_gsa": 0.0, "fh_new_signup": 0.0},
@@ -592,7 +593,7 @@ class TestOptimiserTargetValidation:
         return FHPosteriorParams(
             decay_rate={"TV_Brand": 0.5}, hill_K={"TV_Brand": 1000.0}, hill_S={"TV_Brand": 1.0},
             beta={"fh_new_gsa": {"TV_Brand": 0.1}, "fh_new_signup": {"TV_Brand": 0.2}, "fh_diag": {"TV_Brand": 0.05}},
-            halo_strength={"fh_new_gsa": 0.0, "fh_new_signup": 0.0, "fh_diag": 0.0},
+            pathway_strength={},
             promo_coef={"fh_new_gsa": 0.1, "fh_new_signup": 0.1, "fh_diag": 0.1},
             market_offset={"UK": {"fh_new_gsa": 0.0, "fh_new_signup": 0.0, "fh_diag": 0.0}},
             intercept={"fh_new_gsa": 3.0, "fh_new_signup": 3.0, "fh_diag": 3.0},
@@ -857,7 +858,7 @@ class TestValueWeightNeverSilentlyDefaultsToOne:
             hill_K={"TV_Brand": 1000.0, "DNA_Ad": 500.0},
             hill_S={"TV_Brand": 1.0, "DNA_Ad": 1.0},
             beta={"New": {"TV_Brand": 0.1, "DNA_Ad": 0.05}, "DNA_Kit": {"TV_Brand": 0.0, "DNA_Ad": 0.2}},
-            halo_strength={"New": 0.3, "DNA_Kit": 0.0}, promo_coef={"New": 0.1, "DNA_Kit": 0.1},
+            pathway_strength=pathway_strength_from_flat({"New": 0.3, "DNA_Kit": 0.0}, "DNA_Ad"), promo_coef={"New": 0.1, "DNA_Kit": 0.1},
             market_offset={"UK": {"New": 0.0, "DNA_Kit": 0.0}}, intercept={"New": 3.0, "DNA_Kit": 2.0},
             trend_coef={"New": 0.0, "DNA_Kit": 0.0},
             gamma_fourier={"New": np.zeros(6), "DNA_Kit": np.zeros(6)},

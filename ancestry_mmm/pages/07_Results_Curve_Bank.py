@@ -69,6 +69,26 @@ def _render_curve_with_cpa(curve_df: pd.DataFrame, title: str) -> None:
         st.warning(f["message"])
 
 
+def _pathway_strength_table(meta, params) -> pd.DataFrame:
+    """One row per active_cross_product/exploratory_cross_product
+    (outcome, channel) cell (PR G1 - core.pathways.resolve_pathway_masks) -
+    the general replacement for the old DNA-only "halo strength by outcome"
+    table, since a cross-product cell can now exist on any channel, and more
+    than one channel can have a distinct cell for the same outcome."""
+    rows = []
+    for oid in meta.outcome_ids:
+        active = set(meta.pathway_masks.active_channels_by_outcome.get(oid, []))
+        exploratory = set(meta.pathway_masks.exploratory_channels_by_outcome.get(oid, []))
+        for ch in active | exploratory:
+            rows.append({
+                "outcome_id": oid,
+                "channel": ch,
+                "role": "active_cross_product" if ch in active else "exploratory_cross_product",
+                "strength": params.pathway_strength.get(oid, {}).get(ch),
+            })
+    return pd.DataFrame(rows, columns=["outcome_id", "channel", "role", "strength"])
+
+
 def _render_media_unit_section(curve_df: pd.DataFrame, market_config: MarketSpecConfig, market: str, channel: str) -> None:
     """Historical cost trend, response-unit curve, and equivalent delivery/
     response calculators for one (market, channel) - only shown where a
@@ -265,10 +285,15 @@ if model_type == "market_specific":
     _render_media_unit_section(curve_df, market_config, viewer_market, viewer_channel)
 
     st.markdown("---")
-    st.markdown("### DNA halo strength by outcome")
-    st.caption("Shared across markets in this model structure (only K and beta are market-specific).")
-    halo_df = pd.DataFrame([{"outcome_id": s, "halo_strength": params.halo_strength.get(s)} for s in meta.outcome_ids])
-    st.dataframe(halo_df, width="stretch", column_config=dataframe_column_config(halo_df))
+    st.markdown("### Cross-product pathway strength")
+    st.caption(
+        "Shared across markets in this model structure (only K and beta are market-specific). "
+        "Estimated multiplier for each active/exploratory cross-product (outcome, channel) cell "
+        "(core.pathways.resolve_pathway_masks) - generalises the old DNA-only halo pathway to any "
+        "channel a pathway catalogue routes there."
+    )
+    pathway_df = _pathway_strength_table(meta, params)
+    st.dataframe(pathway_df, width="stretch", column_config=dataframe_column_config(pathway_df))
 
 else:
     st.markdown("---")
@@ -354,13 +379,16 @@ else:
     _render_media_unit_section(curve_df, market_config, viewer_market, viewer_channel)
 
     st.markdown("---")
-    st.markdown("### DNA halo strength by outcome")
-    halo_df = pd.DataFrame([{"outcome_id": s, "halo_strength": params.halo_strength.get(s)} for s in meta.outcome_ids])
-    st.dataframe(halo_df, width="stretch", column_config=dataframe_column_config(halo_df))
+    st.markdown("### Cross-product pathway strength")
+    pathway_df = _pathway_strength_table(meta, params)
+    st.dataframe(pathway_df, width="stretch", column_config=dataframe_column_config(pathway_df))
     st.caption(
-        f"DNA cross-sell outcome ('{meta.dna_outcome_id}') is fixed at 1.0 (full weight). "
-        "Other outcomes' values are the estimated halo effect strength, shrunk toward zero by prior "
-        "default and only pulled away from zero where the data supports it."
+        "Estimated multiplier for each active/exploratory cross-product (outcome, channel) cell "
+        "(core.pathways.resolve_pathway_masks) - shrunk toward zero by prior default (tighter for "
+        "exploratory cells) and only pulled away from zero where the data supports it. A "
+        "primary_direct cell (e.g. the DNA cross-sell outcome's own direct pathway from DNA media) "
+        "isn't shown here - it's fixed at full weight (beta itself), not a separate strength "
+        "multiplier."
     )
 
 # --- Curve bank: available for both model types - a market-

@@ -13,6 +13,7 @@ from ancestry_mmm.core.market_specific_attribution import (
     total_contribution_market_specific,
 )
 from ancestry_mmm.core.market_specific_predict import FHMarketSpecificPosteriorParams
+from ancestry_mmm.tests.conftest import pathway_strength_from_flat
 
 MARKETS = ["UK", "AU"]
 OUTCOME_IDS = ["New", "DNA_CrossSell", "New Customer"]
@@ -47,10 +48,10 @@ def params() -> FHMarketSpecificPosteriorParams:
                 "New Customer": {"TV": 0.012, "DNA_Media": 0.45},
             },
         },
-        # "New Customer" carries a low halo_strength deliberately - when it's
+        # "New Customer" carries a low pathway_strength deliberately - when it's
         # NOT a direct segment, this is what its DNA_Media contribution gets
         # shrunk by; when it IS direct (as in `meta` above), it's bypassed.
-        halo_strength={"New": 0.15, "DNA_CrossSell": 1.0, "New Customer": 0.2},
+        pathway_strength=pathway_strength_from_flat({"New": 0.15, "DNA_CrossSell": 1.0, "New Customer": 0.2}, "DNA_Media"),
         promo_coef={"New": 0.2, "DNA_CrossSell": 0.3, "New Customer": 0.1},
         market_offset={
             "UK": {"New": 0.0, "DNA_CrossSell": 0.0, "New Customer": 0.0},
@@ -221,7 +222,7 @@ class TestShapleyMarketSpecificDirectHaloSeparation:
             hill_K={"UK": {"DNA_Media": 1000.0}},
             hill_S={"DNA_Media": 1.0},
             beta={"UK": beta_uk},
-            halo_strength={"New": 0.5, "DNA_CrossSell": 0.5, "New Customer": 0.0},
+            pathway_strength=pathway_strength_from_flat({"New": 0.5, "DNA_CrossSell": 0.5, "New Customer": 0.0}, "DNA_Media"),
             promo_coef={s: 0.0 for s in self.OUTCOME_IDS},
             market_offset={"UK": {s: 0.0 for s in self.OUTCOME_IDS}},
             intercept={s: 0.0 for s in self.OUTCOME_IDS},

@@ -12,16 +12,25 @@ relationship this project believes exists, what kind of relationship it is
 effect not yet trusted for planning), or how confident the evidence for it
 is. `MediaOutcomePathway` is that catalogue.
 
-**This module is schema, validation, persistence, fingerprinting, fit-time
-metadata and drift detection only.** Nothing here changes what gets fitted
-or how attribution/scenario numbers are computed - `dna_channels`/
-`direct_dna_outcome_ids` remain the actual structural inputs the PyMC model
-builders (`core.hierarchical_model`, `core.market_specific_model`) read.
-A `MediaOutcomePathway` catalogue is captured, validated and carried through
-to `FHModelMeta.pathway_catalogue_at_fit` purely as forward-looking,
-versioned metadata - proving the schema can already describe the pathways a
-future estimation PR (PR G) will actually use, before that PR exists. See
-docs/media_outcome_pathways.md for the full design record and roadmap.
+**PR F built this module as schema, validation, persistence, fingerprinting
+and fit-time metadata only - nothing read it to change fitting.** PR G1
+("segment-level estimation and curve correctness" - docs/decision_log.md)
+makes it operational: `resolve_pathway_masks` below is what both PyMC model
+builders (`core.hierarchical_model`, `core.market_specific_model`) now call
+to decide, per `(outcome, channel)` cell, whether that channel's response
+for that outcome is a normal-strength `primary_direct` effect, a
+tighter-but-real `active_cross_product` effect, a strongly-shrunk
+`exploratory_cross_product` effect, or `excluded` (zero contribution,
+deterministically - not just a tight prior). `core.predict`/
+`core.market_specific_predict`/`core.attribution`/
+`core.market_specific_attribution` call the same function to replay the
+identical structure in NumPy, so a fitted model's curves/attribution/
+scenario numbers can never silently diverge from what was actually fit -
+see docs/media_outcome_pathways.md and docs/decision_log.md's PR G1 entry
+for the full design record, including the deliberate backward-compatibility
+guarantee (a project with no pathway catalogue configured for a given cell
+gets exactly the same legacy DNA-direct/halo-or-unconstrained-primary
+default this codebase has always used).
 
 Deliberately designed against the *expanded* future outcome catalogue (net
 bill-through, finance-date GSA, DNA purchase-type segmentation - see
@@ -213,6 +222,191 @@ def validate_media_outcome_pathways(
         seen_pairs.add(pair)
 
     return errors
+
+
+# ---------------------------------------------------------------------------
+# Operational pathway masks (PR G1)
+#
+# The single place that decides, for every (outcome, channel) cell, which of
+# the four roles actually governs that cell's fitted contribution - called
+# identically by both PyMC model builders (to build the right priors/masks)
+# and by both NumPy replay modules (to reproduce the identical structure for
+# curves/attribution/scenario planning). Keeping this resolution logic in
+# ONE place (rather than each of those ~6 call sites re-deriving it, which is
+# exactly the duplication that existed before this PR - core.predict,
+# core.market_specific_predict, core.attribution and
+# core.market_specific_attribution each separately re-implemented the same
+# "is this a DNA channel" direct/halo branching) is what guarantees a fitted
+# model's downstream numbers can never silently diverge from what was
+# actually fit, and is also what makes Model A/Model C parity checkable by
+# construction rather than by convention.
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ResolvedPathwayMasks:
+    """The result of resolving a project's `MediaOutcomePathway` catalogue
+    (plus the legacy DNA direct/halo defaults for any cell it doesn't cover)
+    against a specific fit's `outcome_ids`/`channels`. JSON-safe (plain
+    dict-of-lists), so it can be stored directly on `FHModelMeta` and
+    round-tripped through project export/import without special handling.
+
+    `primary_channels_by_outcome[outcome_id]` - channels contributing a
+    normal-strength, standard-prior effect to that outcome.
+    `active_channels_by_outcome[outcome_id]` - channels contributing a
+    real-but-distinctly-regularised effect (generalises the old DNA halo
+    pathway beyond DNA channels).
+    `exploratory_channels_by_outcome[outcome_id]` - channels contributing a
+    strongly-shrunk-toward-zero, not-trusted-for-planning-by-default effect.
+    A channel absent from all three lists for a given outcome is `excluded`
+    for that cell - zero contribution, not merely a tight prior.
+    `cross_product_lag_weeks` - the single shared lag (in weeks, beyond
+    ordinary adstock carryover) applied to every `active_channels_by_outcome`/
+    `exploratory_channels_by_outcome` cell before its saturated media enters
+    that cell's contribution - generalises `dna_lag_weeks` beyond DNA
+    channels specifically. Per-pathway custom lag values remain a documented
+    future extension (docs/media_outcome_pathways.md); every cross-product
+    cell currently shares this one lag."""
+
+    primary_channels_by_outcome: Dict[str, List[str]] = field(default_factory=dict)
+    active_channels_by_outcome: Dict[str, List[str]] = field(default_factory=dict)
+    exploratory_channels_by_outcome: Dict[str, List[str]] = field(default_factory=dict)
+    cross_product_lag_weeks: int = 0
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: Optional[dict]) -> "ResolvedPathwayMasks":
+        if not d:
+            return cls()
+        known = set(cls.__dataclass_fields__)
+        return cls(**{k: v for k, v in d.items() if k in known})
+
+    def primary_matrix(self, outcome_ids: Sequence[str], channels: Sequence[str]):
+        """`(n_outcome, n_channel)` float array, `1.0` where that channel is
+        `primary_direct` for that outcome, else `0.0`. Local numpy import so
+        this module stays importable without numpy for pure schema/UI use
+        (matches this module's existing pandas-only dependency footprint)."""
+        import numpy as np
+
+        channel_pos = {c: i for i, c in enumerate(channels)}
+        mat = np.zeros((len(outcome_ids), len(channels)), dtype=float)
+        for oi, oid in enumerate(outcome_ids):
+            for ch in self.primary_channels_by_outcome.get(oid, []):
+                ci = channel_pos.get(ch)
+                if ci is not None:
+                    mat[oi, ci] = 1.0
+        return mat
+
+    def _cells(self, by_outcome: Dict[str, List[str]], outcome_ids: Sequence[str], channels: Sequence[str]) -> List[tuple]:
+        outcome_pos = {o: i for i, o in enumerate(outcome_ids)}
+        channel_pos = {c: i for i, c in enumerate(channels)}
+        cells = []
+        for oid in outcome_ids:
+            for ch in by_outcome.get(oid, []):
+                if ch in channel_pos:
+                    cells.append((outcome_pos[oid], channel_pos[ch]))
+        return cells
+
+    def active_cells(self, outcome_ids: Sequence[str], channels: Sequence[str]) -> List[tuple]:
+        """`(outcome_idx, channel_idx)` pairs needing an `active_cross_product`
+        strength parameter, in a stable order (iterates `outcome_ids` then
+        each outcome's own channel list) - the order every caller sizing a
+        parameter vector to `len(...)` and scattering into it must agree on."""
+        return self._cells(self.active_channels_by_outcome, outcome_ids, channels)
+
+    def exploratory_cells(self, outcome_ids: Sequence[str], channels: Sequence[str]) -> List[tuple]:
+        """Same contract as `active_cells`, for `exploratory_cross_product`."""
+        return self._cells(self.exploratory_channels_by_outcome, outcome_ids, channels)
+
+
+def resolve_pathway_masks(
+    outcome_ids: Sequence[str],
+    channels: Sequence[str],
+    pathways: List[MediaOutcomePathway],
+    *,
+    dna_channel_idx: Sequence[int],
+    dna_outcome_id: Optional[str],
+    direct_dna_outcome_ids: Sequence[str],
+    dna_lag_weeks: int,
+) -> ResolvedPathwayMasks:
+    """
+    Resolve every `(outcome, channel)` cell to exactly one role: an explicit
+    `MediaOutcomePathway` for that exact `(channel, target_outcome_id)` pair
+    wins outright (its `role` fully replaces whatever the legacy default
+    would have been for that one cell - including the legacy "both direct
+    and halo" case for `dna_outcome_id` below, which an explicit pathway
+    reduces to a single specified role); every other cell falls back to this
+    codebase's pre-PR-G1 default, so a project with no pathway catalogue
+    configured for a given cell fits identically to before this PR:
+
+    - a non-DNA channel: `primary_direct` for every outcome (unconstrained,
+      matching this codebase's original behaviour - every channel could
+      always freely affect every outcome via `beta[outcome, channel]|)
+    - a DNA channel, `direct_dna_outcome_ids` member other than
+      `dna_outcome_id` (a DNA-product kit-sale outcome): `primary_direct`
+      only - a kit sale has no halo pathway onto itself
+      (docs/dna_fh_causal_structure.md)
+    - a DNA channel, `dna_outcome_id` itself: BOTH `primary_direct` (the
+      direct component) AND `active_cross_product` with
+      `cross_product_lag_weeks=dna_lag_weeks` (the halo component) - the one
+      case a single cell legitimately gets two simultaneous terms, since the
+      FH DNA-cross-sell outcome may plausibly respond to DNA media both
+      immediately and with a delay
+    - a DNA channel, every other outcome_id: `active_cross_product` only
+      (`cross_product_lag_weeks=dna_lag_weeks`) - exactly the old
+      unconditional halo pathway
+
+    An explicit `role="excluded"` pathway removes that cell from every list
+    (zero contribution). `lag_weeks` is read from the first pathway
+    requesting a delay (`lag_type` not `"none"`/blank, or `lag_weeks` set
+    explicitly) - see `cross_product_lag_weeks`'s docstring on why this is
+    currently one shared value, not per-pathway.
+    """
+    explicit: Dict[tuple, MediaOutcomePathway] = {
+        (p.target_outcome_id, p.channel): p for p in pathways
+    }
+    dna_channel_set = {channels[i] for i in dna_channel_idx if 0 <= i < len(channels)}
+    direct_set = set(direct_dna_outcome_ids)
+
+    primary: Dict[str, List[str]] = {}
+    active: Dict[str, List[str]] = {}
+    exploratory: Dict[str, List[str]] = {}
+    cross_product_lag_weeks = dna_lag_weeks
+
+    def _add(bucket: Dict[str, List[str]], oid: str, ch: str) -> None:
+        bucket.setdefault(oid, []).append(ch)
+
+    for oid in outcome_ids:
+        for ch in channels:
+            key = (oid, ch)
+            if key in explicit:
+                p = explicit[key]
+                if p.role == PATHWAY_ROLE_PRIMARY_DIRECT:
+                    _add(primary, oid, ch)
+                elif p.role == PATHWAY_ROLE_ACTIVE_CROSS_PRODUCT:
+                    _add(active, oid, ch)
+                elif p.role == PATHWAY_ROLE_EXPLORATORY_CROSS_PRODUCT:
+                    _add(exploratory, oid, ch)
+                # PATHWAY_ROLE_EXCLUDED: added to no bucket - zero contribution.
+                continue
+
+            if ch not in dna_channel_set:
+                _add(primary, oid, ch)
+            elif oid in direct_set and oid != dna_outcome_id:
+                _add(primary, oid, ch)
+            elif oid == dna_outcome_id:
+                _add(primary, oid, ch)
+                _add(active, oid, ch)
+            else:
+                _add(active, oid, ch)
+
+    return ResolvedPathwayMasks(
+        primary_channels_by_outcome=primary,
+        active_channels_by_outcome=active,
+        exploratory_channels_by_outcome=exploratory,
+        cross_product_lag_weeks=cross_product_lag_weeks,
+    )
 
 
 # ---------------------------------------------------------------------------
