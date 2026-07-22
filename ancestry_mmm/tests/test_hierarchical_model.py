@@ -62,6 +62,14 @@ class TestFHModelMetaOutcomeCatalogueDicts:
         assert meta.outcome_id_to_segment == {}
         assert meta.outcome_id_to_product == {}
         assert meta.outcome_catalogue_at_fit == []
+        assert meta.pathway_catalogue_at_fit == []
+
+    def test_explicit_pathway_catalogue_at_fit_is_preserved(self):
+        from ancestry_mmm.core.pathways import MediaOutcomePathway
+
+        pathway = MediaOutcomePathway(channel="DNA_Media", source_product="DNA", target_outcome_id="dna_new_kit")
+        meta = _meta(pathway_catalogue_at_fit=[pathway])
+        assert meta.pathway_catalogue_at_fit == [pathway]
 
     def test_explicit_catalogue_dicts_are_preserved(self):
         meta = _meta(
@@ -97,6 +105,7 @@ class TestModelAModelCMetaConstructionParity:
         for field_expr in (
             "outcome_id_to_metric_key={o.outcome_id: o.metric_key for o in outcome_catalogue},",
             "outcome_id_to_eligibility={o.outcome_id: outcome_eligibility(o) for o in outcome_catalogue},",
+            'pathway_catalogue_at_fit=frame.get("media_outcome_pathways") or [],',
         ):
             assert field_expr in source_a, f"Model A missing: {field_expr}"
             assert field_expr in source_c, f"Model C missing: {field_expr}"

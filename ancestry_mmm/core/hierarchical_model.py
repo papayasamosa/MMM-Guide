@@ -57,6 +57,16 @@ class FHModelMeta:
     model was fit on and what the catalogue currently says (core.outcomes.
     outcome_status's "Stale" detection).
 
+    `pathway_catalogue_at_fit` (PR F) is the exact `MediaOutcomePathway` list
+    (`core.pathways`) captured when this fit was built, if a pathway
+    catalogue was configured - pure pass-through metadata for
+    `core.pathways.pathway_drift_status`'s drift detection, exactly like
+    `outcome_catalogue_at_fit` but for the pathway catalogue. Nothing in this
+    builder reads `pathway_catalogue_at_fit` to change fitting behaviour -
+    it is captured here purely so a future estimation PR (PR G) can compare
+    "what pathways were assumed at fit time" against the live catalogue,
+    without waiting for that PR to add the capture mechanism too.
+
     `dna_outcome_id` is specifically the Family History DNA-cross-sell
     outcome - the halo pathway's traditional target. `direct_dna_outcome_ids`
     lists every outcome_id that gets a *direct* pathway from DNA-targeted
@@ -100,6 +110,7 @@ class FHModelMeta:
     outcome_catalogue_at_fit: List[Any] = field(default_factory=list)
     outcome_control_names: Dict[str, List[str]] = field(default_factory=dict)
     direct_dna_outcome_ids: List[str] = field(default_factory=list)
+    pathway_catalogue_at_fit: List[Any] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not self.direct_dna_outcome_ids:
@@ -538,5 +549,6 @@ def build_fh_hierarchical_model(
         outcome_catalogue_at_fit=outcome_catalogue,
         outcome_control_names=frame.get("outcome_control_names") or {},
         direct_dna_outcome_ids=direct_dna_outcome_ids,
+        pathway_catalogue_at_fit=frame.get("media_outcome_pathways") or [],
     )
     return model, meta

@@ -490,6 +490,17 @@ parquet for a segment with a `promotion_event` step, then replays those steps fr
 imported `transformed_data` - so re-importing a project reproduces the derived columns from the
 versioned event list, never trusting a possibly-stale value baked into the parquet.
 
+## PR F: planned metric keys, outcome-type metadata, and the pathway catalogue
+
+`METRIC_REGISTRY` gained seven forward-looking metric keys (Family History net bill-through count/rate,
+finance-date GSA, and four DNA purchase-type keys - self-activated/gifted-activated/unactivated/total)
+and `OutcomeDefinition` gained `aggregation_type`/`date_basis`/`maturity_required` - schema and
+validation only, no computation pipeline exists for any of these yet. `core.pathways.
+MediaOutcomePathway` is a new, separate, persisted/fingerprinted catalogue of explicit
+`(channel, target_outcome_id)` relationships, designed so a pathway can already target any of these
+planned outcome_ids. None of this changes what gets fitted. See `docs/media_outcome_pathways.md` for
+the full design record and `docs/decision_log.md`'s PR F entry.
+
 ## Synthetic demo data
 
 `ancestry_mmm/sample_data/generate_sample_data.py` generates `DNA_Kit_New_Customer` and

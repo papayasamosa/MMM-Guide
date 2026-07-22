@@ -51,6 +51,7 @@ from .approval import ModelApproval
 from .fingerprint import fingerprint_dataframe, fingerprint_model_spec, fingerprint_posterior
 from .hierarchical_model import FHModelMeta
 from .outcomes import outcome_catalogue_fingerprint_payload
+from .pathways import pathway_catalogue_fingerprint_payload
 from .predict import extract_posterior_params
 from .schema import ModelSpec
 from .optimization import SpendConstraint
@@ -122,6 +123,7 @@ def export_project(
     model_type: Optional[str] = None,
     outcome_definitions: Optional[List[dict]] = None,
     funnel_links: Optional[List[dict]] = None,
+    media_outcome_pathways: Optional[List[dict]] = None,
 ) -> Path:
     output_path = Path(output_path)
     with tempfile.TemporaryDirectory() as tmp:
@@ -155,6 +157,10 @@ def export_project(
             (tmp / "config" / "outcome_definitions.json").write_text(json.dumps(outcome_definitions, indent=2, default=str))
         if funnel_links is not None:
             (tmp / "config" / "funnel_links.json").write_text(json.dumps(funnel_links, indent=2, default=str))
+        if media_outcome_pathways is not None:
+            (tmp / "config" / "media_outcome_pathways.json").write_text(
+                json.dumps(media_outcome_pathways, indent=2, default=str)
+            )
 
         scenarios_meta = []
         for i, s in enumerate(scenarios):
@@ -211,6 +217,10 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         # not "funnel diagnostics are unavailable" (they still work with an
         # empty list, just show no configured pairs).
         "funnel_links": None,
+        # Absent in bundles exported before PR F - None (not an error); "no
+        # pathway catalogue configured" is the correct legacy/default
+        # reading, matching funnel_links' convention above.
+        "media_outcome_pathways": None,
     }
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
@@ -249,6 +259,8 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
             result["outcome_definitions"] = json.loads((config_dir / "outcome_definitions.json").read_text())
         if (config_dir / "funnel_links.json").exists():
             result["funnel_links"] = json.loads((config_dir / "funnel_links.json").read_text())
+        if (config_dir / "media_outcome_pathways.json").exists():
+            result["media_outcome_pathways"] = json.loads((config_dir / "media_outcome_pathways.json").read_text())
         if (config_dir / "scenarios.json").exists():
             scenarios_meta = json.loads((config_dir / "scenarios.json").read_text())
             for i, s in enumerate(scenarios_meta):
@@ -313,6 +325,11 @@ def reconstruct_model_state(imported: Dict[str, Any]) -> Dict[str, Any]:
                 from .outcomes import OutcomeDefinition
                 meta_dict["outcome_catalogue_at_fit"] = [
                     OutcomeDefinition.from_dict(o) for o in meta_dict["outcome_catalogue_at_fit"]
+                ]
+            if meta_dict.get("pathway_catalogue_at_fit"):
+                from .pathways import MediaOutcomePathway
+                meta_dict["pathway_catalogue_at_fit"] = [
+                    MediaOutcomePathway.from_dict(p) for p in meta_dict["pathway_catalogue_at_fit"]
                 ]
             result["model_meta"] = FHModelMeta(**meta_dict)
         except TypeError:
@@ -403,12 +420,22 @@ def verify_imported_approval(
     # wrongly appear mismatched, or a genuinely stale one wrongly appear to
     # still match.
     outcome_catalogue_at_fit = getattr(model_meta, "outcome_catalogue_at_fit", None) or []
+    # funnel_links/media_outcome_pathways: fingerprint the fit-time pathway
+    # catalogue the same way outcome_catalogue is fingerprinted above (the
+    # exact catalogue this fit's metadata was captured from, not the
+    # project's current, possibly-since-edited one) - funnel_links has no
+    # fit-time snapshot field, so the imported bundle's own funnel_links.json
+    # is used directly (it is diagnostic-only configuration, never something
+    # a fit is "built from").
+    pathway_catalogue_at_fit = getattr(model_meta, "pathway_catalogue_at_fit", None) or []
     spec_fp = fingerprint_model_spec(
         imported.get("model_spec") or {}, imported.get("prior_config") or {}, imported.get("dna_lag_weeks", 4),
         model_type=imported.get("model_type", "shared"),
         pipeline_steps=imported.get("pipeline_steps") or [], market_spec_config=imported.get("market_spec_config"),
         direct_dna_outcome_ids=model_meta.direct_dna_outcome_ids if model_meta is not None else None,
         outcome_catalogue=outcome_catalogue_fingerprint_payload(outcome_catalogue_at_fit),
+        funnel_links=imported.get("funnel_links"),
+        media_outcome_pathways=pathway_catalogue_fingerprint_payload(pathway_catalogue_at_fit),
     )
     posterior_fp = fingerprint_posterior(posterior_params)
     current_run_id = imported.get("model_run_id") or approval.model_run_id

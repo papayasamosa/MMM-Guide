@@ -380,5 +380,6 @@ def build_fh_market_specific_model(
         outcome_catalogue_at_fit=outcome_catalogue,
         outcome_control_names=frame.get("outcome_control_names") or {},
         direct_dna_outcome_ids=direct_dna_outcome_ids,
+        pathway_catalogue_at_fit=frame.get("media_outcome_pathways") or [],
     )
     return model, meta

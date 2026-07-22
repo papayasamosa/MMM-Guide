@@ -118,6 +118,64 @@ def test_bulk_apply_segment_mapping_to_every_outcome_in_it():
     assert outcome_promo_selects["Promo column for 'fh_new_signup' (or None)"] == "Promo_New"
 
 
+def test_media_outcome_pathway_catalogue_saves_and_validates():
+    # PR F - the pathway catalogue is a real, drivable section of this page
+    # (data_editor can't be driven via AppTest in this Streamlit version, so
+    # this seeds session_state with a pre-populated row exactly as the
+    # editor would produce after an analyst adds one, matching this test
+    # file's established convention for data_editor-backed sections).
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    df = _transformed_data()
+    at.session_state["transformed_data"] = df
+    at.session_state["date_col"] = "date"
+    at.session_state["market_col"] = "market"
+    at.session_state["outcome_definitions"] = [
+        {"outcome_id": "fh_new_gsa", "product": FAMILY_HISTORY, "segment": "New", "metric": METRIC_GSA, "source_column": "New"},
+        {"outcome_id": "dna_new_kit", "product": "DNA", "segment": "New Customer", "metric": "Kit sale", "source_column": "DNA_CrossSell"},
+    ]
+    at.session_state["media_outcome_pathways"] = [
+        {
+            "pathway_id": "p1", "channel": "tv_spend", "source_product": "DNA", "target_outcome_id": "dna_new_kit",
+            "role": "primary_direct", "lag_type": "none", "lag_weeks": None, "prior_scale": 1.0,
+            "include_in_attribution": True, "include_in_planning": True, "evidence_status": "untested",
+        },
+    ]
+    at.run()
+    assert not at.exception, f"initial load with a pre-populated pathway raised: {at.exception}"
+
+    save_button = [b for b in at.button if b.label == "Save structure and validate"][0]
+    save_button.click().run()
+    assert not at.exception, f"save raised: {at.exception}"
+
+    saved_pathways = at.session_state["media_outcome_pathways"]
+    assert len(saved_pathways) == 1
+    assert saved_pathways[0]["channel"] == "tv_spend"
+    assert saved_pathways[0]["target_outcome_id"] == "dna_new_kit"
+
+    # Real errors from the underlying validator are surfaced, not swallowed -
+    # an unknown channel makes the page's own error path fire.
+    at2 = AppTest.from_file(str(PAGE), default_timeout=60)
+    at2.session_state["transformed_data"] = df
+    at2.session_state["date_col"] = "date"
+    at2.session_state["market_col"] = "market"
+    at2.session_state["outcome_definitions"] = [
+        {"outcome_id": "fh_new_gsa", "product": FAMILY_HISTORY, "segment": "New", "metric": METRIC_GSA, "source_column": "New"},
+    ]
+    at2.session_state["media_outcome_pathways"] = [
+        {
+            "pathway_id": "p2", "channel": "tv_spend", "source_product": FAMILY_HISTORY,
+            "target_outcome_id": "does_not_exist", "role": "primary_direct", "lag_type": "none",
+            "lag_weeks": None, "prior_scale": 1.0, "include_in_attribution": True,
+            "include_in_planning": True, "evidence_status": "untested",
+        },
+    ]
+    at2.run()
+    save_button_2 = [b for b in at2.button if b.label == "Save structure and validate"][0]
+    save_button_2.click().run()
+    assert not at2.exception, f"save raised: {at2.exception}"
+    assert any("unknown target_outcome_id" in e.value for e in at2.error)
+
+
 def test_save_succeeds_with_a_genuine_signup_and_gsa_on_the_same_segment():
     # Directly exercises the same row -> OutcomeDefinition -> validation
     # path the page's Save handler uses, seeded with the exact "two KPIs,

@@ -16,6 +16,15 @@ from ancestry_mmm.core.outcomes import (
     METRIC_KEY_DNA_KIT_SALE,
     METRIC_KEY_FH_GSA,
     METRIC_KEY_FH_SIGNUP,
+    METRIC_KEY_FH_NET_BILLTHROUGH_COUNT,
+    METRIC_KEY_FH_NET_BILLTHROUGH_RATE,
+    METRIC_KEY_FH_GSA_FINANCE_DATE,
+    METRIC_KEY_DNA_KIT_SALE_SELF_ACTIVATED,
+    METRIC_KEY_DNA_KIT_SALE_GIFTED_ACTIVATED,
+    METRIC_KEY_DNA_KIT_SALE_UNACTIVATED,
+    METRIC_KEY_DNA_KIT_SALE_TOTAL,
+    AGGREGATION_TYPES,
+    DATE_BASIS_VALUES,
     METRIC_REGISTRY,
     OUTCOME_ROLES,
     OUTCOME_STATUSES,
@@ -208,6 +217,153 @@ class TestMetricRegistryAndUnitDefaults:
             assert isinstance(definition, MetricDefinition)
             assert definition.metric_key == key
             assert definition.default_unit
+
+
+class TestPlannedMetricKeysAndAggregationType:
+    """PR F (net bill-through / DNA purchase-type roadmap) - the seven new
+    metric keys are registered with correct product/unit/aggregation_type,
+    and OutcomeDefinition's new aggregation_type field derives from them the
+    same way unit already does. No transformation pipeline exists yet for
+    any of these outcomes (see docs/media_outcome_pathways.md) - this is
+    catalogue/registry-level coverage only."""
+
+    PLANNED_KEYS = (
+        METRIC_KEY_FH_NET_BILLTHROUGH_COUNT,
+        METRIC_KEY_FH_NET_BILLTHROUGH_RATE,
+        METRIC_KEY_FH_GSA_FINANCE_DATE,
+        METRIC_KEY_DNA_KIT_SALE_SELF_ACTIVATED,
+        METRIC_KEY_DNA_KIT_SALE_GIFTED_ACTIVATED,
+        METRIC_KEY_DNA_KIT_SALE_UNACTIVATED,
+        METRIC_KEY_DNA_KIT_SALE_TOTAL,
+    )
+
+    def test_all_planned_keys_are_registered(self):
+        for key in self.PLANNED_KEYS:
+            assert key in METRIC_REGISTRY, key
+
+    def test_net_billthrough_rate_is_the_only_rate_aggregation_builtin(self):
+        rate_keys = [k for k, d in METRIC_REGISTRY.items() if d.aggregation_type == "rate"]
+        assert rate_keys == [METRIC_KEY_FH_NET_BILLTHROUGH_RATE]
+
+    def test_net_billthrough_rate_is_disallowed_in_optimiser_and_cpa(self):
+        definition = METRIC_REGISTRY[METRIC_KEY_FH_NET_BILLTHROUGH_RATE]
+        assert definition.allowed_in_optimiser is False
+        assert definition.allowed_in_cpa is False
+
+    def test_every_other_planned_key_is_a_count_allowed_everywhere(self):
+        for key in self.PLANNED_KEYS:
+            if key == METRIC_KEY_FH_NET_BILLTHROUGH_RATE:
+                continue
+            definition = METRIC_REGISTRY[key]
+            assert definition.aggregation_type == "count"
+            assert definition.allowed_in_optimiser is True
+            assert definition.allowed_in_cpa is True
+
+    def test_dna_kit_sale_total_is_distinct_from_dna_kit_sale(self):
+        # The roadmap lists dna_kit_sale_total as a distinct key from the
+        # pre-existing generic dna_kit_sale - not a rename, not an alias.
+        assert METRIC_KEY_DNA_KIT_SALE_TOTAL != METRIC_KEY_DNA_KIT_SALE
+
+    def test_outcome_definition_aggregation_type_derives_from_registry(self):
+        rate_outcome = OutcomeDefinition(
+            outcome_id="fh_billthrough_rate", product=FAMILY_HISTORY, segment="New",
+            metric="Net bill-through rate", source_column="c", role="secondary",
+        )
+        assert rate_outcome.metric_key == METRIC_KEY_FH_NET_BILLTHROUGH_RATE
+        assert rate_outcome.aggregation_type == "rate"
+
+        count_outcome = OutcomeDefinition(
+            outcome_id="dna_self", product=DNA, segment="New Customer",
+            metric="Kit sale (self-activated)", source_column="c",
+        )
+        assert count_outcome.metric_key == METRIC_KEY_DNA_KIT_SALE_SELF_ACTIVATED
+        assert count_outcome.aggregation_type == "count"
+
+    def test_custom_metric_defaults_aggregation_type_to_count(self):
+        outcome = OutcomeDefinition(
+            outcome_id="x", product=FAMILY_HISTORY, segment="S", metric="Repeat purchase",
+            source_column="c", unit="repeat purchase",
+        )
+        assert outcome.metric_key == METRIC_KEY_CUSTOM
+        assert outcome.aggregation_type == "count"
+
+    def test_explicit_aggregation_type_is_preserved(self):
+        outcome = OutcomeDefinition(
+            outcome_id="x", product=FAMILY_HISTORY, segment="S", metric="Custom index",
+            source_column="c", unit="index points", aggregation_type="index",
+        )
+        assert outcome.aggregation_type == "index"
+
+    def test_date_basis_and_maturity_required_default_to_none(self):
+        outcome = OutcomeDefinition(
+            outcome_id="x", product=FAMILY_HISTORY, segment="S", metric="GSA", source_column="c",
+        )
+        assert outcome.date_basis is None
+        assert outcome.maturity_required is None
+
+    def test_date_basis_can_be_set_explicitly(self):
+        outcome = OutcomeDefinition(
+            outcome_id="fh_billthrough", product=FAMILY_HISTORY, segment="New",
+            metric="Net bill-through count", source_column="c",
+            date_basis="signup_date_attributed", maturity_required=True,
+        )
+        assert outcome.date_basis == "signup_date_attributed"
+        assert outcome.maturity_required is True
+
+    def test_date_basis_values_matches_roadmap_vocabulary(self):
+        assert set(DATE_BASIS_VALUES) == {
+            "event_date", "signup_date_attributed", "billing_date", "purchase_date", "activation_date",
+        }
+
+
+class TestValidateOutcomeDefinitionsAggregationRules:
+    """PR F - "do not allow rate outcomes into count totals or count-based
+    CPA": a rate-aggregation outcome must not resolve eligible for the
+    official total or optimisation."""
+
+    def _rate_outcome(self, **overrides):
+        defaults = dict(
+            outcome_id="fh_billthrough_rate", product=FAMILY_HISTORY, segment="New",
+            metric="Net bill-through rate", source_column="c", role="secondary",
+            include_in_official_total=None, include_in_optimisation=None,
+        )
+        defaults.update(overrides)
+        return OutcomeDefinition(**defaults)
+
+    def test_rate_outcome_with_correct_secondary_role_has_no_error(self):
+        outcome = self._rate_outcome()
+        errors = validate_outcome_definitions([outcome])
+        assert not any("rate" in e.lower() for e in errors)
+
+    def test_rate_outcome_left_at_default_primary_role_is_an_error(self):
+        outcome = self._rate_outcome(role="primary")
+        errors = validate_outcome_definitions([outcome])
+        assert any("eligible for the official total" in e for e in errors)
+        assert any("eligible for optimisation" in e for e in errors)
+
+    def test_rate_outcome_with_explicit_optimisation_override_is_an_error(self):
+        outcome = self._rate_outcome(include_in_optimisation=True)
+        errors = validate_outcome_definitions([outcome])
+        assert any("eligible for optimisation" in e for e in errors)
+
+    def test_unknown_aggregation_type_is_an_error(self):
+        outcome = OutcomeDefinition(
+            outcome_id="x", product=FAMILY_HISTORY, segment="S", metric="GSA", source_column="c",
+            aggregation_type="not_a_real_type",
+        )
+        errors = validate_outcome_definitions([outcome])
+        assert any("aggregation_type" in e for e in errors)
+
+    def test_unknown_date_basis_is_an_error(self):
+        outcome = OutcomeDefinition(
+            outcome_id="x", product=FAMILY_HISTORY, segment="S", metric="GSA", source_column="c",
+            date_basis="not_a_real_basis",
+        )
+        errors = validate_outcome_definitions([outcome])
+        assert any("date_basis" in e for e in errors)
+
+    def test_aggregation_types_constant_matches_roadmap_vocabulary(self):
+        assert set(AGGREGATION_TYPES) == {"count", "rate", "currency", "index"}
 
 
 class TestOutcomeEligibility:

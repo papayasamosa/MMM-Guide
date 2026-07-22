@@ -13,6 +13,7 @@ from ancestry_mmm.components import apply_theme, render_sidebar, render_page_hea
 from ancestry_mmm.core.approval import ApprovalMismatchError, ModelApproval
 from ancestry_mmm.core.fingerprint import fingerprint_dataframe, fingerprint_model_spec, fingerprint_posterior
 from ancestry_mmm.core.outcomes import fh_gsa_outcome_ids, fh_signup_outcome_ids, dna_kit_sale_outcome_ids, outcome_catalogue_fingerprint_payload, resolve_outcome_definitions
+from ancestry_mmm.core.pathways import pathway_catalogue_fingerprint_payload
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.market_config import MarketSpecConfig
 from ancestry_mmm.core.attribution import (
@@ -390,6 +391,8 @@ if model_run_id and spec_dict is not None:
             pipeline_steps=get_state("pipeline_steps") or [], market_spec_config=get_state("market_spec_config"),
             direct_dna_outcome_ids=meta.direct_dna_outcome_ids if meta is not None else None,
             outcome_catalogue=outcome_catalogue_fingerprint_payload(meta.outcome_catalogue_at_fit) if meta is not None else None,
+            funnel_links=get_state("funnel_links"),
+            media_outcome_pathways=pathway_catalogue_fingerprint_payload(meta.pathway_catalogue_at_fit) if meta is not None else None,
         ),
         "posterior_fingerprint": fingerprint_posterior(params),
     }

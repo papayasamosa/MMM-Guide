@@ -29,6 +29,7 @@ from ancestry_mmm.core.market_config import MarketSpecConfig
 from ancestry_mmm.core.evidence_tiers import evidence_tiers_dataframe
 from ancestry_mmm.core.media_units import market_specific_cpa_table
 from ancestry_mmm.core.outcomes import fh_gsa_outcome_ids, resolve_outcome_definitions
+from ancestry_mmm.core.pathways import MediaOutcomePathway, pathways_drift_dataframe
 from ancestry_mmm.core.optimization import compare_scenarios
 from ancestry_mmm.core.report import build_report_sections, render_markdown, render_html
 from ancestry_mmm.core.promotions import PROMOTION_EVENT_OP
@@ -71,6 +72,7 @@ if st.button("Build export bundle", type="primary"):
             model_type=get_state("model_type", "shared"),
             outcome_definitions=get_state("outcome_definitions"),
             funnel_links=get_state("funnel_links"),
+            media_outcome_pathways=get_state("media_outcome_pathways"),
         )
     st.success(f"Project bundle built: {output_path}")
     with open(output_path, "rb") as f:
@@ -122,6 +124,7 @@ if uploaded_zip is not None and st.button("Import bundle"):
         set_state("model_type", imported["model_type"])
         set_state("outcome_definitions", imported["outcome_definitions"])
         set_state("funnel_links", imported["funnel_links"])
+        set_state("media_outcome_pathways", imported["media_outcome_pathways"])
         if imported["market_spec_config"] is None:
             st.caption(
                 "This bundle predates the market-specific redesign - no market descriptors or "
@@ -169,6 +172,16 @@ if get_state("trace") is not None and get_state("model_spec"):
         resolve_outcome_definitions(get_state("outcome_definitions"), _export_spec.segment_outcomes, _export_spec.segment_ltv),
         get_state("model_meta"),
     )
+    _current_pathways = [MediaOutcomePathway.from_dict(p) for p in (get_state("media_outcome_pathways") or [])]
+    _pathway_drift_df = pathways_drift_dataframe(_current_pathways, get_state("model_meta"))
+    if not _pathway_drift_df.empty:
+        _changed_pathways = _pathway_drift_df[_pathway_drift_df["drift_status"] != "Fitted and current"]
+        if not _changed_pathways.empty:
+            st.info(
+                f"{len(_changed_pathways)} media-outcome pathway(s) differ from this fit's captured "
+                "pathway metadata (informational only - the pathway catalogue does not yet drive "
+                "fitting; PR F)."
+            )
     if model_type_for_export == "shared":
         st.caption("Curve bank, total-FH contribution and segment x channel Shapley attribution (Model A).")
     else:

@@ -113,6 +113,7 @@ def fingerprint_model_spec(
     direct_dna_outcome_ids: Optional[List[str]] = None,
     outcome_catalogue: Optional[List[Dict[str, Any]]] = None,
     funnel_links: Optional[List[Dict[str, Any]]] = None,
+    media_outcome_pathways: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     """
     Fingerprint the full set of inputs that determine how the model is
@@ -171,14 +172,24 @@ def fingerprint_model_spec(
     (upstream_outcome_id, downstream_outcome_id) here defensively, `[]` when
     omitted.
 
+    `media_outcome_pathways` (PR F - `core.pathways.MediaOutcomePathway`s,
+    pass `core.pathways.pathway_catalogue_fingerprint_payload(pathways)`) is,
+    like `funnel_links`, configuration that does not (yet) change what gets
+    fitted - no model equation reads it - but is calculation-*adjacent*
+    metadata a future estimation PR will read, and is captured at fit time
+    (`FHModelMeta.pathway_catalogue_at_fit`) for drift detection the same way
+    the outcome catalogue is. Sorted by `(channel, target_outcome_id)` here
+    defensively, `[]` when omitted.
+
     Note: adding `pipeline_steps`, `market_spec_config`,
-    `direct_dna_outcome_ids`, `outcome_catalogue` and `funnel_links` to this
-    payload is an intentional breaking change to every fingerprint this
-    function produces, including for callers who pass none of them (the
-    payload always carries `"pipeline_steps": []`, `"market_relevant_config":
-    {}`, `"direct_dna_outcome_ids": []`, `"outcome_catalogue": []` and
-    `"funnel_links": []` keys now) - the same pattern used when `model_type`
-    was added (docs/decision_log.md).
+    `direct_dna_outcome_ids`, `outcome_catalogue`, `funnel_links` and
+    `media_outcome_pathways` to this payload is an intentional breaking
+    change to every fingerprint this function produces, including for
+    callers who pass none of them (the payload always carries
+    `"pipeline_steps": []`, `"market_relevant_config": {}`,
+    `"direct_dna_outcome_ids": []`, `"outcome_catalogue": []`,
+    `"funnel_links": []` and `"media_outcome_pathways": []` keys now) - the
+    same pattern used when `model_type` was added (docs/decision_log.md).
     Every pre-existing approval is invalidated by upgrading to this version,
     which is correct: an approval bound to a fingerprint that didn't cover
     the transformation recipe, media-unit/currency config, DNA-kit outcome
@@ -205,6 +216,10 @@ def fingerprint_model_spec(
         "funnel_links": (
             sorted(funnel_links, key=lambda link: (link.get("upstream_outcome_id", ""), link.get("downstream_outcome_id", "")))
             if funnel_links else []
+        ),
+        "media_outcome_pathways": (
+            sorted(media_outcome_pathways, key=lambda p: (p.get("channel", ""), p.get("target_outcome_id", "")))
+            if media_outcome_pathways else []
         ),
     }
     blob = _canonical_json(payload)

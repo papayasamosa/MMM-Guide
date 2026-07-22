@@ -300,6 +300,30 @@ def test_legacy_bundle_without_funnel_links_imports_with_none(tmp_path, sample_p
     assert imported["funnel_links"] is None
 
 
+def test_export_then_import_reproduces_media_outcome_pathways(tmp_path, sample_project):
+    from ancestry_mmm.core.pathways import MediaOutcomePathway
+
+    pathways = [
+        MediaOutcomePathway(channel="DNA_Media", source_product="DNA", target_outcome_id="dna_new_kit").to_dict(),
+    ]
+    sample_project = dict(sample_project)
+    sample_project["media_outcome_pathways"] = pathways
+
+    output_path = export_project(tmp_path / "bundle.zip", **sample_project)
+    imported = import_project(output_path)
+
+    assert imported["media_outcome_pathways"] == pathways
+
+
+def test_legacy_bundle_without_media_outcome_pathways_imports_with_none(tmp_path, sample_project):
+    """A bundle exported before PR F has no media_outcome_pathways.json -
+    import must not fail, and None must mean "no pathway catalogue
+    configured", not an error."""
+    output_path = export_project(tmp_path / "bundle.zip", **sample_project)
+    imported = import_project(output_path)
+    assert imported["media_outcome_pathways"] is None
+
+
 def test_promotion_event_pipeline_steps_reproduce_derived_columns_on_import(tmp_path, sample_project):
     """PR E.2 #11 - "re-importing a project must reproduce the same derived
     columns from raw data. Do not rely only on the already-mutated
