@@ -50,6 +50,7 @@ import arviz as az
 from .approval import ModelApproval
 from .fingerprint import fingerprint_dataframe, fingerprint_model_spec, fingerprint_posterior
 from .hierarchical_model import FHModelMeta
+from .outcomes import outcome_catalogue_fingerprint_payload
 from .predict import extract_posterior_params
 from .schema import ModelSpec
 from .optimization import SpendConstraint
@@ -384,11 +385,20 @@ def verify_imported_approval(
 
     model_meta = reconstructed.get("model_meta")
     data_fp = fingerprint_dataframe(frame["df"])
+    # Fingerprint the exact outcome catalogue this model was fit against
+    # (model_meta.outcome_catalogue_at_fit, restored to OutcomeDefinition
+    # instances by reconstruct_model_state), not the imported project's
+    # *current* outcome_definitions - those can differ (e.g. re-edited on
+    # Structure page since the fit) and would make a verified-valid approval
+    # wrongly appear mismatched, or a genuinely stale one wrongly appear to
+    # still match.
+    outcome_catalogue_at_fit = getattr(model_meta, "outcome_catalogue_at_fit", None) or []
     spec_fp = fingerprint_model_spec(
         imported.get("model_spec") or {}, imported.get("prior_config") or {}, imported.get("dna_lag_weeks", 4),
         model_type=imported.get("model_type", "shared"),
         pipeline_steps=imported.get("pipeline_steps") or [], market_spec_config=imported.get("market_spec_config"),
         direct_dna_outcome_ids=model_meta.direct_dna_outcome_ids if model_meta is not None else None,
+        outcome_catalogue=outcome_catalogue_fingerprint_payload(outcome_catalogue_at_fit),
     )
     posterior_fp = fingerprint_posterior(posterior_params)
     current_run_id = imported.get("model_run_id") or approval.model_run_id

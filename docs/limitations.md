@@ -113,11 +113,11 @@
   operates in spend terms only; there's no dedicated "locked media units" constraint type.
 - CPA/inflation are not first-class optimiser objectives - "minimise CPA," "maintain response/
   delivery under inflation" from the original redesign brief aren't built; `objective` is explicit
-  (`core.optimization.VALID_OBJECTIVES`: `"fh_gsa"`, `"dna_kits"`, `"weighted_mix"`,
-  `"expected_value"` - no generic "maximise volume" that would mix FH GSAs and DNA kits), with
-  `avg_cpa`/`dna_avg_cpa` reported as output metrics only. `"weighted_mix"` and per-outcome
-  `target_outcome_ids` are implemented in `core.optimization` but not yet exposed as UI controls on
-  the Scenario Planner page.
+  (`core.optimization.VALID_OBJECTIVES`: `"fh_gsa"`, `"fh_signups"`, `"dna_kits"`, `"weighted_mix"`,
+  `"expected_value"` - no generic "maximise volume" that would mix FH GSAs, FH sign-ups and DNA kits),
+  with `avg_cpa`/`fh_signup_avg_cpa`/`dna_avg_cpa` reported as output metrics only. `"weighted_mix"`
+  and per-outcome `target_outcome_ids` are implemented in `core.optimization` but not yet exposed as
+  UI controls on the Scenario Planner page.
 - Media-unit curve bank entries (`input_type="media_unit"`) are only auto-saved for a
   market-specific fit - a shared curve's cost-per-unit context is inherently market-specific with no
   single market to attribute it to, so it's shown in the UI (for a chosen reference market) but not

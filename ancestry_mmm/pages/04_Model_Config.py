@@ -138,13 +138,19 @@ if excluded_dna_outcomes:
 if dna_kit_outcomes:
     st.info(
         f"DNA outcomes mapped on Structure will be included in this fit: {', '.join(dna_kit_outcomes)}. "
-        "DNA-targeted media gets full direct response on these segments, same as the FH DNA-cross-sell "
-        "segment - see docs/dna_fh_causal_structure.md."
+        "DNA-targeted media gets full direct response on these outcomes, same as the FH DNA-cross-sell "
+        "outcome - see docs/dna_fh_causal_structure.md."
     )
 else:
     st.caption(
         "No DNA outcomes mapped (or their columns aren't in the current data) - fitting Family "
         "History segments only. Map DNA kit columns on Structure: Segments & Markets to include them."
+    )
+if spec.dna_channels and not spec.fh_dna_cross_sell_outcome_id:
+    st.warning(
+        "DNA-targeted media is configured but no FH DNA cross-sell outcome was selected on the "
+        "Structure page - Model Training will fail to fit until one is chosen there (automatic "
+        "name-based inference is no longer used for a live fit)."
     )
 
 if st.button("Prepare modelling frame", type="primary"):

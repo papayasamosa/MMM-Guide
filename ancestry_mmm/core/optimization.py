@@ -18,9 +18,9 @@ steady-state, so a month's expected outcome is a closed-form function of
 that month's channel spend - no MCMC in the optimisation loop.
 
 Works against either model type (Phase 3c) via `model_type`: `"shared"`
-(Model A, the default - `steady_state_segment_response`, `params` an
+(Model A, the default - `steady_state_outcome_response`, `params` an
 `FHPosteriorParams`) or `"market_specific"` (Model C -
-`steady_state_segment_response_market_specific`, `params` an
+`steady_state_outcome_response_market_specific`, `params` an
 `FHMarketSpecificPosteriorParams`). Both functions have the identical
 `(market, spend_by_channel, meta, params, reference_context) -> {outcome_id:
 rate}` contract - `market` already selects the right market-specific
@@ -51,8 +51,9 @@ from scipy.optimize import minimize, LinearConstraint
 
 from .approval import ModelApproval, require_matching_approval
 from .hierarchical_model import FHModelMeta
-from .predict import FHPosteriorParams, steady_state_segment_response
-from .market_specific_predict import FHMarketSpecificPosteriorParams, steady_state_segment_response_market_specific
+from .outcomes import fh_gsa_outcome_ids, fh_signup_outcome_ids, dna_kit_sale_outcome_ids, select_outcome_ids
+from .predict import FHPosteriorParams, steady_state_outcome_response
+from .market_specific_predict import FHMarketSpecificPosteriorParams, steady_state_outcome_response_market_specific
 
 WEEKS_PER_MONTH = 365.25 / 12 / 7  # ~4.348
 
@@ -62,7 +63,7 @@ AnyPosteriorParams = Union[FHPosteriorParams, FHMarketSpecificPosteriorParams]
 def _steady_state_response_fn(model_type: str):
     if model_type not in ("shared", "market_specific"):
         raise ValueError(f"model_type must be 'shared' or 'market_specific', got {model_type!r}")
-    return steady_state_segment_response_market_specific if model_type == "market_specific" else steady_state_segment_response
+    return steady_state_outcome_response_market_specific if model_type == "market_specific" else steady_state_outcome_response
 
 
 # ---------------------------------------------------------------------------
@@ -91,28 +92,35 @@ def evaluate_scenario(
     steady-state rate x weeks/month) and LTV-weighted value if `ltv` is given.
     `ltv` is keyed by outcome_id.
 
-    Product-aware, same denominator discipline as
-    core.media_units.compute_cpa_by_product: `meta.kit_only_outcome_ids` are
-    DNA kit sales, every other outcome_id (including `dna_outcome_id`, the FH
-    DNA-cross-sell outcome) is a Family History outcome - see
-    docs/dna_fh_causal_structure.md. Each row repeats these month-level
-    totals (same "duplicated scalar per outcome_id row" shape `total_spend`
-    already used):
+    Metric-aware (PR E.1), same denominator discipline as
+    core.media_units.compute_cpa_by_product: `fh_gsa`/`fh_signups`/`dna_kits`
+    are each summed via `core.outcomes.fh_gsa_outcome_ids`/
+    `fh_signup_outcome_ids`/`dna_kit_sale_outcome_ids` - explicit
+    product+metric selectors, never "every outcome_id that isn't a DNA-kit
+    outcome" (the confirmed defect this replaces: that would silently sum a
+    Family History sign-up outcome into what's labelled `fh_gsa`). Each row
+    repeats these month-level totals (same "duplicated scalar per outcome_id
+    row" shape `total_spend` already used):
 
-    - `fh_gsa` / `dna_kits`: that month's total predicted FH units / DNA
-      kits, each summed only over its own product's outcome_ids - never
-      combined.
-    - `avg_cpa`: `total_spend / fh_gsa` (`None` where `fh_gsa` is zero or
-      negative, same "never compute CPA on a non-positive base" rule as
-      core.media_units.compute_cpa). Family-History-scoped - this replaces
-      the previous behaviour, which divided total spend by predicted units
-      summed across *every* outcome_id including DNA kit outcomes, silently
-      mixing two different units into one CPA number.
-    - `dna_avg_cpa`: `total_spend / dna_kits`, `None` where `dna_kits` is
-      zero/negative or the model has no DNA-kit outcomes at all.
-    - `total_value`: that month's LTV-weighted value summed across every
-      outcome_id (safe to combine across products - LTV already expresses
-      both in the same currency unit, unlike a raw GSA/kit count).
+    - `fh_gsa` / `fh_signups` / `dna_kits`: that month's total predicted
+      units for each named metric, never combined with each other.
+    - `avg_cpa` (alias `cost_per_fh_gsa`): `total_spend / fh_gsa` (`None`
+      where `fh_gsa` is zero or negative, same "never compute CPA on a
+      non-positive base" rule as core.media_units.compute_cpa).
+    - `fh_signup_avg_cpa` (alias `cost_per_fh_signup`): `total_spend /
+      fh_signups`, `None` where `fh_signups` is zero/negative or the model
+      has no sign-up outcomes.
+    - `dna_avg_cpa` (alias `cost_per_dna_kit`): `total_spend / dna_kits`,
+      `None` where `dna_kits` is zero/negative or the model has no DNA-kit
+      outcomes at all.
+    - `value`/`total_value`: LTV-weighted value. A missing `ltv` entry for
+      an outcome_id is NEVER silently treated as weight 1.0 (the confirmed
+      defect this replaces - that could turn a raw sign-up/GSA/kit count
+      into a fake common-currency total) - that outcome_id's `value` is
+      `None` and it is excluded from `total_value`, which is flagged via
+      `total_value_is_complete=False` whenever any outcome_id that month
+      had no value weight, so a caller can show an explicit
+      incomplete-value warning rather than silently under/over-counting.
 
     `model_type` selects which model's steady-state response function
     drives the evaluation - `"shared"` (Model A, default) or
@@ -131,29 +139,54 @@ def evaluate_scenario(
     )
     response_fn = _steady_state_response_fn(model_type)
     ltv = ltv or {}
+    gsa_ids = set(fh_gsa_outcome_ids(meta))
+    signup_ids = set(fh_signup_outcome_ids(meta))
+    dna_ids = set(dna_kit_sale_outcome_ids(meta))
     rows = []
     for month, spend_by_channel in spend_plan.items():
         ref = reference_context_by_month.get(month, {})
         weekly_rate = response_fn(market, spend_by_channel, meta, params, ref)
         total_spend = sum(spend_by_channel.values())
         monthly_outcome_by_id = {oid: rate * WEEKS_PER_MONTH for oid, rate in weekly_rate.items()}
-        dna_kits = sum(v for oid, v in monthly_outcome_by_id.items() if oid in meta.kit_only_outcome_ids)
-        fh_gsa = sum(v for oid, v in monthly_outcome_by_id.items() if oid not in meta.kit_only_outcome_ids)
+        fh_gsa = sum(v for oid, v in monthly_outcome_by_id.items() if oid in gsa_ids)
+        fh_signups = sum(v for oid, v in monthly_outcome_by_id.items() if oid in signup_ids)
+        dna_kits = sum(v for oid, v in monthly_outcome_by_id.items() if oid in dna_ids)
         avg_cpa = (total_spend / fh_gsa) if fh_gsa > 0 else None
+        fh_signup_avg_cpa = (total_spend / fh_signups) if fh_signups > 0 else None
         dna_avg_cpa = (total_spend / dna_kits) if dna_kits > 0 else None
-        total_value = sum(v * ltv.get(oid, 1.0) for oid, v in monthly_outcome_by_id.items())
+        if ltv:
+            # A *partial* ltv (some outcome_ids priced, others not) is the
+            # confirmed defect: a missing entry must never be silently
+            # treated as weight 1.0. `total_value_is_complete=False` flags
+            # exactly this case for the caller to warn about.
+            total_value_is_complete = all(oid in ltv for oid in monthly_outcome_by_id)
+            total_value = sum(v * ltv[oid] for oid, v in monthly_outcome_by_id.items() if oid in ltv)
+        else:
+            # No value weights given at all is not the defect above - it is
+            # the documented "no $-weighting requested" case, where `value`
+            # is simply the raw predicted units (uniform weight 1.0),
+            # unchanged from this function's behaviour before PR E.1.
+            total_value_is_complete = True
+            total_value = sum(monthly_outcome_by_id.values())
         for oid, monthly_outcome in monthly_outcome_by_id.items():
+            value = (monthly_outcome * ltv[oid] if oid in ltv else None) if ltv else monthly_outcome
             rows.append({
                 "month": month,
                 "outcome_id": oid,
                 "predicted_outcome": monthly_outcome,
-                "value": monthly_outcome * ltv.get(oid, 1.0),
+                "value": value,
                 "total_spend": total_spend,
                 "fh_gsa": fh_gsa,
+                "fh_signups": fh_signups,
                 "dna_kits": dna_kits,
                 "avg_cpa": avg_cpa,
+                "cost_per_fh_gsa": avg_cpa,
+                "fh_signup_avg_cpa": fh_signup_avg_cpa,
+                "cost_per_fh_signup": fh_signup_avg_cpa,
                 "dna_avg_cpa": dna_avg_cpa,
+                "cost_per_dna_kit": dna_avg_cpa,
                 "total_value": total_value,
+                "total_value_is_complete": total_value_is_complete,
             })
     return pd.DataFrame(rows)
 
@@ -276,7 +309,7 @@ def build_bounds_and_constraints(
 # Optimiser
 # ---------------------------------------------------------------------------
 
-VALID_OBJECTIVES = ("fh_gsa", "dna_kits", "weighted_mix", "expected_value")
+VALID_OBJECTIVES = ("fh_gsa", "fh_signups", "dna_kits", "weighted_mix", "expected_value")
 
 
 def _objective_weight(
@@ -294,39 +327,69 @@ def _objective_weight(
     there is no "maximise everything, whatever unit it's in" option, and an
     outcome_id outside the objective's scope gets weight 0 (excluded), never
     an implicit 1 (silently counted as if it were the same unit as
-    everything else - the confirmed defect this replaces).
+    everything else - the confirmed defect this replaces: `"fh_gsa"` used to
+    mean "every outcome_id that isn't a DNA-kit outcome", which would
+    silently fold a Family History sign-up outcome into a GSA objective).
 
-    - `"fh_gsa"`: Family History outcomes - every outcome_id except
-      `meta.kit_only_outcome_ids`, or just `target_outcome_ids` if given
-      (e.g. a single FH outcome - "maximise FH New GSA").
-    - `"dna_kits"`: DNA kit sales - `meta.kit_only_outcome_ids`, or just
-      `target_outcome_ids` if given. Raises if the model has none.
+    - `"fh_gsa"`: Family History GSA outcomes - `core.outcomes.fh_gsa_outcome_ids`
+      (product=Family History, metric=GSA), or just `target_outcome_ids` if
+      given (e.g. a single FH outcome - "maximise FH New GSA").
+    - `"fh_signups"`: Family History sign-up outcomes -
+      `core.outcomes.fh_signup_outcome_ids` (product=Family History,
+      metric=Sign-up), or just `target_outcome_ids` if given. Raises if the
+      model has none - distinct from `"fh_gsa"` even when both share a
+      segment.
+    - `"dna_kits"`: DNA kit sales - `core.outcomes.dna_kit_sale_outcome_ids`,
+      or just `target_outcome_ids` if given. Raises if the model has none.
     - `"weighted_mix"`: an analyst-supplied per-outcome_id `weights` dict -
       required explicitly; there is no default mix to fall back to.
-    - `"expected_value"`: LTV-weighted total value across every outcome_id -
-      requires `ltv` (this is exactly what `ltv` is for).
+    - `"expected_value"`: LTV-weighted total value across every eligible
+      (role="primary", or just `target_outcome_ids` if given) outcome_id -
+      requires `ltv` to have a finite, non-negative entry for every one of
+      them. Fails closed (raises) rather than silently treating a missing
+      weight as 0 or 1 - the confirmed "missing value_weight defaults to
+      1.0" defect this replaces.
     """
     if objective not in VALID_OBJECTIVES:
         raise ValueError(
             f"objective must be one of {VALID_OBJECTIVES}, got {objective!r}. Generic unlabelled "
             "volume optimisation is not supported here - it would silently combine Family History "
-            "GSAs and DNA kit sales into one meaningless total."
+            "GSAs, sign-ups and DNA kit sales into one meaningless total."
         )
     if objective == "fh_gsa":
-        eligible = set(target_outcome_ids) if target_outcome_ids else (set(meta.outcome_ids) - set(meta.kit_only_outcome_ids))
+        eligible = set(target_outcome_ids) if target_outcome_ids else set(fh_gsa_outcome_ids(meta))
+        return {s: 1.0 for s in eligible}
+    if objective == "fh_signups":
+        eligible = set(target_outcome_ids) if target_outcome_ids else set(fh_signup_outcome_ids(meta))
+        if not eligible:
+            raise ValueError("objective='fh_signups' but this model has no Family History sign-up outcomes.")
         return {s: 1.0 for s in eligible}
     if objective == "dna_kits":
-        eligible = set(target_outcome_ids) if target_outcome_ids else set(meta.kit_only_outcome_ids)
+        eligible = set(target_outcome_ids) if target_outcome_ids else set(dna_kit_sale_outcome_ids(meta))
         if not eligible:
-            raise ValueError("objective='dna_kits' but this model has no DNA-kit outcomes (meta.kit_only_outcome_ids is empty).")
+            raise ValueError("objective='dna_kits' but this model has no DNA-kit outcomes.")
         return {s: 1.0 for s in eligible}
     if objective == "weighted_mix":
         if not weights:
             raise ValueError("objective='weighted_mix' requires an explicit weights={outcome_id: weight} dict - there is no default mix.")
         return weights
+    # objective == "expected_value"
     if not ltv:
         raise ValueError("objective='expected_value' requires ltv={outcome_id: value} - it is the LTV-weighted total across every outcome_id.")
-    return ltv
+    eligible = set(target_outcome_ids) if target_outcome_ids else set(select_outcome_ids(meta, role="primary"))
+    missing = sorted(oid for oid in eligible if oid not in ltv)
+    if missing:
+        raise ValueError(
+            f"objective='expected_value' requires a value weight for every eligible outcome_id, but "
+            f"{missing} have none in ltv - a missing weight must never be silently treated as 0 or 1. "
+            "Provide ltv entries for all of them, or pass target_outcome_ids to restrict the objective."
+        )
+    invalid = sorted(oid for oid in eligible if not (isinstance(ltv[oid], (int, float)) and np.isfinite(ltv[oid]) and ltv[oid] >= 0))
+    if invalid:
+        raise ValueError(
+            f"objective='expected_value' requires finite, non-negative value weights; invalid for: {invalid}."
+        )
+    return {oid: ltv[oid] for oid in eligible}
 
 
 def _objective_factory(
@@ -481,13 +544,15 @@ def compare_scenarios(scenarios: List[Dict], predicted_key: str = "predicted") -
     """
     Compare total predicted value/volume and spend across saved scenarios.
 
-    `total_value` is safe to sum directly from `pred["value"]` (genuinely
-    per-outcome_id, not duplicated across rows) - LTV already expresses every
-    outcome_id in the same currency unit. `total_gsa`, by contrast, would sum
-    Family History outcomes and DNA kit sales into one meaningless count if
-    any scenario has DNA-kit outcomes - split into `total_fh_gsa`/
-    `total_dna_kits` instead (never combined), same product-aware discipline
-    as core.optimization.evaluate_scenario. `fh_gsa`/`dna_kits` are
+    `total_value` sums `pred["value"]` skipping any row with no value weight
+    (`value is None` - see evaluate_scenario's docstring) - `total_value_is_complete`
+    is `False` if any scenario-month had an incomplete-coverage row, so a
+    caller can flag the total as a partial sum rather than presenting it as
+    exact. `total_gsa` would sum Family History outcomes, sign-ups and DNA
+    kit sales into one meaningless count if combined - split into
+    `total_fh_gsa`/`total_fh_signups`/`total_dna_kits` instead (never
+    combined), same metric-aware discipline as
+    core.optimization.evaluate_scenario. `fh_gsa`/`fh_signups`/`dna_kits` are
     month-level totals *duplicated* across every outcome_id row within a
     month (see evaluate_scenario's docstring), so they're deduplicated by
     month before summing across a scenario's months - directly summing them
@@ -500,18 +565,26 @@ def compare_scenarios(scenarios: List[Dict], predicted_key: str = "predicted") -
         total_spend = sum(sum(ch.values()) for ch in s["spend_plan"].values())
         has_product_split = "fh_gsa" in pred.columns and "dna_kits" in pred.columns
         if has_product_split:
-            by_month = pred.groupby("month")[["fh_gsa", "dna_kits"]].first()
+            dedup_cols = ["fh_gsa", "dna_kits"] + (["fh_signups"] if "fh_signups" in pred.columns else [])
+            by_month = pred.groupby("month")[dedup_cols].first()
             total_fh_gsa = float(by_month["fh_gsa"].sum())
+            total_fh_signups = float(by_month["fh_signups"].sum()) if "fh_signups" in dedup_cols else 0.0
             total_dna_kits = float(by_month["dna_kits"].sum())
         else:
             total_fh_gsa = float(pred["predicted_outcome"].sum())
+            total_fh_signups = 0.0
             total_dna_kits = 0.0
+        total_value_is_complete = (
+            bool(pred["total_value_is_complete"].all()) if "total_value_is_complete" in pred else True
+        )
         rows.append({
             "scenario": s["name"],
             "market": s.get("market"),
             "total_spend": total_spend,
             "total_value": pred["value"].sum() if "value" in pred else np.nan,
+            "total_value_is_complete": total_value_is_complete,
             "total_fh_gsa": total_fh_gsa,
+            "total_fh_signups": total_fh_signups,
             "total_dna_kits": total_dna_kits,
         })
     return pd.DataFrame(rows)

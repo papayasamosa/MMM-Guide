@@ -10,11 +10,13 @@ import streamlit as st
 from ancestry_mmm.utils import init_session_state, get_state, set_state, clear_model_state, readable_label, FIELD_HELP, dataframe_column_config
 from ancestry_mmm.components import apply_theme, render_sidebar, render_page_header, render_next_step, render_empty_state
 from ancestry_mmm.core.schema import ModelSpec, DEFAULT_SEGMENTS
-from dataclasses import replace as dataclass_replace
 
 from ancestry_mmm.core.outcomes import (
     DNA_SEGMENT_NEW, DNA_SEGMENT_EXISTING_FH, DNA_SEGMENT_COMBINED,
-    fh_outcomes_from_spec, dna_outcomes_from_columns, validate_outcome_definitions, outcomes_to_dataframe,
+    FAMILY_HISTORY, KNOWN_PRODUCTS, OUTCOME_ROLES, METRIC_GSA, METRIC_SIGNUP, METRIC_KIT_SALE,
+    OutcomeDefinition, fh_outcomes_from_spec, dna_outcomes_from_columns,
+    validate_outcome_definitions, outcomes_to_dataframe,
+    validate_fh_dna_cross_sell_outcome_id, infer_legacy_fh_dna_cross_sell_outcome_id,
 )
 from ancestry_mmm.core.promotions import PromotionEvent, validate_promotion_events, apply_promotion_events_to_frame
 from ancestry_mmm.data import validate_modeling_frame, detect_column_types
@@ -81,8 +83,6 @@ for i in range(n_segments):
     if key:
         segment_outcomes[key] = col
 
-dna_segment_guess = next((s for s in segment_outcomes if "dna" in s.lower()), None)
-
 st.markdown("---")
 st.markdown("### Media channels")
 spend_hint_cols = [c for c in numeric_cols if c not in segment_outcomes.values()]
@@ -142,11 +142,12 @@ for seg in segment_outcomes:
 st.markdown("---")
 st.markdown("### DNA outcomes (optional)")
 st.info(
-    "DNA kit purchases are a separate business outcome from the FH DNA-cross-sell signup GSA above "
-    "- map them here so they're captured and, once mapped, **automatically included in the joint "
-    "model fit** on Model Configuration/Training: DNA-targeted media gets full direct response on "
-    "these segments (not the shrunk halo pathway other segments get) - see "
-    "docs/dna_fh_causal_structure.md. Skip this if you don't have the columns yet."
+    "DNA kit purchases are a separate business outcome (product='DNA', metric='Kit sale') from any "
+    "Family History outcome above - a kit sale is never the same KPI as an FH sign-up or an FH GSA, "
+    "even for the DNA cross-sell segment. Map them here so they're captured and, once mapped, "
+    "**automatically included in the joint model fit** on Model Configuration/Training: DNA-targeted "
+    "media gets full direct response on these outcomes (not the shrunk halo pathway other outcomes "
+    "get) - see docs/dna_fh_causal_structure.md. Skip this if you don't have the columns yet."
 )
 dna_mode = st.radio(
     "Data available for DNA kit purchases",
@@ -179,24 +180,6 @@ if dna_existing_col:
     dna_segment_names.append(DNA_SEGMENT_EXISTING_FH)
 if dna_combined_col:
     dna_segment_names.append(DNA_SEGMENT_COMBINED)
-
-# Fixed outcome_id per DNA segment, matching core.outcomes.dna_outcomes_from_columns
-# exactly - lets "excluded" be a genuinely separate state from "not mapped
-# at all": a DNA outcome can be captured, validated, and shown in the
-# catalogue without being committed to the next fit.
-_DNA_SEGMENT_OUTCOME_ID = {
-    DNA_SEGMENT_NEW: "dna_new_kit", DNA_SEGMENT_EXISTING_FH: "dna_existing_fh_kit", DNA_SEGMENT_COMBINED: "dna_combined_kit",
-}
-excluded_dna_segments = []
-if dna_segment_names:
-    excluded_dna_segments = st.multiselect(
-        "Exclude these DNA outcomes from the next fit",
-        dna_segment_names, key="excluded_dna_segments",
-        help="A genuinely separate state from not mapping a column at all - an excluded DNA "
-        "outcome is still captured and validated here, just not included the next time the "
-        "modelling frame is prepared, until un-excluded.",
-    )
-excluded_outcome_ids = [_DNA_SEGMENT_OUTCOME_ID[s] for s in excluded_dna_segments]
 
 dna_promo_cols = {}
 dna_segment_control_cols = {}
@@ -242,6 +225,75 @@ else:
     dna_promo_events_df = pd.DataFrame()
 
 st.markdown("---")
+st.markdown("### Outcome catalogue")
+st.caption(
+    "The general editor for what this project actually fits - one row per measurable outcome, not "
+    "one weekly GSA column per segment. A sign-up KPI and a GSA KPI on the same segment are two "
+    "separate rows here, each with its own `outcome_id`, `metric` and `unit`, so they are fit as "
+    "fully independent outcomes - never combined anywhere downstream just because they share a "
+    "`segment` (docs/outcomes.md). Seeded from the FH segment and DNA mappings above; add, edit, or "
+    "remove rows freely - this table, not the mappings above, is what gets saved. `included_in_fit` "
+    "replaces the old 'exclude from next fit' control: unchecking a row here has the identical "
+    "effect (still captured and validated, just held back from the next fit) but is a genuinely "
+    "persisted property of the outcome, not session-only state."
+)
+_default_outcome_rows = fh_outcomes_from_spec(segment_outcomes, segment_ltv) + dna_outcomes_from_columns(
+    new_customer_column=dna_new_col, existing_fh_column=dna_existing_col, combined_column=dna_combined_col,
+    value_weight_new=dna_new_weight, value_weight_existing=dna_existing_weight, value_weight_combined=dna_combined_weight,
+)
+_default_outcome_df = pd.DataFrame([o.to_dict() for o in _default_outcome_rows]) if _default_outcome_rows else pd.DataFrame(
+    columns=["outcome_id", "product", "segment", "metric", "source_column", "unit", "value_weight",
+             "value_currency", "role", "included_in_fit", "exclusion_reason"]
+)
+if st.button("Reset outcome catalogue to the mappings above", help="Discards any manual edits below and reseeds from the FH segment / DNA mappings above."):
+    st.session_state.pop("outcome_catalogue_editor", None)
+outcome_catalogue_df = st.data_editor(
+    _default_outcome_df,
+    num_rows="dynamic",
+    column_config={
+        "outcome_id": st.column_config.TextColumn("outcome_id", required=True, help="Stable identity - unique per outcome."),
+        "product": st.column_config.SelectboxColumn("product", options=list(KNOWN_PRODUCTS), required=True),
+        "segment": st.column_config.TextColumn("segment", required=True, help="Descriptive customer-segment grouping - not unique."),
+        "metric": st.column_config.TextColumn(
+            "metric", required=True,
+            help=f"What's being counted - e.g. '{METRIC_GSA}', '{METRIC_SIGNUP}', '{METRIC_KIT_SALE}'. "
+            "A sign-up and a GSA must never share a metric value.",
+        ),
+        "source_column": st.column_config.SelectboxColumn("source_column", options=numeric_cols, required=True),
+        "unit": st.column_config.TextColumn("unit", help="Counting unit - defaults from product if left blank."),
+        "value_weight": st.column_config.NumberColumn("value_weight", min_value=0.0, help="Per-unit value (LTV for FH, an analogous per-kit value for DNA)."),
+        "value_currency": st.column_config.TextColumn("value_currency", help="e.g. USD - the currency value_weight is denominated in."),
+        "role": st.column_config.SelectboxColumn("role", options=list(OUTCOME_ROLES), required=True),
+        "included_in_fit": st.column_config.CheckboxColumn("included_in_fit", default=True),
+        "exclusion_reason": st.column_config.TextColumn("exclusion_reason"),
+    },
+    key="outcome_catalogue_editor",
+    width="stretch",
+)
+
+_fh_candidate_ids = [
+    r["outcome_id"] for r in outcome_catalogue_df.to_dict("records")
+    if r.get("outcome_id") and r.get("product") == FAMILY_HISTORY
+]
+_legacy_candidate, _legacy_warning = infer_legacy_fh_dna_cross_sell_outcome_id([
+    OutcomeDefinition.from_dict(r) for r in outcome_catalogue_df.to_dict("records")
+    if r.get("outcome_id") and r.get("product") and r.get("segment") and r.get("metric") and r.get("source_column")
+])
+if _legacy_warning:
+    st.warning(_legacy_warning)
+_cross_sell_options = ["(none)"] + _fh_candidate_ids
+_cross_sell_default = _legacy_candidate if _legacy_candidate in _fh_candidate_ids else "(none)"
+fh_dna_cross_sell_outcome_id = st.selectbox(
+    "FH DNA cross-sell outcome",
+    _cross_sell_options,
+    index=_cross_sell_options.index(_cross_sell_default) if _cross_sell_default in _cross_sell_options else 0,
+    help="Which Family History outcome is the DNA halo pathway's target - required explicitly whenever "
+    "DNA-targeted media is configured above. Automatic name-based inference is not used for a live fit "
+    "(only offered here as a one-time migration suggestion for a legacy project).",
+)
+fh_dna_cross_sell_outcome_id = None if fh_dna_cross_sell_outcome_id == "(none)" else fh_dna_cross_sell_outcome_id
+
+st.markdown("---")
 if st.button("Save structure and validate", type="primary"):
     dna_promotion_events = []
     for row in dna_promo_events_df.to_dict("records"):
@@ -275,24 +327,30 @@ if st.button("Save structure and validate", type="primary"):
         control_cols=control_cols,
         segment_control_cols=merged_segment_control_cols,
         segment_ltv=segment_ltv,
+        fh_dna_cross_sell_outcome_id=fh_dna_cross_sell_outcome_id,
     )
     errors = spec.validate() + promo_event_errors
 
-    outcome_definitions = fh_outcomes_from_spec(segment_outcomes, segment_ltv) + dna_outcomes_from_columns(
-        new_customer_column=dna_new_col, existing_fh_column=dna_existing_col, combined_column=dna_combined_col,
-        value_weight_new=dna_new_weight, value_weight_existing=dna_existing_weight, value_weight_combined=dna_combined_weight,
-    )
-    # Exclusion is a persisted property of each OutcomeDefinition itself
-    # (included_in_fit - PR E), not session-only state - applied here so it
-    # round-trips through export/import and survives to the next fit exactly
-    # as configured, rather than needing to be re-applied from a separate
-    # excluded_outcome_ids list every time the catalogue is used.
-    outcome_definitions = [
-        dataclass_replace(o, included_in_fit=False, exclusion_reason="Excluded on Structure page")
-        if o.outcome_id in excluded_outcome_ids else o
-        for o in outcome_definitions
-    ]
-    errors += validate_outcome_definitions(outcome_definitions)
+    # The outcome catalogue editor above (not the FH segment/DNA mappings)
+    # is the actual saved source of truth (PR E.1) - built from its edited
+    # rows, not re-derived from segment_outcomes/dna_*_col, so an analyst's
+    # added/edited rows (e.g. a distinct sign-up outcome on an FH segment)
+    # are what gets persisted. A blank row added by num_rows="dynamic" but
+    # never filled in is skipped, same convention as the promo-events editor
+    # above.
+    outcome_definitions = []
+    for row in outcome_catalogue_df.to_dict("records"):
+        if not (row.get("outcome_id") and row.get("product") and row.get("segment") and row.get("metric") and row.get("source_column")):
+            continue
+        outcome_definitions.append(OutcomeDefinition.from_dict(row))
+    errors += validate_outcome_definitions(outcome_definitions, available_columns=set(df.columns))
+    errors += validate_fh_dna_cross_sell_outcome_id(fh_dna_cross_sell_outcome_id, outcome_definitions)
+    if dna_channels and not fh_dna_cross_sell_outcome_id:
+        errors.append(
+            "DNA-targeted media is configured but no FH DNA cross-sell outcome is selected above - "
+            "required so the halo pathway has an explicit target (automatic name-based inference is "
+            "no longer used for a live fit)."
+        )
 
     if errors:
         for e in errors:

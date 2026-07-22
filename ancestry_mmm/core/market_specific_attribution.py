@@ -162,7 +162,7 @@ def compute_shapley_contributions_market_specific(
     }
 
 
-def segment_channel_market_summary(
+def outcome_channel_market_summary(
     frame: Dict,
     meta: FHModelMeta,
     params: FHMarketSpecificPosteriorParams,
@@ -173,9 +173,11 @@ def segment_channel_market_summary(
     """
     Market x channel x outcome_id summary: total volume contribution, spend,
     ROAS/CPA, and (if `ltv` given) LTV-weighted value - the Model C
-    equivalent of `core.attribution.segment_channel_summary`, with an added
+    equivalent of `core.attribution.outcome_channel_summary`, with an added
     `market` column since Model C's parameters (and hence contributions)
-    genuinely differ by market. `ltv` is keyed by outcome_id.
+    genuinely differ by market. `ltv` is keyed by outcome_id. Same
+    never-default-a-missing-weight-to-1.0 rule as
+    `core.attribution.outcome_channel_summary` (PR E.1) - see its docstring.
     """
     contributions = contributions or compute_shapley_contributions_market_specific(frame, meta, params, n_permutations)
     ltv = ltv or {}
@@ -189,7 +191,8 @@ def segment_channel_market_summary(
             market_spend = float(frame["X_media"][row_mask, ci].sum())
             for si, oid in enumerate(meta.outcome_ids):
                 vol = float(contributions["channel_contributions"][ch][row_mask, si].sum())
-                value = vol * ltv.get(oid, 1.0)
+                weight = ltv[oid] if oid in ltv else (1.0 if not ltv else np.nan)
+                value = vol * weight
                 rows.append({
                     "market": market,
                     "channel": ch,
@@ -203,6 +206,11 @@ def segment_channel_market_summary(
                     "value_roas": value / market_spend if market_spend > 0 else np.nan,
                 })
     return pd.DataFrame(rows)
+
+
+# Deprecated alias (PR E.1 segment-era rename) - see core.predict's identical
+# alias pattern for steady_state_outcome_response.
+segment_channel_market_summary = outcome_channel_market_summary
 
 
 def total_contribution_market_specific(
@@ -233,7 +241,7 @@ def total_contribution_market_specific(
     (market, channel), so it's taken once per (market, channel) before any
     cross-market summation.
     """
-    summary = segment_channel_market_summary(frame, meta, params, contributions, ltv, n_permutations)
+    summary = outcome_channel_market_summary(frame, meta, params, contributions, ltv, n_permutations)
     if outcome_ids is not None:
         summary = summary[summary["outcome_id"].isin(outcome_ids)]
 

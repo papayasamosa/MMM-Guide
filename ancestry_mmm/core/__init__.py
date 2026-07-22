@@ -28,6 +28,7 @@ from .predict import (
     adstock_saturate_frame,
     lag_frame,
     steady_state_segment_response,
+    steady_state_outcome_response,
     generate_channel_curve,
 )
 from .diagnostics import (
@@ -68,6 +69,7 @@ from .media_units import (
 from .attribution import (
     compute_shapley_contributions,
     segment_channel_summary,
+    outcome_channel_summary,
     total_fh_contribution,
     contribution_waterfall,
     compute_shapley_values,
@@ -119,6 +121,7 @@ from .market_specific_predict import (
     adstock_saturate_frame_market_specific,
     predict_mu_market_specific,
     steady_state_segment_response_market_specific,
+    steady_state_outcome_response_market_specific,
     generate_market_channel_curve,
 )
 from .market_specific_diagnostics import (
@@ -172,6 +175,7 @@ from .uncertainty import (
 from .market_specific_attribution import (
     compute_shapley_contributions_market_specific,
     segment_channel_market_summary,
+    outcome_channel_market_summary,
     total_contribution_market_specific,
 )
 
@@ -205,6 +209,7 @@ __all__ = [
     "adstock_saturate_frame",
     "lag_frame",
     "steady_state_segment_response",
+    "steady_state_outcome_response",
     "generate_channel_curve",
     "compute_scorecard",
     "in_sample_fit",
@@ -235,6 +240,7 @@ __all__ = [
     "calibrations_to_dataframe",
     "compute_shapley_contributions",
     "segment_channel_summary",
+    "outcome_channel_summary",
     "total_fh_contribution",
     "contribution_waterfall",
     "compute_shapley_values",
@@ -276,6 +282,7 @@ __all__ = [
     "adstock_saturate_frame_market_specific",
     "predict_mu_market_specific",
     "steady_state_segment_response_market_specific",
+    "steady_state_outcome_response_market_specific",
     "generate_market_channel_curve",
     "in_sample_fit_market_specific",
     "curve_plausibility_checks_market_specific",
@@ -315,5 +322,6 @@ __all__ = [
     "evaluate_scenario_with_uncertainty",
     "compute_shapley_contributions_market_specific",
     "segment_channel_market_summary",
+    "outcome_channel_market_summary",
     "total_contribution_market_specific",
 ]

@@ -72,17 +72,23 @@ if st.button("Build & fit model", type="primary"):
     dna_lag_weeks = get_state("dna_lag_weeks", 4)
     direct_dna_outcome_ids = get_state("direct_dna_outcome_ids") or None
 
-    with st.spinner("Building model..."):
-        if model_type == "market_specific":
-            model, meta = build_fh_market_specific_model(
-                frame, spec, dna_lag_weeks=dna_lag_weeks, prior_config=prior_config,
-                direct_dna_outcome_ids=direct_dna_outcome_ids,
-            )
-        else:
-            model, meta = build_fh_hierarchical_model(
-                frame, spec, dna_lag_weeks=dna_lag_weeks, prior_config=prior_config,
-                direct_dna_outcome_ids=direct_dna_outcome_ids,
-            )
+    try:
+        with st.spinner("Building model..."):
+            if model_type == "market_specific":
+                model, meta = build_fh_market_specific_model(
+                    frame, spec, dna_lag_weeks=dna_lag_weeks, prior_config=prior_config,
+                    dna_outcome_id=spec.fh_dna_cross_sell_outcome_id,
+                    direct_dna_outcome_ids=direct_dna_outcome_ids,
+                )
+            else:
+                model, meta = build_fh_hierarchical_model(
+                    frame, spec, dna_lag_weeks=dna_lag_weeks, prior_config=prior_config,
+                    dna_outcome_id=spec.fh_dna_cross_sell_outcome_id,
+                    direct_dna_outcome_ids=direct_dna_outcome_ids,
+                )
+    except ValueError as e:
+        st.error(f"Could not build the model: {e} Set the FH DNA cross-sell outcome on the Structure page if needed, and try again.")
+        st.stop()
     st.success(f"Model built ({MODEL_TYPE_LABELS[model_type]}).")
 
     # Read MCMC settings on the main thread: st.session_state (get_state) is

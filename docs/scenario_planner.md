@@ -38,13 +38,17 @@ optimised/theoretical-optimum plan" metrics on each result panel - never a blend
 (FH-GSAs-plus-DNA-kits) number (`docs/dna_fh_causal_structure.md`).
 
 `objective` is explicit (`core.optimization.VALID_OBJECTIVES`): `"fh_gsa"` (default - maximise
-Family History GSAs), `"dna_kits"` (maximise DNA kit sales - only offered where the model has
-DNA-kit segments), `"expected_value"` (LTV-weighted total value, requires `ltv`), or
-`"weighted_mix"` (an analyst-supplied per-segment weight dict - not yet exposed in this UI, core
-support only). There is no generic "maximise volume" objective - it would silently combine Family
-History GSAs and DNA kit sales into one meaningless total (the instruction document's audit-
-confirmed defect this replaced; see `docs/decision_log.md`). A segment outside the chosen
-objective's scope contributes 0 to it, never an implicit 1.
+Family History GSA outcomes only), `"fh_signups"` (maximise Family History sign-up outcomes only -
+only offered where the model has a distinct sign-up outcome; PR E.1), `"dna_kits"` (maximise DNA kit
+sales - only offered where the model has DNA-kit outcomes), `"expected_value"` (LTV-weighted total
+value, requires `ltv` with a complete entry for every eligible outcome - fails closed, never silently
+zero/one-weights a missing one), or `"weighted_mix"` (an analyst-supplied per-segment weight dict - not
+yet exposed in this UI, core support only). There is no generic "maximise volume" objective - it would
+silently combine Family History GSAs, sign-ups and DNA kit sales into one meaningless total (the
+instruction document's audit-confirmed defect this replaced, closed further in PR E.1 - `"fh_gsa"` used
+to also mean "every outcome_id that isn't a DNA-kit outcome", which would have folded a sign-up outcome
+into it; see `docs/decision_log.md`). An outcome outside the chosen objective's scope contributes 0 to
+it, never an implicit 1.
 
 **Not built in this phase:**
 
@@ -54,9 +58,10 @@ objective's scope contributes 0 to it, never an implicit 1.
 - "Minimise CPA," "maintain response under inflation," "maintain delivery under inflation" as
   distinct optimiser objectives - `avg_cpa`/`dna_avg_cpa` are reported as output metrics, not
   (yet) optimisation targets in their own right.
-- `"weighted_mix"` and per-outcome `target_outcome_ids` (e.g. "maximise FH New" only) are implemented
-  in `core.optimization` but not yet exposed as UI controls on this page - the radio only offers
-  `"fh_gsa"`/`"dna_kits"`/`"expected_value"`.
+- `"weighted_mix"` and per-outcome `target_outcome_ids` (e.g. "maximise FH New GSA" only) are
+  implemented in `core.optimization` but not yet exposed as UI controls on this page - the radio
+  offers `"fh_gsa"`/`"fh_signups"`/`"dna_kits"`/`"expected_value"` (each only where the model has a
+  matching outcome).
 - Marginal CPA as a scenario-level metric - the planner's optimiser always conserves total budget
   (`conserve_total_budget=True`), so there's no net spend change to compute a meaningful marginal
   CPA against; the product-aware *average* CPA of the current vs. optimised allocation is the

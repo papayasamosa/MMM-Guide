@@ -12,13 +12,14 @@ from ancestry_mmm.utils import init_session_state, get_state, set_state, curve_b
 from ancestry_mmm.components import apply_theme, render_sidebar, render_page_header, render_next_step, render_empty_state
 from ancestry_mmm.core.approval import ApprovalMismatchError, ModelApproval
 from ancestry_mmm.core.fingerprint import fingerprint_dataframe, fingerprint_model_spec, fingerprint_posterior
+from ancestry_mmm.core.outcomes import fh_gsa_outcome_ids, fh_signup_outcome_ids, dna_kit_sale_outcome_ids, outcome_catalogue_fingerprint_payload
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.market_config import MarketSpecConfig
 from ancestry_mmm.core.attribution import (
-    compute_shapley_contributions, segment_channel_summary, total_fh_contribution, contribution_waterfall,
+    compute_shapley_contributions, outcome_channel_summary, total_fh_contribution, contribution_waterfall,
 )
 from ancestry_mmm.core.market_specific_attribution import (
-    compute_shapley_contributions_market_specific, segment_channel_market_summary, total_contribution_market_specific,
+    compute_shapley_contributions_market_specific, outcome_channel_market_summary, total_contribution_market_specific,
 )
 from ancestry_mmm.core import curve_bank as cb
 from ancestry_mmm.core.evidence_tiers import classify_all_markets
@@ -53,10 +54,11 @@ def _render_curve_with_cpa(curve_df: pd.DataFrame, title: str) -> None:
     st.caption(
         "Average CPA = spend / incremental outcomes; marginal CPA = change in spend / change in "
         "incremental outcomes - both shown together since they diverge near saturation. Left blank "
-        "wherever response (or its change between points) is zero or negative. `avg_cpa`/"
-        "`marginal_cpa` are against Family History GSAs; where this channel also has a mapped "
-        "DNA-kit segment, `dna_avg_cpa`/`dna_marginal_cpa` are shown separately against DNA kit "
-        "sales - the two are never combined into one number (docs/dna_fh_causal_structure.md)."
+        "wherever response (or its change between points) is zero or negative. `avg_cpa` (alias "
+        "`cost_per_fh_gsa`) is against Family History GSA outcomes only; where this channel also has "
+        "a mapped DNA-kit outcome or a distinct FH sign-up outcome, `dna_avg_cpa`/`cost_per_dna_kit` "
+        "and `fh_signup_avg_cpa`/`cost_per_fh_signup` are shown separately - none of the three are "
+        "ever combined into one number (docs/dna_fh_causal_structure.md)."
     )
     st.dataframe(cpa_df, width="stretch", column_config=dataframe_column_config(cpa_df))
     for f in cpa_stability_flags(curve_df)[:5]:
@@ -129,8 +131,12 @@ def _render_media_unit_section(curve_df: pd.DataFrame, market_config: MarketSpec
             key=f"cost_assumption_{key_suffix}",
         )
         has_dna = "dna_response" in curve_df.columns and (curve_df["dna_response"] > 0).any()
+        has_signup = "fh_signup_response" in curve_df.columns and (curve_df["fh_signup_response"] > 0).any()
         fh_response = equivalent_response(target_units2, cost_assumption, curve_df, "fh_response")
         st.metric("Modelled response (Family History GSAs)", f"{fh_response:,.1f}")
+        if has_signup:
+            fh_signup_response = equivalent_response(target_units2, cost_assumption, curve_df, "fh_signup_response")
+            st.metric("Modelled response (Family History sign-ups)", f"{fh_signup_response:,.1f}")
         if has_dna:
             dna_response = equivalent_response(target_units2, cost_assumption, curve_df, "dna_response")
             st.metric("Modelled response (DNA kits)", f"{dna_response:,.1f}")
@@ -160,26 +166,28 @@ if model_type == "market_specific":
         ms_contributions = compute_shapley_contributions_market_specific(frame, meta, params, n_permutations=100)
 
     st.markdown("### Total contribution by channel")
-    dna_kit_outcomes_in_fit = [s for s in meta.direct_dna_outcome_ids if s != meta.dna_outcome_id]
-    fh_outcomes_in_fit = [s for s in meta.outcome_ids if s not in dna_kit_outcomes_in_fit]
-    if dna_kit_outcomes_in_fit:
+    fh_gsa_ids = fh_gsa_outcome_ids(meta)
+    fh_signup_ids = fh_signup_outcome_ids(meta)
+    dna_kit_outcomes_in_fit = dna_kit_sale_outcome_ids(meta)
+    if dna_kit_outcomes_in_fit or fh_signup_ids:
         st.caption(
-            f"Total impact per channel across FH outcomes only ({', '.join(fh_outcomes_in_fit)}) - "
-            f"DNA-product outcomes ({', '.join(dna_kit_outcomes_in_fit)}) are excluded from this total "
-            "since a kit-sale count and a GSA count aren't the same unit; see their own rows in the "
-            "market x outcome x channel detail below."
+            f"Total impact per channel across FH GSA outcomes only ({', '.join(fh_gsa_ids) or '(none)'}) - "
+            f"FH sign-up outcomes ({', '.join(fh_signup_ids) or '(none)'}) and DNA-product outcomes "
+            f"({', '.join(dna_kit_outcomes_in_fit) or '(none)'}) are excluded from this total since a "
+            "sign-up count, a kit-sale count and a GSA count aren't the same unit; see their own rows "
+            "in the market x outcome x channel detail below."
         )
     else:
         st.caption("Total impact per channel across all markets and outcomes, plus LTV-weighted value.")
     by_market_total = st.checkbox("Break totals out by market", value=False)
     ms_total_df = total_contribution_market_specific(
-        frame, meta, params, ms_contributions, ltv, outcome_ids=fh_outcomes_in_fit, by_market=by_market_total,
+        frame, meta, params, ms_contributions, ltv, outcome_ids=fh_gsa_ids, by_market=by_market_total,
     )
     st.dataframe(ms_total_df, width="stretch", column_config=dataframe_column_config(ms_total_df))
 
     st.markdown("---")
     st.markdown("### Market x segment x channel detail")
-    ms_seg_df = segment_channel_market_summary(frame, meta, params, ms_contributions, ltv)
+    ms_seg_df = outcome_channel_market_summary(frame, meta, params, ms_contributions, ltv)
     st.dataframe(ms_seg_df, width="stretch", column_config=dataframe_column_config(ms_seg_df))
 
     st.markdown("---")
@@ -261,23 +269,25 @@ else:
         contributions = compute_shapley_contributions(frame, meta, params, n_permutations=100)
 
     st.markdown("### Total-FH contribution by channel")
-    dna_kit_outcomes_in_fit = [s for s in meta.direct_dna_outcome_ids if s != meta.dna_outcome_id]
-    fh_outcomes_in_fit = [s for s in meta.outcome_ids if s not in dna_kit_outcomes_in_fit]
-    if dna_kit_outcomes_in_fit:
+    fh_gsa_ids = fh_gsa_outcome_ids(meta)
+    fh_signup_ids = fh_signup_outcome_ids(meta)
+    dna_kit_outcomes_in_fit = dna_kit_sale_outcome_ids(meta)
+    if dna_kit_outcomes_in_fit or fh_signup_ids:
         st.caption(
-            f"Total impact per FH channel across FH outcomes only ({', '.join(fh_outcomes_in_fit)}) - "
-            f"DNA-product outcomes ({', '.join(dna_kit_outcomes_in_fit)}) are excluded from this total "
-            "since a kit-sale count and a GSA count aren't the same unit; see their own rows in the "
-            "outcome x channel detail below."
+            f"Total impact per FH channel across FH GSA outcomes only ({', '.join(fh_gsa_ids) or '(none)'}) - "
+            f"FH sign-up outcomes ({', '.join(fh_signup_ids) or '(none)'}) and DNA-product outcomes "
+            f"({', '.join(dna_kit_outcomes_in_fit) or '(none)'}) are excluded from this total since a "
+            "sign-up count, a kit-sale count and a GSA count aren't the same unit; see their own rows "
+            "in the outcome x channel detail below."
         )
     else:
         st.caption("Total impact per channel across all outcomes, plus which outcome that impact falls into and LTV-weighted value.")
-    total_df = total_fh_contribution(frame, meta, params, contributions, ltv, outcome_ids=fh_outcomes_in_fit)
+    total_df = total_fh_contribution(frame, meta, params, contributions, ltv, outcome_ids=fh_gsa_ids)
     st.dataframe(total_df, width="stretch", column_config=dataframe_column_config(total_df))
 
     st.markdown("---")
     st.markdown("### Outcome x channel detail")
-    seg_df = segment_channel_summary(frame, meta, params, contributions, ltv)
+    seg_df = outcome_channel_summary(frame, meta, params, contributions, ltv)
     st.dataframe(seg_df, width="stretch", column_config=dataframe_column_config(seg_df))
 
     st.markdown("---")
@@ -373,6 +383,7 @@ if model_run_id and spec_dict is not None:
             spec_dict, prior_config, dna_lag_weeks, model_type=model_type,
             pipeline_steps=get_state("pipeline_steps") or [], market_spec_config=get_state("market_spec_config"),
             direct_dna_outcome_ids=meta.direct_dna_outcome_ids if meta is not None else None,
+            outcome_catalogue=outcome_catalogue_fingerprint_payload(meta.outcome_catalogue_at_fit) if meta is not None else None,
         ),
         "posterior_fingerprint": fingerprint_posterior(params),
     }

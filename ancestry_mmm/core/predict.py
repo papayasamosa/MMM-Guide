@@ -30,6 +30,7 @@ import arviz as az
 
 from .transformations import geometric_adstock_matrix, hill_function
 from .hierarchical_model import FHModelMeta
+from .outcomes import fh_gsa_outcome_ids, fh_signup_outcome_ids, dna_kit_sale_outcome_ids
 
 
 @dataclass
@@ -226,7 +227,7 @@ def predict_mu(
     return mu
 
 
-def steady_state_segment_response(
+def steady_state_outcome_response(
     market: str,
     spend_by_channel: Dict[str, float],
     meta: FHModelMeta,
@@ -285,6 +286,13 @@ def steady_state_segment_response(
     return {s: float(np.clip(np.exp(v), 1e-6, 1e9)) for s, v in eta.items()}
 
 
+# Deprecated alias (PR E.1 segment-era rename) - kept because this name is
+# part of this module's public API surface (core/__init__.py re-exports it)
+# and may still be imported by external/legacy callers. Prefer
+# steady_state_outcome_response in new code.
+steady_state_segment_response = steady_state_outcome_response
+
+
 def generate_channel_curve(
     channel: str,
     meta: FHModelMeta,
@@ -303,28 +311,35 @@ def generate_channel_curve(
     the curve bank - can work on either model type's curve without
     branching on which one produced it.
 
-    `fh_response`/`dna_response` split `overall_response` by product
-    (docs/dna_fh_causal_structure.md's "never sum kits and GSAs as one
-    volume") - `dna_response` is the sum over `meta.kit_only_outcome_ids`
-    (DNA-product kit-sale outcome_ids, which is exactly the set of
-    outcome_ids with `product == DNA` in the outcome catalogue - see
-    `FHModelMeta.kit_only_outcome_ids`'s docstring), `fh_response` is every
-    other outcome_id (every Family History outcome, including the FH
-    DNA-cross-sell outcome - its response is a GSA/sign-up count, not a kit
-    count, even though DNA media drives it). `overall_response` remains
-    their sum, unchanged in value - it is not removed, since plenty of
-    existing callers (and the curve bank) still want "this channel's total
-    modelled response" as one number when a project has no DNA-kit
-    outcomes at all (the overwhelming majority of curves, where
-    `dna_response` is identically zero and `overall_response == fh_response`).
+    `fh_response`/`fh_signup_response`/`dna_response` split `overall_response`
+    by product AND metric (PR E.1 - docs/dna_fh_causal_structure.md's "never
+    sum kits and GSAs as one volume", extended to "never sum sign-ups and
+    GSAs as one volume" either, since both can now be independently fitted
+    outcome_ids on the same segment): `dna_response` is the sum over
+    outcome_ids with `product == DNA` (`core.outcomes.dna_kit_sale_outcome_ids`),
+    `fh_response` is the sum over outcome_ids with `product == Family History
+    and metric == "GSA"` (`core.outcomes.fh_gsa_outcome_ids`) - NOT "every
+    other outcome_id" as before, which silently included any FH sign-up
+    outcome in what was labelled a GSA total. `fh_signup_response` is the
+    analogous sum for `metric == "Sign-up"`
+    (`core.outcomes.fh_signup_outcome_ids`). `overall_response` remains the
+    sum of every outcome_id regardless of product/metric/role, unchanged in
+    value - it is not removed, since plenty of existing callers (and the
+    curve bank) still want "this channel's total modelled response" as one
+    number; it is never used as a CPA/objective denominator on its own
+    (`core.media_units.compute_cpa` blocks that when the curve genuinely
+    mixes products). For the overwhelming majority of curves (no DNA-kit
+    outcomes, no distinct sign-up outcome), `dna_response`/`fh_signup_response`
+    are identically zero and `overall_response == fh_response`, unchanged
+    from before this split existed.
 
     Steady-state approximation (see module docstring): channels don't
     interact in this model's linear predictor, so a channel's own curve
     doesn't depend on any other channel's spend level - each point is just
     that channel's own Hill saturation curve, scaled by each outcome_id's
     beta (and, for a DNA channel, that outcome_id's direct-plus-halo weight
-    - see steady_state_segment_response). Point estimates only (posterior
-    means), same convention as steady_state_segment_response.
+    - see steady_state_outcome_response). Point estimates only (posterior
+    means), same convention as steady_state_outcome_response.
     """
     if channel not in meta.channels:
         raise ValueError(f"'{channel}' is not one of this model's channels: {meta.channels}")
@@ -336,16 +351,21 @@ def generate_channel_curve(
         spend_range = np.linspace(0.0, cap, n_points)
 
     is_dna = channel in meta.dna_channels
+    gsa_ids = set(fh_gsa_outcome_ids(meta))
+    signup_ids = set(fh_signup_outcome_ids(meta))
+    dna_ids = set(dna_kit_sale_outcome_ids(meta))
     rows = []
     for spend in spend_range:
         sat = float(hill_function(np.array([float(spend)]), K, S)[0])
         row = {"channel": channel, "spend": float(spend), "saturation": sat}
         overall = 0.0
         dna_total = 0.0
+        fh_gsa_total = 0.0
+        fh_signup_total = 0.0
         for oid in meta.outcome_ids:
             beta_val = params.beta[oid][channel]
             if is_dna:
-                # Same steady-state collapse as steady_state_segment_response:
+                # Same steady-state collapse as steady_state_outcome_response:
                 # dna_direct_media and dna_halo_media converge to the same
                 # constant `sat` here, so the two pathways' weights just add.
                 weight = params.halo_strength.get(oid, 0.0) if oid in meta.halo_eligible_outcome_ids else 0.0
@@ -355,11 +375,16 @@ def generate_channel_curve(
             value = beta_val * sat
             row[f"{oid}_response"] = value
             overall += value
-            if oid in meta.kit_only_outcome_ids:
+            if oid in dna_ids:
                 dna_total += value
+            elif oid in gsa_ids:
+                fh_gsa_total += value
+            elif oid in signup_ids:
+                fh_signup_total += value
         row["overall_response"] = overall
         row["dna_response"] = dna_total
-        row["fh_response"] = overall - dna_total
+        row["fh_response"] = fh_gsa_total
+        row["fh_signup_response"] = fh_signup_total
         rows.append(row)
 
     return pd.DataFrame(rows)

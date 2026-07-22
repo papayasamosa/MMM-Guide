@@ -20,6 +20,7 @@ import numpy as np
 import pandas as pd
 
 from .hierarchical_model import FHModelMeta
+from .outcomes import fh_gsa_outcome_ids, fh_signup_outcome_ids, dna_kit_sale_outcome_ids
 from .predict import lag_frame
 from .transformations import geometric_adstock_matrix, hill_function
 
@@ -220,14 +221,14 @@ def predict_mu_market_specific(
     return mu
 
 
-def steady_state_segment_response_market_specific(
+def steady_state_outcome_response_market_specific(
     market: str,
     spend_by_channel: Dict[str, float],
     meta: FHModelMeta,
     params: FHMarketSpecificPosteriorParams,
     reference_context: Optional[Dict] = None,
 ) -> Dict[str, float]:
-    """Market-specific-model equivalent of core.predict.steady_state_segment_response -
+    """Market-specific-model equivalent of core.predict.steady_state_outcome_response -
     same steady-state approximation, using `market`'s own K and beta."""
     reference_context = reference_context or {}
     outcome_ids = meta.outcome_ids
@@ -251,7 +252,7 @@ def steady_state_segment_response_market_specific(
             beta_val = params.beta[market][s][c]
             if c in meta.dna_channels:
                 # Steady-state collapse (dna_direct_media == dna_halo_media
-                # at constant spend) - see core.predict.steady_state_segment_response.
+                # at constant spend) - see core.predict.steady_state_outcome_response.
                 weight = params.halo_strength.get(s, 0.0) if s in meta.halo_eligible_outcome_ids else 0.0
                 if s in meta.direct_dna_outcome_ids:
                     weight += 1.0
@@ -270,6 +271,11 @@ def steady_state_segment_response_market_specific(
     return {s: float(np.clip(np.exp(v), 1e-6, 1e9)) for s, v in eta.items()}
 
 
+# Deprecated alias (PR E.1 segment-era rename) - see core.predict's identical
+# alias for steady_state_outcome_response.
+steady_state_segment_response_market_specific = steady_state_outcome_response_market_specific
+
+
 def generate_market_channel_curve(
     market: str,
     channel: str,
@@ -285,10 +291,13 @@ def generate_market_channel_curve(
     "overall market-level curve" deliverables from docs/market_hierarchy.md
     section 3 and docs/segment_methodology.md's aggregation rule (overall =
     sum of outcome responses, never an independently fitted "Overall"
-    outcome). Also splits `overall_response` by product into `fh_response`/
-    `dna_response` (docs/dna_fh_causal_structure.md's "never sum kits and
-    GSAs as one volume") - see core.predict.generate_channel_curve's
-    docstring for the exact rule (`meta.kit_only_outcome_ids`).
+    outcome). Also splits `overall_response` by product AND metric into
+    `fh_response`/`fh_signup_response`/`dna_response` (PR E.1 -
+    docs/dna_fh_causal_structure.md's "never sum kits and GSAs as one
+    volume", extended to sign-ups vs. GSAs) - see
+    core.predict.generate_channel_curve's docstring for the exact rule
+    (`core.outcomes.fh_gsa_outcome_ids`/`fh_signup_outcome_ids`/
+    `dna_kit_sale_outcome_ids`).
 
     Steady-state approximation (see core.predict module docstring): channels
     don't interact in this model's linear predictor, so a channel's own
@@ -297,7 +306,7 @@ def generate_market_channel_curve(
     outcome_id's beta (and, for a DNA channel, the halo strength).
 
     Point estimates only (posterior means) - matching the existing curve
-    bank/scenario planner convention (core.predict.steady_state_segment_response).
+    bank/scenario planner convention (core.predict.steady_state_outcome_response).
     Credible intervals are explicitly Phase 3 scope (docs/media_units_and_inflation.md).
     """
     if market not in params.hill_K:
@@ -312,12 +321,17 @@ def generate_market_channel_curve(
         spend_range = np.linspace(0.0, cap, n_points)
 
     is_dna = channel in meta.dna_channels
+    gsa_ids = set(fh_gsa_outcome_ids(meta))
+    signup_ids = set(fh_signup_outcome_ids(meta))
+    dna_ids = set(dna_kit_sale_outcome_ids(meta))
     rows = []
     for spend in spend_range:
         sat = float(hill_function(np.array([float(spend)]), K, S)[0])
         row = {"market": market, "channel": channel, "spend": float(spend), "saturation": sat}
         overall = 0.0
         dna_total = 0.0
+        fh_gsa_total = 0.0
+        fh_signup_total = 0.0
         for oid in meta.outcome_ids:
             beta_val = params.beta[market][oid][channel]
             if is_dna:
@@ -328,11 +342,16 @@ def generate_market_channel_curve(
             value = beta_val * sat
             row[f"{oid}_response"] = value
             overall += value
-            if oid in meta.kit_only_outcome_ids:
+            if oid in dna_ids:
                 dna_total += value
+            elif oid in gsa_ids:
+                fh_gsa_total += value
+            elif oid in signup_ids:
+                fh_signup_total += value
         row["overall_response"] = overall
         row["dna_response"] = dna_total
-        row["fh_response"] = overall - dna_total
+        row["fh_response"] = fh_gsa_total
+        row["fh_signup_response"] = fh_signup_total
         rows.append(row)
 
     return pd.DataFrame(rows)

@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 import pytest
 
 from ancestry_mmm.core.approval import ApprovalMismatchError, ModelApproval
@@ -456,4 +457,202 @@ class TestExplicitOptimisationObjectives:
     def test_all_valid_objectives_are_exercised_above(self):
         # Documentation-level check that this test class covers every
         # VALID_OBJECTIVES value, so a future addition doesn't go untested.
-        assert set(VALID_OBJECTIVES) == {"fh_gsa", "dna_kits", "weighted_mix", "expected_value"}
+        assert set(VALID_OBJECTIVES) == {"fh_gsa", "fh_signups", "dna_kits", "weighted_mix", "expected_value"}
+
+
+class TestFhSignupVsGsaObjectives:
+    """PR E.1: a fit with an FH sign-up outcome AND an FH GSA outcome on the
+    SAME segment must never let objective='fh_gsa' silently include the
+    sign-up (the confirmed defect: 'fh_gsa' used to mean "every non-DNA-kit
+    outcome"). Uses a meta with full catalogue metadata (outcome_id_to_product/
+    _metric) so the metric-aware selectors are actually exercised, not the
+    legacy no-catalogue-metadata fallback the fixtures above rely on."""
+
+    @pytest.fixture
+    def meta_with_signup_and_gsa(self) -> FHModelMeta:
+        from ancestry_mmm.core.outcomes import FAMILY_HISTORY, METRIC_GSA, METRIC_SIGNUP
+
+        return FHModelMeta(
+            markets=["UK"], outcome_ids=["fh_new_gsa", "fh_new_signup"], channels=["TV_Brand"],
+            dna_channels=[], dna_channel_idx=[], non_dna_idx=[0], dna_outcome_id="fh_new_gsa",
+            dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+            outcome_id_to_product={"fh_new_gsa": FAMILY_HISTORY, "fh_new_signup": FAMILY_HISTORY},
+            outcome_id_to_metric={"fh_new_gsa": METRIC_GSA, "fh_new_signup": METRIC_SIGNUP},
+            outcome_id_to_segment={"fh_new_gsa": "New", "fh_new_signup": "New"},
+        )
+
+    @pytest.fixture
+    def params_with_signup_and_gsa(self) -> FHPosteriorParams:
+        return FHPosteriorParams(
+            decay_rate={"TV_Brand": 0.5}, hill_K={"TV_Brand": 1000.0}, hill_S={"TV_Brand": 1.0},
+            beta={"fh_new_gsa": {"TV_Brand": 0.1}, "fh_new_signup": {"TV_Brand": 0.4}},
+            halo_strength={"fh_new_gsa": 0.0, "fh_new_signup": 0.0},
+            promo_coef={"fh_new_gsa": 0.1, "fh_new_signup": 0.1},
+            market_offset={"UK": {"fh_new_gsa": 0.0, "fh_new_signup": 0.0}},
+            intercept={"fh_new_gsa": 3.0, "fh_new_signup": 3.5}, trend_coef={"fh_new_gsa": 0.0, "fh_new_signup": 0.0},
+            gamma_fourier={"fh_new_gsa": np.zeros(6), "fh_new_signup": np.zeros(6)},
+            alpha={"fh_new_gsa": 5.0, "fh_new_signup": 5.0}, control_coef={}, outcome_control_coef={},
+        )
+
+    @pytest.fixture
+    def ref_with_signup_and_gsa(self):
+        return {"2024-01": {"trend": 1.0, "fourier": np.zeros(6), "promo": {"fh_new_gsa": 0.0, "fh_new_signup": 0.0}, "controls": {}, "outcome_controls": {}}}
+
+    @pytest.fixture
+    def plan(self):
+        return {"2024-01": {"TV_Brand": 1000.0}}
+
+    def test_evaluate_scenario_fh_gsa_excludes_signup(
+        self, meta_with_signup_and_gsa, params_with_signup_and_gsa, approval, ref_with_signup_and_gsa, plan,
+    ):
+        result = evaluate_scenario(plan, "UK", meta_with_signup_and_gsa, params_with_signup_and_gsa, ref_with_signup_and_gsa, approval=approval, **IDENTITY)
+        gsa_row = result[result["outcome_id"] == "fh_new_gsa"].iloc[0]
+        signup_row = result[result["outcome_id"] == "fh_new_signup"].iloc[0]
+        assert gsa_row["fh_gsa"] == pytest.approx(gsa_row["predicted_outcome"])
+        assert gsa_row["fh_signups"] == pytest.approx(signup_row["predicted_outcome"])
+        # The confirmed defect this guards against: fh_gsa must not equal
+        # the sum of both outcomes.
+        assert gsa_row["fh_gsa"] != pytest.approx(gsa_row["predicted_outcome"] + signup_row["predicted_outcome"])
+
+    def test_gsa_objective_targets_only_gsa_outcome(
+        self, meta_with_signup_and_gsa, params_with_signup_and_gsa, approval, ref_with_signup_and_gsa, plan,
+    ):
+        result = optimize_scenario(
+            plan, ["2024-01"], ["TV_Brand"], "UK", meta_with_signup_and_gsa, params_with_signup_and_gsa, ref_with_signup_and_gsa,
+            objective="fh_gsa", approval=approval, **IDENTITY,
+        )
+        current_predicted = result["current_predicted"]
+        expected = float(current_predicted[current_predicted["outcome_id"] == "fh_new_gsa"]["predicted_outcome"].sum())
+        assert result["current_objective_value"] == pytest.approx(expected)
+
+    def test_signup_objective_targets_only_signup_outcome(
+        self, meta_with_signup_and_gsa, params_with_signup_and_gsa, approval, ref_with_signup_and_gsa, plan,
+    ):
+        result = optimize_scenario(
+            plan, ["2024-01"], ["TV_Brand"], "UK", meta_with_signup_and_gsa, params_with_signup_and_gsa, ref_with_signup_and_gsa,
+            objective="fh_signups", approval=approval, **IDENTITY,
+        )
+        current_predicted = result["current_predicted"]
+        expected = float(current_predicted[current_predicted["outcome_id"] == "fh_new_signup"]["predicted_outcome"].sum())
+        assert result["current_objective_value"] == pytest.approx(expected)
+        # And it must differ from the GSA objective's total - proof the two
+        # objectives are actually scoped to different outcome_ids, not
+        # coincidentally computing the same number.
+        gsa_result = optimize_scenario(
+            plan, ["2024-01"], ["TV_Brand"], "UK", meta_with_signup_and_gsa, params_with_signup_and_gsa, ref_with_signup_and_gsa,
+            objective="fh_gsa", approval=approval, **IDENTITY,
+        )
+        assert result["current_objective_value"] != pytest.approx(gsa_result["current_objective_value"])
+
+    def test_signup_objective_raises_if_model_has_no_signup_outcome(self, meta, params, approval, spend_plan, reference_context):
+        with pytest.raises(ValueError, match="fh_signups"):
+            optimize_scenario(
+                spend_plan, ["2024-01"], ["TV_Brand"], "UK", meta, params, reference_context,
+                objective="fh_signups", approval=approval, **IDENTITY,
+            )
+
+
+class TestValueWeightNeverSilentlyDefaultsToOne:
+    """PR E.1's second confirmed defect: a *partial* ltv (some outcome_ids
+    priced, others not) must never treat the missing entries as weight 1.0."""
+
+    def test_evaluate_scenario_value_is_none_not_predicted_outcome_for_missing_weight(
+        self, meta_with_kit_segment, params_with_kit_segment, approval, ref_with_kit_segment,
+    ):
+        plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0}}
+        ltv = {"New": 2.0}  # DNA_Kit deliberately has no weight
+        result = evaluate_scenario(plan, "UK", meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment, ltv, approval=approval, **IDENTITY)
+        kit_row = result[result["outcome_id"] == "DNA_Kit"].iloc[0]
+        assert pd.isna(kit_row["value"])
+        assert kit_row["value"] != pytest.approx(kit_row["predicted_outcome"])  # would be true if weight silently defaulted to 1.0
+        assert not result["total_value_is_complete"].iloc[0]
+
+    def test_evaluate_scenario_total_value_excludes_unpriced_outcomes(
+        self, meta_with_kit_segment, params_with_kit_segment, approval, ref_with_kit_segment,
+    ):
+        plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0}}
+        ltv = {"New": 2.0}
+        result = evaluate_scenario(plan, "UK", meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment, ltv, approval=approval, **IDENTITY)
+        new_row = result[result["outcome_id"] == "New"].iloc[0]
+        assert result["total_value"].iloc[0] == pytest.approx(new_row["predicted_outcome"] * 2.0)
+
+    def test_evaluate_scenario_value_equals_raw_volume_when_ltv_entirely_omitted(
+        self, meta_with_kit_segment, params_with_kit_segment, approval, ref_with_kit_segment,
+    ):
+        # Not the defect case - no value weighting was requested at all, so
+        # "value" is simply raw predicted units (weight 1.0 uniformly),
+        # matching this function's behaviour before PR E.1's fix.
+        plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0}}
+        result = evaluate_scenario(plan, "UK", meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment, approval=approval, **IDENTITY)
+        assert result["total_value_is_complete"].iloc[0]
+        for _, row in result.iterrows():
+            assert row["value"] == pytest.approx(row["predicted_outcome"])
+
+    def test_expected_value_objective_fails_closed_on_incomplete_ltv_coverage(
+        self, meta_with_kit_segment, params_with_kit_segment, approval, plan_with_kit_segment, ref_with_kit_segment,
+    ):
+        with pytest.raises(ValueError, match="requires a value weight for every eligible outcome_id"):
+            optimize_scenario(
+                plan_with_kit_segment, ["2024-01"], ["TV_Brand", "DNA_Ad"], "UK",
+                meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment,
+                objective="expected_value", ltv={"New": 2.0}, approval=approval, **IDENTITY,
+            )
+
+    def test_expected_value_objective_rejects_negative_weight(
+        self, meta_with_kit_segment, params_with_kit_segment, approval, plan_with_kit_segment, ref_with_kit_segment,
+    ):
+        with pytest.raises(ValueError, match="non-negative"):
+            optimize_scenario(
+                plan_with_kit_segment, ["2024-01"], ["TV_Brand", "DNA_Ad"], "UK",
+                meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment,
+                objective="expected_value", ltv={"New": 2.0, "DNA_Kit": -5.0}, approval=approval, **IDENTITY,
+            )
+
+    def test_expected_value_objective_succeeds_with_complete_coverage(
+        self, meta_with_kit_segment, params_with_kit_segment, approval, plan_with_kit_segment, ref_with_kit_segment,
+    ):
+        result = optimize_scenario(
+            plan_with_kit_segment, ["2024-01"], ["TV_Brand", "DNA_Ad"], "UK",
+            meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment,
+            objective="expected_value", ltv={"New": 2.0, "DNA_Kit": 50.0}, approval=approval, **IDENTITY,
+        )
+        assert "spend_plan" in result
+
+    def test_compare_scenarios_flags_incomplete_value_coverage(
+        self, meta_with_kit_segment, params_with_kit_segment, approval, ref_with_kit_segment,
+    ):
+        plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0}}
+        predicted = evaluate_scenario(plan, "UK", meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment, {"New": 2.0}, approval=approval, **IDENTITY)
+        compare_df = compare_scenarios([{"name": "Plan A", "market": "UK", "spend_plan": plan, "predicted": predicted}])
+        assert not compare_df["total_value_is_complete"].iloc[0]
+
+    @pytest.fixture
+    def meta_with_kit_segment(self) -> FHModelMeta:
+        return FHModelMeta(
+            markets=["UK"], outcome_ids=["New", "DNA_Kit"], channels=["TV_Brand", "DNA_Ad"],
+            dna_channels=["DNA_Ad"], dna_channel_idx=[1], non_dna_idx=[0],
+            dna_outcome_id="New", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+            direct_dna_outcome_ids=["New", "DNA_Kit"],
+        )
+
+    @pytest.fixture
+    def params_with_kit_segment(self) -> FHPosteriorParams:
+        return FHPosteriorParams(
+            decay_rate={"TV_Brand": 0.5, "DNA_Ad": 0.5},
+            hill_K={"TV_Brand": 1000.0, "DNA_Ad": 500.0},
+            hill_S={"TV_Brand": 1.0, "DNA_Ad": 1.0},
+            beta={"New": {"TV_Brand": 0.1, "DNA_Ad": 0.05}, "DNA_Kit": {"TV_Brand": 0.0, "DNA_Ad": 0.2}},
+            halo_strength={"New": 0.3, "DNA_Kit": 0.0}, promo_coef={"New": 0.1, "DNA_Kit": 0.1},
+            market_offset={"UK": {"New": 0.0, "DNA_Kit": 0.0}}, intercept={"New": 3.0, "DNA_Kit": 2.0},
+            trend_coef={"New": 0.0, "DNA_Kit": 0.0},
+            gamma_fourier={"New": np.zeros(6), "DNA_Kit": np.zeros(6)},
+            alpha={"New": 5.0, "DNA_Kit": 5.0}, control_coef={}, outcome_control_coef={},
+        )
+
+    @pytest.fixture
+    def ref_with_kit_segment(self):
+        return {"2024-01": {"trend": 1.0, "fourier": np.zeros(6), "promo": {"New": 0.0, "DNA_Kit": 0.0}, "controls": {}, "outcome_controls": {}}}
+
+    @pytest.fixture
+    def plan_with_kit_segment(self):
+        return {"2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0}}

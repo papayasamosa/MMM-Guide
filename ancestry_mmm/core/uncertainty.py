@@ -174,10 +174,13 @@ def generate_market_channel_curve_with_uncertainty(
 
 
 def _summarize_scenario_draws(draws: List[pd.DataFrame], cred_mass: float) -> pd.DataFrame:
-    """Per (month, outcome_id) draw summary. `avg_cpa`/`dna_avg_cpa` are
-    product-aware (see core.optimization.evaluate_scenario's docstring) -
-    each summarized independently across draws, never combined into one
-    number here either."""
+    """Per (month, outcome_id) draw summary. `avg_cpa`/`fh_signup_avg_cpa`/
+    `dna_avg_cpa` are metric-aware (see core.optimization.evaluate_scenario's
+    docstring, PR E.1) - each summarized independently across draws, never
+    combined into one number here either. `total_value_is_complete` is a
+    per-row flag (not a per-draw distribution), so it's carried through via
+    "min" (False if any draw's row was incomplete) rather than mean/median/
+    quantile."""
     tail = (1.0 - cred_mass) / 2.0
     combined = pd.concat(draws, ignore_index=True)
     grouped = combined.groupby(["month", "outcome_id"], sort=False)
@@ -194,6 +197,10 @@ def _summarize_scenario_draws(draws: List[pd.DataFrame], cred_mass: float) -> pd
         avg_cpa_median=("avg_cpa", "median"),
         avg_cpa_lower=("avg_cpa", lambda s: s.quantile(tail)),
         avg_cpa_upper=("avg_cpa", lambda s: s.quantile(1.0 - tail)),
+        fh_signup_avg_cpa_mean=("fh_signup_avg_cpa", "mean"),
+        fh_signup_avg_cpa_median=("fh_signup_avg_cpa", "median"),
+        fh_signup_avg_cpa_lower=("fh_signup_avg_cpa", lambda s: s.quantile(tail)),
+        fh_signup_avg_cpa_upper=("fh_signup_avg_cpa", lambda s: s.quantile(1.0 - tail)),
         dna_avg_cpa_mean=("dna_avg_cpa", "mean"),
         dna_avg_cpa_median=("dna_avg_cpa", "median"),
         dna_avg_cpa_lower=("dna_avg_cpa", lambda s: s.quantile(tail)),
@@ -202,6 +209,7 @@ def _summarize_scenario_draws(draws: List[pd.DataFrame], cred_mass: float) -> pd
         total_value_median=("total_value", "median"),
         total_value_lower=("total_value", lambda s: s.quantile(tail)),
         total_value_upper=("total_value", lambda s: s.quantile(1.0 - tail)),
+        total_value_is_complete=("total_value_is_complete", "min"),
     ).reset_index()
     return summary
 
