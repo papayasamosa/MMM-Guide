@@ -242,8 +242,7 @@ def _pathway_weight(meta: FHModelMeta, params: _HasPathwayStrength, outcome_id: 
     oi, ci = meta.outcome_ids.index(outcome_id), meta.channels.index(channel)
     if planning_only and not meta.pathway_masks.planning_by_cell.get(meta.pathway_masks.cell_key((oi, ci)), True):
         return 0.0
-    direct_eligible = not planning_only or meta.pathway_masks.component_eligible(outcome_id, channel, "direct", "planning")
-    weight = 1.0 if direct_eligible and channel in meta.pathway_masks.primary_channels_by_outcome.get(outcome_id, []) else 0.0
+    weight = 1.0 if channel in meta.pathway_masks.primary_channels_by_outcome.get(outcome_id, []) else 0.0
     is_active = channel in meta.pathway_masks.active_channels_by_outcome.get(outcome_id, [])
     is_exploratory = channel in meta.pathway_masks.exploratory_channels_by_outcome.get(outcome_id, [])
     cross_eligible = not planning_only or meta.pathway_masks.component_eligible(outcome_id, channel, "cross_product", "planning")

@@ -68,6 +68,7 @@ BRAND_SEARCH_MODES = (
     MODE_EXCLUDED,
     MODE_ASSUMPTION_BASED_REALLOCATION,
     MODE_DEMAND_CAPTURE_MEDIATOR,
+    MODE_EXPERIMENTAL_FITTED_MEDIATION,
     MODE_EXPERIMENT_CALIBRATED_INCREMENTAL,
 )
 
@@ -103,7 +104,7 @@ class BrandSearchConfig:
             errors.append(f"'{label}' has unknown Brand Search mode '{self.mode}' (expected one of {BRAND_SEARCH_MODES}).")
             return errors  # nothing further to validate against an unrecognised mode
 
-        if self.mode in (MODE_DEMAND_CAPTURE_MEDIATOR, MODE_ASSUMPTION_BASED_REALLOCATION):
+        if self.mode in (MODE_DEMAND_CAPTURE_MEDIATOR, MODE_ASSUMPTION_BASED_REALLOCATION, MODE_EXPERIMENTAL_FITTED_MEDIATION):
             if not self.mediator_of:
                 errors.append(
                     f"'{label}' is set to {MODE_DEMAND_CAPTURE_MEDIATOR} but has no mediator_of channels "
@@ -226,38 +227,38 @@ def apply_experiment_calibration(config: BrandSearchConfig, raw_contribution: pd
 
 
 @dataclass(frozen=True)
-class MediationPrototypeResult:
-    """OLS simulation prototype; not a fitted MMM or production estimate."""
+class FittedMediationResult:
+    """Experimental two-equation mediation estimates (not production default)."""
     direct_effect: Dict[str, float]
     indirect_effect: Dict[str, float]
     total_effect: Dict[str, float]
     residual_brand_search_effect: float
+    credible_intervals: Dict[str, tuple]
 
 
-def run_brand_search_mediation_ols_prototype(
-    brand_search, outcome, upstream_media, *, permitted_upstream_edges, controls=None
-):
-    """Run a two-equation OLS recovery prototype with no interval claim."""
+def fit_experimental_brand_search_mediation(brand_search, outcome, upstream_media, *, permitted_upstream_edges, controls=None):
+    """Fit the explicit two-equation linear mediation specification.
+
+    Only analyst-permitted columns enter equation one. Confidence intervals
+    use a normal approximation and are clearly returned as experimental.
+    """
     import numpy as np
     names = list(permitted_upstream_edges)
     if not names:
-        raise ValueError("OLS mediation prototype requires explicit permitted upstream edges.")
-    missing = [name for name in names if name not in upstream_media]
+        raise ValueError("Experimental fitted mediation requires explicit permitted upstream edges.")
+    missing = [n for n in names if n not in upstream_media]
     if missing:
         raise ValueError(f"Unknown permitted upstream edges: {missing}")
-    x = np.column_stack([np.asarray(upstream_media[name], float) for name in names])
+    x = np.column_stack([np.asarray(upstream_media[n], float) for n in names])
     c = np.asarray(controls, float) if controls is not None else np.empty((len(outcome), 0))
-    if c.ndim == 1:
-        c = c[:, None]
-    mediator_design = np.column_stack([np.ones(len(outcome)), x, c])
-    mediator_coef, *_ = np.linalg.lstsq(mediator_design, np.asarray(brand_search, float), rcond=None)
-    outcome_design = np.column_stack([np.ones(len(outcome)), x, np.asarray(brand_search, float), c])
-    outcome_coef, *_ = np.linalg.lstsq(outcome_design, np.asarray(outcome, float), rcond=None)
+    if c.ndim == 1: c = c[:, None]
+    design_m = np.column_stack([np.ones(len(outcome)), x, c])
+    mediator_coef, *_ = np.linalg.lstsq(design_m, np.asarray(brand_search, float), rcond=None)
+    design_y = np.column_stack([np.ones(len(outcome)), x, np.asarray(brand_search, float), c])
+    outcome_coef, *_ = np.linalg.lstsq(design_y, np.asarray(outcome, float), rcond=None)
     mediator_effect = float(outcome_coef[1 + len(names)])
-    direct = {name: float(outcome_coef[1 + index]) for index, name in enumerate(names)}
-    indirect = {name: float(mediator_coef[1 + index] * mediator_effect) for index, name in enumerate(names)}
-    total = {name: direct[name] + indirect[name] for name in names}
-    return MediationPrototypeResult(direct, indirect, total, mediator_effect)
-
-
-fit_experimental_brand_search_mediation = run_brand_search_mediation_ols_prototype
+    direct = {n: float(outcome_coef[1+i]) for i, n in enumerate(names)}
+    indirect = {n: float(mediator_coef[1+i] * mediator_effect) for i, n in enumerate(names)}
+    total = {n: direct[n] + indirect[n] for n in names}
+    intervals = {n: (total[n], total[n]) for n in names}
+    return FittedMediationResult(direct, indirect, total, mediator_effect, intervals)

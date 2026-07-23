@@ -103,8 +103,8 @@ def _channel_log_terms(frame: Dict, meta: FHModelMeta, params: FHPosteriorParams
         term = np.zeros((n_obs, n_out))
         for si, oid in enumerate(outcome_ids):
             b = params.beta[oid][ch]
-            value = (b * primary_mask[si, ci] * sat_media[:, ci] if meta.pathway_masks.component_eligible(oid, ch, "direct", "attribution") else 0.0)
-            if strength_matrix is not None and strength_matrix[si, ci] and meta.pathway_masks.component_eligible(oid, ch, "cross_product", "attribution"):
+            value = b * primary_mask[si, ci] * sat_media[:, ci]
+            if strength_matrix is not None and strength_matrix[si, ci]:
                 value = value + b * strength_matrix[si, ci] * cross_product_lag_media[meta.pathway_masks.lag_for_cell((si, ci))][:, ci]
             term[:, si] = value
         terms[ch] = term

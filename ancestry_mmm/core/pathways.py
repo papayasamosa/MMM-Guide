@@ -150,12 +150,7 @@ class MediaOutcomePathway:
     allow_same_product_cross_product: bool = False
     allow_cross_product_primary: bool = False
     planning_eligibility_confirmed: bool = False
-    mediation_specification: Optional[str] = None
-    pathway_id: str = ""
-
-    def __post_init__(self) -> None:
-        if not self.pathway_id:
-            self.pathway_id = _deterministic_pathway_id(self.channel, self.target_outcome_id, self.component_type)
+    pathway_id: str = field(default_factory=_new_pathway_id)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -259,16 +254,6 @@ def validate_media_outcome_pathways(
 
         if p.component_type not in COMPONENT_TYPES:
             errors.append(f"Pathway '{label}' has unknown component_type '{p.component_type}' (expected one of {', '.join(COMPONENT_TYPES)}).")
-        compatible = {
-            "direct": {PATHWAY_ROLE_PRIMARY_DIRECT},
-            "cross_product": {PATHWAY_ROLE_ACTIVE_CROSS_PRODUCT, PATHWAY_ROLE_EXPLORATORY_CROSS_PRODUCT},
-            "mediated": {PATHWAY_ROLE_ACTIVE_CROSS_PRODUCT, PATHWAY_ROLE_EXPLORATORY_CROSS_PRODUCT},
-            "excluded": {PATHWAY_ROLE_EXCLUDED},
-        }
-        if p.component_type in compatible and p.role not in compatible[p.component_type]:
-            errors.append(f"Pathway '{label}' has incompatible role '{p.role}' for component_type '{p.component_type}'.")
-        if p.component_type == "mediated" and not p.mediation_specification:
-            errors.append(f"Pathway '{label}' is mediated but has no mediation specification.")
         if p.lag_type not in LAG_TYPES:
             errors.append(f"Pathway '{label}' has unknown lag_type '{p.lag_type}' (expected one of {', '.join(LAG_TYPES)}).")
         if p.evidence_status not in EVIDENCE_STATUSES + LEGACY_EVIDENCE_STATUSES:
@@ -346,7 +331,6 @@ class ResolvedPathwayMasks:
     lag_weeks_by_cell: Dict[str, int] = field(default_factory=dict)
     prior_scale_by_cell: Dict[str, float] = field(default_factory=dict)
     planning_by_cell: Dict[str, bool] = field(default_factory=dict)
-    components: List[Dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -417,12 +401,6 @@ class ResolvedPathwayMasks:
                     result[oi, ci] = 1.0
         return result
 
-    def component_eligible(self, outcome_id: str, channel: str, component_type: str, eligibility: str) -> bool:
-        for component in self.components:
-            if (component["outcome_id"], component["channel"], component["component_type"]) == (outcome_id, channel, component_type):
-                return bool(component[f"include_in_{eligibility}"])
-        return True
-
 
 def resolve_pathway_masks(
     outcome_ids: Sequence[str],
@@ -480,7 +458,6 @@ def resolve_pathway_masks(
     lag_weeks_by_cell: Dict[str, int] = {}
     prior_scale_by_cell: Dict[str, float] = {}
     planning_by_cell: Dict[str, bool] = {}
-    resolved_components: List[Dict[str, Any]] = []
 
     def _add(bucket: Dict[str, List[str]], oid: str, ch: str) -> None:
         bucket.setdefault(oid, []).append(ch)
@@ -497,17 +474,10 @@ def resolve_pathway_masks(
                     elif p.role == PATHWAY_ROLE_EXPLORATORY_CROSS_PRODUCT:
                         _add(exploratory, oid, ch)
                     cell_key = f"{outcome_ids.index(oid)}:{channels.index(ch)}"
-                    if p.component_type in ("cross_product", "mediated"):
-                        lag_weeks_by_cell[cell_key] = int(p.lag_weeks or 0)
-                        if p.prior_scale is not None:
-                            prior_scale_by_cell[cell_key] = float(p.prior_scale)
-                        planning_by_cell[cell_key] = bool(p.include_in_planning)
-                    resolved_components.append({
-                        "outcome_id": oid, "channel": ch, "component_type": p.component_type,
-                        "role": p.role, "lag_type": p.lag_type, "lag_weeks": int(p.lag_weeks or 0),
-                        "prior_scale": p.prior_scale, "include_in_attribution": bool(p.include_in_attribution),
-                        "include_in_planning": bool(p.include_in_planning), "evidence_status": p.evidence_status,
-                    })
+                    lag_weeks_by_cell[cell_key] = int(p.lag_weeks or 0)
+                    if p.prior_scale is not None:
+                        prior_scale_by_cell[cell_key] = float(p.prior_scale)
+                    planning_by_cell[cell_key] = bool(p.include_in_planning)
                 # PATHWAY_ROLE_EXCLUDED: added to no bucket - zero contribution.
                 continue
 
@@ -529,7 +499,6 @@ def resolve_pathway_masks(
         lag_weeks_by_cell=lag_weeks_by_cell,
         prior_scale_by_cell=prior_scale_by_cell,
         planning_by_cell=planning_by_cell,
-        components=resolved_components,
     )
 
 
@@ -548,7 +517,6 @@ _PATHWAY_FINGERPRINT_FIELDS = (
     "channel", "source_product", "target_outcome_id", "component_type", "role", "lag_type", "lag_weeks",
     "prior_scale", "include_in_attribution", "include_in_planning", "evidence_status",
     "allow_same_product_cross_product", "allow_cross_product_primary", "planning_eligibility_confirmed",
-    "mediation_specification",
 )
 
 

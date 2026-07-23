@@ -270,7 +270,7 @@ def build_fh_market_specific_model(
                 lagged = lagged_media_by_weeks[pathway_masks.lag_for_cell((oi, ci))]
                 cell_matrix = pt.zeros((n_outcomes, n_channels))
                 cell_matrix = pt.set_subtensor(cell_matrix[oi, ci], strength_est[idx])
-                eta = eta + pt.sum(lagged[:, None, :] * beta_by_market_idx * cell_matrix[None, :, :], axis=2)
+                eta = eta + pt.sum(lagged[:, None, :] * beta_by_market_idx * strength_matrix[None, :, :], axis=2)
             pm.Deterministic(var_name, strength_matrix, dims=("outcome", "channel"))
             return eta
 

@@ -488,7 +488,7 @@ def build_fh_hierarchical_model(
                 lagged = lagged_media_by_weeks[pathway_masks.lag_for_cell((oi, ci))]
                 cell_matrix = pt.zeros((n_outcomes, n_channels))
                 cell_matrix = pt.set_subtensor(cell_matrix[oi, ci], strength_est[idx])
-                eta = eta + pm.math.dot(lagged, (beta * cell_matrix).T)
+                eta = eta + pm.math.dot(lagged, (beta * strength_matrix).T)
             pm.Deterministic(var_name, strength_matrix, dims=("outcome", "channel"))
             return eta
 
