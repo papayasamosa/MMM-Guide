@@ -71,8 +71,7 @@ PATHWAY_ROLES = (
     PATHWAY_ROLE_EXCLUDED,
 )
 
-# Suggested values for the UI - not a closed, validated vocabulary (the
-# roadmap doesn't specify one for either field, unlike `role` above).
+# Closed vocabularies used by validation and the pathway editor.
 LAG_TYPES = ("none", "fixed_weeks", "adstock_only", "delayed_adstock")
 EVIDENCE_STATUSES = (
     "business_assumption",
@@ -84,6 +83,12 @@ EVIDENCE_STATUSES = (
 )
 LEGACY_EVIDENCE_STATUSES = ("untested", "supported", "inconclusive")
 COMPONENT_TYPES = ("direct", "cross_product", "mediated", "excluded")
+HEADLINE_APPROVAL_STATUSES = (
+    "not_reviewed",
+    "approved",
+    "rejected",
+    "not_applicable",
+)
 SUGGESTED_LAG_TYPES = LAG_TYPES
 SUGGESTED_EVIDENCE_STATUSES = EVIDENCE_STATUSES
 
@@ -152,15 +157,17 @@ class MediaOutcomePathway:
     ruled out, kept in the catalogue as a documented decision rather than
     silently absent). `lag_type`/`lag_weeks` describe the assumed temporal
     relationship (e.g. `"fixed_weeks"`/`4` for a fixed delayed response);
-    `prior_scale` records how tight a future estimation prior should be for
-    this pathway (a `exploratory_cross_product` pathway should use a small
-    value). `include_in_attribution`/`include_in_planning` are independent
-    downstream-eligibility flags, matching the four-flag eligibility
-    pattern this codebase already uses for outcomes (core.outcomes) rather
-    than overloading `role` to control everything. `evidence_status` is a
-    free-text label (see `SUGGESTED_EVIDENCE_STATUSES` for the UI's
-    suggestions - not a closed, validated vocabulary) for what evidence, if
-    any, currently supports this pathway."""
+    `prior_scale` controls the HalfNormal pathway-strength prior for fitted
+    `cross_product` components only. Direct effects use the model's
+    hierarchical beta prior, so their pathway-level `prior_scale` must be
+    unset. Mediated and excluded components are governance/diagnostic
+    records and do not enter the standard MMM likelihood.
+
+    Attribution, planning, and headline reporting are independent decisions.
+    Evidence status describes the evidence; it never grants headline
+    approval. Headline reporting requires both `include_in_headline=True`
+    and `headline_approval_status="approved"`, with the reviewer metadata
+    retained for audit."""
 
     channel: str
     source_product: str
@@ -168,9 +175,14 @@ class MediaOutcomePathway:
     role: str = PATHWAY_ROLE_PRIMARY_DIRECT
     lag_type: str = "none"
     lag_weeks: Optional[int] = None
-    prior_scale: Optional[float] = 1.0
+    prior_scale: Optional[float] = None
     include_in_attribution: bool = True
     include_in_planning: bool = True
+    include_in_headline: bool = False
+    headline_approval_status: str = "not_reviewed"
+    headline_approval_note: str = ""
+    approved_by: str = ""
+    approved_at: str = ""
     evidence_status: str = "untested"
     component_type: str = "direct"
     allow_same_product_cross_product: bool = False
@@ -211,6 +223,30 @@ class MediaOutcomePathway:
                 )
                 else "direct"
             )
+        # Bundles written before G1.1.3 inferred headline visibility from
+        # evidence. Preserve that result once during migration, then make
+        # approval explicit and independent for all future saves.
+        if "include_in_headline" not in d:
+            inferred = bool(
+                d.get("include_in_attribution", True)
+                and d.get("component_type") in {"direct", "cross_product"}
+                and d.get("role") != PATHWAY_ROLE_EXCLUDED
+                and d.get("evidence_status")
+                in {"experiment_supported", "model_supported", "supported"}
+            )
+            d["include_in_headline"] = inferred
+            d["headline_approval_status"] = "approved" if inferred else "not_reviewed"
+            if inferred:
+                d["headline_approval_note"] = (
+                    "Migrated from pre-G1.1.3 evidence-based headline eligibility."
+                )
+                d["approved_by"] = "legacy_migration"
+                d["approved_at"] = "legacy_bundle"
+        # Old editors populated 1.0 for direct/excluded rows even though the
+        # value never affected a parameter. Remove that misleading legacy
+        # value during bundle/session migration.
+        if d.get("component_type") != "cross_product":
+            d["prior_scale"] = None
         known = set(cls.__dataclass_fields__)
         return cls(**{k: v for k, v in d.items() if k in known})
 
@@ -237,11 +273,11 @@ def validate_media_outcome_pathways(
       `available_columns`)
     - an unknown `role` (not one of `PATHWAY_ROLES`)
     - a negative `lag_weeks`
-    - a non-positive `prior_scale`
-    - a duplicate `(channel, target_outcome_id)` pair - at most one pathway
-      should describe a given channel's relationship to a given outcome;
-      two rows for the same pair is ambiguous about which role/lag/prior
-      actually applies
+    - a missing/non-positive cross-product `prior_scale`, or a misleading
+      `prior_scale` on a component where it is not operational
+    - a duplicate `(channel, target_outcome_id, component_type)` natural key
+    - mediated/excluded components enabled for fit-dependent outputs
+    - headline inclusion without an explicit approval record
     """
     errors: List[str] = []
     seen_ids = set()
@@ -388,6 +424,43 @@ def validate_media_outcome_pathways(
             errors.append(
                 f"Pathway '{label}' has a non-positive prior_scale ({p.prior_scale})."
             )
+        if p.component_type != "cross_product" and p.prior_scale is not None:
+            errors.append(
+                f"Pathway '{label}' has prior_scale set, but that field only controls "
+                "the fitted cross-product pathway-strength prior."
+            )
+
+        if p.headline_approval_status not in HEADLINE_APPROVAL_STATUSES:
+            errors.append(
+                f"Pathway '{label}' has unknown headline_approval_status "
+                f"'{p.headline_approval_status}' (expected one of "
+                f"{', '.join(HEADLINE_APPROVAL_STATUSES)})."
+            )
+        if p.include_in_headline and p.headline_approval_status != "approved":
+            errors.append(
+                f"Pathway '{label}' is headline-enabled without explicit approval."
+            )
+        if p.include_in_headline and not p.include_in_attribution:
+            errors.append(
+                f"Pathway '{label}' cannot be headline-enabled while attribution is disabled."
+            )
+        if p.headline_approval_status == "approved" and not p.approved_by:
+            errors.append(
+                f"Pathway '{label}' has headline approval but no approved_by reviewer."
+            )
+        if p.headline_approval_status == "approved" and not p.approved_at:
+            errors.append(
+                f"Pathway '{label}' has headline approval but no approved_at timestamp."
+            )
+        if p.component_type in {"mediated", "excluded"}:
+            if p.include_in_planning:
+                errors.append(
+                    f"Pathway '{label}' is {p.component_type} and cannot be planning-enabled."
+                )
+            if p.include_in_headline:
+                errors.append(
+                    f"Pathway '{label}' is {p.component_type} and cannot be headline-enabled."
+                )
 
         pair = (p.channel, p.target_outcome_id, p.component_type)
         if pair in seen_pairs:
@@ -432,10 +505,14 @@ class ResolvedPathwayComponent:
     component_type: str
     role: str
     lag_weeks: int = 0
-    prior_scale: float = 1.0
+    prior_scale: Optional[float] = None
     include_in_attribution: bool = True
     include_in_planning: bool = True
     include_in_headline: bool = False
+    headline_approval_status: str = "not_reviewed"
+    headline_approval_note: str = ""
+    approved_by: str = ""
+    approved_at: str = ""
     evidence_status: str = "unreviewed"
     included_in_fit: bool = True
 
@@ -444,6 +521,16 @@ class ResolvedPathwayComponent:
 
     @classmethod
     def from_dict(cls, value: dict) -> "ResolvedPathwayComponent":
+        value = dict(value)
+        if value.get("include_in_headline") and "headline_approval_status" not in value:
+            value.update(
+                headline_approval_status="approved",
+                headline_approval_note=(
+                    "Migrated from pre-G1.1.3 resolved-component metadata."
+                ),
+                approved_by="legacy_migration",
+                approved_at="legacy_bundle",
+            )
         known = set(cls.__dataclass_fields__)
         return cls(**{key: item for key, item in value.items() if key in known})
 
@@ -465,13 +552,10 @@ class ResolvedPathwayMasks:
     strongly-shrunk-toward-zero, not-trusted-for-planning-by-default effect.
     A channel absent from all three lists for a given outcome is `excluded`
     for that cell - zero contribution, not merely a tight prior.
-    `cross_product_lag_weeks` - the single shared lag (in weeks, beyond
-    ordinary adstock carryover) applied to every `active_channels_by_outcome`/
-    `exploratory_channels_by_outcome` cell before its saturated media enters
-    that cell's contribution - generalises `dna_lag_weeks` beyond DNA
-    channels specifically. Per-pathway custom lag values remain a documented
-    future extension (docs/media_outcome_pathways.md); every cross-product
-    cell currently shares this one lag."""
+    `components` is authoritative. The named masks and cell dictionaries are
+    deterministic compatibility caches for older bundle readers; every
+    calculation method derives from `components`. Per-component lag,
+    prior, attribution, headline, and planning decisions are operational."""
 
     primary_channels_by_outcome: Dict[str, List[str]] = field(default_factory=dict)
     active_channels_by_outcome: Dict[str, List[str]] = field(default_factory=dict)
@@ -483,6 +567,51 @@ class ResolvedPathwayMasks:
     lag_weeks_by_cell: Dict[str, int] = field(default_factory=dict)
     prior_scale_by_cell: Dict[str, float] = field(default_factory=dict)
     planning_by_cell: Dict[str, bool] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.components:
+            self._refresh_compatibility_caches()
+
+    def _refresh_compatibility_caches(self) -> None:
+        """Rebuild every legacy mask/cache from authoritative components."""
+        primary: Dict[str, List[str]] = {}
+        active: Dict[str, List[str]] = {}
+        exploratory: Dict[str, List[str]] = {}
+        cross_components = [
+            item
+            for item in self.components
+            if item.included_in_fit and item.component_type == "cross_product"
+        ]
+        for item in self.components:
+            if not item.included_in_fit:
+                continue
+            if item.role == PATHWAY_ROLE_PRIMARY_DIRECT:
+                primary.setdefault(item.outcome_id, []).append(item.channel)
+            elif item.role == PATHWAY_ROLE_ACTIVE_CROSS_PRODUCT:
+                active.setdefault(item.outcome_id, []).append(item.channel)
+            elif item.role == PATHWAY_ROLE_EXPLORATORY_CROSS_PRODUCT:
+                exploratory.setdefault(item.outcome_id, []).append(item.channel)
+        self.primary_channels_by_outcome = primary
+        self.active_channels_by_outcome = active
+        self.exploratory_channels_by_outcome = exploratory
+        # Index-keyed caches require the stable outcome/channel order encoded
+        # by the compatibility masks. Preserve first-seen component order,
+        # which is resolve_pathway_masks' outcome-then-channel order.
+        outcomes = list(dict.fromkeys(item.outcome_id for item in self.components))
+        channels = list(dict.fromkeys(item.channel for item in self.components))
+        outcome_pos = {value: index for index, value in enumerate(outcomes)}
+        channel_pos = {value: index for index, value in enumerate(channels)}
+        self.lag_weeks_by_cell = {}
+        self.prior_scale_by_cell = {}
+        self.planning_by_cell = {}
+        for item in cross_components:
+            key = self.cell_key(
+                (outcome_pos[item.outcome_id], channel_pos[item.channel])
+            )
+            self.lag_weeks_by_cell[key] = int(item.lag_weeks)
+            if item.prior_scale is not None:
+                self.prior_scale_by_cell[key] = float(item.prior_scale)
+            self.planning_by_cell[key] = bool(item.include_in_planning)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -499,7 +628,32 @@ class ResolvedPathwayMasks:
             else ResolvedPathwayComponent.from_dict(item)
             for item in values.get("components", [])
         ]
-        return cls(**values)
+        supplied_caches = {
+            key: values.get(key)
+            for key in (
+                "primary_channels_by_outcome",
+                "active_channels_by_outcome",
+                "exploratory_channels_by_outcome",
+                "lag_weeks_by_cell",
+                "prior_scale_by_cell",
+                "planning_by_cell",
+            )
+            if key in d
+        }
+        result = cls(**values)
+        if result.components:
+            canonical = result.to_dict()
+            mismatches = [
+                key
+                for key, supplied in supplied_caches.items()
+                if supplied != canonical.get(key)
+            ]
+            if mismatches:
+                raise ValueError(
+                    "Resolved pathway compatibility caches disagree with the "
+                    "authoritative component collection: " + ", ".join(mismatches)
+                )
+        return result
 
     def component(
         self, outcome_id: str, channel: str, component_type: str
@@ -531,7 +685,11 @@ class ResolvedPathwayMasks:
         if purpose == "attribution":
             return item.included_in_fit and item.include_in_attribution
         if purpose == "headline":
-            return item.included_in_fit and item.include_in_headline
+            return (
+                item.included_in_fit
+                and item.include_in_headline
+                and item.headline_approval_status == "approved"
+            )
         return item.included_in_fit and item.include_in_planning
 
     def primary_matrix(self, outcome_ids: Sequence[str], channels: Sequence[str]):
@@ -541,13 +699,24 @@ class ResolvedPathwayMasks:
         (matches this module's existing pandas-only dependency footprint)."""
         import numpy as np
 
-        channel_pos = {c: i for i, c in enumerate(channels)}
         mat = np.zeros((len(outcome_ids), len(channels)), dtype=float)
+        outcome_pos = {value: index for index, value in enumerate(outcome_ids)}
+        channel_pos = {value: index for index, value in enumerate(channels)}
+        if self.components:
+            for item in self.components:
+                if (
+                    item.included_in_fit
+                    and item.component_type == "direct"
+                    and item.role == PATHWAY_ROLE_PRIMARY_DIRECT
+                    and item.outcome_id in outcome_pos
+                    and item.channel in channel_pos
+                ):
+                    mat[outcome_pos[item.outcome_id], channel_pos[item.channel]] = 1.0
+            return mat
         for oi, oid in enumerate(outcome_ids):
-            for ch in self.primary_channels_by_outcome.get(oid, []):
-                ci = channel_pos.get(ch)
-                if ci is not None:
-                    mat[oi, ci] = 1.0
+            for channel in self.primary_channels_by_outcome.get(oid, []):
+                if channel in channel_pos:
+                    mat[oi, channel_pos[channel]] = 1.0
         return mat
 
     def _cells(
@@ -572,19 +741,57 @@ class ResolvedPathwayMasks:
         strength parameter, in a stable order (iterates `outcome_ids` then
         each outcome's own channel list) - the order every caller sizing a
         parameter vector to `len(...)` and scattering into it must agree on."""
-        return self._cells(self.active_channels_by_outcome, outcome_ids, channels)
+        return self._component_cells(
+            PATHWAY_ROLE_ACTIVE_CROSS_PRODUCT, outcome_ids, channels
+        )
 
     def exploratory_cells(
         self, outcome_ids: Sequence[str], channels: Sequence[str]
     ) -> List[tuple]:
         """Same contract as `active_cells`, for `exploratory_cross_product`."""
-        return self._cells(self.exploratory_channels_by_outcome, outcome_ids, channels)
+        return self._component_cells(
+            PATHWAY_ROLE_EXPLORATORY_CROSS_PRODUCT, outcome_ids, channels
+        )
+
+    def _component_cells(
+        self,
+        role: str,
+        outcome_ids: Sequence[str],
+        channels: Sequence[str],
+    ) -> List[tuple]:
+        if not self.components:
+            legacy = (
+                self.active_channels_by_outcome
+                if role == PATHWAY_ROLE_ACTIVE_CROSS_PRODUCT
+                else self.exploratory_channels_by_outcome
+            )
+            return self._cells(legacy, outcome_ids, channels)
+        outcome_pos = {value: index for index, value in enumerate(outcome_ids)}
+        channel_pos = {value: index for index, value in enumerate(channels)}
+        return [
+            (outcome_pos[item.outcome_id], channel_pos[item.channel])
+            for item in self.components
+            if item.included_in_fit
+            and item.component_type == "cross_product"
+            and item.role == role
+            and item.outcome_id in outcome_pos
+            and item.channel in channel_pos
+        ]
 
     @staticmethod
     def cell_key(cell: tuple) -> str:
         return f"{cell[0]}:{cell[1]}"
 
     def lag_for_cell(self, cell: tuple) -> int:
+        if self.components:
+            outcomes = list(dict.fromkeys(item.outcome_id for item in self.components))
+            channels = list(dict.fromkeys(item.channel for item in self.components))
+            if cell[0] < len(outcomes) and cell[1] < len(channels):
+                item = self.component(
+                    outcomes[cell[0]], channels[cell[1]], "cross_product"
+                )
+                if item is not None:
+                    return int(item.lag_weeks)
         return int(
             self.lag_weeks_by_cell.get(
                 self.cell_key(cell), self.cross_product_lag_weeks
@@ -592,7 +799,38 @@ class ResolvedPathwayMasks:
         )
 
     def prior_for_cell(self, cell: tuple, default: float) -> float:
+        if self.components:
+            outcomes = list(dict.fromkeys(item.outcome_id for item in self.components))
+            channels = list(dict.fromkeys(item.channel for item in self.components))
+            if cell[0] < len(outcomes) and cell[1] < len(channels):
+                item = self.component(
+                    outcomes[cell[0]], channels[cell[1]], "cross_product"
+                )
+                if item is not None and item.prior_scale is not None:
+                    return float(item.prior_scale)
         return float(self.prior_scale_by_cell.get(self.cell_key(cell), default))
+
+    def eligibility_matrix(
+        self,
+        outcome_ids: Sequence[str],
+        channels: Sequence[str],
+        purpose: str,
+    ):
+        """Total component eligibility by cell for an explicit output view."""
+        import numpy as np
+
+        result = np.zeros((len(outcome_ids), len(channels)), dtype=float)
+        for oi, outcome_id in enumerate(outcome_ids):
+            for ci, channel in enumerate(channels):
+                result[oi, ci] = float(
+                    any(
+                        self.component_eligible(
+                            outcome_id, channel, component_type, purpose
+                        )
+                        for component_type in ("direct", "cross_product")
+                    )
+                )
+        return result
 
     def planning_matrix(self, outcome_ids: Sequence[str], channels: Sequence[str]):
         import numpy as np
@@ -644,12 +882,6 @@ def resolve_pathway_masks(
     dna_channels = {channels[i] for i in dna_channel_idx if 0 <= i < len(channels)}
     direct_dna = set(direct_dna_outcome_ids)
     components: List[ResolvedPathwayComponent] = []
-    primary: Dict[str, List[str]] = {}
-    active: Dict[str, List[str]] = {}
-    exploratory: Dict[str, List[str]] = {}
-    lag_by_cell: Dict[str, int] = {}
-    prior_by_cell: Dict[str, float] = {}
-    planning_by_cell: Dict[str, bool] = {}
 
     def add_component(
         oid: str,
@@ -658,21 +890,23 @@ def resolve_pathway_masks(
         role: str,
         *,
         lag_weeks: int = 0,
-        prior_scale: float = 1.0,
+        prior_scale: Optional[float] = None,
         include_in_attribution: bool = True,
         include_in_planning: bool = True,
+        include_in_headline: bool = False,
+        headline_approval_status: str = "not_reviewed",
+        headline_approval_note: str = "",
+        approved_by: str = "",
+        approved_at: str = "",
         evidence_status: str = "unreviewed",
     ) -> None:
         included_in_fit = (
             component_type in {"direct", "cross_product"}
             and role != PATHWAY_ROLE_EXCLUDED
         )
-        include_in_headline = (
-            included_in_fit
-            and include_in_attribution
-            and evidence_status
-            in {"experiment_supported", "model_supported", "supported"}
-        )
+        if component_type in {"mediated", "excluded"}:
+            include_in_planning = False
+            include_in_headline = False
         components.append(
             ResolvedPathwayComponent(
                 outcome_id=oid,
@@ -680,28 +914,22 @@ def resolve_pathway_masks(
                 component_type=component_type,
                 role=role,
                 lag_weeks=int(lag_weeks),
-                prior_scale=float(prior_scale),
+                prior_scale=(
+                    float(prior_scale)
+                    if component_type == "cross_product" and prior_scale is not None
+                    else None
+                ),
                 include_in_attribution=bool(include_in_attribution),
                 include_in_planning=bool(include_in_planning),
                 include_in_headline=include_in_headline,
+                headline_approval_status=headline_approval_status,
+                headline_approval_note=headline_approval_note,
+                approved_by=approved_by,
+                approved_at=approved_at,
                 evidence_status=evidence_status,
                 included_in_fit=included_in_fit,
             )
         )
-        if not included_in_fit:
-            return
-        if role == PATHWAY_ROLE_PRIMARY_DIRECT:
-            primary.setdefault(oid, []).append(channel)
-        elif role == PATHWAY_ROLE_ACTIVE_CROSS_PRODUCT:
-            active.setdefault(oid, []).append(channel)
-        elif role == PATHWAY_ROLE_EXPLORATORY_CROSS_PRODUCT:
-            exploratory.setdefault(oid, []).append(channel)
-        if component_type == "cross_product":
-            oi, ci = outcome_ids.index(oid), channels.index(channel)
-            cell_key = f"{oi}:{ci}"
-            lag_by_cell[cell_key] = int(lag_weeks)
-            prior_by_cell[cell_key] = float(prior_scale)
-            planning_by_cell[cell_key] = bool(include_in_planning)
 
     for oid in outcome_ids:
         for channel in channels:
@@ -714,11 +942,14 @@ def resolve_pathway_masks(
                         pathway.component_type,
                         pathway.role,
                         lag_weeks=pathway.lag_weeks or 0,
-                        prior_scale=pathway.prior_scale
-                        if pathway.prior_scale is not None
-                        else 1.0,
+                        prior_scale=pathway.prior_scale,
                         include_in_attribution=pathway.include_in_attribution,
                         include_in_planning=pathway.include_in_planning,
+                        include_in_headline=pathway.include_in_headline,
+                        headline_approval_status=pathway.headline_approval_status,
+                        headline_approval_note=pathway.headline_approval_note,
+                        approved_by=pathway.approved_by,
+                        approved_at=pathway.approved_at,
                         evidence_status=pathway.evidence_status,
                     )
                 continue
@@ -746,14 +977,52 @@ def resolve_pathway_masks(
                 )
 
     return ResolvedPathwayMasks(
-        primary_channels_by_outcome=primary,
-        active_channels_by_outcome=active,
-        exploratory_channels_by_outcome=exploratory,
         cross_product_lag_weeks=dna_lag_weeks,
         components=components,
-        lag_weeks_by_cell=lag_by_cell,
-        prior_scale_by_cell=prior_by_cell,
-        planning_by_cell=planning_by_cell,
+    )
+
+
+def resolve_validated_pathway_masks(
+    outcome_ids: Sequence[str],
+    channels: Sequence[str],
+    pathways: List[MediaOutcomePathway],
+    *,
+    channel_products: Dict[str, str],
+    outcome_products: Dict[str, str],
+    fitted_outcome_ids: Sequence[str],
+    diagnostic_only_outcome_ids: Sequence[str],
+    dna_channel_idx: Sequence[int],
+    dna_outcome_id: Optional[str],
+    direct_dna_outcome_ids: Sequence[str],
+    dna_lag_weeks: int,
+) -> ResolvedPathwayMasks:
+    """Validate the complete pathway context, then resolve model components.
+
+    Model builders call this before creating a PyMC model. It deliberately
+    requires ownership, fit, and diagnostic context so builder validation
+    cannot silently degrade to channel/outcome-name checks only.
+    """
+    errors = validate_media_outcome_pathways(
+        pathways,
+        channels=channels,
+        outcome_ids=outcome_ids,
+        channel_products=channel_products,
+        outcome_products=outcome_products,
+        fitted_outcome_ids=fitted_outcome_ids,
+        diagnostic_only_outcome_ids=diagnostic_only_outcome_ids,
+    )
+    if errors:
+        raise ValueError(
+            "Invalid media-outcome pathway catalogue: " + "; ".join(errors)
+        )
+    return resolve_pathway_masks(
+        outcome_ids,
+        channels,
+        pathways,
+        dna_channel_idx=dna_channel_idx,
+        dna_outcome_id=dna_outcome_id,
+        direct_dna_outcome_ids=direct_dna_outcome_ids,
+        dna_lag_weeks=dna_lag_weeks,
     )
 
 
@@ -779,6 +1048,11 @@ _PATHWAY_FINGERPRINT_FIELDS = (
     "prior_scale",
     "include_in_attribution",
     "include_in_planning",
+    "include_in_headline",
+    "headline_approval_status",
+    "headline_approval_note",
+    "approved_by",
+    "approved_at",
     "evidence_status",
     "allow_same_product_cross_product",
     "allow_cross_product_primary",

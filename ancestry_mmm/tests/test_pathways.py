@@ -32,7 +32,9 @@ from ancestry_mmm.core.pathways import (
 
 def _pathway(**overrides) -> MediaOutcomePathway:
     defaults = dict(
-        channel="DNA_Media", source_product=DNA, target_outcome_id="dna_kit_sale_self_activated",
+        channel="DNA_Media",
+        source_product=DNA,
+        target_outcome_id="dna_kit_sale_self_activated",
         role=PATHWAY_ROLE_PRIMARY_DIRECT,
     )
     defaults.update(overrides)
@@ -59,7 +61,7 @@ class TestMediaOutcomePathwayRoundTrip:
         assert pathway.role == PATHWAY_ROLE_PRIMARY_DIRECT
         assert pathway.lag_type == "none"
         assert pathway.lag_weeks is None
-        assert pathway.prior_scale == 1.0
+        assert pathway.prior_scale is None
         assert pathway.include_in_attribution is True
         assert pathway.include_in_planning is True
         assert pathway.evidence_status == "untested"
@@ -68,8 +70,10 @@ class TestMediaOutcomePathwayRoundTrip:
 class TestPathwayRolesCoverRoadmapVocabulary:
     def test_all_four_roles_present(self):
         assert set(PATHWAY_ROLES) == {
-            PATHWAY_ROLE_PRIMARY_DIRECT, PATHWAY_ROLE_ACTIVE_CROSS_PRODUCT,
-            PATHWAY_ROLE_EXPLORATORY_CROSS_PRODUCT, PATHWAY_ROLE_EXCLUDED,
+            PATHWAY_ROLE_PRIMARY_DIRECT,
+            PATHWAY_ROLE_ACTIVE_CROSS_PRODUCT,
+            PATHWAY_ROLE_EXPLORATORY_CROSS_PRODUCT,
+            PATHWAY_ROLE_EXCLUDED,
         }
 
 
@@ -77,7 +81,9 @@ class TestValidateMediaOutcomePathways:
     def test_well_formed_pathway_has_no_errors(self):
         pathway = _pathway()
         errors = validate_media_outcome_pathways(
-            [pathway], channels=["DNA_Media"], outcome_ids=["dna_kit_sale_self_activated"],
+            [pathway],
+            channels=["DNA_Media"],
+            outcome_ids=["dna_kit_sale_self_activated"],
         )
         assert errors == []
 
@@ -123,19 +129,29 @@ class TestValidateMediaOutcomePathways:
 
     def test_duplicate_pathway_id_is_an_error(self):
         a = _pathway(pathway_id="dup")
-        b = _pathway(pathway_id="dup", target_outcome_id="dna_kit_sale_gifted_activated")
+        b = _pathway(
+            pathway_id="dup", target_outcome_id="dna_kit_sale_gifted_activated"
+        )
         errors = validate_media_outcome_pathways([a, b])
         assert any("Duplicate pathway_id" in e for e in errors)
 
     def test_duplicate_channel_outcome_pair_is_an_error(self):
-        a = _pathway(channel="DNA_Media", target_outcome_id="dna_kit_sale_self_activated")
-        b = _pathway(channel="DNA_Media", target_outcome_id="dna_kit_sale_self_activated")
+        a = _pathway(
+            channel="DNA_Media", target_outcome_id="dna_kit_sale_self_activated"
+        )
+        b = _pathway(
+            channel="DNA_Media", target_outcome_id="dna_kit_sale_self_activated"
+        )
         errors = validate_media_outcome_pathways([a, b])
         assert any("Duplicate pathway for channel" in e for e in errors)
 
     def test_same_channel_different_outcomes_is_not_a_duplicate(self):
-        a = _pathway(channel="DNA_Media", target_outcome_id="dna_kit_sale_self_activated")
-        b = _pathway(channel="DNA_Media", target_outcome_id="dna_kit_sale_gifted_activated")
+        a = _pathway(
+            channel="DNA_Media", target_outcome_id="dna_kit_sale_self_activated"
+        )
+        b = _pathway(
+            channel="DNA_Media", target_outcome_id="dna_kit_sale_gifted_activated"
+        )
         errors = validate_media_outcome_pathways([a, b])
         assert not any("Duplicate pathway for channel" in e for e in errors)
 
@@ -152,49 +168,79 @@ class TestPathwaysCanTargetTheExpandedFutureOutcomeCatalogue:
     FH KPI is a GSA or every DNA KPI is a generic kit-sale total."""
 
     FUTURE_OUTCOME_IDS = [
-        "fh_net_billthrough_count", "fh_gsa_finance_date", "fh_signup_count",
-        "dna_kit_sale_total", "dna_kit_sale_self_activated",
-        "dna_kit_sale_gifted_activated", "dna_kit_sale_unactivated",
+        "fh_net_billthrough_count",
+        "fh_gsa_finance_date",
+        "fh_signup_count",
+        "dna_kit_sale_total",
+        "dna_kit_sale_self_activated",
+        "dna_kit_sale_gifted_activated",
+        "dna_kit_sale_unactivated",
     ]
 
     def test_pathways_targeting_every_future_outcome_id_validate_cleanly(self):
         pathways = [
-            _pathway(channel=f"channel_{i}", target_outcome_id=oid, source_product=DNA if "dna" in oid else FAMILY_HISTORY)
+            _pathway(
+                channel=f"channel_{i}",
+                target_outcome_id=oid,
+                source_product=DNA if "dna" in oid else FAMILY_HISTORY,
+            )
             for i, oid in enumerate(self.FUTURE_OUTCOME_IDS)
         ]
         errors = validate_media_outcome_pathways(
-            pathways, channels=[p.channel for p in pathways], outcome_ids=self.FUTURE_OUTCOME_IDS,
+            pathways,
+            channels=[p.channel for p in pathways],
+            outcome_ids=self.FUTURE_OUTCOME_IDS,
         )
         assert errors == []
 
-    def test_dna_media_to_fh_net_billthrough_is_a_valid_active_cross_product_pathway(self):
+    def test_dna_media_to_fh_net_billthrough_is_a_valid_active_cross_product_pathway(
+        self,
+    ):
         pathway = _pathway(
-            channel="DNA_Media", source_product=DNA, target_outcome_id="fh_net_billthrough_count",
-            role=PATHWAY_ROLE_ACTIVE_CROSS_PRODUCT, component_type="cross_product",
+            channel="DNA_Media",
+            source_product=DNA,
+            target_outcome_id="fh_net_billthrough_count",
+            role=PATHWAY_ROLE_ACTIVE_CROSS_PRODUCT,
+            component_type="cross_product",
         )
-        errors = validate_media_outcome_pathways([pathway], outcome_ids=["fh_net_billthrough_count"])
+        errors = validate_media_outcome_pathways(
+            [pathway], outcome_ids=["fh_net_billthrough_count"]
+        )
         assert errors == []
 
     def test_fh_media_to_dna_kit_total_is_a_valid_exploratory_pathway(self):
         pathway = _pathway(
-            channel="TV", source_product=FAMILY_HISTORY, target_outcome_id="dna_kit_sale_total",
-            role=PATHWAY_ROLE_EXPLORATORY_CROSS_PRODUCT, component_type="cross_product", include_in_planning=False, prior_scale=0.1,
+            channel="TV",
+            source_product=FAMILY_HISTORY,
+            target_outcome_id="dna_kit_sale_total",
+            role=PATHWAY_ROLE_EXPLORATORY_CROSS_PRODUCT,
+            component_type="cross_product",
+            include_in_planning=False,
+            prior_scale=0.1,
         )
-        errors = validate_media_outcome_pathways([pathway], outcome_ids=["dna_kit_sale_total"])
+        errors = validate_media_outcome_pathways(
+            [pathway], outcome_ids=["dna_kit_sale_total"]
+        )
         assert errors == []
 
 
 class TestPathwayCatalogueFingerprintPayload:
     def test_sorted_by_channel_and_target_outcome_id(self):
         a = _pathway(channel="TV", target_outcome_id="fh_new_gsa")
-        b = _pathway(channel="DNA_Media", target_outcome_id="dna_kit_sale_self_activated")
+        b = _pathway(
+            channel="DNA_Media", target_outcome_id="dna_kit_sale_self_activated"
+        )
         payload = pathway_catalogue_fingerprint_payload([a, b])
         assert [p["channel"] for p in payload] == ["DNA_Media", "TV"]
 
     def test_order_independent(self):
         a = _pathway(channel="TV", target_outcome_id="fh_new_gsa")
-        b = _pathway(channel="DNA_Media", target_outcome_id="dna_kit_sale_self_activated")
-        assert pathway_catalogue_fingerprint_payload([a, b]) == pathway_catalogue_fingerprint_payload([b, a])
+        b = _pathway(
+            channel="DNA_Media", target_outcome_id="dna_kit_sale_self_activated"
+        )
+        assert pathway_catalogue_fingerprint_payload(
+            [a, b]
+        ) == pathway_catalogue_fingerprint_payload([b, a])
 
     def test_pathway_id_is_excluded_from_the_payload(self):
         pathway = _pathway()
@@ -204,12 +250,16 @@ class TestPathwayCatalogueFingerprintPayload:
     def test_two_pathways_differing_only_by_pathway_id_fingerprint_identically(self):
         a = _pathway(pathway_id="id-a")
         b = _pathway(pathway_id="id-b")
-        assert pathway_catalogue_fingerprint_payload([a]) == pathway_catalogue_fingerprint_payload([b])
+        assert pathway_catalogue_fingerprint_payload(
+            [a]
+        ) == pathway_catalogue_fingerprint_payload([b])
 
     def test_changing_role_changes_the_payload(self):
         a = _pathway(role=PATHWAY_ROLE_PRIMARY_DIRECT)
         b = _pathway(role=PATHWAY_ROLE_EXPLORATORY_CROSS_PRODUCT)
-        assert pathway_catalogue_fingerprint_payload([a]) != pathway_catalogue_fingerprint_payload([b])
+        assert pathway_catalogue_fingerprint_payload(
+            [a]
+        ) != pathway_catalogue_fingerprint_payload([b])
 
 
 class TestPathwayDriftStatus:
@@ -236,7 +286,10 @@ class TestPathwayDriftStatus:
 
     def test_all_statuses_are_the_documented_four(self):
         assert set(PATHWAY_DRIFT_STATUSES) == {
-            "Fitted and current", "Changed since fit", "New since fit", "Removed since fit",
+            "Fitted and current",
+            "Changed since fit",
+            "New since fit",
+            "Removed since fit",
         }
 
 
@@ -278,8 +331,13 @@ class TestPathwaysDriftDataframe:
 def _reconciliation_group(**overrides) -> OutcomeReconciliationGroup:
     defaults = dict(
         group_id="dna_total_reconciliation",
-        component_outcome_ids=["dna_kit_sale_self_activated", "dna_kit_sale_gifted_activated", "dna_kit_sale_unactivated"],
-        relation="sum", total_outcome_id="dna_kit_sale_total",
+        component_outcome_ids=[
+            "dna_kit_sale_self_activated",
+            "dna_kit_sale_gifted_activated",
+            "dna_kit_sale_unactivated",
+        ],
+        relation="sum",
+        total_outcome_id="dna_kit_sale_total",
     )
     defaults.update(overrides)
     return OutcomeReconciliationGroup(**defaults)
@@ -296,7 +354,12 @@ class TestValidateReconciliationGroups:
         group = _reconciliation_group()
         errors = validate_reconciliation_groups(
             [group],
-            outcome_ids=["dna_kit_sale_self_activated", "dna_kit_sale_gifted_activated", "dna_kit_sale_unactivated", "dna_kit_sale_total"],
+            outcome_ids=[
+                "dna_kit_sale_self_activated",
+                "dna_kit_sale_gifted_activated",
+                "dna_kit_sale_unactivated",
+                "dna_kit_sale_total",
+            ],
         )
         assert errors == []
 
@@ -324,20 +387,32 @@ class TestValidateReconciliationGroups:
     def test_total_outcome_id_in_its_own_components_is_an_error(self):
         group = _reconciliation_group(
             total_outcome_id="dna_kit_sale_self_activated",
-            component_outcome_ids=["dna_kit_sale_self_activated", "dna_kit_sale_gifted_activated"],
+            component_outcome_ids=[
+                "dna_kit_sale_self_activated",
+                "dna_kit_sale_gifted_activated",
+            ],
         )
         errors = validate_reconciliation_groups([group])
-        assert any("listed as one of its own component_outcome_ids" in e for e in errors)
+        assert any(
+            "listed as one of its own component_outcome_ids" in e for e in errors
+        )
 
     def test_unknown_component_outcome_id_is_an_error_when_outcome_ids_given(self):
         group = _reconciliation_group()
-        errors = validate_reconciliation_groups([group], outcome_ids=["dna_kit_sale_total"])
+        errors = validate_reconciliation_groups(
+            [group], outcome_ids=["dna_kit_sale_total"]
+        )
         assert any("unknown component_outcome_id" in e for e in errors)
 
     def test_unknown_total_outcome_id_is_an_error_when_outcome_ids_given(self):
         group = _reconciliation_group()
         errors = validate_reconciliation_groups(
-            [group], outcome_ids=["dna_kit_sale_self_activated", "dna_kit_sale_gifted_activated", "dna_kit_sale_unactivated"],
+            [group],
+            outcome_ids=[
+                "dna_kit_sale_self_activated",
+                "dna_kit_sale_gifted_activated",
+                "dna_kit_sale_unactivated",
+            ],
         )
         assert any("unknown total_outcome_id" in e for e in errors)
 
@@ -354,8 +429,10 @@ class TestReconciliationGroupDiagnostics:
     def test_sum_relation_reconciles_when_total_equals_component_sum(self):
         group = _reconciliation_group()
         values = {
-            "dna_kit_sale_self_activated": 10.0, "dna_kit_sale_gifted_activated": 5.0,
-            "dna_kit_sale_unactivated": 3.0, "dna_kit_sale_total": 18.0,
+            "dna_kit_sale_self_activated": 10.0,
+            "dna_kit_sale_gifted_activated": 5.0,
+            "dna_kit_sale_unactivated": 3.0,
+            "dna_kit_sale_total": 18.0,
         }
         result = reconciliation_group_diagnostics(group, values)
         assert result["component_sum"] == 18.0
@@ -365,8 +442,10 @@ class TestReconciliationGroupDiagnostics:
     def test_sum_relation_does_not_reconcile_when_total_differs(self):
         group = _reconciliation_group()
         values = {
-            "dna_kit_sale_self_activated": 10.0, "dna_kit_sale_gifted_activated": 5.0,
-            "dna_kit_sale_unactivated": 3.0, "dna_kit_sale_total": 100.0,
+            "dna_kit_sale_self_activated": 10.0,
+            "dna_kit_sale_gifted_activated": 5.0,
+            "dna_kit_sale_unactivated": 3.0,
+            "dna_kit_sale_total": 100.0,
         }
         result = reconciliation_group_diagnostics(group, values)
         assert result["reconciles"] is False
@@ -381,8 +460,10 @@ class TestReconciliationGroupDiagnostics:
 
     def test_ratio_relation_computes_implied_ratio(self):
         group = OutcomeReconciliationGroup(
-            group_id="net_billthrough_rate", relation="ratio",
-            total_outcome_id="fh_net_billthrough_count", component_outcome_ids=["fh_signup_count"],
+            group_id="net_billthrough_rate",
+            relation="ratio",
+            total_outcome_id="fh_net_billthrough_count",
+            component_outcome_ids=["fh_signup_count"],
         )
         values = {"fh_net_billthrough_count": 40.0, "fh_signup_count": 100.0}
         result = reconciliation_group_diagnostics(group, values)
@@ -390,8 +471,10 @@ class TestReconciliationGroupDiagnostics:
 
     def test_ratio_relation_with_zero_denominator_gives_no_implied_ratio(self):
         group = OutcomeReconciliationGroup(
-            group_id="net_billthrough_rate", relation="ratio",
-            total_outcome_id="fh_net_billthrough_count", component_outcome_ids=["fh_signup_count"],
+            group_id="net_billthrough_rate",
+            relation="ratio",
+            total_outcome_id="fh_net_billthrough_count",
+            component_outcome_ids=["fh_signup_count"],
         )
         values = {"fh_net_billthrough_count": 40.0, "fh_signup_count": 0.0}
         result = reconciliation_group_diagnostics(group, values)
@@ -415,9 +498,13 @@ DNA_LAG_WEEKS = 4
 
 def _resolve(pathways=None):
     return resolve_pathway_masks(
-        OUTCOME_IDS, CHANNELS, pathways or [],
-        dna_channel_idx=DNA_CHANNEL_IDX, dna_outcome_id=DNA_OUTCOME_ID,
-        direct_dna_outcome_ids=DIRECT_DNA_OUTCOME_IDS, dna_lag_weeks=DNA_LAG_WEEKS,
+        OUTCOME_IDS,
+        CHANNELS,
+        pathways or [],
+        dna_channel_idx=DNA_CHANNEL_IDX,
+        dna_outcome_id=DNA_OUTCOME_ID,
+        direct_dna_outcome_ids=DIRECT_DNA_OUTCOME_IDS,
+        dna_lag_weeks=DNA_LAG_WEEKS,
     )
 
 
@@ -437,7 +524,9 @@ class TestResolvePathwayMasksLegacyDefaults:
     def test_dna_channel_kit_only_outcome_is_primary_only(self):
         masks = _resolve()
         assert "DNA_Media" in masks.primary_channels_by_outcome.get("dna_new_kit", [])
-        assert "DNA_Media" not in masks.active_channels_by_outcome.get("dna_new_kit", [])
+        assert "DNA_Media" not in masks.active_channels_by_outcome.get(
+            "dna_new_kit", []
+        )
 
     def test_dna_channel_dna_outcome_id_gets_both_primary_and_active(self):
         masks = _resolve()
@@ -448,7 +537,9 @@ class TestResolvePathwayMasksLegacyDefaults:
         masks = _resolve()
         assert "DNA_Media" not in masks.primary_channels_by_outcome.get("fh_new", [])
         assert "DNA_Media" in masks.active_channels_by_outcome.get("fh_new", [])
-        assert "DNA_Media" not in masks.primary_channels_by_outcome.get("fh_winback", [])
+        assert "DNA_Media" not in masks.primary_channels_by_outcome.get(
+            "fh_winback", []
+        )
         assert "DNA_Media" in masks.active_channels_by_outcome.get("fh_winback", [])
 
     def test_no_exploratory_cells_by_default(self):
@@ -460,8 +551,13 @@ class TestResolvePathwayMasksLegacyDefaults:
 
     def test_no_dna_channels_at_all_is_primary_direct_everywhere(self):
         masks = resolve_pathway_masks(
-            OUTCOME_IDS, CHANNELS, [], dna_channel_idx=[], dna_outcome_id=None,
-            direct_dna_outcome_ids=[], dna_lag_weeks=DNA_LAG_WEEKS,
+            OUTCOME_IDS,
+            CHANNELS,
+            [],
+            dna_channel_idx=[],
+            dna_outcome_id=None,
+            direct_dna_outcome_ids=[],
+            dna_lag_weeks=DNA_LAG_WEEKS,
         )
         for oid in OUTCOME_IDS:
             assert set(masks.primary_channels_by_outcome.get(oid, [])) == set(CHANNELS)
@@ -470,7 +566,12 @@ class TestResolvePathwayMasksLegacyDefaults:
 
 class TestResolvePathwayMasksExplicitOverrides:
     def test_explicit_excluded_pathway_removes_cell_from_every_bucket(self):
-        pathway = MediaOutcomePathway(channel="TV", source_product=FAMILY_HISTORY, target_outcome_id="fh_new", role=PATHWAY_ROLE_EXCLUDED)
+        pathway = MediaOutcomePathway(
+            channel="TV",
+            source_product=FAMILY_HISTORY,
+            target_outcome_id="fh_new",
+            role=PATHWAY_ROLE_EXCLUDED,
+        )
         masks = _resolve([pathway])
         assert "TV" not in masks.primary_channels_by_outcome.get("fh_new", [])
         assert "TV" not in masks.active_channels_by_outcome.get("fh_new", [])
@@ -480,7 +581,9 @@ class TestResolvePathwayMasksExplicitOverrides:
 
     def test_explicit_exploratory_pathway_on_a_non_dna_channel(self):
         pathway = MediaOutcomePathway(
-            channel="TV", source_product=FAMILY_HISTORY, target_outcome_id="dna_new_kit",
+            channel="TV",
+            source_product=FAMILY_HISTORY,
+            target_outcome_id="dna_new_kit",
             role=PATHWAY_ROLE_EXPLORATORY_CROSS_PRODUCT,
         )
         masks = _resolve([pathway])
@@ -496,16 +599,30 @@ class TestResolvePathwayMasksExplicitOverrides:
         # active; an explicit pathway for that exact cell reduces it to just
         # the one specified role (documented simplification).
         pathway = MediaOutcomePathway(
-            channel="DNA_Media", source_product=DNA, target_outcome_id=DNA_OUTCOME_ID,
+            channel="DNA_Media",
+            source_product=DNA,
+            target_outcome_id=DNA_OUTCOME_ID,
             role=PATHWAY_ROLE_ACTIVE_CROSS_PRODUCT,
         )
         masks = _resolve([pathway])
         assert "DNA_Media" in masks.active_channels_by_outcome.get(DNA_OUTCOME_ID, [])
-        assert "DNA_Media" not in masks.primary_channels_by_outcome.get(DNA_OUTCOME_ID, [])
+        assert "DNA_Media" not in masks.primary_channels_by_outcome.get(
+            DNA_OUTCOME_ID, []
+        )
 
-    def test_explicit_primary_direct_pathway_is_a_no_op_when_it_matches_the_legacy_default(self):
-        pathway = MediaOutcomePathway(channel="TV", source_product=FAMILY_HISTORY, target_outcome_id="fh_new", role=PATHWAY_ROLE_PRIMARY_DIRECT)
-        assert _resolve([pathway]).primary_channels_by_outcome == _resolve([]).primary_channels_by_outcome
+    def test_explicit_primary_direct_pathway_is_a_no_op_when_it_matches_the_legacy_default(
+        self,
+    ):
+        pathway = MediaOutcomePathway(
+            channel="TV",
+            source_product=FAMILY_HISTORY,
+            target_outcome_id="fh_new",
+            role=PATHWAY_ROLE_PRIMARY_DIRECT,
+        )
+        assert (
+            _resolve([pathway]).primary_channels_by_outcome
+            == _resolve([]).primary_channels_by_outcome
+        )
 
 
 class TestResolvedPathwayMasksConversionHelpers:

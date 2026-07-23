@@ -5,9 +5,20 @@ import numpy as np
 from typing import List, Optional, Tuple, Dict, Any
 
 from ancestry_mmm.core.schema import ModelSpec
-from ancestry_mmm.core.outcomes import OutcomeDefinition, included_outcomes, resolve_outcome_definitions
+from ancestry_mmm.core.outcomes import (
+    DNA,
+    FAMILY_HISTORY,
+    OutcomeDefinition,
+    included_outcomes,
+    resolve_outcome_definitions,
+)
+from ancestry_mmm.core.pathways import (
+    MediaOutcomePathway,
+    validate_media_outcome_pathways,
+)
 from ancestry_mmm.core.net_billthrough import (
-    NBT_METRIC_KEY, NetBillthroughCompletenessMetadata,
+    NBT_METRIC_KEY,
+    NetBillthroughCompletenessMetadata,
     assert_supplied_net_billthrough_complete,
 )
 
@@ -60,36 +71,36 @@ def prepare_data_for_modeling(
 
     # Aggregate if needed
     if aggregation == "Weekly":
-        data['period'] = data[date_col].dt.to_period('W').dt.start_time
+        data["period"] = data[date_col].dt.to_period("W").dt.start_time
         numeric_cols = [target_col] + media_cols + control_cols
-        data = data.groupby('period')[numeric_cols].sum().reset_index()
-        data = data.rename(columns={'period': date_col})
+        data = data.groupby("period")[numeric_cols].sum().reset_index()
+        data = data.rename(columns={"period": date_col})
     elif aggregation == "Monthly":
-        data['period'] = data[date_col].dt.to_period('M').dt.start_time
+        data["period"] = data[date_col].dt.to_period("M").dt.start_time
         numeric_cols = [target_col] + media_cols + control_cols
-        data = data.groupby('period')[numeric_cols].sum().reset_index()
-        data = data.rename(columns={'period': date_col})
+        data = data.groupby("period")[numeric_cols].sum().reset_index()
+        data = data.rename(columns={"period": date_col})
 
     # Add time index
-    data['time_index'] = np.arange(len(data))
+    data["time_index"] = np.arange(len(data))
 
     # Calculate metadata
     metadata = {
-        'n_observations': len(data),
-        'n_media_channels': len(media_cols),
-        'date_range': (data[date_col].min(), data[date_col].max()),
-        'aggregation': aggregation,
-        'media_columns': media_cols,
-        'control_columns': control_cols,
-        'target_column': target_col,
-        'date_column': date_col,
+        "n_observations": len(data),
+        "n_media_channels": len(media_cols),
+        "date_range": (data[date_col].min(), data[date_col].max()),
+        "aggregation": aggregation,
+        "media_columns": media_cols,
+        "control_columns": control_cols,
+        "target_column": target_col,
+        "date_column": date_col,
     }
 
     # Calculate summary statistics for scaling
-    metadata['target_mean'] = data[target_col].mean()
-    metadata['target_std'] = data[target_col].std()
-    metadata['media_means'] = {col: data[col].mean() for col in media_cols}
-    metadata['media_stds'] = {col: data[col].std() for col in media_cols}
+    metadata["target_mean"] = data[target_col].mean()
+    metadata["target_std"] = data[target_col].std()
+    metadata["media_means"] = {col: data[col].mean() for col in media_cols}
+    metadata["media_stds"] = {col: data[col].std() for col in media_cols}
 
     return data, metadata
 
@@ -216,7 +227,9 @@ def prepare_fh_modeling_frame(
     spec: ModelSpec,
     outcomes: Optional[List[OutcomeDefinition]] = None,
     media_outcome_pathways: Optional[List[Any]] = None,
-    net_billthrough_metadata: Optional[NetBillthroughCompletenessMetadata | dict] = None,
+    net_billthrough_metadata: Optional[
+        NetBillthroughCompletenessMetadata | dict
+    ] = None,
 ) -> Dict[str, Any]:
     """
     Turn a joined, transformed DataFrame + ModelSpec into the arrays the
@@ -275,22 +288,59 @@ def prepare_fh_modeling_frame(
         raise ValueError("Invalid model spec: " + "; ".join(errors))
 
     if outcomes is None:
-        outcomes = resolve_outcome_definitions(None, spec.segment_outcomes, spec.segment_ltv)
+        outcomes = resolve_outcome_definitions(
+            None, spec.segment_outcomes, spec.segment_ltv
+        )
     fit_outcomes = included_outcomes(outcomes)
     if not fit_outcomes:
-        raise ValueError("No outcomes are included in the fit - check included_in_fit on the outcome catalogue.")
+        raise ValueError(
+            "No outcomes are included in the fit - check included_in_fit on the outcome catalogue."
+        )
 
     outcome_ids = [o.outcome_id for o in fit_outcomes]
     if len(set(outcome_ids)) != len(outcome_ids):
-        raise ValueError(f"Duplicate outcome_id(s) among the outcomes included in the fit: {outcome_ids}")
+        raise ValueError(
+            f"Duplicate outcome_id(s) among the outcomes included in the fit: {outcome_ids}"
+        )
     outcome_id_to_segment = {o.outcome_id: o.segment for o in fit_outcomes}
     outcome_id_to_product = {o.outcome_id: o.product for o in fit_outcomes}
     outcome_source_columns = {o.outcome_id: o.source_column for o in fit_outcomes}
 
+    # Validate the uploaded/catalogue contract before any long-to-wide NBT
+    # reshaping or aggregation. The model builders repeat this with the same
+    # full context as a final defensive gate.
+    resolved_pathways = [
+        pathway
+        if isinstance(pathway, MediaOutcomePathway)
+        else MediaOutcomePathway.from_dict(pathway)
+        for pathway in (media_outcome_pathways or [])
+    ]
+    pathway_errors = validate_media_outcome_pathways(
+        resolved_pathways,
+        channels=spec.channels,
+        outcome_ids=[outcome.outcome_id for outcome in outcomes],
+        channel_products={
+            channel: DNA if channel in spec.dna_channels else FAMILY_HISTORY
+            for channel in spec.channels
+        },
+        outcome_products={outcome.outcome_id: outcome.product for outcome in outcomes},
+        fitted_outcome_ids=outcome_ids,
+        diagnostic_only_outcome_ids=[
+            outcome.outcome_id for outcome in outcomes if outcome.role == "diagnostic"
+        ],
+    )
+    if pathway_errors:
+        raise ValueError(
+            "Invalid media-outcome pathway catalogue before frame preparation: "
+            + "; ".join(pathway_errors)
+        )
+
     data = df.copy()
     data[spec.date_col] = pd.to_datetime(data[spec.date_col])
 
-    markets_filter = spec.markets or sorted(data[spec.market_col].dropna().unique().tolist())
+    markets_filter = spec.markets or sorted(
+        data[spec.market_col].dropna().unique().tolist()
+    )
     data = data[data[spec.market_col].isin(markets_filter)].copy()
     data = data.sort_values([spec.market_col, spec.date_col]).reset_index(drop=True)
 
@@ -331,9 +381,11 @@ def prepare_fh_modeling_frame(
                 market_column=spec.market_col,
             )
             keys = [spec.market_col, spec.date_col]
-            base = data.drop(columns=["segment", NBT_METRIC_KEY]).groupby(
-                keys, as_index=False
-            ).first()
+            base = (
+                data.drop(columns=["segment", NBT_METRIC_KEY])
+                .groupby(keys, as_index=False)
+                .first()
+            )
             for outcome in nbt_outcomes:
                 column = f"__nbt_{outcome.outcome_id}"
                 values = data[data["segment"].astype(str) == str(outcome.segment)][
@@ -381,33 +433,51 @@ def prepare_fh_modeling_frame(
         if outcome_source_columns[o.outcome_id] not in data.columns
     ]
     if missing_outcomes:
-        raise ValueError(f"Outcome source columns missing from data: {missing_outcomes}")
-    Y = data[
-        [outcome_source_columns[o.outcome_id] for o in fit_outcomes]
-    ].to_numpy(dtype=float)
+        raise ValueError(
+            f"Outcome source columns missing from data: {missing_outcomes}"
+        )
+    Y = data[[outcome_source_columns[o.outcome_id] for o in fit_outcomes]].to_numpy(
+        dtype=float
+    )
 
     promo = np.zeros((len(data), len(outcome_ids)))
     for i, oid in enumerate(outcome_ids):
         # Outcome-id-keyed mapping (PR E.2, canonical) wins when set; the
         # legacy segment-keyed mapping is the fallback for a migrated
         # project that hasn't configured this outcome_id explicitly yet.
-        col = (spec.outcome_promo_cols or {}).get(oid) or spec.promo_cols.get(outcome_id_to_segment[oid])
+        col = (spec.outcome_promo_cols or {}).get(oid) or spec.promo_cols.get(
+            outcome_id_to_segment[oid]
+        )
         if col and col in data.columns:
             promo[:, i] = data[col].to_numpy(dtype=float)
 
     control_cols = [c for c in spec.control_cols if c in data.columns]
-    X_controls = data[control_cols].to_numpy(dtype=float) if control_cols else np.zeros((len(data), 0))
+    X_controls = (
+        data[control_cols].to_numpy(dtype=float)
+        if control_cols
+        else np.zeros((len(data), 0))
+    )
 
     outcome_controls: Dict[str, np.ndarray] = {}
     outcome_control_names: Dict[str, List[str]] = {}
     for oid in outcome_ids:
         # Additive across product-level, legacy segment-level, and
         # outcome-level controls (PR E.2) - deduplicated, order preserved.
-        cols = list(dict.fromkeys(
-            list((spec.product_control_cols or {}).get(outcome_id_to_product[oid], []))
-            + list((spec.segment_control_cols or {}).get(outcome_id_to_segment[oid], []))
-            + list((spec.outcome_control_cols or {}).get(oid, []))
-        ))
+        cols = list(
+            dict.fromkeys(
+                list(
+                    (spec.product_control_cols or {}).get(
+                        outcome_id_to_product[oid], []
+                    )
+                )
+                + list(
+                    (spec.segment_control_cols or {}).get(
+                        outcome_id_to_segment[oid], []
+                    )
+                )
+                + list((spec.outcome_control_cols or {}).get(oid, []))
+            )
+        )
         if not cols:
             continue
         present = [c for c in cols if c in data.columns]
@@ -426,7 +496,9 @@ def prepare_fh_modeling_frame(
         if n > 0:
             trend[mask] = np.arange(n) / max(n - 1, 1)
 
-    dna_channel_idx = [spec.channels.index(c) for c in spec.dna_channels if c in spec.channels]
+    dna_channel_idx = [
+        spec.channels.index(c) for c in spec.dna_channels if c in spec.channels
+    ]
 
     return {
         "df": data,
@@ -448,6 +520,6 @@ def prepare_fh_modeling_frame(
         "fourier": fourier,
         "trend": trend,
         "unpooled_markets": spec.unpooled_markets,
-        "media_outcome_pathways": media_outcome_pathways or [],
+        "media_outcome_pathways": resolved_pathways,
         "net_billthrough_metadata": net_billthrough_metadata,
     }

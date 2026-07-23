@@ -8,8 +8,20 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 import pandas as pd
 import streamlit as st
 
-from ancestry_mmm.utils import init_session_state, get_state, set_state, curve_bank_dir, PROJECT_EXPORT_ROOT
-from ancestry_mmm.components import apply_theme, render_sidebar, render_page_header, render_drift_status
+from ancestry_mmm.utils import (
+    PROJECT_EXPORT_ROOT,
+    curve_bank_dir,
+    get_state,
+    get_workflow_progress,
+    init_session_state,
+    set_state,
+)
+from ancestry_mmm.components import (
+    apply_theme,
+    render_sidebar,
+    render_page_header,
+    render_drift_status,
+)
 from ancestry_mmm.core.persistence import (
     export_project,
     import_project,
@@ -17,11 +29,18 @@ from ancestry_mmm.core.persistence import (
     reconstruct_model_state,
     verify_imported_approval,
     UnsafeZipEntryError,
+    audit_project_resumability,
 )
 from ancestry_mmm.core.curve_bank import load_all_entries, entries_to_dataframe
-from ancestry_mmm.core.attribution import compute_shapley_contributions, total_fh_contribution, outcome_channel_summary
+from ancestry_mmm.core.attribution import (
+    compute_shapley_contributions,
+    total_fh_contribution,
+    outcome_channel_summary,
+)
 from ancestry_mmm.core.market_specific_attribution import (
-    compute_shapley_contributions_market_specific, total_contribution_market_specific, outcome_channel_market_summary,
+    compute_shapley_contributions_market_specific,
+    total_contribution_market_specific,
+    outcome_channel_market_summary,
 )
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.approval import ModelApproval
@@ -35,7 +54,9 @@ from ancestry_mmm.core.report import build_report_sections, render_markdown, ren
 from ancestry_mmm.core.promotions import PROMOTION_EVENT_OP
 from ancestry_mmm.data import apply_pipeline, pipeline_from_json
 
-st.set_page_config(page_title="Project Export - Ancestry FH MMM", page_icon="🧬", layout="wide")
+st.set_page_config(
+    page_title="Project Export - Ancestry FH MMM", page_icon="🧬", layout="wide"
+)
 init_session_state()
 apply_theme()
 render_sidebar("export")
@@ -50,6 +71,12 @@ st.caption(
 st.markdown("---")
 st.markdown("### Export project bundle")
 project_name = get_state("project_name", "ancestry-fh-uk")
+project_notes = st.text_area(
+    "Analyst project notes",
+    value=get_state("project_notes", ""),
+    help="Saved in the resumable bundle as notes.md.",
+)
+set_state("project_notes", project_notes)
 if st.button("Build export bundle", type="primary"):
     PROJECT_EXPORT_ROOT.mkdir(parents=True, exist_ok=True)
     output_path = PROJECT_EXPORT_ROOT / f"{project_name}.zip"
@@ -74,10 +101,40 @@ if st.button("Build export bundle", type="primary"):
             funnel_links=get_state("funnel_links"),
             media_outcome_pathways=get_state("media_outcome_pathways"),
             net_billthrough_metadata=get_state("net_billthrough_metadata"),
+            workflow_state={
+                "checkpoint": (
+                    "scenarios"
+                    if get_state("scenarios")
+                    else "curves"
+                    if get_state("curve_bank_entry_id")
+                    else "approved"
+                    if get_state("model_approval")
+                    else "fitted"
+                    if get_state("trace") is not None
+                    else "pre_fit"
+                    if get_state("model_spec")
+                    else "uploaded"
+                ),
+                "current_page": get_state("current_page", 0),
+                "workflow_progress": get_workflow_progress(),
+                "active_scenario": get_state("active_scenario"),
+            },
+            diagnostics={
+                "scorecard": get_state("scorecard"),
+                "backtest_results": get_state("backtest_results"),
+            },
+            notes=get_state("project_notes"),
+            calibration_records=get_state("calibration_records") or [],
+            model_comparison_candidates=get_state("model_comparison_candidates") or [],
         )
     st.success(f"Project bundle built: {output_path}")
     with open(output_path, "rb") as f:
-        st.download_button("Download project bundle (.zip)", f, file_name=f"{project_name}.zip", mime="application/zip")
+        st.download_button(
+            "Download project bundle (.zip)",
+            f,
+            file_name=f"{project_name}.zip",
+            mime="application/zip",
+        )
 
 st.markdown("---")
 st.markdown("### Import project bundle")
@@ -104,13 +161,19 @@ if uploaded_zip is not None and st.button("Import bundle"):
         # is computed purely from the versioned event list, not layered on
         # top of a stale one.
         transformed = imported["transformed_data"]
-        promo_steps = [s for s in pipeline_from_json(imported["pipeline_steps"] or []) if s.op == PROMOTION_EVENT_OP]
+        promo_steps = [
+            s
+            for s in pipeline_from_json(imported["pipeline_steps"] or [])
+            if s.op == PROMOTION_EVENT_OP
+        ]
         if transformed is not None and promo_steps:
             promo_columns = {
                 f"{s.params.get('column_prefix', '_promo_event_')}{s.params['event']['segment']}"
                 for s in promo_steps
             }
-            transformed = transformed.drop(columns=[c for c in promo_columns if c in transformed.columns])
+            transformed = transformed.drop(
+                columns=[c for c in promo_columns if c in transformed.columns]
+            )
             transformed = apply_pipeline(transformed, promo_steps)
         set_state("transformed_data", transformed)
         set_state("pipeline_steps", imported["pipeline_steps"])
@@ -127,6 +190,27 @@ if uploaded_zip is not None and st.button("Import bundle"):
         set_state("funnel_links", imported["funnel_links"])
         set_state("media_outcome_pathways", imported["media_outcome_pathways"])
         set_state("net_billthrough_metadata", imported["net_billthrough_metadata"])
+        workflow_state = imported.get("workflow_state") or {}
+        set_state("current_page", workflow_state.get("current_page", 0))
+        set_state("active_scenario", workflow_state.get("active_scenario"))
+        set_state("project_notes", imported.get("notes") or "")
+        set_state("calibration_records", imported.get("calibration_records") or [])
+        set_state(
+            "model_comparison_candidates",
+            imported.get("model_comparison_candidates") or [],
+        )
+        imported_diagnostics = imported.get("diagnostics") or {}
+        set_state("scorecard", imported_diagnostics.get("scorecard"))
+        set_state("backtest_results", imported_diagnostics.get("backtest_results"))
+        if imported.get("curve_bank_files"):
+            restored_curve_dir = curve_bank_dir()
+            restored_curve_dir.mkdir(parents=True, exist_ok=True)
+            for filename, contents in imported["curve_bank_files"].items():
+                (restored_curve_dir / Path(filename).name).write_text(contents)
+            set_state(
+                "curve_bank_entry_id",
+                Path(next(iter(imported["curve_bank_files"]))).stem,
+            )
         if imported["market_spec_config"] is None:
             st.caption(
                 "This bundle predates the market-specific redesign - no market descriptors or "
@@ -150,16 +234,31 @@ if uploaded_zip is not None and st.button("Import bundle"):
         set_state("model_meta", reconstructed["model_meta"])
         set_state("posterior_params", reconstructed["posterior_params"])
         set_state("model_trained", reconstructed["posterior_params"] is not None)
+        resume_audit = audit_project_resumability(imported)
+        if resume_audit["resumable"]:
+            st.success(
+                f"Resumability audit passed at checkpoint "
+                f"'{resume_audit['checkpoint']}'."
+            )
+        else:
+            st.warning(
+                "Bundle imported, but its declared checkpoint is incomplete: "
+                + ", ".join(resume_audit["missing_required"])
+            )
+        for audit_warning in resume_audit["warnings"]:
+            st.caption(audit_warning)
 
         verified_approval, message = verify_imported_approval(imported, reconstructed)
-        set_state("model_approval", verified_approval.to_dict() if verified_approval else None)
+        set_state(
+            "model_approval", verified_approval.to_dict() if verified_approval else None
+        )
         (st.success if verified_approval else st.warning)(message)
 
         if imported["trace"] is not None and reconstructed["frame"] is None:
             st.info(
                 "Imported a fitted trace, but couldn't reconstruct the modelling frame (missing "
                 "or inconsistent transformed data / model spec) - re-run Model Configuration's "
-                "\"Prepare modelling frame\" step, or re-fit, to continue."
+                '"Prepare modelling frame" step, or re-fit, to continue.'
             )
         st.success("Project imported. Review each page to pick up where you left off.")
     finally:
@@ -171,13 +270,24 @@ model_type_for_export = get_state("model_type", "shared")
 if get_state("trace") is not None and get_state("model_spec"):
     _export_spec = ModelSpec.from_dict(get_state("model_spec"))
     render_drift_status(
-        resolve_outcome_definitions(get_state("outcome_definitions"), _export_spec.segment_outcomes, _export_spec.segment_ltv),
+        resolve_outcome_definitions(
+            get_state("outcome_definitions"),
+            _export_spec.segment_outcomes,
+            _export_spec.segment_ltv,
+        ),
         get_state("model_meta"),
     )
-    _current_pathways = [MediaOutcomePathway.from_dict(p) for p in (get_state("media_outcome_pathways") or [])]
-    _pathway_drift_df = pathways_drift_dataframe(_current_pathways, get_state("model_meta"))
+    _current_pathways = [
+        MediaOutcomePathway.from_dict(p)
+        for p in (get_state("media_outcome_pathways") or [])
+    ]
+    _pathway_drift_df = pathways_drift_dataframe(
+        _current_pathways, get_state("model_meta")
+    )
     if not _pathway_drift_df.empty:
-        _changed_pathways = _pathway_drift_df[_pathway_drift_df["drift_status"] != "Fitted and current"]
+        _changed_pathways = _pathway_drift_df[
+            _pathway_drift_df["drift_status"] != "Fitted and current"
+        ]
         if not _changed_pathways.empty:
             st.info(
                 f"{len(_changed_pathways)} media-outcome pathway(s) differ from this fit's captured "
@@ -185,7 +295,9 @@ if get_state("trace") is not None and get_state("model_spec"):
                 "fitting; PR F)."
             )
     if model_type_for_export == "shared":
-        st.caption("Curve bank, total-FH contribution and segment x channel Shapley attribution (Model A).")
+        st.caption(
+            "Curve bank, total-FH contribution and segment x channel Shapley attribution (Model A)."
+        )
     else:
         st.caption(
             "Curve bank, evidence tiers, a CPA table per market/channel, market-aware Shapley "
@@ -202,9 +314,20 @@ if get_state("trace") is not None and get_state("model_spec"):
         entries_df = entries_to_dataframe(entries) if entries else None
 
         if model_type_for_export == "shared":
-            contributions = compute_shapley_contributions(frame, meta, params, n_permutations=100)
-            total_df = total_fh_contribution(frame, meta, params, contributions, spec.segment_ltv, outcome_ids=fh_gsa_outcome_ids(meta))
-            seg_df = outcome_channel_summary(frame, meta, params, contributions, spec.segment_ltv)
+            contributions = compute_shapley_contributions(
+                frame, meta, params, n_permutations=100
+            )
+            total_df = total_fh_contribution(
+                frame,
+                meta,
+                params,
+                contributions,
+                spec.segment_ltv,
+                outcome_ids=fh_gsa_outcome_ids(meta),
+            )
+            seg_df = outcome_channel_summary(
+                frame, meta, params, contributions, spec.segment_ltv
+            )
             sheets = {
                 "Total FH Contribution": total_df,
                 "Segment x Channel": seg_df,
@@ -217,11 +340,21 @@ if get_state("trace") is not None and get_state("model_spec"):
             approval_df = pd.DataFrame([approval_dict]) if approval_dict else None
             scenarios = get_state("scenarios") or []
             scenarios_df = compare_scenarios(scenarios) if scenarios else None
-            ms_contributions = compute_shapley_contributions_market_specific(frame, meta, params, n_permutations=100)
-            ms_total_df = total_contribution_market_specific(
-                frame, meta, params, ms_contributions, spec.segment_ltv, outcome_ids=fh_gsa_outcome_ids(meta), by_market=True,
+            ms_contributions = compute_shapley_contributions_market_specific(
+                frame, meta, params, n_permutations=100
             )
-            ms_seg_df = outcome_channel_market_summary(frame, meta, params, ms_contributions, spec.segment_ltv)
+            ms_total_df = total_contribution_market_specific(
+                frame,
+                meta,
+                params,
+                ms_contributions,
+                spec.segment_ltv,
+                outcome_ids=fh_gsa_outcome_ids(meta),
+                by_market=True,
+            )
+            ms_seg_df = outcome_channel_market_summary(
+                frame, meta, params, ms_contributions, spec.segment_ltv
+            )
             sheets = {
                 "Curve Bank": entries_df,
                 "Evidence Tiers": evidence_tiers_dataframe(trace, frame, meta),
@@ -237,8 +370,12 @@ if get_state("trace") is not None and get_state("model_spec"):
         excel_path = PROJECT_EXPORT_ROOT / f"{project_name}_summary.xlsx"
         export_excel_summary(excel_path, sheets)
         with open(excel_path, "rb") as f:
-            st.download_button("Download Excel summary (.xlsx)", f, file_name=excel_path.name,
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            st.download_button(
+                "Download Excel summary (.xlsx)",
+                f,
+                file_name=excel_path.name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
 else:
     st.info("Train a model first to build an Excel summary.")
 
@@ -287,9 +424,13 @@ if st.button("Build project report"):
     st.success("Report built.")
     c1, c2 = st.columns(2)
     with open(md_path, "rb") as f:
-        c1.download_button("Download report (.md)", f, file_name=md_path.name, mime="text/markdown")
+        c1.download_button(
+            "Download report (.md)", f, file_name=md_path.name, mime="text/markdown"
+        )
     with open(html_path, "rb") as f:
-        c2.download_button("Download report (.html)", f, file_name=html_path.name, mime="text/html")
+        c2.download_button(
+            "Download report (.html)", f, file_name=html_path.name, mime="text/html"
+        )
 
 st.markdown("---")
 st.markdown("### What's out of scope")
@@ -310,4 +451,6 @@ Per `docs/project_objectives.md` and `docs/limitations.md`, deliberately **not**
 """)
 
 st.markdown("---")
-st.caption("This is the last step in the workflow. Revisit any page from the sidebar to refine the model or plans.")
+st.caption(
+    "This is the last step in the workflow. Revisit any page from the sidebar to refine the model or plans."
+)

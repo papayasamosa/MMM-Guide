@@ -186,18 +186,19 @@
   boundary.
 - Evidence-tier thresholds (`core.evidence_tiers`) are reasonable defaults, not yet
   validated against real Ancestry data - see `docs/decision_log.md`.
-- PR G1's pathway masking supports one shared `cross_product_lag_weeks` across every active/exploratory
-  cell, not a per-pathway custom lag - `MediaOutcomePathway.lag_weeks` is stored/validated but not yet
-  read by fitting; see `docs/segment_level_estimation.md`.
+- The compatibility field `cross_product_lag_weeks` is only the legacy
+  fallback. Explicit cross-product components use their own validated
+  `lag_weeks` in fitting, replay, attribution, and planning; see
+  `docs/segment_level_estimation.md`.
 - `core.brand_search.BrandSearchConfig` does not by itself change what gets fitted - a channel set to
   `excluded` mode still needs a matching `role="excluded"` row on the Structure page's pathway catalogue
   to actually drop it from the likelihood. `mediation_share`/`calibration_factor` remain explicit
   analyst judgement, not fitted or estimated from an incrementality experiment - no automated geo-test
   pipeline exists yet; see `docs/brand_search.md`.
-- `core.net_billthrough` computes a correct weekly `fh_net_billthrough_count` series but is not yet
-  wired into `data.preprocessor.prepare_fh_modeling_frame` or any UI join step - a caller must compute
-  the series and join it into the transformed data by hand before it can be fitted as an outcome; see
-  `docs/net_billthrough.md`.
+- `core.net_billthrough` treats weekly NBT as an authoritative supplied KPI,
+  not a value reconstructed in this app. Wide and long inputs are validated
+  before reshaping and again at model construction; upstream ownership and
+  maturity rules remain external.
 - `core.identification_diagnostics.leave_one_channel_out_sensitivity` requires a caller-supplied refit
   function (matching `core.diagnostics.expanding_window_backtest`'s pattern) - it is not wired into the
   Diagnostics page's UI, since a real per-channel refit is too slow for an interactive click; only the

@@ -61,6 +61,9 @@ from .predict import extract_posterior_params
 from .schema import ModelSpec
 from .optimization import SpendConstraint
 
+PROJECT_BUNDLE_SCHEMA_VERSION = 3
+PROJECT_APP_VERSION = "0.1.0"
+
 
 class UnsafeZipEntryError(ValueError):
     """A project bundle zip contained an entry that would extract outside the target directory."""
@@ -130,6 +133,11 @@ def export_project(
     funnel_links: Optional[List[dict]] = None,
     media_outcome_pathways: Optional[List[dict]] = None,
     net_billthrough_metadata: Optional[dict] = None,
+    workflow_state: Optional[dict] = None,
+    diagnostics: Optional[dict] = None,
+    notes: Optional[str] = None,
+    calibration_records: Optional[List[dict]] = None,
+    model_comparison_candidates: Optional[List[dict]] = None,
 ) -> Path:
     output_path = Path(output_path)
     with tempfile.TemporaryDirectory() as tmp:
@@ -137,6 +145,7 @@ def export_project(
         (tmp / "data").mkdir()
         (tmp / "config").mkdir()
         (tmp / "scenarios").mkdir()
+        (tmp / "diagnostics").mkdir()
 
         for name, df in raw_sources.items():
             df.to_parquet(tmp / "data" / f"raw_{name}.parquet", index=False)
@@ -194,6 +203,30 @@ def export_project(
             (tmp / "config" / "net_billthrough_metadata.json").write_text(
                 json.dumps(net_billthrough_metadata, indent=2, default=str)
             )
+        if workflow_state is not None:
+            (tmp / "config" / "workflow_state.json").write_text(
+                json.dumps(workflow_state, indent=2, default=str)
+            )
+        if calibration_records is not None:
+            (tmp / "config" / "calibration_records.json").write_text(
+                json.dumps(calibration_records, indent=2, default=str)
+            )
+        if model_comparison_candidates is not None:
+            (tmp / "config" / "model_comparison_candidates.json").write_text(
+                json.dumps(model_comparison_candidates, indent=2, default=str)
+            )
+        if diagnostics is not None:
+            for name, value in diagnostics.items():
+                if value is None:
+                    continue
+                if isinstance(value, pd.DataFrame):
+                    value.to_parquet(tmp / "diagnostics" / f"{name}.parquet")
+                else:
+                    (tmp / "diagnostics" / f"{name}.json").write_text(
+                        json.dumps(value, indent=2, default=str)
+                    )
+        if notes:
+            (tmp / "notes.md").write_text(notes)
 
         scenarios_meta = []
         for i, s in enumerate(scenarios):
@@ -218,6 +251,24 @@ def export_project(
 
         if curve_bank_source_dir is not None and Path(curve_bank_source_dir).exists():
             shutil.copytree(curve_bank_source_dir, tmp / "curve_bank")
+
+        manifest = {
+            "schema_version": PROJECT_BUNDLE_SCHEMA_VERSION,
+            "app_version": PROJECT_APP_VERSION,
+            "workflow_checkpoint": (workflow_state or {}).get("checkpoint", "unknown"),
+            "contains": {
+                "raw_data": bool(raw_sources),
+                "transformed_data": transformed_data is not None,
+                "model_spec": model_spec is not None,
+                "posterior": trace is not None,
+                "diagnostics": bool(diagnostics),
+                "curves": (tmp / "curve_bank").exists(),
+                "approval": model_approval is not None,
+                "scenarios": bool(scenarios),
+                "notes": bool(notes),
+            },
+        }
+        (tmp / "manifest.json").write_text(json.dumps(manifest, indent=2, default=str))
 
         if output_path.exists():
             output_path.unlink()
@@ -267,11 +318,20 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         # reading, matching funnel_links' convention above.
         "media_outcome_pathways": None,
         "net_billthrough_metadata": None,
+        "manifest": None,
+        "workflow_state": None,
+        "diagnostics": {},
+        "notes": None,
+        "calibration_records": [],
+        "model_comparison_candidates": [],
     }
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         with zipfile.ZipFile(zip_path, "r") as zf:
             _safe_extract_zip(zf, tmp)
+
+        if (tmp / "manifest.json").exists():
+            result["manifest"] = json.loads((tmp / "manifest.json").read_text())
 
         data_dir = tmp / "data"
         if data_dir.exists():
@@ -331,6 +391,18 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
             result["net_billthrough_metadata"] = json.loads(
                 (config_dir / "net_billthrough_metadata.json").read_text()
             )
+        if (config_dir / "workflow_state.json").exists():
+            result["workflow_state"] = json.loads(
+                (config_dir / "workflow_state.json").read_text()
+            )
+        if (config_dir / "calibration_records.json").exists():
+            result["calibration_records"] = json.loads(
+                (config_dir / "calibration_records.json").read_text()
+            )
+        if (config_dir / "model_comparison_candidates.json").exists():
+            result["model_comparison_candidates"] = json.loads(
+                (config_dir / "model_comparison_candidates.json").read_text()
+            )
         if (config_dir / "scenarios.json").exists():
             scenarios_meta = json.loads((config_dir / "scenarios.json").read_text())
             for i, s in enumerate(scenarios_meta):
@@ -356,8 +428,100 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
             result["curve_bank_files"] = {
                 f.name: f.read_text() for f in curve_bank_path.glob("*.json")
             }
+        diagnostics_path = tmp / "diagnostics"
+        if diagnostics_path.exists():
+            for path in diagnostics_path.glob("*.json"):
+                result["diagnostics"][path.stem] = json.loads(path.read_text())
+            for path in diagnostics_path.glob("*.parquet"):
+                result["diagnostics"][path.stem] = pd.read_parquet(path)
+        notes_path = tmp / "notes.md"
+        if notes_path.exists():
+            result["notes"] = notes_path.read_text()
 
     return result
+
+
+def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
+    """Audit whether an imported bundle can resume its declared checkpoint.
+
+    Legacy bundles remain importable; they report a migration warning rather
+    than being treated as corrupt. Required artefacts grow with the furthest
+    checkpoint actually represented by the bundle.
+    """
+    manifest = imported.get("manifest") or {}
+    declared = manifest.get("workflow_checkpoint")
+    if not declared or declared == "unknown":
+        if imported.get("scenarios"):
+            declared = "scenarios"
+        elif imported.get("curve_bank_files"):
+            declared = "curves"
+        elif imported.get("model_approval"):
+            declared = "approved"
+        elif imported.get("trace") is not None:
+            declared = "fitted"
+        elif imported.get("model_spec"):
+            declared = "pre_fit"
+        else:
+            declared = "uploaded"
+
+    required = {
+        "uploaded": ["raw_sources"],
+        "pre_fit": ["raw_sources", "transformed_data", "model_spec"],
+        "fitted": [
+            "raw_sources",
+            "transformed_data",
+            "model_spec",
+            "trace",
+            "model_meta",
+        ],
+        "approved": [
+            "raw_sources",
+            "transformed_data",
+            "model_spec",
+            "trace",
+            "model_meta",
+            "model_approval",
+        ],
+        "curves": [
+            "raw_sources",
+            "transformed_data",
+            "model_spec",
+            "trace",
+            "model_meta",
+            "curve_bank_files",
+        ],
+        "scenarios": [
+            "raw_sources",
+            "transformed_data",
+            "model_spec",
+            "trace",
+            "model_meta",
+            "scenarios",
+        ],
+    }.get(declared, [])
+
+    def present(key: str) -> bool:
+        value = imported.get(key)
+        if key == "trace":
+            return value is not None
+        if key in {"transformed_data", "model_spec", "model_meta", "model_approval"}:
+            return value is not None
+        return bool(value)
+
+    missing = [key for key in required if not present(key)]
+    warnings = []
+    if not manifest:
+        warnings.append(
+            "Legacy bundle has no manifest; checkpoint was inferred and will "
+            "be migrated on the next export."
+        )
+    return {
+        "resumable": not missing,
+        "checkpoint": declared,
+        "missing_required": missing,
+        "warnings": warnings,
+        "schema_version": manifest.get("schema_version"),
+    }
 
 
 def reconstruct_model_state(imported: Dict[str, Any]) -> Dict[str, Any]:

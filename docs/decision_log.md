@@ -1583,8 +1583,8 @@ net bill-through cohorts so every week has a value (rejected - a fabricated numb
 honest gap; excluding immature cohorts, with `immature_cohort_summary` making the exclusion visible, was
 judged the only defensible default). Per-pathway custom `lag_weeks` values instead of one shared
 `cross_product_lag_weeks` (rejected for this PR - the pathway schema already stores `lag_weeks` per
-pathway for a future PR to read; building the per-pathway variable-lag PyMC machinery now was judged out
-of proportion to this PR's core deliverable and is documented as a explicit future extension). Refitting
+pathway for a future PR to read; this limitation was later removed by G1.1.2/G1.1.3, which made
+per-component lags operational across fitting and replay). Refitting
 inside `leave_one_channel_out_sensitivity` itself rather than taking a caller-supplied refit function
 (rejected - matches `expanding_window_backtest`'s established injection pattern; a real refit is slow and
 belongs page-level/user-paced, not embedded in a diagnostics module).
@@ -1619,3 +1619,46 @@ PR's `pathway_masks`/`pathway_strength`/`net_billthrough_weekly_series`/`identif
 directly for channel x segment saturation curves, average/marginal ROI and CPA, and a pathway-aware
 scenario planner. See docs/segment_level_estimation.md, docs/brand_search.md, docs/net_billthrough.md
 and docs/limitations.md for the updated design records.
+
+## G1.1.3 — authoritative resolved-component contract and resumability
+
+**Decision:** `ResolvedPathwayComponent` is the single calculation and
+governance authority. Named pathway masks and index-keyed lag/prior/planning
+dictionaries remain only as regenerated, consistency-checked bundle
+compatibility caches.
+
+Direct pathway `prior_scale` is disabled because direct effects use the
+hierarchical beta prior. For cross-product components it is the optional
+HalfNormal pathway-strength sigma override; a blank value uses the active or
+exploratory role default. Mediated and excluded records remain outside the
+standard likelihood and cannot enter planning or headline output.
+
+Evidence status no longer grants headline reporting implicitly. Headline
+eligibility requires an explicit approval decision, reviewer, and approval
+timestamp/reference. Pre-G1.1.3 catalogue and resolved-component payloads are
+migrated once to an auditable `legacy_migration` approval when their old
+evidence-derived headline flag was true.
+
+Pathway validation now receives channel ownership, outcome ownership, fitted
+outcomes, and diagnostic-only outcomes before frame construction and again
+before either PyMC model is created. NBT validation remains before long-to-wide
+aggregation and is repeated against the model frame.
+
+Project bundles now include a schema/app manifest, workflow checkpoint,
+diagnostics, analyst notes, calibration/comparison state, and restoration of
+curve-bank files. `audit_project_resumability` checks the artefacts required at
+uploaded, pre-fit, fitted, approved, curve, and scenario checkpoints; legacy
+bundles remain importable with an explicit migration warning.
+
+**Verification:** actual PyMC deterministics for Models A and C are reconciled
+for simultaneous direct/delayed components, multiple active and exploratory
+cells, and mixed lags; the same prior draws reconcile to NumPy prediction.
+Attribution, headline attribution, and planning-only response tests prove that
+only their independently eligible components are summed. Wide and long NBT
+preparation is equivalent, and duplicate long rows are blocked before
+aggregation. Full suite, every Streamlit AppTest, Ruff, compileall, and bundle
+round trips pass.
+
+**Scope:** G2 curves/economics, response horizons, year-on-year reporting,
+dynamic planning, production mediation, brand health, and DNA composition
+remain separate follow-on work.

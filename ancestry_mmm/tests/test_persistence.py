@@ -7,15 +7,25 @@ import pandas as pd
 import pytest
 
 from ancestry_mmm.core.approval import ModelApproval
-from ancestry_mmm.core.fingerprint import fingerprint_dataframe, fingerprint_model_spec, fingerprint_posterior
+from ancestry_mmm.core.fingerprint import (
+    fingerprint_dataframe,
+    fingerprint_model_spec,
+    fingerprint_posterior,
+)
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
-from ancestry_mmm.core.market_config import ChannelMediaUnitConfig, MarketCurrency, MarketProfile, MarketSpecConfig
+from ancestry_mmm.core.market_config import (
+    ChannelMediaUnitConfig,
+    MarketCurrency,
+    MarketProfile,
+    MarketSpecConfig,
+)
 from ancestry_mmm.core.optimization import SpendConstraint
 from ancestry_mmm.core.outcomes import DNA, FAMILY_HISTORY, OutcomeDefinition
 from ancestry_mmm.core.persistence import (
     UnsafeZipEntryError,
     _is_safe_zip_member,
     _safe_extract_zip,
+    audit_project_resumability,
     export_excel_summary,
     export_project,
     import_project,
@@ -31,29 +41,36 @@ from ancestry_mmm.data.preprocessor import prepare_fh_modeling_frame
 # Zip-slip / path-traversal protection
 # ---------------------------------------------------------------------------
 
+
 class TestIsSafeZipMember:
-    @pytest.mark.parametrize("name", [
-        "data/raw_media.parquet",
-        "config/model_spec.json",
-        "a/b/c.txt",
-        "curve_bank/1700000000_abc.json",
-        "trailing_slash_dir/",
-    ])
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "data/raw_media.parquet",
+            "config/model_spec.json",
+            "a/b/c.txt",
+            "curve_bank/1700000000_abc.json",
+            "trailing_slash_dir/",
+        ],
+    )
     def test_accepts_plain_relative_paths(self, name):
         assert _is_safe_zip_member(name) is True
 
-    @pytest.mark.parametrize("name", [
-        "../evil.txt",
-        "../../etc/passwd",
-        "data/../../evil.txt",
-        "/etc/passwd",
-        "/absolute/path.txt",
-        "\\windows\\absolute.txt",
-        "C:\\evil.txt",
-        "C:evil.txt",
-        "a/b/../../../evil.txt",
-        "",
-    ])
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "../evil.txt",
+            "../../etc/passwd",
+            "data/../../evil.txt",
+            "/etc/passwd",
+            "/absolute/path.txt",
+            "\\windows\\absolute.txt",
+            "C:\\evil.txt",
+            "C:evil.txt",
+            "a/b/../../../evil.txt",
+            "",
+        ],
+    )
     def test_rejects_absolute_or_traversal_paths(self, name):
         assert _is_safe_zip_member(name) is False
 
@@ -62,7 +79,9 @@ class TestSafeExtractZip:
     def test_extracts_a_well_formed_archive(self, tmp_path):
         zip_path = tmp_path / "good.zip"
         with zipfile.ZipFile(zip_path, "w") as zf:
-            zf.writestr("data/raw_media.parquet", b"not really parquet but fine for this test")
+            zf.writestr(
+                "data/raw_media.parquet", b"not really parquet but fine for this test"
+            )
             zf.writestr("config/model_spec.json", "{}")
 
         dest = tmp_path / "extracted"
@@ -118,6 +137,7 @@ class TestSafeExtractZip:
 # Core project persistence behaviour: export -> import round trip
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def sample_trace() -> az.InferenceData:
     rng = np.random.default_rng(0)
@@ -127,43 +147,88 @@ def sample_trace() -> az.InferenceData:
 @pytest.fixture
 def sample_project(sample_trace):
     raw_sources = {
-        "media": pd.DataFrame({"date": pd.date_range("2024-01-01", periods=3), "TV_Brand": [100.0, 200.0, 150.0]}),
-        "outcomes": pd.DataFrame({"date": pd.date_range("2024-01-01", periods=3), "fh_new_gsa": [10.0, 12.0, 11.0]}),
+        "media": pd.DataFrame(
+            {
+                "date": pd.date_range("2024-01-01", periods=3),
+                "TV_Brand": [100.0, 200.0, 150.0],
+            }
+        ),
+        "outcomes": pd.DataFrame(
+            {
+                "date": pd.date_range("2024-01-01", periods=3),
+                "fh_new_gsa": [10.0, 12.0, 11.0],
+            }
+        ),
     }
     transformed_data = raw_sources["media"].merge(raw_sources["outcomes"], on="date")
-    pipeline_steps = [{"step_id": "step_001", "operation": "rename_column", "params": {"old": "a", "new": "b"}}]
+    pipeline_steps = [
+        {
+            "step_id": "step_001",
+            "operation": "rename_column",
+            "params": {"old": "a", "new": "b"},
+        }
+    ]
     model_spec = ModelSpec(
-        date_col="date", market_col="market", markets=["UK"],
-        segment_outcomes={"New": "fh_new_gsa"}, channels=["TV_Brand"],
+        date_col="date",
+        market_col="market",
+        markets=["UK"],
+        segment_outcomes={"New": "fh_new_gsa"},
+        channels=["TV_Brand"],
     ).to_dict()
     prior_config = {"decay_mu": 0.5}
-    constraint = SpendConstraint(kind="locked_cell", channel="TV_Brand", month="2024-01", value=100.0)
-    scenarios = [{
-        "name": "manual-uk", "market": "UK", "spend_plan": {"2024-01": {"TV_Brand": 100.0}},
-        "objective": "value", "constraints": [constraint], "notes": "manual",
-        "predicted": pd.DataFrame({"month": ["2024-01"], "segment": ["New"], "predicted_gsa": [11.0]}),
-    }]
+    constraint = SpendConstraint(
+        kind="locked_cell", channel="TV_Brand", month="2024-01", value=100.0
+    )
+    scenarios = [
+        {
+            "name": "manual-uk",
+            "market": "UK",
+            "spend_plan": {"2024-01": {"TV_Brand": 100.0}},
+            "objective": "value",
+            "constraints": [constraint],
+            "notes": "manual",
+            "predicted": pd.DataFrame(
+                {"month": ["2024-01"], "segment": ["New"], "predicted_gsa": [11.0]}
+            ),
+        }
+    ]
     model_approval = {
-        "approved_by": "Jane Analyst", "approved_at": 1700000000.0, "run_label": "uk-v1",
-        "notes": "looks fine", "known_limitations": "", "diagnostics_accepted": ["convergence"],
+        "approved_by": "Jane Analyst",
+        "approved_at": 1700000000.0,
+        "run_label": "uk-v1",
+        "notes": "looks fine",
+        "known_limitations": "",
+        "diagnostics_accepted": ["convergence"],
     }
     return dict(
-        raw_sources=raw_sources, transformed_data=transformed_data, pipeline_steps=pipeline_steps,
-        model_spec=model_spec, prior_config=prior_config, dna_lag_weeks=4, trace=sample_trace,
-        scenarios=scenarios, model_approval=model_approval,
+        raw_sources=raw_sources,
+        transformed_data=transformed_data,
+        pipeline_steps=pipeline_steps,
+        model_spec=model_spec,
+        prior_config=prior_config,
+        dna_lag_weeks=4,
+        trace=sample_trace,
+        scenarios=scenarios,
+        model_approval=model_approval,
     )
 
 
-def test_export_then_import_reproduces_raw_and_transformed_data(tmp_path, sample_project):
+def test_export_then_import_reproduces_raw_and_transformed_data(
+    tmp_path, sample_project
+):
     output_path = export_project(tmp_path / "bundle.zip", **sample_project)
     assert output_path.exists()
 
     imported = import_project(output_path)
 
     for name, df in sample_project["raw_sources"].items():
-        pd.testing.assert_frame_equal(imported["raw_sources"][name], df, check_dtype=False)
+        pd.testing.assert_frame_equal(
+            imported["raw_sources"][name], df, check_dtype=False
+        )
     pd.testing.assert_frame_equal(
-        imported["transformed_data"], sample_project["transformed_data"], check_dtype=False,
+        imported["transformed_data"],
+        sample_project["transformed_data"],
+        check_dtype=False,
     )
 
 
@@ -178,7 +243,9 @@ def test_export_then_import_reproduces_config(tmp_path, sample_project):
     assert imported["model_approval"] == sample_project["model_approval"]
 
 
-def test_export_then_import_reproduces_scenarios_and_constraints(tmp_path, sample_project):
+def test_export_then_import_reproduces_scenarios_and_constraints(
+    tmp_path, sample_project
+):
     output_path = export_project(tmp_path / "bundle.zip", **sample_project)
     imported = import_project(output_path)
 
@@ -186,11 +253,20 @@ def test_export_then_import_reproduces_scenarios_and_constraints(tmp_path, sampl
     restored_scenario = imported["scenarios"][0]
     assert restored_scenario["name"] == "manual-uk"
     assert restored_scenario["constraints"] == [
-        {"kind": "locked_cell", "channel": "TV_Brand", "month": "2024-01", "months": None,
-         "value": 100.0, "max_pct_move": None, "label": ""}
+        {
+            "kind": "locked_cell",
+            "channel": "TV_Brand",
+            "month": "2024-01",
+            "months": None,
+            "value": 100.0,
+            "max_pct_move": None,
+            "label": "",
+        }
     ]
     pd.testing.assert_frame_equal(
-        restored_scenario["predicted"], sample_project["scenarios"][0]["predicted"], check_dtype=False,
+        restored_scenario["predicted"],
+        sample_project["scenarios"][0]["predicted"],
+        check_dtype=False,
     )
 
 
@@ -203,11 +279,88 @@ def test_export_then_import_reproduces_trace(tmp_path, sample_project):
     np.testing.assert_allclose(restored, original)
 
 
+def test_bundle_manifest_workflow_diagnostics_notes_and_curve_state_round_trip(
+    tmp_path, sample_project
+):
+    project = dict(sample_project)
+    project["model_meta"] = FHModelMeta(
+        markets=["UK"],
+        outcome_ids=["New"],
+        channels=["TV_Brand"],
+        dna_channels=[],
+        dna_channel_idx=[],
+        non_dna_idx=[0],
+        dna_outcome_id="New",
+        dna_lag_weeks=0,
+        unpooled_markets=[],
+        control_names=[],
+    )
+    project["workflow_state"] = {
+        "checkpoint": "scenarios",
+        "current_page": 11,
+        "active_scenario": "manual-uk",
+    }
+    project["diagnostics"] = {
+        "scorecard": {"status": "reviewed"},
+        "backtest_results": pd.DataFrame({"fold": [1], "smape": [0.12]}),
+    }
+    project["notes"] = "# Analyst notes\nReady to resume."
+    project["calibration_records"] = [{"channel": "TV_Brand", "lift": 0.2}]
+    project["model_comparison_candidates"] = [{"run_id": "shared-v1"}]
+    curve_dir = tmp_path / "curves"
+    curve_dir.mkdir()
+    (curve_dir / "curve-1.json").write_text('{"channel": "TV_Brand"}')
+    project["curve_bank_source_dir"] = curve_dir
+
+    imported = import_project(export_project(tmp_path / "resume.zip", **project))
+
+    assert imported["manifest"]["schema_version"] >= 3
+    assert imported["workflow_state"]["active_scenario"] == "manual-uk"
+    assert imported["diagnostics"]["scorecard"]["status"] == "reviewed"
+    pd.testing.assert_frame_equal(
+        imported["diagnostics"]["backtest_results"],
+        project["diagnostics"]["backtest_results"],
+    )
+    assert imported["notes"] == project["notes"]
+    assert imported["calibration_records"] == project["calibration_records"]
+    assert (
+        imported["model_comparison_candidates"]
+        == project["model_comparison_candidates"]
+    )
+    assert "curve-1.json" in imported["curve_bank_files"]
+    assert audit_project_resumability(imported)["resumable"]
+
+
+def test_resumability_audit_covers_prefit_and_legacy_bundle_migration(
+    tmp_path, sample_project
+):
+    prefit = dict(sample_project)
+    prefit.update(trace=None, scenarios=[], model_approval=None)
+    prefit["workflow_state"] = {"checkpoint": "pre_fit"}
+    imported = import_project(export_project(tmp_path / "prefit.zip", **prefit))
+    audit = audit_project_resumability(imported)
+    assert audit["resumable"]
+    assert audit["checkpoint"] == "pre_fit"
+
+    legacy = dict(imported)
+    legacy["manifest"] = None
+    legacy_audit = audit_project_resumability(legacy)
+    assert legacy_audit["resumable"]
+    assert legacy_audit["warnings"]
+
+
 def test_export_then_import_reproduces_market_spec_config(tmp_path, sample_project):
     market_spec_config = MarketSpecConfig()
-    market_spec_config.set_profile(MarketProfile(market="UK", currency=MarketCurrency(local_currency="GBP")))
+    market_spec_config.set_profile(
+        MarketProfile(market="UK", currency=MarketCurrency(local_currency="GBP"))
+    )
     market_spec_config.set_media_unit_config(
-        ChannelMediaUnitConfig(market="UK", channel="TV_Brand", spend_column="TV_Brand", response_unit_column="TV_Brand_GRP")
+        ChannelMediaUnitConfig(
+            market="UK",
+            channel="TV_Brand",
+            spend_column="TV_Brand",
+            response_unit_column="TV_Brand_GRP",
+        )
     )
     sample_project = dict(sample_project)
     sample_project["market_spec_config"] = market_spec_config.to_dict()
@@ -217,10 +370,15 @@ def test_export_then_import_reproduces_market_spec_config(tmp_path, sample_proje
 
     restored = MarketSpecConfig.from_dict(imported["market_spec_config"])
     assert restored.get_profile("UK").currency.local_currency == "GBP"
-    assert restored.get_media_unit_config("UK", "TV_Brand").response_unit_column == "TV_Brand_GRP"
+    assert (
+        restored.get_media_unit_config("UK", "TV_Brand").response_unit_column
+        == "TV_Brand_GRP"
+    )
 
 
-def test_legacy_bundle_without_market_spec_config_imports_with_none(tmp_path, sample_project):
+def test_legacy_bundle_without_market_spec_config_imports_with_none(
+    tmp_path, sample_project
+):
     """A bundle exported before the market-specific redesign has no
     market_spec_config.json - import must not fail, and MarketSpecConfig
     must treat the missing data as an empty (not corrupt) config."""
@@ -256,8 +414,21 @@ def test_legacy_bundle_without_model_type_imports_as_shared(tmp_path, sample_pro
 
 def test_export_then_import_reproduces_outcome_definitions(tmp_path, sample_project):
     outcome_definitions = [
-        OutcomeDefinition(outcome_id="fh_new", product=FAMILY_HISTORY, segment="New", metric="GSA", source_column="fh_new_gsa", value_weight=180.0).to_dict(),
-        OutcomeDefinition(outcome_id="dna_new_kit", product=DNA, segment="New Customer", metric="Kit sale", source_column="DNA_Kit_New").to_dict(),
+        OutcomeDefinition(
+            outcome_id="fh_new",
+            product=FAMILY_HISTORY,
+            segment="New",
+            metric="GSA",
+            source_column="fh_new_gsa",
+            value_weight=180.0,
+        ).to_dict(),
+        OutcomeDefinition(
+            outcome_id="dna_new_kit",
+            product=DNA,
+            segment="New Customer",
+            metric="Kit sale",
+            source_column="DNA_Kit_New",
+        ).to_dict(),
     ]
     sample_project = dict(sample_project)
     sample_project["outcome_definitions"] = outcome_definitions
@@ -268,7 +439,9 @@ def test_export_then_import_reproduces_outcome_definitions(tmp_path, sample_proj
     assert imported["outcome_definitions"] == outcome_definitions
 
 
-def test_legacy_bundle_without_outcome_definitions_imports_with_none(tmp_path, sample_project):
+def test_legacy_bundle_without_outcome_definitions_imports_with_none(
+    tmp_path, sample_project
+):
     """A bundle exported before the outcome-schema work (PR2) has no
     outcome_definitions.json - import must not fail, and
     core.outcomes.resolve_outcome_definitions(None, ...) must derive an
@@ -281,7 +454,11 @@ def test_legacy_bundle_without_outcome_definitions_imports_with_none(tmp_path, s
 def test_export_then_import_reproduces_funnel_links(tmp_path, sample_project):
     from ancestry_mmm.core.funnel import FunnelLink
 
-    funnel_links = [FunnelLink(upstream_outcome_id="fh_new_signup", downstream_outcome_id="fh_new_gsa").to_dict()]
+    funnel_links = [
+        FunnelLink(
+            upstream_outcome_id="fh_new_signup", downstream_outcome_id="fh_new_gsa"
+        ).to_dict()
+    ]
     sample_project = dict(sample_project)
     sample_project["funnel_links"] = funnel_links
 
@@ -304,7 +481,9 @@ def test_export_then_import_reproduces_media_outcome_pathways(tmp_path, sample_p
     from ancestry_mmm.core.pathways import MediaOutcomePathway
 
     pathways = [
-        MediaOutcomePathway(channel="DNA_Media", source_product="DNA", target_outcome_id="dna_new_kit").to_dict(),
+        MediaOutcomePathway(
+            channel="DNA_Media", source_product="DNA", target_outcome_id="dna_new_kit"
+        ).to_dict(),
     ]
     sample_project = dict(sample_project)
     sample_project["media_outcome_pathways"] = pathways
@@ -315,7 +494,9 @@ def test_export_then_import_reproduces_media_outcome_pathways(tmp_path, sample_p
     assert imported["media_outcome_pathways"] == pathways
 
 
-def test_legacy_bundle_without_media_outcome_pathways_imports_with_none(tmp_path, sample_project):
+def test_legacy_bundle_without_media_outcome_pathways_imports_with_none(
+    tmp_path, sample_project
+):
     """A bundle exported before PR F has no media_outcome_pathways.json -
     import must not fail, and None must mean "no pathway catalogue
     configured", not an error."""
@@ -324,7 +505,9 @@ def test_legacy_bundle_without_media_outcome_pathways_imports_with_none(tmp_path
     assert imported["media_outcome_pathways"] is None
 
 
-def test_promotion_event_pipeline_steps_reproduce_derived_columns_on_import(tmp_path, sample_project):
+def test_promotion_event_pipeline_steps_reproduce_derived_columns_on_import(
+    tmp_path, sample_project
+):
     """PR E.2 #11 - "re-importing a project must reproduce the same derived
     columns from raw data. Do not rely only on the already-mutated
     transformed parquet." Mirrors what pages/09_Project_Export.py's import
@@ -332,14 +515,24 @@ def test_promotion_event_pipeline_steps_reproduce_derived_columns_on_import(tmp_
     imported transformed_data, dropping whatever derived column happens to
     already be sitting there first. A bundle whose parquet has a stale/
     hand-edited value for that column must still come back correct."""
-    from ancestry_mmm.core.promotions import PROMOTION_EVENT_OP, PromotionEvent, promotion_events_to_transform_steps
+    from ancestry_mmm.core.promotions import (
+        PROMOTION_EVENT_OP,
+        PromotionEvent,
+        promotion_events_to_transform_steps,
+    )
     from ancestry_mmm.data.pipeline import apply_pipeline, pipeline_from_json
 
     event = PromotionEvent(
-        event_name="Christmas Sale", start_date="2024-01-01", end_date="2024-01-03",
-        segment="New", intensity=1.0,
+        event_name="Christmas Sale",
+        start_date="2024-01-01",
+        end_date="2024-01-03",
+        segment="New",
+        intensity=1.0,
     )
-    promo_steps = [s.to_dict() for s in promotion_events_to_transform_steps([event], date_col="date")]
+    promo_steps = [
+        s.to_dict()
+        for s in promotion_events_to_transform_steps([event], date_col="date")
+    ]
 
     sample_project = dict(sample_project)
     sample_project["pipeline_steps"] = promo_steps
@@ -352,20 +545,28 @@ def test_promotion_event_pipeline_steps_reproduce_derived_columns_on_import(tmp_
     output_path = export_project(tmp_path / "bundle.zip", **sample_project)
     imported = import_project(output_path)
 
-    promo_steps_typed = [s for s in pipeline_from_json(imported["pipeline_steps"]) if s.op == PROMOTION_EVENT_OP]
+    promo_steps_typed = [
+        s
+        for s in pipeline_from_json(imported["pipeline_steps"])
+        if s.op == PROMOTION_EVENT_OP
+    ]
     assert len(promo_steps_typed) == 1
 
     regenerated = imported["transformed_data"].drop(columns=["_promo_event_New"])
     regenerated = apply_pipeline(regenerated, promo_steps_typed)
 
     dates = pd.to_datetime(regenerated["date"])
-    in_window = (dates >= pd.Timestamp("2024-01-01")) & (dates <= pd.Timestamp("2024-01-03"))
+    in_window = (dates >= pd.Timestamp("2024-01-01")) & (
+        dates <= pd.Timestamp("2024-01-03")
+    )
     assert (regenerated.loc[in_window, "_promo_event_New"] == 1.0).all()
     assert (regenerated.loc[~in_window, "_promo_event_New"] == 0.0).all()
     assert not (regenerated["_promo_event_New"] == 999.0).any()
 
 
-def test_export_without_trace_or_approval_omits_them_on_import(tmp_path, sample_project):
+def test_export_without_trace_or_approval_omits_them_on_import(
+    tmp_path, sample_project
+):
     sample_project = dict(sample_project)
     sample_project["trace"] = None
     sample_project["model_approval"] = None
@@ -376,7 +577,9 @@ def test_export_without_trace_or_approval_omits_them_on_import(tmp_path, sample_
     assert imported["model_approval"] is None
 
 
-def test_reimporting_a_project_bundle_it_exported_is_a_safe_no_op(tmp_path, sample_project):
+def test_reimporting_a_project_bundle_it_exported_is_a_safe_no_op(
+    tmp_path, sample_project
+):
     """A project bundle this app produced must always pass its own safety check."""
     output_path = export_project(tmp_path / "bundle.zip", **sample_project)
     # Should not raise UnsafeZipEntryError - only crafted/hostile archives should.
@@ -385,7 +588,9 @@ def test_reimporting_a_project_bundle_it_exported_is_a_safe_no_op(tmp_path, samp
 
 def test_export_excel_summary_writes_a_readable_workbook(tmp_path):
     total_df = pd.DataFrame({"channel": ["TV_Brand"], "volume_contribution": [42.5]})
-    output_path = export_excel_summary(tmp_path / "summary.xlsx", {"Total FH Contribution": total_df})
+    output_path = export_excel_summary(
+        tmp_path / "summary.xlsx", {"Total FH Contribution": total_df}
+    )
     assert output_path.exists()
     reread = pd.read_excel(output_path, sheet_name="Total FH Contribution")
     pd.testing.assert_frame_equal(reread, total_df)
@@ -393,9 +598,14 @@ def test_export_excel_summary_writes_a_readable_workbook(tmp_path):
 
 def test_export_excel_summary_skips_none_and_empty_sheets(tmp_path):
     total_df = pd.DataFrame({"channel": ["TV_Brand"], "volume_contribution": [42.5]})
-    output_path = export_excel_summary(tmp_path / "summary.xlsx", {
-        "Total FH Contribution": total_df, "Empty": pd.DataFrame(), "Missing": None,
-    })
+    output_path = export_excel_summary(
+        tmp_path / "summary.xlsx",
+        {
+            "Total FH Contribution": total_df,
+            "Empty": pd.DataFrame(),
+            "Missing": None,
+        },
+    )
     workbook_sheets = pd.ExcelFile(output_path).sheet_names
     assert workbook_sheets == ["Total FH Contribution"]
 
@@ -403,7 +613,9 @@ def test_export_excel_summary_skips_none_and_empty_sheets(tmp_path):
 def test_export_excel_summary_writes_every_non_empty_sheet(tmp_path):
     sheets = {
         "Curve Bank": pd.DataFrame({"channel": ["TV"], "beta": [0.1]}),
-        "Evidence Tiers": pd.DataFrame({"market": ["UK"], "curve_status": ["Locally estimated"]}),
+        "Evidence Tiers": pd.DataFrame(
+            {"market": ["UK"], "curve_status": ["Locally estimated"]}
+        ),
         "CPA": pd.DataFrame({"market": ["UK"], "channel": ["TV"], "avg_cpa": [12.5]}),
     }
     output_path = export_excel_summary(tmp_path / "summary.xlsx", sheets)
@@ -417,15 +629,29 @@ def test_export_excel_summary_writes_every_non_empty_sheet(tmp_path):
 # imported/reconstructed model artefacts.
 # ---------------------------------------------------------------------------
 
+
 def _make_consistent_meta() -> FHModelMeta:
     return FHModelMeta(
-        markets=["UK"], outcome_ids=["New"], channels=["TV_Brand"], dna_channels=[],
-        dna_channel_idx=[], non_dna_idx=[0], dna_outcome_id="New", dna_lag_weeks=4,
-        unpooled_markets=[], control_names=[],
+        markets=["UK"],
+        outcome_ids=["New"],
+        channels=["TV_Brand"],
+        dna_channels=[],
+        dna_channel_idx=[],
+        non_dna_idx=[0],
+        dna_outcome_id="New",
+        dna_lag_weeks=4,
+        unpooled_markets=[],
+        control_names=[],
     )
 
 
-def _make_trace(meta: FHModelMeta, n_fourier: int = 6, chains: int = 2, draws: int = 10, seed: int = 0) -> az.InferenceData:
+def _make_trace(
+    meta: FHModelMeta,
+    n_fourier: int = 6,
+    chains: int = 2,
+    draws: int = 10,
+    seed: int = 0,
+) -> az.InferenceData:
     """A structurally-valid (but not really fitted) trace with exactly the
     variables/dims extract_posterior_params(trace, meta) needs, for a meta
     with no DNA channels/control columns (so halo_strength/control_coef/
@@ -444,11 +670,23 @@ def _make_trace(meta: FHModelMeta, n_fourier: int = 6, chains: int = 2, draws: i
         "market_offset": rng.normal(size=(chains, draws, n_mkt, n_seg)),
         "gamma_fourier": rng.normal(size=(chains, draws, n_fourier, n_seg)),
     }
-    coords = {"channel": meta.channels, "outcome": meta.outcome_ids, "market": meta.markets, "fourier": list(range(n_fourier))}
+    coords = {
+        "channel": meta.channels,
+        "outcome": meta.outcome_ids,
+        "market": meta.markets,
+        "fourier": list(range(n_fourier)),
+    }
     dims = {
-        "decay_rate": ["channel"], "hill_K": ["channel"], "hill_S": ["channel"],
-        "intercept": ["outcome"], "trend_coef": ["outcome"], "promo_coef": ["outcome"], "alpha": ["outcome"],
-        "beta": ["outcome", "channel"], "market_offset": ["market", "outcome"], "gamma_fourier": ["fourier", "outcome"],
+        "decay_rate": ["channel"],
+        "hill_K": ["channel"],
+        "hill_S": ["channel"],
+        "intercept": ["outcome"],
+        "trend_coef": ["outcome"],
+        "promo_coef": ["outcome"],
+        "alpha": ["outcome"],
+        "beta": ["outcome", "channel"],
+        "market_offset": ["market", "outcome"],
+        "gamma_fourier": ["fourier", "outcome"],
     }
     return az.from_dict(posterior=posterior, coords=coords, dims=dims)
 
@@ -468,15 +706,20 @@ def consistent_project(consistent_meta, consistent_trace):
     """A project bundle that is fully internally consistent: the approval's
     fingerprints genuinely match the data/spec/posterior being exported
     alongside it (computed the same way verify_imported_approval will)."""
-    transformed_data = pd.DataFrame({
-        "date": pd.date_range("2024-01-01", periods=8, freq="W"),
-        "market": ["UK"] * 8,
-        "TV_Brand": [100.0, 120.0, 90.0, 110.0, 130.0, 95.0, 105.0, 115.0],
-        "fh_new_gsa": [10, 12, 9, 11, 13, 9, 10, 11],
-    })
+    transformed_data = pd.DataFrame(
+        {
+            "date": pd.date_range("2024-01-01", periods=8, freq="W"),
+            "market": ["UK"] * 8,
+            "TV_Brand": [100.0, 120.0, 90.0, 110.0, 130.0, 95.0, 105.0, 115.0],
+            "fh_new_gsa": [10, 12, 9, 11, 13, 9, 10, 11],
+        }
+    )
     model_spec_dict = ModelSpec(
-        date_col="date", market_col="market", markets=["UK"],
-        segment_outcomes={"New": "fh_new_gsa"}, channels=["TV_Brand"],
+        date_col="date",
+        market_col="market",
+        markets=["UK"],
+        segment_outcomes={"New": "fh_new_gsa"},
+        channels=["TV_Brand"],
     ).to_dict()
     prior_config = {"decay_mu": 0.5}
     dna_lag_weeks = 4
@@ -491,20 +734,32 @@ def consistent_project(consistent_meta, consistent_trace):
         model_run_id=model_run_id,
         data_fingerprint=fingerprint_dataframe(frame["df"]),
         model_spec_fingerprint=fingerprint_model_spec(
-            model_spec_dict, prior_config, dna_lag_weeks, direct_dna_outcome_ids=consistent_meta.direct_dna_outcome_ids,
+            model_spec_dict,
+            prior_config,
+            dna_lag_weeks,
+            direct_dna_outcome_ids=consistent_meta.direct_dna_outcome_ids,
         ),
         posterior_fingerprint=fingerprint_posterior(posterior_params),
     )
 
     return dict(
-        raw_sources={}, transformed_data=transformed_data, pipeline_steps=[],
-        model_spec=model_spec_dict, prior_config=prior_config, dna_lag_weeks=dna_lag_weeks,
-        trace=consistent_trace, scenarios=[], model_approval=approval.to_dict(),
-        model_run_id=model_run_id, model_meta=consistent_meta,
+        raw_sources={},
+        transformed_data=transformed_data,
+        pipeline_steps=[],
+        model_spec=model_spec_dict,
+        prior_config=prior_config,
+        dna_lag_weeks=dna_lag_weeks,
+        trace=consistent_trace,
+        scenarios=[],
+        model_approval=approval.to_dict(),
+        model_run_id=model_run_id,
+        model_meta=consistent_meta,
     )
 
 
-def test_export_then_import_preserves_model_run_id_and_meta(tmp_path, consistent_project):
+def test_export_then_import_preserves_model_run_id_and_meta(
+    tmp_path, consistent_project
+):
     output_path = export_project(tmp_path / "bundle.zip", **consistent_project)
     imported = import_project(output_path)
 
@@ -513,7 +768,9 @@ def test_export_then_import_preserves_model_run_id_and_meta(tmp_path, consistent
     assert imported["model_approval"] == consistent_project["model_approval"]
 
 
-def test_reconstruct_model_state_rebuilds_frame_and_posterior_without_a_refit(tmp_path, consistent_project):
+def test_reconstruct_model_state_rebuilds_frame_and_posterior_without_a_refit(
+    tmp_path, consistent_project
+):
     output_path = export_project(tmp_path / "bundle.zip", **consistent_project)
     imported = import_project(output_path)
 
@@ -524,7 +781,11 @@ def test_reconstruct_model_state_rebuilds_frame_and_posterior_without_a_refit(tm
 
 
 def test_reconstruct_model_state_handles_missing_inputs_without_raising():
-    assert reconstruct_model_state({}) == {"frame": None, "model_meta": None, "posterior_params": None}
+    assert reconstruct_model_state({}) == {
+        "frame": None,
+        "model_meta": None,
+        "posterior_params": None,
+    }
 
 
 class TestReconstructModelStateWithDnaKitOutcomes:
@@ -538,48 +799,82 @@ class TestReconstructModelStateWithDnaKitOutcomes:
 
     @pytest.fixture
     def dna_kit_project(self):
-        transformed_data = pd.DataFrame({
-            "date": pd.date_range("2024-01-01", periods=8, freq="W"),
-            "market": ["UK"] * 8,
-            "TV_Brand": [100.0, 120.0, 90.0, 110.0, 130.0, 95.0, 105.0, 115.0],
-            "DNA_Ad": [40.0, 45.0, 35.0, 42.0, 48.0, 36.0, 41.0, 44.0],
-            "fh_new_gsa": [10, 12, 9, 11, 13, 9, 10, 11],
-            "dna_kit_sales": [3, 4, 2, 3, 5, 2, 3, 4],
-        })
+        transformed_data = pd.DataFrame(
+            {
+                "date": pd.date_range("2024-01-01", periods=8, freq="W"),
+                "market": ["UK"] * 8,
+                "TV_Brand": [100.0, 120.0, 90.0, 110.0, 130.0, 95.0, 105.0, 115.0],
+                "DNA_Ad": [40.0, 45.0, 35.0, 42.0, 48.0, 36.0, 41.0, 44.0],
+                "fh_new_gsa": [10, 12, 9, 11, 13, 9, 10, 11],
+                "dna_kit_sales": [3, 4, 2, 3, 5, 2, 3, 4],
+            }
+        )
         model_spec_dict = ModelSpec(
-            date_col="date", market_col="market", markets=["UK"],
-            segment_outcomes={"New": "fh_new_gsa"}, channels=["TV_Brand", "DNA_Ad"], dna_channels=["DNA_Ad"],
+            date_col="date",
+            market_col="market",
+            markets=["UK"],
+            segment_outcomes={"New": "fh_new_gsa"},
+            channels=["TV_Brand", "DNA_Ad"],
+            dna_channels=["DNA_Ad"],
         ).to_dict()
         outcome_definitions = [
             OutcomeDefinition(
-                outcome_id="fh_new", product=FAMILY_HISTORY, segment="New", metric="gsa", source_column="fh_new_gsa",
+                outcome_id="fh_new",
+                product=FAMILY_HISTORY,
+                segment="New",
+                metric="gsa",
+                source_column="fh_new_gsa",
             ).to_dict(),
             OutcomeDefinition(
-                outcome_id="dna_new_customer", product=DNA, segment="New Customer", metric="kits",
+                outcome_id="dna_new_customer",
+                product=DNA,
+                segment="New Customer",
+                metric="kits",
                 source_column="dna_kit_sales",
             ).to_dict(),
         ]
         meta = FHModelMeta(
-            markets=["UK"], outcome_ids=["fh_new", "dna_new_customer"], channels=["TV_Brand", "DNA_Ad"],
-            dna_channels=["DNA_Ad"], dna_channel_idx=[1], non_dna_idx=[0], dna_outcome_id="fh_new", dna_lag_weeks=4,
-            unpooled_markets=[], control_names=[], direct_dna_outcome_ids=["fh_new", "dna_new_customer"],
+            markets=["UK"],
+            outcome_ids=["fh_new", "dna_new_customer"],
+            channels=["TV_Brand", "DNA_Ad"],
+            dna_channels=["DNA_Ad"],
+            dna_channel_idx=[1],
+            non_dna_idx=[0],
+            dna_outcome_id="fh_new",
+            dna_lag_weeks=4,
+            unpooled_markets=[],
+            control_names=[],
+            direct_dna_outcome_ids=["fh_new", "dna_new_customer"],
         )
         return dict(
-            raw_sources={}, transformed_data=transformed_data, pipeline_steps=[],
-            model_spec=model_spec_dict, prior_config={}, dna_lag_weeks=4,
-            trace=None, scenarios=[], model_meta=meta, outcome_definitions=outcome_definitions,
+            raw_sources={},
+            transformed_data=transformed_data,
+            pipeline_steps=[],
+            model_spec=model_spec_dict,
+            prior_config={},
+            dna_lag_weeks=4,
+            trace=None,
+            scenarios=[],
+            model_meta=meta,
+            outcome_definitions=outcome_definitions,
         )
 
-    def test_reconstructed_frame_segments_match_model_meta_segments(self, tmp_path, dna_kit_project):
+    def test_reconstructed_frame_segments_match_model_meta_segments(
+        self, tmp_path, dna_kit_project
+    ):
         output_path = export_project(tmp_path / "bundle.zip", **dna_kit_project)
         imported = import_project(output_path)
 
         reconstructed = reconstruct_model_state(imported)
         assert reconstructed["frame"] is not None
-        assert set(reconstructed["frame"]["outcome_ids"]) == set(reconstructed["model_meta"].outcome_ids)
+        assert set(reconstructed["frame"]["outcome_ids"]) == set(
+            reconstructed["model_meta"].outcome_ids
+        )
         assert "dna_new_customer" in reconstructed["frame"]["outcome_ids"]
 
-    def test_a_legacy_bundle_with_no_outcome_definitions_still_reconstructs_fh_only(self, tmp_path, dna_kit_project):
+    def test_a_legacy_bundle_with_no_outcome_definitions_still_reconstructs_fh_only(
+        self, tmp_path, dna_kit_project
+    ):
         # No outcome_definitions.json in the bundle (pre-PR2 export) - must
         # fall back to an FH-only frame derived from model_spec alone, not
         # raise or silently invent a DNA-kit segment that was never saved.
@@ -602,62 +897,109 @@ class TestOutcomeCatalogueExportImportRoundTrip:
 
     @pytest.fixture
     def full_catalogue_project(self):
-        transformed_data = pd.DataFrame({
-            "date": pd.date_range("2024-01-01", periods=8, freq="W"),
-            "market": ["UK"] * 8,
-            "TV_Brand": [100.0] * 8,
-            "fh_new_gsa": [10] * 8,
-            "fh_new_signup": [20] * 8,
-            "dna_new_kit": [3] * 8,
-        })
+        transformed_data = pd.DataFrame(
+            {
+                "date": pd.date_range("2024-01-01", periods=8, freq="W"),
+                "market": ["UK"] * 8,
+                "TV_Brand": [100.0] * 8,
+                "fh_new_gsa": [10] * 8,
+                "fh_new_signup": [20] * 8,
+                "dna_new_kit": [3] * 8,
+            }
+        )
         model_spec_dict = ModelSpec(
-            date_col="date", market_col="market", markets=["UK"],
-            segment_outcomes={"New": "fh_new_gsa"}, channels=["TV_Brand"],
+            date_col="date",
+            market_col="market",
+            markets=["UK"],
+            segment_outcomes={"New": "fh_new_gsa"},
+            channels=["TV_Brand"],
             fh_dna_cross_sell_outcome_id="fh_new_gsa",
         ).to_dict()
         outcome_definitions = [
             OutcomeDefinition(
-                outcome_id="fh_new_gsa", product=FAMILY_HISTORY, segment="New", metric="GSA",
-                source_column="fh_new_gsa", value_weight=100.0, value_currency="USD",
-                role="primary", included_in_fit=True,
+                outcome_id="fh_new_gsa",
+                product=FAMILY_HISTORY,
+                segment="New",
+                metric="GSA",
+                source_column="fh_new_gsa",
+                value_weight=100.0,
+                value_currency="USD",
+                role="primary",
+                included_in_fit=True,
             ).to_dict(),
             OutcomeDefinition(
-                outcome_id="fh_new_signup", product=FAMILY_HISTORY, segment="New", metric="Sign-up",
-                source_column="fh_new_signup", value_weight=20.0, value_currency="USD",
-                role="funnel_intermediate", included_in_fit=True,
+                outcome_id="fh_new_signup",
+                product=FAMILY_HISTORY,
+                segment="New",
+                metric="Sign-up",
+                source_column="fh_new_signup",
+                value_weight=20.0,
+                value_currency="USD",
+                role="funnel_intermediate",
+                included_in_fit=True,
             ).to_dict(),
             OutcomeDefinition(
-                outcome_id="dna_new_kit", product=DNA, segment="New Customer", metric="Kit sale",
-                source_column="dna_new_kit", value_weight=80.0, value_currency="GBP",
-                role="secondary", included_in_fit=False, exclusion_reason="held back this run",
+                outcome_id="dna_new_kit",
+                product=DNA,
+                segment="New Customer",
+                metric="Kit sale",
+                source_column="dna_new_kit",
+                value_weight=80.0,
+                value_currency="GBP",
+                role="secondary",
+                included_in_fit=False,
+                exclusion_reason="held back this run",
             ).to_dict(),
         ]
         return dict(
-            raw_sources={}, transformed_data=transformed_data, pipeline_steps=[],
-            model_spec=model_spec_dict, prior_config={}, dna_lag_weeks=4,
-            trace=None, scenarios=[], outcome_definitions=outcome_definitions,
+            raw_sources={},
+            transformed_data=transformed_data,
+            pipeline_steps=[],
+            model_spec=model_spec_dict,
+            prior_config={},
+            dna_lag_weeks=4,
+            trace=None,
+            scenarios=[],
+            outcome_definitions=outcome_definitions,
         )
 
-    def test_every_outcome_field_survives_the_round_trip_exactly(self, tmp_path, full_catalogue_project):
+    def test_every_outcome_field_survives_the_round_trip_exactly(
+        self, tmp_path, full_catalogue_project
+    ):
         output_path = export_project(tmp_path / "bundle.zip", **full_catalogue_project)
         imported = import_project(output_path)
-        assert imported["outcome_definitions"] == full_catalogue_project["outcome_definitions"]
+        assert (
+            imported["outcome_definitions"]
+            == full_catalogue_project["outcome_definitions"]
+        )
 
-    def test_fh_dna_cross_sell_outcome_id_survives_the_round_trip(self, tmp_path, full_catalogue_project):
+    def test_fh_dna_cross_sell_outcome_id_survives_the_round_trip(
+        self, tmp_path, full_catalogue_project
+    ):
         output_path = export_project(tmp_path / "bundle.zip", **full_catalogue_project)
         imported = import_project(output_path)
         assert imported["model_spec"]["fh_dna_cross_sell_outcome_id"] == "fh_new_gsa"
 
-    def test_reconstructed_outcome_definitions_round_trip_through_OutcomeDefinition(self, tmp_path, full_catalogue_project):
+    def test_reconstructed_outcome_definitions_round_trip_through_OutcomeDefinition(
+        self, tmp_path, full_catalogue_project
+    ):
         output_path = export_project(tmp_path / "bundle.zip", **full_catalogue_project)
         imported = import_project(output_path)
-        restored = [OutcomeDefinition.from_dict(d) for d in imported["outcome_definitions"]]
-        original = [OutcomeDefinition.from_dict(d) for d in full_catalogue_project["outcome_definitions"]]
+        restored = [
+            OutcomeDefinition.from_dict(d) for d in imported["outcome_definitions"]
+        ]
+        original = [
+            OutcomeDefinition.from_dict(d)
+            for d in full_catalogue_project["outcome_definitions"]
+        ]
         assert restored == original
         signup = next(o for o in restored if o.outcome_id == "fh_new_signup")
         assert signup.metric == "Sign-up" and signup.role == "funnel_intermediate"
         excluded = next(o for o in restored if o.outcome_id == "dna_new_kit")
-        assert excluded.included_in_fit is False and excluded.exclusion_reason == "held back this run"
+        assert (
+            excluded.included_in_fit is False
+            and excluded.exclusion_reason == "held back this run"
+        )
 
 
 class TestLegacyBundleMigratesSafely:
@@ -671,7 +1013,9 @@ class TestLegacyBundleMigratesSafely:
         spec = ModelSpec.from_dict(legacy_dict)
         assert spec.fh_dna_cross_sell_outcome_id is None
 
-    def test_legacy_model_meta_with_no_outcome_catalogue_at_fit_reconstructs(self, tmp_path, consistent_project):
+    def test_legacy_model_meta_with_no_outcome_catalogue_at_fit_reconstructs(
+        self, tmp_path, consistent_project
+    ):
         # consistent_project's meta already has an empty outcome_catalogue_at_fit
         # (the default before this field existed) - export/import/reconstruct
         # must all still work, not raise on the missing field.
@@ -681,7 +1025,9 @@ class TestLegacyBundleMigratesSafely:
         assert reconstructed["frame"] is not None
         assert reconstructed["model_meta"].outcome_catalogue_at_fit == []
 
-    def test_legacy_meta_fingerprint_verification_still_matches(self, tmp_path, consistent_project):
+    def test_legacy_meta_fingerprint_verification_still_matches(
+        self, tmp_path, consistent_project
+    ):
         # verify_imported_approval now always passes outcome_catalogue= to
         # fingerprint_model_spec - for a legacy meta with no catalogue at
         # all, this must resolve to the same fingerprint as when the
@@ -725,10 +1071,14 @@ class TestVerifyImportedApproval:
         assert approval is None
         assert "does not match" in message.lower()
 
-    def test_rejected_when_posterior_artefacts_differ(self, tmp_path, consistent_meta, consistent_project):
+    def test_rejected_when_posterior_artefacts_differ(
+        self, tmp_path, consistent_meta, consistent_project
+    ):
         output_path = export_project(tmp_path / "bundle.zip", **consistent_project)
         imported = import_project(output_path)
-        imported["trace"] = _make_trace(consistent_meta, seed=999)  # structurally valid, numerically different
+        imported["trace"] = _make_trace(
+            consistent_meta, seed=999
+        )  # structurally valid, numerically different
 
         reconstructed = reconstruct_model_state(imported)
         approval, message = verify_imported_approval(imported, reconstructed)
@@ -741,15 +1091,20 @@ class TestVerifyImportedApproval:
         # directly) - an approval granted for one outcome_catalogue_at_fit
         # must not verify against a reimport where that catalogue has since
         # changed (e.g. a GSA outcome relabelled as a sign-up outcome).
-        transformed_data = pd.DataFrame({
-            "date": pd.date_range("2024-01-01", periods=8, freq="W"),
-            "market": ["UK"] * 8,
-            "TV_Brand": [100.0, 120.0, 90.0, 110.0, 130.0, 95.0, 105.0, 115.0],
-            "fh_new_gsa": [10, 12, 9, 11, 13, 9, 10, 11],
-        })
+        transformed_data = pd.DataFrame(
+            {
+                "date": pd.date_range("2024-01-01", periods=8, freq="W"),
+                "market": ["UK"] * 8,
+                "TV_Brand": [100.0, 120.0, 90.0, 110.0, 130.0, 95.0, 105.0, 115.0],
+                "fh_new_gsa": [10, 12, 9, 11, 13, 9, 10, 11],
+            }
+        )
         model_spec_dict = ModelSpec(
-            date_col="date", market_col="market", markets=["UK"],
-            segment_outcomes={"New": "fh_new_gsa"}, channels=["TV_Brand"],
+            date_col="date",
+            market_col="market",
+            markets=["UK"],
+            segment_outcomes={"New": "fh_new_gsa"},
+            channels=["TV_Brand"],
         ).to_dict()
         prior_config = {"decay_mu": 0.5}
         dna_lag_weeks = 4
@@ -757,12 +1112,24 @@ class TestVerifyImportedApproval:
         frame = prepare_fh_modeling_frame(transformed_data, spec)
 
         outcome_at_fit = OutcomeDefinition(
-            outcome_id="fh_new", product=FAMILY_HISTORY, segment="New", metric="GSA", source_column="fh_new_gsa",
+            outcome_id="fh_new",
+            product=FAMILY_HISTORY,
+            segment="New",
+            metric="GSA",
+            source_column="fh_new_gsa",
         )
         meta = FHModelMeta(
-            markets=["UK"], outcome_ids=["fh_new"], channels=["TV_Brand"], dna_channels=[],
-            dna_channel_idx=[], non_dna_idx=[0], dna_outcome_id="fh_new", dna_lag_weeks=4,
-            unpooled_markets=[], control_names=[], outcome_catalogue_at_fit=[outcome_at_fit],
+            markets=["UK"],
+            outcome_ids=["fh_new"],
+            channels=["TV_Brand"],
+            dna_channels=[],
+            dna_channel_idx=[],
+            non_dna_idx=[0],
+            dna_outcome_id="fh_new",
+            dna_lag_weeks=4,
+            unpooled_markets=[],
+            control_names=[],
+            outcome_catalogue_at_fit=[outcome_at_fit],
         )
         trace = _make_trace(meta)
         posterior_params = extract_posterior_params(trace, meta)
@@ -775,16 +1142,28 @@ class TestVerifyImportedApproval:
             model_run_id=model_run_id,
             data_fingerprint=fingerprint_dataframe(frame["df"]),
             model_spec_fingerprint=fingerprint_model_spec(
-                model_spec_dict, prior_config, dna_lag_weeks, direct_dna_outcome_ids=meta.direct_dna_outcome_ids,
-                outcome_catalogue=outcome_catalogue_fingerprint_payload([outcome_at_fit]),
+                model_spec_dict,
+                prior_config,
+                dna_lag_weeks,
+                direct_dna_outcome_ids=meta.direct_dna_outcome_ids,
+                outcome_catalogue=outcome_catalogue_fingerprint_payload(
+                    [outcome_at_fit]
+                ),
             ),
             posterior_fingerprint=fingerprint_posterior(posterior_params),
         )
         project = dict(
-            raw_sources={}, transformed_data=transformed_data, pipeline_steps=[],
-            model_spec=model_spec_dict, prior_config=prior_config, dna_lag_weeks=dna_lag_weeks,
-            trace=trace, scenarios=[], model_approval=approval.to_dict(),
-            model_run_id=model_run_id, model_meta=meta,
+            raw_sources={},
+            transformed_data=transformed_data,
+            pipeline_steps=[],
+            model_spec=model_spec_dict,
+            prior_config=prior_config,
+            dna_lag_weeks=dna_lag_weeks,
+            trace=trace,
+            scenarios=[],
+            model_approval=approval.to_dict(),
+            model_run_id=model_run_id,
+            model_meta=meta,
         )
 
         output_path = export_project(tmp_path / "bundle.zip", **project)
@@ -799,10 +1178,15 @@ class TestVerifyImportedApproval:
         # imported bundle's model_meta reflects a later relabel) - approval
         # must no longer verify.
         from dataclasses import replace as dc_replace
-        relabelled = dc_replace(outcome_at_fit, metric="Sign-up")
-        reconstructed["model_meta"] = dc_replace(reconstructed["model_meta"], outcome_catalogue_at_fit=[relabelled])
 
-        approval_after, message_after = verify_imported_approval(imported, reconstructed)
+        relabelled = dc_replace(outcome_at_fit, metric="Sign-up")
+        reconstructed["model_meta"] = dc_replace(
+            reconstructed["model_meta"], outcome_catalogue_at_fit=[relabelled]
+        )
+
+        approval_after, message_after = verify_imported_approval(
+            imported, reconstructed
+        )
         assert approval_after is None
         assert "does not match" in message_after.lower()
 
@@ -817,7 +1201,9 @@ class TestVerifyImportedApproval:
         assert approval is None
         assert "no approval" in message.lower()
 
-    def test_legacy_bundle_without_model_meta_remains_importable_but_unverified(self, tmp_path, sample_project):
+    def test_legacy_bundle_without_model_meta_remains_importable_but_unverified(
+        self, tmp_path, sample_project
+    ):
         # sample_project has model_approval but no model_run_id/model_meta at all -
         # simulates a bundle from before model-bound approval existed.
         output_path = export_project(tmp_path / "bundle.zip", **sample_project)
@@ -829,7 +1215,9 @@ class TestVerifyImportedApproval:
         assert approval is None
         assert "predates" in message.lower() or "unverified" in message.lower()
 
-    def test_legacy_approval_within_an_otherwise_new_bundle_is_unverified(self, tmp_path, consistent_project):
+    def test_legacy_approval_within_an_otherwise_new_bundle_is_unverified(
+        self, tmp_path, consistent_project
+    ):
         # The approval itself lacks fingerprints even though model_meta/model_run_id
         # are present - must still be treated as unverified, not "close enough".
         legacy_approval = ModelApproval(approved_by="Old Approver")

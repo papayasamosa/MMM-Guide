@@ -15,6 +15,7 @@ from ancestry_mmm.core.outcomes import (
     OutcomeDefinition,
     fh_outcomes_from_spec,
 )
+from ancestry_mmm.core.pathways import MediaOutcomePathway
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.data.preprocessor import prepare_fh_modeling_frame
 
@@ -398,6 +399,22 @@ class TestPrepareFhModelingFrameExclusion:
         with pytest.raises(ValueError, match="No outcomes are included in the fit"):
             prepare_fh_modeling_frame(df, spec, outcomes=excluded)
 
+    def test_full_pathway_ownership_is_validated_before_frame_construction(
+        self, df, spec, fh_outcomes
+    ):
+        invalid = MediaOutcomePathway(
+            channel="TV_Brand",
+            source_product=DNA,
+            target_outcome_id="fh_new",
+        )
+        with pytest.raises(ValueError, match="before frame preparation"):
+            prepare_fh_modeling_frame(
+                df,
+                spec,
+                outcomes=fh_outcomes,
+                media_outcome_pathways=[invalid],
+            )
+
 
 class TestNetBillthroughTrainingGate:
     @staticmethod
@@ -436,3 +453,70 @@ class TestNetBillthroughTrainingGate:
         )
         np.testing.assert_array_equal(frame["Y"][:, 0], data["NBT_New"])
         assert frame["net_billthrough_metadata"].source_owner == "Finance Analytics"
+
+    def test_valid_wide_and_long_nbt_inputs_prepare_identical_outcomes(self, df, spec):
+        outcomes = [
+            self.nbt_outcome(),
+            OutcomeDefinition(
+                outcome_id="fh_winback_nbt",
+                product=FAMILY_HISTORY,
+                segment="Winback",
+                metric="Net bill-through count",
+                source_column="NBT_Winback",
+            ),
+        ]
+        wide = df.assign(
+            NBT_New=np.arange(10, dtype=float),
+            NBT_Winback=np.arange(20, 30, dtype=float),
+        )
+        long_parts = []
+        for segment, source in (("New", "NBT_New"), ("Winback", "NBT_Winback")):
+            part = wide.copy()
+            part["segment"] = segment
+            part["fh_net_billthrough_count"] = part[source]
+            long_parts.append(part.drop(columns=["NBT_New", "NBT_Winback"]))
+        long = pd.concat(long_parts, ignore_index=True)
+
+        wide_frame = prepare_fh_modeling_frame(
+            wide,
+            spec,
+            outcomes=outcomes,
+            net_billthrough_metadata=self.metadata(),
+        )
+        long_frame = prepare_fh_modeling_frame(
+            long,
+            spec,
+            outcomes=outcomes,
+            net_billthrough_metadata=self.metadata(),
+        )
+        np.testing.assert_array_equal(long_frame["Y"], wide_frame["Y"])
+        np.testing.assert_array_equal(long_frame["X_media"], wide_frame["X_media"])
+
+    def test_long_nbt_duplicates_are_blocked_before_aggregation(self, df, spec):
+        outcomes = [
+            self.nbt_outcome(),
+            OutcomeDefinition(
+                outcome_id="fh_winback_nbt",
+                product=FAMILY_HISTORY,
+                segment="Winback",
+                metric="Net bill-through count",
+                source_column="NBT_Winback",
+            ),
+        ]
+        rows = []
+        for segment, offset in (("New", 0), ("Winback", 20)):
+            part = df.copy()
+            part["segment"] = segment
+            part["fh_net_billthrough_count"] = np.arange(
+                offset, offset + len(part), dtype=float
+            )
+            rows.append(part)
+        long = pd.concat(rows, ignore_index=True)
+        long = pd.concat([long, long.iloc[[0]]], ignore_index=True)
+        with pytest.raises(ValueError, match="duplicate"):
+            prepare_fh_modeling_frame(
+                long,
+                spec,
+                outcomes=outcomes,
+                net_billthrough_metadata=self.metadata(),
+            )

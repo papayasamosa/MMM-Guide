@@ -178,6 +178,7 @@ def test_net_billthrough_has_explicit_objective_and_cpa_names():
 
 
 def test_actual_pymc_cross_product_deterministics_match_manual_mixed_lags():
+    import arviz as az
     import pymc as pm
 
     from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
@@ -218,6 +219,13 @@ def test_actual_pymc_cross_product_deterministics_match_manual_mixed_lags():
                 "TV",
                 "Family History",
                 "new",
+                role="primary_direct",
+                component_type="direct",
+            ),
+            MediaOutcomePathway(
+                "TV",
+                "Family History",
+                "new",
                 role="active_cross_product",
                 component_type="cross_product",
                 lag_type="none",
@@ -236,10 +244,22 @@ def test_actual_pymc_cross_product_deterministics_match_manual_mixed_lags():
                 "TV",
                 "Family History",
                 "winback",
-                role="active_cross_product",
+                role="exploratory_cross_product",
                 component_type="cross_product",
                 lag_type="fixed_weeks",
                 lag_weeks=2,
+                prior_scale=0.08,
+                include_in_planning=False,
+            ),
+            MediaOutcomePathway(
+                "Radio",
+                "Family History",
+                "winback",
+                role="exploratory_cross_product",
+                component_type="cross_product",
+                lag_type="none",
+                prior_scale=0.08,
+                include_in_planning=False,
             ),
         ],
     }
@@ -259,34 +279,70 @@ def test_actual_pymc_cross_product_deterministics_match_manual_mixed_lags():
         with model:
             prior = pm.sample_prior_predictive(
                 draws=1,
-                var_names=[
-                    "eta_active_cross_product",
-                    "sat_media",
-                    "beta",
-                    "active_cross_product_strength",
-                ],
                 random_seed=12,
             ).prior
 
         def draw(name):
             return prior[name].isel(chain=0, draw=0).values
 
-        actual = draw("eta_active_cross_product")
         saturated = draw("sat_media")
         beta = draw("beta")
-        strength = draw("active_cross_product_strength")
-        expected = np.zeros_like(actual)
-        for oi, ci in meta.pathway_masks.active_cells(meta.outcome_ids, meta.channels):
-            lagged = lag_frame(
-                saturated,
-                frame["market_bounds"],
-                meta.pathway_masks.lag_for_cell((oi, ci)),
-            )[:, ci]
-            coefficient = (
-                beta[frame["market_idx"], oi, ci] if market_specific else beta[oi, ci]
+        for role_name, cells in (
+            (
+                "active_cross_product",
+                meta.pathway_masks.active_cells(meta.outcome_ids, meta.channels),
+            ),
+            (
+                "exploratory_cross_product",
+                meta.pathway_masks.exploratory_cells(meta.outcome_ids, meta.channels),
+            ),
+        ):
+            actual = draw(f"eta_{role_name}")
+            strength = draw(f"{role_name}_strength")
+            expected = np.zeros_like(actual)
+            for oi, ci in cells:
+                lagged = lag_frame(
+                    saturated,
+                    frame["market_bounds"],
+                    meta.pathway_masks.lag_for_cell((oi, ci)),
+                )[:, ci]
+                coefficient = (
+                    beta[frame["market_idx"], oi, ci]
+                    if market_specific
+                    else beta[oi, ci]
+                )
+                expected[:, oi] += lagged * coefficient * strength[oi, ci]
+            np.testing.assert_allclose(actual, expected, rtol=1e-10, atol=1e-10)
+
+        # TV -> new contains simultaneous direct and delayed components.
+        assert (
+            meta.pathway_masks.primary_matrix(meta.outcome_ids, meta.channels)[0, 0]
+            == 1.0
+        )
+        assert (0, 0) in meta.pathway_masks.active_cells(
+            meta.outcome_ids, meta.channels
+        )
+
+        trace_like = az.InferenceData(posterior=prior)
+        if market_specific:
+            from ancestry_mmm.core.market_specific_predict import (
+                extract_market_specific_posterior_params,
+                predict_mu_market_specific,
             )
-            expected[:, oi] += lagged * coefficient * strength[oi, ci]
-        np.testing.assert_allclose(actual, expected, rtol=1e-10, atol=1e-10)
+
+            params = extract_market_specific_posterior_params(
+                trace_like, meta, at=(0, 0)
+            )
+            replayed = predict_mu_market_specific(frame, meta, params)
+        else:
+            from ancestry_mmm.core.predict import (
+                extract_posterior_params,
+                predict_mu,
+            )
+
+            params = extract_posterior_params(trace_like, meta, at=(0, 0))
+            replayed = predict_mu(frame, meta, params)
+        np.testing.assert_allclose(replayed, draw("mu"), rtol=1e-8, atol=1e-8)
 
 
 def test_shared_and_market_specific_curves_emit_nbt_response_and_cpa():

@@ -22,25 +22,37 @@ import numpy as np
 import pandas as pd
 
 from .hierarchical_model import FHModelMeta
-from .predict import FHPosteriorParams, _cross_product_strength_matrix, adstock_saturate_frame, lag_frame
+from .predict import (
+    FHPosteriorParams,
+    _cross_product_strength_matrix,
+    adstock_saturate_frame,
+    lag_frame,
+)
 
 
 # ---------------------------------------------------------------------------
 # Joint hierarchical FH model attribution
 # ---------------------------------------------------------------------------
 
-def _baseline_eta(frame: Dict, meta: FHModelMeta, params: FHPosteriorParams) -> np.ndarray:
+
+def _baseline_eta(
+    frame: Dict, meta: FHModelMeta, params: FHPosteriorParams
+) -> np.ndarray:
     """Everything in eta except the media-channel terms: intercept, market, trend, season, promo, controls."""
     outcome_ids = meta.outcome_ids
 
     intercept = np.array([params.intercept[s] for s in outcome_ids])
-    market_offset_matrix = np.array([[params.market_offset[m][s] for s in outcome_ids] for m in meta.markets])
+    market_offset_matrix = np.array(
+        [[params.market_offset[m][s] for s in outcome_ids] for m in meta.markets]
+    )
     eta_market = market_offset_matrix[frame["market_idx"]]
 
     trend_coef = np.array([params.trend_coef[s] for s in outcome_ids])
     eta_trend = frame["trend"][:, None] * trend_coef[None, :]
 
-    gamma_fourier_matrix = np.column_stack([params.gamma_fourier[s] for s in outcome_ids])
+    gamma_fourier_matrix = np.column_stack(
+        [params.gamma_fourier[s] for s in outcome_ids]
+    )
     eta_season = frame["fourier"] @ gamma_fourier_matrix
 
     promo_coef = np.array([params.promo_coef[s] for s in outcome_ids])
@@ -66,7 +78,13 @@ def _baseline_eta(frame: Dict, meta: FHModelMeta, params: FHPosteriorParams) -> 
     return eta
 
 
-def _channel_log_terms(frame: Dict, meta: FHModelMeta, params: FHPosteriorParams) -> Dict[str, np.ndarray]:
+def _channel_log_terms(
+    frame: Dict,
+    meta: FHModelMeta,
+    params: FHPosteriorParams,
+    *,
+    purpose: str = "attribution",
+) -> Dict[str, np.ndarray]:
     """Per-channel additive log-mu contribution, shape (n_obs, n_outcomes), before the final exp().
 
     Mirrors `core.predict.predict_mu`'s pathway-masked construction (PR G1 -
@@ -87,12 +105,21 @@ def _channel_log_terms(frame: Dict, meta: FHModelMeta, params: FHPosteriorParams
     n_obs = frame["X_media"].shape[0]
     n_out = len(outcome_ids)
 
-    sat_media = adstock_saturate_frame(frame["X_media"], frame["market_bounds"], meta, params)
-    primary_mask = meta.pathway_masks.primary_matrix(outcome_ids, meta.channels)  # (O, C)
+    sat_media = adstock_saturate_frame(
+        frame["X_media"], frame["market_bounds"], meta, params
+    )
+    primary_mask = meta.pathway_masks.primary_matrix(
+        outcome_ids, meta.channels
+    )  # (O, C)
 
-    cross_cells = meta.pathway_masks.active_cells(outcome_ids, meta.channels) + meta.pathway_masks.exploratory_cells(outcome_ids, meta.channels)
+    cross_cells = meta.pathway_masks.active_cells(
+        outcome_ids, meta.channels
+    ) + meta.pathway_masks.exploratory_cells(outcome_ids, meta.channels)
     if cross_cells:
-        cross_product_lag_media = {lag: lag_frame(sat_media, frame["market_bounds"], lag) for lag in {meta.pathway_masks.lag_for_cell(cell) for cell in cross_cells}}
+        cross_product_lag_media = {
+            lag: lag_frame(sat_media, frame["market_bounds"], lag)
+            for lag in {meta.pathway_masks.lag_for_cell(cell) for cell in cross_cells}
+        }
         strength_matrix = _cross_product_strength_matrix(meta, params)
     else:
         cross_product_lag_media = None
@@ -104,14 +131,25 @@ def _channel_log_terms(frame: Dict, meta: FHModelMeta, params: FHPosteriorParams
         for si, oid in enumerate(outcome_ids):
             b = params.beta[oid][ch]
             direct_visible = meta.pathway_masks.component_eligible(
-                oid, ch, "direct", "attribution"
+                oid, ch, "direct", purpose
             )
             value = b * primary_mask[si, ci] * direct_visible * sat_media[:, ci]
             cross_visible = meta.pathway_masks.component_eligible(
-                oid, ch, "cross_product", "attribution"
+                oid, ch, "cross_product", purpose
             )
-            if cross_visible and strength_matrix is not None and strength_matrix[si, ci]:
-                value = value + b * strength_matrix[si, ci] * cross_product_lag_media[meta.pathway_masks.lag_for_cell((si, ci))][:, ci]
+            if (
+                cross_visible
+                and strength_matrix is not None
+                and strength_matrix[si, ci]
+            ):
+                value = (
+                    value
+                    + b
+                    * strength_matrix[si, ci]
+                    * cross_product_lag_media[
+                        meta.pathway_masks.lag_for_cell((si, ci))
+                    ][:, ci]
+                )
             term[:, si] = value
         terms[ch] = term
     return terms
@@ -123,6 +161,7 @@ def compute_shapley_contributions(
     params: FHPosteriorParams,
     n_permutations: int = 200,
     seed: int = 42,
+    purpose: str = "attribution",
 ) -> Dict[str, np.ndarray]:
     """
     Row-and-outcome_id-level Shapley decomposition of predicted mu into a
@@ -137,7 +176,9 @@ def compute_shapley_contributions(
 
     baseline_eta = _baseline_eta(frame, meta, params)
     mu_baseline = np.exp(np.clip(baseline_eta, -50, 50))
-    channel_terms = _channel_log_terms(frame, meta, params)
+    if purpose not in {"attribution", "headline"}:
+        raise ValueError("purpose must be 'attribution' or 'headline'.")
+    channel_terms = _channel_log_terms(frame, meta, params, purpose=purpose)
 
     contributions = {c: np.zeros((n_obs, n_out)) for c in channels}
     for _ in range(n_permutations):
@@ -184,7 +225,9 @@ def outcome_channel_summary(
     are `NaN` for any unpriced outcome_id, regardless of whether `ltv` was
     omitted entirely or only partially covers this fit's outcome_ids.
     """
-    contributions = contributions or compute_shapley_contributions(frame, meta, params, n_permutations)
+    contributions = contributions or compute_shapley_contributions(
+        frame, meta, params, n_permutations
+    )
     ltv = ltv or {}
     rows = []
     for ci, ch in enumerate(meta.channels):
@@ -193,17 +236,19 @@ def outcome_channel_summary(
             vol = float(contributions["channel_contributions"][ch][:, si].sum())
             weight = ltv[oid] if oid in ltv else np.nan
             value = vol * weight
-            rows.append({
-                "channel": ch,
-                "outcome_id": oid,
-                "spend": total_spend,
-                "volume_contribution": vol,
-                "roas": vol / total_spend if total_spend > 0 else np.nan,
-                "cpa": total_spend / vol if vol > 0 else np.nan,
-                "ltv": ltv.get(oid),
-                "value_contribution": value,
-                "value_roas": value / total_spend if total_spend > 0 else np.nan,
-            })
+            rows.append(
+                {
+                    "channel": ch,
+                    "outcome_id": oid,
+                    "spend": total_spend,
+                    "volume_contribution": vol,
+                    "roas": vol / total_spend if total_spend > 0 else np.nan,
+                    "cpa": total_spend / vol if vol > 0 else np.nan,
+                    "ltv": ltv.get(oid),
+                    "value_contribution": value,
+                    "value_roas": value / total_spend if total_spend > 0 else np.nan,
+                }
+            )
     return pd.DataFrame(rows)
 
 
@@ -233,18 +278,28 @@ def total_fh_contribution(
     behaviour for a fit with no DNA outcomes (where "every outcome_id"
     already means "every FH outcome_id").
     """
-    summary = outcome_channel_summary(frame, meta, params, contributions, ltv, n_permutations)
+    summary = outcome_channel_summary(
+        frame, meta, params, contributions, ltv, n_permutations
+    )
     if outcome_ids is not None:
         summary = summary[summary["outcome_id"].isin(outcome_ids)]
-    total = summary.groupby("channel").agg(
-        spend=("spend", "first"),
-        volume_contribution=("volume_contribution", "sum"),
-        value_contribution=("value_contribution", "sum"),
-    ).reset_index()
+    total = (
+        summary.groupby("channel")
+        .agg(
+            spend=("spend", "first"),
+            volume_contribution=("volume_contribution", "sum"),
+            value_contribution=("value_contribution", "sum"),
+        )
+        .reset_index()
+    )
     total["roas"] = total["volume_contribution"] / total["spend"].replace(0, np.nan)
-    total["value_roas"] = total["value_contribution"] / total["spend"].replace(0, np.nan)
+    total["value_roas"] = total["value_contribution"] / total["spend"].replace(
+        0, np.nan
+    )
 
-    pivot = summary.pivot(index="channel", columns="outcome_id", values="volume_contribution")
+    pivot = summary.pivot(
+        index="channel", columns="outcome_id", values="volume_contribution"
+    )
     pivot = pivot.div(pivot.sum(axis=1), axis=0).add_suffix("_share")
     return total.merge(pivot.reset_index(), on="channel", how="left")
 
@@ -262,7 +317,9 @@ def contribution_waterfall(
     If `outcome_id` is None, sums across all outcome_ids (total FH);
     otherwise a single outcome_id's waterfall.
     """
-    contributions = contributions or compute_shapley_contributions(frame, meta, params, n_permutations)
+    contributions = contributions or compute_shapley_contributions(
+        frame, meta, params, n_permutations
+    )
     out_idx = meta.outcome_ids.index(outcome_id) if outcome_id else None
 
     def total(arr: np.ndarray) -> float:
@@ -270,7 +327,9 @@ def contribution_waterfall(
 
     rows = [{"category": "Baseline", "value": total(contributions["baseline"])}]
     for ch in meta.channels:
-        rows.append({"category": ch, "value": total(contributions["channel_contributions"][ch])})
+        rows.append(
+            {"category": ch, "value": total(contributions["channel_contributions"][ch])}
+        )
     rows.append({"category": "Total", "value": total(contributions["mu_total"])})
     return pd.DataFrame(rows)
 
@@ -298,6 +357,7 @@ def calculate_roi(
 # ---------------------------------------------------------------------------
 # Generic helpers (kept from the original single-KPI implementation)
 # ---------------------------------------------------------------------------
+
 
 def compute_shapley_values(
     baseline: float,
@@ -333,9 +393,9 @@ def compute_shapley_values(
                 with_channel = subset_set | {channel}
                 marginal = value_function(with_channel) - value_function(subset_set)
                 weight = (
-                    np.math.factorial(len(subset_set)) *
-                    np.math.factorial(n - len(subset_set) - 1) /
-                    np.math.factorial(n)
+                    np.math.factorial(len(subset_set))
+                    * np.math.factorial(n - len(subset_set) - 1)
+                    / np.math.factorial(n)
                 )
                 marginal_sum += weight * marginal
 
@@ -358,7 +418,7 @@ def _shapley_sampling(
         current_value = baseline
         for channel in perm:
             new_value = current_value + channel_effects[channel]
-            shapley[channel] += (new_value - current_value)
+            shapley[channel] += new_value - current_value
             current_value = new_value
 
     for ch in channels:
@@ -376,21 +436,21 @@ def decompose_sales(
 ) -> pd.DataFrame:
     n = len(y)
     data = {
-        'actual': y,
-        'baseline': baseline if len(baseline) == n else np.full(n, baseline),
+        "actual": y,
+        "baseline": baseline if len(baseline) == n else np.full(n, baseline),
     }
     for channel, contrib in channel_contributions.items():
-        data[f'channel_{channel}'] = contrib
+        data[f"channel_{channel}"] = contrib
     if seasonality is not None:
-        data['seasonality'] = seasonality
+        data["seasonality"] = seasonality
     if trend is not None:
-        data['trend'] = trend
+        data["trend"] = trend
 
-    fitted = data['baseline'].copy()
+    fitted = data["baseline"].copy()
     for key in data:
-        if key.startswith('channel_') or key in ['seasonality', 'trend']:
+        if key.startswith("channel_") or key in ["seasonality", "trend"]:
             fitted = fitted + data[key]
 
-    data['fitted'] = fitted
-    data['residual'] = y - fitted
+    data["fitted"] = fitted
+    data["residual"] = y - fitted
     return pd.DataFrame(data)

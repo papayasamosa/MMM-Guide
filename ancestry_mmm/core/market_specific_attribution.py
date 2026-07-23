@@ -57,7 +57,11 @@ from .predict import _cross_product_strength_matrix, lag_frame
 
 
 def _channel_log_terms_market_specific(
-    frame: Dict, meta: FHModelMeta, params: FHMarketSpecificPosteriorParams,
+    frame: Dict,
+    meta: FHModelMeta,
+    params: FHMarketSpecificPosteriorParams,
+    *,
+    purpose: str = "attribution",
 ) -> Dict[str, np.ndarray]:
     """Per-channel additive log-mu contribution, shape (n_obs, n_outcomes),
     before the final exp() - Model C equivalent of
@@ -80,11 +84,18 @@ def _channel_log_terms_market_specific(
     sat_media = adstock_saturate_frame_market_specific(
         frame["X_media"], frame["market_bounds"], markets, meta, params
     )
-    primary_mask = meta.pathway_masks.primary_matrix(outcome_ids, meta.channels)  # (O, C)
+    primary_mask = meta.pathway_masks.primary_matrix(
+        outcome_ids, meta.channels
+    )  # (O, C)
 
-    cross_cells = meta.pathway_masks.active_cells(outcome_ids, meta.channels) + meta.pathway_masks.exploratory_cells(outcome_ids, meta.channels)
+    cross_cells = meta.pathway_masks.active_cells(
+        outcome_ids, meta.channels
+    ) + meta.pathway_masks.exploratory_cells(outcome_ids, meta.channels)
     if cross_cells:
-        cross_product_lag_media = {lag: lag_frame(sat_media, frame["market_bounds"], lag) for lag in {meta.pathway_masks.lag_for_cell(cell) for cell in cross_cells}}
+        cross_product_lag_media = {
+            lag: lag_frame(sat_media, frame["market_bounds"], lag)
+            for lag in {meta.pathway_masks.lag_for_cell(cell) for cell in cross_cells}
+        }
         strength_matrix = _cross_product_strength_matrix(meta, params)
     else:
         cross_product_lag_media = None
@@ -92,9 +103,12 @@ def _channel_log_terms_market_specific(
 
     # beta_by_row[obs, outcome, channel] - this row's own market's beta,
     # matching core.market_specific_predict.predict_mu_market_specific.
-    beta_stack = np.array([
-        [[params.beta[m][s][c] for c in meta.channels] for s in outcome_ids] for m in markets
-    ])  # (n_market, n_outcome, n_channel)
+    beta_stack = np.array(
+        [
+            [[params.beta[m][s][c] for c in meta.channels] for s in outcome_ids]
+            for m in markets
+        ]
+    )  # (n_market, n_outcome, n_channel)
     beta_by_row = beta_stack[market_idx]  # (n_obs, n_outcome, n_channel)
 
     terms: Dict[str, np.ndarray] = {}
@@ -103,14 +117,25 @@ def _channel_log_terms_market_specific(
         for si, oid in enumerate(outcome_ids):
             b = beta_by_row[:, si, ci]
             direct_visible = meta.pathway_masks.component_eligible(
-                oid, ch, "direct", "attribution"
+                oid, ch, "direct", purpose
             )
             value = b * primary_mask[si, ci] * direct_visible * sat_media[:, ci]
             cross_visible = meta.pathway_masks.component_eligible(
-                oid, ch, "cross_product", "attribution"
+                oid, ch, "cross_product", purpose
             )
-            if cross_visible and strength_matrix is not None and strength_matrix[si, ci]:
-                value = value + b * strength_matrix[si, ci] * cross_product_lag_media[meta.pathway_masks.lag_for_cell((si, ci))][:, ci]
+            if (
+                cross_visible
+                and strength_matrix is not None
+                and strength_matrix[si, ci]
+            ):
+                value = (
+                    value
+                    + b
+                    * strength_matrix[si, ci]
+                    * cross_product_lag_media[
+                        meta.pathway_masks.lag_for_cell((si, ci))
+                    ][:, ci]
+                )
             term[:, si] = value
         terms[ch] = term
     return terms
@@ -122,6 +147,7 @@ def compute_shapley_contributions_market_specific(
     params: FHMarketSpecificPosteriorParams,
     n_permutations: int = 200,
     seed: int = 42,
+    purpose: str = "attribution",
 ) -> Dict[str, object]:
     """
     Row-and-outcome_id-level Shapley decomposition of predicted mu into a
@@ -138,7 +164,11 @@ def compute_shapley_contributions_market_specific(
 
     baseline_eta = _baseline_eta(frame, meta, params)
     mu_baseline = np.exp(np.clip(baseline_eta, -50, 50))
-    channel_terms = _channel_log_terms_market_specific(frame, meta, params)
+    if purpose not in {"attribution", "headline"}:
+        raise ValueError("purpose must be 'attribution' or 'headline'.")
+    channel_terms = _channel_log_terms_market_specific(
+        frame, meta, params, purpose=purpose
+    )
 
     contributions = {c: np.zeros((n_obs, n_out)) for c in channels}
     for _ in range(n_permutations):
@@ -185,7 +215,9 @@ def outcome_channel_market_summary(
     an unpriced outcome_id gets `NaN`, never weight 1.0, whether `ltv` is
     entirely omitted or only partially populated.
     """
-    contributions = contributions or compute_shapley_contributions_market_specific(frame, meta, params, n_permutations)
+    contributions = contributions or compute_shapley_contributions_market_specific(
+        frame, meta, params, n_permutations
+    )
     ltv = ltv or {}
     markets = frame["markets"]
     market_idx = frame["market_idx"]
@@ -196,21 +228,27 @@ def outcome_channel_market_summary(
             row_mask = market_idx == m_i
             market_spend = float(frame["X_media"][row_mask, ci].sum())
             for si, oid in enumerate(meta.outcome_ids):
-                vol = float(contributions["channel_contributions"][ch][row_mask, si].sum())
+                vol = float(
+                    contributions["channel_contributions"][ch][row_mask, si].sum()
+                )
                 weight = ltv[oid] if oid in ltv else np.nan
                 value = vol * weight
-                rows.append({
-                    "market": market,
-                    "channel": ch,
-                    "outcome_id": oid,
-                    "spend": market_spend,
-                    "volume_contribution": vol,
-                    "roas": vol / market_spend if market_spend > 0 else np.nan,
-                    "cpa": market_spend / vol if vol > 0 else np.nan,
-                    "ltv": ltv.get(oid),
-                    "value_contribution": value,
-                    "value_roas": value / market_spend if market_spend > 0 else np.nan,
-                })
+                rows.append(
+                    {
+                        "market": market,
+                        "channel": ch,
+                        "outcome_id": oid,
+                        "spend": market_spend,
+                        "volume_contribution": vol,
+                        "roas": vol / market_spend if market_spend > 0 else np.nan,
+                        "cpa": market_spend / vol if vol > 0 else np.nan,
+                        "ltv": ltv.get(oid),
+                        "value_contribution": value,
+                        "value_roas": value / market_spend
+                        if market_spend > 0
+                        else np.nan,
+                    }
+                )
     return pd.DataFrame(rows)
 
 
@@ -247,29 +285,46 @@ def total_contribution_market_specific(
     (market, channel), so it's taken once per (market, channel) before any
     cross-market summation.
     """
-    summary = outcome_channel_market_summary(frame, meta, params, contributions, ltv, n_permutations)
+    summary = outcome_channel_market_summary(
+        frame, meta, params, contributions, ltv, n_permutations
+    )
     if outcome_ids is not None:
         summary = summary[summary["outcome_id"].isin(outcome_ids)]
 
-    market_channel = summary.groupby(["market", "channel"], sort=False).agg(
-        spend=("spend", "first"),
-        volume_contribution=("volume_contribution", "sum"),
-        value_contribution=("value_contribution", "sum"),
-    ).reset_index()
+    market_channel = (
+        summary.groupby(["market", "channel"], sort=False)
+        .agg(
+            spend=("spend", "first"),
+            volume_contribution=("volume_contribution", "sum"),
+            value_contribution=("value_contribution", "sum"),
+        )
+        .reset_index()
+    )
 
     if by_market:
         total = market_channel
     else:
-        total = market_channel.groupby("channel", sort=False).agg(
-            spend=("spend", "sum"),
-            volume_contribution=("volume_contribution", "sum"),
-            value_contribution=("value_contribution", "sum"),
-        ).reset_index()
+        total = (
+            market_channel.groupby("channel", sort=False)
+            .agg(
+                spend=("spend", "sum"),
+                volume_contribution=("volume_contribution", "sum"),
+                value_contribution=("value_contribution", "sum"),
+            )
+            .reset_index()
+        )
 
     total["roas"] = total["volume_contribution"] / total["spend"].replace(0, np.nan)
-    total["value_roas"] = total["value_contribution"] / total["spend"].replace(0, np.nan)
+    total["value_roas"] = total["value_contribution"] / total["spend"].replace(
+        0, np.nan
+    )
 
     group_cols = ["market", "channel"] if by_market else ["channel"]
-    pivot = summary.pivot_table(index=group_cols, columns="outcome_id", values="volume_contribution", aggfunc="sum")
+    pivot = summary.pivot_table(
+        index=group_cols,
+        columns="outcome_id",
+        values="volume_contribution",
+        aggfunc="sum",
+    )
     pivot = pivot.div(pivot.sum(axis=1), axis=0).add_suffix("_share").reset_index()
     return total.merge(pivot, on=group_cols, how="left")

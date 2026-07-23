@@ -72,9 +72,7 @@ def test_nbt_duplicate_missing_negative_fractional():
 
 
 def test_components_lags_priors_coexist():
-    direct = MediaOutcomePathway(
-        "TV", "Family History", "fh", component_type="direct", prior_scale=0.8
-    )
+    direct = MediaOutcomePathway("TV", "Family History", "fh", component_type="direct")
     delayed = MediaOutcomePathway(
         "TV",
         "Family History",

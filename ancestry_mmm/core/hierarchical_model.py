@@ -31,8 +31,10 @@ from .transformations import pt_geometric_adstock_matrix, pt_hill_function
 from .schema import ModelSpec
 from .outcomes import outcome_eligibility
 from .pathways import (
-    MediaOutcomePathway, ResolvedPathwayMasks, resolve_pathway_masks,
-    validate_media_outcome_pathways,
+    MediaOutcomePathway,
+    ResolvedPathwayMasks,
+    resolve_pathway_masks,
+    resolve_validated_pathway_masks,
 )
 from .net_billthrough import assert_model_frame_net_billthrough_complete
 
@@ -111,6 +113,7 @@ class FHModelMeta:
     see `active_cross_product_strength_est`'s prior in the model builders)
     and summed.
     """
+
     markets: List[str]
     outcome_ids: List[str]
     channels: List[str]
@@ -168,11 +171,16 @@ class FHModelMeta:
         if self.pathway_masks is None:
             self.pathway_masks = (
                 resolve_pathway_masks(
-                    self.outcome_ids, self.channels, [],
-                    dna_channel_idx=self.dna_channel_idx, dna_outcome_id=self.dna_outcome_id,
-                    direct_dna_outcome_ids=self.direct_dna_outcome_ids, dna_lag_weeks=self.dna_lag_weeks,
+                    self.outcome_ids,
+                    self.channels,
+                    [],
+                    dna_channel_idx=self.dna_channel_idx,
+                    dna_outcome_id=self.dna_outcome_id,
+                    direct_dna_outcome_ids=self.direct_dna_outcome_ids,
+                    dna_lag_weeks=self.dna_lag_weeks,
                 )
-                if self.outcome_ids and self.channels else ResolvedPathwayMasks()
+                if self.outcome_ids and self.channels
+                else ResolvedPathwayMasks()
             )
 
     @property
@@ -195,7 +203,9 @@ class FHModelMeta:
 
 
 def _default_dna_outcome_id(
-    outcome_ids: List[str], dna_outcome_id: Optional[str], dna_channel_idx: Optional[List[int]] = None,
+    outcome_ids: List[str],
+    dna_outcome_id: Optional[str],
+    dna_channel_idx: Optional[List[int]] = None,
 ) -> str:
     """
     Resolve which outcome_id is the FH DNA cross-sell outcome (the halo
@@ -218,7 +228,9 @@ def _default_dna_outcome_id(
     """
     if dna_outcome_id is not None:
         if dna_outcome_id not in outcome_ids:
-            raise ValueError(f"dna_outcome_id '{dna_outcome_id}' is not one of the model's outcome_ids: {outcome_ids}")
+            raise ValueError(
+                f"dna_outcome_id '{dna_outcome_id}' is not one of the model's outcome_ids: {outcome_ids}"
+            )
         return dna_outcome_id
     if not dna_channel_idx:
         return outcome_ids[0]
@@ -231,7 +243,9 @@ def _default_dna_outcome_id(
 
 
 def _resolve_direct_dna_outcome_ids(
-    outcome_ids: List[str], dna_outcome_id: str, direct_dna_outcome_ids: Optional[List[str]],
+    outcome_ids: List[str],
+    dna_outcome_id: str,
+    direct_dna_outcome_ids: Optional[List[str]],
 ) -> List[str]:
     """`dna_outcome_id` is always a direct (non-halo-shrunk) recipient of DNA
     media, whether or not the caller lists it explicitly. Every id passed
@@ -241,7 +255,9 @@ def _resolve_direct_dna_outcome_ids(
         resolved.append(dna_outcome_id)
     unknown = [s for s in resolved if s not in outcome_ids]
     if unknown:
-        raise ValueError(f"direct_dna_outcome_ids contains unknown outcome_id(s): {unknown}")
+        raise ValueError(
+            f"direct_dna_outcome_ids contains unknown outcome_id(s): {unknown}"
+        )
     return resolved
 
 
@@ -346,8 +362,12 @@ def build_fh_hierarchical_model(
     n_fourier = fourier.shape[1]
     n_controls = X_controls.shape[1]
 
-    dna_outcome_id = _default_dna_outcome_id(outcome_ids, dna_outcome_id, dna_channel_idx)
-    direct_dna_outcome_ids = _resolve_direct_dna_outcome_ids(outcome_ids, dna_outcome_id, direct_dna_outcome_ids)
+    dna_outcome_id = _default_dna_outcome_id(
+        outcome_ids, dna_outcome_id, dna_channel_idx
+    )
+    direct_dna_outcome_ids = _resolve_direct_dna_outcome_ids(
+        outcome_ids, dna_outcome_id, direct_dna_outcome_ids
+    )
     non_dna_idx = [i for i, c in enumerate(channels) if i not in dna_channel_idx]
 
     # Normalise to real MediaOutcomePathway instances defensively - a caller
@@ -358,15 +378,30 @@ def build_fh_hierarchical_model(
         p if isinstance(p, MediaOutcomePathway) else MediaOutcomePathway.from_dict(p)
         for p in (frame.get("media_outcome_pathways") or [])
     ]
-    pathway_errors = validate_media_outcome_pathways(
-        pathway_catalogue, channels=channels, outcome_ids=outcome_ids
-    )
-    if pathway_errors:
-        raise ValueError("Invalid media-outcome pathway catalogue: " + "; ".join(pathway_errors))
-    pathway_masks = resolve_pathway_masks(
-        outcome_ids, channels, pathway_catalogue,
-        dna_channel_idx=dna_channel_idx, dna_outcome_id=dna_outcome_id,
-        direct_dna_outcome_ids=direct_dna_outcome_ids, dna_lag_weeks=dna_lag_weeks,
+    outcome_catalogue = frame.get("outcomes") or []
+    outcome_products = {
+        outcome.outcome_id: outcome.product for outcome in outcome_catalogue
+    }
+    channel_products = {
+        channel: ("DNA" if index in dna_channel_idx else "Family History")
+        for index, channel in enumerate(channels)
+    }
+    pathway_masks = resolve_validated_pathway_masks(
+        outcome_ids,
+        channels,
+        pathway_catalogue,
+        channel_products=channel_products,
+        outcome_products=outcome_products,
+        fitted_outcome_ids=outcome_ids,
+        diagnostic_only_outcome_ids=[
+            outcome.outcome_id
+            for outcome in outcome_catalogue
+            if getattr(outcome, "role", None) == "diagnostic"
+        ],
+        dna_channel_idx=dna_channel_idx,
+        dna_outcome_id=dna_outcome_id,
+        direct_dna_outcome_ids=direct_dna_outcome_ids,
+        dna_lag_weeks=dna_lag_weeks,
     )
 
     channel_mean_spend = X_media.mean(axis=0)
@@ -411,7 +446,9 @@ def build_fh_hierarchical_model(
 
         sat_media = pm.Deterministic(
             "sat_media",
-            _market_grouped_adstock_and_saturation(X_media, market_bounds, decay_rate, hill_K, hill_S),
+            _market_grouped_adstock_and_saturation(
+                X_media, market_bounds, decay_rate, hill_K, hill_S
+            ),
             dims=("obs", "channel"),
         )
 
@@ -425,15 +462,21 @@ def build_fh_hierarchical_model(
         # additively before the final exp(), so a wide per-channel prior
         # compounds across channels into an implausible tail very fast.
         mu_channel = pm.Normal(
-            "mu_channel", mu=prior_config.get("channel_effect_mu", -2.5),
-            sigma=prior_config.get("channel_effect_sigma", 0.5), dims="channel",
+            "mu_channel",
+            mu=prior_config.get("channel_effect_mu", -2.5),
+            sigma=prior_config.get("channel_effect_sigma", 0.5),
+            dims="channel",
         )
         sigma_pool = pm.HalfNormal(
-            "sigma_pool", sigma=prior_config.get("pooling_sigma_prior", 0.3), dims="channel",
+            "sigma_pool",
+            sigma=prior_config.get("pooling_sigma_prior", 0.3),
+            dims="channel",
         )
         z_offset = pm.Normal("z_offset", mu=0, sigma=1, dims=("outcome", "channel"))
         log_beta = pm.Deterministic(
-            "log_beta", mu_channel[None, :] + sigma_pool[None, :] * z_offset, dims=("outcome", "channel")
+            "log_beta",
+            mu_channel[None, :] + sigma_pool[None, :] * z_offset,
+            dims=("outcome", "channel"),
         )
         beta = pm.Deterministic("beta", pt.exp(log_beta), dims=("outcome", "channel"))
 
@@ -482,19 +525,29 @@ def build_fh_hierarchical_model(
         all_cross_cells = active_cells + exploratory_cells
         lagged_media_by_weeks = {
             lag: _market_grouped_lag(sat_media, market_bounds, lag)
-            for lag in sorted({pathway_masks.lag_for_cell(cell) for cell in all_cross_cells})
+            for lag in sorted(
+                {pathway_masks.lag_for_cell(cell) for cell in all_cross_cells}
+            )
         }
 
-        def _cross_product_eta(cells: list, var_name: str, role_default: float) -> pt.TensorVariable:
+        def _cross_product_eta(
+            cells: list, var_name: str, role_default: float
+        ) -> pt.TensorVariable:
             # Explicit pathway scale > role default > the validated hard
             # defaults supplied by the caller.  A vector sigma makes the
             # configured scale operational for each individual pathway.
-            sigmas = [pathway_masks.prior_for_cell(cell, role_default) for cell in cells]
-            strength_est = pm.HalfNormal(f"{var_name}_est", sigma=pt.constant(sigmas), shape=len(cells))
+            sigmas = [
+                pathway_masks.prior_for_cell(cell, role_default) for cell in cells
+            ]
+            strength_est = pm.HalfNormal(
+                f"{var_name}_est", sigma=pt.constant(sigmas), shape=len(cells)
+            )
             strength_matrix = pt.zeros((n_outcomes, n_channels))
             eta = pt.zeros((n_obs, n_outcomes))
             for idx, (oi, ci) in enumerate(cells):
-                strength_matrix = pt.set_subtensor(strength_matrix[oi, ci], strength_est[idx])
+                strength_matrix = pt.set_subtensor(
+                    strength_matrix[oi, ci], strength_est[idx]
+                )
                 lagged = lagged_media_by_weeks[pathway_masks.lag_for_cell((oi, ci))]
                 cell_matrix = pt.zeros((n_outcomes, n_channels))
                 cell_matrix = pt.set_subtensor(cell_matrix[oi, ci], strength_est[idx])
@@ -503,12 +556,22 @@ def build_fh_hierarchical_model(
             return eta
 
         eta_active = (
-            _cross_product_eta(active_cells, "active_cross_product_strength", prior_config.get("active_cross_product_sigma", 0.25))
-            if active_cells else pt.zeros((n_obs, n_outcomes))
+            _cross_product_eta(
+                active_cells,
+                "active_cross_product_strength",
+                prior_config.get("active_cross_product_sigma", 0.25),
+            )
+            if active_cells
+            else pt.zeros((n_obs, n_outcomes))
         )
         eta_exploratory = (
-            _cross_product_eta(exploratory_cells, "exploratory_cross_product_strength", prior_config.get("exploratory_cross_product_sigma", 0.08))
-            if exploratory_cells else pt.zeros((n_obs, n_outcomes))
+            _cross_product_eta(
+                exploratory_cells,
+                "exploratory_cross_product_strength",
+                prior_config.get("exploratory_cross_product_sigma", 0.08),
+            )
+            if exploratory_cells
+            else pt.zeros((n_obs, n_outcomes))
         )
         eta_active = pm.Deterministic(
             "eta_active_cross_product", eta_active, dims=("obs", "outcome")
@@ -532,20 +595,28 @@ def build_fh_hierarchical_model(
         # independent (wide, unpooled) prior instead of sharing strength.
         # -----------------------------------------------------------------
         market_pool_sigma = pm.HalfNormal(
-            "market_pool_sigma", sigma=prior_config.get("market_pool_sigma_prior", 0.4), dims="outcome"
+            "market_pool_sigma",
+            sigma=prior_config.get("market_pool_sigma_prior", 0.4),
+            dims="outcome",
         )
         unpooled_sigma_const = prior_config.get("unpooled_market_sigma", 2.0)
         sigma_rows = []
         for m in markets:
             if m in unpooled_markets:
-                sigma_rows.append(pt.as_tensor_variable(np.full(n_outcomes, unpooled_sigma_const)))
+                sigma_rows.append(
+                    pt.as_tensor_variable(np.full(n_outcomes, unpooled_sigma_const))
+                )
             else:
                 sigma_rows.append(market_pool_sigma)
         market_sigma_stack = pt.stack(sigma_rows)  # (n_market, n_outcome)
 
-        market_offset_raw = pm.Normal("market_offset_raw", mu=0, sigma=1, dims=("market", "outcome"))
+        market_offset_raw = pm.Normal(
+            "market_offset_raw", mu=0, sigma=1, dims=("market", "outcome")
+        )
         market_offset = pm.Deterministic(
-            "market_offset", market_offset_raw * market_sigma_stack, dims=("market", "outcome")
+            "market_offset",
+            market_offset_raw * market_sigma_stack,
+            dims=("market", "outcome"),
         )
         eta_market = market_offset[market_idx]
 
@@ -554,19 +625,36 @@ def build_fh_hierarchical_model(
         # -----------------------------------------------------------------
         intercept = pm.Normal(
             "intercept",
-            mu=prior_config.get("intercept_mu", np.log(np.clip(Y.mean(axis=0), 1, None))),
+            mu=prior_config.get(
+                "intercept_mu", np.log(np.clip(Y.mean(axis=0), 1, None))
+            ),
             sigma=prior_config.get("intercept_sigma", 1.0),
             dims="outcome",
         )
-        trend_coef = pm.Normal("trend_coef", mu=0, sigma=prior_config.get("trend_sigma", 0.5), dims="outcome")
+        trend_coef = pm.Normal(
+            "trend_coef",
+            mu=0,
+            sigma=prior_config.get("trend_sigma", 0.5),
+            dims="outcome",
+        )
         eta_trend = trend[:, None] * trend_coef[None, :]
 
         gamma_fourier = pm.Normal(
-            "gamma_fourier", mu=0, sigma=prior_config.get("fourier_sigma", 0.4), dims=("fourier", "outcome")
+            "gamma_fourier",
+            mu=0,
+            sigma=prior_config.get("fourier_sigma", 0.4),
+            dims=("fourier", "outcome"),
         )
         eta_season = pm.math.dot(fourier, gamma_fourier)
 
-        eta = intercept[None, :] + eta_market + eta_trend + eta_season + eta_channels + eta_promo
+        eta = (
+            intercept[None, :]
+            + eta_market
+            + eta_trend
+            + eta_season
+            + eta_channels
+            + eta_promo
+        )
 
         # -----------------------------------------------------------------
         # Outcome-level controls, e.g. DNA kit price acting only on the DNA
@@ -583,32 +671,51 @@ def build_fh_hierarchical_model(
             if oid not in outcome_ids:
                 continue
             o_idx = outcome_ids.index(oid)
-            names = outcome_control_names.get(oid, [f"ctrl_{i}" for i in range(arr.shape[1])])
+            names = outcome_control_names.get(
+                oid, [f"ctrl_{i}" for i in range(arr.shape[1])]
+            )
             coord_name = f"{oid}_control"
             model.add_coord(coord_name, names)
-            coef = pm.Normal(f"outcome_control_coef_{oid}", mu=0, sigma=prior_config.get("control_sigma", 0.5), dims=coord_name)
+            coef = pm.Normal(
+                f"outcome_control_coef_{oid}",
+                mu=0,
+                sigma=prior_config.get("control_sigma", 0.5),
+                dims=coord_name,
+            )
             contrib = pm.math.dot(pt.as_tensor_variable(arr), coef)
             eta = pt.set_subtensor(eta[:, o_idx], eta[:, o_idx] + contrib)
 
         if n_controls > 0:
             model.add_coord("control", control_names)
             control_coef = pm.Normal(
-                "control_coef", mu=0, sigma=prior_config.get("control_sigma", 0.5), dims="control"
+                "control_coef",
+                mu=0,
+                sigma=prior_config.get("control_sigma", 0.5),
+                dims="control",
             )
-            eta = eta + pm.math.dot(pt.as_tensor_variable(X_controls), control_coef)[:, None]
+            eta = (
+                eta
+                + pm.math.dot(pt.as_tensor_variable(X_controls), control_coef)[:, None]
+            )
 
         # Clip is a numerical safety net (not a modelling assumption): eta is
         # a sum of several additive terms before this exp(), so pathological
         # prior draws (e.g. during prior-predictive checks) can otherwise
         # overflow into values NegativeBinomial sampling can't handle.
-        mu = pm.Deterministic("mu", pt.clip(pt.exp(eta), 1e-6, 1e9), dims=("obs", "outcome"))
+        mu = pm.Deterministic(
+            "mu", pt.clip(pt.exp(eta), 1e-6, 1e9), dims=("obs", "outcome")
+        )
 
         alpha = pm.Gamma(
-            "alpha", alpha=prior_config.get("alpha_shape", 2.0), beta=prior_config.get("alpha_rate", 0.1),
+            "alpha",
+            alpha=prior_config.get("alpha_shape", 2.0),
+            beta=prior_config.get("alpha_rate", 0.1),
             dims="outcome",
         )
 
-        pm.NegativeBinomial("y_obs", mu=mu, alpha=alpha[None, :], observed=Y, dims=("obs", "outcome"))
+        pm.NegativeBinomial(
+            "y_obs", mu=mu, alpha=alpha[None, :], observed=Y, dims=("obs", "outcome")
+        )
 
     outcome_catalogue: List[Any] = frame.get("outcomes") or []
     meta = FHModelMeta(
@@ -625,11 +732,17 @@ def build_fh_hierarchical_model(
         outcome_id_to_segment={o.outcome_id: o.segment for o in outcome_catalogue},
         outcome_id_to_product={o.outcome_id: o.product for o in outcome_catalogue},
         outcome_id_to_metric={o.outcome_id: o.metric for o in outcome_catalogue},
-        outcome_id_to_metric_key={o.outcome_id: o.metric_key for o in outcome_catalogue},
+        outcome_id_to_metric_key={
+            o.outcome_id: o.metric_key for o in outcome_catalogue
+        },
         outcome_id_to_unit={o.outcome_id: o.unit for o in outcome_catalogue},
         outcome_id_to_role={o.outcome_id: o.role for o in outcome_catalogue},
-        outcome_id_to_eligibility={o.outcome_id: outcome_eligibility(o) for o in outcome_catalogue},
-        outcome_id_to_source_column={o.outcome_id: o.source_column for o in outcome_catalogue},
+        outcome_id_to_eligibility={
+            o.outcome_id: outcome_eligibility(o) for o in outcome_catalogue
+        },
+        outcome_id_to_source_column={
+            o.outcome_id: o.source_column for o in outcome_catalogue
+        },
         outcome_catalogue_at_fit=outcome_catalogue,
         outcome_control_names=frame.get("outcome_control_names") or {},
         direct_dna_outcome_ids=direct_dna_outcome_ids,

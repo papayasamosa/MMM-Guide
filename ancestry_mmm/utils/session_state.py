@@ -4,7 +4,12 @@ import streamlit as st
 from typing import Any
 from pathlib import Path
 
-from .config import DEFAULT_FH_PRIORS, DEFAULT_DNA_LAG_WEEKS, DEFAULT_PARAMS, CURVE_BANK_ROOT
+from .config import (
+    DEFAULT_FH_PRIORS,
+    DEFAULT_DNA_LAG_WEEKS,
+    DEFAULT_PARAMS,
+    CURVE_BANK_ROOT,
+)
 
 
 def init_session_state():
@@ -15,21 +20,17 @@ def init_session_state():
         "joined_data": None,
         "data_loaded": False,
         "project_name": "ancestry-fh-uk",
-
         # Transformation pipeline
-        "pipeline_steps": [],   # list of TransformStep dicts
+        "pipeline_steps": [],  # list of TransformStep dicts
         "transformed_data": None,
         "validation_issues": [],
-
         # Structural model spec (core.schema.ModelSpec as a dict)
         "model_spec": None,
-
         # Market-specific redesign, Phase 1: market descriptors, currency and
         # channel media-unit mappings (core.market_config.MarketSpecConfig as
         # a dict). Optional and not yet consumed by the fitting pipeline -
         # see docs/market_hierarchy.md.
         "market_spec_config": None,
-
         # Model configuration
         "prior_config": dict(DEFAULT_FH_PRIORS),
         "dna_lag_weeks": DEFAULT_DNA_LAG_WEEKS,
@@ -47,11 +48,10 @@ def init_session_state():
         # (core.model_comparison.ModelComparisonCandidate dicts) - accumulated
         # one at a time as the user fits candidates, not auto-populated.
         "model_comparison_candidates": [],
-
         # Model artifacts
-        "frame": None,           # output of prepare_fh_modeling_frame
+        "frame": None,  # output of prepare_fh_modeling_frame
         "model": None,
-        "model_meta": None,      # FHModelMeta
+        "model_meta": None,  # FHModelMeta
         "trace": None,
         "model_trained": False,
         "posterior_params": None,
@@ -59,24 +59,20 @@ def init_session_state():
         # part of a model run's identity alongside the data/spec/posterior
         # fingerprints computed on demand from the artifacts above (core.fingerprint).
         "model_run_id": None,
-
         # Diagnostics
         "scorecard": None,
         "backtest_results": None,
-
         # Model approval gate (core.approval.ModelApproval as a dict) - required
         # before a model's curves can be saved to the curve bank or used to plan
         # scenarios; reset by clear_model_state() whenever the model changes.
         "model_approval": None,
-
         # Curve bank
         "curve_bank_entry_id": None,
         "calibration_records": [],
-
         # Scenario planning
         "scenarios": [],
         "active_scenario": None,
-
+        "project_notes": "",
         # UI state
         "current_page": 0,
     }
@@ -108,12 +104,20 @@ def curve_bank_dir() -> Path:
 def clear_model_state() -> None:
     """Clear all model-related state (useful when data or spec changes)."""
     model_keys = [
-        "frame", "model", "model_meta", "trace", "model_trained", "posterior_params",
-        "scorecard", "backtest_results", "curve_bank_entry_id",
+        "frame",
+        "model",
+        "model_meta",
+        "trace",
+        "model_trained",
+        "posterior_params",
+        "scorecard",
+        "backtest_results",
+        "curve_bank_entry_id",
         # A retrained (or newly loaded) model has not been reviewed yet -
         # any prior approval no longer applies to it. model_run_id resets too,
         # since it identifies a specific fit event, not just "a model exists".
-        "model_approval", "model_run_id",
+        "model_approval",
+        "model_run_id",
     ]
     for key in model_keys:
         st.session_state[key] = None

@@ -103,10 +103,10 @@ class TestModelAModelCMetaConstructionParity:
         source_c = inspect.getsource(build_fh_market_specific_model)
 
         for field_expr in (
-            "outcome_id_to_metric_key={o.outcome_id: o.metric_key for o in outcome_catalogue},",
-            "outcome_id_to_eligibility={o.outcome_id: outcome_eligibility(o) for o in outcome_catalogue},",
-            "pathway_catalogue_at_fit=pathway_catalogue,",
-            "pathway_masks=pathway_masks,",
+            "outcome_id_to_metric_key",
+            "outcome_id_to_eligibility",
+            "pathway_catalogue_at_fit",
+            "pathway_masks",
         ):
             assert field_expr in source_a, f"Model A missing: {field_expr}"
             assert field_expr in source_c, f"Model C missing: {field_expr}"
@@ -127,13 +127,14 @@ class TestModelAModelCMetaConstructionParity:
         source_c = inspect.getsource(build_fh_market_specific_model)
 
         for field_expr in (
-            "pathway_masks = resolve_pathway_masks(",
-            "outcome_ids, channels, pathway_catalogue,",
-            "dna_channel_idx=dna_channel_idx, dna_outcome_id=dna_outcome_id,",
-            "direct_dna_outcome_ids=direct_dna_outcome_ids, dna_lag_weeks=dna_lag_weeks,",
-            "primary_mask = pt.constant(pathway_masks.primary_matrix(outcome_ids, channels))",
-            "active_cells = pathway_masks.active_cells(outcome_ids, channels)",
-            "exploratory_cells = pathway_masks.exploratory_cells(outcome_ids, channels)",
+            "pathway_masks = resolve_validated_pathway_masks(",
+            "channel_products=channel_products",
+            "outcome_products=outcome_products",
+            "fitted_outcome_ids=outcome_ids",
+            "diagnostic_only_outcome_ids",
+            "primary_matrix(outcome_ids, channels)",
+            "active_cells(outcome_ids, channels)",
+            "exploratory_cells(outcome_ids, channels)",
             'prior_config.get("active_cross_product_sigma", 0.25)',
             'prior_config.get("exploratory_cross_product_sigma", 0.08)',
         ):
