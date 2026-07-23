@@ -628,6 +628,14 @@ def fh_signup_outcome_ids(model_meta: object) -> List[str]:
     return eligible_outcome_ids(model_meta, ids, "include_in_default_reporting")
 
 
+def fh_net_billthrough_outcome_ids(model_meta: object) -> List[str]:
+    """Select authoritative FH NBT count outcomes; never aliases GSA."""
+    if not _has_catalogue_metadata(model_meta):
+        return []
+    ids = select_outcome_ids(model_meta, metric_key=METRIC_KEY_FH_NET_BILLTHROUGH_COUNT)
+    return eligible_outcome_ids(model_meta, ids, "include_in_default_reporting")
+
+
 def dna_kit_sale_outcome_ids(model_meta: object) -> List[str]:
     """`metric_key=dna_kit_sale` - the instruction document's named
     `DNA kits` total. Named distinctly from `FHModelMeta.kit_only_outcome_ids`
