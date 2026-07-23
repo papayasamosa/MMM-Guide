@@ -204,14 +204,31 @@ if uploaded_zip is not None and st.button("Import bundle"):
         imported_diagnostics = imported.get("diagnostics") or {}
         set_state("scorecard", imported_diagnostics.get("scorecard"))
         set_state("backtest_results", imported_diagnostics.get("backtest_results"))
-        if imported.get("curve_bank_files"):
+        if imported.get("curve_bank_files") or imported.get(
+            "curve_bank_binary_files"
+        ):
             restored_curve_dir = curve_bank_dir()
             restored_curve_dir.mkdir(parents=True, exist_ok=True)
             for filename, contents in imported["curve_bank_files"].items():
-                (restored_curve_dir / Path(filename).name).write_text(contents)
+                target = restored_curve_dir / Path(filename)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(contents)
+            for filename, contents in imported.get(
+                "curve_bank_binary_files", {}
+            ).items():
+                target = restored_curve_dir / Path(filename)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(contents)
             set_state(
                 "curve_bank_entry_id",
-                Path(next(iter(imported["curve_bank_files"]))).stem,
+                Path(
+                    next(
+                        iter(
+                            imported["curve_bank_files"]
+                            or imported.get("curve_bank_binary_files", {})
+                        )
+                    )
+                ).stem,
             )
         if imported["market_spec_config"] is None:
             st.caption(

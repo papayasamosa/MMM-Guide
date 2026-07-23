@@ -1779,3 +1779,22 @@ replacement refit run are persisted separately from headline approval.
 **Scope:** G2A is core calculation, audit, persistence, and test infrastructure.
 Response horizons (G2B), year-on-year decomposition (G2C), the decision-ready
 dashboard (G2D), and the dynamic planner remain separate work.
+
+## G2A.1 -- outcome-scale counterfactual correction
+
+**Correction:** G2A's initial `response` field was a media contribution to the
+log mean, not an outcome count. Canonical response now replays the complete
+shared or market-specific prediction function under an explicit business
+context and subtracts the configured channel counterfactual. Marginal response
+uses a finite difference through that same full-link prediction.
+
+Component rows retain response decomposition and log-scale media terms but
+have no CPA/ROI without cost allocation. Channel aggregation counts spend
+once. Cross-channel marginal economics are blocked unless an explicit
+portfolio path and perturbation vector define the budget direction. Observed
+support is actual or unknown, current spend is governed by a named method,
+multi-market currency conversion requires ISO/FX metadata, and reconciliation
+diagnostics are part of the curve contract.
+
+**Scope:** This is the mathematical correction to G2A only. Response horizons,
+year-on-year reporting, stakeholder UI, and dynamic planning remain deferred.

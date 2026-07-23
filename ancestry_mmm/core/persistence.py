@@ -330,6 +330,7 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         "calibration_records": [],
         "model_comparison_candidates": [],
         "migration_review": None,
+        "curve_bank_binary_files": {},
     }
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
@@ -436,7 +437,13 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         curve_bank_path = tmp / "curve_bank"
         if curve_bank_path.exists():
             result["curve_bank_files"] = {
-                f.name: f.read_text() for f in curve_bank_path.glob("*.json")
+                str(f.relative_to(curve_bank_path)): f.read_text()
+                for f in curve_bank_path.rglob("*.json")
+            }
+            result["curve_bank_binary_files"] = {
+                str(f.relative_to(curve_bank_path)): f.read_bytes()
+                for f in curve_bank_path.rglob("*")
+                if f.is_file() and f.suffix.lower() != ".json"
             }
         diagnostics_path = tmp / "diagnostics"
         if diagnostics_path.exists():
@@ -463,7 +470,9 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
     if not declared or declared == "unknown":
         if imported.get("scenarios"):
             declared = "scenarios"
-        elif imported.get("curve_bank_files"):
+        elif imported.get("curve_bank_files") or imported.get(
+            "curve_bank_binary_files"
+        ):
             declared = "curves"
         elif imported.get("model_approval"):
             declared = "approved"
@@ -516,6 +525,10 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
 
     def present(key: str) -> bool:
         value = imported.get(key)
+        if key == "curve_bank_files":
+            return bool(
+                value or imported.get("curve_bank_binary_files")
+            )
         if key == "trace":
             return value is not None
         if key in {"transformed_data", "model_spec", "model_meta", "model_approval"}:

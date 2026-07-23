@@ -306,6 +306,22 @@ def test_legacy_pathway_review_loads_catalogue_and_requires_refit():
         at.session_state["media_outcome_pathways"][0]["target_outcome_id"]
         == "fh_new_gsa"
     )
+    # Exercise the public review path's direct -> cross-product replacement,
+    # not only an unchanged migration acceptance.
+    migrated = dict(at.session_state["media_outcome_pathways"][0])
+    migrated.update(
+        component_type="cross_product",
+        role="active_cross_product",
+        lag_type="fixed_weeks",
+        lag_weeks=2,
+        prior_scale=0.2,
+        allow_same_product_cross_product=True,
+    )
+    at.session_state["media_outcome_pathways"] = [migrated]
+    if "pathway_catalogue_editor" in at.session_state:
+        del at.session_state["pathway_catalogue_editor"]
+    at.run()
+    assert not at.exception
 
     save = [b for b in at.button if b.label == "Save structure and validate"][0]
     save.click().run()
@@ -349,6 +365,9 @@ def test_legacy_pathway_review_loads_catalogue_and_requires_refit():
         "Migration Reviewer"
     )
     assert at.session_state["migration_review"]["model_invalidated"] is True
+    assert at.session_state["migration_review"]["migration_change_summary"][
+        "component_type_changes"
+    ][0]["after_component_type"] == "cross_product"
     assert any(
         "old fit and approval were invalidated" in success.value
         for success in at.success

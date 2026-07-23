@@ -5,7 +5,10 @@
 `core.canonical_curves` now provides the reusable posterior-draw contract for
 all new curve and economics consumers. Its curve-bank export contains a
 component-level draw Parquet table, a posterior-summary Parquet table, and a
-versioned JSON schema. See `docs/canonical_curves.md`. The entry-oriented
+versioned JSON schema. G2A.1 defines response on the outcome scale through an
+explicit-context counterfactual; the log-scale media term is retained under a
+different field and is never labelled as a count. See
+`docs/canonical_curves.md`. The entry-oriented
 store below remains supported for the current UI and legacy bundles.
 
 ## Today (Phase 3a - built)

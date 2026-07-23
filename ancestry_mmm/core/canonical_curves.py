@@ -1,14 +1,21 @@
-"""Canonical posterior response-curve and economics dataset (G2A).
+"""Outcome-scale counterfactual posterior curves and economics (G2A.1).
 
-The draw table is the source of truth.  Every summary and aggregate is
-computed from draw rows; independently summarised medians are never added.
-The engine deliberately has no Streamlit dependency so Results, planning,
-year-on-year reporting, the curve bank, and exports can share one contract.
+The fitted models use a log link.  Media terms therefore live on the
+linear-predictor scale, while business response lives on the outcome scale:
+
+    incremental_response = mu(selected spend) - mu(counterfactual spend)
+
+This module always obtains ``mu`` through the normal steady-state NumPy
+prediction functions.  Component rows decompose response but carry no cost
+economics by default; channel rows count spend once.  Portfolio marginal
+economics require an explicit path and budget-perturbation direction.
 """
 
 from __future__ import annotations
 
 import json
+import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Mapping, Optional, Sequence, Tuple
 
@@ -17,8 +24,11 @@ import numpy as np
 import pandas as pd
 
 from .hierarchical_model import FHModelMeta
-from .market_specific_predict import extract_market_specific_posterior_params
-from .predict import extract_posterior_params
+from .market_specific_predict import (
+    extract_market_specific_posterior_params,
+    steady_state_outcome_response_market_specific,
+)
+from .predict import extract_posterior_params, steady_state_outcome_response
 from .transformations import hill_function
 from .uncertainty import DEFAULT_CRED_MASS, DEFAULT_N_DRAWS, sample_draw_indices
 
@@ -29,12 +39,32 @@ ECONOMICS_NEAR_ZERO_MARGINAL = "zero_or_near_zero_marginal_response"
 ECONOMICS_MISSING_VALUE = "missing_value"
 ECONOMICS_UNIT_ERROR = "unit_error"
 ECONOMICS_CURRENCY_ERROR = "currency_error"
+ECONOMICS_COMPONENT_COST_UNALLOCATED = "component_cost_unallocated"
+ECONOMICS_PORTFOLIO_DIRECTION_REQUIRED = "portfolio_direction_required"
 
+SUPPORT_AVAILABLE = "available"
+SUPPORT_MISSING = "missing"
 SUPPORTED_SPEND_UNITS = {"currency", "currency_thousands"}
+CONTEXT_MODES = {
+    "recent_average",
+    "period_average",
+    "specific_week",
+    "specific_scenario",
+    "steady_state_reference",
+}
+CURRENT_SPEND_METHODS = {
+    "latest_complete_week",
+    "last_4_week_average",
+    "last_13_week_average",
+    "selected_period_average",
+    "uploaded_plan",
+}
 DEFAULT_NEAR_ZERO = 1e-12
+ISO_CURRENCY = re.compile(r"^[A-Z]{3}$")
 
 IDENTITY_COLUMNS = [
     "model_run_id",
+    "reference_context_id",
     "market",
     "product",
     "segment",
@@ -47,83 +77,395 @@ IDENTITY_COLUMNS = [
 ]
 
 
+@dataclass(frozen=True)
+class CurveReferenceContext:
+    """Business context held fixed while one channel's spend is varied."""
+
+    reference_context_id: str
+    mode: str
+    market: str
+    trend: float
+    fourier: Tuple[float, ...]
+    promo: Mapping[str, float]
+    controls: Mapping[str, float]
+    outcome_controls: Mapping[str, Mapping[str, float]]
+    other_channel_spend: Mapping[str, float]
+    counterfactual_spend: float = 0.0
+    reference_period_start: Optional[str] = None
+    reference_period_end: Optional[str] = None
+    other_media_assumption: str = "held_at_reference"
+    promotion_assumption: str = "explicit_reference_values"
+    seasonality_assumption: str = "explicit_fourier_values"
+
+    def __post_init__(self) -> None:
+        if not self.reference_context_id:
+            raise ValueError("reference_context_id is required")
+        if self.mode not in CONTEXT_MODES:
+            raise ValueError(
+                f"Unsupported context mode '{self.mode}'; expected {sorted(CONTEXT_MODES)}"
+            )
+        if not self.market:
+            raise ValueError("reference market is required")
+        if not np.isfinite(self.trend):
+            raise ValueError("reference trend must be finite")
+        if self.counterfactual_spend < 0 or not np.isfinite(
+            self.counterfactual_spend
+        ):
+            raise ValueError("counterfactual_spend must be finite and non-negative")
+        if any(value < 0 or not np.isfinite(value) for value in self.other_channel_spend.values()):
+            raise ValueError("other-channel reference spend must be finite and non-negative")
+
+    def prediction_context(self) -> dict:
+        return {
+            "trend": float(self.trend),
+            "fourier": np.asarray(self.fourier, dtype=float),
+            "promo": dict(self.promo),
+            "controls": dict(self.controls),
+            "outcome_controls": {
+                key: dict(values) for key, values in self.outcome_controls.items()
+            },
+        }
+
+    def metadata(self) -> dict:
+        return {
+            "reference_context_id": self.reference_context_id,
+            "reference_context_mode": self.mode,
+            "reference_period_start": self.reference_period_start,
+            "reference_period_end": self.reference_period_end,
+            "reference_market": self.market,
+            "other_media_assumption": self.other_media_assumption,
+            "promotion_assumption": self.promotion_assumption,
+            "seasonality_assumption": self.seasonality_assumption,
+            "counterfactual_spend": float(self.counterfactual_spend),
+            "reference_other_channel_spend": json.dumps(
+                dict(self.other_channel_spend), sort_keys=True
+            ),
+            "reference_trend": float(self.trend),
+            "reference_fourier": json.dumps(list(self.fourier)),
+            "reference_promotions": json.dumps(dict(self.promo), sort_keys=True),
+            "reference_controls": json.dumps(dict(self.controls), sort_keys=True),
+            "reference_outcome_controls": json.dumps(
+                {
+                    key: dict(values)
+                    for key, values in self.outcome_controls.items()
+                },
+                sort_keys=True,
+            ),
+        }
+
+
+@dataclass(frozen=True)
+class PortfolioPerturbation:
+    """Direction of one reporting-currency unit of incremental portfolio budget."""
+
+    perturbation_id: str
+    allocation_direction: Mapping[str, float]
+    method: str = "analyst_defined"
+    source: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.perturbation_id:
+            raise ValueError("perturbation_id is required")
+        values = np.asarray(list(self.allocation_direction.values()), dtype=float)
+        if not len(values) or np.any(~np.isfinite(values)) or np.any(values < 0):
+            raise ValueError("allocation_direction must contain finite non-negative shares")
+        if not np.isclose(values.sum(), 1.0):
+            raise ValueError("allocation_direction shares must sum to 1")
+
+
+@dataclass(frozen=True)
+class ComponentCostAllocation:
+    """Explicit allocation of channel cost to equation components.
+
+    Keys are ``(outcome_id, channel, component_type)``. Shares for the
+    components of each outcome/channel relationship must sum to one.
+    """
+
+    allocation_id: str
+    shares: Mapping[Tuple[str, str, str], float]
+    method: str = "analyst_defined"
+    source: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.allocation_id:
+            raise ValueError("component allocation_id is required")
+        if any(
+            not np.isfinite(value) or value < 0 or value > 1
+            for value in self.shares.values()
+        ):
+            raise ValueError("component cost shares must be finite and between 0 and 1")
+
+
+def _is_iso_currency(value: Optional[str]) -> bool:
+    return bool(value and ISO_CURRENCY.fullmatch(value))
+
+
 def _normalise_support(
     meta: FHModelMeta,
-    params,
-    model_type: str,
     support_by_market_channel: Optional[
-        Mapping[Tuple[str, str], Mapping[str, float]]
+        Mapping[Tuple[str, str], Mapping[str, object]]
     ],
-) -> Dict[Tuple[str, str], Dict[str, float]]:
-    result = {}
+) -> Dict[Tuple[str, str], Dict[str, object]]:
     supplied = support_by_market_channel or {}
+    result: Dict[Tuple[str, str], Dict[str, object]] = {}
     for market in meta.markets:
         for channel in meta.channels:
-            K = (
-                params.hill_K[market][channel]
-                if model_type == "market_specific"
-                else params.hill_K[channel]
-            )
             values = dict(supplied.get((market, channel), {}))
-            observed_min = float(values.get("observed_spend_min", 0.0))
-            observed_max = float(values.get("observed_spend_max", max(K, 0.0)))
-            planning_min = float(
-                values.get("planning_spend_min", observed_min)
-            )
-            planning_max = float(
-                values.get("planning_spend_max", max(observed_max, K * 3.0, 1.0))
-            )
-            current = float(values.get("current_spend", observed_max))
+            required = {
+                "observed_spend_min",
+                "observed_spend_max",
+                "current_spend",
+            }
+            if not required <= values.keys():
+                result[(market, channel)] = {
+                    "observed_support_status": SUPPORT_MISSING,
+                    "current_spend": np.nan,
+                    "observed_spend_min": np.nan,
+                    "observed_spend_max": np.nan,
+                    "planning_spend_min": np.nan,
+                    "planning_spend_max": np.nan,
+                    "current_spend_method": values.get(
+                        "current_spend_method", "unknown"
+                    ),
+                    "current_spend_reference_period_start": values.get(
+                        "current_spend_reference_period_start"
+                    ),
+                    "current_spend_reference_period_end": values.get(
+                        "current_spend_reference_period_end"
+                    ),
+                }
+                continue
+            observed_min = float(values["observed_spend_min"])
+            observed_max = float(values["observed_spend_max"])
+            current = float(values["current_spend"])
+            planning_min = float(values.get("planning_spend_min", observed_min))
+            planning_max = float(values.get("planning_spend_max", observed_max))
             if not (
                 0 <= observed_min <= observed_max
                 and 0 <= planning_min <= planning_max
+                and current >= 0
+                and np.isfinite(
+                    [observed_min, observed_max, planning_min, planning_max, current]
+                ).all()
             ):
                 raise ValueError(
-                    f"Invalid spend support for {market}/{channel}: {values}"
+                    f"Invalid actual spend support for {market}/{channel}: {values}"
                 )
             result[(market, channel)] = {
+                "observed_support_status": SUPPORT_AVAILABLE,
                 "current_spend": current,
                 "observed_spend_min": observed_min,
                 "observed_spend_max": observed_max,
                 "planning_spend_min": planning_min,
                 "planning_spend_max": planning_max,
+                "current_spend_method": values.get(
+                    "current_spend_method", "selected_period_average"
+                ),
+                "current_spend_reference_period_start": values.get(
+                    "current_spend_reference_period_start"
+                ),
+                "current_spend_reference_period_end": values.get(
+                    "current_spend_reference_period_end"
+                ),
             }
     return result
 
 
 def support_from_model_frame(
-    frame: Mapping[str, object], meta: FHModelMeta
-) -> Dict[Tuple[str, str], Dict[str, float]]:
-    """Derive observed/current weekly support from a prepared model frame."""
+    frame: Mapping[str, object],
+    meta: FHModelMeta,
+    *,
+    current_spend_method: str = "last_4_week_average",
+    selected_period_start: Optional[str] = None,
+    selected_period_end: Optional[str] = None,
+    uploaded_plan: Optional[Mapping[Tuple[str, str], float]] = None,
+) -> Dict[Tuple[str, str], Dict[str, object]]:
+    """Derive actual observed support and a governed current-spend definition."""
+    if current_spend_method not in CURRENT_SPEND_METHODS:
+        raise ValueError(
+            f"Unsupported current-spend method '{current_spend_method}'"
+        )
     media = np.asarray(frame["X_media"], dtype=float)
-    market_idx = np.asarray(frame.get("market_idx", np.zeros(len(media))), dtype=int)
+    market_idx = np.asarray(
+        frame.get("market_idx", np.zeros(len(media))), dtype=int
+    )
+    dates = pd.to_datetime(
+        frame.get("dates", np.arange(len(media))), errors="coerce"
+    )
     result = {}
     for market_pos, market in enumerate(meta.markets):
-        rows = media[market_idx == market_pos]
+        mask = market_idx == market_pos
+        rows = media[mask]
+        market_dates = dates[mask]
         if not len(rows):
             continue
         for channel_pos, channel in enumerate(meta.channels):
             values = rows[:, channel_pos]
+            reference_mask = np.ones(len(values), dtype=bool)
+            if current_spend_method == "latest_complete_week":
+                current_values = values[-1:]
+                reference_mask[:] = False
+                reference_mask[-1] = True
+            elif current_spend_method == "last_4_week_average":
+                current_values = values[-4:]
+                reference_mask[:] = False
+                reference_mask[-min(4, len(values)) :] = True
+            elif current_spend_method == "last_13_week_average":
+                current_values = values[-13:]
+                reference_mask[:] = False
+                reference_mask[-min(13, len(values)) :] = True
+            elif current_spend_method == "selected_period_average":
+                if selected_period_start is None or selected_period_end is None:
+                    raise ValueError(
+                        "selected_period_average requires start and end dates"
+                    )
+                reference_mask = (
+                    (market_dates >= pd.Timestamp(selected_period_start))
+                    & (market_dates <= pd.Timestamp(selected_period_end))
+                )
+                if not reference_mask.any():
+                    raise ValueError(
+                        f"Selected period has no observations for {market}"
+                    )
+                current_values = values[reference_mask]
+            else:
+                key = (market, channel)
+                if uploaded_plan is None or key not in uploaded_plan:
+                    raise ValueError(
+                        f"uploaded_plan is missing current spend for {market}/{channel}"
+                    )
+                current_values = np.asarray([uploaded_plan[key]], dtype=float)
+                reference_mask[:] = False
+            selected_dates = market_dates[reference_mask]
             result[(market, channel)] = {
-                "current_spend": float(values[-1]),
+                "current_spend": float(np.mean(current_values)),
                 "observed_spend_min": float(np.nanmin(values)),
                 "observed_spend_max": float(np.nanmax(values)),
+                "planning_spend_min": float(np.nanmin(values)),
+                "planning_spend_max": float(np.nanmax(values)),
+                "current_spend_method": current_spend_method,
+                "current_spend_reference_period_start": (
+                    str(pd.Timestamp(selected_dates.min()).date())
+                    if len(selected_dates) and not pd.isna(selected_dates.min())
+                    else selected_period_start
+                ),
+                "current_spend_reference_period_end": (
+                    str(pd.Timestamp(selected_dates.max()).date())
+                    if len(selected_dates) and not pd.isna(selected_dates.max())
+                    else selected_period_end
+                ),
             }
     return result
 
 
-def _hill_derivative(spend: float, K: float, S: float) -> float:
-    if spend < 0 or K <= 0 or S <= 0:
-        return float("nan")
-    if spend == 0:
-        if S > 1:
-            return 0.0
-        if np.isclose(S, 1.0):
-            return 1.0 / K
-        return float("nan")
-    numerator = S * (K**S) * (spend ** (S - 1.0))
-    denominator = (spend**S + K**S) ** 2
-    return float(numerator / denominator)
+def reference_context_from_model_frame(
+    frame: Mapping[str, object],
+    meta: FHModelMeta,
+    *,
+    market: str,
+    mode: str,
+    reference_context_id: str,
+    period_start: Optional[str] = None,
+    period_end: Optional[str] = None,
+    specific_week: Optional[str] = None,
+    other_channel_spend: Optional[Mapping[str, float]] = None,
+    counterfactual_spend: float = 0.0,
+) -> CurveReferenceContext:
+    """Build a recent/period/week reference context from prepared arrays.
+
+    ``specific_scenario`` remains explicit by design and should be created
+    directly as :class:`CurveReferenceContext`; silently averaging historical
+    arrays would not represent an uploaded scenario.
+    """
+    if mode not in {
+        "recent_average",
+        "period_average",
+        "specific_week",
+        "steady_state_reference",
+    }:
+        raise ValueError(
+            "Model-frame context mode must be recent_average, period_average, "
+            "specific_week, or steady_state_reference"
+        )
+    if market not in meta.markets:
+        raise ValueError(f"Unknown reference market '{market}'")
+    market_pos = meta.markets.index(market)
+    market_idx = np.asarray(frame["market_idx"], dtype=int)
+    dates = pd.to_datetime(frame["dates"])
+    mask = market_idx == market_pos
+    if mode == "recent_average":
+        positions = np.flatnonzero(mask)[-13:]
+        mask = np.zeros(len(market_idx), dtype=bool)
+        mask[positions] = True
+    elif mode == "period_average":
+        if period_start is None or period_end is None:
+            raise ValueError("period_average requires period_start and period_end")
+        mask &= (dates >= pd.Timestamp(period_start)) & (
+            dates <= pd.Timestamp(period_end)
+        )
+    elif mode == "specific_week":
+        if specific_week is None:
+            raise ValueError("specific_week mode requires specific_week")
+        mask &= dates.normalize() == pd.Timestamp(specific_week).normalize()
+    if not mask.any():
+        raise ValueError(f"Reference selection has no observations for {market}")
+    media = np.asarray(frame["X_media"], dtype=float)[mask]
+    trend = float(np.asarray(frame["trend"], dtype=float)[mask].mean())
+    fourier = tuple(
+        np.asarray(frame["fourier"], dtype=float)[mask].mean(axis=0).tolist()
+    )
+    promo_values = np.asarray(frame["promo"], dtype=float)[mask].mean(axis=0)
+    promo = {
+        outcome_id: float(promo_values[index])
+        for index, outcome_id in enumerate(meta.outcome_ids)
+    }
+    controls = {}
+    control_names = list(frame.get("control_names") or [])
+    if control_names:
+        control_values = np.asarray(frame["X_controls"], dtype=float)[mask].mean(
+            axis=0
+        )
+        controls = {
+            name: float(control_values[index])
+            for index, name in enumerate(control_names)
+        }
+    outcome_controls = {}
+    for outcome_id, values in (frame.get("outcome_controls") or {}).items():
+        names = (frame.get("outcome_control_names") or {}).get(outcome_id, [])
+        averages = np.asarray(values, dtype=float)[mask].mean(axis=0)
+        outcome_controls[outcome_id] = {
+            name: float(averages[index]) for index, name in enumerate(names)
+        }
+    reference_spend = (
+        dict(other_channel_spend)
+        if other_channel_spend is not None
+        else {
+            channel: float(media[:, index].mean())
+            for index, channel in enumerate(meta.channels)
+        }
+    )
+    selected_dates = dates[mask]
+    return CurveReferenceContext(
+        reference_context_id=reference_context_id,
+        mode=mode,
+        market=market,
+        trend=trend,
+        fourier=fourier,
+        promo=promo,
+        controls=controls,
+        outcome_controls=outcome_controls,
+        other_channel_spend=reference_spend,
+        counterfactual_spend=counterfactual_spend,
+        reference_period_start=str(pd.Timestamp(selected_dates.min()).date()),
+        reference_period_end=str(pd.Timestamp(selected_dates.max()).date()),
+        other_media_assumption=(
+            "explicit_reference"
+            if other_channel_spend is not None
+            else f"{mode}_observed_average"
+        ),
+        promotion_assumption=f"{mode}_observed_average",
+        seasonality_assumption=f"{mode}_observed_average",
+    )
 
 
 def _economic_values(
@@ -145,20 +487,14 @@ def _economic_values(
         status = ECONOMICS_ZERO_SPEND
     elif not np.isfinite(response) or response <= 0:
         status = ECONOMICS_ZERO_RESPONSE
-    average_cpa = (
-        spend / response
-        if status == ECONOMICS_OK
-        else float("nan")
-    )
+    average_cpa = spend / response if status == ECONOMICS_OK else np.nan
     marginal_ok = (
         units_valid
         and currency_valid
         and np.isfinite(marginal_response)
         and marginal_response > near_zero
     )
-    marginal_cpa = (
-        1.0 / marginal_response if marginal_ok else float("nan")
-    )
+    marginal_cpa = 1.0 / marginal_response if marginal_ok else np.nan
     marginal_status = (
         ECONOMICS_OK if marginal_ok else ECONOMICS_NEAR_ZERO_MARGINAL
     )
@@ -170,19 +506,12 @@ def _economic_values(
     average_roi = (
         response * float(value_per_response) / spend
         if status == ECONOMICS_OK and value_ok
-        else float("nan")
+        else np.nan
     )
     marginal_roi = (
         marginal_response * float(value_per_response)
         if marginal_ok and value_ok
-        else float("nan")
-    )
-    roi_status = (
-        ECONOMICS_OK
-        if value_ok and status == ECONOMICS_OK
-        else ECONOMICS_MISSING_VALUE
-        if not value_ok
-        else status
+        else np.nan
     )
     return {
         "average_cpa": average_cpa,
@@ -191,8 +520,121 @@ def _economic_values(
         "marginal_roi": marginal_roi,
         "average_economics_status": status,
         "marginal_economics_status": marginal_status,
-        "roi_status": roi_status,
+        "roi_status": (
+            ECONOMICS_MISSING_VALUE
+            if not value_ok
+            else status
+        ),
     }
+
+
+def _currency_metadata(
+    meta: FHModelMeta,
+    currency_by_market: Optional[Mapping[str, str]],
+    reporting_currency: Optional[str],
+    currency_rates: Optional[Mapping[Tuple[str, str], float]],
+    fx_as_of_date: Optional[str],
+) -> Dict[str, dict]:
+    currencies = dict(currency_by_market or {})
+    rates = dict(currency_rates or {})
+    multi_market = len(meta.markets) > 1
+    if multi_market:
+        if set(currencies) != set(meta.markets):
+            raise ValueError(
+                "Multi-market curves require an explicit ISO currency for every market"
+            )
+        if not _is_iso_currency(reporting_currency):
+            raise ValueError(
+                "Multi-market curves require an explicit ISO reporting currency"
+            )
+        if not fx_as_of_date:
+            raise ValueError("Multi-market curves require an FX as-of date")
+        pd.Timestamp(fx_as_of_date)
+    result = {}
+    for market in meta.markets:
+        local = currencies.get(market)
+        if not _is_iso_currency(local):
+            raise ValueError(f"Invalid or missing ISO currency for {market}: {local}")
+        reporting = reporting_currency or local
+        if not _is_iso_currency(reporting):
+            raise ValueError(f"Invalid reporting currency: {reporting}")
+        rate = 1.0 if local == reporting else rates.get((local, reporting))
+        valid = rate is not None and np.isfinite(rate) and rate > 0
+        if multi_market and not valid:
+            raise ValueError(
+                f"Missing valid FX rate for {local}->{reporting}"
+            )
+        result[market] = {
+            "local_currency": local,
+            "reporting_currency": reporting,
+            "fx_rate": float(rate) if valid else np.nan,
+            "fx_as_of_date": fx_as_of_date,
+            "currency_valid": bool(valid),
+        }
+    return result
+
+
+def _predict(
+    *,
+    market: str,
+    spend_by_channel: Dict[str, float],
+    meta: FHModelMeta,
+    params,
+    model_type: str,
+    context: CurveReferenceContext,
+) -> Dict[str, float]:
+    fn = (
+        steady_state_outcome_response_market_specific
+        if model_type == "market_specific"
+        else steady_state_outcome_response
+    )
+    return fn(
+        market,
+        spend_by_channel,
+        meta,
+        params,
+        context.prediction_context(),
+    )
+
+
+def _axis_for_channel(
+    spend_points: Optional[Sequence[float]],
+    channel_support: Mapping[str, object],
+    n_points: int,
+) -> np.ndarray:
+    if spend_points is not None:
+        axis = np.asarray(spend_points, dtype=float)
+    elif channel_support["observed_support_status"] == SUPPORT_AVAILABLE:
+        axis = np.linspace(
+            float(channel_support["planning_spend_min"]),
+            float(channel_support["planning_spend_max"]),
+            n_points,
+        )
+    else:
+        raise ValueError(
+            "Observed support is missing; provide an explicit diagnostic spend axis "
+            "or actual support from the prepared model frame"
+        )
+    if not len(axis) or np.any(~np.isfinite(axis)) or np.any(axis < 0):
+        raise ValueError("spend_points must be finite, non-negative, and non-empty")
+    return axis
+
+
+def _finite_difference_delta(
+    spend: float,
+    channel_support: Mapping[str, object],
+    configured_delta: Optional[float],
+) -> float:
+    if configured_delta is not None:
+        if configured_delta <= 0 or not np.isfinite(configured_delta):
+            raise ValueError("marginal_delta must be finite and positive")
+        return float(configured_delta)
+    support_width = 0.0
+    if channel_support["observed_support_status"] == SUPPORT_AVAILABLE:
+        support_width = float(channel_support["observed_spend_max"]) - float(
+            channel_support["observed_spend_min"]
+        )
+    return max(abs(spend) * 1e-4, support_width * 1e-5, 1e-6)
 
 
 def generate_canonical_curve_draws(
@@ -200,54 +642,76 @@ def generate_canonical_curve_draws(
     model_run_id: str,
     meta: FHModelMeta,
     trace: az.InferenceData,
+    reference_contexts: Mapping[str, CurveReferenceContext],
     model_type: str = "shared",
     n_draws: int = DEFAULT_N_DRAWS,
     seed: int = 42,
     spend_points: Optional[Sequence[float]] = None,
+    n_points: int = 25,
     support_by_market_channel: Optional[
-        Mapping[Tuple[str, str], Mapping[str, float]]
+        Mapping[Tuple[str, str], Mapping[str, object]]
     ] = None,
     spend_unit: str = "currency",
     spend_unit_scale: float = 1.0,
     currency_by_market: Optional[Mapping[str, str]] = None,
     reporting_currency: Optional[str] = None,
     currency_rates: Optional[Mapping[Tuple[str, str], float]] = None,
+    fx_as_of_date: Optional[str] = None,
     value_per_response: Optional[Mapping[str, float]] = None,
     evidence_status: Optional[Mapping[Tuple[str, str], str]] = None,
     identification_status: Optional[Mapping[Tuple[str, str], str]] = None,
+    marginal_delta: Optional[float] = None,
     near_zero: float = DEFAULT_NEAR_ZERO,
+    attribution_reference: Optional[Mapping[Tuple[str, str, str], float]] = None,
+    component_cost_allocation: Optional[ComponentCostAllocation] = None,
 ) -> pd.DataFrame:
-    """Return one row per posterior draw and canonical component grain.
+    """Generate component response decomposition on the outcome-count scale.
 
-    Shared Model A parameters are evaluated for every market so market totals
-    remain available, while their identification label defaults to
-    ``shared_across_markets``.  Family History NBT outcomes are naturally
-    represented by their ``metric_key`` and therefore become the default FH
-    denominator in product/market economics views.
+    Component ``average_cpa``/``marginal_cpa``/ROI are intentionally absent
+    (NaN) because no component cost-allocation method is defined. Use
+    :func:`aggregate_curve_draws` with a channel in the grouping to obtain
+    valid channel-total economics.
     """
     if model_type not in {"shared", "market_specific"}:
         raise ValueError("model_type must be 'shared' or 'market_specific'")
     if not model_run_id:
         raise ValueError("model_run_id is required")
+    if set(reference_contexts) != set(meta.markets):
+        raise ValueError("Provide exactly one explicit reference context per market")
+    for market, context in reference_contexts.items():
+        if context.market != market:
+            raise ValueError(
+                f"Reference context {context.reference_context_id} targets "
+                f"{context.market}, not mapping key {market}"
+            )
+        missing_channels = set(meta.channels) - set(context.other_channel_spend)
+        if missing_channels:
+            raise ValueError(
+                f"Reference context {context.reference_context_id} is missing "
+                f"other-channel spend for {sorted(missing_channels)}"
+            )
     units_valid = (
         spend_unit in SUPPORTED_SPEND_UNITS
         and np.isfinite(spend_unit_scale)
         and spend_unit_scale > 0
     )
+    currencies = _currency_metadata(
+        meta,
+        currency_by_market,
+        reporting_currency,
+        currency_rates,
+        fx_as_of_date,
+    )
+    support = _normalise_support(meta, support_by_market_channel)
     extract = (
         extract_market_specific_posterior_params
         if model_type == "market_specific"
         else extract_posterior_params
     )
-    mean_params = extract(trace, meta)
-    support = _normalise_support(
-        meta, mean_params, model_type, support_by_market_channel
-    )
-    currencies = dict(currency_by_market or {})
-    rates = dict(currency_rates or {})
     values = dict(value_per_response or {})
     evidence = dict(evidence_status or {})
     identification = dict(identification_status or {})
+    attribution = dict(attribution_reference or {})
     components = [
         component
         for component in meta.pathway_masks.components
@@ -259,15 +723,12 @@ def generate_canonical_curve_draws(
         params = extract(trace, meta, at=(chain, draw))
         posterior_draw = f"{chain}:{draw}"
         for market in meta.markets:
-            market_currency = currencies.get(
-                market, reporting_currency or spend_unit
-            )
-            currency_valid = bool(market_currency)
-            rate = 1.0
-            if reporting_currency and market_currency != reporting_currency:
-                rate = float(rates.get((market_currency, reporting_currency), np.nan))
-                currency_valid = currency_valid and np.isfinite(rate) and rate > 0
+            context = reference_contexts[market]
+            currency = currencies[market]
+            fx_rate = currency["fx_rate"]
             for channel in meta.channels:
+                channel_support = support[(market, channel)]
+                axis = _axis_for_channel(spend_points, channel_support, n_points)
                 K = (
                     params.hill_K[market][channel]
                     if model_type == "market_specific"
@@ -278,128 +739,367 @@ def generate_canonical_curve_draws(
                     if model_type == "market_specific"
                     else params.beta
                 )
-                channel_support = support[(market, channel)]
-                axis = (
-                    np.asarray(spend_points, dtype=float)
-                    if spend_points is not None
-                    else np.linspace(
-                        channel_support["planning_spend_min"],
-                        channel_support["planning_spend_max"],
-                        25,
-                    )
+                counterfactual = float(context.counterfactual_spend)
+                without_plan = dict(context.other_channel_spend)
+                without_plan[channel] = counterfactual
+                mu_without = _predict(
+                    market=market,
+                    spend_by_channel=without_plan,
+                    meta=meta,
+                    params=params,
+                    model_type=model_type,
+                    context=context,
                 )
-                if np.any(~np.isfinite(axis)) or np.any(axis < 0):
-                    raise ValueError("spend_points must be finite and non-negative")
                 for spend_point, raw_spend in enumerate(axis):
-                    spend = float(raw_spend) * spend_unit_scale * rate
+                    raw_spend = float(raw_spend)
+                    with_plan = dict(context.other_channel_spend)
+                    with_plan[channel] = raw_spend
+                    mu_with = _predict(
+                        market=market,
+                        spend_by_channel=with_plan,
+                        meta=meta,
+                        params=params,
+                        model_type=model_type,
+                        context=context,
+                    )
+                    delta = _finite_difference_delta(
+                        raw_spend, channel_support, marginal_delta
+                    )
+                    lower_spend = max(0.0, raw_spend - delta)
+                    upper_spend = raw_spend + delta
+                    lower_plan = dict(with_plan)
+                    upper_plan = dict(with_plan)
+                    lower_plan[channel] = lower_spend
+                    upper_plan[channel] = upper_spend
+                    mu_lower = _predict(
+                        market=market,
+                        spend_by_channel=lower_plan,
+                        meta=meta,
+                        params=params,
+                        model_type=model_type,
+                        context=context,
+                    )
+                    mu_upper = _predict(
+                        market=market,
+                        spend_by_channel=upper_plan,
+                        meta=meta,
+                        params=params,
+                        model_type=model_type,
+                        context=context,
+                    )
                     saturation = float(
-                        hill_function(np.array([float(raw_spend)]), K, params.hill_S[channel])[0]
+                        hill_function(
+                            np.array([raw_spend]), K, params.hill_S[channel]
+                        )[0]
                     )
-                    derivative = _hill_derivative(
-                        float(raw_spend), K, params.hill_S[channel]
+                    counterfactual_saturation = float(
+                        hill_function(
+                            np.array([counterfactual]), K, params.hill_S[channel]
+                        )[0]
                     )
-                    for component in components:
-                        if component.channel != channel:
+                    for outcome_id in meta.outcome_ids:
+                        outcome_components = [
+                            item
+                            for item in components
+                            if item.channel == channel
+                            and item.outcome_id == outcome_id
+                        ]
+                        if not outcome_components:
                             continue
-                        outcome_id = component.outcome_id
-                        strength = (
-                            1.0
-                            if component.component_type == "direct"
-                            else params.pathway_strength[outcome_id][channel]
+                        channel_incremental = (
+                            mu_with[outcome_id] - mu_without[outcome_id]
                         )
-                        coefficient = beta_by_outcome[outcome_id][channel]
-                        response = coefficient * strength * saturation
-                        marginal_response = (
-                            coefficient * strength * derivative
-                            / (spend_unit_scale * rate)
-                            if units_valid and currency_valid
-                            else float("nan")
+                        marginal_raw = (
+                            mu_upper[outcome_id] - mu_lower[outcome_id]
+                        ) / (upper_spend - lower_spend)
+                        marginal_reporting = (
+                            marginal_raw / (spend_unit_scale * fx_rate)
+                            if units_valid and currency["currency_valid"]
+                            else np.nan
                         )
-                        economics = _economic_values(
-                            spend=spend,
-                            response=response,
-                            marginal_response=marginal_response,
-                            value_per_response=values.get(outcome_id),
-                            units_valid=units_valid,
-                            currency_valid=currency_valid,
-                            near_zero=near_zero,
+                        component_eta = []
+                        component_eta_delta = []
+                        for component in outcome_components:
+                            strength = (
+                                1.0
+                                if component.component_type == "direct"
+                                else params.pathway_strength[outcome_id][channel]
+                            )
+                            coefficient = beta_by_outcome[outcome_id][channel]
+                            component_eta.append(
+                                coefficient * strength * saturation
+                            )
+                            component_eta_delta.append(
+                                coefficient
+                                * strength
+                                * (saturation - counterfactual_saturation)
+                            )
+                        total_eta_delta = float(np.sum(component_eta_delta))
+                        local_spend = raw_spend * spend_unit_scale
+                        reporting_spend = local_spend * fx_rate
+                        local_counterfactual = counterfactual * spend_unit_scale
+                        incremental_spend = (
+                            (raw_spend - counterfactual)
+                            * spend_unit_scale
+                            * fx_rate
                         )
-                        observed_min = channel_support["observed_spend_min"]
-                        observed_max = channel_support["observed_spend_max"]
-                        is_extrapolated = not (
-                            observed_min <= raw_spend <= observed_max
+                        observed_status = channel_support[
+                            "observed_support_status"
+                        ]
+                        if observed_status == SUPPORT_AVAILABLE:
+                            is_extrapolated: Optional[bool] = not (
+                                channel_support["observed_spend_min"]
+                                <= raw_spend
+                                <= channel_support["observed_spend_max"]
+                            )
+                        else:
+                            is_extrapolated = None
+                        matched_attribution = attribution.get(
+                            (market, channel, outcome_id)
                         )
-                        rows.append(
-                            {
-                                "model_run_id": model_run_id,
-                                "market": market,
-                                "product": meta.outcome_id_to_product.get(outcome_id, ""),
-                                "segment": meta.outcome_id_to_segment.get(outcome_id, ""),
-                                "outcome_id": outcome_id,
-                                "metric_key": meta.outcome_id_to_metric_key.get(outcome_id, ""),
-                                "channel": channel,
-                                "component_type": component.component_type,
-                                "pathway_role": component.role,
-                                "spend_point": spend_point,
-                                "posterior_draw": posterior_draw,
-                                "spend": spend,
-                                "spend_unit": (
-                                    reporting_currency
-                                    or market_currency
-                                    or spend_unit
-                                ),
-                                "response": response,
-                                "response_unit": meta.outcome_id_to_unit.get(outcome_id, ""),
-                                "marginal_response": marginal_response,
-                                "current_spend": channel_support["current_spend"]
-                                * spend_unit_scale
-                                * rate,
-                                "observed_spend_min": observed_min * spend_unit_scale * rate,
-                                "observed_spend_max": observed_max * spend_unit_scale * rate,
-                                "planning_spend_min": channel_support["planning_spend_min"]
-                                * spend_unit_scale
-                                * rate,
-                                "planning_spend_max": channel_support["planning_spend_max"]
-                                * spend_unit_scale
-                                * rate,
-                                "adstock_parameter": params.decay_rate[channel],
-                                "lag_weeks": component.lag_weeks,
-                                "hill_K": K * spend_unit_scale * rate,
-                                "hill_S": params.hill_S[channel],
-                                "coefficient": coefficient,
-                                "pathway_strength": strength,
-                                "include_in_attribution": component.include_in_attribution,
-                                "include_in_headline": component.include_in_headline,
-                                "include_in_planning": component.include_in_planning,
-                                "evidence_status": evidence.get(
-                                    (market, channel), component.evidence_status
-                                ),
-                                "identification_label": identification.get(
-                                    (market, channel),
-                                    "shared_across_markets"
-                                    if model_type == "shared"
-                                    else "not_assessed",
-                                ),
-                                "is_extrapolated": is_extrapolated,
-                                "economics_scope": "channel_incremental",
-                                "economics_denominator": meta.outcome_id_to_metric_key.get(
-                                    outcome_id, ""
-                                ),
-                                "incremental_value": (
-                                    response * values[outcome_id]
-                                    if outcome_id in values
-                                    and np.isfinite(values[outcome_id])
-                                    else float("nan")
-                                ),
-                                "marginal_value": (
-                                    marginal_response * values[outcome_id]
-                                    if outcome_id in values
-                                    and np.isfinite(values[outcome_id])
-                                    else float("nan")
-                                ),
-                                **economics,
-                            }
-                        )
+                        if component_cost_allocation is not None:
+                            allocation_shares = [
+                                component_cost_allocation.shares.get(
+                                    (
+                                        outcome_id,
+                                        channel,
+                                        item.component_type,
+                                    )
+                                )
+                                for item in outcome_components
+                            ]
+                            if any(value is None for value in allocation_shares):
+                                raise ValueError(
+                                    "Component cost allocation is missing a share "
+                                    f"for {outcome_id}/{channel}"
+                                )
+                            if not np.isclose(sum(allocation_shares), 1.0):
+                                raise ValueError(
+                                    "Component cost shares must sum to 1 for "
+                                    f"{outcome_id}/{channel}"
+                                )
+                        else:
+                            allocation_shares = [None] * len(outcome_components)
+                        for position, component in enumerate(outcome_components):
+                            eta_share = (
+                                component_eta_delta[position] / total_eta_delta
+                                if not np.isclose(total_eta_delta, 0.0)
+                                else 1.0 / len(outcome_components)
+                            )
+                            component_response = channel_incremental * eta_share
+                            component_marginal = marginal_reporting * eta_share
+                            strength = (
+                                1.0
+                                if component.component_type == "direct"
+                                else params.pathway_strength[outcome_id][channel]
+                            )
+                            coefficient = beta_by_outcome[outcome_id][channel]
+                            cost_share = allocation_shares[position]
+                            component_value = (
+                                component_response * values[outcome_id]
+                                if outcome_id in values
+                                and np.isfinite(values[outcome_id])
+                                else np.nan
+                            )
+                            component_marginal_value = (
+                                component_marginal * values[outcome_id]
+                                if outcome_id in values
+                                and np.isfinite(values[outcome_id])
+                                else np.nan
+                            )
+                            if cost_share is None:
+                                component_economics = {
+                                    "average_cpa": np.nan,
+                                    "marginal_cpa": np.nan,
+                                    "average_roi": np.nan,
+                                    "marginal_roi": np.nan,
+                                    "average_economics_status": ECONOMICS_COMPONENT_COST_UNALLOCATED,
+                                    "marginal_economics_status": ECONOMICS_COMPONENT_COST_UNALLOCATED,
+                                    "roi_status": ECONOMICS_COMPONENT_COST_UNALLOCATED,
+                                }
+                                economics_scope = "component_response_no_cost"
+                                allocated_spend = np.nan
+                            else:
+                                allocated_spend = incremental_spend * cost_share
+                                component_economics = _economic_values(
+                                    spend=allocated_spend,
+                                    response=component_response,
+                                    marginal_response=(
+                                        component_marginal / cost_share
+                                        if cost_share > 0
+                                        else np.nan
+                                    ),
+                                    value_per_response=values.get(outcome_id),
+                                    units_valid=units_valid,
+                                    currency_valid=currency["currency_valid"],
+                                    near_zero=near_zero,
+                                )
+                                economics_scope = "component_allocated_cost"
+                            rows.append(
+                                {
+                                    "model_run_id": model_run_id,
+                                    **context.metadata(),
+                                    "market": market,
+                                    "product": meta.outcome_id_to_product.get(
+                                        outcome_id, ""
+                                    ),
+                                    "segment": meta.outcome_id_to_segment.get(
+                                        outcome_id, ""
+                                    ),
+                                    "outcome_id": outcome_id,
+                                    "metric_key": meta.outcome_id_to_metric_key.get(
+                                        outcome_id, ""
+                                    ),
+                                    "channel": channel,
+                                    "component_type": component.component_type,
+                                    "pathway_role": component.role,
+                                    "spend_point": spend_point,
+                                    "posterior_draw": posterior_draw,
+                                    "local_spend": local_spend,
+                                    "reporting_currency_spend": reporting_spend,
+                                    "spend": reporting_spend,
+                                    "incremental_spend": incremental_spend,
+                                    "counterfactual_local_spend": local_counterfactual,
+                                    "spend_unit": currency["reporting_currency"],
+                                    "local_currency": currency["local_currency"],
+                                    "reporting_currency": currency[
+                                        "reporting_currency"
+                                    ],
+                                    "fx_rate": fx_rate,
+                                    "fx_as_of_date": currency["fx_as_of_date"],
+                                    "mu_with": mu_with[outcome_id],
+                                    "mu_without": mu_without[outcome_id],
+                                    "incremental_response": component_response,
+                                    "response": component_response,
+                                    "channel_total_incremental_response": channel_incremental,
+                                    "response_unit": meta.outcome_id_to_unit.get(
+                                        outcome_id, ""
+                                    ),
+                                    "media_eta_contribution": component_eta[position],
+                                    "incremental_media_eta_contribution": component_eta_delta[
+                                        position
+                                    ],
+                                    "component_response_allocation_method": "incremental_eta_share",
+                                    "marginal_incremental_response_per_currency_unit": component_marginal,
+                                    "marginal_response": component_marginal,
+                                    "channel_total_marginal_response": marginal_reporting,
+                                    "marginal_calculation_method": (
+                                        "forward_finite_difference"
+                                        if lower_spend == raw_spend
+                                        else "central_finite_difference"
+                                    ),
+                                    "marginal_delta_local_spend": delta
+                                    * spend_unit_scale,
+                                    "current_spend": (
+                                        channel_support["current_spend"]
+                                        * spend_unit_scale
+                                        * fx_rate
+                                        if observed_status == SUPPORT_AVAILABLE
+                                        else np.nan
+                                    ),
+                                    "current_spend_method": channel_support[
+                                        "current_spend_method"
+                                    ],
+                                    "current_spend_reference_period_start": channel_support[
+                                        "current_spend_reference_period_start"
+                                    ],
+                                    "current_spend_reference_period_end": channel_support[
+                                        "current_spend_reference_period_end"
+                                    ],
+                                    "observed_support_status": observed_status,
+                                    "observed_spend_min": (
+                                        channel_support["observed_spend_min"]
+                                        * spend_unit_scale
+                                        * fx_rate
+                                        if observed_status == SUPPORT_AVAILABLE
+                                        else np.nan
+                                    ),
+                                    "observed_spend_max": (
+                                        channel_support["observed_spend_max"]
+                                        * spend_unit_scale
+                                        * fx_rate
+                                        if observed_status == SUPPORT_AVAILABLE
+                                        else np.nan
+                                    ),
+                                    "planning_spend_min": (
+                                        channel_support["planning_spend_min"]
+                                        * spend_unit_scale
+                                        * fx_rate
+                                        if observed_status == SUPPORT_AVAILABLE
+                                        else np.nan
+                                    ),
+                                    "planning_spend_max": (
+                                        channel_support["planning_spend_max"]
+                                        * spend_unit_scale
+                                        * fx_rate
+                                        if observed_status == SUPPORT_AVAILABLE
+                                        else np.nan
+                                    ),
+                                    "planning_support_eligible": (
+                                        observed_status == SUPPORT_AVAILABLE
+                                    ),
+                                    "planning_blocked_reason": (
+                                        ""
+                                        if observed_status == SUPPORT_AVAILABLE
+                                        else "observed_support_missing"
+                                    ),
+                                    "adstock_parameter": params.decay_rate[channel],
+                                    "lag_weeks": component.lag_weeks,
+                                    "hill_K": K * spend_unit_scale * fx_rate,
+                                    "hill_S": params.hill_S[channel],
+                                    "coefficient": coefficient,
+                                    "pathway_strength": strength,
+                                    "include_in_attribution": component.include_in_attribution,
+                                    "include_in_headline": component.include_in_headline,
+                                    "include_in_planning": (
+                                        component.include_in_planning
+                                        and observed_status == SUPPORT_AVAILABLE
+                                    ),
+                                    "evidence_status": evidence.get(
+                                        (market, channel),
+                                        component.evidence_status,
+                                    ),
+                                    "identification_label": identification.get(
+                                        (market, channel),
+                                        "shared_across_markets"
+                                        if model_type == "shared"
+                                        else "not_assessed",
+                                    ),
+                                    "is_extrapolated": is_extrapolated,
+                                    "economics_scope": economics_scope,
+                                    "component_cost_allocation_id": (
+                                        component_cost_allocation.allocation_id
+                                        if component_cost_allocation is not None
+                                        else None
+                                    ),
+                                    "component_cost_allocation_method": (
+                                        component_cost_allocation.method
+                                        if component_cost_allocation is not None
+                                        else "none"
+                                    ),
+                                    "component_cost_share": cost_share,
+                                    "allocated_incremental_spend": allocated_spend,
+                                    "economics_denominator": meta.outcome_id_to_metric_key.get(
+                                        outcome_id, ""
+                                    ),
+                                    "incremental_value": component_value,
+                                    "marginal_value": component_marginal_value,
+                                    **component_economics,
+                                    "counterfactual_prediction_reconciliation_error": (
+                                        channel_incremental
+                                        - (
+                                            mu_with[outcome_id]
+                                            - mu_without[outcome_id]
+                                        )
+                                    ),
+                                    "curve_attribution_reconciliation_error": (
+                                        channel_incremental
+                                        - matched_attribution
+                                        if matched_attribution is not None
+                                        else np.nan
+                                    ),
+                                }
+                            )
     return pd.DataFrame(rows)
 
 
@@ -408,131 +1108,282 @@ def aggregate_curve_draws(
     *,
     by: Sequence[str],
     governance: Optional[str] = None,
+    value_per_response: Optional[Mapping[str, float]] = None,
 ) -> pd.DataFrame:
-    """Aggregate responses by draw, then recompute economics.
+    """Aggregate component response into valid channel-total economics.
 
-    ``governance`` may be ``headline`` or ``planning``. Spend is counted once
-    per channel within an aggregate so direct and halo rows cannot duplicate
-    channel cost.
+    Cross-channel aggregation is rejected because ordinal channel spend axes
+    do not define a portfolio path. Use :func:`aggregate_portfolio_marginal`
+    with rows carrying an explicit ``portfolio_path_id``.
     """
+    if "channel" not in by:
+        raise ValueError(
+            "Cross-channel curve aggregation is undefined without an explicit "
+            "portfolio path; keep channel in `by`"
+        )
     data = draws.copy()
     if governance in {"headline", "planning"}:
         data = data[data[f"include_in_{governance}"]]
     elif governance not in {None, "attribution"}:
-        raise ValueError("governance must be attribution, headline, planning, or None")
+        raise ValueError(
+            "governance must be attribution, headline, planning, or None"
+        )
     if governance == "attribution":
         data = data[data["include_in_attribution"]]
     group_cols = list(by) + ["posterior_draw"]
-    channel_cost_cols = group_cols + ["channel"]
-    channel_spend = (
-        data.groupby(channel_cost_cols, dropna=False, sort=False)["spend"]
-        .max()
-        .groupby(group_cols, dropna=False, sort=False)
-        .sum()
+    grouped = data.groupby(group_cols, dropna=False, sort=False)
+    result = grouped.agg(
+        response=("incremental_response", "sum"),
+        incremental_response=("incremental_response", "sum"),
+        marginal_response=(
+            "marginal_incremental_response_per_currency_unit",
+            "sum",
+        ),
+        marginal_incremental_response_per_currency_unit=(
+            "marginal_incremental_response_per_currency_unit",
+            "sum",
+        ),
+        spend=("reporting_currency_spend", "max"),
+        incremental_spend=("incremental_spend", "max"),
+        local_spend=("local_spend", "max"),
+        incremental_value=(
+            "incremental_value",
+            lambda values: values.sum()
+            if values.notna().all()
+            else np.nan,
+        ),
+        marginal_value=(
+            "marginal_value",
+            lambda values: values.sum()
+            if values.notna().all()
+            else np.nan,
+        ),
+        response_unit=(
+            "response_unit",
+            lambda values: values.iloc[0]
+            if values.nunique() == 1
+            else "mixed",
+        ),
+        spend_unit=(
+            "reporting_currency",
+            lambda values: values.iloc[0]
+            if values.nunique() == 1
+            else "mixed",
+        ),
+        is_extrapolated=(
+            "is_extrapolated",
+            lambda values: (
+                None if values.isna().all() else bool(values.dropna().max())
+            ),
+        ),
+        observed_support_status=(
+            "observed_support_status",
+            lambda values: values.iloc[0]
+            if values.nunique() == 1
+            else SUPPORT_MISSING,
+        ),
+        counterfactual_prediction_reconciliation_error=(
+            "counterfactual_prediction_reconciliation_error",
+            "max",
+        ),
+        curve_attribution_reconciliation_error=(
+            "curve_attribution_reconciliation_error",
+            lambda values: values.sum(min_count=1),
+        ),
+    ).reset_index()
+    values = dict(value_per_response or {})
+    economics = []
+    for _, row in result.iterrows():
+        value = values.get(row.get("outcome_id"))
+        economics.append(
+            _economic_values(
+                spend=float(row["incremental_spend"]),
+                response=float(row["incremental_response"]),
+                marginal_response=float(
+                    row["marginal_incremental_response_per_currency_unit"]
+                ),
+                value_per_response=value,
+                units_valid=row["response_unit"] != "mixed",
+                currency_valid=row["spend_unit"] != "mixed",
+                near_zero=DEFAULT_NEAR_ZERO,
+            )
+        )
+    result = pd.concat(
+        [result, pd.DataFrame(economics, index=result.index)], axis=1
     )
+    # A caller may supply outcome values at aggregation time for a draw table
+    # generated without them. For mixed-outcome totals, draw-level component
+    # value is authoritative and is summed only when every component is known.
+    if values and "outcome_id" in result:
+        missing_value = result["incremental_value"].isna()
+        result.loc[missing_value, "incremental_value"] = [
+            row["incremental_response"]
+            * values.get(row.get("outcome_id"), np.nan)
+            for _, row in result[missing_value].iterrows()
+        ]
+        result.loc[missing_value, "marginal_value"] = [
+            row["marginal_incremental_response_per_currency_unit"]
+            * values.get(row.get("outcome_id"), np.nan)
+            for _, row in result[missing_value].iterrows()
+        ]
+    value_complete = result["incremental_value"].notna()
+    result.loc[value_complete & (result["incremental_spend"] > 0), "average_roi"] = (
+        result["incremental_value"] / result["incremental_spend"]
+    )
+    result.loc[value_complete, "marginal_roi"] = result["marginal_value"]
+    result.loc[value_complete, "roi_status"] = ECONOMICS_OK
+    result.loc[~value_complete, "roi_status"] = ECONOMICS_MISSING_VALUE
+    result["economics_scope"] = "channel_total"
+    return result
+
+
+def aggregate_portfolio_marginal(
+    channel_draws: pd.DataFrame,
+    perturbation: PortfolioPerturbation,
+    *,
+    by: Sequence[str],
+) -> pd.DataFrame:
+    """Directional whole-plan marginal response for an explicit portfolio path."""
+    if "portfolio_path_id" not in channel_draws.columns:
+        raise ValueError(
+            "Portfolio marginal economics require an explicit portfolio_path_id"
+        )
+    missing = set(channel_draws["channel"]) - set(
+        perturbation.allocation_direction
+    )
+    if missing:
+        raise ValueError(
+            f"Perturbation is missing allocation shares for {sorted(missing)}"
+        )
+    data = channel_draws.copy()
+    group_cols = list(by) + ["portfolio_path_id", "posterior_draw"]
+    if data.duplicated(group_cols + ["channel"]).any():
+        raise ValueError(
+            "Each portfolio path must define exactly one spend row per channel "
+            "and posterior draw"
+        )
+    data["_weighted_marginal"] = data[
+        "marginal_incremental_response_per_currency_unit"
+    ] * data["channel"].map(perturbation.allocation_direction)
     result = (
         data.groupby(group_cols, dropna=False, sort=False)
         .agg(
-            response=("response", "sum"),
-            marginal_response=("marginal_response", "sum"),
-            incremental_value=("incremental_value", lambda s: s.sum(min_count=1)),
-            marginal_value=("marginal_value", lambda s: s.sum(min_count=1)),
-            response_unit=("response_unit", lambda s: s.iloc[0] if s.nunique() == 1 else "mixed"),
-            spend_unit=("spend_unit", lambda s: s.iloc[0] if s.nunique() == 1 else "mixed"),
-            is_extrapolated=("is_extrapolated", "max"),
+            portfolio_marginal_response=("_weighted_marginal", "sum"),
+            total_budget=("spend", "sum"),
         )
         .reset_index()
     )
-    result["spend"] = [
-        channel_spend.loc[tuple(row[col] for col in group_cols)]
-        for _, row in result.iterrows()
-    ]
-    unit_ok = (result["response_unit"] != "mixed") & (result["spend_unit"] != "mixed")
-    result["average_cpa"] = np.where(
-        unit_ok & (result["spend"] > 0) & (result["response"] > 0),
-        result["spend"] / result["response"],
+    result["portfolio_marginal_cpa"] = np.where(
+        result["portfolio_marginal_response"] > DEFAULT_NEAR_ZERO,
+        1.0 / result["portfolio_marginal_response"],
         np.nan,
     )
-    result["marginal_cpa"] = np.where(
-        unit_ok & (result["marginal_response"] > DEFAULT_NEAR_ZERO),
-        1.0 / result["marginal_response"],
-        np.nan,
-    )
-    result["average_roi"] = np.where(
-        unit_ok & (result["spend"] > 0),
-        result["incremental_value"] / result["spend"],
-        np.nan,
-    )
-    result["marginal_roi"] = result["marginal_value"]
-    result["economics_scope"] = (
-        "channel_incremental" if "channel" in by else "whole_plan"
+    result["portfolio_perturbation_id"] = perturbation.perturbation_id
+    result["portfolio_perturbation_method"] = perturbation.method
+    result["portfolio_allocation_direction"] = json.dumps(
+        dict(perturbation.allocation_direction), sort_keys=True
     )
     return result
 
 
-def canonical_governance_views(draws: pd.DataFrame) -> Dict[str, pd.DataFrame]:
-    """Standard draw-level views used by reporting, planning, and exports."""
+def canonical_governance_views(
+    draws: pd.DataFrame,
+    *,
+    value_per_response: Optional[Mapping[str, float]] = None,
+) -> Dict[str, pd.DataFrame]:
+    """Channel-safe draw-level views; each reports its governance purpose."""
     common = [
         "model_run_id",
+        "reference_context_id",
         "market",
         "channel",
         "spend_point",
     ]
     nbt = draws[draws["metric_key"] == "fh_net_billthrough_count"]
-    return {
+    views = {
         "segment": aggregate_curve_draws(
-            draws, by=common + ["product", "segment", "metric_key"]
+            draws,
+            by=common + ["product", "segment", "outcome_id", "metric_key"],
+            value_per_response=value_per_response,
         ),
         "product": aggregate_curve_draws(
-            draws, by=common + ["product", "metric_key"]
+            draws,
+            by=common + ["product", "metric_key"],
+            value_per_response=value_per_response,
         ),
         "market": aggregate_curve_draws(
             draws,
-            by=["model_run_id", "market", "spend_point", "metric_key"],
+            by=common + ["metric_key"],
+            value_per_response=value_per_response,
         ),
         "fh_nbt_total": aggregate_curve_draws(
             nbt,
-            by=["model_run_id", "market", "channel", "spend_point", "metric_key"],
+            by=common + ["metric_key"],
+            value_per_response=value_per_response,
         ),
         "direct": aggregate_curve_draws(
             draws[draws["component_type"] == "direct"],
             by=common + ["product", "metric_key"],
+            value_per_response=value_per_response,
         ),
         "halo": aggregate_curve_draws(
             draws[draws["component_type"] == "cross_product"],
             by=common + ["product", "metric_key"],
+            value_per_response=value_per_response,
         ),
         "headline": aggregate_curve_draws(
             draws,
             by=common + ["product", "metric_key"],
             governance="headline",
+            value_per_response=value_per_response,
         ),
         "planning": aggregate_curve_draws(
             draws,
             by=common + ["product", "metric_key"],
             governance="planning",
+            value_per_response=value_per_response,
         ),
     }
+    for purpose, view in views.items():
+        view["governance_view"] = purpose
+    return views
+
+
+def reconcile_curve_to_attribution(
+    draws: pd.DataFrame,
+    attribution_by_market_channel_outcome: Mapping[
+        Tuple[str, str, str], float
+    ],
+) -> pd.DataFrame:
+    """Attach curve-minus-attribution diagnostics under matched assumptions."""
+    result = draws.copy()
+    result["curve_attribution_reconciliation_error"] = [
+        row["channel_total_incremental_response"]
+        - attribution_by_market_channel_outcome.get(
+            (row["market"], row["channel"], row["outcome_id"]), np.nan
+        )
+        for _, row in result.iterrows()
+    ]
+    return result
 
 
 def summarize_curve_draws(
     draws: pd.DataFrame, cred_mass: float = DEFAULT_CRED_MASS
 ) -> pd.DataFrame:
-    """Posterior summaries at every non-draw identity in ``draws``."""
+    """Posterior summaries after draw-level response/economics calculation."""
     if not 0 < cred_mass < 1:
         raise ValueError("cred_mass must be between zero and one")
-    identity = [
-        column
-        for column in IDENTITY_COLUMNS
-        if column in draws.columns
-    ]
+    identity = [column for column in IDENTITY_COLUMNS if column in draws.columns]
     if not identity:
         raise ValueError("draws do not contain canonical identity columns")
     tail = (1.0 - cred_mass) / 2.0
     measures = [
         name
         for name in (
+            "incremental_response",
             "response",
+            "media_eta_contribution",
+            "marginal_incremental_response_per_currency_unit",
             "marginal_response",
             "average_cpa",
             "marginal_cpa",
@@ -545,6 +1396,7 @@ def summarize_curve_draws(
             "hill_S",
             "coefficient",
             "pathway_strength",
+            "curve_attribution_reconciliation_error",
         )
         if name in draws.columns
     ]
@@ -577,18 +1429,26 @@ def summarize_curve_draws(
             on=identity,
             how="left",
         )
-    if "response_posterior_mean" in result:
-        result["posterior_mean"] = result["response_posterior_mean"]
-        result["posterior_median"] = result["response_posterior_median"]
-        result["lower_interval"] = result["response_lower_interval"]
-        result["upper_interval"] = result["response_upper_interval"]
+    if "incremental_response_posterior_mean" in result:
+        result["posterior_mean"] = result[
+            "incremental_response_posterior_mean"
+        ]
+        result["posterior_median"] = result[
+            "incremental_response_posterior_median"
+        ]
+        result["lower_interval"] = result[
+            "incremental_response_lower_interval"
+        ]
+        result["upper_interval"] = result[
+            "incremental_response_upper_interval"
+        ]
     return result
 
 
 def export_canonical_curve_bank(
     draws: pd.DataFrame, summaries: pd.DataFrame, directory: Path
 ) -> Tuple[Path, Path, Path]:
-    """Write open, machine-readable draw, summary, and schema artifacts."""
+    """Write open draw, summary, and versioned schema artifacts."""
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     draws_path = directory / "canonical_curve_draws.parquet"
@@ -599,7 +1459,11 @@ def export_canonical_curve_bank(
     schema_path.write_text(
         json.dumps(
             {
-                "version": "G2A-1",
+                "version": "G2A.1-1",
+                "response_definition": (
+                    "mu(selected_channel_spend)-mu(counterfactual_channel_spend)"
+                ),
+                "component_economics_default": "suppressed_without_cost_allocation",
                 "grain": IDENTITY_COLUMNS,
                 "draw_rows": len(draws),
                 "summary_rows": len(summaries),

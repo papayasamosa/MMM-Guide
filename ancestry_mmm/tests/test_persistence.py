@@ -1,3 +1,4 @@
+import io
 import zipfile
 from dataclasses import asdict, replace
 
@@ -542,6 +543,126 @@ def test_export_then_import_preserves_migration_review_audit(tmp_path, sample_pr
         export_project(tmp_path / "migration-review.zip", **project)
     )
     assert imported["migration_review"] == audit
+
+
+def test_public_bundle_round_trip_preserves_canonical_curve_artifacts(
+    tmp_path, sample_project
+):
+    from ancestry_mmm.core.canonical_curves import export_canonical_curve_bank
+
+    curve_dir = tmp_path / "canonical-curves"
+    draws = pd.DataFrame(
+        {
+            "model_run_id": ["run"],
+            "reference_context_id": ["recent"],
+            "posterior_draw": ["0:0"],
+            "incremental_response": [12.0],
+        }
+    )
+    summaries = pd.DataFrame(
+        {
+            "model_run_id": ["run"],
+            "reference_context_id": ["recent"],
+            "posterior_mean": [12.0],
+        }
+    )
+    export_canonical_curve_bank(draws, summaries, curve_dir)
+    project = dict(sample_project)
+    project["curve_bank_source_dir"] = curve_dir
+    imported = import_project(
+        export_project(tmp_path / "canonical-bundle.zip", **project)
+    )
+    assert {
+        "canonical_curve_draws.parquet",
+        "canonical_curve_summaries.parquet",
+    } <= set(imported["curve_bank_binary_files"])
+    assert "canonical_curve_schema.json" in imported["curve_bank_files"]
+    restored_draws = pd.read_parquet(
+        io.BytesIO(
+            imported["curve_bank_binary_files"][
+                "canonical_curve_draws.parquet"
+            ]
+        )
+    )
+    pd.testing.assert_frame_equal(restored_draws, draws)
+
+
+def test_post_migration_refit_approval_curves_scenario_restore_public_api(
+    tmp_path, consistent_project
+):
+    """Final half of the UI migration journey: refit -> approve -> export ->
+    restore, including the migration audit and corrected curve artifacts."""
+    from ancestry_mmm.core.canonical_curves import export_canonical_curve_bank
+
+    curve_dir = tmp_path / "reviewed-canonical-curves"
+    export_canonical_curve_bank(
+        pd.DataFrame(
+            {
+                "model_run_id": [consistent_project["model_run_id"]],
+                "reference_context_id": ["recent"],
+                "incremental_response": [9.0],
+            }
+        ),
+        pd.DataFrame(
+            {
+                "model_run_id": [consistent_project["model_run_id"]],
+                "reference_context_id": ["recent"],
+                "posterior_mean": [9.0],
+            }
+        ),
+        curve_dir,
+    )
+    project = dict(consistent_project)
+    project.update(
+        raw_sources={
+            "joined": consistent_project["transformed_data"].copy()
+        },
+        migration_review={
+            "migration_review_status": "refit_completed",
+            "migration_reviewed_by": "Migration Reviewer",
+            "migration_reviewed_at": "2026-07-23T12:00:00+00:00",
+            "migration_review_note": "Reclassified and refitted.",
+            "migrated_from_model_run_id": "legacy-run",
+            "migration_change_summary": {
+                "component_type_changes": [
+                    {
+                        "channel": "TV_Brand",
+                        "target_outcome_id": "New",
+                        "before_component_type": "direct",
+                        "after_component_type": "cross_product",
+                    }
+                ],
+                "excluded": [],
+            },
+            "model_invalidated": True,
+            "replacement_model_run_id": consistent_project["model_run_id"],
+        },
+        curve_bank_source_dir=curve_dir,
+        scenarios=[
+            {
+                "name": "reviewed-plan",
+                "predicted": pd.DataFrame(
+                    {"month": ["2026-07"], "predicted_outcome": [9.0]}
+                ),
+            }
+        ],
+        workflow_state={"checkpoint": "scenarios", "current_page": 9},
+    )
+    imported = import_project(
+        export_project(tmp_path / "reviewed-complete.zip", **project)
+    )
+    reconstructed = reconstruct_model_state(imported)
+    approval, message = verify_imported_approval(imported, reconstructed)
+    assert approval is not None, message
+    assert imported["migration_review"]["migration_review_status"] == (
+        "refit_completed"
+    )
+    assert imported["migration_review"]["replacement_model_run_id"] == (
+        imported["model_run_id"]
+    )
+    assert imported["curve_bank_binary_files"]
+    assert imported["scenarios"][0]["name"] == "reviewed-plan"
+    assert audit_project_resumability(imported)["resumable"]
 
 
 def test_legacy_bundle_without_media_outcome_pathways_imports_with_none(
