@@ -1756,3 +1756,26 @@ CPA.
 **Scope:** No G2 curve dashboard, response-horizon reporting, year-on-year
 analysis, dynamic planner, production mediation, brand-health model, or DNA
 composition model is included.
+
+## G2A -- canonical posterior curve and economics engine
+
+**Decision:** One long-form, component-level posterior draw table is now the
+source of truth for response curves and economics. Shared and
+market-specific fits use the same contract. CPA and ROI are calculated by
+draw, totals aggregate draws before summarisation, and invalid economics are
+represented by `NaN` plus a machine-readable status rather than misleading
+infinities. Standard views cover segments, products, markets, FH net
+bill-through, direct versus halo, headline-approved, and planning-eligible
+components. Draws, summaries, and a versioned schema have an open Parquet/JSON
+curve-bank export.
+
+The legacy pathway review now permits a direct/cross-product reclassification
+for the same outcome/channel only when the analyst explicitly confirms it.
+Exactly one reviewed equation component or one exclusion must replace each
+reconstructed relationship. Source-product values are labelled inferred.
+Reviewer, timestamp, note, source run, change summary, invalidation state, and
+replacement refit run are persisted separately from headline approval.
+
+**Scope:** G2A is core calculation, audit, persistence, and test infrastructure.
+Response horizons (G2B), year-on-year decomposition (G2C), the decision-ready
+dashboard (G2D), and the dynamic planner remain separate work.

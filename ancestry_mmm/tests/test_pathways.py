@@ -19,6 +19,7 @@ from ancestry_mmm.core.pathways import (
     MediaOutcomePathway,
     OutcomeReconciliationGroup,
     ResolvedPathwayMasks,
+    legacy_governance_change_summary,
     pathway_catalogue_at_fit_by_id,
     pathway_catalogue_fingerprint_payload,
     pathway_drift_status,
@@ -26,8 +27,71 @@ from ancestry_mmm.core.pathways import (
     reconciliation_group_diagnostics,
     resolve_pathway_masks,
     validate_media_outcome_pathways,
+    validate_legacy_governance_review,
     validate_reconciliation_groups,
 )
+
+
+def test_legacy_review_allows_explicit_component_type_reclassification():
+    legacy_masks = ResolvedPathwayMasks.from_dict(
+        {
+            "primary_channels_by_outcome": {"outcome": ["channel"]},
+            "active_channels_by_outcome": {},
+            "exploratory_channels_by_outcome": {},
+        }
+    )
+    meta = SimpleNamespace(
+        pathway_masks=legacy_masks,
+        dna_channels=[],
+        outcome_id_to_product={"outcome": FAMILY_HISTORY},
+    )
+    replacement = MediaOutcomePathway(
+        channel="channel",
+        source_product=FAMILY_HISTORY,
+        target_outcome_id="outcome",
+        component_type="cross_product",
+        role="active_cross_product",
+        lag_type="fixed_weeks",
+        lag_weeks=2,
+        prior_scale=0.2,
+        allow_same_product_cross_product=True,
+    )
+    errors = validate_legacy_governance_review(
+        meta,
+        [replacement],
+        review_confirmed=True,
+        component_type_changes_confirmed=False,
+    )
+    assert any("direct -> cross_product" in error for error in errors)
+    assert not validate_legacy_governance_review(
+        meta,
+        [replacement],
+        review_confirmed=True,
+        component_type_changes_confirmed=True,
+    )
+    summary = legacy_governance_change_summary(meta, [replacement])
+    assert summary["component_type_changes"] == [
+        {
+            "channel": "channel",
+            "target_outcome_id": "outcome",
+            "before_component_type": "direct",
+            "after_component_type": "cross_product",
+        }
+    ]
+    duplicate = MediaOutcomePathway(
+        channel="channel",
+        source_product=FAMILY_HISTORY,
+        target_outcome_id="outcome",
+        component_type="direct",
+        role="primary_direct",
+    )
+    errors = validate_legacy_governance_review(
+        meta,
+        [replacement, duplicate],
+        review_confirmed=True,
+        component_type_changes_confirmed=True,
+    )
+    assert any("exactly one reviewed equation component" in error for error in errors)
 
 
 def _pathway(**overrides) -> MediaOutcomePathway:

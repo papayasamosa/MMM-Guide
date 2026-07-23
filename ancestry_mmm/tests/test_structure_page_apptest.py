@@ -320,6 +320,24 @@ def test_legacy_pathway_review_loads_catalogue_and_requires_refit():
         == "I reviewed every migrated pathway and its governance fields"
     ][0]
     confirmation.check().run()
+    reviewer = [
+        item for item in at.text_input if item.label == "Migration reviewed by"
+    ][0]
+    reviewer.input("Migration Reviewer").run()
+    source_confirmation = [
+        checkbox
+        for checkbox in at.checkbox
+        if checkbox.label
+        == "I confirmed or corrected every inferred source product"
+    ][0]
+    source_confirmation.check().run()
+    type_confirmation = [
+        checkbox
+        for checkbox in at.checkbox
+        if checkbox.label
+        == "I explicitly confirm any direct/cross-product reclassification"
+    ][0]
+    type_confirmation.check().run()
     save = [b for b in at.button if b.label == "Save structure and validate"][0]
     save.click().run()
     assert not at.exception
@@ -327,6 +345,10 @@ def test_legacy_pathway_review_loads_catalogue_and_requires_refit():
     assert at.session_state["model_meta"] is None
     assert at.session_state["trace"] is None
     assert at.session_state["model_trained"] is False
+    assert at.session_state["migration_review"]["migration_reviewed_by"] == (
+        "Migration Reviewer"
+    )
+    assert at.session_state["migration_review"]["model_invalidated"] is True
     assert any(
         "old fit and approval were invalidated" in success.value
         for success in at.success

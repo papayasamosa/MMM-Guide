@@ -515,6 +515,35 @@ def test_export_then_import_reproduces_media_outcome_pathways(tmp_path, sample_p
     assert imported["media_outcome_pathways"] == pathways
 
 
+def test_export_then_import_preserves_migration_review_audit(tmp_path, sample_project):
+    audit = {
+        "migration_review_status": "reviewed_refit_required",
+        "migration_reviewed_by": "Reviewer",
+        "migration_reviewed_at": "2026-07-23T12:00:00+00:00",
+        "migration_review_note": "Direct effect replaced by delayed halo.",
+        "migrated_from_model_run_id": "old-run",
+        "migration_change_summary": {
+            "component_type_changes": [
+                {
+                    "channel": "DNA",
+                    "target_outcome_id": "fh_new",
+                    "before_component_type": "direct",
+                    "after_component_type": "cross_product",
+                }
+            ],
+            "excluded": [],
+        },
+        "model_invalidated": True,
+        "replacement_model_run_id": None,
+    }
+    project = dict(sample_project)
+    project["migration_review"] = audit
+    imported = import_project(
+        export_project(tmp_path / "migration-review.zip", **project)
+    )
+    assert imported["migration_review"] == audit
+
+
 def test_legacy_bundle_without_media_outcome_pathways_imports_with_none(
     tmp_path, sample_project
 ):

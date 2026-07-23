@@ -189,6 +189,9 @@ class MediaOutcomePathway:
     allow_same_product_cross_product: bool = False
     allow_cross_product_primary: bool = False
     planning_eligibility_confirmed: bool = False
+    # True only for catalogue rows reconstructed from legacy mask-only
+    # metadata. It is an audit hint, not modelling authority.
+    source_product_inferred: bool = False
     pathway_id: str = ""
 
     def __post_init__(self) -> None:
@@ -1269,6 +1272,7 @@ def legacy_governance_review_catalogue(model_meta: object) -> List[MediaOutcomeP
                     "Review draft reconstructed from mask-only pathway metadata."
                 ),
                 evidence_status="unreviewed",
+                source_product_inferred=True,
                 component_type=component.component_type,
                 allow_same_product_cross_product=(
                     component.component_type == "cross_product"
@@ -1289,6 +1293,8 @@ def validate_legacy_governance_review(
     pathways: Sequence[MediaOutcomePathway],
     *,
     review_confirmed: bool,
+    component_type_changes_confirmed: bool = False,
+    inferred_source_products_confirmed: bool = True,
 ) -> List[str]:
     """Require explicit coverage and certification before legacy review saves."""
     masks = getattr(model_meta, "pathway_masks", None)
@@ -1300,18 +1306,25 @@ def validate_legacy_governance_review(
             "Confirm that every migrated pathway has been reviewed before saving "
             "the replacement catalogue."
         )
+    if not inferred_source_products_confirmed:
+        errors.append(
+            "Confirm or correct every inferred source-product value before saving "
+            "the migration review."
+        )
     review_draft = legacy_governance_review_catalogue(model_meta)
-    reviewed_ids = {pathway.pathway_id for pathway in pathways}
-    excluded_pairs = {
-        (pathway.target_outcome_id, pathway.channel)
-        for pathway in pathways
-        if pathway.component_type == "excluded"
+    reviewed_by_pair = {}
+    for pathway in pathways:
+        reviewed_by_pair.setdefault(
+            (pathway.target_outcome_id, pathway.channel), []
+        ).append(pathway)
+    original_by_pair = {
+        (pathway.target_outcome_id, pathway.channel): pathway
+        for pathway in review_draft
     }
     missing = [
         pathway
         for pathway in review_draft
-        if pathway.pathway_id not in reviewed_ids
-        and (pathway.target_outcome_id, pathway.channel) not in excluded_pairs
+        if (pathway.target_outcome_id, pathway.channel) not in reviewed_by_pair
     ]
     if missing:
         errors.append(
@@ -1324,7 +1337,125 @@ def validate_legacy_governance_review(
             + ". Keep each migrated row, or use one excluded row to record rejection "
             "of that outcome/channel relationship."
         )
+    ambiguous = []
+    for original in review_draft:
+        pair = (original.target_outcome_id, original.channel)
+        replacements = reviewed_by_pair.get(pair, [])
+        equation_count = sum(
+            item.component_type in {"direct", "cross_product"}
+            for item in replacements
+        )
+        excluded_count = sum(
+            item.component_type == "excluded" for item in replacements
+        )
+        if replacements and not (
+            (equation_count == 1 and excluded_count == 0)
+            or (equation_count == 0 and excluded_count == 1)
+        ):
+            ambiguous.append(original)
+    if ambiguous:
+        errors.append(
+            "Each migrated outcome/channel relationship must resolve to exactly "
+            "one reviewed equation component or one explicit exclusion: "
+            + ", ".join(
+                f"{item.target_outcome_id} <- {item.channel}"
+                for item in ambiguous
+            )
+            + "."
+        )
+    changed = []
+    for pair, original in original_by_pair.items():
+        replacements = reviewed_by_pair.get(pair, [])
+        equation_replacements = [
+            pathway
+            for pathway in replacements
+            if pathway.component_type in {"direct", "cross_product"}
+        ]
+        if (
+            len(equation_replacements) == 1
+            and equation_replacements[0].component_type != original.component_type
+        ):
+            changed.append((original, equation_replacements[0]))
+    if changed and not component_type_changes_confirmed:
+        errors.append(
+            "Explicitly confirm migrated component-type changes: "
+            + ", ".join(
+                f"{before.target_outcome_id} <- {before.channel} "
+                f"[{before.component_type} -> {after.component_type}]"
+                for before, after in changed
+            )
+            + "."
+        )
     return errors
+
+
+def legacy_governance_change_summary(
+    model_meta: object, pathways: Sequence[MediaOutcomePathway]
+) -> dict:
+    """Machine-readable before/after audit for a completed legacy review."""
+    draft = legacy_governance_review_catalogue(model_meta)
+    reviewed_by_pair = {}
+    for pathway in pathways:
+        reviewed_by_pair.setdefault(
+            (pathway.target_outcome_id, pathway.channel), []
+        ).append(pathway)
+    changes = []
+    exclusions = []
+    unchanged = []
+    source_product_changes = []
+    for original in draft:
+        pair = (original.target_outcome_id, original.channel)
+        replacements = reviewed_by_pair.get(pair, [])
+        excluded = [
+            item for item in replacements if item.component_type == "excluded"
+        ]
+        equation = [
+            item
+            for item in replacements
+            if item.component_type in {"direct", "cross_product"}
+        ]
+        if excluded and not equation:
+            exclusions.append(
+                {
+                    "channel": original.channel,
+                    "target_outcome_id": original.target_outcome_id,
+                    "before_component_type": original.component_type,
+                }
+            )
+        elif len(equation) == 1 and equation[0].component_type != original.component_type:
+            changes.append(
+                {
+                    "channel": original.channel,
+                    "target_outcome_id": original.target_outcome_id,
+                    "before_component_type": original.component_type,
+                    "after_component_type": equation[0].component_type,
+                }
+            )
+        else:
+            unchanged.append(
+                {
+                    "channel": original.channel,
+                    "target_outcome_id": original.target_outcome_id,
+                    "component_type": original.component_type,
+                }
+            )
+        if len(equation) == 1 and equation[0].source_product != original.source_product:
+            source_product_changes.append(
+                {
+                    "channel": original.channel,
+                    "target_outcome_id": original.target_outcome_id,
+                    "before_source_product": original.source_product,
+                    "after_source_product": equation[0].source_product,
+                    "before_was_inferred": True,
+                }
+            )
+    return {
+        "reconstructed": len(draft),
+        "unchanged": unchanged,
+        "component_type_changes": changes,
+        "source_product_changes": source_product_changes,
+        "excluded": exclusions,
+    }
 
 
 def resolve_pathway_masks(

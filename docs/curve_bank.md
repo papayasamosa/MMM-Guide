@@ -1,5 +1,13 @@
 # Curve Bank
 
+## G2A canonical export
+
+`core.canonical_curves` now provides the reusable posterior-draw contract for
+all new curve and economics consumers. Its curve-bank export contains a
+component-level draw Parquet table, a posterior-summary Parquet table, and a
+versioned JSON schema. See `docs/canonical_curves.md`. The entry-oriented
+store below remains supported for the current UI and legacy bundles.
+
 ## Today (Phase 3a - built)
 
 Each curve bank entry (`core.curve_bank.CurveBankEntry`) is one *curve* - a

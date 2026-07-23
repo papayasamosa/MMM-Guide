@@ -86,6 +86,15 @@ project is marked `legacy_governance_mode`. Headline and planning output are
 blocked until an analyst reviews and re-saves an explicit pathway catalogue.
 The resolved metadata and resumability audit both retain a migration report.
 
+The review may reclassify a reconstructed relationship between `direct` and
+`cross_product` for the same outcome/channel pair. This requires explicit
+confirmation and must resolve to exactly one equation component or exactly
+one exclusion, preventing a duplicate term. Reconstructed source product is
+marked as inferred and must be confirmed or corrected. A separate migration
+audit records reviewer, time, note, source run, before/after component and
+source-product changes, exclusions, fit invalidation, and the replacement
+refit run.
+
 The Structure page provides the supported completion path. **Review migrated
 pathways** shows the migration report and reconstructed rows, then loads them
 into the normal pathway catalogue for correction. Every reconstructed

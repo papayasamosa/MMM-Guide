@@ -51,6 +51,14 @@ from .curve_bank import (
     load_all_calibrations,
     calibrations_to_dataframe,
 )
+from .canonical_curves import (
+    aggregate_curve_draws,
+    canonical_governance_views,
+    export_canonical_curve_bank,
+    generate_canonical_curve_draws,
+    summarize_curve_draws,
+    support_from_model_frame,
+)
 from .evidence_tiers import (
     classify_market_evidence,
     classify_all_markets,
@@ -225,6 +233,12 @@ __all__ = [
     "classify_all_markets",
     "evidence_tiers_dataframe",
     "compute_cpa",
+    "aggregate_curve_draws",
+    "canonical_governance_views",
+    "export_canonical_curve_bank",
+    "generate_canonical_curve_draws",
+    "summarize_curve_draws",
+    "support_from_model_frame",
     "cpa_stability_flags",
     "extract_cost_per_unit_series",
     "historical_cost_trend",

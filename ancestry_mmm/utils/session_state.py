@@ -66,6 +66,8 @@ def init_session_state():
         # before a model's curves can be saved to the curve bank or used to plan
         # scenarios; reset by clear_model_state() whenever the model changes.
         "model_approval": None,
+        # Separate audit trail for mask-only pathway migration review.
+        "migration_review": None,
         # Curve bank
         "curve_bank_entry_id": None,
         "calibration_records": [],

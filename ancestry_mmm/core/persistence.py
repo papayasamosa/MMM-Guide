@@ -138,6 +138,7 @@ def export_project(
     notes: Optional[str] = None,
     calibration_records: Optional[List[dict]] = None,
     model_comparison_candidates: Optional[List[dict]] = None,
+    migration_review: Optional[dict] = None,
 ) -> Path:
     output_path = Path(output_path)
     with tempfile.TemporaryDirectory() as tmp:
@@ -214,6 +215,10 @@ def export_project(
         if model_comparison_candidates is not None:
             (tmp / "config" / "model_comparison_candidates.json").write_text(
                 json.dumps(model_comparison_candidates, indent=2, default=str)
+            )
+        if migration_review is not None:
+            (tmp / "config" / "migration_review.json").write_text(
+                json.dumps(migration_review, indent=2, default=str)
             )
         if diagnostics is not None:
             for name, value in diagnostics.items():
@@ -324,6 +329,7 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         "notes": None,
         "calibration_records": [],
         "model_comparison_candidates": [],
+        "migration_review": None,
     }
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
@@ -402,6 +408,10 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         if (config_dir / "model_comparison_candidates.json").exists():
             result["model_comparison_candidates"] = json.loads(
                 (config_dir / "model_comparison_candidates.json").read_text()
+            )
+        if (config_dir / "migration_review.json").exists():
+            result["migration_review"] = json.loads(
+                (config_dir / "migration_review.json").read_text()
             )
         if (config_dir / "scenarios.json").exists():
             scenarios_meta = json.loads((config_dir / "scenarios.json").read_text())

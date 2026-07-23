@@ -153,6 +153,18 @@ if st.button("Build & fit model", type="primary"):
         # "upstream config changed" path, this covers "user just refit").
         set_state("model_run_id", str(uuid.uuid4()))
         set_state("model_approval", None)
+        migration_review = get_state("migration_review")
+        if (
+            isinstance(migration_review, dict)
+            and migration_review.get("migration_review_status")
+            == "reviewed_refit_required"
+        ):
+            migration_review = dict(migration_review)
+            migration_review.update(
+                migration_review_status="refit_completed",
+                replacement_model_run_id=get_state("model_run_id"),
+            )
+            set_state("migration_review", migration_review)
         st.success(f"Model trained ({MODEL_TYPE_LABELS[model_type]}).")
 
 if get_state("model_trained"):

@@ -126,6 +126,7 @@ if st.button("Build export bundle", type="primary"):
             notes=get_state("project_notes"),
             calibration_records=get_state("calibration_records") or [],
             model_comparison_candidates=get_state("model_comparison_candidates") or [],
+            migration_review=get_state("migration_review"),
         )
     st.success(f"Project bundle built: {output_path}")
     with open(output_path, "rb") as f:
@@ -190,6 +191,7 @@ if uploaded_zip is not None and st.button("Import bundle"):
         set_state("funnel_links", imported["funnel_links"])
         set_state("media_outcome_pathways", imported["media_outcome_pathways"])
         set_state("net_billthrough_metadata", imported["net_billthrough_metadata"])
+        set_state("migration_review", imported.get("migration_review"))
         workflow_state = imported.get("workflow_state") or {}
         set_state("current_page", workflow_state.get("current_page", 0))
         set_state("active_scenario", workflow_state.get("active_scenario"))

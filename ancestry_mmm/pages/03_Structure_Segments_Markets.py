@@ -1,6 +1,7 @@
 """Page 3: define markets, FH segments, channels, DNA channels, promo columns and LTV as explicit structural dimensions."""
 
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -62,6 +63,7 @@ from ancestry_mmm.core.pathways import (
     PATHWAY_ROLES,
     MediaOutcomePathway,
     legacy_governance_review_catalogue,
+    legacy_governance_change_summary,
     pathways_drift_dataframe,
     resolve_pathway_masks,
     validate_legacy_governance_review,
@@ -515,6 +517,10 @@ _legacy_governance_review = bool(
     and getattr(_current_pathway_masks, "legacy_governance_mode", False)
 )
 _legacy_review_confirmed = False
+_legacy_type_changes_confirmed = False
+_legacy_sources_confirmed = False
+_legacy_reviewed_by = ""
+_legacy_review_note = ""
 if _legacy_governance_review:
     st.warning(
         "This fit was restored from mask-only pathway metadata. Analyst attribution "
@@ -545,6 +551,26 @@ if _legacy_governance_review:
             st.session_state.pop("pathway_catalogue_editor", None)
             st.rerun()
         if st.session_state["media_outcome_pathways"]:
+            st.info(
+                "Rows marked `source_product_inferred = true` were reconstructed "
+                "from legacy DNA-channel membership. Confirm or correct each value."
+            )
+            _legacy_reviewed_by = st.text_input(
+                "Migration reviewed by",
+                key="legacy_pathway_reviewed_by",
+            )
+            _legacy_review_note = st.text_area(
+                "Migration review note",
+                key="legacy_pathway_review_note",
+            )
+            _legacy_sources_confirmed = st.checkbox(
+                "I confirmed or corrected every inferred source product",
+                key="legacy_source_products_confirmed",
+            )
+            _legacy_type_changes_confirmed = st.checkbox(
+                "I explicitly confirm any direct/cross-product reclassification",
+                key="legacy_component_type_changes_confirmed",
+            )
             _legacy_review_confirmed = st.checkbox(
                 "I reviewed every migrated pathway and its governance fields",
                 help=(
@@ -575,6 +601,7 @@ _pathway_default_df = (
             "approved_by",
             "approved_at",
             "evidence_status",
+            "source_product_inferred",
         ]
     )
 )
@@ -1250,13 +1277,25 @@ if st.button("Save structure and validate", type="primary"):
         _current_model_meta,
         media_outcome_pathways,
         review_confirmed=_legacy_review_confirmed,
+        component_type_changes_confirmed=_legacy_type_changes_confirmed,
+        inferred_source_products_confirmed=_legacy_sources_confirmed,
     )
+    if _legacy_governance_review and not _legacy_reviewed_by.strip():
+        errors.append("Enter the migration reviewer's name before saving.")
 
     if errors:
         for e in errors:
             st.error(e)
     else:
         _completed_legacy_review = _legacy_governance_review
+        _migration_source_run_id = get_state("model_run_id")
+        _migration_change_summary = (
+            legacy_governance_change_summary(
+                _current_model_meta, media_outcome_pathways
+            )
+            if _completed_legacy_review
+            else None
+        )
         if updated_df is not None:
             set_state("transformed_data", updated_df)
         set_state("model_spec", spec.to_dict())
@@ -1269,6 +1308,20 @@ if st.button("Save structure and validate", type="primary"):
         )
         set_state("net_billthrough_metadata", net_billthrough_metadata)
         clear_model_state()
+        if _completed_legacy_review:
+            set_state(
+                "migration_review",
+                {
+                    "migration_review_status": "reviewed_refit_required",
+                    "migration_reviewed_by": _legacy_reviewed_by.strip(),
+                    "migration_reviewed_at": datetime.now(timezone.utc).isoformat(),
+                    "migration_review_note": _legacy_review_note.strip(),
+                    "migrated_from_model_run_id": _migration_source_run_id,
+                    "migration_change_summary": _migration_change_summary,
+                    "model_invalidated": True,
+                    "replacement_model_run_id": None,
+                },
+            )
         issues = validate_modeling_frame(
             df if market_col in df.columns else df.assign(**{market_col: "default"}),
             channels=channels,
