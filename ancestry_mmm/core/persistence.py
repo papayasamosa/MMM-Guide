@@ -352,7 +352,14 @@ def reconstruct_model_state(imported: Dict[str, Any]) -> Dict[str, Any]:
             )
             available_columns = set(transformed_data.columns)
             usable_outcomes = [o for o in outcome_definitions if o.source_column in available_columns]
-            result["frame"] = prepare_fh_modeling_frame(transformed_data, spec, outcomes=usable_outcomes)
+            nbt_metadata = (
+                getattr(result.get("model_meta"), "net_billthrough_metadata", None)
+                if result.get("model_meta") is not None else None
+            )
+            result["frame"] = prepare_fh_modeling_frame(
+                transformed_data, spec, outcomes=usable_outcomes,
+                net_billthrough_metadata=nbt_metadata,
+            )
         except (ValueError, KeyError):
             result["frame"] = None
 

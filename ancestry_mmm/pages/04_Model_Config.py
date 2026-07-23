@@ -230,7 +230,10 @@ if brand_search_errors:
     st.caption("Fix the Brand Search configuration errors above before preparing the modelling frame.")
 elif st.button("Prepare modelling frame", type="primary"):
     try:
-        frame = prepare_fh_modeling_frame(df, spec, outcomes=outcome_definitions)
+        frame = prepare_fh_modeling_frame(
+            df, spec, outcomes=outcome_definitions,
+            net_billthrough_metadata=get_state("net_billthrough_metadata"),
+        )
         set_state("frame", frame)
         set_state("prior_config", prior_config)
         set_state("dna_lag_weeks", int(dna_lag_weeks))

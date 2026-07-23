@@ -30,7 +30,7 @@ import arviz as az
 
 from .transformations import geometric_adstock_matrix, hill_function
 from .hierarchical_model import FHModelMeta
-from .outcomes import fh_gsa_outcome_ids, fh_signup_outcome_ids, dna_kit_sale_outcome_ids
+from .outcomes import fh_gsa_outcome_ids, fh_signup_outcome_ids, fh_net_billthrough_outcome_ids, dna_kit_sale_outcome_ids
 
 
 @dataclass
@@ -229,7 +229,7 @@ def _cross_product_strength_matrix(meta: FHModelMeta, params: _HasPathwayStrengt
     return mat
 
 
-def _pathway_weight(meta: FHModelMeta, params: _HasPathwayStrength, outcome_id: str, channel: str) -> float:
+def _pathway_weight(meta: FHModelMeta, params: _HasPathwayStrength, outcome_id: str, channel: str, *, planning_only: bool = False) -> float:
     """Total multiplier for one `(outcome_id, channel)` cell's channel
     contribution at STEADY STATE - constant spend converges lagged and
     unlagged media to the identical value, so the `primary_direct` and
@@ -239,10 +239,12 @@ def _pathway_weight(meta: FHModelMeta, params: _HasPathwayStrength, outcome_id: 
     plus `params.pathway_strength[...]` if it's also (or instead)
     `active_cross_product`/`exploratory_cross_product`, `0.0` for an
     excluded cell (in neither)."""
-    weight = 1.0 if channel in meta.pathway_masks.primary_channels_by_outcome.get(outcome_id, []) else 0.0
+    direct_eligible = not planning_only or meta.pathway_masks.component_eligible(outcome_id, channel, "direct", "planning")
+    weight = 1.0 if direct_eligible and channel in meta.pathway_masks.primary_channels_by_outcome.get(outcome_id, []) else 0.0
     is_active = channel in meta.pathway_masks.active_channels_by_outcome.get(outcome_id, [])
     is_exploratory = channel in meta.pathway_masks.exploratory_channels_by_outcome.get(outcome_id, [])
-    if is_active or is_exploratory:
+    cross_eligible = not planning_only or meta.pathway_masks.component_eligible(outcome_id, channel, "cross_product", "planning")
+    if cross_eligible and (is_active or is_exploratory):
         weight += params.pathway_strength.get(outcome_id, {}).get(channel, 0.0)
     return weight
 
@@ -275,12 +277,13 @@ def predict_mu(
     eta_primary = sat_media @ (beta_matrix * primary_mask).T
 
     cross_cells = meta.pathway_masks.active_cells(outcome_ids, meta.channels) + meta.pathway_masks.exploratory_cells(outcome_ids, meta.channels)
+    eta_cross = np.zeros((n_obs, n_out))
     if cross_cells:
-        cross_product_lag_media = lag_frame(sat_media, frame["market_bounds"], meta.pathway_masks.cross_product_lag_weeks)
         strength_matrix = _cross_product_strength_matrix(meta, params)
-        eta_cross = cross_product_lag_media @ (beta_matrix * strength_matrix).T
-    else:
-        eta_cross = np.zeros((n_obs, n_out))
+        lagged = {lag: lag_frame(sat_media, frame["market_bounds"], lag)
+                  for lag in {meta.pathway_masks.component_lag(outcome_ids[cell[0]], meta.channels[cell[1]], meta.pathway_masks.cross_product_lag_weeks) for cell in cross_cells}}
+        for oi, ci in cross_cells:
+            eta_cross[:, oi] += lagged[meta.pathway_masks.component_lag(outcome_ids[oi], meta.channels[ci], meta.pathway_masks.cross_product_lag_weeks)][:, ci] * beta_matrix[oi, ci] * strength_matrix[oi, ci]
 
     eta_channels = eta_primary + eta_cross
 
@@ -325,6 +328,7 @@ def steady_state_outcome_response(
     meta: FHModelMeta,
     params: FHPosteriorParams,
     reference_context: Optional[Dict] = None,
+    *, planning_only: bool = False,
 ) -> Dict[str, float]:
     """
     Expected weekly outcome per outcome_id for spend held constant at
@@ -359,7 +363,7 @@ def steady_state_outcome_response(
             # `sat[c]` term directly instead of needing two separate media
             # series - see predict_mu for the general, non-steady-state
             # replay where they must stay separate.
-            val += params.beta[s][c] * sat[c] * _pathway_weight(meta, params, s, c)
+            val += params.beta[s][c] * sat[c] * _pathway_weight(meta, params, s, c, planning_only=planning_only)
 
         for name, coef in params.control_coef.items():
             val += coef * reference_context.get("controls", {}).get(name, 0.0)
@@ -439,6 +443,7 @@ def generate_channel_curve(
     gsa_ids = set(fh_gsa_outcome_ids(meta))
     signup_ids = set(fh_signup_outcome_ids(meta))
     dna_ids = set(dna_kit_sale_outcome_ids(meta))
+    nbt_ids = set(fh_net_billthrough_outcome_ids(meta))
     rows = []
     for spend in spend_range:
         sat = float(hill_function(np.array([float(spend)]), K, S)[0])
@@ -447,6 +452,7 @@ def generate_channel_curve(
         dna_total = 0.0
         fh_gsa_total = 0.0
         fh_signup_total = 0.0
+        fh_net_billthrough_total = 0.0
         for oid in meta.outcome_ids:
             # Same steady-state collapse as steady_state_outcome_response:
             # constant spend converges the primary and cross-product media to
@@ -456,6 +462,8 @@ def generate_channel_curve(
             value = beta_val * sat
             row[f"{oid}_response"] = value
             overall += value
+            if oid in nbt_ids:
+                fh_net_billthrough_total += value
             if oid in dna_ids:
                 dna_total += value
             elif oid in gsa_ids:
@@ -466,6 +474,7 @@ def generate_channel_curve(
         row["dna_response"] = dna_total
         row["fh_response"] = fh_gsa_total
         row["fh_signup_response"] = fh_signup_total
+        row["fh_net_billthrough_response"] = fh_net_billthrough_total
         rows.append(row)
 
     return pd.DataFrame(rows)

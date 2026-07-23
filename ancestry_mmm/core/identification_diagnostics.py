@@ -262,3 +262,59 @@ def identification_report(
                 })
 
     return flags
+
+
+def transformed_media_correlation_matrix(transformed_media, channels=None) -> pd.DataFrame:
+    """Correlation after the fitted adstock and saturation transformations."""
+    values = np.asarray(transformed_media, dtype=float)
+    labels = list(channels or range(values.shape[1]))
+    return pd.DataFrame(np.corrcoef(values, rowvar=False), index=labels, columns=labels)
+
+
+def posterior_variable_correlation(trace: az.InferenceData, variable: str = "beta") -> pd.DataFrame:
+    """Posterior correlation across the flattened non-sampling coordinates."""
+    values = trace.posterior[variable].stack(sample=("chain", "draw"))
+    other = [d for d in values.dims if d != "sample"]
+    matrix = values.stack(term=other).transpose("sample", "term").values
+    labels = [str(v) for v in values.stack(term=other).coords["term"].values]
+    return pd.DataFrame(np.corrcoef(matrix, rowvar=False), index=labels, columns=labels)
+
+
+def posterior_contribution_correlation(contribution_draws, labels=None) -> pd.DataFrame:
+    """Posterior correlation of channel contributions (draws × channels)."""
+    values = np.asarray(contribution_draws, dtype=float)
+    names = list(labels or range(values.shape[-1]))
+    flat = values.reshape(-1, values.shape[-1])
+    return pd.DataFrame(np.corrcoef(flat, rowvar=False), index=names, columns=names)
+
+
+def contribution_rank_stability(contribution_draws, labels=None) -> pd.DataFrame:
+    """Probability each channel occupies its modal contribution rank."""
+    values = np.asarray(contribution_draws, dtype=float).reshape(-1, np.asarray(contribution_draws).shape[-1])
+    ranks = np.argsort(np.argsort(-values, axis=1), axis=1) + 1
+    names = list(labels or range(values.shape[1]))
+    rows = []
+    for i, name in enumerate(names):
+        counts = np.bincount(ranks[:, i], minlength=values.shape[1] + 1)[1:]
+        modal = int(np.argmax(counts) + 1)
+        rows.append({"channel": name, "modal_rank": modal, "rank_stability": float(counts.max() / len(ranks))})
+    return pd.DataFrame(rows)
+
+
+def probability_contribution_exceeds(contribution_draws, threshold: float, labels=None) -> pd.DataFrame:
+    values = np.asarray(contribution_draws, dtype=float).reshape(-1, np.asarray(contribution_draws).shape[-1])
+    names = list(labels or range(values.shape[1]))
+    return pd.DataFrame({"channel": names, "practical_threshold": threshold,
+                         "probability_exceeds_threshold": (values > threshold).mean(axis=0)})
+
+
+def stakeholder_identification_label(*, max_abs_correlation: float, rank_stability: float,
+                                     probability_exceeds_threshold: float, exploratory: bool = False) -> str:
+    """Multi-signal stakeholder label; no CV division near zero is used."""
+    if exploratory:
+        return "Exploratory"
+    if max_abs_correlation < .7 and rank_stability >= .8 and probability_exceeds_threshold >= .9:
+        return "Strongly identified"
+    if max_abs_correlation < .9 and rank_stability >= .6 and probability_exceeds_threshold >= .7:
+        return "Moderately identified"
+    return "Weakly identified"

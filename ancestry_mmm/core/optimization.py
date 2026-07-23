@@ -52,9 +52,9 @@ from scipy.optimize import minimize, LinearConstraint
 from .approval import ModelApproval, require_matching_approval
 from .hierarchical_model import FHModelMeta
 from .outcomes import (
-    fh_gsa_outcome_ids, fh_signup_outcome_ids, dna_kit_sale_outcome_ids, select_outcome_ids,
+    fh_gsa_outcome_ids, fh_signup_outcome_ids, fh_net_billthrough_outcome_ids, dna_kit_sale_outcome_ids, select_outcome_ids,
     outcome_catalogue_at_fit_by_id, eligible_outcome_ids,
-    METRIC_KEY_FH_GSA, METRIC_KEY_FH_SIGNUP, METRIC_KEY_DNA_KIT_SALE,
+    METRIC_KEY_FH_GSA, METRIC_KEY_FH_SIGNUP, METRIC_KEY_FH_NET_BILLTHROUGH_COUNT, METRIC_KEY_DNA_KIT_SALE,
 )
 from .predict import FHPosteriorParams, steady_state_outcome_response
 from .market_specific_predict import FHMarketSpecificPosteriorParams, steady_state_outcome_response_market_specific
@@ -156,19 +156,22 @@ def evaluate_scenario(
     ltv = ltv or {}
     gsa_ids = set(fh_gsa_outcome_ids(meta))
     signup_ids = set(fh_signup_outcome_ids(meta))
+    nbt_ids = set(fh_net_billthrough_outcome_ids(meta))
     dna_ids = set(dna_kit_sale_outcome_ids(meta))
     catalogue_by_id = outcome_catalogue_at_fit_by_id(meta)
     rows = []
     for month, spend_by_channel in spend_plan.items():
         ref = reference_context_by_month.get(month, {})
-        weekly_rate = response_fn(market, spend_by_channel, meta, params, ref)
+        weekly_rate = response_fn(market, spend_by_channel, meta, params, ref, planning_only=True)
         total_spend = sum(spend_by_channel.values())
         monthly_outcome_by_id = {oid: rate * WEEKS_PER_MONTH for oid, rate in weekly_rate.items()}
         fh_gsa = sum(v for oid, v in monthly_outcome_by_id.items() if oid in gsa_ids)
         fh_signups = sum(v for oid, v in monthly_outcome_by_id.items() if oid in signup_ids)
+        fh_net_billthrough = sum(v for oid, v in monthly_outcome_by_id.items() if oid in nbt_ids)
         dna_kits = sum(v for oid, v in monthly_outcome_by_id.items() if oid in dna_ids)
         avg_cpa = (total_spend / fh_gsa) if fh_gsa > 0 else None
         fh_signup_avg_cpa = (total_spend / fh_signups) if fh_signups > 0 else None
+        nbt_avg_cpa = (total_spend / fh_net_billthrough) if fh_net_billthrough > 0 else None
         dna_avg_cpa = (total_spend / dna_kits) if dna_kits > 0 else None
 
         priced_ids = sorted(oid for oid in monthly_outcome_by_id if oid in ltv)
@@ -202,6 +205,7 @@ def evaluate_scenario(
                 "total_spend": total_spend,
                 "fh_gsa": fh_gsa,
                 "fh_signups": fh_signups,
+                "fh_net_billthrough": fh_net_billthrough,
                 "dna_kits": dna_kits,
                 "avg_cpa": avg_cpa,
                 "cost_per_fh_gsa": avg_cpa,
@@ -215,6 +219,7 @@ def evaluate_scenario(
                 "fh_signup_avg_cpa": fh_signup_avg_cpa,
                 "cost_per_fh_signup": fh_signup_avg_cpa,
                 "whole_plan_cost_per_fh_signup": fh_signup_avg_cpa,
+                "whole_plan_cost_per_fh_net_billthrough": nbt_avg_cpa,
                 "dna_avg_cpa": dna_avg_cpa,
                 "cost_per_dna_kit": dna_avg_cpa,
                 "whole_plan_cost_per_dna_kit": dna_avg_cpa,
@@ -365,11 +370,12 @@ def build_bounds_and_constraints(
 # Optimiser
 # ---------------------------------------------------------------------------
 
-VALID_OBJECTIVES = ("fh_gsa", "fh_signups", "dna_kits", "weighted_mix", "expected_value")
+VALID_OBJECTIVES = ("fh_net_billthrough", "fh_gsa", "fh_signups", "dna_kits", "weighted_mix", "expected_value")
 
 _OBJECTIVE_METRIC_KEY = {
     "fh_gsa": METRIC_KEY_FH_GSA,
     "fh_signups": METRIC_KEY_FH_SIGNUP,
+    "fh_net_billthrough": METRIC_KEY_FH_NET_BILLTHROUGH_COUNT,
     "dna_kits": METRIC_KEY_DNA_KIT_SALE,
 }
 
@@ -485,11 +491,12 @@ def _objective_weight(
         metric_key = _OBJECTIVE_METRIC_KEY[objective]
         _validate_target_outcome_ids(target_outcome_ids, meta, metric_key=metric_key)
         default_selector = {
-            "fh_gsa": fh_gsa_outcome_ids, "fh_signups": fh_signup_outcome_ids, "dna_kits": dna_kit_sale_outcome_ids,
+            "fh_gsa": fh_gsa_outcome_ids, "fh_signups": fh_signup_outcome_ids,
+            "fh_net_billthrough": fh_net_billthrough_outcome_ids, "dna_kits": dna_kit_sale_outcome_ids,
         }[objective]
         eligible = set(target_outcome_ids) if target_outcome_ids else set(default_selector(meta))
         if objective != "fh_gsa" and not eligible:
-            noun = "Family History sign-up" if objective == "fh_signups" else "DNA-kit"
+            noun = {"fh_signups": "Family History sign-up", "fh_net_billthrough": "Family History net bill-through", "dna_kits": "DNA-kit"}[objective]
             raise ValueError(f"objective={objective!r} but this model has no {noun} outcomes.")
         return {s: 1.0 for s in eligible}
     if objective == "weighted_mix":
@@ -561,7 +568,7 @@ def _objective_factory(
         total = 0.0
         for m in months:
             ref = reference_context_by_month.get(m, {})
-            rates = response_fn(market, spend_plan[m], meta, params, ref)
+            rates = response_fn(market, spend_plan[m], meta, params, ref, planning_only=True)
             for oid, rate in rates.items():
                 total += rate * WEEKS_PER_MONTH * weight.get(oid, 0.0)
         return -total

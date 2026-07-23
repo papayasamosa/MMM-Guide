@@ -23,10 +23,11 @@ from ancestry_mmm.core.promotions import (
     promotion_events_to_transform_steps, PROMOTION_EVENT_OP,
 )
 from ancestry_mmm.core.funnel import FunnelLink, validate_funnel_links
+from ancestry_mmm.core.net_billthrough import NetBillthroughCompletenessMetadata
 from ancestry_mmm.core.pathways import (
-    PATHWAY_ROLES, MediaOutcomePathway, validate_media_outcome_pathways, pathways_drift_dataframe,
+    PATHWAY_ROLES, COMPONENT_TYPES, LAG_TYPES, EVIDENCE_STATUSES,
+    MediaOutcomePathway, validate_media_outcome_pathways, pathways_drift_dataframe,
 )
-from ancestry_mmm.core.net_billthrough import NetBillthroughOfferRule, validate_offer_rules
 from ancestry_mmm.data import validate_modeling_frame, detect_column_types, pipeline_to_json, pipeline_from_json
 import pandas as pd
 
@@ -301,7 +302,7 @@ st.caption(
 if "media_outcome_pathways" not in st.session_state:
     st.session_state["media_outcome_pathways"] = get_state("media_outcome_pathways") or []
 _pathway_default_df = pd.DataFrame(st.session_state["media_outcome_pathways"]) if st.session_state["media_outcome_pathways"] else pd.DataFrame(
-    columns=["pathway_id", "channel", "source_product", "target_outcome_id", "role", "lag_type",
+    columns=["pathway_id", "channel", "source_product", "target_outcome_id", "component_type", "role", "lag_type",
              "lag_weeks", "prior_scale", "include_in_attribution", "include_in_planning", "evidence_status"]
 )
 pathway_catalogue_df = st.data_editor(
@@ -316,12 +317,13 @@ pathway_catalogue_df = st.data_editor(
             required=True,
         ),
         "role": st.column_config.SelectboxColumn("role", options=list(PATHWAY_ROLES), required=True, default=PATHWAY_ROLES[0]),
-        "lag_type": st.column_config.TextColumn("lag_type", help="Free text, e.g. 'none', 'fixed_weeks', 'distributed'.", default="none"),
+        "component_type": st.column_config.SelectboxColumn("component_type", options=list(COMPONENT_TYPES), required=True, default="direct"),
+        "lag_type": st.column_config.SelectboxColumn("lag_type", options=list(LAG_TYPES), required=True, default="none"),
         "lag_weeks": st.column_config.NumberColumn("lag_weeks", min_value=0, help="Only meaningful if lag_type implies a delay."),
         "prior_scale": st.column_config.NumberColumn("prior_scale", min_value=0.0001, default=1.0, help="Smaller = tighter prior for a future estimation PR."),
         "include_in_attribution": st.column_config.CheckboxColumn("include_in_attribution", default=True),
         "include_in_planning": st.column_config.CheckboxColumn("include_in_planning", default=True),
-        "evidence_status": st.column_config.TextColumn("evidence_status", help="Free text, e.g. 'untested', 'supported', 'inconclusive', 'contradicted'.", default="untested"),
+        "evidence_status": st.column_config.SelectboxColumn("evidence_status", options=list(EVIDENCE_STATUSES), required=True, default="unreviewed"),
     },
     key="pathway_catalogue_editor",
     width="stretch",
@@ -346,31 +348,19 @@ if get_state("model_meta") is not None and st.session_state["media_outcome_pathw
                 st.dataframe(_pathway_drift_df, width="stretch")
 
 st.markdown("---")
-st.markdown("### Net bill-through offer rules")
-st.caption(
-    "Deterministic, analyst-configured maturity windows for `fh_net_billthrough_count` "
-    "(core.net_billthrough) - each `(market, offer_id)` pair's `maturity_days` is how long after a "
-    "cohort's signup date its eventual net bill-through outcome (did the customer stick around past "
-    "their trial/refund window) is considered determined. A cohort younger than that is excluded "
-    "from the reported series entirely, never zero-filled or guessed - see docs/net_billthrough.md."
-)
-if "net_billthrough_offer_rules" not in st.session_state:
-    st.session_state["net_billthrough_offer_rules"] = get_state("net_billthrough_offer_rules") or []
-_offer_rule_default_df = pd.DataFrame(st.session_state["net_billthrough_offer_rules"]) if st.session_state["net_billthrough_offer_rules"] else pd.DataFrame(
-    columns=["offer_id", "market", "maturity_days", "description"]
-)
-offer_rules_df = st.data_editor(
-    _offer_rule_default_df,
-    num_rows="dynamic",
-    column_config={
-        "offer_id": st.column_config.TextColumn("offer_id", required=True),
-        "market": st.column_config.SelectboxColumn("market", options=markets, required=True),
-        "maturity_days": st.column_config.NumberColumn("maturity_days", min_value=0, required=True),
-        "description": st.column_config.TextColumn("description"),
-    },
-    key="net_billthrough_offer_rules_editor",
-    width="stretch",
-)
+st.markdown("### Net bill-through completeness")
+st.caption("Family History net bill-through is supplied as an authoritative weekly count. Configure and validate its completeness at upload; the app never reconstructs it from customer or billing events.")
+_nbt_saved = get_state("net_billthrough_metadata") or {}
+_nbt_cols = st.columns(3)
+with _nbt_cols[0]:
+    nbt_data_as_of = st.text_input("NBT data as-of date", value=_nbt_saved.get("data_as_of_date", ""))
+    nbt_model_start = st.text_input("NBT model start week", value=_nbt_saved.get("model_start_week", ""))
+with _nbt_cols[1]:
+    nbt_model_end = st.text_input("NBT model end week", value=_nbt_saved.get("model_end_week", ""))
+    nbt_latest_complete = st.text_input("Latest complete NBT week", value=_nbt_saved.get("latest_complete_net_billthrough_week", ""))
+with _nbt_cols[2]:
+    nbt_source_owner = st.text_input("NBT source owner", value=_nbt_saved.get("source_owner", ""))
+    nbt_maturity_basis = st.text_input("NBT completion basis", value=_nbt_saved.get("maturity_rule_description", ""))
 
 # `segment_outcomes`/`segment_ltv` (ModelSpec migration fields) and per-segment
 # promo/control mappings are now derived from the catalogue's own segments,
@@ -594,12 +584,17 @@ if st.button("Save structure and validate", type="primary"):
         media_outcome_pathways, channels=channels, outcome_ids=[o.outcome_id for o in outcome_definitions],
     )
 
-    net_billthrough_offer_rules = []
-    for row in offer_rules_df.to_dict("records"):
-        if not (row.get("offer_id") and row.get("market")):
-            continue  # a blank row added by the editor but never filled in
-        net_billthrough_offer_rules.append(NetBillthroughOfferRule.from_dict(row))
-    errors += validate_offer_rules(net_billthrough_offer_rules)
+    nbt_is_fitted = any(
+        o.included_in_fit and o.metric_key == "fh_net_billthrough_count"
+        for o in outcome_definitions
+    )
+    nbt_values = (
+        nbt_data_as_of, nbt_model_start, nbt_model_end, nbt_latest_complete,
+        nbt_maturity_basis, nbt_source_owner,
+    )
+    if nbt_is_fitted and not all(nbt_values):
+        errors.append("All net bill-through completeness metadata fields are required before fitting NBT.")
+
 
     if errors:
         for e in errors:
@@ -613,7 +608,14 @@ if st.button("Save structure and validate", type="primary"):
         set_state("pipeline_steps", pipeline_to_json(updated_pipeline_steps))
         set_state("funnel_links", [fl.to_dict() for fl in funnel_links])
         set_state("media_outcome_pathways", [p.to_dict() for p in media_outcome_pathways])
-        set_state("net_billthrough_offer_rules", [r.to_dict() for r in net_billthrough_offer_rules])
+        if all(nbt_values):
+            set_state("net_billthrough_metadata", NetBillthroughCompletenessMetadata(
+                data_as_of_date=nbt_data_as_of, model_start_week=nbt_model_start,
+                model_end_week=nbt_model_end,
+                latest_complete_net_billthrough_week=nbt_latest_complete,
+                maturity_rule_description=nbt_maturity_basis,
+                source_owner=nbt_source_owner,
+            ).to_dict())
         clear_model_state()
         issues = validate_modeling_frame(
             df if market_col in df.columns else df.assign(**{market_col: "default"}),

@@ -6,6 +6,10 @@ from typing import List, Optional, Tuple, Dict, Any
 
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.outcomes import OutcomeDefinition, included_outcomes, resolve_outcome_definitions
+from ancestry_mmm.core.net_billthrough import (
+    NBT_METRIC_KEY, NetBillthroughCompletenessMetadata,
+    assert_supplied_net_billthrough_complete,
+)
 
 
 def prepare_data_for_modeling(
@@ -210,6 +214,7 @@ def create_fourier_features_from_calendar(
 def prepare_fh_modeling_frame(
     df: pd.DataFrame, spec: ModelSpec, outcomes: Optional[List[OutcomeDefinition]] = None,
     media_outcome_pathways: Optional[List[Any]] = None,
+    net_billthrough_metadata: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """
     Turn a joined, transformed DataFrame + ModelSpec into the arrays the
@@ -272,6 +277,27 @@ def prepare_fh_modeling_frame(
     fit_outcomes = included_outcomes(outcomes)
     if not fit_outcomes:
         raise ValueError("No outcomes are included in the fit - check included_in_fit on the outcome catalogue.")
+
+    nbt_outcomes = [o for o in fit_outcomes if o.metric_key == NBT_METRIC_KEY]
+    if nbt_outcomes:
+        if not net_billthrough_metadata:
+            raise ValueError(
+                "Model training blocked: net bill-through completeness metadata is required "
+                "when an fh_net_billthrough_count outcome is fitted."
+            )
+        metadata = (
+            net_billthrough_metadata
+            if isinstance(net_billthrough_metadata, NetBillthroughCompletenessMetadata)
+            else NetBillthroughCompletenessMetadata.from_dict(net_billthrough_metadata)
+        )
+        assert_supplied_net_billthrough_complete(
+            df, metadata,
+            configured_markets=(
+                spec.markets or sorted(df[spec.market_col].dropna().unique().tolist())
+            ),
+            configured_outcomes=nbt_outcomes, week_column=spec.date_col,
+            market_column=spec.market_col,
+        )
 
     outcome_ids = [o.outcome_id for o in fit_outcomes]
     if len(set(outcome_ids)) != len(outcome_ids):
@@ -374,4 +400,6 @@ def prepare_fh_modeling_frame(
         "trend": trend,
         "unpooled_markets": spec.unpooled_markets,
         "media_outcome_pathways": media_outcome_pathways or [],
+        "net_billthrough_metadata": metadata.to_dict() if nbt_outcomes else None,
+        "net_billthrough_validated": bool(nbt_outcomes),
     }

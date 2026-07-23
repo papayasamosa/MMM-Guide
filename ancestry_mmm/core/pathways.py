@@ -46,7 +46,7 @@ transformation existing) - nothing here hard-codes "every FH KPI is GSA" or
 
 from __future__ import annotations
 
-import uuid
+import hashlib
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -73,8 +73,15 @@ PATHWAY_ROLES = (
 
 # Suggested values for the UI - not a closed, validated vocabulary (the
 # roadmap doesn't specify one for either field, unlike `role` above).
-SUGGESTED_LAG_TYPES = ("none", "fixed_weeks", "distributed")
-SUGGESTED_EVIDENCE_STATUSES = ("untested", "supported", "inconclusive", "contradicted")
+LAG_TYPES = ("none", "fixed_weeks", "adstock_only", "delayed_adstock")
+EVIDENCE_STATUSES = (
+    "business_assumption", "experiment_supported", "model_supported",
+    "weak_evidence", "contradicted", "unreviewed",
+)
+LEGACY_EVIDENCE_STATUSES = ("untested", "supported", "inconclusive")
+COMPONENT_TYPES = ("direct", "cross_product", "mediated", "excluded")
+SUGGESTED_LAG_TYPES = LAG_TYPES
+SUGGESTED_EVIDENCE_STATUSES = EVIDENCE_STATUSES
 
 # Ancestry's documented default pathway expectations (roadmap "PR F: pathway
 # catalogue" section) - reference data for the UI's quick-start defaults,
@@ -87,8 +94,12 @@ DEFAULT_PATHWAY_EXPECTATIONS = (
 )
 
 
-def _new_pathway_id() -> str:
-    return uuid.uuid4().hex[:12]
+def pathway_natural_key(channel: str, target_outcome_id: str, component_type: str) -> str:
+    return f"{channel}\x1f{target_outcome_id}\x1f{component_type}"
+
+
+def _deterministic_pathway_id(channel: str, target_outcome_id: str, component_type: str) -> str:
+    return hashlib.sha256(pathway_natural_key(channel, target_outcome_id, component_type).encode()).hexdigest()[:12]
 
 
 @dataclass
@@ -131,17 +142,41 @@ class MediaOutcomePathway:
     role: str = PATHWAY_ROLE_PRIMARY_DIRECT
     lag_type: str = "none"
     lag_weeks: Optional[int] = None
-    prior_scale: float = 1.0
+    prior_scale: Optional[float] = 1.0
     include_in_attribution: bool = True
     include_in_planning: bool = True
     evidence_status: str = "untested"
-    pathway_id: str = field(default_factory=_new_pathway_id)
+    component_type: str = ""
+    allow_same_product_cross_product: bool = False
+    allow_cross_product_primary: bool = False
+    planning_eligibility_confirmed: bool = False
+    mediation_specification: Optional[str] = None
+    pathway_id: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.component_type:
+            self.component_type = (
+                "excluded" if self.role == PATHWAY_ROLE_EXCLUDED else
+                "cross_product" if self.role in (
+                    PATHWAY_ROLE_ACTIVE_CROSS_PRODUCT,
+                    PATHWAY_ROLE_EXPLORATORY_CROSS_PRODUCT,
+                ) else "direct"
+            )
+        if not self.pathway_id:
+            self.pathway_id = _deterministic_pathway_id(self.channel, self.target_outcome_id, self.component_type)
 
     def to_dict(self) -> dict:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, d: dict) -> "MediaOutcomePathway":
+        d = dict(d)
+        if "component_type" not in d:
+            d["component_type"] = (
+                "excluded" if d.get("role") == PATHWAY_ROLE_EXCLUDED else
+                "cross_product" if d.get("role") in (PATHWAY_ROLE_ACTIVE_CROSS_PRODUCT, PATHWAY_ROLE_EXPLORATORY_CROSS_PRODUCT) else
+                "direct"
+            )
         known = set(cls.__dataclass_fields__)
         return cls(**{k: v for k, v in d.items() if k in known})
 
@@ -151,6 +186,10 @@ def validate_media_outcome_pathways(
     *,
     channels: Optional[Sequence[str]] = None,
     outcome_ids: Optional[Sequence[str]] = None,
+    channel_products: Optional[Dict[str, str]] = None,
+    outcome_products: Optional[Dict[str, str]] = None,
+    fitted_outcome_ids: Optional[Sequence[str]] = None,
+    diagnostic_only_outcome_ids: Optional[Sequence[str]] = None,
 ) -> List[str]:
     """
     Rejects (returns non-empty error list, never raises):
@@ -194,6 +233,12 @@ def validate_media_outcome_pathways(
                 f"Pathway '{label}' has unknown source_product '{p.source_product}' "
                 f"(expected one of {', '.join(KNOWN_PRODUCTS)})."
             )
+        if channel_products is not None:
+            owner = channel_products.get(p.channel)
+            if owner not in KNOWN_PRODUCTS:
+                errors.append(f"Pathway '{label}' has unknown channel-product ownership for '{p.channel}'.")
+            elif owner != p.source_product:
+                errors.append(f"Pathway '{label}' source_product '{p.source_product}' does not match channel ownership '{owner}'.")
 
         if not p.target_outcome_id:
             errors.append(f"Pathway '{label}' has no target_outcome_id set.")
@@ -206,18 +251,54 @@ def validate_media_outcome_pathways(
             errors.append(
                 f"Pathway '{label}' has unknown role '{p.role}' (expected one of {', '.join(PATHWAY_ROLES)})."
             )
+        target_product = outcome_products.get(p.target_outcome_id) if outcome_products else None
+        is_cross = p.role in (PATHWAY_ROLE_ACTIVE_CROSS_PRODUCT, PATHWAY_ROLE_EXPLORATORY_CROSS_PRODUCT)
+        if target_product in KNOWN_PRODUCTS:
+            if is_cross and target_product == p.source_product and not p.allow_same_product_cross_product:
+                errors.append(f"Pathway '{label}' uses a cross-product role within the same product without an explicit override.")
+            if p.role == PATHWAY_ROLE_PRIMARY_DIRECT and target_product != p.source_product and not p.allow_cross_product_primary:
+                errors.append(f"Pathway '{label}' uses primary-direct across products without explicit approval.")
+        if p.role == PATHWAY_ROLE_EXPLORATORY_CROSS_PRODUCT and p.include_in_planning and not p.planning_eligibility_confirmed:
+            errors.append(f"Pathway '{label}' is exploratory with planning enabled but has no explicit confirmation.")
+        if fitted_outcome_ids is not None and p.role != PATHWAY_ROLE_EXCLUDED and p.target_outcome_id not in fitted_outcome_ids:
+            errors.append(f"Pathway '{label}' is active but its target outcome is excluded from fit.")
+        if diagnostic_only_outcome_ids is not None and p.include_in_planning and p.target_outcome_id in diagnostic_only_outcome_ids:
+            errors.append(f"Pathway '{label}' enables planning for a diagnostic-only outcome.")
 
+        if p.component_type not in COMPONENT_TYPES:
+            errors.append(f"Pathway '{label}' has unknown component_type '{p.component_type}' (expected one of {', '.join(COMPONENT_TYPES)}).")
+        compatible = {
+            "direct": {PATHWAY_ROLE_PRIMARY_DIRECT},
+            "cross_product": {PATHWAY_ROLE_ACTIVE_CROSS_PRODUCT, PATHWAY_ROLE_EXPLORATORY_CROSS_PRODUCT},
+            "mediated": {PATHWAY_ROLE_ACTIVE_CROSS_PRODUCT, PATHWAY_ROLE_EXPLORATORY_CROSS_PRODUCT},
+            "excluded": {PATHWAY_ROLE_EXCLUDED},
+        }
+        if p.component_type in compatible and p.role not in compatible[p.component_type]:
+            errors.append(f"Pathway '{label}' has incompatible role '{p.role}' for component_type '{p.component_type}'.")
+        if p.component_type == "mediated":
+            errors.append(
+                f"Pathway '{label}' is mediated; mediated components cannot enter the ordinary "
+                "cross-product equation until a fitted mediation specification exists."
+            )
+        if p.lag_type not in LAG_TYPES:
+            errors.append(f"Pathway '{label}' has unknown lag_type '{p.lag_type}' (expected one of {', '.join(LAG_TYPES)}).")
+        if p.evidence_status not in EVIDENCE_STATUSES + LEGACY_EVIDENCE_STATUSES:
+            errors.append(f"Pathway '{label}' has unknown evidence_status '{p.evidence_status}' (expected one of {', '.join(EVIDENCE_STATUSES)}).")
+        if p.lag_type in ("fixed_weeks", "delayed_adstock") and (p.lag_weeks is None or p.lag_weeks <= 0):
+            errors.append(f"Pathway '{label}' uses {p.lag_type} and needs a positive lag_weeks value.")
+        if p.lag_type in ("none", "adstock_only") and p.lag_weeks not in (None, 0):
+            errors.append(f"Pathway '{label}' uses {p.lag_type} and cannot have a positive lag_weeks value.")
         if p.lag_weeks is not None and p.lag_weeks < 0:
             errors.append(f"Pathway '{label}' has a negative lag_weeks ({p.lag_weeks}).")
 
-        if p.prior_scale <= 0:
+        if p.prior_scale is not None and p.prior_scale <= 0:
             errors.append(f"Pathway '{label}' has a non-positive prior_scale ({p.prior_scale}).")
 
-        pair = (p.channel, p.target_outcome_id)
+        pair = (p.channel, p.target_outcome_id, p.component_type)
         if pair in seen_pairs:
             errors.append(
-                f"Duplicate pathway for channel '{p.channel}' -> outcome '{p.target_outcome_id}' - "
-                "at most one pathway should describe a given channel/outcome relationship."
+                f"Duplicate pathway for channel '{p.channel}' -> outcome '{p.target_outcome_id}' "
+                f"component '{p.component_type}'."
             )
         seen_pairs.add(pair)
 
@@ -271,6 +352,12 @@ class ResolvedPathwayMasks:
     active_channels_by_outcome: Dict[str, List[str]] = field(default_factory=dict)
     exploratory_channels_by_outcome: Dict[str, List[str]] = field(default_factory=dict)
     cross_product_lag_weeks: int = 0
+    # Keys are ``outcome_index:channel_index``. Values follow the stable
+    # active-cells then exploratory-cells ordering used by both model types.
+    lag_weeks_by_cell: Dict[str, int] = field(default_factory=dict)
+    prior_scale_by_cell: Dict[str, float] = field(default_factory=dict)
+    planning_by_cell: Dict[str, bool] = field(default_factory=dict)
+    components: List[Dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -319,6 +406,53 @@ class ResolvedPathwayMasks:
         """Same contract as `active_cells`, for `exploratory_cross_product`."""
         return self._cells(self.exploratory_channels_by_outcome, outcome_ids, channels)
 
+    @staticmethod
+    def cell_key(cell: tuple) -> str:
+        return f"{cell[0]}:{cell[1]}"
+
+    def lag_for_cell(self, cell: tuple) -> int:
+        return int(self.lag_weeks_by_cell.get(self.cell_key(cell), self.cross_product_lag_weeks))
+
+    def prior_for_cell(self, cell: tuple, default: float) -> float:
+        return float(self.prior_scale_by_cell.get(self.cell_key(cell), default))
+
+    def planning_matrix(self, outcome_ids: Sequence[str], channels: Sequence[str]):
+        import numpy as np
+        result = np.zeros((len(outcome_ids), len(channels)), dtype=float)
+        for cell in self.active_cells(outcome_ids, channels) + self.exploratory_cells(outcome_ids, channels):
+            result[cell] = float(self.planning_by_cell.get(self.cell_key(cell), True))
+        primary = self.primary_matrix(outcome_ids, channels)
+        for oi, oid in enumerate(outcome_ids):
+            for ci, ch in enumerate(channels):
+                if primary[oi, ci] and self.planning_by_cell.get(self.cell_key((oi, ci)), True):
+                    result[oi, ci] = 1.0
+        return result
+
+    def component_eligible(self, outcome_id: str, channel: str, component_type: str, eligibility: str) -> bool:
+        for component in self.components:
+            if (component["outcome_id"], component["channel"], component["component_type"]) == (outcome_id, channel, component_type):
+                return bool(component[f"include_in_{eligibility}"])
+        return True
+
+    def resolved_component(self, outcome_id: str, channel: str, component_type: str) -> Optional[Dict[str, Any]]:
+        matches = [
+            component for component in self.components
+            if (component["outcome_id"], component["channel"], component["component_type"])
+            == (outcome_id, channel, component_type)
+        ]
+        if len(matches) > 1:
+            raise ValueError(f"Duplicate resolved equation component: {outcome_id}/{channel}/{component_type}")
+        return matches[0] if matches else None
+
+    def component_lag(self, outcome_id: str, channel: str, default: int = 0) -> int:
+        component = self.resolved_component(outcome_id, channel, "cross_product")
+        return int(component["lag_weeks"]) if component else int(default)
+
+    def component_prior(self, outcome_id: str, channel: str, default: float) -> float:
+        component = self.resolved_component(outcome_id, channel, "cross_product")
+        value = component.get("prior_scale") if component else None
+        return float(default if value is None else value)
+
 
 def resolve_pathway_masks(
     outcome_ids: Sequence[str],
@@ -363,9 +497,9 @@ def resolve_pathway_masks(
     explicitly) - see `cross_product_lag_weeks`'s docstring on why this is
     currently one shared value, not per-pathway.
     """
-    explicit: Dict[tuple, MediaOutcomePathway] = {
-        (p.target_outcome_id, p.channel): p for p in pathways
-    }
+    explicit: Dict[tuple, List[MediaOutcomePathway]] = {}
+    for p in pathways:
+        explicit.setdefault((p.target_outcome_id, p.channel), []).append(p)
     dna_channel_set = {channels[i] for i in dna_channel_idx if 0 <= i < len(channels)}
     direct_set = set(direct_dna_outcome_ids)
 
@@ -373,6 +507,10 @@ def resolve_pathway_masks(
     active: Dict[str, List[str]] = {}
     exploratory: Dict[str, List[str]] = {}
     cross_product_lag_weeks = dna_lag_weeks
+    lag_weeks_by_cell: Dict[str, int] = {}
+    prior_scale_by_cell: Dict[str, float] = {}
+    planning_by_cell: Dict[str, bool] = {}
+    resolved_components: List[Dict[str, Any]] = []
 
     def _add(bucket: Dict[str, List[str]], oid: str, ch: str) -> None:
         bucket.setdefault(oid, []).append(ch)
@@ -381,13 +519,25 @@ def resolve_pathway_masks(
         for ch in channels:
             key = (oid, ch)
             if key in explicit:
-                p = explicit[key]
-                if p.role == PATHWAY_ROLE_PRIMARY_DIRECT:
-                    _add(primary, oid, ch)
-                elif p.role == PATHWAY_ROLE_ACTIVE_CROSS_PRODUCT:
-                    _add(active, oid, ch)
-                elif p.role == PATHWAY_ROLE_EXPLORATORY_CROSS_PRODUCT:
-                    _add(exploratory, oid, ch)
+                for p in explicit[key]:
+                    if p.role == PATHWAY_ROLE_PRIMARY_DIRECT:
+                        _add(primary, oid, ch)
+                    elif p.role == PATHWAY_ROLE_ACTIVE_CROSS_PRODUCT and p.component_type == "cross_product":
+                        _add(active, oid, ch)
+                    elif p.role == PATHWAY_ROLE_EXPLORATORY_CROSS_PRODUCT and p.component_type == "cross_product":
+                        _add(exploratory, oid, ch)
+                    cell_key = f"{outcome_ids.index(oid)}:{channels.index(ch)}"
+                    if p.component_type in ("cross_product", "mediated"):
+                        lag_weeks_by_cell[cell_key] = int(p.lag_weeks or 0)
+                        if p.prior_scale is not None:
+                            prior_scale_by_cell[cell_key] = float(p.prior_scale)
+                        planning_by_cell[cell_key] = bool(p.include_in_planning)
+                    resolved_components.append({
+                        "outcome_id": oid, "channel": ch, "component_type": p.component_type,
+                        "role": p.role, "lag_type": p.lag_type, "lag_weeks": int(p.lag_weeks or 0),
+                        "prior_scale": p.prior_scale, "include_in_attribution": bool(p.include_in_attribution),
+                        "include_in_planning": bool(p.include_in_planning), "evidence_status": p.evidence_status,
+                    })
                 # PATHWAY_ROLE_EXCLUDED: added to no bucket - zero contribution.
                 continue
 
@@ -406,6 +556,10 @@ def resolve_pathway_masks(
         active_channels_by_outcome=active,
         exploratory_channels_by_outcome=exploratory,
         cross_product_lag_weeks=cross_product_lag_weeks,
+        lag_weeks_by_cell=lag_weeks_by_cell,
+        prior_scale_by_cell=prior_scale_by_cell,
+        planning_by_cell=planning_by_cell,
+        components=resolved_components,
     )
 
 
@@ -421,8 +575,10 @@ def resolve_pathway_masks(
 # ---------------------------------------------------------------------------
 
 _PATHWAY_FINGERPRINT_FIELDS = (
-    "channel", "source_product", "target_outcome_id", "role", "lag_type", "lag_weeks",
+    "channel", "source_product", "target_outcome_id", "component_type", "role", "lag_type", "lag_weeks",
     "prior_scale", "include_in_attribution", "include_in_planning", "evidence_status",
+    "allow_same_product_cross_product", "allow_cross_product_primary", "planning_eligibility_confirmed",
+    "mediation_specification",
 )
 
 
@@ -437,7 +593,7 @@ def pathway_catalogue_fingerprint_payload(pathways: List[MediaOutcomePathway]) -
     `core.funnel.FunnelLink`."""
     return [
         {f: getattr(p, f) for f in _PATHWAY_FINGERPRINT_FIELDS}
-        for p in sorted(pathways, key=lambda p: (p.channel, p.target_outcome_id))
+        for p in sorted(pathways, key=lambda p: (p.channel, p.target_outcome_id, p.component_type, p.role))
     ]
 
 
@@ -465,7 +621,7 @@ def pathway_catalogue_at_fit_by_id(model_meta: Optional[object]) -> Dict[str, Me
     if model_meta is None:
         return {}
     catalogue = getattr(model_meta, "pathway_catalogue_at_fit", None) or []
-    return {p.pathway_id: p for p in catalogue}
+    return {pathway_natural_key(p.channel, p.target_outcome_id, p.component_type): p for p in catalogue}
 
 
 def pathway_drift_status(
@@ -505,7 +661,7 @@ def pathways_drift_dataframe(
     if model_meta is None:
         return pd.DataFrame(columns=["pathway_id", "drift_status"])
     fit_by_id = pathway_catalogue_at_fit_by_id(model_meta)
-    current_by_id = {p.pathway_id: p for p in pathways}
+    current_by_id = {pathway_natural_key(p.channel, p.target_outcome_id, p.component_type): p for p in pathways}
     all_ids = list(dict.fromkeys(list(current_by_id) + list(fit_by_id)))
     rows = []
     for pid in all_ids:
@@ -513,7 +669,8 @@ def pathways_drift_dataframe(
         fit_time = fit_by_id.get(pid)
         status = pathway_drift_status(current, fit_time)
         row = (current or fit_time).to_dict()
-        row["pathway_id"] = pid
+        row["pathway_id"] = _deterministic_pathway_id(row["channel"], row["target_outcome_id"], row["component_type"])
+        row["natural_key"] = pid
         row["drift_status"] = status
         rows.append(row)
     return pd.DataFrame(rows)
@@ -675,3 +832,15 @@ def reconciliation_group_diagnostics(
             result["implied_ratio"] = numerator / denominator
 
     return result
+
+
+def accumulate_cross_product_eta_numpy(lagged_media_by_weeks, beta, strength, cells, lag_for_cell):
+    """Reference Model A/C algebra: accumulate every resolved component once."""
+    import numpy as np
+    media = next(iter(lagged_media_by_weeks.values()))
+    eta = np.zeros((media.shape[0], beta.shape[-2]), dtype=float)
+    for outcome_index, channel_index in cells:
+        lagged = lagged_media_by_weeks[lag_for_cell[(outcome_index, channel_index)]][:, channel_index]
+        coefficient = beta[outcome_index, channel_index] if beta.ndim == 2 else beta[:, outcome_index, channel_index]
+        eta[:, outcome_index] += lagged * coefficient * strength[outcome_index, channel_index]
+    return eta

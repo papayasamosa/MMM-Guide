@@ -138,6 +138,7 @@ class FHModelMeta:
     # channel for every outcome), which __post_init__ would then incorrectly
     # overwrite with the legacy default instead of respecting it.
     pathway_masks: Optional[ResolvedPathwayMasks] = None
+    net_billthrough_metadata: Optional[Any] = None
 
     def __post_init__(self) -> None:
         if not self.direct_dna_outcome_ids:
@@ -348,6 +349,9 @@ def build_fh_hierarchical_model(
     # may have passed plain dicts (e.g. straight from session state) rather
     # than converting them first (PR G1 - core.pathways.resolve_pathway_masks
     # is what makes this catalogue operational; see FHModelMeta's docstring).
+    if any((o.get("metric_key") if isinstance(o, dict) else getattr(o, "metric_key", None)) == "fh_net_billthrough_count" for o in (frame.get("outcomes") or [])) and not frame.get("net_billthrough_validated"):
+        raise ValueError("Model training blocked: net bill-through data has not passed completeness validation.")
+
     pathway_catalogue: List[MediaOutcomePathway] = [
         p if isinstance(p, MediaOutcomePathway) else MediaOutcomePathway.from_dict(p)
         for p in (frame.get("media_outcome_pathways") or [])
@@ -468,22 +472,28 @@ def build_fh_hierarchical_model(
         active_cells = pathway_masks.active_cells(outcome_ids, channels)
         exploratory_cells = pathway_masks.exploratory_cells(outcome_ids, channels)
 
-        if active_cells or exploratory_cells:
-            cross_product_lag_media = pm.Deterministic(
-                "cross_product_lag_media",
-                _market_grouped_lag(sat_media, market_bounds, pathway_masks.cross_product_lag_weeks),
-                dims=("obs", "channel"),
-            )
-        else:
-            cross_product_lag_media = None
+        all_cross_cells = active_cells + exploratory_cells
+        lagged_media_by_weeks = {
+            lag: _market_grouped_lag(sat_media, market_bounds, lag)
+            for lag in sorted({pathway_masks.component_lag(outcome_ids[cell[0]], channels[cell[1]], pathway_masks.cross_product_lag_weeks) for cell in all_cross_cells})
+        }
 
-        def _cross_product_eta(cells: list, var_name: str, sigma: float) -> pt.TensorVariable:
-            strength_est = pm.HalfNormal(f"{var_name}_est", sigma=sigma, shape=len(cells))
+        def _cross_product_eta(cells: list, var_name: str, role_default: float) -> pt.TensorVariable:
+            # Explicit pathway scale > role default > the validated hard
+            # defaults supplied by the caller.  A vector sigma makes the
+            # configured scale operational for each individual pathway.
+            sigmas = [pathway_masks.component_prior(outcome_ids[cell[0]], channels[cell[1]], role_default) for cell in cells]
+            strength_est = pm.HalfNormal(f"{var_name}_est", sigma=pt.constant(sigmas), shape=len(cells))
             strength_matrix = pt.zeros((n_outcomes, n_channels))
+            eta = pt.zeros((n_obs, n_outcomes))
             for idx, (oi, ci) in enumerate(cells):
                 strength_matrix = pt.set_subtensor(strength_matrix[oi, ci], strength_est[idx])
-            strength_matrix = pm.Deterministic(var_name, strength_matrix, dims=("outcome", "channel"))
-            return pm.math.dot(cross_product_lag_media, (beta * strength_matrix).T)
+                lagged = lagged_media_by_weeks[pathway_masks.component_lag(outcome_ids[oi], channels[ci], pathway_masks.cross_product_lag_weeks)]
+                cell_matrix = pt.zeros((n_outcomes, n_channels))
+                cell_matrix = pt.set_subtensor(cell_matrix[oi, ci], strength_est[idx])
+                eta = eta + pm.math.dot(lagged, (beta * cell_matrix).T)
+            pm.Deterministic(var_name, strength_matrix, dims=("outcome", "channel"))
+            return eta
 
         eta_active = (
             _cross_product_eta(active_cells, "active_cross_product_strength", prior_config.get("active_cross_product_sigma", 0.25))
@@ -493,7 +503,10 @@ def build_fh_hierarchical_model(
             _cross_product_eta(exploratory_cells, "exploratory_cross_product_strength", prior_config.get("exploratory_cross_product_sigma", 0.08))
             if exploratory_cells else pt.zeros((n_obs, n_outcomes))
         )
-        eta_channels = eta_primary + eta_active + eta_exploratory
+        eta_channels = pm.Deterministic(
+            "eta_channels", eta_primary + eta_active + eta_exploratory,
+            dims=("obs", "outcome"),
+        )
 
         # -----------------------------------------------------------------
         # Outcome-specific promotional sensitivity (non-negative: promos lift).
@@ -612,5 +625,6 @@ def build_fh_hierarchical_model(
         direct_dna_outcome_ids=direct_dna_outcome_ids,
         pathway_catalogue_at_fit=pathway_catalogue,
         pathway_masks=pathway_masks,
+        net_billthrough_metadata=frame.get("net_billthrough_metadata"),
     )
     return model, meta

@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 
 from .hierarchical_model import FHModelMeta
-from .outcomes import fh_gsa_outcome_ids, fh_signup_outcome_ids, dna_kit_sale_outcome_ids
+from .outcomes import fh_gsa_outcome_ids, fh_signup_outcome_ids, fh_net_billthrough_outcome_ids, dna_kit_sale_outcome_ids
 from .predict import _cross_product_strength_matrix, _pathway_weight, extract_pathway_strength, lag_frame
 from .transformations import geometric_adstock_matrix, hill_function
 
@@ -175,12 +175,13 @@ def predict_mu_market_specific(
     eta_primary = np.einsum("oc,osc->os", sat_media, beta_by_row * primary_mask[None, :, :])
 
     cross_cells = meta.pathway_masks.active_cells(outcome_ids, meta.channels) + meta.pathway_masks.exploratory_cells(outcome_ids, meta.channels)
+    eta_cross = np.zeros((n_obs, n_out))
     if cross_cells:
-        cross_product_lag_media = lag_frame(sat_media, frame["market_bounds"], meta.pathway_masks.cross_product_lag_weeks)
         strength_matrix = _cross_product_strength_matrix(meta, params)
-        eta_cross = np.einsum("oc,osc->os", cross_product_lag_media, beta_by_row * strength_matrix[None, :, :])
-    else:
-        eta_cross = np.zeros((n_obs, n_out))
+        lagged = {lag: lag_frame(sat_media, frame["market_bounds"], lag)
+                  for lag in {meta.pathway_masks.component_lag(outcome_ids[cell[0]], meta.channels[cell[1]], meta.pathway_masks.cross_product_lag_weeks) for cell in cross_cells}}
+        for oi, ci in cross_cells:
+            eta_cross[:, oi] += lagged[meta.pathway_masks.component_lag(outcome_ids[oi], meta.channels[ci], meta.pathway_masks.cross_product_lag_weeks)][:, ci] * beta_by_row[:, oi, ci] * strength_matrix[oi, ci]
 
     eta_channels = eta_primary + eta_cross
 
@@ -224,6 +225,7 @@ def steady_state_outcome_response_market_specific(
     meta: FHModelMeta,
     params: FHMarketSpecificPosteriorParams,
     reference_context: Optional[Dict] = None,
+    *, planning_only: bool = False,
 ) -> Dict[str, float]:
     """Market-specific-model equivalent of core.predict.steady_state_outcome_response -
     same steady-state approximation, using `market`'s own K and beta."""
@@ -248,7 +250,7 @@ def steady_state_outcome_response_market_specific(
         for c in meta.channels:
             # Steady-state collapse (primary and cross-product media converge
             # at constant spend) - see core.predict.steady_state_outcome_response.
-            val += params.beta[market][s][c] * sat[c] * _pathway_weight(meta, params, s, c)
+            val += params.beta[market][s][c] * sat[c] * _pathway_weight(meta, params, s, c, planning_only=planning_only)
 
         for name, coef in params.control_coef.items():
             val += coef * reference_context.get("controls", {}).get(name, 0.0)
@@ -313,6 +315,7 @@ def generate_market_channel_curve(
     gsa_ids = set(fh_gsa_outcome_ids(meta))
     signup_ids = set(fh_signup_outcome_ids(meta))
     dna_ids = set(dna_kit_sale_outcome_ids(meta))
+    nbt_ids = set(fh_net_billthrough_outcome_ids(meta))
     rows = []
     for spend in spend_range:
         sat = float(hill_function(np.array([float(spend)]), K, S)[0])
@@ -321,12 +324,15 @@ def generate_market_channel_curve(
         dna_total = 0.0
         fh_gsa_total = 0.0
         fh_signup_total = 0.0
+        fh_net_billthrough_total = 0.0
         for oid in meta.outcome_ids:
             # Steady-state collapse - see steady_state_outcome_response_market_specific.
             beta_val = params.beta[market][oid][channel] * _pathway_weight(meta, params, oid, channel)
             value = beta_val * sat
             row[f"{oid}_response"] = value
             overall += value
+            if oid in nbt_ids:
+                fh_net_billthrough_total += value
             if oid in dna_ids:
                 dna_total += value
             elif oid in gsa_ids:
@@ -337,6 +343,7 @@ def generate_market_channel_curve(
         row["dna_response"] = dna_total
         row["fh_response"] = fh_gsa_total
         row["fh_signup_response"] = fh_signup_total
+        row["fh_net_billthrough_response"] = fh_net_billthrough_total
         rows.append(row)
 
     return pd.DataFrame(rows)
