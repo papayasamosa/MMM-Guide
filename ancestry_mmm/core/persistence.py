@@ -519,6 +519,16 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
             "Legacy bundle has no manifest; checkpoint was inferred and will "
             "be migrated on the next export."
         )
+    pathway_masks = (imported.get("model_meta") or {}).get("pathway_masks") or {}
+    if pathway_masks and (
+        pathway_masks.get("legacy_governance_mode")
+        or not pathway_masks.get("components")
+    ):
+        warnings.append(
+            "Legacy mask-only pathway metadata will be migrated to explicit "
+            "components. Analyst attribution is preserved, but headline reporting "
+            "and planning remain blocked until governance review."
+        )
     return {
         "resumable": not missing,
         "checkpoint": declared,

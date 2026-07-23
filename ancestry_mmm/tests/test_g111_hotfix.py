@@ -304,7 +304,9 @@ def test_actual_pymc_cross_product_deterministics_match_manual_mixed_lags():
                 lagged = lag_frame(
                     saturated,
                     frame["market_bounds"],
-                    meta.pathway_masks.lag_for_cell((oi, ci)),
+                    meta.pathway_masks.lag_for_component(
+                        meta.outcome_ids[oi], meta.channels[ci]
+                    ),
                 )[:, ci]
                 coefficient = (
                     beta[frame["market_idx"], oi, ci]
@@ -313,6 +315,30 @@ def test_actual_pymc_cross_product_deterministics_match_manual_mixed_lags():
                 )
                 expected[:, oi] += lagged * coefficient * strength[oi, ci]
             np.testing.assert_allclose(actual, expected, rtol=1e-10, atol=1e-10)
+
+        primary_mask = meta.pathway_masks.primary_matrix(
+            meta.outcome_ids, meta.channels
+        )
+        expected_primary = (
+            np.einsum(
+                "oc,osc->os",
+                saturated,
+                beta[frame["market_idx"]] * primary_mask[None, :, :],
+            )
+            if market_specific
+            else saturated @ (beta * primary_mask).T
+        )
+        np.testing.assert_allclose(
+            draw("eta_primary"), expected_primary, rtol=1e-10, atol=1e-10
+        )
+        np.testing.assert_allclose(
+            draw("eta_channels"),
+            expected_primary
+            + draw("eta_active_cross_product")
+            + draw("eta_exploratory_cross_product"),
+            rtol=1e-10,
+            atol=1e-10,
+        )
 
         # TV -> new contains simultaneous direct and delayed components.
         assert (
@@ -346,9 +372,13 @@ def test_actual_pymc_cross_product_deterministics_match_manual_mixed_lags():
 
 
 def test_shared_and_market_specific_curves_emit_nbt_response_and_cpa():
-    from ancestry_mmm.core.market_specific_predict import generate_market_channel_curve
+    from ancestry_mmm.core.hierarchical_model import FHModelMeta
+    from ancestry_mmm.core.market_specific_predict import (
+        FHMarketSpecificPosteriorParams,
+        generate_market_channel_curve,
+    )
     from ancestry_mmm.core.media_units import compute_cpa_by_product
-    from ancestry_mmm.core.predict import generate_channel_curve
+    from ancestry_mmm.core.predict import FHPosteriorParams, generate_channel_curve
 
     masks = resolve_pathway_masks(
         ["nbt"],
@@ -359,27 +389,45 @@ def test_shared_and_market_specific_curves_emit_nbt_response_and_cpa():
         direct_dna_outcome_ids=[],
         dna_lag_weeks=0,
     )
-    meta = SimpleNamespace(
+    meta = FHModelMeta(
+        markets=["UK"],
         outcome_ids=["nbt"],
         channels=["TV"],
+        dna_channels=[],
+        dna_channel_idx=[],
+        non_dna_idx=[0],
+        dna_outcome_id="nbt",
+        dna_lag_weeks=0,
+        unpooled_markets=[],
+        control_names=[],
         pathway_masks=masks,
         outcome_id_to_metric_key={"nbt": "fh_net_billthrough_count"},
         outcome_id_to_eligibility={"nbt": {"include_in_default_reporting": True}},
         outcome_id_to_product={"nbt": "Family History"},
         outcome_id_to_metric={"nbt": "Net bill-through count"},
-        kit_only_outcome_ids=[],
     )
-    shared_params = SimpleNamespace(
+    common = {
+        "decay_rate": {"TV": 0.0},
+        "hill_S": {"TV": 1.0},
+        "pathway_strength": {"nbt": {"TV": 0.0}},
+        "promo_coef": {"nbt": 0.0},
+        "market_offset": {"UK": {"nbt": 0.0}},
+        "intercept": {"nbt": 0.0},
+        "trend_coef": {"nbt": 0.0},
+        "gamma_fourier": {"nbt": np.zeros(2)},
+        "alpha": {"nbt": 5.0},
+        "control_coef": {},
+        "outcome_control_coef": {},
+    }
+    shared_params = FHPosteriorParams(
         hill_K={"TV": 10.0},
-        hill_S={"TV": 1.0},
         beta={"nbt": {"TV": 2.0}},
-        pathway_strength={"nbt": {"TV": 0.0}},
+        **common,
     )
-    market_params = SimpleNamespace(
+    market_params = FHMarketSpecificPosteriorParams(
         hill_K={"UK": {"TV": 10.0}},
-        hill_S={"TV": 1.0},
         beta={"UK": {"nbt": {"TV": 2.0}}},
-        pathway_strength={"nbt": {"TV": 0.0}},
+        **common,
     )
     shared = generate_channel_curve(
         "TV", meta, shared_params, spend_range=np.array([0.0, 10.0, 20.0])

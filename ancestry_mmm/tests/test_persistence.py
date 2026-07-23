@@ -1,5 +1,5 @@
 import zipfile
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
 import arviz as az
 import numpy as np
@@ -21,6 +21,7 @@ from ancestry_mmm.core.market_config import (
 )
 from ancestry_mmm.core.optimization import SpendConstraint, evaluate_scenario
 from ancestry_mmm.core.outcomes import DNA, FAMILY_HISTORY, OutcomeDefinition
+from ancestry_mmm.core.pathways import ResolvedPathwayMasks
 from ancestry_mmm.core.persistence import (
     UnsafeZipEntryError,
     _is_safe_zip_member,
@@ -347,6 +348,23 @@ def test_resumability_audit_covers_prefit_and_legacy_bundle_migration(
     legacy_audit = audit_project_resumability(legacy)
     assert legacy_audit["resumable"]
     assert legacy_audit["warnings"]
+
+
+def test_resumability_audit_reports_legacy_mask_only_governance():
+    audit = audit_project_resumability(
+        {
+            "raw_sources": {"source": pd.DataFrame({"x": [1]})},
+            "model_meta": {
+                "pathway_masks": {
+                    "primary_channels_by_outcome": {"fh": ["TV"]},
+                    "active_channels_by_outcome": {},
+                    "exploratory_channels_by_outcome": {},
+                }
+            },
+        }
+    )
+    assert any("mask-only" in warning for warning in audit["warnings"])
+    assert any("planning remain blocked" in warning for warning in audit["warnings"])
 
 
 def test_export_then_import_reproduces_market_spec_config(tmp_path, sample_project):
@@ -781,9 +799,9 @@ def test_reconstruct_model_state_rebuilds_frame_and_posterior_without_a_refit(
 
 
 @pytest.mark.parametrize(
-    "checkpoint", ["fitted", "approved", "curves", "scenarios"]
+    "checkpoint", ["pre_fit", "fitted", "approved", "curves", "scenarios"]
 )
-def test_end_to_end_resume_at_each_post_fit_checkpoint(
+def test_end_to_end_resume_at_each_checkpoint(
     tmp_path, consistent_project, checkpoint
 ):
     project = dict(consistent_project)
@@ -791,6 +809,33 @@ def test_end_to_end_resume_at_each_post_fit_checkpoint(
         "joined": consistent_project["transformed_data"].copy()
     }
     project["workflow_state"] = {"checkpoint": checkpoint, "current_page": 9}
+    project["media_outcome_pathways"] = [
+        {
+            "channel": "TV_Brand",
+            "source_product": "Family History",
+            "target_outcome_id": "New",
+            "component_type": "direct",
+            "role": "primary_direct",
+            "include_in_headline": True,
+            "headline_approval_status": "approved",
+            "headline_approval_note": "Reviewed for the resume test.",
+            "approved_by": "Jane Analyst",
+            "approved_at": "2026-07-23T10:00:00Z",
+        }
+    ]
+    project["net_billthrough_metadata"] = {
+        "data_as_of_date": "2026-07-23",
+        "model_start_week": "2024-01-07",
+        "model_end_week": "2024-02-25",
+        "latest_complete_net_billthrough_week": "2024-02-25",
+        "maturity_rule_description": "Upstream authoritative finalisation.",
+        "source_owner": "Finance Analytics",
+    }
+    if checkpoint == "pre_fit":
+        project["trace"] = None
+        project["model_meta"] = None
+        project["model_approval"] = None
+        project["model_run_id"] = None
     if checkpoint == "fitted":
         project["model_approval"] = None
     if checkpoint == "curves":
@@ -814,13 +859,40 @@ def test_end_to_end_resume_at_each_post_fit_checkpoint(
     audit = audit_project_resumability(imported)
     assert audit["resumable"], audit
     assert audit["checkpoint"] == checkpoint
+    pd.testing.assert_frame_equal(
+        imported["transformed_data"], project["transformed_data"]
+    )
+    assert imported["model_spec"] == project["model_spec"]
+    assert imported["media_outcome_pathways"] == project["media_outcome_pathways"]
+    assert imported["net_billthrough_metadata"] == project["net_billthrough_metadata"]
+    assert imported["workflow_state"] == project["workflow_state"]
 
     reconstructed = reconstruct_model_state(imported)
     assert reconstructed["frame"] is not None
+    if checkpoint == "pre_fit":
+        assert reconstructed["posterior_params"] is None
+        return
+
     assert reconstructed["posterior_params"] is not None
-    if checkpoint != "fitted":
+    expected_params = extract_posterior_params(
+        project["trace"], project["model_meta"]
+    )
+    assert fingerprint_posterior(reconstructed["posterior_params"]) == (
+        fingerprint_posterior(expected_params)
+    )
+    if checkpoint not in {"fitted", "pre_fit"}:
         verified, message = verify_imported_approval(imported, reconstructed)
         assert verified is not None, message
+    if checkpoint == "curves":
+        assert imported["curve_bank_files"] == {
+            "curve.json": '{"channel": "TV_Brand"}'
+        }
+    if checkpoint == "scenarios":
+        assert imported["scenarios"][0]["name"] == "resume-plan"
+        pd.testing.assert_frame_equal(
+            imported["scenarios"][0]["predicted"],
+            project["scenarios"][0]["predicted"],
+        )
 
 
 def test_reconstruct_model_state_handles_missing_inputs_without_raising():
@@ -1081,6 +1153,41 @@ class TestLegacyBundleMigratesSafely:
         reconstructed = reconstruct_model_state(imported)
         approval, message = verify_imported_approval(imported, reconstructed)
         assert approval is not None, message
+
+    def test_mask_only_governance_migration_survives_repeated_bundle_round_trips(
+        self, tmp_path, consistent_project
+    ):
+        legacy_masks = ResolvedPathwayMasks.from_dict(
+            {
+                "primary_channels_by_outcome": {"New": ["TV_Brand"]},
+                "active_channels_by_outcome": {},
+                "exploratory_channels_by_outcome": {},
+                "cross_product_lag_weeks": 4,
+            }
+        )
+        project = dict(consistent_project)
+        project["model_meta"] = replace(
+            consistent_project["model_meta"], pathway_masks=legacy_masks
+        )
+
+        first = import_project(
+            export_project(tmp_path / "legacy-first.zip", **project)
+        )
+        first_state = reconstruct_model_state(first)
+        first_masks = first_state["model_meta"].pathway_masks
+        assert first_masks.legacy_governance_mode
+        assert first_masks.migration_report
+        assert any(
+            "planning remain blocked" in warning
+            for warning in audit_project_resumability(first)["warnings"]
+        )
+
+        project["model_meta"] = first_state["model_meta"]
+        second = import_project(
+            export_project(tmp_path / "legacy-second.zip", **project)
+        )
+        second_masks = reconstruct_model_state(second)["model_meta"].pathway_masks
+        assert second_masks.to_dict() == first_masks.to_dict()
 
 
 class TestVerifyImportedApproval:

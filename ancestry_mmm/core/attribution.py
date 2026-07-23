@@ -118,7 +118,12 @@ def _channel_log_terms(
     if cross_cells:
         cross_product_lag_media = {
             lag: lag_frame(sat_media, frame["market_bounds"], lag)
-            for lag in {meta.pathway_masks.lag_for_cell(cell) for cell in cross_cells}
+            for lag in {
+                meta.pathway_masks.lag_for_component(
+                    outcome_ids[cell[0]], meta.channels[cell[1]]
+                )
+                for cell in cross_cells
+            }
         }
         strength_matrix = _cross_product_strength_matrix(meta, params)
     else:
@@ -147,7 +152,7 @@ def _channel_log_terms(
                     + b
                     * strength_matrix[si, ci]
                     * cross_product_lag_media[
-                        meta.pathway_masks.lag_for_cell((si, ci))
+                        meta.pathway_masks.lag_for_component(oid, ch)
                     ][:, ci]
                 )
             term[:, si] = value

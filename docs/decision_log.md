@@ -1689,3 +1689,38 @@ planning/scenario reconciliation, NBT validation ordering and defensive
 model-builder guards, dynamic UI state, and checkpoint restoration are
 covered by executable tests. G2 curve dashboards, dynamic planning, and
 long-horizon efficiency reporting remain out of scope.
+
+## G1.1.5 -- final calculation and migration release gate
+
+**Decision:** Pathway lag and prior semantics are keyed only by
+`(outcome_id, channel, component_type)`. Model A, Model C, NumPy replay, and
+both attribution paths use the ID-keyed API. Index-based methods are retained
+only as compatibility wrappers that require the exact model outcome and
+channel coordinates, eliminating the former first-seen component-order
+dependency.
+
+Mask-only pathway metadata is now an explicit legacy-governance migration,
+not an all-visible compatibility mode. Deterministic direct and
+cross-product components are reconstructed where the masks contain enough
+information; analyst attribution remains available, while official headline
+and planning output raises a governance error until the catalogue is
+reviewed and re-resolved. Migration limitations and required actions are
+persisted in a migration report and surfaced by resumability auditing.
+
+Both PyMC models now expose `eta_primary` and `eta_channels` deterministics in
+addition to active and exploratory cross-product terms. The complex mixed-lag
+graph test reconciles each term manually, their total, full NumPy replay, and
+the model's `mu`. Standard shared and market-specific curve tests use real
+model metadata and posterior-parameter objects to verify NBT response plus
+average and marginal NBT CPA.
+
+Bundle restoration tests cover pre-fit, fitted, approved, curve, and scenario
+checkpoints through the public export/import APIs, including data,
+configuration, governance metadata, NBT metadata, posterior fingerprints,
+curve files, scenario predictions, workflow stage, repeated legacy
+migration, and stale-approval planning rejection.
+
+**Scope:** This is the final G1 release gate. The G2 curve table/dashboard,
+posterior curve uncertainty, response horizons, year-on-year reporting,
+dynamic planner, production mediation, brand health, and DNA composition
+remain separate work.

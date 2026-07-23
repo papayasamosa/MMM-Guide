@@ -521,6 +521,9 @@ class _ReadOnlyList(list):
         memo[id(self)] = copied
         return copied
 
+    def __reduce__(self):
+        return type(self), (list(self),)
+
 
 class _ReadOnlyDict(dict):
     """JSON-compatible dict that rejects mutation after construction."""
@@ -548,6 +551,9 @@ class _ReadOnlyDict(dict):
         )
         memo[id(self)] = copied
         return copied
+
+    def __reduce__(self):
+        return type(self), (dict(self),)
 
 
 @dataclass(frozen=True)
@@ -593,6 +599,10 @@ class ResolvedPathwayComponent:
         return cls(**{key: item for key, item in value.items() if key in known})
 
 
+class LegacyPathwayGovernanceError(ValueError):
+    """Official output was requested from migrated pre-governance metadata."""
+
+
 @dataclass
 class ResolvedPathwayMasks:
     """The result of resolving a project's `MediaOutcomePathway` catalogue
@@ -625,6 +635,8 @@ class ResolvedPathwayMasks:
     lag_weeks_by_cell: Dict[str, int] = field(default_factory=dict)
     prior_scale_by_cell: Dict[str, float] = field(default_factory=dict)
     planning_by_cell: Dict[str, bool] = field(default_factory=dict)
+    legacy_governance_mode: bool = False
+    migration_report: List[str] = field(default_factory=list)
 
     _IMMUTABLE_FIELDS = {
         "primary_channels_by_outcome",
@@ -635,6 +647,8 @@ class ResolvedPathwayMasks:
         "lag_weeks_by_cell",
         "prior_scale_by_cell",
         "planning_by_cell",
+        "legacy_governance_mode",
+        "migration_report",
     }
 
     def __setattr__(self, name, value) -> None:
@@ -649,11 +663,112 @@ class ResolvedPathwayMasks:
         object.__setattr__(self, name, value)
 
     def __post_init__(self) -> None:
+        if not self.components and any(
+            (
+                self.primary_channels_by_outcome,
+                self.active_channels_by_outcome,
+                self.exploratory_channels_by_outcome,
+            )
+        ):
+            self._migrate_mask_only_governance()
         if self.components:
             self._refresh_compatibility_caches()
         else:
             self._freeze_current_compatibility_views()
+        object.__setattr__(
+            self, "migration_report", _ReadOnlyList(self.migration_report)
+        )
         object.__setattr__(self, "_compatibility_views_frozen", True)
+
+    def _migrate_mask_only_governance(self) -> None:
+        """Materialise legacy masks as components without granting official use."""
+        mask_groups = (
+            (self.primary_channels_by_outcome, "direct", PATHWAY_ROLE_PRIMARY_DIRECT),
+            (
+                self.active_channels_by_outcome,
+                "cross_product",
+                PATHWAY_ROLE_ACTIVE_CROSS_PRODUCT,
+            ),
+            (
+                self.exploratory_channels_by_outcome,
+                "cross_product",
+                PATHWAY_ROLE_EXPLORATORY_CROSS_PRODUCT,
+            ),
+        )
+        outcomes = list(
+            dict.fromkeys(
+                outcome_id
+                for mask, _, _ in mask_groups
+                for outcome_id in mask
+            )
+        )
+        channels = list(
+            dict.fromkeys(
+                channel
+                for outcome_id in outcomes
+                for mask, _, _ in mask_groups
+                for channel in mask.get(outcome_id, [])
+            )
+        )
+        outcome_pos = {value: index for index, value in enumerate(outcomes)}
+        channel_pos = {value: index for index, value in enumerate(channels)}
+        components = []
+        seen = set()
+        for mask, component_type, role in mask_groups:
+            for outcome_id in outcomes:
+                for channel in mask.get(outcome_id, []):
+                    natural_key = (outcome_id, channel, component_type)
+                    if natural_key in seen:
+                        continue
+                    seen.add(natural_key)
+                    cell_key = self.cell_key(
+                        (outcome_pos[outcome_id], channel_pos[channel])
+                    )
+                    components.append(
+                        ResolvedPathwayComponent(
+                            outcome_id=outcome_id,
+                            channel=channel,
+                            component_type=component_type,
+                            role=role,
+                            lag_weeks=(
+                                int(
+                                    self.lag_weeks_by_cell.get(
+                                        cell_key, self.cross_product_lag_weeks
+                                    )
+                                )
+                                if component_type == "cross_product"
+                                else 0
+                            ),
+                            prior_scale=(
+                                self.prior_scale_by_cell.get(cell_key)
+                                if component_type == "cross_product"
+                                else None
+                            ),
+                            include_in_attribution=True,
+                            include_in_planning=False,
+                            include_in_headline=False,
+                            headline_approval_status="not_reviewed",
+                            headline_approval_note=(
+                                "Migrated from mask-only pathway metadata; "
+                                "governance review required."
+                            ),
+                            evidence_status="unreviewed",
+                            included_in_fit=True,
+                        )
+                    )
+        object.__setattr__(self, "components", components)
+        object.__setattr__(self, "legacy_governance_mode", True)
+        object.__setattr__(
+            self,
+            "migration_report",
+            [
+                "Mask-only pathway metadata was migrated to explicit components.",
+                "Analyst attribution was preserved.",
+                "Headline reporting and planning are blocked until the pathway "
+                "catalogue is reviewed and re-resolved.",
+                "Excluded or mediated relationships cannot be inferred from legacy masks.",
+            ],
+        )
 
     @staticmethod
     def _readonly_channel_map(value: Dict[str, List[str]]) -> _ReadOnlyDict:
@@ -687,12 +802,15 @@ class ResolvedPathwayMasks:
         object.__setattr__(
             self, "planning_by_cell", _ReadOnlyDict(self.planning_by_cell)
         )
+        object.__setattr__(
+            self, "migration_report", _ReadOnlyList(self.migration_report)
+        )
 
     def _refresh_compatibility_caches(self) -> None:
         """Rebuild every legacy mask/cache from authoritative components."""
-        primary: Dict[str, List[str]] = {}
-        active: Dict[str, List[str]] = {}
-        exploratory: Dict[str, List[str]] = {}
+        primary_sets: Dict[str, set] = {}
+        active_sets: Dict[str, set] = {}
+        exploratory_sets: Dict[str, set] = {}
         cross_components = [
             item
             for item in self.components
@@ -702,11 +820,23 @@ class ResolvedPathwayMasks:
             if not item.included_in_fit:
                 continue
             if item.role == PATHWAY_ROLE_PRIMARY_DIRECT:
-                primary.setdefault(item.outcome_id, []).append(item.channel)
+                primary_sets.setdefault(item.outcome_id, set()).add(item.channel)
             elif item.role == PATHWAY_ROLE_ACTIVE_CROSS_PRODUCT:
-                active.setdefault(item.outcome_id, []).append(item.channel)
+                active_sets.setdefault(item.outcome_id, set()).add(item.channel)
             elif item.role == PATHWAY_ROLE_EXPLORATORY_CROSS_PRODUCT:
-                exploratory.setdefault(item.outcome_id, []).append(item.channel)
+                exploratory_sets.setdefault(item.outcome_id, set()).add(item.channel)
+        primary = {
+            outcome_id: sorted(primary_sets[outcome_id])
+            for outcome_id in sorted(primary_sets)
+        }
+        active = {
+            outcome_id: sorted(active_sets[outcome_id])
+            for outcome_id in sorted(active_sets)
+        }
+        exploratory = {
+            outcome_id: sorted(exploratory_sets[outcome_id])
+            for outcome_id in sorted(exploratory_sets)
+        }
         object.__setattr__(
             self,
             "primary_channels_by_outcome",
@@ -723,11 +853,11 @@ class ResolvedPathwayMasks:
             self._readonly_channel_map(exploratory),
         )
         object.__setattr__(self, "components", _ReadOnlyList(self.components))
-        # Index-keyed caches require the stable outcome/channel order encoded
-        # by the compatibility masks. Preserve first-seen component order,
-        # which is resolve_pathway_masks' outcome-then-channel order.
-        outcomes = list(dict.fromkeys(item.outcome_id for item in self.components))
-        channels = list(dict.fromkeys(item.channel for item in self.components))
+        # These index-keyed fields are persistence compatibility caches only.
+        # Canonical sorted coordinates keep them deterministic even if a
+        # migration or external reader reorders the component collection.
+        outcomes = sorted({item.outcome_id for item in self.components})
+        channels = sorted({item.channel for item in self.components})
         outcome_pos = {value: index for index, value in enumerate(outcomes)}
         channel_pos = {value: index for index, value in enumerate(channels)}
         lag_by_cell: Dict[str, int] = {}
@@ -768,6 +898,53 @@ class ResolvedPathwayMasks:
             "lag_weeks_by_cell": dict(self.lag_weeks_by_cell),
             "prior_scale_by_cell": dict(self.prior_scale_by_cell),
             "planning_by_cell": dict(self.planning_by_cell),
+            "legacy_governance_mode": self.legacy_governance_mode,
+            "migration_report": list(self.migration_report),
+        }
+
+    @classmethod
+    def _pre_g115_component_order_caches(
+        cls, components: Sequence[ResolvedPathwayComponent]
+    ) -> Dict[str, dict]:
+        """Reproduce G1.1.3/4 caches solely to recognise and migrate them."""
+        primary: Dict[str, List[str]] = {}
+        active: Dict[str, List[str]] = {}
+        exploratory: Dict[str, List[str]] = {}
+        for item in components:
+            if not item.included_in_fit:
+                continue
+            if item.role == PATHWAY_ROLE_PRIMARY_DIRECT:
+                primary.setdefault(item.outcome_id, []).append(item.channel)
+            elif item.role == PATHWAY_ROLE_ACTIVE_CROSS_PRODUCT:
+                active.setdefault(item.outcome_id, []).append(item.channel)
+            elif item.role == PATHWAY_ROLE_EXPLORATORY_CROSS_PRODUCT:
+                exploratory.setdefault(item.outcome_id, []).append(item.channel)
+        outcomes = list(dict.fromkeys(item.outcome_id for item in components))
+        channels = list(dict.fromkeys(item.channel for item in components))
+        outcome_pos = {value: index for index, value in enumerate(outcomes)}
+        channel_pos = {value: index for index, value in enumerate(channels)}
+        lag_by_cell = {}
+        prior_by_cell = {}
+        planning_by_cell = {}
+        for item in components:
+            if not (
+                item.included_in_fit and item.component_type == "cross_product"
+            ):
+                continue
+            key = cls.cell_key(
+                (outcome_pos[item.outcome_id], channel_pos[item.channel])
+            )
+            lag_by_cell[key] = int(item.lag_weeks)
+            if item.prior_scale is not None:
+                prior_by_cell[key] = float(item.prior_scale)
+            planning_by_cell[key] = bool(item.include_in_planning)
+        return {
+            "primary_channels_by_outcome": primary,
+            "active_channels_by_outcome": active,
+            "exploratory_channels_by_outcome": exploratory,
+            "lag_weeks_by_cell": lag_by_cell,
+            "prior_scale_by_cell": prior_by_cell,
+            "planning_by_cell": planning_by_cell,
         }
 
     @classmethod
@@ -794,13 +971,15 @@ class ResolvedPathwayMasks:
             )
             if key in d
         }
+        had_authoritative_components = bool(values.get("components"))
         result = cls(**values)
-        if result.components:
+        if had_authoritative_components:
             canonical = result.to_dict()
+            pre_g115 = cls._pre_g115_component_order_caches(values["components"])
             mismatches = [
                 key
                 for key, supplied in supplied_caches.items()
-                if supplied != canonical.get(key)
+                if supplied != canonical.get(key) and supplied != pre_g115.get(key)
             ]
             if mismatches:
                 raise ValueError(
@@ -829,11 +1008,15 @@ class ResolvedPathwayMasks:
         """Eligibility for the fitted, attribution, headline, or planning view."""
         if purpose not in {"fit", "attribution", "headline", "planning"}:
             raise ValueError(f"Unknown component eligibility purpose '{purpose}'.")
+        if self.legacy_governance_mode and purpose in {"headline", "planning"}:
+            raise LegacyPathwayGovernanceError(
+                "This project uses migrated mask-only pathway metadata. "
+                f"Official {purpose} output is blocked until an analyst reviews "
+                "and re-saves the explicit pathway catalogue after governance review."
+            )
         item = self.component(outcome_id, channel, component_type)
         if item is None:
-            # Old bundles have masks but no component collection. Preserve
-            # their historical all-visible behaviour.
-            return not self.components
+            return False
         if purpose == "fit":
             return item.included_in_fit
         if purpose == "attribution":
@@ -922,46 +1105,89 @@ class ResolvedPathwayMasks:
             return self._cells(legacy, outcome_ids, channels)
         outcome_pos = {value: index for index, value in enumerate(outcome_ids)}
         channel_pos = {value: index for index, value in enumerate(channels)}
-        return [
-            (outcome_pos[item.outcome_id], channel_pos[item.channel])
+        eligible = {
+            (item.outcome_id, item.channel)
             for item in self.components
             if item.included_in_fit
             and item.component_type == "cross_product"
             and item.role == role
-            and item.outcome_id in outcome_pos
-            and item.channel in channel_pos
+        }
+        return [
+            (outcome_pos[outcome_id], channel_pos[channel])
+            for outcome_id in outcome_ids
+            for channel in channels
+            if (outcome_id, channel) in eligible
         ]
 
     @staticmethod
     def cell_key(cell: tuple) -> str:
         return f"{cell[0]}:{cell[1]}"
 
-    def lag_for_cell(self, cell: tuple) -> int:
+    def lag_for_component(
+        self,
+        outcome_id: str,
+        channel: str,
+        component_type: str = "cross_product",
+    ) -> int:
+        """Return a component lag by stable model IDs, never list position."""
+        item = self.component(outcome_id, channel, component_type)
+        if item is not None:
+            return int(item.lag_weeks)
+        return int(self.cross_product_lag_weeks)
+
+    def prior_for_component(
+        self,
+        outcome_id: str,
+        channel: str,
+        component_type: str = "cross_product",
+        *,
+        default: float,
+    ) -> float:
+        """Return a component prior scale by stable model IDs."""
+        item = self.component(outcome_id, channel, component_type)
+        if item is not None and item.prior_scale is not None:
+            return float(item.prior_scale)
+        return float(default)
+
+    def lag_for_cell(
+        self,
+        cell: tuple,
+        outcome_ids: Sequence[str],
+        channels: Sequence[str],
+    ) -> int:
+        """Compatibility wrapper using the caller's explicit model coordinates."""
+        oi, ci = cell
+        if not (0 <= oi < len(outcome_ids) and 0 <= ci < len(channels)):
+            raise IndexError(
+                f"Pathway cell {cell} is outside model coordinates "
+                f"({len(outcome_ids)} outcomes, {len(channels)} channels)."
+            )
         if self.components:
-            outcomes = list(dict.fromkeys(item.outcome_id for item in self.components))
-            channels = list(dict.fromkeys(item.channel for item in self.components))
-            if cell[0] < len(outcomes) and cell[1] < len(channels):
-                item = self.component(
-                    outcomes[cell[0]], channels[cell[1]], "cross_product"
-                )
-                if item is not None:
-                    return int(item.lag_weeks)
+            return self.lag_for_component(outcome_ids[oi], channels[ci])
         return int(
             self.lag_weeks_by_cell.get(
                 self.cell_key(cell), self.cross_product_lag_weeks
             )
         )
 
-    def prior_for_cell(self, cell: tuple, default: float) -> float:
+    def prior_for_cell(
+        self,
+        cell: tuple,
+        default: float,
+        outcome_ids: Sequence[str],
+        channels: Sequence[str],
+    ) -> float:
+        """Compatibility wrapper using the caller's explicit model coordinates."""
+        oi, ci = cell
+        if not (0 <= oi < len(outcome_ids) and 0 <= ci < len(channels)):
+            raise IndexError(
+                f"Pathway cell {cell} is outside model coordinates "
+                f"({len(outcome_ids)} outcomes, {len(channels)} channels)."
+            )
         if self.components:
-            outcomes = list(dict.fromkeys(item.outcome_id for item in self.components))
-            channels = list(dict.fromkeys(item.channel for item in self.components))
-            if cell[0] < len(outcomes) and cell[1] < len(channels):
-                item = self.component(
-                    outcomes[cell[0]], channels[cell[1]], "cross_product"
-                )
-                if item is not None and item.prior_scale is not None:
-                    return float(item.prior_scale)
+            return self.prior_for_component(
+                outcome_ids[oi], channels[ci], default=default
+            )
         return float(self.prior_scale_by_cell.get(self.cell_key(cell), default))
 
     def eligibility_matrix(

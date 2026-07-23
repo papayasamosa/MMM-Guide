@@ -1,3 +1,5 @@
+import json
+import pickle
 from copy import deepcopy
 from dataclasses import FrozenInstanceError, asdict
 from types import SimpleNamespace
@@ -17,7 +19,9 @@ from ancestry_mmm.core.net_billthrough import (
 )
 from ancestry_mmm.core.outcomes import FAMILY_HISTORY, OutcomeDefinition
 from ancestry_mmm.core.pathways import (
+    LegacyPathwayGovernanceError,
     MediaOutcomePathway,
+    ResolvedPathwayComponent,
     ResolvedPathwayMasks,
     resolve_pathway_masks,
     validate_media_outcome_pathways,
@@ -80,6 +84,8 @@ def test_components_and_compatibility_caches_cannot_be_mutated_independently():
     copied = deepcopy(resolved)
     assert copied.to_dict() == resolved.to_dict()
     assert asdict(resolved)["components"][0]["channel"] == "TV"
+    assert json.loads(json.dumps(resolved.to_dict())) == resolved.to_dict()
+    assert pickle.loads(pickle.dumps(resolved)) == resolved
 
 
 def test_old_mask_only_bundle_is_migrated_to_read_only_compatibility_views():
@@ -95,8 +101,107 @@ def test_old_mask_only_bundle_is_migrated_to_read_only_compatibility_views():
         }
     )
     assert restored.primary_matrix(["fh"], ["TV"])[0, 0] == 1.0
+    assert restored.legacy_governance_mode
+    assert restored.components[0].include_in_attribution
+    assert not restored.components[0].include_in_planning
+    assert restored.migration_report
+    assert (
+        ResolvedPathwayMasks.from_dict(restored.to_dict()).to_dict()
+        == restored.to_dict()
+    )
+    with pytest.raises(LegacyPathwayGovernanceError, match="governance review"):
+        restored.component_eligible("fh", "TV", "direct", "planning")
+    with pytest.raises(LegacyPathwayGovernanceError, match="governance review"):
+        restored.component_eligible("fh", "TV", "direct", "headline")
+    legacy_meta = SimpleNamespace(
+        outcome_ids=["fh"], channels=["TV"], pathway_masks=restored
+    )
+    legacy_params = SimpleNamespace(
+        hill_K={"TV": 100.0},
+        hill_S={"TV": 1.0},
+        beta={"fh": {"TV": 1.0}},
+        pathway_strength={"fh": {"TV": 0.0}},
+        intercept={"fh": 0.0},
+        market_offset={"UK": {"fh": 0.0}},
+        trend_coef={"fh": 0.0},
+        gamma_fourier={"fh": np.zeros(2)},
+        promo_coef={"fh": 0.0},
+        control_coef={},
+        outcome_control_coef={},
+    )
+    with pytest.raises(LegacyPathwayGovernanceError, match="governance review"):
+        steady_state_outcome_response(
+            "UK",
+            {"TV": 50.0},
+            legacy_meta,
+            legacy_params,
+            planning_only=True,
+        )
     with pytest.raises(TypeError, match="read-only"):
         restored.primary_channels_by_outcome["fh"].clear()
+
+
+def test_id_keyed_lag_and_prior_are_independent_of_component_order():
+    components = [
+        ResolvedPathwayComponent(
+            outcome_id="second",
+            channel="Radio",
+            component_type="cross_product",
+            role="active_cross_product",
+            lag_weeks=5,
+            prior_scale=0.4,
+            included_in_fit=True,
+        ),
+        ResolvedPathwayComponent(
+            outcome_id="first",
+            channel="TV",
+            component_type="cross_product",
+            role="exploratory_cross_product",
+            lag_weeks=2,
+            prior_scale=0.07,
+            include_in_planning=False,
+            included_in_fit=True,
+        ),
+    ]
+    ordered_masks = ResolvedPathwayMasks(components=components)
+    masks = ResolvedPathwayMasks(components=list(reversed(components)))
+
+    assert masks.lag_for_component("second", "Radio") == 5
+    assert masks.prior_for_component("second", "Radio", default=1.0) == 0.4
+    assert masks.lag_for_component("first", "TV") == 2
+    assert masks.prior_for_component("first", "TV", default=1.0) == 0.07
+
+    model_outcomes = ["first", "unused", "second"]
+    model_channels = ["Radio", "unused", "TV"]
+    assert masks.lag_for_cell((2, 0), model_outcomes, model_channels) == 5
+    assert (
+        masks.prior_for_cell((0, 2), 1.0, model_outcomes, model_channels)
+        == 0.07
+    )
+    assert masks.active_cells(model_outcomes, model_channels) == [(2, 0)]
+    assert masks.exploratory_cells(model_outcomes, model_channels) == [(0, 2)]
+    for cache_name in (
+        "primary_channels_by_outcome",
+        "active_channels_by_outcome",
+        "exploratory_channels_by_outcome",
+        "lag_weeks_by_cell",
+        "prior_scale_by_cell",
+        "planning_by_cell",
+    ):
+        assert getattr(masks, cache_name) == getattr(ordered_masks, cache_name)
+
+    pre_g115_payload = {
+        "components": [component.to_dict() for component in components],
+        "primary_channels_by_outcome": {},
+        "active_channels_by_outcome": {"second": ["Radio"]},
+        "exploratory_channels_by_outcome": {"first": ["TV"]},
+        "lag_weeks_by_cell": {"0:0": 5, "1:1": 2},
+        "prior_scale_by_cell": {"0:0": 0.4, "1:1": 0.07},
+        "planning_by_cell": {"0:0": True, "1:1": False},
+    }
+    migrated = ResolvedPathwayMasks.from_dict(pre_g115_payload)
+    assert migrated.lag_for_component("second", "Radio") == 5
+    assert migrated.lag_weeks_by_cell == masks.lag_weeks_by_cell
 
 
 def test_legacy_catalogue_migrates_headline_decision_and_unused_direct_prior():

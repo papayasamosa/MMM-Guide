@@ -517,7 +517,11 @@ def build_fh_hierarchical_model(
         # direct and a halo term" treatment exactly.
         # -----------------------------------------------------------------
         primary_mask = pt.constant(pathway_masks.primary_matrix(outcome_ids, channels))
-        eta_primary = pm.math.dot(sat_media, (beta * primary_mask).T)
+        eta_primary = pm.Deterministic(
+            "eta_primary",
+            pm.math.dot(sat_media, (beta * primary_mask).T),
+            dims=("obs", "outcome"),
+        )
 
         active_cells = pathway_masks.active_cells(outcome_ids, channels)
         exploratory_cells = pathway_masks.exploratory_cells(outcome_ids, channels)
@@ -526,7 +530,12 @@ def build_fh_hierarchical_model(
         lagged_media_by_weeks = {
             lag: _market_grouped_lag(sat_media, market_bounds, lag)
             for lag in sorted(
-                {pathway_masks.lag_for_cell(cell) for cell in all_cross_cells}
+                {
+                    pathway_masks.lag_for_component(
+                        outcome_ids[cell[0]], channels[cell[1]]
+                    )
+                    for cell in all_cross_cells
+                }
             )
         }
 
@@ -537,7 +546,12 @@ def build_fh_hierarchical_model(
             # defaults supplied by the caller.  A vector sigma makes the
             # configured scale operational for each individual pathway.
             sigmas = [
-                pathway_masks.prior_for_cell(cell, role_default) for cell in cells
+                pathway_masks.prior_for_component(
+                    outcome_ids[cell[0]],
+                    channels[cell[1]],
+                    default=role_default,
+                )
+                for cell in cells
             ]
             strength_est = pm.HalfNormal(
                 f"{var_name}_est", sigma=pt.constant(sigmas), shape=len(cells)
@@ -548,7 +562,11 @@ def build_fh_hierarchical_model(
                 strength_matrix = pt.set_subtensor(
                     strength_matrix[oi, ci], strength_est[idx]
                 )
-                lagged = lagged_media_by_weeks[pathway_masks.lag_for_cell((oi, ci))]
+                lagged = lagged_media_by_weeks[
+                    pathway_masks.lag_for_component(
+                        outcome_ids[oi], channels[ci]
+                    )
+                ]
                 cell_matrix = pt.zeros((n_outcomes, n_channels))
                 cell_matrix = pt.set_subtensor(cell_matrix[oi, ci], strength_est[idx])
                 eta = eta + pm.math.dot(lagged, (beta * cell_matrix).T)
@@ -579,7 +597,11 @@ def build_fh_hierarchical_model(
         eta_exploratory = pm.Deterministic(
             "eta_exploratory_cross_product", eta_exploratory, dims=("obs", "outcome")
         )
-        eta_channels = eta_primary + eta_active + eta_exploratory
+        eta_channels = pm.Deterministic(
+            "eta_channels",
+            eta_primary + eta_active + eta_exploratory,
+            dims=("obs", "outcome"),
+        )
 
         # -----------------------------------------------------------------
         # Outcome-specific promotional sensitivity (non-negative: promos lift).

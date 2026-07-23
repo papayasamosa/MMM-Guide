@@ -101,7 +101,8 @@ def test_components_lags_priors_coexist():
     )
     assert masks.primary_matrix(["fh"], ["TV"])[0, 0] == 1
     assert masks.active_cells(["fh"], ["TV"]) == [(0, 0)]
-    assert masks.lag_for_cell((0, 0)) == 3 and masks.prior_for_cell((0, 0), 1) == 0.15
+    assert masks.lag_for_cell((0, 0), ["fh"], ["TV"]) == 3
+    assert masks.prior_for_cell((0, 0), 1, ["fh"], ["TV"]) == 0.15
 
 
 def test_experimental_mediation_recovers_simulation():

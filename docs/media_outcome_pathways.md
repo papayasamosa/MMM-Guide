@@ -69,10 +69,22 @@ They are regenerated from components, exposed as read-only compatibility
 views, and cannot be reassigned independently. Bundle import rejects a
 component collection whose supplied caches disagree with it.
 
+All operational lag and prior lookups use the stable component key
+`(outcome_id, channel, component_type)`. Index-based lookup remains only as
+a compatibility wrapper and requires the caller's explicit model
+`outcome_ids` and `channels`; component-list order is never treated as model
+coordinate order.
+
 Bundles written before component/headline fields existed are migrated:
 component type is inferred from role, unused direct/excluded prior scales are
 removed, and the old evidence-derived headline result is captured as an
 explicit legacy-migration approval rather than continuing to infer it.
+
+Older mask-only model metadata is stricter. Its masks are materialised as
+explicit fitted components and analyst attribution is preserved, but the
+project is marked `legacy_governance_mode`. Headline and planning output are
+blocked until an analyst reviews and re-saves an explicit pathway catalogue.
+The resolved metadata and resumability audit both retain a migration report.
 
 ## Validation sequence
 

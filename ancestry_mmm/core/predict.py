@@ -288,10 +288,24 @@ def predict_mu(
     eta_cross = np.zeros((n_obs, n_out))
     if cross_cells:
         strength_matrix = _cross_product_strength_matrix(meta, params)
-        lagged = {lag: lag_frame(sat_media, frame["market_bounds"], lag)
-                  for lag in {meta.pathway_masks.lag_for_cell(cell) for cell in cross_cells}}
+        lagged = {
+            lag: lag_frame(sat_media, frame["market_bounds"], lag)
+            for lag in {
+                meta.pathway_masks.lag_for_component(
+                    outcome_ids[cell[0]], meta.channels[cell[1]]
+                )
+                for cell in cross_cells
+            }
+        }
         for oi, ci in cross_cells:
-            eta_cross[:, oi] += lagged[meta.pathway_masks.lag_for_cell((oi, ci))][:, ci] * beta_matrix[oi, ci] * strength_matrix[oi, ci]
+            component_lag = meta.pathway_masks.lag_for_component(
+                outcome_ids[oi], meta.channels[ci]
+            )
+            eta_cross[:, oi] += (
+                lagged[component_lag][:, ci]
+                * beta_matrix[oi, ci]
+                * strength_matrix[oi, ci]
+            )
 
     eta_channels = eta_primary + eta_cross
 
