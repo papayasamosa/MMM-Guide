@@ -530,6 +530,12 @@ _pathway_default_df = (
 pathway_catalogue_df = st.data_editor(
     _pathway_default_df,
     num_rows="dynamic",
+    disabled=[
+        "prior_scale",
+        "include_in_planning",
+        "include_in_headline",
+        "headline_approval_status",
+    ],
     column_config={
         "pathway_id": None,  # auto-managed identity, not hand-edited
         "channel": st.column_config.SelectboxColumn(
@@ -600,6 +606,120 @@ pathway_catalogue_df = st.data_editor(
     key="pathway_catalogue_editor",
     width="stretch",
 )
+st.caption(
+    "Component-specific fields are read-only in the grid. Select a row below to edit "
+    "them: `prior_scale` is the HalfNormal sigma for the cross-product "
+    "`pathway_strength` multiplier and is unavailable for every other component type."
+)
+
+if not pathway_catalogue_df.empty:
+    _pathway_row_options = list(range(len(pathway_catalogue_df)))
+
+    def _pathway_row_label(index: int) -> str:
+        row = pathway_catalogue_df.iloc[index]
+        channel = row.get("channel") or "(channel not set)"
+        outcome = row.get("target_outcome_id") or "(outcome not set)"
+        component = row.get("component_type") or "direct"
+        return f"Row {index + 1}: {channel} -> {outcome} [{component}]"
+
+    _selected_pathway_row = st.selectbox(
+        "Component-specific pathway fields",
+        options=_pathway_row_options,
+        format_func=_pathway_row_label,
+        key="pathway_component_field_row",
+    )
+    _selected_pathway = pathway_catalogue_df.iloc[_selected_pathway_row]
+    _selected_component_type = _selected_pathway.get("component_type") or "direct"
+    _is_cross_product = _selected_component_type == "cross_product"
+    _is_governance_only = _selected_component_type in {"mediated", "excluded"}
+
+    if _selected_component_type == "mediated":
+        st.info(
+            "Mediated components are diagnostic-only: they add no term to the standard "
+            "MMM likelihood and cannot be used for planning or headline reporting."
+        )
+    elif _selected_component_type == "excluded":
+        st.info(
+            "Excluded components are governance-only and contribute zero to fitting, "
+            "planning, and headline reporting."
+        )
+
+    _field_col_1, _field_col_2, _field_col_3, _field_col_4 = st.columns(4)
+    _prior_value = _selected_pathway.get("prior_scale")
+    if pd.isna(_prior_value):
+        _prior_value = None
+    _edited_prior_scale = _field_col_1.number_input(
+        "Cross-product prior scale",
+        min_value=0.0001,
+        value=_prior_value if _is_cross_product else None,
+        disabled=not _is_cross_product,
+        help=(
+            "Sigma of the HalfNormal prior on this cross-product component's "
+            "pathway_strength multiplier."
+        ),
+        key=f"pathway_prior_scale_{_selected_pathway_row}_{_selected_component_type}",
+    )
+    _edited_planning = _field_col_2.checkbox(
+        "Planning eligible",
+        value=(
+            bool(_selected_pathway.get("include_in_planning", True))
+            if not _is_governance_only
+            else False
+        ),
+        disabled=_is_governance_only,
+        key=f"pathway_planning_{_selected_pathway_row}_{_selected_component_type}",
+    )
+    _edited_headline = _field_col_3.checkbox(
+        "Headline eligible",
+        value=(
+            bool(_selected_pathway.get("include_in_headline", False))
+            if not _is_governance_only
+            else False
+        ),
+        disabled=_is_governance_only,
+        key=f"pathway_headline_{_selected_pathway_row}_{_selected_component_type}",
+    )
+    _headline_status = _selected_pathway.get("headline_approval_status")
+    if _headline_status not in HEADLINE_APPROVAL_STATUSES:
+        _headline_status = "not_reviewed"
+    _edited_headline_status = _field_col_4.selectbox(
+        "Headline approval",
+        options=list(HEADLINE_APPROVAL_STATUSES),
+        index=list(HEADLINE_APPROVAL_STATUSES).index(
+            "not_applicable" if _is_governance_only else _headline_status
+        ),
+        disabled=_is_governance_only,
+        key=f"pathway_headline_status_{_selected_pathway_row}_{_selected_component_type}",
+    )
+
+    pathway_catalogue_df.at[_selected_pathway_row, "prior_scale"] = (
+        _edited_prior_scale if _is_cross_product else None
+    )
+    pathway_catalogue_df.at[_selected_pathway_row, "include_in_planning"] = (
+        _edited_planning if not _is_governance_only else False
+    )
+    pathway_catalogue_df.at[_selected_pathway_row, "include_in_headline"] = (
+        _edited_headline if not _is_governance_only else False
+    )
+    pathway_catalogue_df.at[_selected_pathway_row, "headline_approval_status"] = (
+        _edited_headline_status if not _is_governance_only else "not_applicable"
+    )
+
+# Enforce the UI contract for every row, including rows not currently selected.
+# This prevents stale values from an older bundle or a component-type change from
+# becoming operational merely because the grid retains a hidden cell value.
+for _pathway_index, _pathway_row in pathway_catalogue_df.iterrows():
+    _component_type = _pathway_row.get("component_type") or "direct"
+    if _component_type != "cross_product":
+        pathway_catalogue_df.at[_pathway_index, "prior_scale"] = None
+    if _component_type in {"mediated", "excluded"}:
+        pathway_catalogue_df.at[_pathway_index, "include_in_planning"] = False
+        pathway_catalogue_df.at[_pathway_index, "include_in_headline"] = False
+        pathway_catalogue_df.at[
+            _pathway_index, "headline_approval_status"
+        ] = "not_applicable"
+    if _component_type == "excluded":
+        pathway_catalogue_df.at[_pathway_index, "include_in_attribution"] = False
 
 _edited_pathways = [
     MediaOutcomePathway.from_dict(row)

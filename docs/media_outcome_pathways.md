@@ -65,8 +65,9 @@ planning_by_cell
 ```
 
 remain in persisted metadata only as deterministic compatibility caches.
-They are regenerated from components. Bundle import rejects a component
-collection whose supplied caches disagree with it.
+They are regenerated from components, exposed as read-only compatibility
+views, and cannot be reassigned independently. Bundle import rejects a
+component collection whose supplied caches disagree with it.
 
 Bundles written before component/headline fields existed are migrated:
 component type is inferred from role, unused direct/excluded prior scales are
@@ -86,6 +87,13 @@ Pathways are validated twice:
 The resolved-component preview on the Structure page shows the exact
 equation term and fit/attribution/headline/planning decisions that downstream
 calculations will use.
+
+The pathway grid keeps component-specific fields read-only and exposes them
+through a row selector. `prior_scale` is enabled only for `cross_product`
+components and controls the HalfNormal sigma for that component's
+`pathway_strength` multiplier. Planning and headline controls are disabled
+for mediated and excluded components; mediated rows are labelled
+diagnostic-only.
 
 ## Scope boundary
 

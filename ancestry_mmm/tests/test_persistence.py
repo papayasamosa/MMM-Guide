@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from ancestry_mmm.core.approval import ModelApproval
+from ancestry_mmm.core.approval import ApprovalMismatchError, ModelApproval
 from ancestry_mmm.core.fingerprint import (
     fingerprint_dataframe,
     fingerprint_model_spec,
@@ -19,7 +19,7 @@ from ancestry_mmm.core.market_config import (
     MarketProfile,
     MarketSpecConfig,
 )
-from ancestry_mmm.core.optimization import SpendConstraint
+from ancestry_mmm.core.optimization import SpendConstraint, evaluate_scenario
 from ancestry_mmm.core.outcomes import DNA, FAMILY_HISTORY, OutcomeDefinition
 from ancestry_mmm.core.persistence import (
     UnsafeZipEntryError,
@@ -780,6 +780,49 @@ def test_reconstruct_model_state_rebuilds_frame_and_posterior_without_a_refit(
     assert reconstructed["posterior_params"] is not None
 
 
+@pytest.mark.parametrize(
+    "checkpoint", ["fitted", "approved", "curves", "scenarios"]
+)
+def test_end_to_end_resume_at_each_post_fit_checkpoint(
+    tmp_path, consistent_project, checkpoint
+):
+    project = dict(consistent_project)
+    project["raw_sources"] = {
+        "joined": consistent_project["transformed_data"].copy()
+    }
+    project["workflow_state"] = {"checkpoint": checkpoint, "current_page": 9}
+    if checkpoint == "fitted":
+        project["model_approval"] = None
+    if checkpoint == "curves":
+        curve_dir = tmp_path / "curve-source"
+        curve_dir.mkdir()
+        (curve_dir / "curve.json").write_text('{"channel": "TV_Brand"}')
+        project["curve_bank_source_dir"] = curve_dir
+    if checkpoint == "scenarios":
+        project["scenarios"] = [
+            {
+                "name": "resume-plan",
+                "predicted": pd.DataFrame(
+                    {"month": ["2026-07"], "predicted_outcome": [42.0]}
+                ),
+            }
+        ]
+
+    imported = import_project(
+        export_project(tmp_path / f"{checkpoint}.zip", **project)
+    )
+    audit = audit_project_resumability(imported)
+    assert audit["resumable"], audit
+    assert audit["checkpoint"] == checkpoint
+
+    reconstructed = reconstruct_model_state(imported)
+    assert reconstructed["frame"] is not None
+    assert reconstructed["posterior_params"] is not None
+    if checkpoint != "fitted":
+        verified, message = verify_imported_approval(imported, reconstructed)
+        assert verified is not None, message
+
+
 def test_reconstruct_model_state_handles_missing_inputs_without_raising():
     assert reconstruct_model_state({}) == {
         "frame": None,
@@ -1060,6 +1103,27 @@ class TestVerifyImportedApproval:
         approval, message = verify_imported_approval(imported, reconstructed)
         assert approval is None
         assert "does not match" in message.lower()
+        with pytest.raises(ApprovalMismatchError):
+            evaluate_scenario(
+                {"2026-07": {"TV_Brand": 100.0}},
+                "UK",
+                reconstructed["model_meta"],
+                reconstructed["posterior_params"],
+                {
+                    "2026-07": {
+                        "trend": 0.0,
+                        "fourier": np.zeros(6),
+                        "promo": {"New": 0.0},
+                        "controls": {},
+                        "outcome_controls": {},
+                    }
+                },
+                approval=approval,
+                model_run_id=imported["model_run_id"],
+                data_fingerprint="stale",
+                model_spec_fingerprint="stale",
+                posterior_fingerprint="stale",
+            )
 
     def test_rejected_when_model_spec_differs(self, tmp_path, consistent_project):
         output_path = export_project(tmp_path / "bundle.zip", **consistent_project)

@@ -47,6 +47,7 @@ transformation existing) - nothing here hard-codes "every FH KPI is GSA" or
 from __future__ import annotations
 
 import hashlib
+from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -492,7 +493,64 @@ def validate_media_outcome_pathways(
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+class _ReadOnlyList(list):
+    """JSON-compatible list that rejects mutation after construction."""
+
+    @staticmethod
+    def _blocked(*_args, **_kwargs):
+        raise TypeError("Resolved pathway compatibility views are read-only.")
+
+    __setitem__ = _blocked
+    __delitem__ = _blocked
+    __iadd__ = _blocked
+    __imul__ = _blocked
+    append = _blocked
+    clear = _blocked
+    extend = _blocked
+    insert = _blocked
+    pop = _blocked
+    remove = _blocked
+    reverse = _blocked
+    sort = _blocked
+
+    def __copy__(self):
+        return self
+
+    def __deepcopy__(self, memo):
+        copied = type(self)(deepcopy(list(self), memo))
+        memo[id(self)] = copied
+        return copied
+
+
+class _ReadOnlyDict(dict):
+    """JSON-compatible dict that rejects mutation after construction."""
+
+    @staticmethod
+    def _blocked(*_args, **_kwargs):
+        raise TypeError("Resolved pathway compatibility views are read-only.")
+
+    __setitem__ = _blocked
+    __delitem__ = _blocked
+    __ior__ = _blocked
+    clear = _blocked
+    pop = _blocked
+    popitem = _blocked
+    setdefault = _blocked
+    update = _blocked
+
+    def __copy__(self):
+        return self
+
+    def __deepcopy__(self, memo):
+        copied = type(self)(
+            (deepcopy(key, memo), deepcopy(value, memo))
+            for key, value in self.items()
+        )
+        memo[id(self)] = copied
+        return copied
+
+
+@dataclass(frozen=True)
 class ResolvedPathwayComponent:
     """One resolved equation component and its downstream governance.
 
@@ -568,9 +626,67 @@ class ResolvedPathwayMasks:
     prior_scale_by_cell: Dict[str, float] = field(default_factory=dict)
     planning_by_cell: Dict[str, bool] = field(default_factory=dict)
 
+    _IMMUTABLE_FIELDS = {
+        "primary_channels_by_outcome",
+        "active_channels_by_outcome",
+        "exploratory_channels_by_outcome",
+        "cross_product_lag_weeks",
+        "components",
+        "lag_weeks_by_cell",
+        "prior_scale_by_cell",
+        "planning_by_cell",
+    }
+
+    def __setattr__(self, name, value) -> None:
+        if (
+            name in self._IMMUTABLE_FIELDS
+            and getattr(self, "_compatibility_views_frozen", False)
+        ):
+            raise AttributeError(
+                "Resolved pathway components and compatibility views are "
+                "immutable; resolve a new component collection instead."
+            )
+        object.__setattr__(self, name, value)
+
     def __post_init__(self) -> None:
         if self.components:
             self._refresh_compatibility_caches()
+        else:
+            self._freeze_current_compatibility_views()
+        object.__setattr__(self, "_compatibility_views_frozen", True)
+
+    @staticmethod
+    def _readonly_channel_map(value: Dict[str, List[str]]) -> _ReadOnlyDict:
+        return _ReadOnlyDict(
+            {key: _ReadOnlyList(channels) for key, channels in value.items()}
+        )
+
+    def _freeze_current_compatibility_views(self) -> None:
+        object.__setattr__(
+            self,
+            "primary_channels_by_outcome",
+            self._readonly_channel_map(self.primary_channels_by_outcome),
+        )
+        object.__setattr__(
+            self,
+            "active_channels_by_outcome",
+            self._readonly_channel_map(self.active_channels_by_outcome),
+        )
+        object.__setattr__(
+            self,
+            "exploratory_channels_by_outcome",
+            self._readonly_channel_map(self.exploratory_channels_by_outcome),
+        )
+        object.__setattr__(self, "components", _ReadOnlyList(self.components))
+        object.__setattr__(
+            self, "lag_weeks_by_cell", _ReadOnlyDict(self.lag_weeks_by_cell)
+        )
+        object.__setattr__(
+            self, "prior_scale_by_cell", _ReadOnlyDict(self.prior_scale_by_cell)
+        )
+        object.__setattr__(
+            self, "planning_by_cell", _ReadOnlyDict(self.planning_by_cell)
+        )
 
     def _refresh_compatibility_caches(self) -> None:
         """Rebuild every legacy mask/cache from authoritative components."""
@@ -591,9 +707,22 @@ class ResolvedPathwayMasks:
                 active.setdefault(item.outcome_id, []).append(item.channel)
             elif item.role == PATHWAY_ROLE_EXPLORATORY_CROSS_PRODUCT:
                 exploratory.setdefault(item.outcome_id, []).append(item.channel)
-        self.primary_channels_by_outcome = primary
-        self.active_channels_by_outcome = active
-        self.exploratory_channels_by_outcome = exploratory
+        object.__setattr__(
+            self,
+            "primary_channels_by_outcome",
+            self._readonly_channel_map(primary),
+        )
+        object.__setattr__(
+            self,
+            "active_channels_by_outcome",
+            self._readonly_channel_map(active),
+        )
+        object.__setattr__(
+            self,
+            "exploratory_channels_by_outcome",
+            self._readonly_channel_map(exploratory),
+        )
+        object.__setattr__(self, "components", _ReadOnlyList(self.components))
         # Index-keyed caches require the stable outcome/channel order encoded
         # by the compatibility masks. Preserve first-seen component order,
         # which is resolve_pathway_masks' outcome-then-channel order.
@@ -601,20 +730,45 @@ class ResolvedPathwayMasks:
         channels = list(dict.fromkeys(item.channel for item in self.components))
         outcome_pos = {value: index for index, value in enumerate(outcomes)}
         channel_pos = {value: index for index, value in enumerate(channels)}
-        self.lag_weeks_by_cell = {}
-        self.prior_scale_by_cell = {}
-        self.planning_by_cell = {}
+        lag_by_cell: Dict[str, int] = {}
+        prior_by_cell: Dict[str, float] = {}
+        planning_by_cell: Dict[str, bool] = {}
         for item in cross_components:
             key = self.cell_key(
                 (outcome_pos[item.outcome_id], channel_pos[item.channel])
             )
-            self.lag_weeks_by_cell[key] = int(item.lag_weeks)
+            lag_by_cell[key] = int(item.lag_weeks)
             if item.prior_scale is not None:
-                self.prior_scale_by_cell[key] = float(item.prior_scale)
-            self.planning_by_cell[key] = bool(item.include_in_planning)
+                prior_by_cell[key] = float(item.prior_scale)
+            planning_by_cell[key] = bool(item.include_in_planning)
+        object.__setattr__(self, "lag_weeks_by_cell", _ReadOnlyDict(lag_by_cell))
+        object.__setattr__(
+            self, "prior_scale_by_cell", _ReadOnlyDict(prior_by_cell)
+        )
+        object.__setattr__(
+            self, "planning_by_cell", _ReadOnlyDict(planning_by_cell)
+        )
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        return {
+            "primary_channels_by_outcome": {
+                key: list(value)
+                for key, value in self.primary_channels_by_outcome.items()
+            },
+            "active_channels_by_outcome": {
+                key: list(value)
+                for key, value in self.active_channels_by_outcome.items()
+            },
+            "exploratory_channels_by_outcome": {
+                key: list(value)
+                for key, value in self.exploratory_channels_by_outcome.items()
+            },
+            "cross_product_lag_weeks": self.cross_product_lag_weeks,
+            "components": [component.to_dict() for component in self.components],
+            "lag_weeks_by_cell": dict(self.lag_weeks_by_cell),
+            "prior_scale_by_cell": dict(self.prior_scale_by_cell),
+            "planning_by_cell": dict(self.planning_by_cell),
+        }
 
     @classmethod
     def from_dict(cls, d: Optional[dict]) -> "ResolvedPathwayMasks":

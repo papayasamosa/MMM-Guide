@@ -176,6 +176,75 @@ def test_media_outcome_pathway_catalogue_saves_and_validates():
     assert any("unknown target_outcome_id" in e.value for e in at2.error)
 
 
+def test_pathway_component_controls_disable_irrelevant_fields():
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.session_state["transformed_data"] = _transformed_data()
+    at.session_state["date_col"] = "date"
+    at.session_state["market_col"] = "market"
+    at.session_state["outcome_definitions"] = [
+        {
+            "outcome_id": "fh_new_gsa",
+            "product": FAMILY_HISTORY,
+            "segment": "New",
+            "metric": METRIC_GSA,
+            "source_column": "New",
+        },
+    ]
+    at.session_state["media_outcome_pathways"] = [
+        {
+            "pathway_id": "direct",
+            "channel": "tv_spend",
+            "source_product": FAMILY_HISTORY,
+            "target_outcome_id": "fh_new_gsa",
+            "component_type": "direct",
+            "role": "primary_direct",
+            "lag_type": "none",
+            "include_in_attribution": True,
+            "include_in_planning": True,
+        },
+        {
+            "pathway_id": "mediated",
+            "channel": "tv_spend",
+            "source_product": FAMILY_HISTORY,
+            "target_outcome_id": "fh_new_gsa",
+            "component_type": "mediated",
+            "role": "primary_direct",
+            "lag_type": "none",
+            "include_in_attribution": True,
+            "include_in_planning": False,
+            "include_in_headline": False,
+            "headline_approval_status": "not_applicable",
+        },
+    ]
+    at.run()
+    assert not at.exception
+
+    prior = [n for n in at.number_input if n.label == "Cross-product prior scale"][0]
+    planning = [c for c in at.checkbox if c.label == "Planning eligible"][0]
+    headline = [c for c in at.checkbox if c.label == "Headline eligible"][0]
+    approval = [s for s in at.selectbox if s.label == "Headline approval"][0]
+    assert prior.disabled
+    assert not planning.disabled
+    assert not headline.disabled
+    assert not approval.disabled
+
+    component_row = [
+        s for s in at.selectbox if s.label == "Component-specific pathway fields"
+    ][0]
+    component_row.select(1).run()
+    assert not at.exception
+
+    prior = [n for n in at.number_input if n.label == "Cross-product prior scale"][0]
+    planning = [c for c in at.checkbox if c.label == "Planning eligible"][0]
+    headline = [c for c in at.checkbox if c.label == "Headline eligible"][0]
+    approval = [s for s in at.selectbox if s.label == "Headline approval"][0]
+    assert prior.disabled
+    assert planning.disabled and planning.value is False
+    assert headline.disabled and headline.value is False
+    assert approval.disabled and approval.value == "not_applicable"
+    assert any("diagnostic-only" in info.value for info in at.info)
+
+
 def test_save_succeeds_with_a_genuine_signup_and_gsa_on_the_same_segment():
     # Directly exercises the same row -> OutcomeDefinition -> validation
     # path the page's Save handler uses, seeded with the exact "two KPIs,

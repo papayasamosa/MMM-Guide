@@ -1,20 +1,33 @@
+from copy import deepcopy
+from dataclasses import FrozenInstanceError, asdict
 from types import SimpleNamespace
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from ancestry_mmm.core.attribution import compute_shapley_contributions
+from ancestry_mmm.core.approval import ModelApproval
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
+from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
+from ancestry_mmm.core.market_specific_model import build_fh_market_specific_model
+from ancestry_mmm.core.net_billthrough import (
+    NetBillthroughCompletenessMetadata,
+    assert_model_frame_net_billthrough_complete,
+)
+from ancestry_mmm.core.outcomes import FAMILY_HISTORY, OutcomeDefinition
 from ancestry_mmm.core.pathways import (
     MediaOutcomePathway,
     ResolvedPathwayMasks,
     resolve_pathway_masks,
     validate_media_outcome_pathways,
 )
+from ancestry_mmm.core.optimization import WEEKS_PER_MONTH, evaluate_scenario
 from ancestry_mmm.core.predict import (
     FHPosteriorParams,
     steady_state_outcome_response,
 )
+from ancestry_mmm.core.schema import ModelSpec
 
 
 def _pathway(**overrides):
@@ -41,6 +54,49 @@ def test_component_collection_rejects_disagreeing_legacy_cache():
     payload["primary_channels_by_outcome"] = {"fh": []}
     with pytest.raises(ValueError, match="authoritative component collection"):
         ResolvedPathwayMasks.from_dict(payload)
+
+
+def test_components_and_compatibility_caches_cannot_be_mutated_independently():
+    resolved = resolve_pathway_masks(
+        ["fh"],
+        ["TV"],
+        [_pathway()],
+        dna_channel_idx=[],
+        dna_outcome_id=None,
+        direct_dna_outcome_ids=[],
+        dna_lag_weeks=0,
+    )
+    with pytest.raises(AttributeError, match="immutable"):
+        resolved.primary_channels_by_outcome = {}
+    with pytest.raises(TypeError, match="read-only"):
+        resolved.primary_channels_by_outcome["fh"] = []
+    with pytest.raises(TypeError, match="read-only"):
+        resolved.primary_channels_by_outcome["fh"].append("Radio")
+    with pytest.raises(TypeError, match="read-only"):
+        resolved.components.append(resolved.components[0])
+    with pytest.raises(FrozenInstanceError):
+        resolved.components[0].include_in_planning = False
+
+    copied = deepcopy(resolved)
+    assert copied.to_dict() == resolved.to_dict()
+    assert asdict(resolved)["components"][0]["channel"] == "TV"
+
+
+def test_old_mask_only_bundle_is_migrated_to_read_only_compatibility_views():
+    restored = ResolvedPathwayMasks.from_dict(
+        {
+            "primary_channels_by_outcome": {"fh": ["TV"]},
+            "active_channels_by_outcome": {},
+            "exploratory_channels_by_outcome": {},
+            "cross_product_lag_weeks": 4,
+            "lag_weeks_by_cell": {},
+            "prior_scale_by_cell": {},
+            "planning_by_cell": {},
+        }
+    )
+    assert restored.primary_matrix(["fh"], ["TV"])[0, 0] == 1.0
+    with pytest.raises(TypeError, match="read-only"):
+        restored.primary_channels_by_outcome["fh"].clear()
 
 
 def test_legacy_catalogue_migrates_headline_decision_and_unused_direct_prior():
@@ -186,3 +242,73 @@ def test_attribution_headline_and_planning_views_sum_only_eligible_components():
     )
     assert full["fh"] > planning["fh"]
     assert planning["fh"] == pytest.approx(direct_only["fh"])
+
+    identity = {
+        "model_run_id": "g114-parity",
+        "data_fingerprint": "data",
+        "model_spec_fingerprint": "spec",
+        "posterior_fingerprint": "posterior",
+    }
+    scenario = evaluate_scenario(
+        {"2026-07": {"TV": 50.0}},
+        "UK",
+        meta,
+        params,
+        {
+            "2026-07": {
+                "trend": 0.0,
+                "fourier": np.zeros(2),
+                "promo": {"fh": 0.0},
+                "controls": {},
+                "outcome_controls": {},
+            }
+        },
+        approval=ModelApproval(approved_by="Analyst", **identity),
+        **identity,
+    )
+    assert scenario.loc[0, "predicted_outcome"] == pytest.approx(
+        planning["fh"] * WEEKS_PER_MONTH
+    )
+
+
+def test_both_model_builders_defensively_revalidate_prepared_nbt_values():
+    outcome = OutcomeDefinition(
+        outcome_id="fh_nbt",
+        product=FAMILY_HISTORY,
+        segment="New",
+        metric="Net bill-through count",
+        source_column="NBT_New",
+    )
+    metadata = NetBillthroughCompletenessMetadata(
+        data_as_of_date="2026-07-31",
+        model_start_week="2026-07-06",
+        model_end_week="2026-07-20",
+        latest_complete_net_billthrough_week="2026-07-20",
+        maturity_rule_description="authoritative upstream finalisation",
+        source_owner="Finance Analytics",
+    )
+    frame = {
+        "outcomes": [outcome],
+        "outcome_ids": ["fh_nbt"],
+        "Y": np.array([[1.0], [-1.0], [3.0]]),
+        "dates": pd.date_range("2026-07-06", periods=3, freq="7D").to_numpy(),
+        "market_idx": np.zeros(3, dtype=int),
+        "markets": ["UK"],
+        "net_billthrough_metadata": metadata,
+    }
+    with pytest.raises(ValueError, match="training blocked"):
+        assert_model_frame_net_billthrough_complete(frame)
+
+    spec = ModelSpec(
+        date_col="date",
+        market_col="market",
+        markets=["UK"],
+        segment_outcomes={"New": "NBT_New"},
+        channels=["TV"],
+    )
+    for builder in (
+        build_fh_hierarchical_model,
+        build_fh_market_specific_model,
+    ):
+        with pytest.raises(ValueError, match="training blocked"):
+            builder(frame, spec)

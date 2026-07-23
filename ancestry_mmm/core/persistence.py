@@ -466,6 +466,8 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
 
     required = {
         "uploaded": ["raw_sources"],
+        "transformed": ["raw_sources", "transformed_data"],
+        "configured": ["raw_sources", "transformed_data", "model_spec"],
         "pre_fit": ["raw_sources", "transformed_data", "model_spec"],
         "fitted": [
             "raw_sources",
@@ -488,6 +490,7 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
             "model_spec",
             "trace",
             "model_meta",
+            "model_approval",
             "curve_bank_files",
         ],
         "scenarios": [
@@ -496,6 +499,7 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
             "model_spec",
             "trace",
             "model_meta",
+            "model_approval",
             "scenarios",
         ],
     }.get(declared, [])

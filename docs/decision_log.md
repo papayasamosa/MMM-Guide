@@ -1662,3 +1662,30 @@ round trips pass.
 **Scope:** G2 curves/economics, response horizons, year-on-year reporting,
 dynamic planning, production mediation, brand health, and DNA composition
 remain separate follow-on work.
+
+## G1.1.4 -- final integration verification and release hardening
+
+**Decision:** Resolved components remain the sole pathway authority.
+Compatibility masks and cell caches are immutable, component-derived views;
+they cannot be independently reassigned or mutated. Import continues to
+reject any supplied cache that disagrees with its component collection.
+
+The Structure editor now keeps component-specific columns read-only in the
+grid and provides dynamically enabled row controls. Cross-product
+`prior_scale` is explicitly the HalfNormal sigma for the component's
+`pathway_strength`; it is disabled and cleared for all other component
+types. Planning and headline fields are disabled and cleared for mediated
+and excluded rows, with mediation labelled diagnostic-only.
+
+Resumability auditing covers pre-fit, fitted, approved, curve, and scenario
+checkpoints. Curve and scenario checkpoints require a matching model
+approval, and restored stale state is rejected before scenario evaluation.
+End-to-end bundle tests reconstruct model data and posterior state and verify
+fingerprints at each post-fit checkpoint.
+
+**Verification:** Component/cache immutability, corrupted-cache rejection,
+legacy migration, Model A/Model C PyMC-to-NumPy algebra, attribution/headline/
+planning/scenario reconciliation, NBT validation ordering and defensive
+model-builder guards, dynamic UI state, and checkpoint restoration are
+covered by executable tests. G2 curve dashboards, dynamic planning, and
+long-horizon efficiency reporting remain out of scope.
