@@ -36,6 +36,7 @@ re-fit - see their docstrings.
 
 from __future__ import annotations
 
+import gc
 import json
 import shutil
 import tempfile
@@ -48,7 +49,11 @@ import pandas as pd
 import arviz as az
 
 from .approval import ModelApproval
-from .fingerprint import fingerprint_dataframe, fingerprint_model_spec, fingerprint_posterior
+from .fingerprint import (
+    fingerprint_dataframe,
+    fingerprint_model_spec,
+    fingerprint_posterior,
+)
 from .hierarchical_model import FHModelMeta
 from .outcomes import outcome_catalogue_fingerprint_payload
 from .pathways import pathway_catalogue_fingerprint_payload
@@ -124,6 +129,7 @@ def export_project(
     outcome_definitions: Optional[List[dict]] = None,
     funnel_links: Optional[List[dict]] = None,
     media_outcome_pathways: Optional[List[dict]] = None,
+    net_billthrough_metadata: Optional[dict] = None,
 ) -> Path:
     output_path = Path(output_path)
     with tempfile.TemporaryDirectory() as tmp:
@@ -135,31 +141,58 @@ def export_project(
         for name, df in raw_sources.items():
             df.to_parquet(tmp / "data" / f"raw_{name}.parquet", index=False)
         if transformed_data is not None:
-            transformed_data.to_parquet(tmp / "data" / "transformed.parquet", index=False)
+            transformed_data.to_parquet(
+                tmp / "data" / "transformed.parquet", index=False
+            )
 
-        (tmp / "config" / "pipeline_steps.json").write_text(json.dumps(pipeline_steps, indent=2))
+        (tmp / "config" / "pipeline_steps.json").write_text(
+            json.dumps(pipeline_steps, indent=2)
+        )
         if model_spec is not None:
-            (tmp / "config" / "model_spec.json").write_text(json.dumps(model_spec, indent=2, default=str))
+            (tmp / "config" / "model_spec.json").write_text(
+                json.dumps(model_spec, indent=2, default=str)
+            )
         (tmp / "config" / "prior_config.json").write_text(
-            json.dumps({"prior_config": prior_config or {}, "dna_lag_weeks": dna_lag_weeks}, indent=2)
+            json.dumps(
+                {"prior_config": prior_config or {}, "dna_lag_weeks": dna_lag_weeks},
+                indent=2,
+            )
         )
         if model_approval is not None:
-            (tmp / "config" / "model_approval.json").write_text(json.dumps(model_approval, indent=2, default=str))
+            (tmp / "config" / "model_approval.json").write_text(
+                json.dumps(model_approval, indent=2, default=str)
+            )
         if model_run_id is not None:
-            (tmp / "config" / "model_run_id.json").write_text(json.dumps({"model_run_id": model_run_id}, indent=2))
+            (tmp / "config" / "model_run_id.json").write_text(
+                json.dumps({"model_run_id": model_run_id}, indent=2)
+            )
         if model_meta is not None:
-            (tmp / "config" / "model_meta.json").write_text(json.dumps(asdict(model_meta), indent=2, default=str))
+            (tmp / "config" / "model_meta.json").write_text(
+                json.dumps(asdict(model_meta), indent=2, default=str)
+            )
         if market_spec_config is not None:
-            (tmp / "config" / "market_spec_config.json").write_text(json.dumps(market_spec_config, indent=2, default=str))
+            (tmp / "config" / "market_spec_config.json").write_text(
+                json.dumps(market_spec_config, indent=2, default=str)
+            )
         if model_type is not None:
-            (tmp / "config" / "model_type.json").write_text(json.dumps({"model_type": model_type}, indent=2))
+            (tmp / "config" / "model_type.json").write_text(
+                json.dumps({"model_type": model_type}, indent=2)
+            )
         if outcome_definitions is not None:
-            (tmp / "config" / "outcome_definitions.json").write_text(json.dumps(outcome_definitions, indent=2, default=str))
+            (tmp / "config" / "outcome_definitions.json").write_text(
+                json.dumps(outcome_definitions, indent=2, default=str)
+            )
         if funnel_links is not None:
-            (tmp / "config" / "funnel_links.json").write_text(json.dumps(funnel_links, indent=2, default=str))
+            (tmp / "config" / "funnel_links.json").write_text(
+                json.dumps(funnel_links, indent=2, default=str)
+            )
         if media_outcome_pathways is not None:
             (tmp / "config" / "media_outcome_pathways.json").write_text(
                 json.dumps(media_outcome_pathways, indent=2, default=str)
+            )
+        if net_billthrough_metadata is not None:
+            (tmp / "config" / "net_billthrough_metadata.json").write_text(
+                json.dumps(net_billthrough_metadata, indent=2, default=str)
             )
 
         scenarios_meta = []
@@ -167,12 +200,17 @@ def export_project(
             meta = {k: v for k, v in s.items() if k != "predicted"}
             if "constraints" in meta:
                 meta["constraints"] = [
-                    c.to_dict() if isinstance(c, SpendConstraint) else c for c in meta["constraints"]
+                    c.to_dict() if isinstance(c, SpendConstraint) else c
+                    for c in meta["constraints"]
                 ]
             scenarios_meta.append(meta)
             if "predicted" in s and isinstance(s["predicted"], pd.DataFrame):
-                s["predicted"].to_csv(tmp / "scenarios" / f"scenario_{i}_predicted.csv", index=False)
-        (tmp / "config" / "scenarios.json").write_text(json.dumps(scenarios_meta, indent=2, default=str))
+                s["predicted"].to_csv(
+                    tmp / "scenarios" / f"scenario_{i}_predicted.csv", index=False
+                )
+        (tmp / "config" / "scenarios.json").write_text(
+            json.dumps(scenarios_meta, indent=2, default=str)
+        )
 
         if trace is not None:
             (tmp / "model").mkdir()
@@ -194,10 +232,17 @@ def export_project(
 def import_project(zip_path: Path) -> Dict[str, Any]:
     zip_path = Path(zip_path)
     result: Dict[str, Any] = {
-        "raw_sources": {}, "transformed_data": None, "pipeline_steps": [],
-        "model_spec": None, "prior_config": {}, "dna_lag_weeks": 4,
-        "trace": None, "scenarios": [], "model_approval": None,
-        "model_run_id": None, "model_meta": None,
+        "raw_sources": {},
+        "transformed_data": None,
+        "pipeline_steps": [],
+        "model_spec": None,
+        "prior_config": {},
+        "dna_lag_weeks": 4,
+        "trace": None,
+        "scenarios": [],
+        "model_approval": None,
+        "model_run_id": None,
+        "model_meta": None,
         # Absent in bundles exported before the market-specific redesign
         # (Phase 1) - None here is the correct "legacy bundle" signal, not
         # an error; core.market_config.MarketSpecConfig.from_dict(None)
@@ -221,6 +266,7 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         # pathway catalogue configured" is the correct legacy/default
         # reading, matching funnel_links' convention above.
         "media_outcome_pathways": None,
+        "net_billthrough_metadata": None,
     }
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
@@ -230,7 +276,7 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         data_dir = tmp / "data"
         if data_dir.exists():
             for f in data_dir.glob("raw_*.parquet"):
-                name = f.stem[len("raw_"):]
+                name = f.stem[len("raw_") :]
                 result["raw_sources"][name] = pd.read_parquet(f)
             transformed_path = data_dir / "transformed.parquet"
             if transformed_path.exists():
@@ -238,29 +284,53 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
 
         config_dir = tmp / "config"
         if (config_dir / "pipeline_steps.json").exists():
-            result["pipeline_steps"] = json.loads((config_dir / "pipeline_steps.json").read_text())
+            result["pipeline_steps"] = json.loads(
+                (config_dir / "pipeline_steps.json").read_text()
+            )
         if (config_dir / "model_spec.json").exists():
-            result["model_spec"] = json.loads((config_dir / "model_spec.json").read_text())
+            result["model_spec"] = json.loads(
+                (config_dir / "model_spec.json").read_text()
+            )
         if (config_dir / "prior_config.json").exists():
             prior_data = json.loads((config_dir / "prior_config.json").read_text())
             result["prior_config"] = prior_data.get("prior_config", {})
             result["dna_lag_weeks"] = prior_data.get("dna_lag_weeks", 4)
         if (config_dir / "model_approval.json").exists():
-            result["model_approval"] = json.loads((config_dir / "model_approval.json").read_text())
+            result["model_approval"] = json.loads(
+                (config_dir / "model_approval.json").read_text()
+            )
         if (config_dir / "model_run_id.json").exists():
-            result["model_run_id"] = json.loads((config_dir / "model_run_id.json").read_text()).get("model_run_id")
+            result["model_run_id"] = json.loads(
+                (config_dir / "model_run_id.json").read_text()
+            ).get("model_run_id")
         if (config_dir / "model_meta.json").exists():
-            result["model_meta"] = json.loads((config_dir / "model_meta.json").read_text())
+            result["model_meta"] = json.loads(
+                (config_dir / "model_meta.json").read_text()
+            )
         if (config_dir / "market_spec_config.json").exists():
-            result["market_spec_config"] = json.loads((config_dir / "market_spec_config.json").read_text())
+            result["market_spec_config"] = json.loads(
+                (config_dir / "market_spec_config.json").read_text()
+            )
         if (config_dir / "model_type.json").exists():
-            result["model_type"] = json.loads((config_dir / "model_type.json").read_text()).get("model_type", "shared")
+            result["model_type"] = json.loads(
+                (config_dir / "model_type.json").read_text()
+            ).get("model_type", "shared")
         if (config_dir / "outcome_definitions.json").exists():
-            result["outcome_definitions"] = json.loads((config_dir / "outcome_definitions.json").read_text())
+            result["outcome_definitions"] = json.loads(
+                (config_dir / "outcome_definitions.json").read_text()
+            )
         if (config_dir / "funnel_links.json").exists():
-            result["funnel_links"] = json.loads((config_dir / "funnel_links.json").read_text())
+            result["funnel_links"] = json.loads(
+                (config_dir / "funnel_links.json").read_text()
+            )
         if (config_dir / "media_outcome_pathways.json").exists():
-            result["media_outcome_pathways"] = json.loads((config_dir / "media_outcome_pathways.json").read_text())
+            result["media_outcome_pathways"] = json.loads(
+                (config_dir / "media_outcome_pathways.json").read_text()
+            )
+        if (config_dir / "net_billthrough_metadata.json").exists():
+            result["net_billthrough_metadata"] = json.loads(
+                (config_dir / "net_billthrough_metadata.json").read_text()
+            )
         if (config_dir / "scenarios.json").exists():
             scenarios_meta = json.loads((config_dir / "scenarios.json").read_text())
             for i, s in enumerate(scenarios_meta):
@@ -271,7 +341,15 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
 
         trace_path = tmp / "model" / "trace.nc"
         if trace_path.exists():
-            result["trace"] = az.from_netcdf(str(trace_path))
+            disk_trace = az.from_netcdf(str(trace_path))
+            memory_groups = {
+                group: getattr(disk_trace, group).load().copy(deep=True)
+                for group in disk_trace.groups()
+            }
+            disk_trace.close()
+            del disk_trace
+            gc.collect()
+            result["trace"] = az.InferenceData(**memory_groups)
 
         curve_bank_path = tmp / "curve_bank"
         if curve_bank_path.exists():
@@ -311,7 +389,11 @@ def reconstruct_model_state(imported: Dict[str, Any]) -> Dict[str, Any]:
     with any entry left None if its inputs are missing or inconsistent
     (never raises - callers decide what an incomplete reconstruction means).
     """
-    result: Dict[str, Any] = {"frame": None, "model_meta": None, "posterior_params": None}
+    result: Dict[str, Any] = {
+        "frame": None,
+        "model_meta": None,
+        "posterior_params": None,
+    }
 
     if imported.get("model_meta") is not None:
         try:
@@ -323,19 +405,26 @@ def reconstruct_model_state(imported: Dict[str, Any]) -> Dict[str, Any]:
             # not dicts, after a reimport.
             if meta_dict.get("outcome_catalogue_at_fit"):
                 from .outcomes import OutcomeDefinition
+
                 meta_dict["outcome_catalogue_at_fit"] = [
-                    OutcomeDefinition.from_dict(o) for o in meta_dict["outcome_catalogue_at_fit"]
+                    OutcomeDefinition.from_dict(o)
+                    for o in meta_dict["outcome_catalogue_at_fit"]
                 ]
             if meta_dict.get("pathway_catalogue_at_fit"):
                 from .pathways import MediaOutcomePathway
+
                 meta_dict["pathway_catalogue_at_fit"] = [
-                    MediaOutcomePathway.from_dict(p) for p in meta_dict["pathway_catalogue_at_fit"]
+                    MediaOutcomePathway.from_dict(p)
+                    for p in meta_dict["pathway_catalogue_at_fit"]
                 ]
             result["model_meta"] = FHModelMeta(**meta_dict)
         except TypeError:
             result["model_meta"] = None
 
-    if imported.get("transformed_data") is not None and imported.get("model_spec") is not None:
+    if (
+        imported.get("transformed_data") is not None
+        and imported.get("model_spec") is not None
+    ):
         try:
             # Local import: `ancestry_mmm.data.preprocessor` imports `ancestry_mmm.core.schema`
             # at module level, so importing it at module level here would close a
@@ -348,11 +437,17 @@ def reconstruct_model_state(imported: Dict[str, Any]) -> Dict[str, Any]:
             spec = ModelSpec.from_dict(imported["model_spec"])
             transformed_data = imported["transformed_data"]
             outcome_definitions = resolve_outcome_definitions(
-                imported.get("outcome_definitions"), spec.segment_outcomes, spec.segment_ltv,
+                imported.get("outcome_definitions"),
+                spec.segment_outcomes,
+                spec.segment_ltv,
             )
             available_columns = set(transformed_data.columns)
-            usable_outcomes = [o for o in outcome_definitions if o.source_column in available_columns]
-            result["frame"] = prepare_fh_modeling_frame(transformed_data, spec, outcomes=usable_outcomes)
+            usable_outcomes = [
+                o for o in outcome_definitions if o.source_column in available_columns
+            ]
+            result["frame"] = prepare_fh_modeling_frame(
+                transformed_data, spec, outcomes=usable_outcomes
+            )
         except (ValueError, KeyError):
             result["frame"] = None
 
@@ -361,13 +456,17 @@ def reconstruct_model_state(imported: Dict[str, Any]) -> Dict[str, Any]:
             if imported.get("model_type") == "market_specific":
                 # Local import: mirrors the prepare_fh_modeling_frame import above -
                 # avoids a module-level circular import between core and data.
-                from .market_specific_predict import extract_market_specific_posterior_params
+                from .market_specific_predict import (
+                    extract_market_specific_posterior_params,
+                )
 
                 result["posterior_params"] = extract_market_specific_posterior_params(
                     imported["trace"], result["model_meta"]
                 )
             else:
-                result["posterior_params"] = extract_posterior_params(imported["trace"], result["model_meta"])
+                result["posterior_params"] = extract_posterior_params(
+                    imported["trace"], result["model_meta"]
+                )
         except (KeyError, ValueError):
             result["posterior_params"] = None
 
@@ -419,7 +518,9 @@ def verify_imported_approval(
     # Structure page since the fit) and would make a verified-valid approval
     # wrongly appear mismatched, or a genuinely stale one wrongly appear to
     # still match.
-    outcome_catalogue_at_fit = getattr(model_meta, "outcome_catalogue_at_fit", None) or []
+    outcome_catalogue_at_fit = (
+        getattr(model_meta, "outcome_catalogue_at_fit", None) or []
+    )
     # funnel_links/media_outcome_pathways: fingerprint the fit-time pathway
     # catalogue the same way outcome_catalogue is fingerprinted above (the
     # exact catalogue this fit's metadata was captured from, not the
@@ -427,15 +528,26 @@ def verify_imported_approval(
     # fit-time snapshot field, so the imported bundle's own funnel_links.json
     # is used directly (it is diagnostic-only configuration, never something
     # a fit is "built from").
-    pathway_catalogue_at_fit = getattr(model_meta, "pathway_catalogue_at_fit", None) or []
+    pathway_catalogue_at_fit = (
+        getattr(model_meta, "pathway_catalogue_at_fit", None) or []
+    )
     spec_fp = fingerprint_model_spec(
-        imported.get("model_spec") or {}, imported.get("prior_config") or {}, imported.get("dna_lag_weeks", 4),
+        imported.get("model_spec") or {},
+        imported.get("prior_config") or {},
+        imported.get("dna_lag_weeks", 4),
         model_type=imported.get("model_type", "shared"),
-        pipeline_steps=imported.get("pipeline_steps") or [], market_spec_config=imported.get("market_spec_config"),
-        direct_dna_outcome_ids=model_meta.direct_dna_outcome_ids if model_meta is not None else None,
-        outcome_catalogue=outcome_catalogue_fingerprint_payload(outcome_catalogue_at_fit),
+        pipeline_steps=imported.get("pipeline_steps") or [],
+        market_spec_config=imported.get("market_spec_config"),
+        direct_dna_outcome_ids=model_meta.direct_dna_outcome_ids
+        if model_meta is not None
+        else None,
+        outcome_catalogue=outcome_catalogue_fingerprint_payload(
+            outcome_catalogue_at_fit
+        ),
         funnel_links=imported.get("funnel_links"),
-        media_outcome_pathways=pathway_catalogue_fingerprint_payload(pathway_catalogue_at_fit),
+        media_outcome_pathways=pathway_catalogue_fingerprint_payload(
+            pathway_catalogue_at_fit
+        ),
     )
     posterior_fp = fingerprint_posterior(posterior_params)
     current_run_id = imported.get("model_run_id") or approval.model_run_id
@@ -446,7 +558,10 @@ def verify_imported_approval(
         model_spec_fingerprint=spec_fp,
         posterior_fingerprint=posterior_fp,
     ):
-        return approval, f"Imported approval verified: matches the imported model artefacts (approved by {approval.approved_by})."
+        return (
+            approval,
+            f"Imported approval verified: matches the imported model artefacts (approved by {approval.approved_by}).",
+        )
 
     return None, (
         "The imported approval does not match the imported model artefacts (data, "
@@ -454,7 +569,9 @@ def verify_imported_approval(
     )
 
 
-def export_excel_summary(output_path: Path, sheets: Dict[str, Optional[pd.DataFrame]]) -> Path:
+def export_excel_summary(
+    output_path: Path, sheets: Dict[str, Optional[pd.DataFrame]]
+) -> Path:
     """
     Excel export of named summary sheets for stakeholders who consume Excel,
     not code. `sheets` maps a sheet name to its DataFrame - `None` or an

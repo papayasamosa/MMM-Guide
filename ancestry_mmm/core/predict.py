@@ -30,7 +30,10 @@ import arviz as az
 
 from .transformations import geometric_adstock_matrix, hill_function
 from .hierarchical_model import FHModelMeta
-from .outcomes import fh_gsa_outcome_ids, fh_signup_outcome_ids, dna_kit_sale_outcome_ids
+from .outcomes import (
+    dna_kit_sale_outcome_ids, fh_gsa_outcome_ids, fh_net_billthrough_outcome_ids,
+    fh_signup_outcome_ids,
+)
 
 
 @dataclass
@@ -239,10 +242,13 @@ def _pathway_weight(meta: FHModelMeta, params: _HasPathwayStrength, outcome_id: 
     plus `params.pathway_strength[...]` if it's also (or instead)
     `active_cross_product`/`exploratory_cross_product`, `0.0` for an
     excluded cell (in neither)."""
-    oi, ci = meta.outcome_ids.index(outcome_id), meta.channels.index(channel)
-    if planning_only and not meta.pathway_masks.planning_by_cell.get(meta.pathway_masks.cell_key((oi, ci)), True):
-        return 0.0
-    weight = 1.0 if channel in meta.pathway_masks.primary_channels_by_outcome.get(outcome_id, []) else 0.0
+    weight = 0.0
+    is_direct = channel in meta.pathway_masks.primary_channels_by_outcome.get(outcome_id, [])
+    direct_eligible = not planning_only or meta.pathway_masks.component_eligible(
+        outcome_id, channel, "direct", "planning"
+    )
+    if is_direct and direct_eligible:
+        weight = 1.0
     is_active = channel in meta.pathway_masks.active_channels_by_outcome.get(outcome_id, [])
     is_exploratory = channel in meta.pathway_masks.exploratory_channels_by_outcome.get(outcome_id, [])
     cross_eligible = not planning_only or meta.pathway_masks.component_eligible(outcome_id, channel, "cross_product", "planning")
@@ -443,6 +449,7 @@ def generate_channel_curve(
         spend_range = np.linspace(0.0, cap, n_points)
 
     gsa_ids = set(fh_gsa_outcome_ids(meta))
+    nbt_ids = set(fh_net_billthrough_outcome_ids(meta))
     signup_ids = set(fh_signup_outcome_ids(meta))
     dna_ids = set(dna_kit_sale_outcome_ids(meta))
     rows = []
@@ -452,6 +459,7 @@ def generate_channel_curve(
         overall = 0.0
         dna_total = 0.0
         fh_gsa_total = 0.0
+        fh_nbt_total = 0.0
         fh_signup_total = 0.0
         for oid in meta.outcome_ids:
             # Same steady-state collapse as steady_state_outcome_response:
@@ -466,11 +474,14 @@ def generate_channel_curve(
                 dna_total += value
             elif oid in gsa_ids:
                 fh_gsa_total += value
+            elif oid in nbt_ids:
+                fh_nbt_total += value
             elif oid in signup_ids:
                 fh_signup_total += value
         row["overall_response"] = overall
         row["dna_response"] = dna_total
         row["fh_response"] = fh_gsa_total
+        row["fh_net_billthrough_response"] = fh_nbt_total
         row["fh_signup_response"] = fh_signup_total
         rows.append(row)
 

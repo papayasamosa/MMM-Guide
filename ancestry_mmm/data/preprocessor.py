@@ -6,6 +6,10 @@ from typing import List, Optional, Tuple, Dict, Any
 
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.outcomes import OutcomeDefinition, included_outcomes, resolve_outcome_definitions
+from ancestry_mmm.core.net_billthrough import (
+    NBT_METRIC_KEY, NetBillthroughCompletenessMetadata,
+    assert_supplied_net_billthrough_complete,
+)
 
 
 def prepare_data_for_modeling(
@@ -208,8 +212,11 @@ def create_fourier_features_from_calendar(
 
 
 def prepare_fh_modeling_frame(
-    df: pd.DataFrame, spec: ModelSpec, outcomes: Optional[List[OutcomeDefinition]] = None,
+    df: pd.DataFrame,
+    spec: ModelSpec,
+    outcomes: Optional[List[OutcomeDefinition]] = None,
     media_outcome_pathways: Optional[List[Any]] = None,
+    net_billthrough_metadata: Optional[NetBillthroughCompletenessMetadata | dict] = None,
 ) -> Dict[str, Any]:
     """
     Turn a joined, transformed DataFrame + ModelSpec into the arrays the
@@ -278,6 +285,7 @@ def prepare_fh_modeling_frame(
         raise ValueError(f"Duplicate outcome_id(s) among the outcomes included in the fit: {outcome_ids}")
     outcome_id_to_segment = {o.outcome_id: o.segment for o in fit_outcomes}
     outcome_id_to_product = {o.outcome_id: o.product for o in fit_outcomes}
+    outcome_source_columns = {o.outcome_id: o.source_column for o in fit_outcomes}
 
     data = df.copy()
     data[spec.date_col] = pd.to_datetime(data[spec.date_col])
@@ -301,15 +309,82 @@ def prepare_fh_modeling_frame(
         market_bounds.append((offset, offset + n))
         offset += n
 
+    nbt_outcomes = [o for o in fit_outcomes if o.metric_key == NBT_METRIC_KEY]
+    if nbt_outcomes:
+        metadata = (
+            NetBillthroughCompletenessMetadata.from_dict(net_billthrough_metadata)
+            if isinstance(net_billthrough_metadata, dict)
+            else net_billthrough_metadata
+        )
+        is_long_nbt = (
+            "segment" in data.columns
+            and NBT_METRIC_KEY in data.columns
+            and data.duplicated([spec.market_col, spec.date_col], keep=False).any()
+        )
+        if is_long_nbt:
+            assert_supplied_net_billthrough_complete(
+                data,
+                metadata,
+                configured_markets=markets,
+                configured_segments=[o.segment for o in nbt_outcomes],
+                week_column=spec.date_col,
+                market_column=spec.market_col,
+            )
+            keys = [spec.market_col, spec.date_col]
+            base = data.drop(columns=["segment", NBT_METRIC_KEY]).groupby(
+                keys, as_index=False
+            ).first()
+            for outcome in nbt_outcomes:
+                column = f"__nbt_{outcome.outcome_id}"
+                values = data[data["segment"].astype(str) == str(outcome.segment)][
+                    keys + [NBT_METRIC_KEY]
+                ].rename(columns={NBT_METRIC_KEY: column})
+                base = base.merge(values, on=keys, how="left", validate="one_to_one")
+                outcome_source_columns[outcome.outcome_id] = column
+            data = base.sort_values(keys).reset_index(drop=True)
+            markets = data[spec.market_col].unique().tolist()
+            market_to_idx = {market: i for i, market in enumerate(markets)}
+            market_idx = data[spec.market_col].map(market_to_idx).to_numpy()
+            market_bounds = []
+            offset = 0
+            for market in markets:
+                count = int((data[spec.market_col] == market).sum())
+                market_bounds.append((offset, offset + count))
+                offset += count
+        else:
+            configured = [
+                {
+                    "metric_key": o.metric_key,
+                    "source_column": o.source_column,
+                    "segment": o.segment,
+                    "markets": markets,
+                }
+                for o in nbt_outcomes
+            ]
+            assert_supplied_net_billthrough_complete(
+                data,
+                metadata,
+                configured_outcomes=configured,
+                week_column=spec.date_col,
+                market_column=spec.market_col,
+            )
+        net_billthrough_metadata = metadata
+
     missing_channels = [c for c in spec.channels if c not in data.columns]
     if missing_channels:
         raise ValueError(f"Channel columns missing from data: {missing_channels}")
     X_media = data[spec.channels].to_numpy(dtype=float)
 
-    missing_outcomes = [o.source_column for o in fit_outcomes if o.source_column not in data.columns]
+    missing_outcomes = [
+        outcome_source_columns[o.outcome_id]
+        for o in fit_outcomes
+        if outcome_source_columns[o.outcome_id] not in data.columns
+    ]
     if missing_outcomes:
         raise ValueError(f"Outcome source columns missing from data: {missing_outcomes}")
-    Y = data[[o.source_column for o in fit_outcomes]].to_numpy(dtype=float)
+    Y = data[
+        [outcome_source_columns[o.outcome_id] for o in fit_outcomes]
+    ].to_numpy(dtype=float)
 
     promo = np.zeros((len(data), len(outcome_ids)))
     for i, oid in enumerate(outcome_ids):
@@ -374,4 +449,5 @@ def prepare_fh_modeling_frame(
         "trend": trend,
         "unpooled_markets": spec.unpooled_markets,
         "media_outcome_pathways": media_outcome_pathways or [],
+        "net_billthrough_metadata": net_billthrough_metadata,
     }

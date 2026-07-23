@@ -38,7 +38,10 @@ import pytensor.tensor as pt
 
 from .hierarchical_model import FHModelMeta, _default_dna_outcome_id, _market_grouped_lag, _resolve_direct_dna_outcome_ids
 from .outcomes import outcome_eligibility
-from .pathways import MediaOutcomePathway, resolve_pathway_masks
+from .pathways import (
+    MediaOutcomePathway, resolve_pathway_masks, validate_media_outcome_pathways,
+)
+from .net_billthrough import assert_model_frame_net_billthrough_complete
 from .schema import ModelSpec
 from .transformations import pt_geometric_adstock_matrix, pt_hill_function
 
@@ -91,6 +94,7 @@ def build_fh_market_specific_model(
     meaningless (there is nothing to pool with).
     """
     prior_config = prior_config or {}
+    assert_model_frame_net_billthrough_complete(frame)
 
     markets: List[str] = frame["markets"]
     market_idx: np.ndarray = frame["market_idx"]
@@ -129,6 +133,11 @@ def build_fh_market_specific_model(
         p if isinstance(p, MediaOutcomePathway) else MediaOutcomePathway.from_dict(p)
         for p in (frame.get("media_outcome_pathways") or [])
     ]
+    pathway_errors = validate_media_outcome_pathways(
+        pathway_catalogue, channels=channels, outcome_ids=outcome_ids
+    )
+    if pathway_errors:
+        raise ValueError("Invalid media-outcome pathway catalogue: " + "; ".join(pathway_errors))
     pathway_masks = resolve_pathway_masks(
         outcome_ids, channels, pathway_catalogue,
         dna_channel_idx=dna_channel_idx, dna_outcome_id=dna_outcome_id,
@@ -270,7 +279,7 @@ def build_fh_market_specific_model(
                 lagged = lagged_media_by_weeks[pathway_masks.lag_for_cell((oi, ci))]
                 cell_matrix = pt.zeros((n_outcomes, n_channels))
                 cell_matrix = pt.set_subtensor(cell_matrix[oi, ci], strength_est[idx])
-                eta = eta + pt.sum(lagged[:, None, :] * beta_by_market_idx * strength_matrix[None, :, :], axis=2)
+                eta = eta + pt.sum(lagged[:, None, :] * beta_by_market_idx * cell_matrix[None, :, :], axis=2)
             pm.Deterministic(var_name, strength_matrix, dims=("outcome", "channel"))
             return eta
 
@@ -281,6 +290,12 @@ def build_fh_market_specific_model(
         eta_exploratory = (
             _cross_product_eta(exploratory_cells, "exploratory_cross_product_strength", prior_config.get("exploratory_cross_product_sigma", 0.08))
             if exploratory_cells else pt.zeros((n_obs, n_outcomes))
+        )
+        eta_active = pm.Deterministic(
+            "eta_active_cross_product", eta_active, dims=("obs", "outcome")
+        )
+        eta_exploratory = pm.Deterministic(
+            "eta_exploratory_cross_product", eta_exploratory, dims=("obs", "outcome")
         )
         eta_channels = eta_primary + eta_active + eta_exploratory
 

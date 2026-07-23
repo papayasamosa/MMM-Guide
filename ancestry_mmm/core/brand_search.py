@@ -80,6 +80,7 @@ class BrandSearchConfig:
     required, see `validate`) for `demand_capture_mediator`;
     `calibration_factor` only for `experiment_calibrated_incremental` -
     fields not required by the chosen `mode` are simply left `None`/empty."""
+
     channel: str
     mode: str
     mediator_of: List[str] = field(default_factory=list)
@@ -101,21 +102,31 @@ class BrandSearchConfig:
         if not self.channel:
             errors.append("Every Brand Search config needs a channel.")
         if self.mode not in BRAND_SEARCH_MODES:
-            errors.append(f"'{label}' has unknown Brand Search mode '{self.mode}' (expected one of {BRAND_SEARCH_MODES}).")
+            errors.append(
+                f"'{label}' has unknown Brand Search mode '{self.mode}' (expected one of {BRAND_SEARCH_MODES})."
+            )
             return errors  # nothing further to validate against an unrecognised mode
 
-        if self.mode in (MODE_DEMAND_CAPTURE_MEDIATOR, MODE_ASSUMPTION_BASED_REALLOCATION, MODE_EXPERIMENTAL_FITTED_MEDIATION):
+        if self.mode in (
+            MODE_DEMAND_CAPTURE_MEDIATOR,
+            MODE_ASSUMPTION_BASED_REALLOCATION,
+            MODE_EXPERIMENTAL_FITTED_MEDIATION,
+        ):
             if not self.mediator_of:
                 errors.append(
                     f"'{label}' is set to {MODE_DEMAND_CAPTURE_MEDIATOR} but has no mediator_of channels "
                     "declared - which upstream channels it mediates must be explicit (analyst-approved), never inferred."
                 )
             if self.channel in self.mediator_of:
-                errors.append(f"'{label}' cannot be listed as its own mediator_of channel.")
+                errors.append(
+                    f"'{label}' cannot be listed as its own mediator_of channel."
+                )
             if known_channels is not None:
                 unknown = [c for c in self.mediator_of if c not in known_channels]
                 if unknown:
-                    errors.append(f"'{label}' mediator_of references unknown channel(s): {unknown}.")
+                    errors.append(
+                        f"'{label}' mediator_of references unknown channel(s): {unknown}."
+                    )
             if self.mediation_share is None:
                 errors.append(
                     f"'{label}' is set to {MODE_DEMAND_CAPTURE_MEDIATOR} but has no mediation_share - the "
@@ -123,7 +134,9 @@ class BrandSearchConfig:
                     "supplied explicitly, there is no safe default."
                 )
             elif not (0.0 <= self.mediation_share <= 1.0):
-                errors.append(f"'{label}' mediation_share must be within [0, 1], got {self.mediation_share}.")
+                errors.append(
+                    f"'{label}' mediation_share must be within [0, 1], got {self.mediation_share}."
+                )
 
         if self.mode == MODE_EXPERIMENT_CALIBRATED_INCREMENTAL:
             if self.calibration_factor is None:
@@ -132,13 +145,16 @@ class BrandSearchConfig:
                     "an external incrementality test result must be supplied explicitly, there is no safe default."
                 )
             elif not (0.0 <= self.calibration_factor <= 1.0):
-                errors.append(f"'{label}' calibration_factor must be within [0, 1], got {self.calibration_factor}.")
+                errors.append(
+                    f"'{label}' calibration_factor must be within [0, 1], got {self.calibration_factor}."
+                )
 
         return errors
 
 
 def validate_brand_search_configs(
-    configs: List[BrandSearchConfig], known_channels: Optional[List[str]] = None,
+    configs: List[BrandSearchConfig],
+    known_channels: Optional[List[str]] = None,
 ) -> List[str]:
     errors: List[str] = []
     for c in configs:
@@ -159,7 +175,9 @@ def brand_search_pathway_role(mode: str) -> str:
     in how it's fit); `excluded` maps to the `excluded` role, dropping the
     channel from the likelihood's media term entirely."""
     if mode not in BRAND_SEARCH_MODES:
-        raise ValueError(f"Unknown Brand Search mode '{mode}' (expected one of {BRAND_SEARCH_MODES}).")
+        raise ValueError(
+            f"Unknown Brand Search mode '{mode}' (expected one of {BRAND_SEARCH_MODES})."
+        )
     return "excluded" if mode == MODE_EXCLUDED else "primary_direct"
 
 
@@ -189,8 +207,13 @@ def mediator_reallocation(
     the same total, never an independent estimate that could over- or
     under-shoot it.
     """
-    if config.mode not in (MODE_DEMAND_CAPTURE_MEDIATOR, MODE_ASSUMPTION_BASED_REALLOCATION):
-        raise ValueError(f"mediator_reallocation only applies to '{MODE_DEMAND_CAPTURE_MEDIATOR}' mode, got '{config.mode}'.")
+    if config.mode not in (
+        MODE_DEMAND_CAPTURE_MEDIATOR,
+        MODE_ASSUMPTION_BASED_REALLOCATION,
+    ):
+        raise ValueError(
+            f"mediator_reallocation only applies to '{MODE_DEMAND_CAPTURE_MEDIATOR}' mode, got '{config.mode}'."
+        )
 
     mediator_of = config.mediator_of
     mediated_pool = brand_search_contribution * config.mediation_share
@@ -202,7 +225,9 @@ def mediator_reallocation(
     result = pd.DataFrame(index=brand_search_contribution.index)
     mediated_assigned = pd.Series(0.0, index=brand_search_contribution.index)
     for c in mediator_of:
-        share = (upstream_contributions[c].clip(lower=0.0) / safe_upstream_total).fillna(0.0)
+        share = (
+            upstream_contributions[c].clip(lower=0.0) / safe_upstream_total
+        ).fillna(0.0)
         col = f"mediated_by_{c}"
         result[col] = share * mediated_pool
         mediated_assigned = mediated_assigned + result[col]
@@ -215,7 +240,9 @@ def mediator_reallocation(
     return result[["direct"] + [f"mediated_by_{c}" for c in mediator_of]]
 
 
-def apply_experiment_calibration(config: BrandSearchConfig, raw_contribution: pd.Series) -> pd.Series:
+def apply_experiment_calibration(
+    config: BrandSearchConfig, raw_contribution: pd.Series
+) -> pd.Series:
     """Scale a Brand Search channel's raw fitted contribution by its
     external incrementality test's `calibration_factor` - only meaningful
     for `experiment_calibrated_incremental` mode."""
@@ -229,6 +256,7 @@ def apply_experiment_calibration(config: BrandSearchConfig, raw_contribution: pd
 @dataclass(frozen=True)
 class FittedMediationResult:
     """Experimental two-equation mediation estimates (not production default)."""
+
     direct_effect: Dict[str, float]
     indirect_effect: Dict[str, float]
     total_effect: Dict[str, float]
@@ -236,29 +264,73 @@ class FittedMediationResult:
     credible_intervals: Dict[str, tuple]
 
 
-def fit_experimental_brand_search_mediation(brand_search, outcome, upstream_media, *, permitted_upstream_edges, controls=None):
+def fit_experimental_brand_search_mediation(
+    brand_search, outcome, upstream_media, *, permitted_upstream_edges, controls=None
+):
     """Fit the explicit two-equation linear mediation specification.
 
     Only analyst-permitted columns enter equation one. Confidence intervals
     use a normal approximation and are clearly returned as experimental.
     """
     import numpy as np
+
     names = list(permitted_upstream_edges)
     if not names:
-        raise ValueError("Experimental fitted mediation requires explicit permitted upstream edges.")
+        raise ValueError(
+            "Experimental fitted mediation requires explicit permitted upstream edges."
+        )
     missing = [n for n in names if n not in upstream_media]
     if missing:
         raise ValueError(f"Unknown permitted upstream edges: {missing}")
     x = np.column_stack([np.asarray(upstream_media[n], float) for n in names])
-    c = np.asarray(controls, float) if controls is not None else np.empty((len(outcome), 0))
-    if c.ndim == 1: c = c[:, None]
+    c = (
+        np.asarray(controls, float)
+        if controls is not None
+        else np.empty((len(outcome), 0))
+    )
+    if c.ndim == 1:
+        c = c[:, None]
     design_m = np.column_stack([np.ones(len(outcome)), x, c])
-    mediator_coef, *_ = np.linalg.lstsq(design_m, np.asarray(brand_search, float), rcond=None)
-    design_y = np.column_stack([np.ones(len(outcome)), x, np.asarray(brand_search, float), c])
+    mediator_coef, *_ = np.linalg.lstsq(
+        design_m, np.asarray(brand_search, float), rcond=None
+    )
+    design_y = np.column_stack(
+        [np.ones(len(outcome)), x, np.asarray(brand_search, float), c]
+    )
     outcome_coef, *_ = np.linalg.lstsq(design_y, np.asarray(outcome, float), rcond=None)
     mediator_effect = float(outcome_coef[1 + len(names)])
-    direct = {n: float(outcome_coef[1+i]) for i, n in enumerate(names)}
-    indirect = {n: float(mediator_coef[1+i] * mediator_effect) for i, n in enumerate(names)}
+    direct = {n: float(outcome_coef[1 + i]) for i, n in enumerate(names)}
+    indirect = {
+        n: float(mediator_coef[1 + i] * mediator_effect) for i, n in enumerate(names)
+    }
     total = {n: direct[n] + indirect[n] for n in names}
     intervals = {n: (total[n], total[n]) for n in names}
     return FittedMediationResult(direct, indirect, total, mediator_effect, intervals)
+
+
+@dataclass(frozen=True)
+class BrandSearchMediationOLSPrototype:
+    """Diagnostic-only OLS mediation output; never a headline/planning input."""
+
+    direct_effect: Dict[str, float]
+    indirect_effect: Dict[str, float]
+    total_effect: Dict[str, float]
+    residual_brand_search_effect: float
+
+
+def run_brand_search_mediation_ols_prototype(
+    brand_search, outcome, upstream_media, *, permitted_upstream_edges, controls=None
+) -> BrandSearchMediationOLSPrototype:
+    fitted = fit_experimental_brand_search_mediation(
+        brand_search,
+        outcome,
+        upstream_media,
+        permitted_upstream_edges=permitted_upstream_edges,
+        controls=controls,
+    )
+    return BrandSearchMediationOLSPrototype(
+        direct_effect=fitted.direct_effect,
+        indirect_effect=fitted.indirect_effect,
+        total_effect=fitted.total_effect,
+        residual_brand_search_effect=fitted.residual_brand_search_effect,
+    )

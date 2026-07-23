@@ -20,7 +20,10 @@ import numpy as np
 import pandas as pd
 
 from .hierarchical_model import FHModelMeta
-from .outcomes import fh_gsa_outcome_ids, fh_signup_outcome_ids, dna_kit_sale_outcome_ids
+from .outcomes import (
+    dna_kit_sale_outcome_ids, fh_gsa_outcome_ids, fh_net_billthrough_outcome_ids,
+    fh_signup_outcome_ids,
+)
 from .predict import _cross_product_strength_matrix, _pathway_weight, extract_pathway_strength, lag_frame
 from .transformations import geometric_adstock_matrix, hill_function
 
@@ -313,6 +316,7 @@ def generate_market_channel_curve(
         spend_range = np.linspace(0.0, cap, n_points)
 
     gsa_ids = set(fh_gsa_outcome_ids(meta))
+    nbt_ids = set(fh_net_billthrough_outcome_ids(meta))
     signup_ids = set(fh_signup_outcome_ids(meta))
     dna_ids = set(dna_kit_sale_outcome_ids(meta))
     rows = []
@@ -322,6 +326,7 @@ def generate_market_channel_curve(
         overall = 0.0
         dna_total = 0.0
         fh_gsa_total = 0.0
+        fh_nbt_total = 0.0
         fh_signup_total = 0.0
         for oid in meta.outcome_ids:
             # Steady-state collapse - see steady_state_outcome_response_market_specific.
@@ -333,11 +338,14 @@ def generate_market_channel_curve(
                 dna_total += value
             elif oid in gsa_ids:
                 fh_gsa_total += value
+            elif oid in nbt_ids:
+                fh_nbt_total += value
             elif oid in signup_ids:
                 fh_signup_total += value
         row["overall_response"] = overall
         row["dna_response"] = dna_total
         row["fh_response"] = fh_gsa_total
+        row["fh_net_billthrough_response"] = fh_nbt_total
         row["fh_signup_response"] = fh_signup_total
         rows.append(row)
 

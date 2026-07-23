@@ -73,6 +73,7 @@ if st.button("Build export bundle", type="primary"):
             outcome_definitions=get_state("outcome_definitions"),
             funnel_links=get_state("funnel_links"),
             media_outcome_pathways=get_state("media_outcome_pathways"),
+            net_billthrough_metadata=get_state("net_billthrough_metadata"),
         )
     st.success(f"Project bundle built: {output_path}")
     with open(output_path, "rb") as f:
@@ -125,6 +126,7 @@ if uploaded_zip is not None and st.button("Import bundle"):
         set_state("outcome_definitions", imported["outcome_definitions"])
         set_state("funnel_links", imported["funnel_links"])
         set_state("media_outcome_pathways", imported["media_outcome_pathways"])
+        set_state("net_billthrough_metadata", imported["net_billthrough_metadata"])
         if imported["market_spec_config"] is None:
             st.caption(
                 "This bundle predates the market-specific redesign - no market descriptors or "

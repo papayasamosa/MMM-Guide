@@ -24,8 +24,10 @@ from ancestry_mmm.core.promotions import (
 )
 from ancestry_mmm.core.funnel import FunnelLink, validate_funnel_links
 from ancestry_mmm.core.pathways import (
-    PATHWAY_ROLES, MediaOutcomePathway, validate_media_outcome_pathways, pathways_drift_dataframe,
+    COMPONENT_TYPES, EVIDENCE_STATUSES, LEGACY_EVIDENCE_STATUSES, LAG_TYPES, PATHWAY_ROLES,
+    MediaOutcomePathway, validate_media_outcome_pathways, pathways_drift_dataframe,
 )
+from ancestry_mmm.core.net_billthrough import NBT_METRIC_KEY
 from ancestry_mmm.data import validate_modeling_frame, detect_column_types, pipeline_to_json, pipeline_from_json
 import pandas as pd
 
@@ -300,7 +302,7 @@ st.caption(
 if "media_outcome_pathways" not in st.session_state:
     st.session_state["media_outcome_pathways"] = get_state("media_outcome_pathways") or []
 _pathway_default_df = pd.DataFrame(st.session_state["media_outcome_pathways"]) if st.session_state["media_outcome_pathways"] else pd.DataFrame(
-    columns=["pathway_id", "channel", "source_product", "target_outcome_id", "role", "lag_type",
+    columns=["pathway_id", "channel", "source_product", "target_outcome_id", "component_type", "role", "lag_type",
              "lag_weeks", "prior_scale", "include_in_attribution", "include_in_planning", "evidence_status"]
 )
 pathway_catalogue_df = st.data_editor(
@@ -314,13 +316,17 @@ pathway_catalogue_df = st.data_editor(
             "target_outcome_id", options=[r["outcome_id"] for r in outcome_catalogue_df.to_dict("records") if r.get("outcome_id")],
             required=True,
         ),
-        "role": st.column_config.SelectboxColumn("role", options=list(PATHWAY_ROLES), required=True, default=PATHWAY_ROLES[0]),
-        "lag_type": st.column_config.TextColumn("lag_type", help="Free text, e.g. 'none', 'fixed_weeks', 'distributed'.", default="none"),
+        "component_type": st.column_config.SelectboxColumn(
+            "Component type", options=list(COMPONENT_TYPES), required=True, default="direct",
+            help="Direct effect, delayed/cross-product effect, diagnostic mediation, or exclusion.",
+        ),
+        "role": st.column_config.SelectboxColumn("Role", options=list(PATHWAY_ROLES), required=True, default=PATHWAY_ROLES[0]),
+        "lag_type": st.column_config.SelectboxColumn("Lag type", options=list(LAG_TYPES), required=True, default="none"),
         "lag_weeks": st.column_config.NumberColumn("lag_weeks", min_value=0, help="Only meaningful if lag_type implies a delay."),
         "prior_scale": st.column_config.NumberColumn("prior_scale", min_value=0.0001, default=1.0, help="Smaller = tighter prior for a future estimation PR."),
         "include_in_attribution": st.column_config.CheckboxColumn("include_in_attribution", default=True),
         "include_in_planning": st.column_config.CheckboxColumn("include_in_planning", default=True),
-        "evidence_status": st.column_config.TextColumn("evidence_status", help="Free text, e.g. 'untested', 'supported', 'inconclusive', 'contradicted'.", default="untested"),
+        "evidence_status": st.column_config.SelectboxColumn("Evidence status", options=list(EVIDENCE_STATUSES + LEGACY_EVIDENCE_STATUSES), required=True, default="unreviewed"),
     },
     key="pathway_catalogue_editor",
     width="stretch",
@@ -347,6 +353,28 @@ if get_state("model_meta") is not None and st.session_state["media_outcome_pathw
 st.markdown("---")
 st.markdown("### Net bill-through completeness")
 st.caption("Family History net bill-through is supplied as an authoritative weekly count. Configure and validate its completeness at upload; the app never reconstructs it from customer or billing events.")
+_saved_nbt = get_state("net_billthrough_metadata") or {}
+_has_nbt = any(row.get("metric_key") == NBT_METRIC_KEY for row in outcome_catalogue_df.to_dict("records"))
+net_billthrough_metadata = None
+if _has_nbt:
+    n1, n2, n3 = st.columns(3)
+    nbt_start = n1.text_input("Model start week", value=str(_saved_nbt.get("model_start_week", "")), help="Weekly anchor, YYYY-MM-DD")
+    nbt_end = n2.text_input("Model end week", value=str(_saved_nbt.get("model_end_week", "")), help="Inclusive, YYYY-MM-DD")
+    nbt_latest = n3.text_input("Latest complete NBT week", value=str(_saved_nbt.get("latest_complete_net_billthrough_week", "")))
+    n4, n5 = st.columns(2)
+    nbt_as_of = n4.text_input("NBT data as-of date", value=str(_saved_nbt.get("data_as_of_date", "")))
+    nbt_owner = n5.text_input("NBT source owner", value=str(_saved_nbt.get("source_owner", "")))
+    nbt_rule = st.text_input("NBT maturity/finalisation rule", value=str(_saved_nbt.get("maturity_rule_description", "")))
+    net_billthrough_metadata = {
+        "data_as_of_date": nbt_as_of,
+        "model_start_week": nbt_start,
+        "model_end_week": nbt_end,
+        "latest_complete_net_billthrough_week": nbt_latest,
+        "maturity_rule_description": nbt_rule,
+        "source_owner": nbt_owner,
+    }
+else:
+    st.caption("No fitted net bill-through outcome is currently configured.")
 
 # `segment_outcomes`/`segment_ltv` (ModelSpec migration fields) and per-segment
 # promo/control mappings are now derived from the catalogue's own segments,
@@ -583,6 +611,7 @@ if st.button("Save structure and validate", type="primary"):
         set_state("pipeline_steps", pipeline_to_json(updated_pipeline_steps))
         set_state("funnel_links", [fl.to_dict() for fl in funnel_links])
         set_state("media_outcome_pathways", [p.to_dict() for p in media_outcome_pathways])
+        set_state("net_billthrough_metadata", net_billthrough_metadata)
         clear_model_state()
         issues = validate_modeling_frame(
             df if market_col in df.columns else df.assign(**{market_col: "default"}),
