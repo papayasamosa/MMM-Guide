@@ -65,6 +65,16 @@ from .canonical_curves import (
     summarize_curve_draws,
     support_from_model_frame,
 )
+from .media_costs import (
+    CostMappingRegistry,
+    FixedCostPerUnitMapping,
+    IdentitySpendMapping,
+    MediaCostMapping,
+    MediaInputSpec,
+    PiecewiseLinearCostMapping,
+    UploadedPlanCostMapping,
+    cost_mapping_from_dict,
+)
 from .evidence_tiers import (
     classify_market_evidence,
     classify_all_markets,
@@ -251,6 +261,14 @@ __all__ = [
     "reference_context_from_model_frame",
     "summarize_curve_draws",
     "support_from_model_frame",
+    "CostMappingRegistry",
+    "FixedCostPerUnitMapping",
+    "IdentitySpendMapping",
+    "MediaCostMapping",
+    "MediaInputSpec",
+    "PiecewiseLinearCostMapping",
+    "UploadedPlanCostMapping",
+    "cost_mapping_from_dict",
     "cpa_stability_flags",
     "extract_cost_per_unit_series",
     "historical_cost_trend",

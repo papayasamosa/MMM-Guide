@@ -15,6 +15,8 @@ Bundle layout (a single zip):
     config/model_approval.json         - ModelApproval, if the trained model has been approved
     config/market_spec_config.json     - MarketSpecConfig (market descriptors, currency,
                                           media-unit mappings), if any is set
+    config/media_input_specs.json      - explicit model-input identity/unit metadata
+    config/media_cost_mappings.json    - governed market/channel/context cost mappings
     config/model_type.json             - which model builder was fit: "shared" (Model A,
                                           core.hierarchical_model - the default/legacy value
                                           when this file is absent) or "market_specific"
@@ -61,7 +63,7 @@ from .predict import extract_posterior_params
 from .schema import ModelSpec
 from .optimization import SpendConstraint
 
-PROJECT_BUNDLE_SCHEMA_VERSION = 3
+PROJECT_BUNDLE_SCHEMA_VERSION = 4
 PROJECT_APP_VERSION = "0.1.0"
 
 
@@ -139,6 +141,8 @@ def export_project(
     calibration_records: Optional[List[dict]] = None,
     model_comparison_candidates: Optional[List[dict]] = None,
     migration_review: Optional[dict] = None,
+    media_input_specs: Optional[List[dict]] = None,
+    media_cost_mappings: Optional[dict] = None,
 ) -> Path:
     output_path = Path(output_path)
     with tempfile.TemporaryDirectory() as tmp:
@@ -183,6 +187,14 @@ def export_project(
         if market_spec_config is not None:
             (tmp / "config" / "market_spec_config.json").write_text(
                 json.dumps(market_spec_config, indent=2, default=str)
+            )
+        if media_input_specs is not None:
+            (tmp / "config" / "media_input_specs.json").write_text(
+                json.dumps(media_input_specs, indent=2, default=str)
+            )
+        if media_cost_mappings is not None:
+            (tmp / "config" / "media_cost_mappings.json").write_text(
+                json.dumps(media_cost_mappings, indent=2, default=str)
             )
         if model_type is not None:
             (tmp / "config" / "model_type.json").write_text(
@@ -304,6 +316,9 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         # an error; core.market_config.MarketSpecConfig.from_dict(None)
         # returns an empty config.
         "market_spec_config": None,
+        # G2A.2 metadata is optional so older bundles remain resumable.
+        "media_input_specs": [],
+        "media_cost_mappings": None,
         # Absent in bundles exported before the market-specific redesign's
         # Phase 2 - "shared" (Model A) is the correct default: every bundle
         # exported before Model C existed was necessarily a Model A fit.
@@ -377,6 +392,14 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         if (config_dir / "market_spec_config.json").exists():
             result["market_spec_config"] = json.loads(
                 (config_dir / "market_spec_config.json").read_text()
+            )
+        if (config_dir / "media_input_specs.json").exists():
+            result["media_input_specs"] = json.loads(
+                (config_dir / "media_input_specs.json").read_text()
+            )
+        if (config_dir / "media_cost_mappings.json").exists():
+            result["media_cost_mappings"] = json.loads(
+                (config_dir / "media_cost_mappings.json").read_text()
             )
         if (config_dir / "model_type.json").exists():
             result["model_type"] = json.loads(

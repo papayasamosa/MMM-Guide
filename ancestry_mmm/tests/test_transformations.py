@@ -38,6 +38,30 @@ def test_geometric_adstock_matrix_matches_per_channel_calls():
     np.testing.assert_allclose(result[:, 1], expected_col1)
 
 
+def test_geometric_adstock_matches_pymc_marketing_unnormalized():
+    """Guard the portion of the upstream transform we intentionally match."""
+    pytest.importorskip("pymc_marketing")
+    import pytensor.tensor as pt
+    from pymc_marketing.mmm.transformers import (
+        geometric_adstock as upstream_geometric_adstock,
+    )
+
+    values = np.array([10.0, 0.0, 4.0, 1.0, 0.0])
+    alpha = 0.35
+    upstream = upstream_geometric_adstock(
+        pt.as_tensor_variable(values),
+        alpha=alpha,
+        l_max=len(values),
+        normalize=False,
+    ).eval()
+    np.testing.assert_allclose(
+        geometric_adstock(values, alpha, normalize=False),
+        upstream,
+        rtol=1e-12,
+        atol=1e-12,
+    )
+
+
 def test_hill_function_at_half_saturation_point_is_one_half():
     # By construction, x**S / (K**S + x**S) == 0.5 when x == K, for any S > 0.
     for K, S in [(100.0, 1.0), (5000.0, 0.8), (12.0, 2.5)]:

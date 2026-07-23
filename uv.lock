@@ -1472,6 +1472,7 @@ dependencies = [
     { name = "pymc" },
     { name = "pymc-marketing", version = "0.19.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "pymc-marketing", version = "0.19.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "pytensor" },
     { name = "scikit-learn" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
@@ -1502,7 +1503,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "arviz", specifier = ">=0.17.0" },
+    { name = "arviz", specifier = "==0.23.4" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=23.0.0" },
     { name = "fastapi", marker = "extra == 'api'", specifier = ">=0.109.0" },
     { name = "graphviz", specifier = ">=0.21" },
@@ -1516,8 +1517,10 @@ requires-dist = [
     { name = "pandas", specifier = ">=2.0.0" },
     { name = "plotly", specifier = ">=5.18.0" },
     { name = "pyarrow", specifier = ">=14.0.0" },
-    { name = "pymc", specifier = ">=5.10.0" },
-    { name = "pymc-marketing", specifier = ">=0.4.0" },
+    { name = "pymc", specifier = "==5.28.5" },
+    { name = "pymc-marketing", marker = "python_full_version < '3.12'", specifier = "==0.19.2" },
+    { name = "pymc-marketing", marker = "python_full_version >= '3.12'", specifier = "==0.19.4" },
+    { name = "pytensor", specifier = "==2.38.3" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.4.0" },
     { name = "python-multipart", marker = "extra == 'api'", specifier = ">=0.0.6" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },

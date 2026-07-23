@@ -248,6 +248,43 @@ def test_export_then_import_reproduces_config(tmp_path, sample_project):
     assert imported["model_approval"] == sample_project["model_approval"]
 
 
+def test_media_input_and_cost_governance_round_trip(tmp_path, sample_project):
+    project = dict(sample_project)
+    project["media_input_specs"] = [
+        {
+            "market": "UK",
+            "channel": "TV_Brand",
+            "column": "tv_impressions",
+            "unit": "impressions",
+            "unit_scale": 1000.0,
+            "source": "delivery feed",
+            "schema_version": 1,
+        }
+    ]
+    project["media_cost_mappings"] = {
+        "schema_version": 1,
+        "mappings": [
+            {
+                "mapping_id": "uk-tv-base",
+                "method": "fixed_cost_per_unit",
+                "market": "UK",
+                "channel": "TV_Brand",
+                "currency": "GBP",
+                "cost_context_id": "base",
+                "cost_per_media_input": 2.5,
+                "source": "finance",
+                "approval_status": "approved",
+                "approved_by": "owner",
+            }
+        ],
+    }
+    imported = import_project(
+        export_project(tmp_path / "cost-governance.zip", **project)
+    )
+    assert imported["media_input_specs"] == project["media_input_specs"]
+    assert imported["media_cost_mappings"] == project["media_cost_mappings"]
+
+
 def test_export_then_import_reproduces_scenarios_and_constraints(
     tmp_path, sample_project
 ):

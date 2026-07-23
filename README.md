@@ -6,6 +6,10 @@ Ancestry's actual Family History (FH) measurement problem: **New**, **DNA cross-
 explicit DNA-to-FH halo pathway, a versioned curve bank, an explicit model-approval gate, and
 constrained scenario planning.
 
+Built in PyMC and informed by PyMC Marketing. The exact upstream alignment,
+tested compatibility, and intentional custom behaviour are documented in
+[`docs/pymc_marketing_alignment.md`](docs/pymc_marketing_alignment.md).
+
 The application lives in [`ancestry_mmm/`](ancestry_mmm/) and runs as a Streamlit app. See
 [`docs/ancestry_fh_mmm.md`](docs/ancestry_fh_mmm.md) for the full requirements brief it was built
 against - why segments are modelled jointly, why the DNA halo pathway is explicit, why the

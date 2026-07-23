@@ -24,6 +24,10 @@ from ancestry_mmm.core.canonical_curves import (
     support_from_model_frame,
 )
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
+from ancestry_mmm.core.media_costs import (
+    FixedCostPerUnitMapping,
+    MediaInputSpec,
+)
 from ancestry_mmm.core.pathways import MediaOutcomePathway, resolve_pathway_masks
 from ancestry_mmm.core.predict import (
     extract_posterior_params,
@@ -527,7 +531,7 @@ def test_governance_views_are_channel_safe_and_labelled(meta):
         _generate(meta), value_per_response=VALUES
     )
     assert set(views) == {
-        "segment", "product", "market", "fh_nbt_total", "direct", "halo",
+        "segment", "product", "market_channel_metric", "fh_nbt_total", "direct", "halo",
         "headline", "planning",
     }
     for purpose, view in views.items():
@@ -580,5 +584,112 @@ def test_attribution_reconciliation_and_serialization(meta, tmp_path):
     paths = export_canonical_curve_bank(reconciled, summary, tmp_path)
     pd.testing.assert_frame_equal(pd.read_parquet(paths[0]), reconciled)
     schema = json.loads(paths[2].read_text())
-    assert schema["version"] == "G2A.1-1"
-    assert "mu(selected_channel_spend)" in schema["response_definition"]
+    assert schema["version"] == "G2A.2-1"
+    assert "mu(selected_channel_media_input)" in schema["response_definition"]
+
+
+def _governed_inputs_and_costs(cost_per_unit=2.0):
+    specs = {
+        (market, channel): MediaInputSpec(
+            market=market,
+            channel=channel,
+            column=f"{channel.lower()}_impressions",
+            unit="thousand_impressions",
+            unit_scale=1000.0,
+        )
+        for market in MARKETS
+        for channel in CHANNELS
+    }
+    costs = {
+        (market, channel): FixedCostPerUnitMapping(
+            mapping_id=f"{market}-{channel}-cost",
+            market=market,
+            channel=channel,
+            currency="GBP" if market == "UK" else "AUD",
+            cost_context_id="curve",
+            cost_per_media_input=cost_per_unit,
+            source="approved rate card",
+            approval_status="approved",
+            approved_by="finance",
+        )
+        for market in MARKETS
+        for channel in CHANNELS
+    }
+    return specs, costs
+
+
+def test_model_input_curve_is_available_without_cost_economics(meta):
+    specs, _ = _governed_inputs_and_costs()
+    draws = generate_canonical_curve_draws(
+        model_run_id="input-only",
+        meta=meta,
+        trace=_trace(),
+        reference_contexts=_contexts(),
+        n_draws=2,
+        spend_points=[0.0, 50.0],
+        support_by_market_channel=_support(),
+        curve_type="model_input",
+        media_input_specs=specs,
+    )
+    assert draws["curve_type"].eq("model_input").all()
+    assert draws["media_input_unit"].eq("thousand_impressions").all()
+    assert draws["reporting_currency_spend"].isna().all()
+    assert draws["current_spend"].isna().all()
+    assert draws["current_media_input"].eq(50.0).all()
+    channel = aggregate_curve_draws(
+        draws,
+        by=[
+            "model_run_id", "reference_context_id", "market", "channel",
+            "spend_point", "outcome_id",
+        ],
+    )
+    assert channel["average_cpa"].isna().all()
+    assert channel["average_economics_status"].eq(
+        "cost_mapping_missing"
+    ).all()
+
+
+def test_monetary_curve_maps_spend_and_stores_chain_rule_derivatives(meta):
+    specs, costs = _governed_inputs_and_costs(cost_per_unit=2.0)
+    draws = _generate(
+        meta,
+        curve_type="monetary",
+        media_input_specs=specs,
+        cost_mappings=costs,
+        cost_context_id="curve",
+    )
+    first = draws[(draws["market"] == "UK") & (draws["spend_point"] == 1)]
+    assert first["media_input"].eq(25.0).all()
+    assert first["local_spend"].eq(50.0).all()
+    assert first[
+        "marginal_media_input_per_local_currency_unit"
+    ].eq(0.5).all()
+    assert np.allclose(
+        first["marginal_incremental_response_per_currency_unit"],
+        first["marginal_incremental_response_per_media_input_unit"] * 0.5,
+    )
+    au = draws[(draws["market"] == "AU") & (draws["spend_point"] == 1)]
+    assert np.allclose(
+        au["marginal_incremental_response_per_currency_unit"],
+        au["marginal_incremental_response_per_media_input_unit"],
+    )
+
+
+def test_monetary_curve_is_blocked_without_approved_mapping(meta):
+    specs, _ = _governed_inputs_and_costs()
+    with pytest.raises(ValueError, match="blocked"):
+        _generate(
+            meta,
+            curve_type="monetary",
+            media_input_specs=specs,
+            cost_context_id="curve",
+        )
+
+
+def test_direct_and_halo_governance_views_are_response_only(meta):
+    views = canonical_governance_views(_generate(meta))
+    for name in ("direct", "halo"):
+        assert views[name]["average_cpa"].isna().all()
+        assert views[name]["economics_scope"].eq(
+            "decomposition_response_only"
+        ).all()

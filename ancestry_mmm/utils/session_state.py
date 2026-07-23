@@ -31,6 +31,9 @@ def init_session_state():
         # a dict). Optional and not yet consumed by the fitting pipeline -
         # see docs/market_hierarchy.md.
         "market_spec_config": None,
+        # Explicit model-input identity and governed spend mappings (G2A.2).
+        "media_input_specs": [],
+        "media_cost_mappings": None,
         # Model configuration
         "prior_config": dict(DEFAULT_FH_PRIORS),
         "dna_lag_weeks": DEFAULT_DNA_LAG_WEEKS,

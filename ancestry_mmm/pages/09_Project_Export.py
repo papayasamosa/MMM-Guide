@@ -127,6 +127,8 @@ if st.button("Build export bundle", type="primary"):
             calibration_records=get_state("calibration_records") or [],
             model_comparison_candidates=get_state("model_comparison_candidates") or [],
             migration_review=get_state("migration_review"),
+            media_input_specs=get_state("media_input_specs") or [],
+            media_cost_mappings=get_state("media_cost_mappings"),
         )
     st.success(f"Project bundle built: {output_path}")
     with open(output_path, "rb") as f:
@@ -186,6 +188,8 @@ if uploaded_zip is not None and st.button("Import bundle"):
         set_state("trace", imported["trace"])
         set_state("model_run_id", imported["model_run_id"])
         set_state("market_spec_config", imported["market_spec_config"])
+        set_state("media_input_specs", imported.get("media_input_specs") or [])
+        set_state("media_cost_mappings", imported.get("media_cost_mappings"))
         set_state("model_type", imported["model_type"])
         set_state("outcome_definitions", imported["outcome_definitions"])
         set_state("funnel_links", imported["funnel_links"])
