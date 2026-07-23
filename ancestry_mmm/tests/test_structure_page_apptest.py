@@ -12,6 +12,7 @@ renders and saves correctly for the exact scenario the instruction
 document requires, without needing to simulate grid keystrokes."""
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -19,6 +20,7 @@ import streamlit as st
 from streamlit.testing.v1 import AppTest
 
 from ancestry_mmm.core.outcomes import FAMILY_HISTORY, METRIC_GSA, METRIC_SIGNUP, OutcomeDefinition
+from ancestry_mmm.core.pathways import ResolvedPathwayMasks
 
 st.page_link = lambda *a, **k: None
 
@@ -243,6 +245,92 @@ def test_pathway_component_controls_disable_irrelevant_fields():
     assert headline.disabled and headline.value is False
     assert approval.disabled and approval.value == "not_applicable"
     assert any("diagnostic-only" in info.value for info in at.info)
+
+
+def test_legacy_pathway_review_loads_catalogue_and_requires_refit():
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.session_state["transformed_data"] = _transformed_data()
+    at.session_state["date_col"] = "date"
+    at.session_state["market_col"] = "market"
+    at.session_state["outcome_definitions"] = [
+        {
+            "outcome_id": "fh_new_gsa",
+            "product": FAMILY_HISTORY,
+            "segment": "New",
+            "metric": METRIC_GSA,
+            "source_column": "New",
+        },
+        {
+            "outcome_id": "fh_dna_crosssell",
+            "product": FAMILY_HISTORY,
+            "segment": "DNA cross-sell",
+            "metric": METRIC_GSA,
+            "source_column": "DNA_CrossSell",
+        },
+    ]
+    legacy_masks = ResolvedPathwayMasks.from_dict(
+        {
+            "primary_channels_by_outcome": {"fh_new_gsa": ["tv_spend"]},
+            "active_channels_by_outcome": {},
+            "exploratory_channels_by_outcome": {},
+        }
+    )
+    at.session_state["model_meta"] = SimpleNamespace(
+        pathway_masks=legacy_masks,
+        dna_channels=[],
+        outcome_id_to_product={"fh_new_gsa": FAMILY_HISTORY},
+        outcome_ids=["fh_new_gsa"],
+    )
+    at.session_state["trace"] = object()
+    at.session_state["model_trained"] = True
+    at.run()
+    assert not at.exception
+    assert any("mask-only" in warning.value for warning in at.warning)
+    cross_sell = [
+        selectbox
+        for selectbox in at.selectbox
+        if selectbox.label == "FH DNA cross-sell outcome"
+    ][0]
+    cross_sell.select("fh_dna_crosssell").run()
+    assert not at.exception
+
+    load_review = [
+        button
+        for button in at.button
+        if button.label == "Load migrated components into review catalogue"
+    ][0]
+    load_review.click().run()
+    assert not at.exception
+    assert len(at.session_state["media_outcome_pathways"]) == 1
+    assert (
+        at.session_state["media_outcome_pathways"][0]["target_outcome_id"]
+        == "fh_new_gsa"
+    )
+
+    save = [b for b in at.button if b.label == "Save structure and validate"][0]
+    save.click().run()
+    assert not at.exception
+    assert any("Confirm that every migrated pathway" in e.value for e in at.error)
+    assert at.session_state["model_meta"] is not None
+
+    confirmation = [
+        checkbox
+        for checkbox in at.checkbox
+        if checkbox.label
+        == "I reviewed every migrated pathway and its governance fields"
+    ][0]
+    confirmation.check().run()
+    save = [b for b in at.button if b.label == "Save structure and validate"][0]
+    save.click().run()
+    assert not at.exception
+    assert not at.error, [error.value for error in at.error]
+    assert at.session_state["model_meta"] is None
+    assert at.session_state["trace"] is None
+    assert at.session_state["model_trained"] is False
+    assert any(
+        "old fit and approval were invalidated" in success.value
+        for success in at.success
+    )
 
 
 def test_save_succeeds_with_a_genuine_signup_and_gsa_on_the_same_segment():

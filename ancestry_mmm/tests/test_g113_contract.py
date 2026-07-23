@@ -12,7 +12,14 @@ from ancestry_mmm.core.attribution import compute_shapley_contributions
 from ancestry_mmm.core.approval import ModelApproval
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
 from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
+from ancestry_mmm.core.market_specific_attribution import (
+    compute_shapley_contributions_market_specific,
+)
 from ancestry_mmm.core.market_specific_model import build_fh_market_specific_model
+from ancestry_mmm.core.market_specific_predict import (
+    FHMarketSpecificPosteriorParams,
+    steady_state_outcome_response_market_specific,
+)
 from ancestry_mmm.core.net_billthrough import (
     NetBillthroughCompletenessMetadata,
     assert_model_frame_net_billthrough_complete,
@@ -23,12 +30,15 @@ from ancestry_mmm.core.pathways import (
     MediaOutcomePathway,
     ResolvedPathwayComponent,
     ResolvedPathwayMasks,
+    legacy_governance_review_catalogue,
     resolve_pathway_masks,
+    validate_legacy_governance_review,
     validate_media_outcome_pathways,
 )
 from ancestry_mmm.core.optimization import WEEKS_PER_MONTH, evaluate_scenario
 from ancestry_mmm.core.predict import (
     FHPosteriorParams,
+    predict_mu,
     steady_state_outcome_response,
 )
 from ancestry_mmm.core.schema import ModelSpec
@@ -113,6 +123,22 @@ def test_old_mask_only_bundle_is_migrated_to_read_only_compatibility_views():
         restored.component_eligible("fh", "TV", "direct", "planning")
     with pytest.raises(LegacyPathwayGovernanceError, match="governance review"):
         restored.component_eligible("fh", "TV", "direct", "headline")
+    review_meta = SimpleNamespace(
+        pathway_masks=restored,
+        dna_channels=[],
+        outcome_id_to_product={"fh": FAMILY_HISTORY},
+    )
+    review_draft = legacy_governance_review_catalogue(review_meta)
+    assert len(review_draft) == 1
+    assert validate_legacy_governance_review(
+        review_meta, review_draft, review_confirmed=True
+    ) == []
+    assert any(
+        "missing reconstructed components" in error
+        for error in validate_legacy_governance_review(
+            review_meta, [], review_confirmed=True
+        )
+    )
     legacy_meta = SimpleNamespace(
         outcome_ids=["fh"], channels=["TV"], pathway_masks=restored
     )
@@ -202,6 +228,137 @@ def test_id_keyed_lag_and_prior_are_independent_of_component_order():
     migrated = ResolvedPathwayMasks.from_dict(pre_g115_payload)
     assert migrated.lag_for_component("second", "Radio") == 5
     assert migrated.lag_weeks_by_cell == masks.lag_weeks_by_cell
+
+
+def test_reordered_and_governance_filtered_components_preserve_all_calculations():
+    fitted_components = [
+        ResolvedPathwayComponent(
+            outcome_id="z_outcome",
+            channel="TV",
+            component_type="direct",
+            role="primary_direct",
+            include_in_headline=True,
+            headline_approval_status="approved",
+            included_in_fit=True,
+        ),
+        ResolvedPathwayComponent(
+            outcome_id="z_outcome",
+            channel="TV",
+            component_type="cross_product",
+            role="active_cross_product",
+            lag_weeks=1,
+            prior_scale=0.2,
+            include_in_planning=False,
+            included_in_fit=True,
+        ),
+        ResolvedPathwayComponent(
+            outcome_id="a_outcome",
+            channel="Radio",
+            component_type="direct",
+            role="primary_direct",
+            include_in_headline=True,
+            headline_approval_status="approved",
+            included_in_fit=True,
+        ),
+    ]
+    governance_only = ResolvedPathwayComponent(
+        outcome_id="z_outcome",
+        channel="Radio",
+        component_type="mediated",
+        role="active_cross_product",
+        lag_weeks=2,
+        included_in_fit=False,
+    )
+    variants = (
+        fitted_components + [governance_only],
+        list(reversed(fitted_components + [governance_only])),
+        fitted_components,
+    )
+    params = FHPosteriorParams(
+        decay_rate={"Radio": 0.0, "TV": 0.0},
+        hill_K={"Radio": 100.0, "TV": 100.0},
+        hill_S={"Radio": 1.0, "TV": 1.0},
+        beta={
+            "z_outcome": {"Radio": 0.3, "TV": 1.0},
+            "a_outcome": {"Radio": 0.8, "TV": 0.2},
+        },
+        pathway_strength={
+            "z_outcome": {"Radio": 0.0, "TV": 0.5},
+            "a_outcome": {"Radio": 0.0, "TV": 0.0},
+        },
+        promo_coef={"z_outcome": 0.0, "a_outcome": 0.0},
+        market_offset={"UK": {"z_outcome": 0.0, "a_outcome": 0.0}},
+        intercept={"z_outcome": 0.0, "a_outcome": 0.0},
+        trend_coef={"z_outcome": 0.0, "a_outcome": 0.0},
+        gamma_fourier={
+            "z_outcome": np.zeros(2),
+            "a_outcome": np.zeros(2),
+        },
+        alpha={"z_outcome": 5.0, "a_outcome": 5.0},
+        control_coef={},
+        outcome_control_coef={},
+    )
+    frame = {
+        "markets": ["UK"],
+        "market_idx": np.zeros(4, dtype=int),
+        "market_bounds": [(0, 4)],
+        "X_media": np.array(
+            [[20.0, 50.0], [30.0, 0.0], [0.0, 0.0], [10.0, 0.0]]
+        ),
+        "promo": np.zeros((4, 2)),
+        "trend": np.zeros(4),
+        "fourier": np.zeros((4, 2)),
+        "control_names": [],
+        "X_controls": np.zeros((4, 0)),
+        "outcome_controls": {},
+        "outcome_control_names": {},
+    }
+
+    results = []
+    for components in variants:
+        meta = FHModelMeta(
+            markets=["UK"],
+            outcome_ids=["z_outcome", "a_outcome"],
+            channels=["Radio", "TV"],
+            dna_channels=[],
+            dna_channel_idx=[],
+            non_dna_idx=[0, 1],
+            dna_outcome_id="z_outcome",
+            dna_lag_weeks=0,
+            unpooled_markets=[],
+            control_names=[],
+            pathway_masks=ResolvedPathwayMasks(components=components),
+        )
+        results.append(
+            (
+                predict_mu(frame, meta, params),
+                compute_shapley_contributions(
+                    frame, meta, params, n_permutations=2, purpose="attribution"
+                ),
+                compute_shapley_contributions(
+                    frame, meta, params, n_permutations=2, purpose="headline"
+                ),
+                steady_state_outcome_response(
+                    "UK",
+                    {"Radio": 20.0, "TV": 50.0},
+                    meta,
+                    params,
+                    planning_only=True,
+                ),
+                meta.pathway_masks.active_cells(meta.outcome_ids, meta.channels),
+            )
+        )
+
+    for candidate in results[1:]:
+        np.testing.assert_allclose(candidate[0], results[0][0])
+        for purpose_index in (1, 2):
+            for channel in ("Radio", "TV"):
+                np.testing.assert_allclose(
+                    candidate[purpose_index]["channel_contributions"][channel],
+                    results[0][purpose_index]["channel_contributions"][channel],
+                )
+        assert candidate[3] == pytest.approx(results[0][3])
+        assert candidate[4] == results[0][4] == [(0, 1)]
 
 
 def test_legacy_catalogue_migrates_headline_decision_and_unused_direct_prior():
@@ -373,6 +530,61 @@ def test_attribution_headline_and_planning_views_sum_only_eligible_components():
     )
     assert scenario.loc[0, "predicted_outcome"] == pytest.approx(
         planning["fh"] * WEEKS_PER_MONTH
+    )
+
+    market_params = FHMarketSpecificPosteriorParams(
+        decay_rate=params.decay_rate,
+        hill_K={"UK": params.hill_K},
+        hill_S=params.hill_S,
+        beta={"UK": params.beta},
+        pathway_strength=params.pathway_strength,
+        promo_coef=params.promo_coef,
+        market_offset=params.market_offset,
+        intercept=params.intercept,
+        trend_coef=params.trend_coef,
+        gamma_fourier=params.gamma_fourier,
+        alpha=params.alpha,
+        control_coef=params.control_coef,
+        outcome_control_coef=params.outcome_control_coef,
+    )
+    market_attribution = compute_shapley_contributions_market_specific(
+        frame, meta, market_params, n_permutations=1, purpose="attribution"
+    )
+    market_headline = compute_shapley_contributions_market_specific(
+        frame, meta, market_params, n_permutations=1, purpose="headline"
+    )
+    np.testing.assert_allclose(
+        market_attribution["channel_contributions"]["TV"],
+        attribution["channel_contributions"]["TV"],
+    )
+    np.testing.assert_allclose(
+        market_headline["channel_contributions"]["TV"],
+        headline["channel_contributions"]["TV"],
+    )
+    market_planning = steady_state_outcome_response_market_specific(
+        "UK", {"TV": 50.0}, meta, market_params, planning_only=True
+    )
+    assert market_planning == pytest.approx(planning)
+    market_scenario = evaluate_scenario(
+        {"2026-07": {"TV": 50.0}},
+        "UK",
+        meta,
+        market_params,
+        {
+            "2026-07": {
+                "trend": 0.0,
+                "fourier": np.zeros(2),
+                "promo": {"fh": 0.0},
+                "controls": {},
+                "outcome_controls": {},
+            }
+        },
+        model_type="market_specific",
+        approval=ModelApproval(approved_by="Analyst", **identity),
+        **identity,
+    )
+    assert market_scenario.loc[0, "predicted_outcome"] == pytest.approx(
+        market_planning["fh"] * WEEKS_PER_MONTH
     )
 
 

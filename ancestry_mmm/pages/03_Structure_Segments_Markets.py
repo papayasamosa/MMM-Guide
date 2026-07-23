@@ -61,8 +61,10 @@ from ancestry_mmm.core.pathways import (
     LAG_TYPES,
     PATHWAY_ROLES,
     MediaOutcomePathway,
+    legacy_governance_review_catalogue,
     pathways_drift_dataframe,
     resolve_pathway_masks,
+    validate_legacy_governance_review,
     validate_media_outcome_pathways,
 )
 from ancestry_mmm.core.net_billthrough import NBT_METRIC_KEY
@@ -502,6 +504,55 @@ if "media_outcome_pathways" not in st.session_state:
     st.session_state["media_outcome_pathways"] = (
         get_state("media_outcome_pathways") or []
     )
+_current_model_meta = get_state("model_meta")
+_current_pathway_masks = (
+    getattr(_current_model_meta, "pathway_masks", None)
+    if _current_model_meta is not None
+    else None
+)
+_legacy_governance_review = bool(
+    _current_pathway_masks is not None
+    and getattr(_current_pathway_masks, "legacy_governance_mode", False)
+)
+_legacy_review_confirmed = False
+if _legacy_governance_review:
+    st.warning(
+        "This fit was restored from mask-only pathway metadata. Analyst attribution "
+        "is available, but headline reporting and planning are blocked until every "
+        "migrated component is reviewed here and the model is refit."
+    )
+    _legacy_review_draft = legacy_governance_review_catalogue(_current_model_meta)
+    with st.expander("Review migrated pathways", expanded=True):
+        for _migration_message in _current_pathway_masks.migration_report:
+            st.write(f"- {_migration_message}")
+        st.caption(
+            "Load the reconstructed rows into the normal catalogue, then correct "
+            "source product, role, lag, prior, evidence, planning, and headline "
+            "approval. Mark rejected relationships as excluded instead of deleting "
+            "them so the migration remains auditable."
+        )
+        st.dataframe(
+            pd.DataFrame([pathway.to_dict() for pathway in _legacy_review_draft]),
+            width="stretch",
+        )
+        if st.button(
+            "Load migrated components into review catalogue",
+            disabled=not bool(_legacy_review_draft),
+        ):
+            st.session_state["media_outcome_pathways"] = [
+                pathway.to_dict() for pathway in _legacy_review_draft
+            ]
+            st.session_state.pop("pathway_catalogue_editor", None)
+            st.rerun()
+        if st.session_state["media_outcome_pathways"]:
+            _legacy_review_confirmed = st.checkbox(
+                "I reviewed every migrated pathway and its governance fields",
+                help=(
+                    "Saving clears the legacy fit and approval. Model Configuration "
+                    "and Model Training must then be rerun before headline or planning use."
+                ),
+                key="legacy_pathway_review_confirmed",
+            )
 _pathway_default_df = (
     pd.DataFrame(st.session_state["media_outcome_pathways"])
     if st.session_state["media_outcome_pathways"]
@@ -1195,11 +1246,17 @@ if st.button("Save structure and validate", type="primary"):
             if outcome.role == "diagnostic"
         ],
     )
+    errors += validate_legacy_governance_review(
+        _current_model_meta,
+        media_outcome_pathways,
+        review_confirmed=_legacy_review_confirmed,
+    )
 
     if errors:
         for e in errors:
             st.error(e)
     else:
+        _completed_legacy_review = _legacy_governance_review
         if updated_df is not None:
             set_state("transformed_data", updated_df)
         set_state("model_spec", spec.to_dict())
@@ -1219,7 +1276,13 @@ if st.button("Save structure and validate", type="primary"):
             market_col=market_col,
         )
         set_state("validation_issues", issues)
-        st.success("Structure saved.")
+        if _completed_legacy_review:
+            st.success(
+                "Legacy pathway review saved. The old fit and approval were invalidated; "
+                "prepare the modelling frame and refit before headline reporting or planning."
+            )
+        else:
+            st.success("Structure saved.")
         if issues:
             st.markdown("#### Validation flags")
             for issue in issues:

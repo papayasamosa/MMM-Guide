@@ -21,7 +21,10 @@ from ancestry_mmm.core.market_config import (
 )
 from ancestry_mmm.core.optimization import SpendConstraint, evaluate_scenario
 from ancestry_mmm.core.outcomes import DNA, FAMILY_HISTORY, OutcomeDefinition
-from ancestry_mmm.core.pathways import ResolvedPathwayMasks
+from ancestry_mmm.core.pathways import (
+    ResolvedPathwayComponent,
+    ResolvedPathwayMasks,
+)
 from ancestry_mmm.core.persistence import (
     UnsafeZipEntryError,
     _is_safe_zip_member,
@@ -798,8 +801,81 @@ def test_reconstruct_model_state_rebuilds_frame_and_posterior_without_a_refit(
     assert reconstructed["posterior_params"] is not None
 
 
+def test_reordered_component_bundle_restores_identical_id_keyed_semantics(
+    tmp_path, consistent_project
+):
+    components = [
+        ResolvedPathwayComponent(
+            outcome_id="New",
+            channel="TV_Brand",
+            component_type="direct",
+            role="primary_direct",
+            included_in_fit=True,
+        ),
+        ResolvedPathwayComponent(
+            outcome_id="New",
+            channel="TV_Brand",
+            component_type="cross_product",
+            role="active_cross_product",
+            lag_weeks=3,
+            prior_scale=0.2,
+            include_in_planning=False,
+            included_in_fit=True,
+        ),
+        ResolvedPathwayComponent(
+            outcome_id="New",
+            channel="TV_Brand",
+            component_type="mediated",
+            role="active_cross_product",
+            lag_weeks=1,
+            include_in_planning=False,
+            included_in_fit=False,
+        ),
+    ]
+    restored_masks = []
+    for index, ordered_components in enumerate(
+        (components, list(reversed(components)))
+    ):
+        project = dict(consistent_project)
+        project["model_meta"] = replace(
+            consistent_project["model_meta"],
+            pathway_masks=ResolvedPathwayMasks(
+                components=ordered_components
+            ),
+        )
+        imported = import_project(
+            export_project(tmp_path / f"component-order-{index}.zip", **project)
+        )
+        restored = reconstruct_model_state(imported)
+        assert restored["posterior_params"] is not None
+        restored_masks.append(restored["model_meta"].pathway_masks)
+
+    for masks in restored_masks:
+        assert masks.lag_for_component("New", "TV_Brand") == 3
+        assert (
+            masks.prior_for_component("New", "TV_Brand", default=1.0)
+            == 0.2
+        )
+        assert masks.active_cells(["New"], ["TV_Brand"]) == [(0, 0)]
+    assert (
+        restored_masks[0].primary_channels_by_outcome
+        == restored_masks[1].primary_channels_by_outcome
+    )
+    assert restored_masks[0].lag_weeks_by_cell == restored_masks[1].lag_weeks_by_cell
+
+
 @pytest.mark.parametrize(
-    "checkpoint", ["pre_fit", "fitted", "approved", "curves", "scenarios"]
+    "checkpoint",
+    [
+        "uploaded",
+        "transformed",
+        "configured",
+        "pre_fit",
+        "fitted",
+        "approved",
+        "curves",
+        "scenarios",
+    ],
 )
 def test_end_to_end_resume_at_each_checkpoint(
     tmp_path, consistent_project, checkpoint
@@ -831,11 +907,20 @@ def test_end_to_end_resume_at_each_checkpoint(
         "maturity_rule_description": "Upstream authoritative finalisation.",
         "source_owner": "Finance Analytics",
     }
-    if checkpoint == "pre_fit":
+    if checkpoint in {"uploaded", "transformed", "configured", "pre_fit"}:
         project["trace"] = None
         project["model_meta"] = None
         project["model_approval"] = None
         project["model_run_id"] = None
+    if checkpoint == "uploaded":
+        project["transformed_data"] = None
+        project["model_spec"] = None
+        project["media_outcome_pathways"] = None
+        project["net_billthrough_metadata"] = None
+    elif checkpoint == "transformed":
+        project["model_spec"] = None
+        project["media_outcome_pathways"] = None
+        project["net_billthrough_metadata"] = None
     if checkpoint == "fitted":
         project["model_approval"] = None
     if checkpoint == "curves":
@@ -859,17 +944,24 @@ def test_end_to_end_resume_at_each_checkpoint(
     audit = audit_project_resumability(imported)
     assert audit["resumable"], audit
     assert audit["checkpoint"] == checkpoint
-    pd.testing.assert_frame_equal(
-        imported["transformed_data"], project["transformed_data"]
-    )
+    if project["transformed_data"] is not None:
+        pd.testing.assert_frame_equal(
+            imported["transformed_data"], project["transformed_data"]
+        )
+    else:
+        assert imported["transformed_data"] is None
     assert imported["model_spec"] == project["model_spec"]
     assert imported["media_outcome_pathways"] == project["media_outcome_pathways"]
     assert imported["net_billthrough_metadata"] == project["net_billthrough_metadata"]
     assert imported["workflow_state"] == project["workflow_state"]
 
     reconstructed = reconstruct_model_state(imported)
+    if checkpoint in {"uploaded", "transformed"}:
+        assert reconstructed["frame"] is None
+        assert reconstructed["posterior_params"] is None
+        return
     assert reconstructed["frame"] is not None
-    if checkpoint == "pre_fit":
+    if checkpoint in {"configured", "pre_fit"}:
         assert reconstructed["posterior_params"] is None
         return
 

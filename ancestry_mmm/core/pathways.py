@@ -1235,6 +1235,98 @@ class ResolvedPathwayMasks:
         return result
 
 
+def legacy_governance_review_catalogue(model_meta: object) -> List[MediaOutcomePathway]:
+    """Build an editable catalogue from a migrated mask-only fit.
+
+    This is deliberately a review draft, not an automatic approval. Channel
+    ownership is reconstructed from the fit metadata; every official-output
+    flag remains disabled until the analyst edits and explicitly saves the
+    catalogue.
+    """
+    masks = getattr(model_meta, "pathway_masks", None)
+    if masks is None or not getattr(masks, "legacy_governance_mode", False):
+        return []
+    dna_channels = set(getattr(model_meta, "dna_channels", []) or [])
+    outcome_products = getattr(model_meta, "outcome_id_to_product", {}) or {}
+    review_rows = []
+    for component in masks.components:
+        source_product = DNA if component.channel in dna_channels else FAMILY_HISTORY
+        target_product = outcome_products.get(component.outcome_id)
+        review_rows.append(
+            MediaOutcomePathway(
+                channel=component.channel,
+                source_product=source_product,
+                target_outcome_id=component.outcome_id,
+                role=component.role,
+                lag_type="fixed_weeks" if component.lag_weeks > 0 else "none",
+                lag_weeks=component.lag_weeks or None,
+                prior_scale=component.prior_scale,
+                include_in_attribution=component.include_in_attribution,
+                include_in_planning=False,
+                include_in_headline=False,
+                headline_approval_status="not_reviewed",
+                headline_approval_note=(
+                    "Review draft reconstructed from mask-only pathway metadata."
+                ),
+                evidence_status="unreviewed",
+                component_type=component.component_type,
+                allow_same_product_cross_product=(
+                    component.component_type == "cross_product"
+                    and target_product == source_product
+                ),
+                allow_cross_product_primary=(
+                    component.component_type == "direct"
+                    and target_product in KNOWN_PRODUCTS
+                    and target_product != source_product
+                ),
+            )
+        )
+    return review_rows
+
+
+def validate_legacy_governance_review(
+    model_meta: object,
+    pathways: Sequence[MediaOutcomePathway],
+    *,
+    review_confirmed: bool,
+) -> List[str]:
+    """Require explicit coverage and certification before legacy review saves."""
+    masks = getattr(model_meta, "pathway_masks", None)
+    if masks is None or not getattr(masks, "legacy_governance_mode", False):
+        return []
+    errors = []
+    if not review_confirmed:
+        errors.append(
+            "Confirm that every migrated pathway has been reviewed before saving "
+            "the replacement catalogue."
+        )
+    review_draft = legacy_governance_review_catalogue(model_meta)
+    reviewed_ids = {pathway.pathway_id for pathway in pathways}
+    excluded_pairs = {
+        (pathway.target_outcome_id, pathway.channel)
+        for pathway in pathways
+        if pathway.component_type == "excluded"
+    }
+    missing = [
+        pathway
+        for pathway in review_draft
+        if pathway.pathway_id not in reviewed_ids
+        and (pathway.target_outcome_id, pathway.channel) not in excluded_pairs
+    ]
+    if missing:
+        errors.append(
+            "The migration review is missing reconstructed components: "
+            + ", ".join(
+                f"{pathway.target_outcome_id} <- {pathway.channel} "
+                f"[{pathway.component_type}]"
+                for pathway in missing
+            )
+            + ". Keep each migrated row, or use one excluded row to record rejection "
+            "of that outcome/channel relationship."
+        )
+    return errors
+
+
 def resolve_pathway_masks(
     outcome_ids: Sequence[str],
     channels: Sequence[str],

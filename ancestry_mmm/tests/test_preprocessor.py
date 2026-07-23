@@ -455,6 +455,13 @@ class TestNetBillthroughTrainingGate:
         assert frame["net_billthrough_metadata"].source_owner == "Finance Analytics"
 
     def test_valid_wide_and_long_nbt_inputs_prepare_identical_outcomes(self, df, spec):
+        from ancestry_mmm.core.hierarchical_model import (
+            build_fh_hierarchical_model,
+        )
+        from ancestry_mmm.core.market_specific_model import (
+            build_fh_market_specific_model,
+        )
+
         outcomes = [
             self.nbt_outcome(),
             OutcomeDefinition(
@@ -491,6 +498,44 @@ class TestNetBillthroughTrainingGate:
         )
         np.testing.assert_array_equal(long_frame["Y"], wide_frame["Y"])
         np.testing.assert_array_equal(long_frame["X_media"], wide_frame["X_media"])
+        for frame in (wide_frame, long_frame):
+            shared_model, shared_meta = build_fh_hierarchical_model(frame, spec)
+            assert shared_model is not None
+            assert shared_meta.outcome_ids == [
+                "fh_new_nbt",
+                "fh_winback_nbt",
+            ]
+        two_market_spec = ModelSpec.from_dict(
+            {**spec.to_dict(), "markets": ["UK", "AU"]}
+        )
+        for source in (wide, long):
+            two_market_source = pd.concat(
+                [source, source.assign(market="AU")], ignore_index=True
+            )
+            two_market_frame = prepare_fh_modeling_frame(
+                two_market_source,
+                two_market_spec,
+                outcomes=outcomes,
+                net_billthrough_metadata=self.metadata(),
+            )
+            market_model, market_meta = build_fh_market_specific_model(
+                two_market_frame, two_market_spec
+            )
+            assert market_model is not None
+            assert market_meta.outcome_ids == ["fh_new_nbt", "fh_winback_nbt"]
+
+    def test_invalid_nbt_introduced_by_transformation_cannot_reach_aggregation(
+        self, df, spec
+    ):
+        transformed = df.assign(NBT_New=np.arange(10, dtype=float))
+        transformed.loc[0, "NBT_New"] = -1.0
+        with pytest.raises(ValueError, match="negative"):
+            prepare_fh_modeling_frame(
+                transformed,
+                spec,
+                outcomes=[self.nbt_outcome()],
+                net_billthrough_metadata=self.metadata(),
+            )
 
     def test_long_nbt_duplicates_are_blocked_before_aggregation(self, df, spec):
         outcomes = [

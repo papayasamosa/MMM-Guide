@@ -380,8 +380,9 @@ def test_shared_and_market_specific_curves_emit_nbt_response_and_cpa():
     from ancestry_mmm.core.media_units import compute_cpa_by_product
     from ancestry_mmm.core.predict import FHPosteriorParams, generate_channel_curve
 
+    outcome_ids = ["nbt_new", "nbt_winback"]
     masks = resolve_pathway_masks(
-        ["nbt"],
+        outcome_ids,
         ["TV"],
         [],
         dna_channel_idx=[],
@@ -391,42 +392,67 @@ def test_shared_and_market_specific_curves_emit_nbt_response_and_cpa():
     )
     meta = FHModelMeta(
         markets=["UK"],
-        outcome_ids=["nbt"],
+        outcome_ids=outcome_ids,
         channels=["TV"],
         dna_channels=[],
         dna_channel_idx=[],
         non_dna_idx=[0],
-        dna_outcome_id="nbt",
+        dna_outcome_id="nbt_new",
         dna_lag_weeks=0,
         unpooled_markets=[],
         control_names=[],
         pathway_masks=masks,
-        outcome_id_to_metric_key={"nbt": "fh_net_billthrough_count"},
-        outcome_id_to_eligibility={"nbt": {"include_in_default_reporting": True}},
-        outcome_id_to_product={"nbt": "Family History"},
-        outcome_id_to_metric={"nbt": "Net bill-through count"},
+        outcome_id_to_metric_key={
+            outcome_id: "fh_net_billthrough_count"
+            for outcome_id in outcome_ids
+        },
+        outcome_id_to_eligibility={
+            outcome_id: {"include_in_default_reporting": True}
+            for outcome_id in outcome_ids
+        },
+        outcome_id_to_product={
+            outcome_id: "Family History" for outcome_id in outcome_ids
+        },
+        outcome_id_to_metric={
+            outcome_id: "Net bill-through count" for outcome_id in outcome_ids
+        },
+        outcome_id_to_segment={
+            "nbt_new": "New",
+            "nbt_winback": "Winback",
+        },
     )
     common = {
         "decay_rate": {"TV": 0.0},
         "hill_S": {"TV": 1.0},
-        "pathway_strength": {"nbt": {"TV": 0.0}},
-        "promo_coef": {"nbt": 0.0},
-        "market_offset": {"UK": {"nbt": 0.0}},
-        "intercept": {"nbt": 0.0},
-        "trend_coef": {"nbt": 0.0},
-        "gamma_fourier": {"nbt": np.zeros(2)},
-        "alpha": {"nbt": 5.0},
+        "pathway_strength": {
+            outcome_id: {"TV": 0.0} for outcome_id in outcome_ids
+        },
+        "promo_coef": {outcome_id: 0.0 for outcome_id in outcome_ids},
+        "market_offset": {
+            "UK": {outcome_id: 0.0 for outcome_id in outcome_ids}
+        },
+        "intercept": {outcome_id: 0.0 for outcome_id in outcome_ids},
+        "trend_coef": {outcome_id: 0.0 for outcome_id in outcome_ids},
+        "gamma_fourier": {
+            outcome_id: np.zeros(2) for outcome_id in outcome_ids
+        },
+        "alpha": {outcome_id: 5.0 for outcome_id in outcome_ids},
         "control_coef": {},
         "outcome_control_coef": {},
     }
     shared_params = FHPosteriorParams(
         hill_K={"TV": 10.0},
-        beta={"nbt": {"TV": 2.0}},
+        beta={"nbt_new": {"TV": 2.0}, "nbt_winback": {"TV": 1.0}},
         **common,
     )
     market_params = FHMarketSpecificPosteriorParams(
         hill_K={"UK": {"TV": 10.0}},
-        beta={"UK": {"nbt": {"TV": 2.0}}},
+        beta={
+            "UK": {
+                "nbt_new": {"TV": 2.0},
+                "nbt_winback": {"TV": 1.0},
+            }
+        },
         **common,
     )
     shared = generate_channel_curve(
@@ -436,6 +462,12 @@ def test_shared_and_market_specific_curves_emit_nbt_response_and_cpa():
         "UK", "TV", meta, market_params, spend_range=np.array([0.0, 10.0, 20.0])
     )
     for curve in (shared, market):
+        assert curve["nbt_new_response"].iloc[-1] > 0
+        assert curve["nbt_winback_response"].iloc[-1] > 0
+        np.testing.assert_allclose(
+            curve["fh_net_billthrough_response"],
+            curve["nbt_new_response"] + curve["nbt_winback_response"],
+        )
         assert curve["fh_net_billthrough_response"].iloc[-1] > 0
         cpa = compute_cpa_by_product(curve)
         assert "channel_incremental_cost_per_fh_net_billthrough" in cpa

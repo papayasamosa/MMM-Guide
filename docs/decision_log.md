@@ -1724,3 +1724,35 @@ migration, and stale-approval planning rejection.
 posterior curve uncertainty, response horizons, year-on-year reporting,
 dynamic planner, production mediation, brand health, and DNA composition
 remain separate work.
+
+## G1.1.6 -- integration verification and legacy-review completion
+
+**Decision:** Legacy-governance projects now have a supported upgrade
+workflow on the Structure page. The migration report and reconstructed
+components are visible, the rows can be loaded into the governed catalogue,
+and analysts can correct ownership, role, lag, prior, evidence, attribution,
+headline approval, and planning eligibility. Every reconstructed
+outcome/channel pair must remain auditable, and completing the review
+requires explicit certification.
+
+Saving a completed review persists the replacement catalogue and clears the
+old frame, model, posterior, approval, and run identity. The reviewed
+catalogue is non-legacy configuration, but official use remains impossible
+until Model Configuration and Model Training produce a new fit. Rejected
+relationships are recorded as excluded rows instead of being silently
+deleted.
+
+**Verification:** Order-independence tests now compare prediction, analyst
+attribution, headline attribution, planning response, fit cells, and bundle
+restoration for reordered and governance-filtered component collections.
+Model C downstream governance views reconcile with the equivalent Model A
+fixture. Public bundle tests cover uploaded, transformed, configured,
+pre-fit, fitted, approved, curve, and scenario checkpoints. The NBT
+source-to-builder test constructs both model types from equivalent wide and
+long inputs, and standard shared/market-specific curves reconcile two
+segment-level NBT responses to total NBT response and average/marginal NBT
+CPA.
+
+**Scope:** No G2 curve dashboard, response-horizon reporting, year-on-year
+analysis, dynamic planner, production mediation, brand-health model, or DNA
+composition model is included.

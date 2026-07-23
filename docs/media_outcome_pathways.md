@@ -86,6 +86,16 @@ project is marked `legacy_governance_mode`. Headline and planning output are
 blocked until an analyst reviews and re-saves an explicit pathway catalogue.
 The resolved metadata and resumability audit both retain a migration report.
 
+The Structure page provides the supported completion path. **Review migrated
+pathways** shows the migration report and reconstructed rows, then loads them
+into the normal pathway catalogue for correction. Every reconstructed
+outcome/channel pair must remain represented (use `excluded` to reject a
+relationship), and the analyst must explicitly certify the review. Saving
+the reviewed catalogue clears the old fit and approval. Legacy status is
+removed only after the reviewed catalogue is used to prepare and fit a new
+model; headline reporting and planning therefore cannot resume without a
+refit.
+
 ## Validation sequence
 
 Pathways are validated twice:
