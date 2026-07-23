@@ -92,7 +92,7 @@ def _channel_log_terms(frame: Dict, meta: FHModelMeta, params: FHPosteriorParams
 
     cross_cells = meta.pathway_masks.active_cells(outcome_ids, meta.channels) + meta.pathway_masks.exploratory_cells(outcome_ids, meta.channels)
     if cross_cells:
-        cross_product_lag_media = lag_frame(sat_media, frame["market_bounds"], meta.pathway_masks.cross_product_lag_weeks)
+        cross_product_lag_media = {lag: lag_frame(sat_media, frame["market_bounds"], lag) for lag in {meta.pathway_masks.lag_for_cell(cell) for cell in cross_cells}}
         strength_matrix = _cross_product_strength_matrix(meta, params)
     else:
         cross_product_lag_media = None
@@ -105,7 +105,7 @@ def _channel_log_terms(frame: Dict, meta: FHModelMeta, params: FHPosteriorParams
             b = params.beta[oid][ch]
             value = b * primary_mask[si, ci] * sat_media[:, ci]
             if strength_matrix is not None and strength_matrix[si, ci]:
-                value = value + b * strength_matrix[si, ci] * cross_product_lag_media[:, ci]
+                value = value + b * strength_matrix[si, ci] * cross_product_lag_media[meta.pathway_masks.lag_for_cell((si, ci))][:, ci]
             term[:, si] = value
         terms[ch] = term
     return terms

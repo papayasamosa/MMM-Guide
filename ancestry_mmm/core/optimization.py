@@ -161,7 +161,7 @@ def evaluate_scenario(
     rows = []
     for month, spend_by_channel in spend_plan.items():
         ref = reference_context_by_month.get(month, {})
-        weekly_rate = response_fn(market, spend_by_channel, meta, params, ref)
+        weekly_rate = response_fn(market, spend_by_channel, meta, params, ref, planning_only=True)
         total_spend = sum(spend_by_channel.values())
         monthly_outcome_by_id = {oid: rate * WEEKS_PER_MONTH for oid, rate in weekly_rate.items()}
         fh_gsa = sum(v for oid, v in monthly_outcome_by_id.items() if oid in gsa_ids)
@@ -561,7 +561,7 @@ def _objective_factory(
         total = 0.0
         for m in months:
             ref = reference_context_by_month.get(m, {})
-            rates = response_fn(market, spend_plan[m], meta, params, ref)
+            rates = response_fn(market, spend_plan[m], meta, params, ref, planning_only=True)
             for oid, rate in rates.items():
                 total += rate * WEEKS_PER_MONTH * weight.get(oid, 0.0)
         return -total

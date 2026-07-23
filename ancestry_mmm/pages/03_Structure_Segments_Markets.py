@@ -26,7 +26,6 @@ from ancestry_mmm.core.funnel import FunnelLink, validate_funnel_links
 from ancestry_mmm.core.pathways import (
     PATHWAY_ROLES, MediaOutcomePathway, validate_media_outcome_pathways, pathways_drift_dataframe,
 )
-from ancestry_mmm.core.net_billthrough import NetBillthroughOfferRule, validate_offer_rules
 from ancestry_mmm.data import validate_modeling_frame, detect_column_types, pipeline_to_json, pipeline_from_json
 import pandas as pd
 
@@ -346,31 +345,8 @@ if get_state("model_meta") is not None and st.session_state["media_outcome_pathw
                 st.dataframe(_pathway_drift_df, width="stretch")
 
 st.markdown("---")
-st.markdown("### Net bill-through offer rules")
-st.caption(
-    "Deterministic, analyst-configured maturity windows for `fh_net_billthrough_count` "
-    "(core.net_billthrough) - each `(market, offer_id)` pair's `maturity_days` is how long after a "
-    "cohort's signup date its eventual net bill-through outcome (did the customer stick around past "
-    "their trial/refund window) is considered determined. A cohort younger than that is excluded "
-    "from the reported series entirely, never zero-filled or guessed - see docs/net_billthrough.md."
-)
-if "net_billthrough_offer_rules" not in st.session_state:
-    st.session_state["net_billthrough_offer_rules"] = get_state("net_billthrough_offer_rules") or []
-_offer_rule_default_df = pd.DataFrame(st.session_state["net_billthrough_offer_rules"]) if st.session_state["net_billthrough_offer_rules"] else pd.DataFrame(
-    columns=["offer_id", "market", "maturity_days", "description"]
-)
-offer_rules_df = st.data_editor(
-    _offer_rule_default_df,
-    num_rows="dynamic",
-    column_config={
-        "offer_id": st.column_config.TextColumn("offer_id", required=True),
-        "market": st.column_config.SelectboxColumn("market", options=markets, required=True),
-        "maturity_days": st.column_config.NumberColumn("maturity_days", min_value=0, required=True),
-        "description": st.column_config.TextColumn("description"),
-    },
-    key="net_billthrough_offer_rules_editor",
-    width="stretch",
-)
+st.markdown("### Net bill-through completeness")
+st.caption("Family History net bill-through is supplied as an authoritative weekly count. Configure and validate its completeness at upload; the app never reconstructs it from customer or billing events.")
 
 # `segment_outcomes`/`segment_ltv` (ModelSpec migration fields) and per-segment
 # promo/control mappings are now derived from the catalogue's own segments,
@@ -594,12 +570,6 @@ if st.button("Save structure and validate", type="primary"):
         media_outcome_pathways, channels=channels, outcome_ids=[o.outcome_id for o in outcome_definitions],
     )
 
-    net_billthrough_offer_rules = []
-    for row in offer_rules_df.to_dict("records"):
-        if not (row.get("offer_id") and row.get("market")):
-            continue  # a blank row added by the editor but never filled in
-        net_billthrough_offer_rules.append(NetBillthroughOfferRule.from_dict(row))
-    errors += validate_offer_rules(net_billthrough_offer_rules)
 
     if errors:
         for e in errors:
@@ -613,7 +583,6 @@ if st.button("Save structure and validate", type="primary"):
         set_state("pipeline_steps", pipeline_to_json(updated_pipeline_steps))
         set_state("funnel_links", [fl.to_dict() for fl in funnel_links])
         set_state("media_outcome_pathways", [p.to_dict() for p in media_outcome_pathways])
-        set_state("net_billthrough_offer_rules", [r.to_dict() for r in net_billthrough_offer_rules])
         clear_model_state()
         issues = validate_modeling_frame(
             df if market_col in df.columns else df.assign(**{market_col: "default"}),
