@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import date
+import hashlib
+import json
 from typing import Any, Dict, Iterable, Mapping, Optional, Protocol, Tuple
 
 import numpy as np
@@ -38,6 +40,7 @@ class MediaInputSpec:
     effective_period_start: Optional[str] = None
     effective_period_end: Optional[str] = None
     schema_version: int = 1
+    scale_contract: str = "descriptive_only"
 
     def __post_init__(self) -> None:
         if not all((self.market, self.channel, self.column, self.unit)):
@@ -46,6 +49,11 @@ class MediaInputSpec:
             raise ValueError("unit_scale must be finite and positive")
         if self.input_kind not in {"monetary_spend", "exposure"}:
             raise ValueError("input_kind must be monetary_spend or exposure")
+        if self.scale_contract != "descriptive_only":
+            raise ValueError(
+                "unit_scale is descriptive metadata; model inputs must already "
+                "be in their fitted numeric unit"
+            )
         _validate_period(self.effective_period_start, self.effective_period_end)
 
     def to_dict(self) -> dict:
@@ -66,6 +74,12 @@ class MediaCostMapping(Protocol):
     channel: str
     cost_context_id: str
     currency: str
+    effective_period_start: Optional[str]
+    effective_period_end: Optional[str]
+    approved_by: Optional[str]
+    approved_at: Optional[str]
+    owner: Optional[str]
+    approval_note: Optional[str]
 
     def spend_to_media_input(self, spend: float | np.ndarray) -> np.ndarray: ...
 
@@ -102,7 +116,11 @@ class GovernedCostMapping:
     approval_status: str = "draft"
     approved_by: Optional[str] = None
     approved_at: Optional[str] = None
-    schema_version: int = 1
+    owner: Optional[str] = None
+    approval_note: Optional[str] = None
+    last_reviewed_at: Optional[str] = None
+    supersedes_mapping_id: Optional[str] = None
+    schema_version: int = 2
 
     def __post_init__(self) -> None:
         if not all(
@@ -124,8 +142,19 @@ class GovernedCostMapping:
         ):
             raise ValueError("currency must be an uppercase three-letter ISO code")
         _validate_period(self.effective_period_start, self.effective_period_end)
-        if self.approval_status == APPROVED and not self.approved_by:
-            raise ValueError("approved mappings require approved_by")
+        if self.approval_status == APPROVED and not all(
+            (
+                self.approved_by,
+                self.approved_at,
+                self.owner,
+                self.approval_note,
+                self.last_reviewed_at,
+            )
+        ):
+            raise ValueError(
+                "approved mappings require approved_by, approved_at, owner, "
+                "approval_note, and last_reviewed_at"
+            )
 
     def is_valid_for(self, *, as_of: Optional[str] = None) -> bool:
         if self.approval_status != APPROVED:
@@ -324,6 +353,20 @@ def cost_mapping_from_dict(values: Mapping[str, Any]) -> MediaCostMapping:
         raise ValueError(f"Unsupported cost mapping method: {method!r}") from exc
     known = set(cls.__dataclass_fields__)
     payload = {key: value for key, value in values.items() if key in known}
+    if (
+        int(payload.get("schema_version", 1)) < 2
+        and payload.get("approval_status") == APPROVED
+        and not all(
+            payload.get(name)
+            for name in (
+                "approved_at",
+                "owner",
+                "approval_note",
+                "last_reviewed_at",
+            )
+        )
+    ):
+        payload["approval_status"] = "migration_required"
     for key in ("spend_knots", "media_input_knots"):
         if key in payload:
             payload[key] = tuple(payload[key])
@@ -386,12 +429,191 @@ class CostMappingRegistry:
             ],
         }
 
+    def fingerprint(self) -> str:
+        payload = json.dumps(
+            self.to_dict(), sort_keys=True, separators=(",", ":")
+        ).encode()
+        return hashlib.sha256(payload).hexdigest()
+
     @classmethod
     def from_dict(cls, values: Optional[Mapping[str, Any]]) -> "CostMappingRegistry":
         return cls(
             cost_mapping_from_dict(mapping)
             for mapping in (values or {}).get("mappings", [])
         )
+
+
+@dataclass(frozen=True)
+class MediaInputSupport:
+    """Observed/planning support expressed only in fitted model-input units."""
+
+    market: str
+    channel: str
+    unit: str
+    current: float
+    observed_min: float
+    observed_max: float
+    planning_min: float
+    planning_max: float
+    current_method: str
+    source: str
+    provenance: str
+    effective_period_start: Optional[str] = None
+    effective_period_end: Optional[str] = None
+    axis_type: str = "model_input"
+    schema_version: int = 1
+
+    def __post_init__(self) -> None:
+        if self.axis_type != "model_input":
+            raise ValueError("MediaInputSupport axis_type must be model_input")
+        values = np.asarray(
+            [
+                self.current,
+                self.observed_min,
+                self.observed_max,
+                self.planning_min,
+                self.planning_max,
+            ]
+        )
+        if (
+            np.any(~np.isfinite(values))
+            or np.any(values < 0)
+            or self.observed_min > self.observed_max
+            or self.planning_min > self.planning_max
+        ):
+            raise ValueError("invalid media-input support range")
+        _validate_period(self.effective_period_start, self.effective_period_end)
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, values: Mapping[str, Any]) -> "MediaInputSupport":
+        known = set(cls.__dataclass_fields__)
+        return cls(**{key: value for key, value in values.items() if key in known})
+
+
+@dataclass(frozen=True)
+class MonetarySpendSupport:
+    """Auditable local/reporting spend support derived from media support."""
+
+    market: str
+    channel: str
+    local_currency: str
+    reporting_currency: str
+    current_local: float
+    observed_local_min: float
+    observed_local_max: float
+    planning_local_min: float
+    planning_local_max: float
+    fx_rate: float
+    current_method: str
+    source: str
+    provenance: str
+    cost_mapping_id: str
+    cost_mapping_fingerprint: str
+    current_media_input: float = 0.0
+    observed_media_input_min: float = 0.0
+    observed_media_input_max: float = 0.0
+    planning_media_input_min: float = 0.0
+    planning_media_input_max: float = 0.0
+    approval_status: str = APPROVED
+    approved_by: Optional[str] = None
+    approved_at: Optional[str] = None
+    owner: Optional[str] = None
+    approval_note: Optional[str] = None
+    effective_period_start: Optional[str] = None
+    effective_period_end: Optional[str] = None
+    axis_type: str = "monetary"
+    schema_version: int = 1
+
+    def __post_init__(self) -> None:
+        if self.axis_type != "monetary":
+            raise ValueError("MonetarySpendSupport axis_type must be monetary")
+        values = np.asarray(
+            [
+                self.current_local,
+                self.observed_local_min,
+                self.observed_local_max,
+                self.planning_local_min,
+                self.planning_local_max,
+                self.fx_rate,
+            ]
+        )
+        if np.any(~np.isfinite(values)) or np.any(values < 0) or self.fx_rate <= 0:
+            raise ValueError("invalid monetary support range")
+        if self.approval_status == APPROVED and not all(
+            (self.approved_by, self.approved_at, self.owner, self.approval_note)
+        ):
+            raise ValueError(
+                "approved monetary support requires approval governance"
+            )
+
+    @property
+    def current_reporting(self) -> float:
+        return self.current_local * self.fx_rate
+
+    def to_dict(self) -> dict:
+        values = asdict(self)
+        reporting_fields = {
+            "current": "current_local",
+            "observed_min": "observed_local_min",
+            "observed_max": "observed_local_max",
+            "planning_min": "planning_local_min",
+            "planning_max": "planning_local_max",
+        }
+        for name, local_name in reporting_fields.items():
+            values[f"{name}_reporting"] = values[local_name] * self.fx_rate
+        return values
+
+    @classmethod
+    def from_dict(cls, values: Mapping[str, Any]) -> "MonetarySpendSupport":
+        known = set(cls.__dataclass_fields__)
+        return cls(**{key: value for key, value in values.items() if key in known})
+
+
+def derive_monetary_support(
+    media: MediaInputSupport,
+    mapping: MediaCostMapping,
+    *,
+    reporting_currency: str,
+    fx_rate: float,
+    mapping_fingerprint: str,
+) -> MonetarySpendSupport:
+    """Convert typed model-input support through one governed mapping."""
+
+    if (media.market, media.channel) != (mapping.market, mapping.channel):
+        raise ValueError("support and cost mapping market/channel do not match")
+    convert = mapping.media_input_to_spend
+    return MonetarySpendSupport(
+        market=media.market,
+        channel=media.channel,
+        local_currency=mapping.currency,
+        reporting_currency=reporting_currency,
+        current_local=float(convert(media.current)),
+        observed_local_min=float(convert(media.observed_min)),
+        observed_local_max=float(convert(media.observed_max)),
+        planning_local_min=float(convert(media.planning_min)),
+        planning_local_max=float(convert(media.planning_max)),
+        fx_rate=fx_rate,
+        current_method=media.current_method,
+        source=mapping.source,
+        provenance=f"derived_from:{media.provenance}",
+        cost_mapping_id=mapping.mapping_id,
+        cost_mapping_fingerprint=mapping_fingerprint,
+        current_media_input=media.current,
+        observed_media_input_min=media.observed_min,
+        observed_media_input_max=media.observed_max,
+        planning_media_input_min=media.planning_min,
+        planning_media_input_max=media.planning_max,
+        approval_status=APPROVED,
+        approved_by=mapping.approved_by,
+        approved_at=mapping.approved_at,
+        owner=mapping.owner,
+        approval_note=mapping.approval_note,
+        effective_period_start=mapping.effective_period_start,
+        effective_period_end=mapping.effective_period_end,
+    )
 
 
 def _validate_period(start: Optional[str], end: Optional[str]) -> None:

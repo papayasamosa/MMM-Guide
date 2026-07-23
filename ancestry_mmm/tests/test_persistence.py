@@ -278,11 +278,37 @@ def test_media_input_and_cost_governance_round_trip(tmp_path, sample_project):
             }
         ],
     }
+    project["media_input_support"] = [
+        {
+            "axis_type": "model_input",
+            "market": "UK",
+            "channel": "TV_Brand",
+            "unit": "impressions",
+            "current": 50.0,
+            "observed_min": 0.0,
+            "observed_max": 100.0,
+        }
+    ]
+    project["monetary_spend_support"] = [
+        {
+            "axis_type": "monetary",
+            "market": "UK",
+            "channel": "TV_Brand",
+            "local_currency": "GBP",
+            "current_local": 125.0,
+            "cost_mapping_fingerprint": "cost-fp",
+        }
+    ]
     imported = import_project(
         export_project(tmp_path / "cost-governance.zip", **project)
     )
     assert imported["media_input_specs"] == project["media_input_specs"]
     assert imported["media_cost_mappings"] == project["media_cost_mappings"]
+    assert imported["media_input_support"] == project["media_input_support"]
+    assert (
+        imported["monetary_spend_support"]
+        == project["monetary_spend_support"]
+    )
 
 
 def test_export_then_import_reproduces_scenarios_and_constraints(

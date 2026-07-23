@@ -6,8 +6,16 @@ from ancestry_mmm.core.media_costs import (
     FixedCostPerUnitMapping,
     IdentitySpendMapping,
     MediaInputSpec,
+    MediaInputSupport,
+    MonetarySpendSupport,
     PiecewiseLinearCostMapping,
     UploadedPlanCostMapping,
+    cost_mapping_from_dict,
+    derive_monetary_support,
+)
+from ancestry_mmm.core.optimization import (
+    monetary_plan_to_media_input,
+    require_current_cost_mapping,
 )
 
 
@@ -24,6 +32,10 @@ def _governance(**overrides):
         "assumptions": "net media cost",
         "approval_status": "approved",
         "approved_by": "finance-owner",
+        "approved_at": "2026-01-01T10:00:00Z",
+        "owner": "media-finance",
+        "approval_note": "Approved net media rate",
+        "last_reviewed_at": "2026-01-01",
     }
     values.update(overrides)
     return values
@@ -121,3 +133,102 @@ def test_draft_mapping_is_not_valid_and_media_spec_round_trips():
         source="weekly delivery file",
     )
     assert MediaInputSpec.from_dict(spec.to_dict()) == spec
+    support = MediaInputSupport(
+        market="UK",
+        channel="TV",
+        unit="GRP",
+        current=50,
+        observed_min=0,
+        observed_max=100,
+        planning_min=0,
+        planning_max=120,
+        current_method="last_4_week_average",
+        source="frame",
+        provenance="X_media",
+    )
+    assert MediaInputSupport.from_dict(support.to_dict()) == support
+
+
+def test_legacy_approval_requires_governance_migration():
+    legacy = {
+        "mapping_id": "legacy",
+        "method": "identity_spend",
+        "market": "UK",
+        "channel": "TV",
+        "currency": "GBP",
+        "approval_status": "approved",
+        "approved_by": "old-owner",
+        "schema_version": 1,
+    }
+    restored = cost_mapping_from_dict(legacy)
+    assert restored.approval_status == "migration_required"
+    assert not restored.is_valid_for(as_of="2026-01-01")
+
+
+def test_monetary_plan_conversion_blocks_unmapped_cells():
+    mapping = FixedCostPerUnitMapping(
+        **_governance(),
+        cost_per_media_input=2.0,
+    )
+    registry = CostMappingRegistry([mapping])
+    converted = monetary_plan_to_media_input(
+        {"2026-03": {"TV": 100.0}},
+        market="UK",
+        registry=registry,
+        cost_context_id="base-plan",
+        as_of_by_period={"2026-03": "2026-03-01"},
+    )
+    assert converted == {"2026-03": {"TV": 50.0}}
+    with pytest.raises(ValueError, match="blocked"):
+        monetary_plan_to_media_input(
+            {"2026-03": {"Search": 100.0}},
+            market="UK",
+            registry=registry,
+            cost_context_id="base-plan",
+            as_of_by_period={"2026-03": "2026-03-01"},
+        )
+
+
+def test_mapping_fingerprint_invalidates_stale_artifact():
+    registry = CostMappingRegistry(
+        [
+            FixedCostPerUnitMapping(
+                **_governance(),
+                cost_per_media_input=2.0,
+            )
+        ]
+    )
+    artifact = {"cost_mapping_fingerprint": registry.fingerprint()}
+    require_current_cost_mapping(artifact, registry.fingerprint())
+    changed = CostMappingRegistry(
+        [
+            FixedCostPerUnitMapping(
+                **_governance(mapping_id="replacement"),
+                cost_per_media_input=3.0,
+                supersedes_mapping_id="uk-tv-2026",
+            )
+        ]
+    )
+    with pytest.raises(ValueError, match="stale"):
+        require_current_cost_mapping(artifact, changed.fingerprint())
+
+
+def test_derived_monetary_support_round_trips():
+    mapping = FixedCostPerUnitMapping(
+        **_governance(), cost_per_media_input=2.0
+    )
+    media = MediaInputSupport(
+        market="UK", channel="TV", unit="TVR", current=50,
+        observed_min=0, observed_max=100, planning_min=0,
+        planning_max=120, current_method="current", source="frame",
+        provenance="X_media",
+    )
+    monetary = derive_monetary_support(
+        media,
+        mapping,
+        reporting_currency="GBP",
+        fx_rate=1.0,
+        mapping_fingerprint="abc",
+    )
+    assert monetary.observed_local_max == 200
+    assert MonetarySpendSupport.from_dict(monetary.to_dict()) == monetary

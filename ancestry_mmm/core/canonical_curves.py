@@ -14,7 +14,9 @@ economics require an explicit path and budget-perturbation direction.
 from __future__ import annotations
 
 import json
+import hashlib
 import re
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Mapping, Optional, Sequence, Tuple
@@ -24,7 +26,13 @@ import numpy as np
 import pandas as pd
 
 from .hierarchical_model import FHModelMeta
-from .media_costs import CostMappingRegistry, MediaCostMapping, MediaInputSpec
+from .media_costs import (
+    CostMappingRegistry,
+    MediaCostMapping,
+    MediaInputSpec,
+    MediaInputSupport,
+    MonetarySpendSupport,
+)
 from .market_specific_predict import (
     extract_market_specific_posterior_params,
     steady_state_outcome_response_market_specific,
@@ -99,6 +107,16 @@ class CurveReferenceContext:
     promotion_assumption: str = "explicit_reference_values"
     seasonality_assumption: str = "explicit_fourier_values"
 
+    @property
+    def other_channel_media_input(self) -> Mapping[str, float]:
+        """Model-input values held fixed for non-selected channels."""
+        return self.other_channel_spend
+
+    @property
+    def counterfactual_value(self) -> float:
+        """Selected-channel value on the curve's declared axis."""
+        return self.counterfactual_spend
+
     def __post_init__(self) -> None:
         if not self.reference_context_id:
             raise ValueError("reference_context_id is required")
@@ -139,8 +157,12 @@ class CurveReferenceContext:
             "promotion_assumption": self.promotion_assumption,
             "seasonality_assumption": self.seasonality_assumption,
             "counterfactual_spend": float(self.counterfactual_spend),
+            "counterfactual_value": float(self.counterfactual_value),
             "reference_other_channel_spend": json.dumps(
                 dict(self.other_channel_spend), sort_keys=True
+            ),
+            "reference_other_channel_media_input": json.dumps(
+                dict(self.other_channel_media_input), sort_keys=True
             ),
             "reference_trend": float(self.trend),
             "reference_fourier": json.dumps(list(self.fourier)),
@@ -204,15 +226,84 @@ def _is_iso_currency(value: Optional[str]) -> bool:
 
 def _normalise_support(
     meta: FHModelMeta,
-    support_by_market_channel: Optional[
-        Mapping[Tuple[str, str], Mapping[str, object]]
-    ],
+    support_by_market_channel: Optional[Mapping[Tuple[str, str], object]],
+    *,
+    curve_type: str,
+    legacy: bool,
 ) -> Dict[Tuple[str, str], Dict[str, object]]:
     supplied = support_by_market_channel or {}
     result: Dict[Tuple[str, str], Dict[str, object]] = {}
     for market in meta.markets:
         for channel in meta.channels:
-            values = dict(supplied.get((market, channel), {}))
+            supplied_value = supplied.get((market, channel))
+            if isinstance(supplied_value, MediaInputSupport):
+                if curve_type != "model_input":
+                    raise ValueError(
+                        "Monetary curves require MonetarySpendSupport; "
+                        "MediaInputSupport cannot be interpreted as currency"
+                    )
+                values = {
+                    "current_spend": supplied_value.current,
+                    "observed_spend_min": supplied_value.observed_min,
+                    "observed_spend_max": supplied_value.observed_max,
+                    "planning_spend_min": supplied_value.planning_min,
+                    "planning_spend_max": supplied_value.planning_max,
+                    "current_spend_method": supplied_value.current_method,
+                    "current_spend_reference_period_start": (
+                        supplied_value.effective_period_start
+                    ),
+                    "current_spend_reference_period_end": (
+                        supplied_value.effective_period_end
+                    ),
+                    "support_axis_type": "model_input",
+                    "support_unit": supplied_value.unit,
+                    "support_provenance": supplied_value.provenance,
+                }
+            elif isinstance(supplied_value, MonetarySpendSupport):
+                if curve_type != "monetary":
+                    raise ValueError(
+                        "Model-input curves require MediaInputSupport"
+                    )
+                values = {
+                    "current_spend": supplied_value.current_local,
+                    "observed_spend_min": supplied_value.observed_local_min,
+                    "observed_spend_max": supplied_value.observed_local_max,
+                    "planning_spend_min": supplied_value.planning_local_min,
+                    "planning_spend_max": supplied_value.planning_local_max,
+                    "current_spend_method": supplied_value.current_method,
+                    "current_spend_reference_period_start": (
+                        supplied_value.effective_period_start
+                    ),
+                    "current_spend_reference_period_end": (
+                        supplied_value.effective_period_end
+                    ),
+                    "support_axis_type": "monetary",
+                    "support_unit": supplied_value.local_currency,
+                    "support_provenance": supplied_value.provenance,
+                    "current_media_input": supplied_value.current_media_input,
+                    "observed_media_input_min": (
+                        supplied_value.observed_media_input_min
+                    ),
+                    "observed_media_input_max": (
+                        supplied_value.observed_media_input_max
+                    ),
+                    "planning_media_input_min": (
+                        supplied_value.planning_media_input_min
+                    ),
+                    "planning_media_input_max": (
+                        supplied_value.planning_media_input_max
+                    ),
+                }
+            elif supplied_value is not None and legacy:
+                values = dict(supplied_value)
+                values["support_axis_type"] = "legacy_ambiguous"
+            elif supplied_value is not None:
+                raise TypeError(
+                    "Explicit curves require typed MediaInputSupport or "
+                    "MonetarySpendSupport"
+                )
+            else:
+                values = {}
             required = {
                 "observed_spend_min",
                 "observed_spend_max",
@@ -269,6 +360,19 @@ def _normalise_support(
                 "current_spend_reference_period_end": values.get(
                     "current_spend_reference_period_end"
                 ),
+                "support_axis_type": values.get("support_axis_type"),
+                "support_unit": values.get("support_unit"),
+                "support_provenance": values.get("support_provenance"),
+                **{
+                    name: values.get(name)
+                    for name in (
+                        "current_media_input",
+                        "observed_media_input_min",
+                        "observed_media_input_max",
+                        "planning_media_input_min",
+                        "planning_media_input_max",
+                    )
+                },
             }
     return result
 
@@ -281,8 +385,9 @@ def support_from_model_frame(
     selected_period_start: Optional[str] = None,
     selected_period_end: Optional[str] = None,
     uploaded_plan: Optional[Mapping[Tuple[str, str], float]] = None,
-) -> Dict[Tuple[str, str], Dict[str, object]]:
-    """Derive actual observed support and a governed current-spend definition."""
+    media_input_specs: Mapping[Tuple[str, str], MediaInputSpec],
+) -> Dict[Tuple[str, str], MediaInputSupport]:
+    """Derive support from ``X_media`` in fitted model-input units only."""
     if current_spend_method not in CURRENT_SPEND_METHODS:
         raise ValueError(
             f"Unsupported current-spend method '{current_spend_method}'"
@@ -339,24 +444,32 @@ def support_from_model_frame(
                 current_values = np.asarray([uploaded_plan[key]], dtype=float)
                 reference_mask[:] = False
             selected_dates = market_dates[reference_mask]
-            result[(market, channel)] = {
-                "current_spend": float(np.mean(current_values)),
-                "observed_spend_min": float(np.nanmin(values)),
-                "observed_spend_max": float(np.nanmax(values)),
-                "planning_spend_min": float(np.nanmin(values)),
-                "planning_spend_max": float(np.nanmax(values)),
-                "current_spend_method": current_spend_method,
-                "current_spend_reference_period_start": (
+            spec = media_input_specs.get((market, channel))
+            if spec is None:
+                raise ValueError(f"Missing MediaInputSpec for {market}/{channel}")
+            result[(market, channel)] = MediaInputSupport(
+                market=market,
+                channel=channel,
+                unit=spec.unit,
+                current=float(np.mean(current_values)),
+                observed_min=float(np.nanmin(values)),
+                observed_max=float(np.nanmax(values)),
+                planning_min=float(np.nanmin(values)),
+                planning_max=float(np.nanmax(values)),
+                current_method=current_spend_method,
+                source=spec.source or spec.column,
+                provenance="model_frame:X_media",
+                effective_period_start=(
                     str(pd.Timestamp(selected_dates.min()).date())
                     if len(selected_dates) and not pd.isna(selected_dates.min())
                     else selected_period_start
                 ),
-                "current_spend_reference_period_end": (
+                effective_period_end=(
                     str(pd.Timestamp(selected_dates.max()).date())
                     if len(selected_dates) and not pd.isna(selected_dates.max())
                     else selected_period_end
                 ),
-            }
+            )
     return result
 
 
@@ -696,6 +809,13 @@ def generate_canonical_curve_draws(
         raise ValueError(
             "Supply cost_mappings or cost_mapping_registry, not both"
         )
+    if legacy_monetary:
+        warnings.warn(
+            "curve_type=None is deprecated and ungoverned; migrate to an "
+            "explicit model_input or monetary curve before G2A.4",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
     def resolve_cost(market: str, channel: str) -> Optional[MediaCostMapping]:
         if cost_mapping_registry is not None:
@@ -775,7 +895,12 @@ def generate_canonical_curve_draws(
             currency_rates,
             fx_as_of_date,
         )
-    support = _normalise_support(meta, support_by_market_channel)
+    support = _normalise_support(
+        meta,
+        support_by_market_channel,
+        curve_type=effective_curve_type,
+        legacy=legacy_monetary,
+    )
     extract = (
         extract_market_specific_posterior_params
         if model_type == "market_specific"
@@ -860,11 +985,51 @@ def generate_canonical_curve_draws(
                         model_type=model_type,
                         context=context,
                     )
-                    delta = _finite_difference_delta(
-                        media_input, channel_support, marginal_delta
+                    derivative_axis_value = (
+                        raw_spend
+                        if effective_curve_type == "monetary"
+                        else media_input
                     )
-                    lower_spend = max(0.0, media_input - delta)
-                    upper_spend = media_input + delta
+                    delta = _finite_difference_delta(
+                        derivative_axis_value, channel_support, marginal_delta
+                    )
+                    lower_bound = 0.0
+                    upper_bound = np.inf
+                    if (
+                        channel_support["observed_support_status"]
+                        == SUPPORT_AVAILABLE
+                    ):
+                        lower_bound = float(
+                            channel_support["planning_spend_min"]
+                        )
+                        upper_bound = float(
+                            channel_support["planning_spend_max"]
+                        )
+                    lower_axis = max(
+                        lower_bound, derivative_axis_value - delta
+                    )
+                    upper_axis = min(
+                        upper_bound, derivative_axis_value + delta
+                    )
+                    if lower_axis == upper_axis:
+                        raise ValueError(
+                            "Cannot calculate a marginal derivative at a "
+                            "zero-width governed support boundary"
+                        )
+                    if (
+                        effective_curve_type == "monetary"
+                        and not legacy_monetary
+                        and cost_mapping is not None
+                    ):
+                        lower_spend = float(
+                            cost_mapping.spend_to_media_input(lower_axis)
+                        )
+                        upper_spend = float(
+                            cost_mapping.spend_to_media_input(upper_axis)
+                        )
+                    else:
+                        lower_spend = lower_axis
+                        upper_spend = upper_axis
                     lower_plan = dict(with_plan)
                     upper_plan = dict(with_plan)
                     lower_plan[channel] = lower_spend
@@ -907,7 +1072,7 @@ def generate_canonical_curve_draws(
                         channel_incremental = (
                             mu_with[outcome_id] - mu_without[outcome_id]
                         )
-                        marginal_raw = (
+                        marginal_media_input = (
                             mu_upper[outcome_id] - mu_lower[outcome_id]
                         ) / (upper_spend - lower_spend)
                         if not legacy_monetary and effective_curve_type == "model_input":
@@ -919,15 +1084,21 @@ def generate_canonical_curve_draws(
                                     raw_spend
                                 )
                             )
+                            # Authoritative monetary derivative: perturb local
+                            # spend, map both endpoints, predict, then divide by
+                            # the reporting-currency change. This remains valid
+                            # at piecewise cost knots.
                             marginal_reporting = (
-                                marginal_raw * marginal_mapping / fx_rate
+                                (mu_upper[outcome_id] - mu_lower[outcome_id])
+                                / ((upper_axis - lower_axis) * fx_rate)
                                 if currency["currency_valid"]
                                 else np.nan
                             )
                         else:
                             marginal_mapping = 1.0 / spend_unit_scale
                             marginal_reporting = (
-                                marginal_raw / (spend_unit_scale * fx_rate)
+                                marginal_media_input
+                                / (spend_unit_scale * fx_rate)
                                 if units_valid and currency["currency_valid"]
                                 else np.nan
                             )
@@ -1085,6 +1256,9 @@ def generate_canonical_curve_draws(
                                     "spend_point": spend_point,
                                     "posterior_draw": posterior_draw,
                                     "curve_type": effective_curve_type,
+                                    "counterfactual_axis_type": (
+                                        effective_curve_type
+                                    ),
                                     "curve_method": "steady_state",
                                     "reference_interpretation": (
                                         "representative_context_not_historical_attribution"
@@ -1123,6 +1297,20 @@ def generate_canonical_curve_draws(
                                         )
                                     ),
                                     "cost_context_id": cost_context_id,
+                                    "cost_mapping_fingerprint": (
+                                        hashlib.sha256(
+                                            json.dumps(
+                                                cost_mapping.to_dict(),
+                                                sort_keys=True,
+                                                separators=(",", ":"),
+                                            ).encode()
+                                        ).hexdigest()
+                                        if cost_mapping is not None
+                                        else None
+                                    ),
+                                    "official_reporting_eligible": (
+                                        not legacy_monetary
+                                    ),
                                     "local_spend": local_spend,
                                     "reporting_currency_spend": reporting_spend,
                                     "spend": reporting_spend,
@@ -1154,7 +1342,7 @@ def generate_canonical_curve_draws(
                                     "component_response_allocation_method": "incremental_eta_share",
                                     "marginal_incremental_response_per_currency_unit": component_marginal,
                                     "marginal_incremental_response_per_media_input_unit": (
-                                        marginal_raw * eta_share
+                                        marginal_media_input * eta_share
                                     ),
                                     "marginal_media_input_per_local_currency_unit": (
                                         marginal_mapping
@@ -1163,13 +1351,28 @@ def generate_canonical_curve_draws(
                                     "channel_total_marginal_response": marginal_reporting,
                                     "marginal_calculation_method": (
                                         "forward_finite_difference"
-                                        if lower_spend == media_input
-                                        else "central_finite_difference"
+                                        if lower_axis == derivative_axis_value
+                                        else (
+                                            "backward_finite_difference"
+                                            if upper_axis
+                                            == derivative_axis_value
+                                            else "central_finite_difference"
+                                        )
                                     ),
                                     "marginal_delta_media_input": delta,
                                     "marginal_delta_local_spend": (
-                                        delta * spend_unit_scale
-                                        if legacy_monetary
+                                        delta
+                                        if effective_curve_type == "monetary"
+                                        and not legacy_monetary
+                                        else (
+                                            delta * spend_unit_scale
+                                            if legacy_monetary
+                                            else np.nan
+                                        )
+                                    ),
+                                    "marginal_delta_reporting_spend": (
+                                        delta * fx_rate
+                                        if effective_curve_type == "monetary"
                                         else np.nan
                                     ),
                                     "current_media_input": (
@@ -1177,10 +1380,13 @@ def generate_canonical_curve_draws(
                                         if observed_status == SUPPORT_AVAILABLE
                                         and effective_curve_type == "model_input"
                                         else (
-                                            float(
-                                                cost_mapping.spend_to_media_input(
-                                                    channel_support["current_spend"]
-                                                )
+                                            channel_support.get(
+                                                "current_media_input",
+                                                float(
+                                                    cost_mapping.spend_to_media_input(
+                                                        channel_support["current_spend"]
+                                                    )
+                                                ),
                                             )
                                             if observed_status == SUPPORT_AVAILABLE
                                             and not legacy_monetary
@@ -1200,6 +1406,20 @@ def generate_canonical_curve_draws(
                                         and effective_curve_type == "monetary"
                                         else np.nan
                                     ),
+                                    "current_local_spend": (
+                                        channel_support["current_spend"]
+                                        if observed_status == SUPPORT_AVAILABLE
+                                        and effective_curve_type == "monetary"
+                                        and not legacy_monetary
+                                        else np.nan
+                                    ),
+                                    "current_reporting_spend": (
+                                        channel_support["current_spend"] * fx_rate
+                                        if observed_status == SUPPORT_AVAILABLE
+                                        and effective_curve_type == "monetary"
+                                        and not legacy_monetary
+                                        else np.nan
+                                    ),
                                     "current_spend_method": channel_support[
                                         "current_spend_method"
                                     ],
@@ -1210,28 +1430,49 @@ def generate_canonical_curve_draws(
                                         "current_spend_reference_period_end"
                                     ],
                                     "observed_support_status": observed_status,
+                                    "support_axis_type": channel_support.get(
+                                        "support_axis_type"
+                                    ),
+                                    "support_unit": channel_support.get(
+                                        "support_unit"
+                                    ),
+                                    "support_provenance": channel_support.get(
+                                        "support_provenance"
+                                    ),
                                     "observed_media_input_min": (
-                                        channel_support["observed_spend_min"]
+                                        channel_support.get(
+                                            "observed_media_input_min",
+                                            channel_support["observed_spend_min"],
+                                        )
                                         if observed_status == SUPPORT_AVAILABLE
-                                        and effective_curve_type == "model_input"
+                                        and not legacy_monetary
                                         else np.nan
                                     ),
                                     "observed_media_input_max": (
-                                        channel_support["observed_spend_max"]
+                                        channel_support.get(
+                                            "observed_media_input_max",
+                                            channel_support["observed_spend_max"],
+                                        )
                                         if observed_status == SUPPORT_AVAILABLE
-                                        and effective_curve_type == "model_input"
+                                        and not legacy_monetary
                                         else np.nan
                                     ),
                                     "planning_media_input_min": (
-                                        channel_support["planning_spend_min"]
+                                        channel_support.get(
+                                            "planning_media_input_min",
+                                            channel_support["planning_spend_min"],
+                                        )
                                         if observed_status == SUPPORT_AVAILABLE
-                                        and effective_curve_type == "model_input"
+                                        and not legacy_monetary
                                         else np.nan
                                     ),
                                     "planning_media_input_max": (
-                                        channel_support["planning_spend_max"]
+                                        channel_support.get(
+                                            "planning_media_input_max",
+                                            channel_support["planning_spend_max"],
+                                        )
                                         if observed_status == SUPPORT_AVAILABLE
-                                        and effective_curve_type == "model_input"
+                                        and not legacy_monetary
                                         else np.nan
                                     ),
                                     "observed_spend_min": (
@@ -1246,6 +1487,20 @@ def generate_canonical_curve_draws(
                                         and effective_curve_type == "monetary"
                                         else np.nan
                                     ),
+                                    "observed_local_spend_min": (
+                                        channel_support["observed_spend_min"]
+                                        if observed_status == SUPPORT_AVAILABLE
+                                        and effective_curve_type == "monetary"
+                                        and not legacy_monetary
+                                        else np.nan
+                                    ),
+                                    "observed_reporting_spend_min": (
+                                        channel_support["observed_spend_min"] * fx_rate
+                                        if observed_status == SUPPORT_AVAILABLE
+                                        and effective_curve_type == "monetary"
+                                        and not legacy_monetary
+                                        else np.nan
+                                    ),
                                     "observed_spend_max": (
                                         channel_support["observed_spend_max"]
                                         * (
@@ -1256,6 +1511,20 @@ def generate_canonical_curve_draws(
                                         * fx_rate
                                         if observed_status == SUPPORT_AVAILABLE
                                         and effective_curve_type == "monetary"
+                                        else np.nan
+                                    ),
+                                    "observed_local_spend_max": (
+                                        channel_support["observed_spend_max"]
+                                        if observed_status == SUPPORT_AVAILABLE
+                                        and effective_curve_type == "monetary"
+                                        and not legacy_monetary
+                                        else np.nan
+                                    ),
+                                    "observed_reporting_spend_max": (
+                                        channel_support["observed_spend_max"] * fx_rate
+                                        if observed_status == SUPPORT_AVAILABLE
+                                        and effective_curve_type == "monetary"
+                                        and not legacy_monetary
                                         else np.nan
                                     ),
                                     "planning_spend_min": (
@@ -1270,6 +1539,20 @@ def generate_canonical_curve_draws(
                                         and effective_curve_type == "monetary"
                                         else np.nan
                                     ),
+                                    "planning_local_spend_min": (
+                                        channel_support["planning_spend_min"]
+                                        if observed_status == SUPPORT_AVAILABLE
+                                        and effective_curve_type == "monetary"
+                                        and not legacy_monetary
+                                        else np.nan
+                                    ),
+                                    "planning_reporting_spend_min": (
+                                        channel_support["planning_spend_min"] * fx_rate
+                                        if observed_status == SUPPORT_AVAILABLE
+                                        and effective_curve_type == "monetary"
+                                        and not legacy_monetary
+                                        else np.nan
+                                    ),
                                     "planning_spend_max": (
                                         channel_support["planning_spend_max"]
                                         * (
@@ -1280,6 +1563,20 @@ def generate_canonical_curve_draws(
                                         * fx_rate
                                         if observed_status == SUPPORT_AVAILABLE
                                         and effective_curve_type == "monetary"
+                                        else np.nan
+                                    ),
+                                    "planning_local_spend_max": (
+                                        channel_support["planning_spend_max"]
+                                        if observed_status == SUPPORT_AVAILABLE
+                                        and effective_curve_type == "monetary"
+                                        and not legacy_monetary
+                                        else np.nan
+                                    ),
+                                    "planning_reporting_spend_max": (
+                                        channel_support["planning_spend_max"] * fx_rate
+                                        if observed_status == SUPPORT_AVAILABLE
+                                        and effective_curve_type == "monetary"
+                                        and not legacy_monetary
                                         else np.nan
                                     ),
                                     "planning_support_eligible": (

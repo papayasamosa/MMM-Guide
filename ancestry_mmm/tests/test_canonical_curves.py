@@ -25,8 +25,12 @@ from ancestry_mmm.core.canonical_curves import (
 )
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
 from ancestry_mmm.core.media_costs import (
+    CostMappingRegistry,
     FixedCostPerUnitMapping,
     MediaInputSpec,
+    MediaInputSupport,
+    PiecewiseLinearCostMapping,
+    derive_monetary_support,
 )
 from ancestry_mmm.core.pathways import MediaOutcomePathway, resolve_pathway_masks
 from ancestry_mmm.core.predict import (
@@ -190,18 +194,20 @@ def _support():
 
 def _generate(meta, *, model_type="shared", contexts=None, **kwargs):
     value_map = kwargs.pop("value_per_response", VALUES)
+    support = kwargs.pop("support_by_market_channel", _support())
+    points = kwargs.pop("spend_points", [0.0, 50.0, 150.0])
     return generate_canonical_curve_draws(
         model_run_id="run-1", meta=meta,
         trace=_trace(model_type == "market_specific"),
         reference_contexts=contexts or _contexts(),
         model_type=model_type, n_draws=4,
-        spend_points=[0.0, 50.0, 150.0],
+        spend_points=points,
         currency_by_market={"UK": "GBP", "AU": "AUD"},
         reporting_currency="GBP",
         currency_rates={("AUD", "GBP"): 0.5},
         fx_as_of_date="2026-07-01",
         value_per_response=value_map,
-        support_by_market_channel=_support(),
+        support_by_market_channel=support,
         **kwargs,
     )
 
@@ -435,10 +441,22 @@ def test_current_spend_definitions(meta, method, expected):
         "dates": np.tile(pd.date_range("2026-01-04", periods=13, freq="W"), 2),
     }
     support = support_from_model_frame(
-        frame, meta, current_spend_method=method
+        frame,
+        meta,
+        current_spend_method=method,
+        media_input_specs={
+            (market, channel): MediaInputSpec(
+                market=market,
+                channel=channel,
+                column=channel,
+                unit="model_unit",
+            )
+            for market in MARKETS
+            for channel in CHANNELS
+        },
     )
-    assert support[("UK", "TV")]["current_spend"] == pytest.approx(expected)
-    assert support[("UK", "TV")]["current_spend_method"] == method
+    assert support[("UK", "TV")].current == pytest.approx(expected)
+    assert support[("UK", "TV")].current_method == method
 
 
 def test_reference_context_builder_uses_prepared_business_context(meta):
@@ -611,11 +629,47 @@ def _governed_inputs_and_costs(cost_per_unit=2.0):
             source="approved rate card",
             approval_status="approved",
             approved_by="finance",
+            approved_at="2026-01-01T10:00:00Z",
+            owner="media-finance",
+            approval_note="Approved rate card",
+            last_reviewed_at="2026-01-01",
         )
         for market in MARKETS
         for channel in CHANNELS
     }
     return specs, costs
+
+
+def _typed_support(specs, costs=None):
+    media = {
+        key: MediaInputSupport(
+            market=key[0],
+            channel=key[1],
+            unit=spec.unit,
+            current=50.0,
+            observed_min=0.0,
+            observed_max=100.0,
+            planning_min=0.0,
+            planning_max=150.0,
+            current_method="last_4_week_average",
+            source="model frame",
+            provenance="test:X_media",
+        )
+        for key, spec in specs.items()
+    }
+    if costs is None:
+        return media
+    fingerprint = CostMappingRegistry(costs.values()).fingerprint()
+    return {
+        key: derive_monetary_support(
+            support,
+            costs[key],
+            reporting_currency="GBP",
+            fx_rate=1.0 if key[0] == "UK" else 0.5,
+            mapping_fingerprint=fingerprint,
+        )
+        for key, support in media.items()
+    }
 
 
 def test_model_input_curve_is_available_without_cost_economics(meta):
@@ -627,7 +681,7 @@ def test_model_input_curve_is_available_without_cost_economics(meta):
         reference_contexts=_contexts(),
         n_draws=2,
         spend_points=[0.0, 50.0],
-        support_by_market_channel=_support(),
+        support_by_market_channel=_typed_support(specs),
         curve_type="model_input",
         media_input_specs=specs,
     )
@@ -657,6 +711,7 @@ def test_monetary_curve_maps_spend_and_stores_chain_rule_derivatives(meta):
         media_input_specs=specs,
         cost_mappings=costs,
         cost_context_id="curve",
+        support_by_market_channel=_typed_support(specs, costs),
     )
     first = draws[(draws["market"] == "UK") & (draws["spend_point"] == 1)]
     assert first["media_input"].eq(25.0).all()
@@ -684,6 +739,54 @@ def test_monetary_curve_is_blocked_without_approved_mapping(meta):
             media_input_specs=specs,
             cost_context_id="curve",
         )
+
+
+def test_monetary_derivative_perturbs_currency_at_piecewise_knot(meta):
+    specs, _ = _governed_inputs_and_costs()
+    costs = {
+        key: PiecewiseLinearCostMapping(
+            mapping_id=f"{key[0]}-{key[1]}-piecewise",
+            market=key[0],
+            channel=key[1],
+            currency="GBP" if key[0] == "UK" else "AUD",
+            cost_context_id="curve",
+            spend_knots=(0.0, 100.0, 300.0),
+            media_input_knots=(0.0, 80.0, 150.0),
+            source="rate card",
+            approval_status="approved",
+            approved_by="finance",
+            approved_at="2026-01-01T10:00:00Z",
+            owner="media-finance",
+            approval_note="Approved piecewise rates",
+            last_reviewed_at="2026-01-01",
+        )
+        for key in specs
+    }
+    draws = _generate(
+        meta,
+        curve_type="monetary",
+        media_input_specs=specs,
+        cost_mappings=costs,
+        cost_context_id="curve",
+        spend_points=[0.0, 100.0, 300.0],
+        support_by_market_channel=_typed_support(specs, costs),
+    )
+    knot = draws[draws["spend_point"] == 1]
+    boundary = draws[draws["spend_point"] == 0]
+    upper_boundary = draws[draws["spend_point"] == 2]
+    assert np.isfinite(
+        knot["marginal_incremental_response_per_currency_unit"]
+    ).all()
+    assert knot["marginal_calculation_method"].eq(
+        "central_finite_difference"
+    ).all()
+    assert boundary["marginal_calculation_method"].eq(
+        "forward_finite_difference"
+    ).all()
+    assert upper_boundary["marginal_calculation_method"].eq(
+        "backward_finite_difference"
+    ).all()
+    assert knot["marginal_delta_local_spend"].gt(0).all()
 
 
 def test_direct_and_halo_governance_views_are_response_only(meta):

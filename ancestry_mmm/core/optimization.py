@@ -51,6 +51,7 @@ from scipy.optimize import minimize, LinearConstraint
 
 from .approval import ModelApproval, require_matching_approval
 from .hierarchical_model import FHModelMeta
+from .media_costs import CostMappingRegistry
 from .outcomes import (
     fh_gsa_outcome_ids, fh_signup_outcome_ids, fh_net_billthrough_outcome_ids, dna_kit_sale_outcome_ids, select_outcome_ids,
     outcome_catalogue_at_fit_by_id, eligible_outcome_ids,
@@ -62,6 +63,39 @@ from .market_specific_predict import FHMarketSpecificPosteriorParams, steady_sta
 WEEKS_PER_MONTH = 365.25 / 12 / 7  # ~4.348
 
 AnyPosteriorParams = Union[FHPosteriorParams, FHMarketSpecificPosteriorParams]
+
+
+def monetary_plan_to_media_input(
+    spend_plan: Dict[str, Dict[str, float]],
+    *,
+    market: str,
+    registry: CostMappingRegistry,
+    cost_context_id: str,
+    as_of_by_period: Dict[str, str],
+) -> Dict[str, Dict[str, float]]:
+    """Convert local-currency decisions through effective governed mappings."""
+
+    converted: Dict[str, Dict[str, float]] = {}
+    for period, channel_spend in spend_plan.items():
+        if period not in as_of_by_period:
+            raise ValueError(f"Missing cost-mapping date for period {period}")
+        converted[period] = {}
+        for channel, spend in channel_spend.items():
+            mapping = registry.resolve(
+                market,
+                channel,
+                cost_context_id,
+                as_of=as_of_by_period[period],
+            )
+            if mapping is None:
+                raise ValueError(
+                    "Monetary planning blocked without an approved effective "
+                    f"mapping for {market}/{channel}/{period}"
+                )
+            converted[period][channel] = float(
+                mapping.spend_to_media_input(spend)
+            )
+    return converted
 
 
 def _steady_state_response_fn(model_type: str):
@@ -88,6 +122,9 @@ def evaluate_scenario(
     data_fingerprint: str,
     model_spec_fingerprint: str,
     posterior_fingerprint: str,
+    cost_mapping_registry: Optional[CostMappingRegistry] = None,
+    cost_context_id: Optional[str] = None,
+    cost_as_of_by_month: Optional[Dict[str, str]] = None,
 ) -> pd.DataFrame:
     """
     Predicted monthly outcomes for a spend plan: {month_label: {channel: spend}}.
@@ -160,9 +197,27 @@ def evaluate_scenario(
     dna_ids = set(dna_kit_sale_outcome_ids(meta))
     catalogue_by_id = outcome_catalogue_at_fit_by_id(meta)
     rows = []
+    model_input_plan = (
+        monetary_plan_to_media_input(
+            spend_plan,
+            market=market,
+            registry=cost_mapping_registry,
+            cost_context_id=cost_context_id or "default",
+            as_of_by_period=cost_as_of_by_month or {},
+        )
+        if cost_mapping_registry is not None
+        else spend_plan
+    )
     for month, spend_by_channel in spend_plan.items():
         ref = reference_context_by_month.get(month, {})
-        weekly_rate = response_fn(market, spend_by_channel, meta, params, ref, planning_only=True)
+        weekly_rate = response_fn(
+            market,
+            model_input_plan[month],
+            meta,
+            params,
+            ref,
+            planning_only=True,
+        )
         total_spend = sum(spend_by_channel.values())
         monthly_outcome_by_id = {oid: rate * WEEKS_PER_MONTH for oid, rate in weekly_rate.items()}
         fh_gsa = sum(v for oid, v in monthly_outcome_by_id.items() if oid in gsa_ids)
@@ -556,6 +611,9 @@ def _objective_factory(
     target_outcome_ids: Optional[List[str]] = None,
     weights: Optional[Dict[str, float]] = None,
     assume_value_scaled_weights: bool = False,
+    cost_mapping_registry: Optional[CostMappingRegistry] = None,
+    cost_context_id: Optional[str] = None,
+    cost_as_of_by_month: Optional[Dict[str, str]] = None,
 ):
     weight = _objective_weight(
         objective, meta, ltv, target_outcome_ids, weights,
@@ -565,10 +623,28 @@ def _objective_factory(
 
     def neg_total(x: np.ndarray) -> float:
         spend_plan = _unflatten(x, months, channels)
+        model_input_plan = (
+            monetary_plan_to_media_input(
+                spend_plan,
+                market=market,
+                registry=cost_mapping_registry,
+                cost_context_id=cost_context_id or "default",
+                as_of_by_period=cost_as_of_by_month or {},
+            )
+            if cost_mapping_registry is not None
+            else spend_plan
+        )
         total = 0.0
         for m in months:
             ref = reference_context_by_month.get(m, {})
-            rates = response_fn(market, spend_plan[m], meta, params, ref, planning_only=True)
+            rates = response_fn(
+                market,
+                model_input_plan[m],
+                meta,
+                params,
+                ref,
+                planning_only=True,
+            )
             for oid, rate in rates.items():
                 total += rate * WEEKS_PER_MONTH * weight.get(oid, 0.0)
         return -total
@@ -599,6 +675,9 @@ def optimize_scenario(
     data_fingerprint: str,
     model_spec_fingerprint: str,
     posterior_fingerprint: str,
+    cost_mapping_registry: Optional[CostMappingRegistry] = None,
+    cost_context_id: Optional[str] = None,
+    cost_as_of_by_month: Optional[Dict[str, str]] = None,
 ) -> Dict:
     """
     Optimise a spend plan. `constraints=None` (or empty) + conserve_total_budget=True
@@ -645,6 +724,9 @@ def optimize_scenario(
         months, channels, market, meta, params, reference_context_by_month, ltv, objective, model_type,
         target_outcome_ids=target_outcome_ids, weights=weights,
         assume_value_scaled_weights=assume_value_scaled_weights,
+        cost_mapping_registry=cost_mapping_registry,
+        cost_context_id=cost_context_id,
+        cost_as_of_by_month=cost_as_of_by_month,
     )
 
     result = minimize(
@@ -660,6 +742,9 @@ def optimize_scenario(
     identity_kwargs = dict(
         model_type=model_type, approval=approval, model_run_id=model_run_id, data_fingerprint=data_fingerprint,
         model_spec_fingerprint=model_spec_fingerprint, posterior_fingerprint=posterior_fingerprint,
+        cost_mapping_registry=cost_mapping_registry,
+        cost_context_id=cost_context_id,
+        cost_as_of_by_month=cost_as_of_by_month,
     )
     predicted = evaluate_scenario(optimized_plan, market, meta, params, reference_context_by_month, ltv, **identity_kwargs)
     current_predicted = evaluate_scenario(current_spend_plan, market, meta, params, reference_context_by_month, ltv, **identity_kwargs)
@@ -678,6 +763,11 @@ def optimize_scenario(
         "current_predicted": current_predicted,
         "objective_value": -float(result.fun),
         "current_objective_value": current_objective_value,
+        "cost_mapping_fingerprint": (
+            cost_mapping_registry.fingerprint()
+            if cost_mapping_registry is not None
+            else None
+        ),
     }
 
 
@@ -688,10 +778,12 @@ def optimize_scenario(
 def scenario_to_dict(
     name: str, market: str, spend_plan: Dict[str, Dict[str, float]],
     objective: str, constraints: List[SpendConstraint], notes: str = "",
+    cost_mapping_fingerprint: Optional[str] = None,
 ) -> dict:
     return {
         "name": name, "market": market, "spend_plan": spend_plan,
         "objective": objective, "constraints": [c.to_dict() for c in constraints], "notes": notes,
+        "cost_mapping_fingerprint": cost_mapping_fingerprint,
     }
 
 
@@ -699,6 +791,17 @@ def scenario_from_dict(d: dict) -> dict:
     d = dict(d)
     d["constraints"] = [SpendConstraint.from_dict(c) for c in d.get("constraints", [])]
     return d
+
+
+def require_current_cost_mapping(
+    artifact: Dict, current_cost_mapping_fingerprint: str
+) -> None:
+    """Reject scenarios/curve metadata created under another cost mapping."""
+    saved = artifact.get("cost_mapping_fingerprint")
+    if not saved or saved != current_cost_mapping_fingerprint:
+        raise ValueError(
+            "Artifact is stale because its governed cost mapping changed"
+        )
 
 
 def compare_scenarios(scenarios: List[Dict], predicted_key: str = "predicted") -> pd.DataFrame:

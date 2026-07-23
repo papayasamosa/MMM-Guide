@@ -129,6 +129,8 @@ if st.button("Build export bundle", type="primary"):
             migration_review=get_state("migration_review"),
             media_input_specs=get_state("media_input_specs") or [],
             media_cost_mappings=get_state("media_cost_mappings"),
+            media_input_support=get_state("media_input_support") or [],
+            monetary_spend_support=get_state("monetary_spend_support") or [],
         )
     st.success(f"Project bundle built: {output_path}")
     with open(output_path, "rb") as f:
@@ -190,6 +192,11 @@ if uploaded_zip is not None and st.button("Import bundle"):
         set_state("market_spec_config", imported["market_spec_config"])
         set_state("media_input_specs", imported.get("media_input_specs") or [])
         set_state("media_cost_mappings", imported.get("media_cost_mappings"))
+        set_state("media_input_support", imported.get("media_input_support") or [])
+        set_state(
+            "monetary_spend_support",
+            imported.get("monetary_spend_support") or [],
+        )
         set_state("model_type", imported["model_type"])
         set_state("outcome_definitions", imported["outcome_definitions"])
         set_state("funnel_links", imported["funnel_links"])

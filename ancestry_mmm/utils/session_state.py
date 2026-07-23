@@ -34,6 +34,8 @@ def init_session_state():
         # Explicit model-input identity and governed spend mappings (G2A.2).
         "media_input_specs": [],
         "media_cost_mappings": None,
+        "media_input_support": [],
+        "monetary_spend_support": [],
         # Model configuration
         "prior_config": dict(DEFAULT_FH_PRIORS),
         "dna_lag_weeks": DEFAULT_DNA_LAG_WEEKS,

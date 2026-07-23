@@ -1,4 +1,4 @@
-# Outcome-scale counterfactual curves and economics (G2A.2)
+# Outcome-scale counterfactual curves and economics (G2A.3)
 
 `core.canonical_curves` is the non-UI source of truth for posterior curves,
 economics, governance views, reconciliation, and curve exports.
@@ -61,9 +61,27 @@ an approved `core.media_costs` mapping before prediction. Identity, fixed
 cost-per-unit, piecewise-linear, and uploaded-plan mappings are supported at
 market × channel × cost-context grain.
 
+Support is typed. `support_from_model_frame` returns only
+`MediaInputSupport`, because `X_media` is in fitted model-input units.
+`MonetarySpendSupport` must be derived through an approved effective mapping
+or supplied as an independently approved monetary table. Passing the wrong
+support axis to a curve raises rather than reinterpreting its numbers.
+
+`MediaInputSpec.unit_scale` is descriptive metadata only. Values in
+`X_media`, prediction contexts, support, and cost-mapping outputs must already
+be in the fitted numeric model-input unit.
+
 Monetary marginal response records both `d outcome / d media input` and
 `d media input / d local currency`, then applies FX to obtain
 `d outcome / d reporting currency`.
+The authoritative monetary derivative directly perturbs local-currency spend,
+maps both endpoints to media input, predicts through the full model, and
+divides by the reporting-currency change. Central, forward, and backward
+differences respect governed support boundaries and piecewise cost knots.
+
+`curve_type=None` is deprecated until G2A.4. It emits a warning and its output
+is marked ineligible for official reporting; new callers must use an explicit
+curve type.
 
 Observed support must come from the prepared frame or an approved support
 table. Hill K is never used as observed support. Missing support produces:

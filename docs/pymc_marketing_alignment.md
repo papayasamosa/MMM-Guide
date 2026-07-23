@@ -1,6 +1,6 @@
 # PyMC Marketing alignment
 
-Status: G2A.2, reviewed 2026-07-23.
+Status: G2A.3, reviewed 2026-07-23.
 
 The product claim is: **Built in PyMC and informed by PyMC Marketing.**
 
@@ -79,4 +79,3 @@ When the pinned PyMC Marketing version changes:
 2. Run the upstream numerical compatibility tests.
 3. Update this matrix with adopted changes or explicit divergences.
 4. Regenerate the lockfile and run the full repository gates.
-

@@ -63,7 +63,7 @@ from .predict import extract_posterior_params
 from .schema import ModelSpec
 from .optimization import SpendConstraint
 
-PROJECT_BUNDLE_SCHEMA_VERSION = 4
+PROJECT_BUNDLE_SCHEMA_VERSION = 5
 PROJECT_APP_VERSION = "0.1.0"
 
 
@@ -143,6 +143,8 @@ def export_project(
     migration_review: Optional[dict] = None,
     media_input_specs: Optional[List[dict]] = None,
     media_cost_mappings: Optional[dict] = None,
+    media_input_support: Optional[List[dict]] = None,
+    monetary_spend_support: Optional[List[dict]] = None,
 ) -> Path:
     output_path = Path(output_path)
     with tempfile.TemporaryDirectory() as tmp:
@@ -195,6 +197,14 @@ def export_project(
         if media_cost_mappings is not None:
             (tmp / "config" / "media_cost_mappings.json").write_text(
                 json.dumps(media_cost_mappings, indent=2, default=str)
+            )
+        if media_input_support is not None:
+            (tmp / "config" / "media_input_support.json").write_text(
+                json.dumps(media_input_support, indent=2, default=str)
+            )
+        if monetary_spend_support is not None:
+            (tmp / "config" / "monetary_spend_support.json").write_text(
+                json.dumps(monetary_spend_support, indent=2, default=str)
             )
         if model_type is not None:
             (tmp / "config" / "model_type.json").write_text(
@@ -319,6 +329,8 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         # G2A.2 metadata is optional so older bundles remain resumable.
         "media_input_specs": [],
         "media_cost_mappings": None,
+        "media_input_support": [],
+        "monetary_spend_support": [],
         # Absent in bundles exported before the market-specific redesign's
         # Phase 2 - "shared" (Model A) is the correct default: every bundle
         # exported before Model C existed was necessarily a Model A fit.
@@ -400,6 +412,14 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         if (config_dir / "media_cost_mappings.json").exists():
             result["media_cost_mappings"] = json.loads(
                 (config_dir / "media_cost_mappings.json").read_text()
+            )
+        if (config_dir / "media_input_support.json").exists():
+            result["media_input_support"] = json.loads(
+                (config_dir / "media_input_support.json").read_text()
+            )
+        if (config_dir / "monetary_spend_support.json").exists():
+            result["monetary_spend_support"] = json.loads(
+                (config_dir / "monetary_spend_support.json").read_text()
             )
         if (config_dir / "model_type.json").exists():
             result["model_type"] = json.loads(
