@@ -175,12 +175,13 @@ def predict_mu_market_specific(
     eta_primary = np.einsum("oc,osc->os", sat_media, beta_by_row * primary_mask[None, :, :])
 
     cross_cells = meta.pathway_masks.active_cells(outcome_ids, meta.channels) + meta.pathway_masks.exploratory_cells(outcome_ids, meta.channels)
+    eta_cross = np.zeros((n_obs, n_out))
     if cross_cells:
-        cross_product_lag_media = lag_frame(sat_media, frame["market_bounds"], meta.pathway_masks.cross_product_lag_weeks)
         strength_matrix = _cross_product_strength_matrix(meta, params)
-        eta_cross = np.einsum("oc,osc->os", cross_product_lag_media, beta_by_row * strength_matrix[None, :, :])
-    else:
-        eta_cross = np.zeros((n_obs, n_out))
+        lagged = {lag: lag_frame(sat_media, frame["market_bounds"], lag)
+                  for lag in {meta.pathway_masks.lag_for_cell(cell) for cell in cross_cells}}
+        for oi, ci in cross_cells:
+            eta_cross[:, oi] += lagged[meta.pathway_masks.lag_for_cell((oi, ci))][:, ci] * beta_by_row[:, oi, ci] * strength_matrix[oi, ci]
 
     eta_channels = eta_primary + eta_cross
 
@@ -224,6 +225,7 @@ def steady_state_outcome_response_market_specific(
     meta: FHModelMeta,
     params: FHMarketSpecificPosteriorParams,
     reference_context: Optional[Dict] = None,
+    *, planning_only: bool = False,
 ) -> Dict[str, float]:
     """Market-specific-model equivalent of core.predict.steady_state_outcome_response -
     same steady-state approximation, using `market`'s own K and beta."""
@@ -248,7 +250,7 @@ def steady_state_outcome_response_market_specific(
         for c in meta.channels:
             # Steady-state collapse (primary and cross-product media converge
             # at constant spend) - see core.predict.steady_state_outcome_response.
-            val += params.beta[market][s][c] * sat[c] * _pathway_weight(meta, params, s, c)
+            val += params.beta[market][s][c] * sat[c] * _pathway_weight(meta, params, s, c, planning_only=planning_only)
 
         for name, coef in params.control_coef.items():
             val += coef * reference_context.get("controls", {}).get(name, 0.0)

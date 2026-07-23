@@ -229,7 +229,7 @@ def _cross_product_strength_matrix(meta: FHModelMeta, params: _HasPathwayStrengt
     return mat
 
 
-def _pathway_weight(meta: FHModelMeta, params: _HasPathwayStrength, outcome_id: str, channel: str) -> float:
+def _pathway_weight(meta: FHModelMeta, params: _HasPathwayStrength, outcome_id: str, channel: str, *, planning_only: bool = False) -> float:
     """Total multiplier for one `(outcome_id, channel)` cell's channel
     contribution at STEADY STATE - constant spend converges lagged and
     unlagged media to the identical value, so the `primary_direct` and
@@ -239,6 +239,9 @@ def _pathway_weight(meta: FHModelMeta, params: _HasPathwayStrength, outcome_id: 
     plus `params.pathway_strength[...]` if it's also (or instead)
     `active_cross_product`/`exploratory_cross_product`, `0.0` for an
     excluded cell (in neither)."""
+    oi, ci = meta.outcome_ids.index(outcome_id), meta.channels.index(channel)
+    if planning_only and not meta.pathway_masks.planning_by_cell.get(meta.pathway_masks.cell_key((oi, ci)), True):
+        return 0.0
     weight = 1.0 if channel in meta.pathway_masks.primary_channels_by_outcome.get(outcome_id, []) else 0.0
     is_active = channel in meta.pathway_masks.active_channels_by_outcome.get(outcome_id, [])
     is_exploratory = channel in meta.pathway_masks.exploratory_channels_by_outcome.get(outcome_id, [])
@@ -275,12 +278,13 @@ def predict_mu(
     eta_primary = sat_media @ (beta_matrix * primary_mask).T
 
     cross_cells = meta.pathway_masks.active_cells(outcome_ids, meta.channels) + meta.pathway_masks.exploratory_cells(outcome_ids, meta.channels)
+    eta_cross = np.zeros((n_obs, n_out))
     if cross_cells:
-        cross_product_lag_media = lag_frame(sat_media, frame["market_bounds"], meta.pathway_masks.cross_product_lag_weeks)
         strength_matrix = _cross_product_strength_matrix(meta, params)
-        eta_cross = cross_product_lag_media @ (beta_matrix * strength_matrix).T
-    else:
-        eta_cross = np.zeros((n_obs, n_out))
+        lagged = {lag: lag_frame(sat_media, frame["market_bounds"], lag)
+                  for lag in {meta.pathway_masks.lag_for_cell(cell) for cell in cross_cells}}
+        for oi, ci in cross_cells:
+            eta_cross[:, oi] += lagged[meta.pathway_masks.lag_for_cell((oi, ci))][:, ci] * beta_matrix[oi, ci] * strength_matrix[oi, ci]
 
     eta_channels = eta_primary + eta_cross
 
@@ -325,6 +329,7 @@ def steady_state_outcome_response(
     meta: FHModelMeta,
     params: FHPosteriorParams,
     reference_context: Optional[Dict] = None,
+    *, planning_only: bool = False,
 ) -> Dict[str, float]:
     """
     Expected weekly outcome per outcome_id for spend held constant at
@@ -359,7 +364,7 @@ def steady_state_outcome_response(
             # `sat[c]` term directly instead of needing two separate media
             # series - see predict_mu for the general, non-steady-state
             # replay where they must stay separate.
-            val += params.beta[s][c] * sat[c] * _pathway_weight(meta, params, s, c)
+            val += params.beta[s][c] * sat[c] * _pathway_weight(meta, params, s, c, planning_only=planning_only)
 
         for name, coef in params.control_coef.items():
             val += coef * reference_context.get("controls", {}).get(name, 0.0)

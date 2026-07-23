@@ -57,13 +57,18 @@ import pandas as pd
 
 MODE_DIRECT_CHANNEL = "direct_channel"
 MODE_EXCLUDED = "excluded"
+MODE_ASSUMPTION_BASED_REALLOCATION = "assumption_based_demand_capture_reallocation"
+# Deprecated persisted key; normalised on load and never presented as mediation.
 MODE_DEMAND_CAPTURE_MEDIATOR = "demand_capture_mediator"
+MODE_EXPERIMENTAL_FITTED_MEDIATION = "experimental_fitted_mediation"
 MODE_EXPERIMENT_CALIBRATED_INCREMENTAL = "experiment_calibrated_incremental"
 
 BRAND_SEARCH_MODES = (
     MODE_DIRECT_CHANNEL,
     MODE_EXCLUDED,
+    MODE_ASSUMPTION_BASED_REALLOCATION,
     MODE_DEMAND_CAPTURE_MEDIATOR,
+    MODE_EXPERIMENTAL_FITTED_MEDIATION,
     MODE_EXPERIMENT_CALIBRATED_INCREMENTAL,
 )
 
@@ -99,7 +104,7 @@ class BrandSearchConfig:
             errors.append(f"'{label}' has unknown Brand Search mode '{self.mode}' (expected one of {BRAND_SEARCH_MODES}).")
             return errors  # nothing further to validate against an unrecognised mode
 
-        if self.mode == MODE_DEMAND_CAPTURE_MEDIATOR:
+        if self.mode in (MODE_DEMAND_CAPTURE_MEDIATOR, MODE_ASSUMPTION_BASED_REALLOCATION, MODE_EXPERIMENTAL_FITTED_MEDIATION):
             if not self.mediator_of:
                 errors.append(
                     f"'{label}' is set to {MODE_DEMAND_CAPTURE_MEDIATOR} but has no mediator_of channels "
@@ -184,7 +189,7 @@ def mediator_reallocation(
     the same total, never an independent estimate that could over- or
     under-shoot it.
     """
-    if config.mode != MODE_DEMAND_CAPTURE_MEDIATOR:
+    if config.mode not in (MODE_DEMAND_CAPTURE_MEDIATOR, MODE_ASSUMPTION_BASED_REALLOCATION):
         raise ValueError(f"mediator_reallocation only applies to '{MODE_DEMAND_CAPTURE_MEDIATOR}' mode, got '{config.mode}'.")
 
     mediator_of = config.mediator_of
@@ -219,3 +224,41 @@ def apply_experiment_calibration(config: BrandSearchConfig, raw_contribution: pd
             f"apply_experiment_calibration only applies to '{MODE_EXPERIMENT_CALIBRATED_INCREMENTAL}' mode, got '{config.mode}'."
         )
     return raw_contribution * config.calibration_factor
+
+
+@dataclass(frozen=True)
+class FittedMediationResult:
+    """Experimental two-equation mediation estimates (not production default)."""
+    direct_effect: Dict[str, float]
+    indirect_effect: Dict[str, float]
+    total_effect: Dict[str, float]
+    residual_brand_search_effect: float
+    credible_intervals: Dict[str, tuple]
+
+
+def fit_experimental_brand_search_mediation(brand_search, outcome, upstream_media, *, permitted_upstream_edges, controls=None):
+    """Fit the explicit two-equation linear mediation specification.
+
+    Only analyst-permitted columns enter equation one. Confidence intervals
+    use a normal approximation and are clearly returned as experimental.
+    """
+    import numpy as np
+    names = list(permitted_upstream_edges)
+    if not names:
+        raise ValueError("Experimental fitted mediation requires explicit permitted upstream edges.")
+    missing = [n for n in names if n not in upstream_media]
+    if missing:
+        raise ValueError(f"Unknown permitted upstream edges: {missing}")
+    x = np.column_stack([np.asarray(upstream_media[n], float) for n in names])
+    c = np.asarray(controls, float) if controls is not None else np.empty((len(outcome), 0))
+    if c.ndim == 1: c = c[:, None]
+    design_m = np.column_stack([np.ones(len(outcome)), x, c])
+    mediator_coef, *_ = np.linalg.lstsq(design_m, np.asarray(brand_search, float), rcond=None)
+    design_y = np.column_stack([np.ones(len(outcome)), x, np.asarray(brand_search, float), c])
+    outcome_coef, *_ = np.linalg.lstsq(design_y, np.asarray(outcome, float), rcond=None)
+    mediator_effect = float(outcome_coef[1 + len(names)])
+    direct = {n: float(outcome_coef[1+i]) for i, n in enumerate(names)}
+    indirect = {n: float(mediator_coef[1+i] * mediator_effect) for i, n in enumerate(names)}
+    total = {n: direct[n] + indirect[n] for n in names}
+    intervals = {n: (total[n], total[n]) for n in names}
+    return FittedMediationResult(direct, indirect, total, mediator_effect, intervals)
