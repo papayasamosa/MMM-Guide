@@ -472,7 +472,7 @@ class TestExplicitOptimisationObjectives:
     def test_all_valid_objectives_are_exercised_above(self):
         # Documentation-level check that this test class covers every
         # VALID_OBJECTIVES value, so a future addition doesn't go untested.
-        assert set(VALID_OBJECTIVES) == {"fh_gsa", "fh_signups", "dna_kits", "weighted_mix", "expected_value"}
+        assert set(VALID_OBJECTIVES) == {"fh_net_billthrough", "fh_gsa", "fh_signups", "dna_kits", "weighted_mix", "expected_value"}
 
 
 class TestFhSignupVsGsaObjectives:

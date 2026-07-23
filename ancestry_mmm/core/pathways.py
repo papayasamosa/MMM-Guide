@@ -46,7 +46,7 @@ transformation existing) - nothing here hard-codes "every FH KPI is GSA" or
 
 from __future__ import annotations
 
-import uuid
+import hashlib
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -94,8 +94,12 @@ DEFAULT_PATHWAY_EXPECTATIONS = (
 )
 
 
-def _new_pathway_id() -> str:
-    return uuid.uuid4().hex[:12]
+def pathway_natural_key(channel: str, target_outcome_id: str, component_type: str) -> str:
+    return f"{channel}\x1f{target_outcome_id}\x1f{component_type}"
+
+
+def _deterministic_pathway_id(channel: str, target_outcome_id: str, component_type: str) -> str:
+    return hashlib.sha256(pathway_natural_key(channel, target_outcome_id, component_type).encode()).hexdigest()[:12]
 
 
 @dataclass
@@ -527,7 +531,7 @@ def pathway_catalogue_fingerprint_payload(pathways: List[MediaOutcomePathway]) -
     `core.funnel.FunnelLink`."""
     return [
         {f: getattr(p, f) for f in _PATHWAY_FINGERPRINT_FIELDS}
-        for p in sorted(pathways, key=lambda p: (p.channel, p.target_outcome_id))
+        for p in sorted(pathways, key=lambda p: (p.channel, p.target_outcome_id, p.component_type, p.role))
     ]
 
 
@@ -555,7 +559,7 @@ def pathway_catalogue_at_fit_by_id(model_meta: Optional[object]) -> Dict[str, Me
     if model_meta is None:
         return {}
     catalogue = getattr(model_meta, "pathway_catalogue_at_fit", None) or []
-    return {p.pathway_id: p for p in catalogue}
+    return {pathway_natural_key(p.channel, p.target_outcome_id, p.component_type): p for p in catalogue}
 
 
 def pathway_drift_status(
@@ -595,7 +599,7 @@ def pathways_drift_dataframe(
     if model_meta is None:
         return pd.DataFrame(columns=["pathway_id", "drift_status"])
     fit_by_id = pathway_catalogue_at_fit_by_id(model_meta)
-    current_by_id = {p.pathway_id: p for p in pathways}
+    current_by_id = {pathway_natural_key(p.channel, p.target_outcome_id, p.component_type): p for p in pathways}
     all_ids = list(dict.fromkeys(list(current_by_id) + list(fit_by_id)))
     rows = []
     for pid in all_ids:
@@ -603,7 +607,8 @@ def pathways_drift_dataframe(
         fit_time = fit_by_id.get(pid)
         status = pathway_drift_status(current, fit_time)
         row = (current or fit_time).to_dict()
-        row["pathway_id"] = pid
+        row["pathway_id"] = _deterministic_pathway_id(row["channel"], row["target_outcome_id"], row["component_type"])
+        row["natural_key"] = pid
         row["drift_status"] = status
         rows.append(row)
     return pd.DataFrame(rows)
@@ -765,3 +770,15 @@ def reconciliation_group_diagnostics(
             result["implied_ratio"] = numerator / denominator
 
     return result
+
+
+def accumulate_cross_product_eta_numpy(lagged_media_by_weeks, beta, strength, cells, lag_for_cell):
+    """Reference Model A/C algebra: accumulate every resolved component once."""
+    import numpy as np
+    media = next(iter(lagged_media_by_weeks.values()))
+    eta = np.zeros((media.shape[0], beta.shape[-2]), dtype=float)
+    for outcome_index, channel_index in cells:
+        lagged = lagged_media_by_weeks[lag_for_cell[(outcome_index, channel_index)]][:, channel_index]
+        coefficient = beta[outcome_index, channel_index] if beta.ndim == 2 else beta[:, outcome_index, channel_index]
+        eta[:, outcome_index] += lagged * coefficient * strength[outcome_index, channel_index]
+    return eta

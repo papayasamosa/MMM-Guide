@@ -206,6 +206,16 @@ def compute_cpa_by_product(curve_df: pd.DataFrame) -> pd.DataFrame:
     # `avg_cpa`/`cost_per_fh_gsa` names are kept as legacy aliases.
     out["channel_incremental_cost_per_fh_gsa"] = out["avg_cpa"]
     out["channel_incremental_marginal_cost_per_fh_gsa"] = out["marginal_cpa"]
+    if (
+        "fh_net_billthrough_response" in curve_df.columns
+        and (curve_df["fh_net_billthrough_response"] > 0).any()
+    ):
+        nbt = compute_cpa(
+            curve_df, "fh_net_billthrough_response", allow_mixed=True,
+            column_prefix="fh_net_billthrough_",
+        )
+        out["channel_incremental_cost_per_fh_net_billthrough"] = nbt["fh_net_billthrough_avg_cpa"]
+        out["channel_incremental_marginal_cost_per_fh_net_billthrough"] = nbt["fh_net_billthrough_marginal_cpa"]
     has_dna = "dna_response" in curve_df.columns and (curve_df["dna_response"] > 0).any()
     if has_dna:
         dna_cpa = compute_cpa(curve_df, "dna_response", allow_mixed=True, column_prefix="dna_")
