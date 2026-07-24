@@ -44,7 +44,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
 import warnings
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -140,6 +140,126 @@ def planning_objective_from_legacy(
         metric_key=metric_keys[objective],
         counterfactual_policy_fingerprint=counterfactual_policy_fingerprint,
     )
+
+
+@dataclass(frozen=True)
+class OptimizationResource:
+    """A single conserved optimisation resource - the unit the solver is
+    allowed to trade decision variables against. `eligible_activity_ids`
+    scopes which activities may move as part of this resource; every other
+    activity in the plan is held fixed for the duration of an optimisation
+    run against this resource, regardless of its own `planning_eligibility`.
+    Prevents the historical defect of summing GBP spend, impressions, GRPs
+    and CRM sends into one flat vector and conserving their numerical total
+    (docs/g2a5_scenario_governance.md's dimensional-correctness gap)."""
+
+    resource_id: str
+    unit: str
+    currency: Optional[str] = None
+    eligible_activity_ids: Tuple[str, ...] = ()
+    total: Optional[float] = None
+    schema_version: int = 1
+
+    def to_dict(self) -> dict:
+        values = asdict(self)
+        values["eligible_activity_ids"] = list(self.eligible_activity_ids)
+        return values
+
+    @classmethod
+    def from_dict(cls, values: Mapping[str, object]) -> "OptimizationResource":
+        payload = dict(values)
+        payload["eligible_activity_ids"] = tuple(
+            payload.get("eligible_activity_ids") or ()
+        )
+        known = set(cls.__dataclass_fields__)
+        return cls(**{key: value for key, value in payload.items() if key in known})
+
+
+def monetary_optimization_resource(
+    activity_definitions: List[ActivityDefinition],
+    market: str,
+    *,
+    resource_id: str = "monetary_budget",
+    currency: Optional[str] = None,
+    total: Optional[float] = None,
+) -> OptimizationResource:
+    """Default resource: every cost-bearing, optimisable activity for this
+    market - the monetary budget a spend optimisation is allowed to move.
+    Response-only quantities, controls, events, mediators and fixed/
+    scenario-only activity are never included, however `planning_eligibility`
+    they carry - they are not denominated in this resource's unit."""
+
+    by_input = activity_by_model_input(activity_definitions, market)
+    eligible = sorted(
+        {
+            definition.activity_id
+            for definition in by_input.values()
+            if definition.is_cost_bearing
+            and definition.planning_eligibility == "optimisable"
+        }
+    )
+    return OptimizationResource(
+        resource_id=resource_id,
+        unit="currency",
+        currency=currency,
+        eligible_activity_ids=tuple(eligible),
+        total=total,
+    )
+
+
+def seed_monetary_and_quantity_defaults(
+    *,
+    avg_weekly_media_input: Mapping[str, float],
+    activity_definitions: List[ActivityDefinition],
+    market: str,
+    cost_mapping_registry: Optional[CostMappingRegistry],
+    cost_context_id: str = "default",
+    as_of: Optional[str] = None,
+    weeks_per_month: float = WEEKS_PER_MONTH,
+) -> Tuple[Dict[str, float], List[str]]:
+    """Seed a default monthly scenario plan from historical weekly model
+    input, without reinterpreting a non-monetary model input as currency.
+
+    Cost-bearing activities are converted through the governed cost
+    mapping's `media_input_to_spend` (never assumed to already be spend);
+    an activity with no resolvable effective mapping defaults to 0 rather
+    than silently presenting a media-input quantity as a currency amount.
+    Non-cost-bearing activities (response-only, not-applicable) are seeded
+    directly from their historical model-input quantity, which is the
+    correct unit for `activity_quantity_assumptions_by_period`.
+
+    Returns `(defaults_by_channel, unmapped_cost_bearing_channels)` - the
+    second list flags cost-bearing channels that were zero-defaulted for
+    lack of an effective mapping, so a caller can surface that explicitly
+    rather than let a silent zero look like a deliberate planning choice.
+    """
+    by_input = (
+        activity_by_model_input(activity_definitions, market)
+        if activity_definitions
+        else {}
+    )
+    defaults: Dict[str, float] = {}
+    unmapped: List[str] = []
+    for channel, weekly_value in avg_weekly_media_input.items():
+        definition = by_input.get(channel)
+        if definition is None or not definition.is_cost_bearing:
+            defaults[channel] = float(weekly_value) * weeks_per_month
+            continue
+        mapping = (
+            cost_mapping_registry.resolve(
+                market, definition.channel, cost_context_id, as_of=as_of,
+            )
+            if cost_mapping_registry is not None
+            else None
+        )
+        if mapping is None:
+            defaults[channel] = 0.0
+            unmapped.append(channel)
+            continue
+        defaults[channel] = float(
+            mapping.media_input_to_spend(float(weekly_value))
+        ) * weeks_per_month
+    return defaults, unmapped
 
 
 def monetary_plan_to_media_input(
@@ -716,8 +836,16 @@ def build_bounds_and_constraints(
     current_spend: np.ndarray,
     constraints: List[SpendConstraint],
     default_max_pct_move: Optional[float] = None,
+    resource_channels: Optional[List[str]] = None,
 ) -> Tuple[List[Tuple[float, float]], List[LinearConstraint]]:
-    """Translate SpendConstraint objects into scipy bounds + LinearConstraints."""
+    """Translate SpendConstraint objects into scipy bounds + LinearConstraints.
+
+    `resource_channels`, when given, restricts a `month_total` constraint's
+    row to only those channels - a `month_total` spans every channel in the
+    plan by default, which mixes units (GBP spend, impressions, CRM sends)
+    unless scoped to one optimisation resource's eligible channels. `None`
+    preserves the legacy behaviour of summing every channel (only valid when
+    the caller has no governed activity taxonomy to scope by)."""
     n = len(current_spend)
     lower = np.zeros(n)
     upper = np.full(n, np.inf)
@@ -767,11 +895,14 @@ def build_bounds_and_constraints(
             linear_constraints.append(LinearConstraint(row, lb=target, ub=target))
 
         elif c.kind == "month_total":
+            target_channels = (
+                resource_channels if resource_channels is not None else channels
+            )
             row = np.zeros(n)
-            for ch in channels:
+            for ch in target_channels:
                 row[_cell_index(c.month, ch, months, channels)] = 1
             target = c.value if c.value is not None else float(
-                sum(current_spend[_cell_index(c.month, ch, months, channels)] for ch in channels)
+                sum(current_spend[_cell_index(c.month, ch, months, channels)] for ch in target_channels)
             )
             linear_constraints.append(LinearConstraint(row, lb=target, ub=target))
 
@@ -1124,6 +1255,7 @@ def optimize_scenario(
     counterfactual_policy: Optional[CounterfactualPolicy] = None,
     posterior_trace: Optional[Any] = None,
     posterior_evaluation_draws: int = 100,
+    optimization_resource: Optional[OptimizationResource] = None,
 ) -> Dict:
     """
     Optimise a spend plan. `constraints=None` (or empty) + conserve_total_budget=True
@@ -1188,29 +1320,68 @@ def optimize_scenario(
     legacy_objective = objective or "fh_net_billthrough"
     current_spend = _flatten(current_spend_plan, months, channels)
 
-    bounds, linear_constraints = build_bounds_and_constraints(months, channels, current_spend, constraints)
     activity_map = (
         activity_by_model_input(activity_definitions, market)
         if activity_definitions is not None
         else {}
     )
+    resource: Optional[OptimizationResource] = None
+    resource_channels: Optional[List[str]] = None
     if activity_definitions is not None:
         missing_activity = set(channels) - set(activity_map)
         if missing_activity:
             raise ValueError(
                 f"Missing activity definitions for {sorted(missing_activity)}"
             )
+        resource = optimization_resource or monetary_optimization_resource(
+            activity_definitions, market,
+        )
+        resource_channels = [
+            channel
+            for channel in channels
+            if activity_map[channel].activity_id in resource.eligible_activity_ids
+        ]
+
+    bounds, linear_constraints = build_bounds_and_constraints(
+        months, channels, current_spend, constraints,
+        resource_channels=resource_channels,
+    )
+
+    if activity_definitions is not None:
+        # Every channel outside this optimisation resource - not just the
+        # ones explicitly marked non-optimisable - is held fixed for this
+        # run. A response-only/quantity activity marked "optimisable" for
+        # scenario purposes is still not denominated in this resource's
+        # unit, so it must never be traded against it (PR G2A.6 workstream A).
         for month in months:
             for channel in channels:
                 definition = activity_map[channel]
-                if definition.planning_eligibility != "optimisable":
+                eligible = (
+                    definition.activity_id in resource.eligible_activity_ids
+                    and definition.planning_eligibility == "optimisable"
+                )
+                if not eligible:
                     index = _cell_index(month, channel, months, channels)
                     value = float(current_spend[index])
                     bounds[index] = (value, value)
 
     if conserve_total_budget:
-        total_row = np.ones(len(current_spend))
-        linear_constraints.append(LinearConstraint(total_row, lb=current_spend.sum(), ub=current_spend.sum()))
+        if resource is not None:
+            eligible_indices = [
+                _cell_index(month, channel, months, channels)
+                for month in months
+                for channel in resource_channels
+            ]
+            if eligible_indices:
+                total_row = np.zeros(len(current_spend))
+                total_row[eligible_indices] = 1
+                target = float(current_spend[eligible_indices].sum())
+                linear_constraints.append(
+                    LinearConstraint(total_row, lb=target, ub=target)
+                )
+        else:
+            total_row = np.ones(len(current_spend))
+            linear_constraints.append(LinearConstraint(total_row, lb=current_spend.sum(), ub=current_spend.sum()))
 
     objective_fn = _objective_factory(
         months, channels, market, meta, params, reference_context_by_month, ltv, legacy_objective, model_type,
@@ -1350,6 +1521,7 @@ def optimize_scenario(
         ),
         "counterfactual_policy": policy.to_dict(),
         "counterfactual_policy_fingerprint": policy.fingerprint(),
+        "optimization_resource": resource.to_dict() if resource is not None else None,
         "activity_definitions_fingerprint": (
             activity_definitions_fingerprint(activity_definitions)
             if activity_definitions is not None

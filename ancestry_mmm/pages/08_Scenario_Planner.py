@@ -36,11 +36,11 @@ from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.optimization import (
     PlanningObjective,
     SpendConstraint,
-    WEEKS_PER_MONTH,
     compare_scenarios,
     evaluate_scenario,
     optimize_scenario,
     scenario_to_dict,
+    seed_monetary_and_quantity_defaults,
 )
 from ancestry_mmm.core.uncertainty import evaluate_scenario_with_uncertainty
 from ancestry_mmm.core.evidence_tiers import classify_market_evidence
@@ -107,6 +107,9 @@ activity_definitions = [
 ]
 cost_mapping_registry = CostMappingRegistry.from_dict(
     get_state("media_cost_mappings")
+)
+governed_cost_registry = (
+    cost_mapping_registry if cost_mapping_registry.to_dict()["mappings"] else None
 )
 if frame is None or meta is None or params is None:
     st.markdown("---")
@@ -237,12 +240,37 @@ for d, m in zip(month_dates, months):
         "controls": mean_controls, "outcome_controls": mean_outcome_controls,
     }
 
-# --- Current/baseline spend plan: recent average weekly spend for this market, held flat.
+# --- Current/baseline plan: recent average weekly model input for this
+# market, held flat. `frame["X_media"]` is in each channel's fitted
+# model-input unit, not currency - a cost-bearing activity's default is
+# only ever derived through its governed cost mapping's
+# media_input_to_spend, never by treating the raw model input as spend
+# (PR G2A.6 workstream C). Activities without a resolvable effective
+# mapping default to 0 rather than mislabel media-input units as currency.
 if market_mask.any():
-    avg_weekly_spend = frame["X_media"][market_mask].mean(axis=0)
+    avg_weekly_media_input = frame["X_media"][market_mask].mean(axis=0)
 else:
-    avg_weekly_spend = frame["X_media"].mean(axis=0)
-default_monthly = avg_weekly_spend * WEEKS_PER_MONTH
+    avg_weekly_media_input = frame["X_media"].mean(axis=0)
+avg_weekly_by_channel = dict(zip(meta.channels, avg_weekly_media_input))
+seed_as_of = f"{months[0]}-01" if months and len(months[0]) == 7 else months[0]
+default_by_channel, unmapped_cost_bearing_channels = (
+    seed_monetary_and_quantity_defaults(
+        avg_weekly_media_input=avg_weekly_by_channel,
+        activity_definitions=activity_definitions,
+        market=market,
+        cost_mapping_registry=governed_cost_registry,
+        cost_context_id="default",
+        as_of=seed_as_of,
+    )
+)
+default_monthly = [default_by_channel[c] for c in meta.channels]
+if unmapped_cost_bearing_channels:
+    st.caption(
+        "Defaulted to 0 for cost-bearing activities with no approved, effective "
+        "cost mapping (never inferred from the raw model input): "
+        + ", ".join(readable_label(c) for c in sorted(unmapped_cost_bearing_channels))
+        + ". Configure a mapping on Channel & Media Units to seed a spend default."
+    )
 
 plan_key = f"spend_plan_editor_{market}_{n_months}_{start_month}"
 if plan_key not in st.session_state:
@@ -371,11 +399,6 @@ counterfactual_policy = CounterfactualPolicy(
 cost_as_of_by_month = {
     month: f"{month}-01" if len(month) == 7 else month for month in months
 }
-governed_cost_registry = (
-    cost_mapping_registry
-    if cost_mapping_registry.to_dict()["mappings"]
-    else None
-)
 
 _has_dna_kit_segments = bool(dna_kit_sale_outcome_ids(meta))
 _has_fh_signup_outcomes = bool(fh_signup_outcome_ids(meta))
