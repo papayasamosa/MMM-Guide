@@ -570,6 +570,7 @@ with tab_manual:
                 economics_coverage=predicted[
                     "economics_coverage"
                 ].iloc[0],
+                governance_mode="not_applicable",
             )
         )
         scenarios[-1]["predicted"] = predicted
@@ -717,7 +718,20 @@ with tab_constrained:
                 st.session_state["constrained_result"] = result
 
     result = st.session_state.get("constrained_result")
+    if result and result.get("governance_mode") != governance_mode:
+        # The governance-mode control changed since this result was
+        # computed (e.g. switched back to "official" after an exploratory
+        # run) - the cached result no longer matches what's displayed above,
+        # so it must never be shown or saved under the new, mismatched label.
+        st.session_state["constrained_result"] = None
+        result = None
+        st.info(
+            "Governance mode changed since this result was computed - re-run the "
+            "optimisation to refresh it."
+        )
     if result:
+        governance_badge = "⚠️ Exploratory" if result["governance_mode"] == "exploratory" else "Official"
+        st.caption(f"**Governance mode: {governance_badge}** (persisted with this result)")
         c1, c2 = st.columns(2)
         c1.metric(f"Current total ({_objective_labels[objective]})", f"{result['current_objective_value']:,.0f}")
         c2.metric("Optimised total", f"{result['objective_value']:,.0f}",
@@ -770,6 +784,7 @@ with tab_constrained:
                 economics_coverage=result["predicted"][
                     "economics_coverage"
                 ].iloc[0],
+                governance_mode=result["governance_mode"],
             )
             s["predicted"] = result["predicted"]
             scenarios.append(s)
@@ -813,7 +828,16 @@ with tab_unconstrained:
                 st.session_state["unconstrained_result"] = result
 
     result = st.session_state.get("unconstrained_result")
+    if result and result.get("governance_mode") != governance_mode:
+        st.session_state["unconstrained_result"] = None
+        result = None
+        st.info(
+            "Governance mode changed since this result was computed - re-run the "
+            "optimisation to refresh it."
+        )
     if result:
+        governance_badge = "⚠️ Exploratory" if result["governance_mode"] == "exploratory" else "Official"
+        st.caption(f"**Governance mode: {governance_badge}**")
         c1, c2 = st.columns(2)
         c1.metric(f"Current total ({_objective_labels[objective]})", f"{result['current_objective_value']:,.0f}")
         c2.metric("Theoretical optimum", f"{result['objective_value']:,.0f}",

@@ -486,6 +486,30 @@ def test_saved_scenario_preserves_typed_objective_and_activity_fingerprint():
     assert restored["activity_definitions_fingerprint"] == "activity-fp"
 
 
+def test_saved_scenario_persists_governance_mode():
+    # PR G2A.6c Codex follow-up: an exploratory-mode result must carry its
+    # governance mode into the saved scenario, so it can never be displayed
+    # or mistaken for an official one after the fact.
+    saved = scenario_to_dict(
+        "Plan A", "UK", {"2024-01": {"TV": 100.0}}, "fh_gsa", [],
+        governance_mode="exploratory",
+    )
+    restored = scenario_from_dict(saved)
+    assert restored["governance_mode"] == "exploratory"
+
+    compare_df = compare_scenarios([
+        {
+            "name": "Plan A", "market": "UK", "governance_mode": "exploratory",
+            "spend_plan": {"2024-01": {"TV": 100.0}},
+            "predicted": pd.DataFrame([{
+                "month": "2024-01", "outcome_id": "New", "predicted_outcome": 10.0,
+                "value": None, "total_value_is_complete": True,
+            }]),
+        },
+    ])
+    assert compare_df["governance_mode"].iloc[0] == "exploratory"
+
+
 def test_non_optimisable_activity_is_held_fixed(approval):
     # A monetary resource with zero eligible activities now raises (PR
     # G2A.6b workstream 1's "fail clearly on empty resources"), so this
@@ -1473,6 +1497,32 @@ class TestValidateOptimizationResource:
         )
         validate_optimization_resource(
             resource, self._activities(), "UK", self._channels(),
+        )  # no raise
+
+    def test_official_mode_rejects_unapproved_fixed_activity_even_though_not_in_resource(self):
+        # A fixed activity is not a resource member (it never moves), but
+        # it's still part of the plan optimize_scenario predicts against -
+        # pinned to its current value, not removed. Its governance must be
+        # checked too, not only the resource's own eligible members.
+        activities = [
+            _paid_activity("tv-paid", "TV_Paid"),
+            _paid_activity(
+                "tv-fixed", "TV_Fixed", planning_eligibility="fixed",
+                approval_status="draft",
+            ),
+        ]
+        resource = OptimizationResource(
+            resource_id="custom", unit="currency",
+            eligible_activity_ids=("tv-paid",),
+        )
+        with pytest.raises(ValueError, match="official mode"):
+            validate_optimization_resource(
+                resource, activities, "UK", ["TV_Paid", "TV_Fixed"],
+            )
+        # Exploratory mode is still the deliberate escape hatch.
+        validate_optimization_resource(
+            resource, activities, "UK", ["TV_Paid", "TV_Fixed"],
+            governance_mode="exploratory",
         )  # no raise
 
 

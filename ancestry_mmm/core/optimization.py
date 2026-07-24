@@ -346,12 +346,16 @@ def validate_optimization_resource(
       or whose resolved currency varies across them or spans more than
       one currency overall
     - a non-finite or negative `total`
-    - (PR G2A.6c workstream F, `governance_mode="official"` only) an
-      activity whose `approval_status` is not `"approved"` - a draft or
-      rejected activity's planning_eligibility must not drive an official
-      optimisation. Pass `governance_mode="exploratory"` for a clearly
-      non-official run that skips this one check only; every other rule
-      above still applies regardless of mode.
+    - (PR G2A.6c workstream F, `governance_mode="official"` only) any
+      activity resolved for this plan's `channels` - not only this
+      resource's own eligible members - whose `approval_status` is not
+      `"approved"`. A fixed or `scenario_only` activity is still part of
+      the plan being predicted against (pinned to its current value, not
+      removed), so a draft or rejected activity must not drive an official
+      optimisation even when it never moves. Pass
+      `governance_mode="exploratory"` for a clearly non-official run that
+      skips this one check only; every other rule above still applies
+      regardless of mode.
     """
     if governance_mode not in {"official", "exploratory"}:
         raise ValueError(
@@ -459,18 +463,33 @@ def validate_optimization_resource(
         )
 
     if governance_mode == "official":
-        not_approved = [
+        # Every activity resolved for this plan's `channels`, not just this
+        # resource's own eligible members - a fixed, scenario_only, or
+        # otherwise non-eligible activity is still part of the plan
+        # `optimize_scenario` predicts against (it's pinned to its current
+        # value, not removed), so its model role, quantity assumption, and
+        # response still influence an official optimisation even though it
+        # never moves. Checking only `resource.eligible_activity_ids` would
+        # let a draft or rejected fixed activity drive an official result
+        # undetected.
+        plan_activities_by_id = {
+            by_input[channel].activity_id: by_input[channel]
+            for channel in channels
+            if channel in by_input
+        }
+        not_approved = sorted(
             activity_id
-            for activity_id in resource.eligible_activity_ids
-            if by_id[activity_id].approval_status != "approved"
-        ]
+            for activity_id, definition in plan_activities_by_id.items()
+            if definition.approval_status != "approved"
+        )
         if not_approved:
             raise ValueError(
                 f"OptimizationResource {resource.resource_id!r} is blocked in "
-                "official mode - it references activity ID(s) without "
-                f"approved governance: {sorted(not_approved)}. Pass "
-                "governance_mode='exploratory' for a clearly labelled "
-                "non-official optimisation."
+                "official mode - this optimisation's plan includes activity "
+                f"ID(s) without approved governance: {not_approved} (every "
+                "activity in the plan, not only this resource's own eligible "
+                "members). Pass governance_mode='exploratory' for a clearly "
+                "labelled non-official optimisation."
             )
 
     if resource.unit == "currency":
@@ -1923,6 +1942,7 @@ def scenario_to_dict(
         CounterfactualPolicy | Dict[str, object]
     ] = None,
     economics_coverage: Optional[Dict[str, object]] = None,
+    governance_mode: Optional[str] = None,
 ) -> dict:
     objective_payload = (
         planning_objective.to_dict()
@@ -1949,6 +1969,7 @@ def scenario_to_dict(
             else None
         ),
         "economics_coverage": economics_coverage,
+        "governance_mode": governance_mode,
         "schema_version": 2,
     }
 
@@ -2023,6 +2044,7 @@ def compare_scenarios(scenarios: List[Dict], predicted_key: str = "predicted") -
         rows.append({
             "scenario": s["name"],
             "market": s.get("market"),
+            "governance_mode": s.get("governance_mode"),
             "total_spend": total_spend,
             "total_value": pred["value"].sum(min_count=1) if "value" in pred else np.nan,
             "total_value_is_complete": total_value_is_complete,
