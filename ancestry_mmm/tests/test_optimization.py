@@ -6,17 +6,25 @@ from ancestry_mmm.core.approval import ApprovalMismatchError, ModelApproval
 from ancestry_mmm.core.activities import ActivityDefinition
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
 from ancestry_mmm.core.market_specific_predict import FHMarketSpecificPosteriorParams
+from ancestry_mmm.core.media_costs import CostMappingRegistry, FixedCostPerUnitMapping
 from ancestry_mmm.core.optimization import (
+    OptimizationResource,
     PlanningObjective,
+    SpendConstraint,
+    WEEKS_PER_MONTH,
+    build_bounds_and_constraints,
     compare_scenarios,
     evaluate_scenario,
+    monetary_optimization_resource,
     optimize_scenario,
     scenario_from_dict,
     scenario_to_dict,
+    seed_monetary_and_quantity_defaults,
     VALID_OBJECTIVES,
 )
 from ancestry_mmm.core.outcomes import FAMILY_HISTORY, DNA, METRIC_GSA, METRIC_KIT_SALE, OutcomeDefinition
 from ancestry_mmm.core.predict import FHPosteriorParams
+from ancestry_mmm.core.scenario_governance import ScenarioPlan, resolve_scenario_plan
 from ancestry_mmm.tests.conftest import pathway_strength_from_flat
 
 IDENTITY = dict(
@@ -992,3 +1000,215 @@ class TestValueWeightNeverSilentlyDefaultsToOne:
     @pytest.fixture
     def plan_with_kit_segment(self):
         return {"2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0}}
+
+
+# ---------------------------------------------------------------------------
+# PR G2A.6 workstream A: OptimizationResource / mixed-unit dimensional
+# correctness. Prior to this, `conserve_total_budget` summed every channel
+# into one flat vector regardless of unit, so GBP spend could be traded
+# against impressions, CRM sends, or event indicators.
+# ---------------------------------------------------------------------------
+
+def _paid_activity(activity_id: str, channel: str, *, planning_eligibility: str = "optimisable") -> ActivityDefinition:
+    return ActivityDefinition(
+        activity_id=activity_id, channel=channel, activity_ownership="paid",
+        model_role="intervention", economic_treatment="paid_media_cost",
+        planning_eligibility=planning_eligibility, source="finance",
+    )
+
+
+def _response_only_activity(activity_id: str, channel: str, *, planning_eligibility: str = "optimisable") -> ActivityDefinition:
+    return ActivityDefinition(
+        activity_id=activity_id, channel=channel, activity_ownership="owned",
+        model_role="intervention", economic_treatment="response_only",
+        planning_eligibility=planning_eligibility, source="social team",
+    )
+
+
+class TestOptimizationResource:
+    def test_monetary_resource_includes_only_cost_bearing_optimisable_activities(self):
+        activities = [
+            _paid_activity("tv-paid", "TV_Paid"),
+            _response_only_activity("organic-social", "Organic_Social"),
+            _paid_activity("tv-committed", "TV_Committed", planning_eligibility="fixed"),
+        ]
+        resource = monetary_optimization_resource(activities, "UK")
+        assert resource.eligible_activity_ids == ("tv-paid",)
+        assert resource.unit == "currency"
+
+    def test_optimization_resource_round_trips_through_dict(self):
+        resource = OptimizationResource(
+            resource_id="monetary_budget", unit="currency", currency="GBP",
+            eligible_activity_ids=("search-paid", "tv-paid"), total=10000.0,
+        )
+        restored = OptimizationResource.from_dict(resource.to_dict())
+        assert restored == resource
+
+
+class TestOptimizerDimensionalCorrectness:
+    def test_optimizer_never_trades_currency_against_a_response_only_quantity(self, approval):
+        meta = FHModelMeta(
+            markets=["UK"], outcome_ids=["New"],
+            channels=["TV_Paid", "Search_Paid", "Organic_Social"],
+            dna_channels=[], dna_channel_idx=[], non_dna_idx=[0, 1, 2],
+            dna_outcome_id="New", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+        )
+        params = FHPosteriorParams(
+            decay_rate={"TV_Paid": 0.5, "Search_Paid": 0.3, "Organic_Social": 0.4},
+            hill_K={"TV_Paid": 2000.0, "Search_Paid": 500.0, "Organic_Social": 400.0},
+            hill_S={"TV_Paid": 1.0, "Search_Paid": 1.0, "Organic_Social": 1.0},
+            beta={"New": {"TV_Paid": 0.1, "Search_Paid": 0.3, "Organic_Social": 0.2}},
+            pathway_strength={}, promo_coef={"New": 0.1},
+            market_offset={"UK": {"New": 0.0}}, intercept={"New": 3.0}, trend_coef={"New": 0.0},
+            gamma_fourier={"New": np.zeros(6)}, alpha={"New": 5.0}, control_coef={}, outcome_control_coef={},
+        )
+        reference_context = {
+            "2024-01": {"trend": 1.0, "fourier": np.zeros(6), "promo": {"New": 0.0}, "controls": {}, "outcome_controls": {}}
+        }
+        activities = [
+            _paid_activity("tv-paid", "TV_Paid"),
+            _paid_activity("search-paid", "Search_Paid"),
+            _response_only_activity("organic-social", "Organic_Social"),
+        ]
+        current_plan = {"2024-01": {"TV_Paid": 800.0, "Search_Paid": 200.0, "Organic_Social": 300.0}}
+        # Cost-bearing activities require an approved, effective cost mapping
+        # before `evaluate_scenario` will resolve their monetary decisions -
+        # identity mappings here so spend and media input are numerically equal.
+        cost_registry = CostMappingRegistry([
+            FixedCostPerUnitMapping(
+                mapping_id="uk-tv-paid-map", market="UK", channel="TV_Paid", currency="GBP",
+                cost_context_id="default", source="finance rate card",
+                approval_status="approved", approved_by="finance-owner",
+                approved_at="2026-01-01T10:00:00Z", owner="media-finance",
+                approval_note="approved", last_reviewed_at="2026-01-01", cost_per_media_input=1.0,
+            ),
+            FixedCostPerUnitMapping(
+                mapping_id="uk-search-paid-map", market="UK", channel="Search_Paid", currency="GBP",
+                cost_context_id="default", source="finance rate card",
+                approval_status="approved", approved_by="finance-owner",
+                approved_at="2026-01-01T10:00:00Z", owner="media-finance",
+                approval_note="approved", last_reviewed_at="2026-01-01", cost_per_media_input=1.0,
+            ),
+        ])
+        result = optimize_scenario(
+            current_plan, ["2024-01"], meta.channels, "UK", meta, params, reference_context,
+            objective="fh_gsa", activity_definitions=activities, approval=approval,
+            cost_mapping_registry=cost_registry, cost_context_id="default",
+            cost_as_of_by_month={"2024-01": "2024-01-01"},
+            **IDENTITY,
+        )
+        optimized = result["spend_plan"]["2024-01"]
+        # Response-only "Organic_Social" is marked optimisable for scenario
+        # purposes but is not denominated in the monetary resource's unit -
+        # it must never move as part of a monetary budget optimisation.
+        assert optimized["Organic_Social"] == pytest.approx(300.0)
+        # The monetary resource's own conserved total is unchanged.
+        assert optimized["TV_Paid"] + optimized["Search_Paid"] == pytest.approx(1000.0)
+        assert sorted(result["optimization_resource"]["eligible_activity_ids"]) == [
+            "search-paid", "tv-paid",
+        ]
+
+    def test_month_total_constraint_defaults_to_every_channel_without_a_resource(self):
+        months = ["2024-01"]
+        channels = ["TV_Paid", "Organic_Social"]
+        current_spend = np.array([800.0, 300.0])
+        constraint = SpendConstraint(kind="month_total", month="2024-01")
+        _, linear_constraints = build_bounds_and_constraints(
+            months, channels, current_spend, [constraint],
+        )
+        assert linear_constraints[0].lb == pytest.approx(1100.0)
+        assert linear_constraints[0].ub == pytest.approx(1100.0)
+
+    def test_month_total_constraint_restricted_to_resource_channels(self):
+        months = ["2024-01"]
+        channels = ["TV_Paid", "Organic_Social"]
+        current_spend = np.array([800.0, 300.0])
+        constraint = SpendConstraint(kind="month_total", month="2024-01")
+        _, linear_constraints = build_bounds_and_constraints(
+            months, channels, current_spend, [constraint], resource_channels=["TV_Paid"],
+        )
+        assert linear_constraints[0].lb == pytest.approx(800.0)
+        assert linear_constraints[0].ub == pytest.approx(800.0)
+
+
+# ---------------------------------------------------------------------------
+# PR G2A.6 workstream C: historical-plan seeding correctness. Prior to this,
+# the Scenario Planner seeded every channel's default from raw model input
+# (`X_media`), then reinterpreted cost-bearing columns as currency.
+# ---------------------------------------------------------------------------
+
+def _approved_fixed_cost_mapping(**overrides) -> FixedCostPerUnitMapping:
+    values = dict(
+        mapping_id="uk-tv-map", market="UK", channel="TV_Paid", currency="GBP",
+        cost_context_id="default", source="finance rate card",
+        approval_status="approved", approved_by="finance-owner",
+        approved_at="2026-01-01T10:00:00Z", owner="media-finance",
+        approval_note="approved net media rate", last_reviewed_at="2026-01-01",
+        cost_per_media_input=2.0,
+    )
+    values.update(overrides)
+    return FixedCostPerUnitMapping(**values)
+
+
+class TestSeedMonetaryAndQuantityDefaults:
+    def test_cost_bearing_activity_seeded_through_governed_mapping_not_raw_input(self):
+        activity = _paid_activity("tv-paid", "TV_Paid")
+        registry = CostMappingRegistry([_approved_fixed_cost_mapping()])
+        defaults, unmapped = seed_monetary_and_quantity_defaults(
+            avg_weekly_media_input={"TV_Paid": 100.0},
+            activity_definitions=[activity], market="UK",
+            cost_mapping_registry=registry, cost_context_id="default", as_of="2026-06-01",
+        )
+        assert defaults["TV_Paid"] == pytest.approx(100.0 * 2.0 * WEEKS_PER_MONTH)
+        assert unmapped == []
+
+    def test_cost_bearing_activity_without_mapping_defaults_to_zero_not_raw_input(self):
+        activity = _paid_activity("tv-paid", "TV_Paid")
+        defaults, unmapped = seed_monetary_and_quantity_defaults(
+            avg_weekly_media_input={"TV_Paid": 100.0},
+            activity_definitions=[activity], market="UK",
+            cost_mapping_registry=None, cost_context_id="default", as_of="2026-06-01",
+        )
+        assert defaults["TV_Paid"] == 0.0
+        assert unmapped == ["TV_Paid"]
+
+    def test_response_only_activity_seeded_directly_from_historical_quantity(self):
+        activity = _response_only_activity("organic-social", "Organic_Social")
+        defaults, unmapped = seed_monetary_and_quantity_defaults(
+            avg_weekly_media_input={"Organic_Social": 40.0},
+            activity_definitions=[activity], market="UK",
+            cost_mapping_registry=None, cost_context_id="default", as_of="2026-06-01",
+        )
+        assert defaults["Organic_Social"] == pytest.approx(40.0 * WEEKS_PER_MONTH)
+        assert unmapped == []
+
+    def test_legacy_ungoverned_channel_seeds_raw_model_input(self):
+        defaults, unmapped = seed_monetary_and_quantity_defaults(
+            avg_weekly_media_input={"TV_Brand": 250.0},
+            activity_definitions=[], market="UK",
+            cost_mapping_registry=None, cost_context_id="default", as_of="2026-06-01",
+        )
+        assert defaults["TV_Brand"] == pytest.approx(250.0 * WEEKS_PER_MONTH)
+        assert unmapped == []
+
+    def test_round_trip_seeded_spend_recovers_historical_media_input(self):
+        activity = _paid_activity("tv-paid", "TV_Paid")
+        registry = CostMappingRegistry([_approved_fixed_cost_mapping()])
+        weekly_media_input = 100.0
+        defaults, _ = seed_monetary_and_quantity_defaults(
+            avg_weekly_media_input={"TV_Paid": weekly_media_input},
+            activity_definitions=[activity], market="UK",
+            cost_mapping_registry=registry, cost_context_id="default", as_of="2026-06-01",
+        )
+        model_input, _, _ = resolve_scenario_plan(
+            ScenarioPlan(
+                monetary_decisions_by_period={"2026-06": {"tv-paid": defaults["TV_Paid"]}},
+                activity_quantity_assumptions_by_period={},
+            ),
+            market="UK", activity_definitions=[activity],
+            cost_mapping_registry=registry, cost_context_id="default",
+            cost_as_of_by_period={"2026-06": "2026-06-01"},
+        )
+        assert model_input["2026-06"]["TV_Paid"] == pytest.approx(
+            weekly_media_input * WEEKS_PER_MONTH
+        )
