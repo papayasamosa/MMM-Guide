@@ -42,8 +42,9 @@ calculate_marginal_roi_loglog, optimize_budget_marginal_roi, calculate_expected_
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
-from typing import Dict, List, Optional, Tuple, Union
+from dataclasses import asdict, dataclass, replace
+import warnings
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -52,7 +53,7 @@ from scipy.optimize import minimize, LinearConstraint
 from .approval import ModelApproval, require_matching_approval
 from .activities import (
     ActivityDefinition,
-    activity_by_channel,
+    activity_by_model_input,
     activity_definitions_fingerprint,
 )
 from .hierarchical_model import FHModelMeta
@@ -64,6 +65,13 @@ from .outcomes import (
 )
 from .predict import FHPosteriorParams, steady_state_outcome_response
 from .market_specific_predict import FHMarketSpecificPosteriorParams, steady_state_outcome_response_market_specific
+from .scenario_governance import (
+    CounterfactualPolicy,
+    ScenarioPlan,
+    classify_activity_plan,
+    resolve_counterfactual,
+    resolve_scenario_plan,
+)
 
 WEEKS_PER_MONTH = 365.25 / 12 / 7  # ~4.348
 
@@ -73,7 +81,6 @@ PLANNING_ESTIMANDS = {
     "total_outcome",
     "incremental_outcome",
     "incremental_value",
-    "marginal_incremental_value",
 }
 
 
@@ -85,21 +92,54 @@ class PlanningObjective:
     metric_key: str = METRIC_KEY_FH_NET_BILLTHROUGH_COUNT
     target_outcome_ids: Tuple[str, ...] = ()
     value_currency: Optional[str] = None
-    schema_version: int = 1
+    spend_scope: str = "cost_bearing_decisions"
+    activity_scope: str = "optimisable_interventions"
+    counterfactual_policy_fingerprint: Optional[str] = None
+    schema_version: int = 2
 
     def __post_init__(self) -> None:
         if self.estimand not in PLANNING_ESTIMANDS:
             raise ValueError(f"Unsupported planning estimand: {self.estimand}")
-        if self.estimand in {
-            "incremental_value",
-            "marginal_incremental_value",
-        } and not self.value_currency:
+        if self.estimand == "incremental_value" and not self.value_currency:
             raise ValueError("value objectives require value_currency")
 
     def to_dict(self) -> dict:
         values = asdict(self)
         values["target_outcome_ids"] = list(self.target_outcome_ids)
         return values
+
+
+def planning_objective_from_legacy(
+    objective: str,
+    *,
+    value_currency: str | None = None,
+    counterfactual_policy_fingerprint: str | None = None,
+) -> PlanningObjective:
+    """Migrate a saved legacy objective string to the typed G2A.5 contract."""
+
+    metric_keys = {
+        "fh_gsa": METRIC_KEY_FH_GSA,
+        "fh_signups": METRIC_KEY_FH_SIGNUP,
+        "fh_net_billthrough": METRIC_KEY_FH_NET_BILLTHROUGH_COUNT,
+        "dna_kits": METRIC_KEY_DNA_KIT_SALE,
+        "weighted_mix": "weighted_mix",
+    }
+    if objective in {"expected_value", "value"}:
+        return PlanningObjective(
+            estimand="incremental_value",
+            metric_key="expected_value",
+            value_currency=value_currency or "UNSPECIFIED",
+            counterfactual_policy_fingerprint=(
+                counterfactual_policy_fingerprint
+            ),
+        )
+    if objective not in metric_keys:
+        raise ValueError(f"cannot migrate unknown legacy objective {objective!r}")
+    return PlanningObjective(
+        estimand="incremental_outcome",
+        metric_key=metric_keys[objective],
+        counterfactual_policy_fingerprint=counterfactual_policy_fingerprint,
+    )
 
 
 def monetary_plan_to_media_input(
@@ -167,63 +207,10 @@ def evaluate_scenario(
     ] = None,
     planning_objective: Optional[PlanningObjective] = None,
     activity_definitions: Optional[List[ActivityDefinition]] = None,
+    scenario_plan: Optional[ScenarioPlan] = None,
+    counterfactual_policy: Optional[CounterfactualPolicy] = None,
 ) -> pd.DataFrame:
-    """
-    Predicted monthly outcomes for a spend plan: {month_label: {channel: spend}}.
-
-    Returns one row per (month, outcome_id) with predicted units (weekly
-    steady-state rate x weeks/month) and LTV-weighted value if `ltv` is given.
-    `ltv` is keyed by outcome_id.
-
-    Metric-aware (PR E.1), same denominator discipline as
-    core.media_units.compute_cpa_by_product: `fh_gsa`/`fh_signups`/`dna_kits`
-    are each summed via `core.outcomes.fh_gsa_outcome_ids`/
-    `fh_signup_outcome_ids`/`dna_kit_sale_outcome_ids` - explicit
-    product+metric selectors, never "every outcome_id that isn't a DNA-kit
-    outcome" (the confirmed defect this replaces: that would silently sum a
-    Family History sign-up outcome into what's labelled `fh_gsa`). Each row
-    repeats these month-level totals (same "duplicated scalar per outcome_id
-    row" shape `total_spend` already used):
-
-    - `fh_gsa` / `fh_signups` / `dna_kits`: that month's total predicted
-      units for each named metric, never combined with each other.
-    - `avg_cpa` (alias `cost_per_fh_gsa`): `total_spend / fh_gsa` (`None`
-      where `fh_gsa` is zero or negative, same "never compute CPA on a
-      non-positive base" rule as core.media_units.compute_cpa).
-    - `fh_signup_avg_cpa` (alias `cost_per_fh_signup`): `total_spend /
-      fh_signups`, `None` where `fh_signups` is zero/negative or the model
-      has no sign-up outcomes.
-    - `dna_avg_cpa` (alias `cost_per_dna_kit`): `total_spend / dna_kits`,
-      `None` where `dna_kits` is zero/negative or the model has no DNA-kit
-      outcomes at all.
-    - `value`/`total_value` (PR E.2 - raw units are never labelled "value"):
-      `ltv` entirely omitted -> every `value` is `None`, `total_value` is
-      `None`, `total_value_is_complete=False`, `value_status="not configured"`
-      - raw predicted units are NEVER silently presented as monetary value
-      (the confirmed defect this replaces: `value` used to fall back to the
-      raw predicted units - unsafe once a model can mix GSAs, sign-ups and
-      kits, which are not addable). A *partial* `ltv` (some eligible
-      outcome_ids priced, others not) -> `value_status="partial"`,
-      `total_value` is the *priced subtotal only*, `total_value_is_complete
-      =False`, and `unpriced_outcome_ids` lists which outcome_ids that
-      month had no weight. Every eligible outcome_id priced ->
-      `value_status="complete"`, `total_value_is_complete=True`.
-      `value`/`total_value` are only ever labelled as such when expressed in
-      one common, explicit currency - combining `ltv` entries across
-      outcome_ids with different `OutcomeDefinition.value_currency` (read
-      from `meta.outcome_catalogue_at_fit`) raises `ValueError` rather than
-      silently adding, say, USD and GBP value weights together; there is no
-      FX conversion built here (documented scope boundary).
-
-    `model_type` selects which model's steady-state response function
-    drives the evaluation - `"shared"` (Model A, default) or
-    `"market_specific"` (Model C) - see module docstring.
-
-    Raises ApprovalMismatchError unless `approval` matches the current model
-    run identity (`model_run_id` plus the three fingerprints) - see
-    core.approval.require_matching_approval. Raises ValueError if `ltv`
-    combines value weights across different currencies (see above).
-    """
+    """Evaluate total and incremental outcomes under governed activity scopes."""
     require_matching_approval(
         approval,
         model_run_id=model_run_id,
@@ -239,7 +226,7 @@ def evaluate_scenario(
     dna_ids = set(dna_kit_sale_outcome_ids(meta))
     catalogue_by_id = outcome_catalogue_at_fit_by_id(meta)
     activity_map = (
-        activity_by_channel(activity_definitions)
+        activity_by_model_input(activity_definitions, market)
         if activity_definitions is not None
         else {}
     )
@@ -247,53 +234,170 @@ def evaluate_scenario(
         missing_activity = set(meta.channels) - set(activity_map)
         if missing_activity:
             raise ValueError(
-                f"Missing activity definitions for {sorted(missing_activity)}"
+                f"Missing activity definitions for model inputs "
+                f"{sorted(missing_activity)}"
             )
     activity_fingerprint = (
         activity_definitions_fingerprint(activity_definitions)
         if activity_definitions is not None
         else None
     )
+    policy = counterfactual_policy or CounterfactualPolicy()
+    if planning_objective is not None:
+        if (
+            planning_objective.counterfactual_policy_fingerprint
+            and planning_objective.counterfactual_policy_fingerprint
+            != policy.fingerprint()
+        ):
+            raise ValueError(
+                "PlanningObjective counterfactual fingerprint does not match "
+                "the supplied CounterfactualPolicy"
+            )
     rows = []
-    model_input_plan = (
-        monetary_plan_to_media_input(
+    if scenario_plan is None and activity_definitions is not None:
+        scenario_plan = classify_activity_plan(
             spend_plan,
             market=market,
-            registry=cost_mapping_registry,
-            cost_context_id=cost_context_id or "default",
-            as_of_by_period=cost_as_of_by_month or {},
+            activity_definitions=activity_definitions,
         )
-        if cost_mapping_registry is not None
-        else spend_plan
-    )
-    for month, spend_by_channel in spend_plan.items():
-        active_definitions = [
-            activity_map[channel]
-            for channel, amount in spend_by_channel.items()
-            if amount != 0 and channel in activity_map
-        ]
-        treatments = {
-            definition.economic_treatment
-            for definition in active_definitions
+    if scenario_plan is not None:
+        model_input_plan, _, coverage = resolve_scenario_plan(
+            scenario_plan,
+            market=market,
+            activity_definitions=activity_definitions,
+            cost_mapping_registry=cost_mapping_registry,
+            cost_context_id=cost_context_id or "default",
+            cost_as_of_by_period=cost_as_of_by_month,
+        )
+        monetary_plan = scenario_plan.monetary_decisions_by_period
+        quantity_plan = scenario_plan.activity_quantity_assumptions_by_period
+    else:
+        model_input_plan = (
+            monetary_plan_to_media_input(
+                spend_plan,
+                market=market,
+                registry=cost_mapping_registry,
+                cost_context_id=cost_context_id or "default",
+                as_of_by_period=cost_as_of_by_month or {},
+            )
+            if cost_mapping_registry is not None
+            else spend_plan
+        )
+        monetary_plan = spend_plan
+        quantity_plan = {}
+        coverage = {
+            "economics_status": "legacy_monetary_assumption",
+            "covered_activity_ids": [],
+            "uncovered_activity_ids": [],
+            "excluded_response_only_activity_ids": [],
+            "mapping_ids": [],
+            "mapping_effective_dates": [],
+            "value_coverage": "evaluated_separately",
+            "currency_coverage": "legacy_unspecified",
+            "counterfactual_scope": policy.policy_id,
         }
-        if "response_only" in treatments:
-            economics_status = "response_only"
-        elif "not_applicable" in treatments:
-            economics_status = "economics_not_applicable"
-        else:
-            economics_status = "monetary_economics_available"
+        if activity_map:
+            active_definitions = [
+                activity_map[column]
+                for values in spend_plan.values()
+                for column, amount in values.items()
+                if float(amount) != 0 and column in activity_map
+            ]
+            costed = sorted(
+                {
+                    item.activity_id
+                for item in active_definitions
+                if item.is_cost_bearing
+                }
+            )
+            response_only = sorted(
+                {
+                    item.activity_id
+                for item in active_definitions
+                if item.economic_treatment == "response_only"
+                }
+            )
+            coverage.update(
+                {
+                    "economics_status": (
+                        "mixed_cost_and_response_only"
+                        if costed and response_only
+                        else "response_only"
+                        if response_only
+                        else "monetary_economics_available"
+                    ),
+                    "covered_activity_ids": costed,
+                    "excluded_response_only_activity_ids": response_only,
+                }
+            )
+
+    resolved_counterfactual = (
+        counterfactual_media_input_by_month
+        if counterfactual_media_input_by_month is not None
+        else resolve_counterfactual(
+            model_input_plan,
+            market=market,
+            activity_definitions=activity_definitions,
+            policy=policy,
+        )
+    )
+
+    def _scoped_counterfactual(
+        month: str,
+        treatment: str,
+    ) -> dict[str, float]:
+        values = dict(model_input_plan[month])
+        for column, value in values.items():
+            definition = activity_map.get(column)
+            if (
+                definition is not None
+                and definition.economic_treatment == treatment
+                and definition.model_role == "intervention"
+                and definition.planning_eligibility == "optimisable"
+            ):
+                values[column] = 0.0
+        return values
+
+    def _period_costs(month: str) -> dict[str, float]:
+        result = {
+            "paid_media_cost": 0.0,
+            "fully_loaded_cost": 0.0,
+            "campaign_cost": 0.0,
+        }
+        for key, amount in monetary_plan.get(month, {}).items():
+            definition = next(
+                (
+                    item
+                    for item in activity_map.values()
+                    if key
+                    in {
+                        item.activity_id,
+                        item.resolved_model_input_column,
+                        item.channel,
+                    }
+                ),
+                None,
+            )
+            treatment = (
+                definition.economic_treatment
+                if definition is not None
+                else "paid_media_cost"
+            )
+            if treatment in result:
+                result[treatment] += float(amount)
+        return result
+
+    for month, media_input_by_activity in model_input_plan.items():
         ref = reference_context_by_month.get(month, {})
         weekly_rate = response_fn(
             market,
-            model_input_plan[month],
+            media_input_by_activity,
             meta,
             params,
             ref,
             planning_only=True,
         )
-        counterfactual_input = (
-            counterfactual_media_input_by_month or {}
-        ).get(month, {channel: 0.0 for channel in model_input_plan[month]})
+        counterfactual_input = resolved_counterfactual[month]
         counterfactual_weekly_rate = response_fn(
             market,
             counterfactual_input,
@@ -302,7 +406,47 @@ def evaluate_scenario(
             ref,
             planning_only=True,
         )
-        total_spend = sum(spend_by_channel.values())
+        paid_counterfactual_input = _scoped_counterfactual(
+            month, "paid_media_cost"
+        )
+        response_only_counterfactual_input = _scoped_counterfactual(
+            month, "response_only"
+        )
+        paid_counterfactual_rates = response_fn(
+            market,
+            paid_counterfactual_input,
+            meta,
+            params,
+            ref,
+            planning_only=True,
+        )
+        response_only_counterfactual_rates = response_fn(
+            market,
+            response_only_counterfactual_input,
+            meta,
+            params,
+            ref,
+            planning_only=True,
+        )
+        costs = _period_costs(month)
+        paid_spend = costs["paid_media_cost"]
+        fully_loaded_owned_spend = costs["fully_loaded_cost"]
+        campaign_cost_spend = costs["campaign_cost"]
+        total_spend = sum(costs.values())
+        non_costed_ids = sorted(
+            {
+                definition.activity_id
+                for key, value in quantity_plan.get(month, {}).items()
+                if float(value) != 0
+                for definition in activity_map.values()
+                if key
+                in {
+                    definition.activity_id,
+                    definition.resolved_model_input_column,
+                    definition.channel,
+                }
+            }
+        )
         monthly_outcome_by_id = {oid: rate * WEEKS_PER_MONTH for oid, rate in weekly_rate.items()}
         counterfactual_outcome_by_id = {
             oid: rate * WEEKS_PER_MONTH
@@ -313,6 +457,16 @@ def evaluate_scenario(
             - counterfactual_outcome_by_id[oid]
             for oid in monthly_outcome_by_id
         }
+        paid_incremental_outcome_by_id = {
+            oid: monthly_outcome_by_id[oid]
+            - paid_counterfactual_rates[oid] * WEEKS_PER_MONTH
+            for oid in monthly_outcome_by_id
+        }
+        response_only_incremental_outcome_by_id = {
+            oid: monthly_outcome_by_id[oid]
+            - response_only_counterfactual_rates[oid] * WEEKS_PER_MONTH
+            for oid in monthly_outcome_by_id
+        }
         fh_gsa = sum(v for oid, v in monthly_outcome_by_id.items() if oid in gsa_ids)
         fh_signups = sum(v for oid, v in monthly_outcome_by_id.items() if oid in signup_ids)
         fh_net_billthrough = sum(v for oid, v in monthly_outcome_by_id.items() if oid in nbt_ids)
@@ -321,15 +475,30 @@ def evaluate_scenario(
         incremental_fh_signups = sum(v for oid, v in incremental_outcome_by_id.items() if oid in signup_ids)
         incremental_fh_nbt = sum(v for oid, v in incremental_outcome_by_id.items() if oid in nbt_ids)
         incremental_dna_kits = sum(v for oid, v in incremental_outcome_by_id.items() if oid in dna_ids)
-        avg_cpa = (total_spend / incremental_fh_gsa) if incremental_fh_gsa > 0 else None
+        paid_incremental_fh_gsa = sum(
+            value
+            for oid, value in paid_incremental_outcome_by_id.items()
+            if oid in gsa_ids
+        )
+        paid_incremental_fh_nbt = sum(
+            value
+            for oid, value in paid_incremental_outcome_by_id.items()
+            if oid in nbt_ids
+        )
+        avg_cpa = (total_spend / incremental_fh_gsa) if incremental_fh_gsa > 0 and total_spend > 0 else None
         fh_signup_avg_cpa = (total_spend / incremental_fh_signups) if incremental_fh_signups > 0 else None
         nbt_avg_cpa = (total_spend / incremental_fh_nbt) if incremental_fh_nbt > 0 else None
         dna_avg_cpa = (total_spend / incremental_dna_kits) if incremental_dna_kits > 0 else None
-        if economics_status != "monetary_economics_available":
-            avg_cpa = None
-            fh_signup_avg_cpa = None
-            nbt_avg_cpa = None
-            dna_avg_cpa = None
+        paid_media_incremental_cpa = (
+            paid_spend / paid_incremental_fh_gsa
+            if paid_spend > 0 and paid_incremental_fh_gsa > 0
+            else None
+        )
+        paid_media_incremental_nbt_cpa = (
+            paid_spend / paid_incremental_fh_nbt
+            if paid_spend > 0 and paid_incremental_fh_nbt > 0
+            else None
+        )
 
         priced_ids = sorted(oid for oid in monthly_outcome_by_id if oid in ltv)
         unpriced_ids = sorted(oid for oid in monthly_outcome_by_id if oid not in ltv)
@@ -357,15 +526,41 @@ def evaluate_scenario(
             if total_value_is_complete
             else None
         )
-        whole_plan_incremental_roi = (
-            incremental_total_value / total_spend
-            if (
-                incremental_total_value is not None
-                and total_spend > 0
-                and economics_status == "monetary_economics_available"
+        paid_incremental_total_value = (
+            sum(
+                paid_incremental_outcome_by_id[oid] * ltv[oid]
+                for oid in paid_incremental_outcome_by_id
             )
+            if total_value_is_complete
             else None
         )
+        whole_plan_incremental_roi = (
+            incremental_total_value / total_spend
+            if incremental_total_value is not None and total_spend > 0
+            else None
+        )
+        paid_media_incremental_roi = (
+            paid_incremental_total_value / paid_spend
+            if paid_incremental_total_value is not None and paid_spend > 0
+            else None
+        )
+        period_coverage = dict(coverage)
+        period_coverage.update(
+            {
+                "counterfactual_scope": policy.policy_id,
+                "non_costed_activity_ids": non_costed_ids,
+                "whole_plan_scope_compatible": not any(
+                    abs(value) > 1e-12
+                    for value in response_only_incremental_outcome_by_id.values()
+                ),
+            }
+        )
+        if not period_coverage["whole_plan_scope_compatible"]:
+            avg_cpa = None
+            fh_signup_avg_cpa = None
+            nbt_avg_cpa = None
+            dna_avg_cpa = None
+            whole_plan_incremental_roi = None
 
         for oid, monthly_outcome in monthly_outcome_by_id.items():
             value = monthly_outcome * ltv[oid] if oid in ltv else None
@@ -376,11 +571,27 @@ def evaluate_scenario(
                 "predicted_total_outcome": monthly_outcome,
                 "predicted_counterfactual_outcome": counterfactual_outcome_by_id[oid],
                 "incremental_outcome": incremental_outcome_by_id[oid],
+                "incremental_outcome_all_activities": (
+                    incremental_outcome_by_id[oid]
+                ),
+                "incremental_outcome_paid_decisions": (
+                    paid_incremental_outcome_by_id[oid]
+                ),
+                "incremental_outcome_response_only_activities": (
+                    response_only_incremental_outcome_by_id[oid]
+                ),
                 "counterfactual_media_input": dict(counterfactual_input),
+                "resolved_counterfactual_vector": dict(counterfactual_input),
+                "counterfactual_policy": policy.to_dict(),
+                "counterfactual_policy_fingerprint": policy.fingerprint(),
                 "value": value,
                 "value_status": value_status,
                 "unpriced_outcome_ids": unpriced_ids,
                 "total_spend": total_spend,
+                "paid_spend": paid_spend,
+                "fully_loaded_owned_spend": fully_loaded_owned_spend,
+                "campaign_cost_spend": campaign_cost_spend,
+                "non_costed_activity_present": bool(non_costed_ids),
                 "fh_gsa": fh_gsa,
                 "fh_signups": fh_signups,
                 "fh_net_billthrough": fh_net_billthrough,
@@ -403,14 +614,27 @@ def evaluate_scenario(
                 "whole_plan_cost_per_fh_signup": fh_signup_avg_cpa,
                 "whole_plan_cost_per_fh_net_billthrough": nbt_avg_cpa,
                 "whole_plan_incremental_nbt_cpa": nbt_avg_cpa,
+                "paid_media_incremental_cpa": paid_media_incremental_cpa,
+                "paid_media_incremental_nbt_cpa": (
+                    paid_media_incremental_nbt_cpa
+                ),
                 "dna_avg_cpa": dna_avg_cpa,
                 "cost_per_dna_kit": dna_avg_cpa,
                 "whole_plan_cost_per_dna_kit": dna_avg_cpa,
                 "total_value": total_value,
                 "incremental_total_value": incremental_total_value,
                 "whole_plan_incremental_roi": whole_plan_incremental_roi,
-                "economics_availability_status": economics_status,
+                "paid_media_incremental_roi": paid_media_incremental_roi,
+                "economics_availability_status": period_coverage[
+                    "economics_status"
+                ],
+                "economics_coverage": period_coverage,
                 "activity_definitions_fingerprint": activity_fingerprint,
+                "scenario_plan_fingerprint": (
+                    scenario_plan.fingerprint()
+                    if scenario_plan is not None
+                    else None
+                ),
                 "planning_objective": (
                     planning_objective.to_dict()
                     if planning_objective is not None
@@ -755,6 +979,8 @@ def _objective_factory(
     counterfactual_media_input_by_month: Optional[
         Dict[str, Dict[str, float]]
     ] = None,
+    activity_definitions: Optional[List[ActivityDefinition]] = None,
+    counterfactual_policy: Optional[CounterfactualPolicy] = None,
 ):
     if planning_objective is not None:
         metric_objectives = {
@@ -765,9 +991,11 @@ def _objective_factory(
         }
         objective = (
             "expected_value"
-            if planning_objective.estimand
-            in {"incremental_value", "marginal_incremental_value"}
-            else metric_objectives[planning_objective.metric_key]
+            if planning_objective.estimand == "incremental_value"
+            else metric_objectives.get(
+                planning_objective.metric_key,
+                objective,
+            )
         )
         target_outcome_ids = list(planning_objective.target_outcome_ids) or None
     weight = _objective_weight(
@@ -775,19 +1003,55 @@ def _objective_factory(
         assume_value_scaled_weights=assume_value_scaled_weights,
     )
     response_fn = _steady_state_response_fn(model_type)
+    policy = counterfactual_policy or CounterfactualPolicy()
+    activity_map = (
+        activity_by_model_input(activity_definitions, market)
+        if activity_definitions is not None
+        else {}
+    )
 
     def neg_total(x: np.ndarray) -> float:
         spend_plan = _unflatten(x, months, channels)
-        model_input_plan = (
-            monetary_plan_to_media_input(
-                spend_plan,
+        if cost_mapping_registry is not None and activity_definitions is not None:
+            monetary: dict[str, dict[str, float]] = {}
+            quantities: dict[str, dict[str, float]] = {}
+            for period, values in spend_plan.items():
+                monetary[period] = {}
+                quantities[period] = {}
+                for column, value in values.items():
+                    definition = activity_map[column]
+                    target = monetary if definition.is_cost_bearing else quantities
+                    target[period][definition.activity_id] = value
+            typed_plan = ScenarioPlan(monetary, quantities)
+            model_input_plan, _, _ = resolve_scenario_plan(
+                typed_plan,
                 market=market,
-                registry=cost_mapping_registry,
+                activity_definitions=activity_definitions,
+                cost_mapping_registry=cost_mapping_registry,
                 cost_context_id=cost_context_id or "default",
-                as_of_by_period=cost_as_of_by_month or {},
+                cost_as_of_by_period=cost_as_of_by_month,
             )
-            if cost_mapping_registry is not None
-            else spend_plan
+        else:
+            model_input_plan = (
+                monetary_plan_to_media_input(
+                    spend_plan,
+                    market=market,
+                    registry=cost_mapping_registry,
+                    cost_context_id=cost_context_id or "default",
+                    as_of_by_period=cost_as_of_by_month or {},
+                )
+                if cost_mapping_registry is not None
+                else spend_plan
+            )
+        resolved_counterfactual = (
+            counterfactual_media_input_by_month
+            if counterfactual_media_input_by_month is not None
+            else resolve_counterfactual(
+                model_input_plan,
+                market=market,
+                activity_definitions=activity_definitions,
+                policy=policy,
+            )
         )
         total = 0.0
         for m in months:
@@ -805,8 +1069,8 @@ def _objective_factory(
                 and planning_objective.estimand != "total_outcome"
             ):
                 counterfactual = (
-                    counterfactual_media_input_by_month or {}
-                ).get(m, {channel: 0.0 for channel in model_input_plan[m]})
+                    resolved_counterfactual[m]
+                )
                 counterfactual_rates = response_fn(
                     market,
                     counterfactual,
@@ -857,6 +1121,9 @@ def optimize_scenario(
         Dict[str, Dict[str, float]]
     ] = None,
     activity_definitions: Optional[List[ActivityDefinition]] = None,
+    counterfactual_policy: Optional[CounterfactualPolicy] = None,
+    posterior_trace: Optional[Any] = None,
+    posterior_evaluation_draws: int = 100,
 ) -> Dict:
     """
     Optimise a spend plan. `constraints=None` (or empty) + conserve_total_budget=True
@@ -891,20 +1158,39 @@ def optimize_scenario(
         posterior_fingerprint=posterior_fingerprint,
     )
     constraints = constraints or []
+    policy = counterfactual_policy or CounterfactualPolicy()
     if objective is None and planning_objective is None:
         planning_objective = PlanningObjective(
             metric_key=(
                 METRIC_KEY_FH_NET_BILLTHROUGH_COUNT
                 if fh_net_billthrough_outcome_ids(meta)
                 else METRIC_KEY_FH_GSA
-            )
+            ),
+            counterfactual_policy_fingerprint=policy.fingerprint(),
         )
+    elif objective is not None and planning_objective is None:
+        warnings.warn(
+            "String objectives are deprecated and are migrated to an "
+            "incremental PlanningObjective; official workflows must persist "
+            "the typed objective.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        planning_objective = planning_objective_from_legacy(
+            objective,
+            counterfactual_policy_fingerprint=policy.fingerprint(),
+        )
+        if target_outcome_ids:
+            planning_objective = replace(
+                planning_objective,
+                target_outcome_ids=tuple(target_outcome_ids),
+            )
     legacy_objective = objective or "fh_net_billthrough"
     current_spend = _flatten(current_spend_plan, months, channels)
 
     bounds, linear_constraints = build_bounds_and_constraints(months, channels, current_spend, constraints)
     activity_map = (
-        activity_by_channel(activity_definitions)
+        activity_by_model_input(activity_definitions, market)
         if activity_definitions is not None
         else {}
     )
@@ -935,6 +1221,8 @@ def optimize_scenario(
         cost_as_of_by_month=cost_as_of_by_month,
         planning_objective=planning_objective,
         counterfactual_media_input_by_month=counterfactual_media_input_by_month,
+        activity_definitions=activity_definitions,
+        counterfactual_policy=policy,
     )
 
     result = minimize(
@@ -956,24 +1244,97 @@ def optimize_scenario(
         planning_objective=planning_objective,
         counterfactual_media_input_by_month=counterfactual_media_input_by_month,
         activity_definitions=activity_definitions,
+        counterfactual_policy=policy,
     )
-    predicted = evaluate_scenario(optimized_plan, market, meta, params, reference_context_by_month, ltv, **identity_kwargs)
-    current_predicted = evaluate_scenario(current_spend_plan, market, meta, params, reference_context_by_month, ltv, **identity_kwargs)
+    optimized_scenario_plan = (
+        classify_activity_plan(
+            optimized_plan,
+            market=market,
+            activity_definitions=activity_definitions,
+        )
+        if activity_definitions is not None
+        else None
+    )
+    current_scenario_plan = (
+        classify_activity_plan(
+            current_spend_plan,
+            market=market,
+            activity_definitions=activity_definitions,
+        )
+        if activity_definitions is not None
+        else None
+    )
+    predicted = evaluate_scenario(
+        optimized_plan,
+        market,
+        meta,
+        params,
+        reference_context_by_month,
+        ltv,
+        scenario_plan=optimized_scenario_plan,
+        **identity_kwargs,
+    )
+    current_predicted = evaluate_scenario(
+        current_spend_plan,
+        market,
+        meta,
+        params,
+        reference_context_by_month,
+        ltv,
+        scenario_plan=current_scenario_plan,
+        **identity_kwargs,
+    )
 
     # Evaluated via the same objective_fn used for optimisation (not
     # re-derived from the predicted DataFrames) so "current" and "optimised"
     # totals are guaranteed to use the identical weighting - no risk of the
     # two diverging from a second, hand-written copy of the eligibility logic.
     current_objective_value = -float(objective_fn(current_spend))
+    posterior_evaluation = None
+    if posterior_trace is not None:
+        from .uncertainty import evaluate_scenario_with_uncertainty
+
+        posterior_evaluation = evaluate_scenario_with_uncertainty(
+            optimized_plan,
+            market,
+            meta,
+            posterior_trace,
+            reference_context_by_month,
+            ltv,
+            model_type=model_type,
+            n_draws=posterior_evaluation_draws,
+            approval=approval,
+            model_run_id=model_run_id,
+            data_fingerprint=data_fingerprint,
+            model_spec_fingerprint=model_spec_fingerprint,
+            posterior_fingerprint=posterior_fingerprint,
+            baseline_spend_plan=current_spend_plan,
+            scenario_plan=optimized_scenario_plan,
+            baseline_scenario_plan=current_scenario_plan,
+            activity_definitions=activity_definitions,
+            counterfactual_policy=policy,
+            planning_objective=planning_objective,
+            cost_mapping_registry=cost_mapping_registry,
+            cost_context_id=cost_context_id,
+            cost_as_of_by_month=cost_as_of_by_month,
+        )
 
     return {
         "success": bool(result.success),
         "message": str(result.message),
         "spend_plan": optimized_plan,
+        "scenario_plan": (
+            optimized_scenario_plan.to_dict()
+            if optimized_scenario_plan is not None
+            else ScenarioPlan.from_legacy_spend_plan(
+                optimized_plan
+            ).to_dict()
+        ),
         "predicted": predicted,
         "current_predicted": current_predicted,
         "objective_value": -float(result.fun),
         "current_objective_value": current_objective_value,
+        "posterior_evaluation": posterior_evaluation,
         "cost_mapping_fingerprint": (
             cost_mapping_registry.fingerprint()
             if cost_mapping_registry is not None
@@ -987,6 +1348,8 @@ def optimize_scenario(
                 "legacy_objective": legacy_objective,
             }
         ),
+        "counterfactual_policy": policy.to_dict(),
+        "counterfactual_policy_fingerprint": policy.fingerprint(),
         "activity_definitions_fingerprint": (
             activity_definitions_fingerprint(activity_definitions)
             if activity_definitions is not None
@@ -1005,23 +1368,52 @@ def scenario_to_dict(
     cost_mapping_fingerprint: Optional[str] = None,
     planning_objective: Optional[PlanningObjective | Dict[str, object]] = None,
     activity_definitions_fingerprint: Optional[str] = None,
+    scenario_plan: Optional[ScenarioPlan] = None,
+    counterfactual_policy: Optional[
+        CounterfactualPolicy | Dict[str, object]
+    ] = None,
+    economics_coverage: Optional[Dict[str, object]] = None,
 ) -> dict:
     objective_payload = (
         planning_objective.to_dict()
         if isinstance(planning_objective, PlanningObjective)
         else planning_objective
     )
+    policy_payload = (
+        counterfactual_policy.to_dict()
+        if isinstance(counterfactual_policy, CounterfactualPolicy)
+        else counterfactual_policy
+    )
+    typed_plan = scenario_plan or ScenarioPlan.from_legacy_spend_plan(spend_plan)
     return {
         "name": name, "market": market, "spend_plan": spend_plan,
+        "scenario_plan": typed_plan.to_dict(),
         "objective": objective, "constraints": [c.to_dict() for c in constraints], "notes": notes,
         "cost_mapping_fingerprint": cost_mapping_fingerprint,
         "planning_objective": objective_payload,
         "activity_definitions_fingerprint": activity_definitions_fingerprint,
+        "counterfactual_policy": policy_payload,
+        "counterfactual_policy_fingerprint": (
+            CounterfactualPolicy.from_dict(policy_payload).fingerprint()
+            if policy_payload
+            else None
+        ),
+        "economics_coverage": economics_coverage,
+        "schema_version": 2,
     }
 
 
 def scenario_from_dict(d: dict) -> dict:
     d = dict(d)
+    if "scenario_plan" not in d:
+        d["scenario_plan"] = ScenarioPlan.from_legacy_spend_plan(
+            d.get("spend_plan", {})
+        ).to_dict()
+        d["schema_version"] = 2
+    if not d.get("planning_objective") and d.get("objective"):
+        d["planning_objective"] = planning_objective_from_legacy(
+            d["objective"]
+        ).to_dict()
     d["constraints"] = [SpendConstraint.from_dict(c) for c in d.get("constraints", [])]
     return d
 

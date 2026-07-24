@@ -15,7 +15,10 @@ from ancestry_mmm.utils import (
 )
 from ancestry_mmm.components import apply_theme, render_sidebar, render_page_header, render_next_step, render_empty_state, render_glossary, render_drift_status
 from ancestry_mmm.core.approval import ApprovalMismatchError, ModelApproval
-from ancestry_mmm.core.activities import ActivityDefinition
+from ancestry_mmm.core.activities import (
+    ActivityDefinition,
+    activity_by_model_input,
+)
 from ancestry_mmm.core.fingerprint import fingerprint_dataframe, fingerprint_model_spec, fingerprint_posterior
 from ancestry_mmm.core.outcomes import (
     METRIC_KEY_DNA_KIT_SALE,
@@ -43,6 +46,12 @@ from ancestry_mmm.core.uncertainty import evaluate_scenario_with_uncertainty
 from ancestry_mmm.core.evidence_tiers import classify_market_evidence
 from ancestry_mmm.core.market_config import MarketSpecConfig
 from ancestry_mmm.core.media_units import extract_cost_per_unit_series, historical_cost_trend
+from ancestry_mmm.core.media_costs import CostMappingRegistry
+from ancestry_mmm.core.scenario_governance import (
+    CounterfactualPolicy,
+    ScenarioPlan,
+    classify_activity_plan,
+)
 from ancestry_mmm.data.preprocessor import create_fourier_features_from_calendar
 
 
@@ -96,6 +105,9 @@ activity_definitions = [
     ActivityDefinition.from_dict(item)
     for item in (get_state("activity_definitions") or [])
 ]
+cost_mapping_registry = CostMappingRegistry.from_dict(
+    get_state("media_cost_mappings")
+)
 if frame is None or meta is None or params is None:
     st.markdown("---")
     render_empty_state(
@@ -294,6 +306,76 @@ else:
     edited = st.data_editor(plan_df, width="stretch", key=f"editor_{plan_key}", column_config=dataframe_column_config(plan_df))
 st.session_state[plan_key] = edited
 spend_plan = {m: {c: float(edited.loc[m, c]) for c in meta.channels} for m in months}
+activity_map = (
+    activity_by_model_input(activity_definitions, market)
+    if activity_definitions
+    else {}
+)
+scenario_plan = None
+if activity_definitions:
+    missing_activity_inputs = set(meta.channels) - set(activity_map)
+    if missing_activity_inputs:
+        st.error(
+            "Activity governance is incomplete for model inputs: "
+            f"{sorted(missing_activity_inputs)}. Complete the required "
+            "activity register before planning."
+        )
+        st.stop()
+if activity_map:
+    monetary_decisions = {}
+    activity_quantities = {}
+    for period, values in spend_plan.items():
+        monetary_decisions[period] = {}
+        activity_quantities[period] = {}
+        for column, value in values.items():
+            definition = activity_map[column]
+            target = (
+                monetary_decisions
+                if definition.is_cost_bearing
+                else activity_quantities
+            )
+            target[period][definition.activity_id] = value
+    scenario_plan = ScenarioPlan(
+        monetary_decisions_by_period=monetary_decisions,
+        activity_quantity_assumptions_by_period=activity_quantities,
+        activity_units={
+            definition.activity_id: (
+                "local_currency"
+                if definition.is_cost_bearing
+                else "model_input_quantity"
+            )
+            for definition in activity_map.values()
+        },
+    )
+    st.caption(
+        "Cost-bearing activity is stored as monetary decisions; response-only "
+        "and non-applicable activity is stored separately as model-input quantities."
+    )
+
+demand_capture_rule = st.radio(
+    "Demand-capture counterfactual",
+    ["hold_plan", "zero"],
+    horizontal=True,
+    format_func=lambda value: {
+        "hold_plan": "Hold demand-capture activity at the candidate level",
+        "zero": "Set demand-capture activity to zero (sensitivity only)",
+    }[value],
+    help=(
+        "Demand capture is never zeroed implicitly. This explicit selection "
+        "is stored with the scenario and objective."
+    ),
+)
+counterfactual_policy = CounterfactualPolicy(
+    demand_capture_rule=demand_capture_rule,
+)
+cost_as_of_by_month = {
+    month: f"{month}-01" if len(month) == 7 else month for month in months
+}
+governed_cost_registry = (
+    cost_mapping_registry
+    if cost_mapping_registry.to_dict()["mappings"]
+    else None
+)
 
 _has_dna_kit_segments = bool(dna_kit_sale_outcome_ids(meta))
 _has_fh_signup_outcomes = bool(fh_signup_outcome_ids(meta))
@@ -327,9 +409,19 @@ planning_objective = (
     PlanningObjective(
         estimand="incremental_outcome",
         metric_key=_objective_metric_keys[objective],
+        counterfactual_policy_fingerprint=(
+            counterfactual_policy.fingerprint()
+        ),
     )
     if objective in _objective_metric_keys
-    else None
+    else PlanningObjective(
+        estimand="incremental_value",
+        metric_key="expected_value",
+        value_currency="project_value_currency",
+        counterfactual_policy_fingerprint=(
+            counterfactual_policy.fingerprint()
+        ),
+    )
 )
 st.caption(
     "Each objective states exactly what it maximises - Family History GSAs, Family History sign-ups "
@@ -357,9 +449,14 @@ with tab_manual:
             ltv,
             planning_objective=planning_objective,
             activity_definitions=activity_definitions or None,
+            scenario_plan=scenario_plan,
+            counterfactual_policy=counterfactual_policy,
+            cost_mapping_registry=governed_cost_registry,
+            cost_context_id="default",
+            cost_as_of_by_month=cost_as_of_by_month,
             **identity_kwargs,
         )
-    except ApprovalMismatchError as e:
+    except (ApprovalMismatchError, ValueError) as e:
         st.error(f"Cannot evaluate this scenario: {e}")
         st.stop()
     st.dataframe(predicted, width="stretch", column_config=dataframe_column_config(predicted))
@@ -372,10 +469,14 @@ with tab_manual:
             "silently treated as $1) - set a value weight for every outcome on the Structure page "
             "for a complete total."
         )
-    by_month_cols = ["fh_gsa", "dna_kits"] + (["fh_signups"] if "fh_signups" in predicted.columns else [])
+    by_month_cols = ["fh_gsa", "fh_net_billthrough", "dna_kits"] + (["fh_signups"] if "fh_signups" in predicted.columns else [])
     by_month_totals = predicted.groupby("month")[by_month_cols].first()
     _objective_totals = {
         "fh_gsa": ("Total predicted FH GSAs", float(by_month_totals["fh_gsa"].sum())),
+        "fh_net_billthrough": (
+            "Total predicted FH net bill-through",
+            float(by_month_totals["fh_net_billthrough"].sum()),
+        ),
         "dna_kits": ("Total predicted DNA kits", float(by_month_totals["dna_kits"].sum())),
         "expected_value": ("Total predicted value", float(predicted["value"].sum())),
     }
@@ -411,6 +512,11 @@ with tab_manual:
                 activity_definitions_fingerprint=(
                     predicted["activity_definitions_fingerprint"].iloc[0]
                 ),
+                scenario_plan=scenario_plan,
+                counterfactual_policy=counterfactual_policy,
+                economics_coverage=predicted[
+                    "economics_coverage"
+                ].iloc[0],
             )
         )
         scenarios[-1]["predicted"] = predicted
@@ -428,13 +534,32 @@ with tab_manual:
         if show_scenario_uncertainty:
             n_draws = st.slider("Posterior draws to sample", 20, 200, 50, step=10, key="manual_scenario_n_draws")
             baseline_plan = {m: {c: float(v) for c, v in zip(meta.channels, default_monthly)} for m in months}
+            baseline_scenario_plan = (
+                classify_activity_plan(
+                    baseline_plan,
+                    market=market,
+                    activity_definitions=activity_definitions,
+                )
+                if activity_definitions
+                else None
+            )
             with st.spinner(f"Computing scenario uncertainty from {n_draws} posterior draws..."):
                 try:
                     uncertainty_result = evaluate_scenario_with_uncertainty(
                         spend_plan, market, meta, trace, reference_context_by_month, ltv,
-                        n_draws=n_draws, baseline_spend_plan=baseline_plan, **identity_kwargs,
+                        n_draws=n_draws,
+                        baseline_spend_plan=baseline_plan,
+                        scenario_plan=scenario_plan,
+                        baseline_scenario_plan=baseline_scenario_plan,
+                        activity_definitions=activity_definitions or None,
+                        counterfactual_policy=counterfactual_policy,
+                        planning_objective=planning_objective,
+                        cost_mapping_registry=governed_cost_registry,
+                        cost_context_id="default",
+                        cost_as_of_by_month=cost_as_of_by_month,
+                        **identity_kwargs,
                     )
-                except ApprovalMismatchError as e:
+                except (ApprovalMismatchError, ValueError) as e:
                     st.error(f"Cannot evaluate this scenario: {e}")
                     uncertainty_result = None
             if uncertainty_result is not None:
@@ -521,9 +646,15 @@ with tab_constrained:
                         constraints=st.session_state["scenario_constraints"],
                         conserve_total_budget=True,
                         activity_definitions=activity_definitions or None,
+                        counterfactual_policy=counterfactual_policy,
+                        cost_mapping_registry=governed_cost_registry,
+                        cost_context_id="default",
+                        cost_as_of_by_month=cost_as_of_by_month,
+                        posterior_trace=trace,
+                        posterior_evaluation_draws=50,
                         **identity_kwargs,
                     )
-                except ApprovalMismatchError as e:
+                except (ApprovalMismatchError, ValueError) as e:
                     st.error(f"Cannot run optimisation: {e}")
                     result = None
             if result is not None:
@@ -572,6 +703,13 @@ with tab_constrained:
                 activity_definitions_fingerprint=result[
                     "activity_definitions_fingerprint"
                 ],
+                scenario_plan=ScenarioPlan.from_dict(
+                    result["scenario_plan"]
+                ),
+                counterfactual_policy=result["counterfactual_policy"],
+                economics_coverage=result["predicted"][
+                    "economics_coverage"
+                ].iloc[0],
             )
             s["predicted"] = result["predicted"]
             scenarios.append(s)
@@ -599,9 +737,15 @@ with tab_unconstrained:
                         constraints=[],
                         conserve_total_budget=True,
                         activity_definitions=activity_definitions or None,
+                        counterfactual_policy=counterfactual_policy,
+                        cost_mapping_registry=governed_cost_registry,
+                        cost_context_id="default",
+                        cost_as_of_by_month=cost_as_of_by_month,
+                        posterior_trace=trace,
+                        posterior_evaluation_draws=50,
                         **identity_kwargs,
                     )
-                except ApprovalMismatchError as e:
+                except (ApprovalMismatchError, ValueError) as e:
                     st.error(f"Cannot run optimisation: {e}")
                     result = None
             if result is not None:

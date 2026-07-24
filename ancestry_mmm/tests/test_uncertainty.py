@@ -222,6 +222,16 @@ class TestEvaluateScenarioWithUncertainty:
         assert np.all(summary["value_mean"] <= summary["value_upper"] + 1e-9)
         assert result["n_draws"] == 20
         assert result["prob_outperforms_baseline"] is None
+        assert len(result["draws"]["posterior_draw"].unique()) == 20
+        assert {
+            "incremental_outcome_mean",
+            "incremental_outcome_lower",
+            "incremental_outcome_upper",
+            "probability_incremental_positive",
+            "incremental_nbt_cpa_mean",
+            "incremental_roi_mean",
+        } <= set(summary.columns)
+        assert summary["probability_incremental_positive"].between(0, 1).all()
 
     def test_paired_baseline_comparison_gives_prob_one_when_proposed_strictly_dominates(
         self, meta, market_trace, approval, reference_context,

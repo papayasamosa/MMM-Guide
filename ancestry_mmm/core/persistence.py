@@ -51,6 +51,7 @@ import pandas as pd
 import arviz as az
 
 from .approval import ModelApproval
+from .activities import ActivityDefinition
 from .fingerprint import (
     fingerprint_dataframe,
     fingerprint_model_spec,
@@ -61,9 +62,10 @@ from .outcomes import outcome_catalogue_fingerprint_payload
 from .pathways import pathway_catalogue_fingerprint_payload
 from .predict import extract_posterior_params
 from .schema import ModelSpec
-from .optimization import SpendConstraint
+from .optimization import SpendConstraint, planning_objective_from_legacy
+from .scenario_governance import ScenarioPlan
 
-PROJECT_BUNDLE_SCHEMA_VERSION = 6
+PROJECT_BUNDLE_SCHEMA_VERSION = 7
 PROJECT_APP_VERSION = "0.1.0"
 
 
@@ -428,9 +430,13 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
                 (config_dir / "monetary_spend_support.json").read_text()
             )
         if (config_dir / "activity_definitions.json").exists():
-            result["activity_definitions"] = json.loads(
+            activity_payload = json.loads(
                 (config_dir / "activity_definitions.json").read_text()
             )
+            result["activity_definitions"] = [
+                ActivityDefinition.from_dict(item).to_dict()
+                for item in activity_payload
+            ]
         if (config_dir / "model_type.json").exists():
             result["model_type"] = json.loads(
                 (config_dir / "model_type.json").read_text()
@@ -470,6 +476,15 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         if (config_dir / "scenarios.json").exists():
             scenarios_meta = json.loads((config_dir / "scenarios.json").read_text())
             for i, s in enumerate(scenarios_meta):
+                if "scenario_plan" not in s:
+                    s["scenario_plan"] = ScenarioPlan.from_legacy_spend_plan(
+                        s.get("spend_plan", {})
+                    ).to_dict()
+                    s["schema_version"] = 2
+                if not s.get("planning_objective") and s.get("objective"):
+                    s["planning_objective"] = planning_objective_from_legacy(
+                        s["objective"]
+                    ).to_dict()
                 pred_path = tmp / "scenarios" / f"scenario_{i}_predicted.csv"
                 if pred_path.exists():
                     s["predicted"] = pd.read_csv(pred_path)

@@ -657,7 +657,7 @@ class TestFhSignupVsGsaObjectives:
             objective="fh_gsa", approval=approval, **IDENTITY,
         )
         current_predicted = result["current_predicted"]
-        expected = float(current_predicted[current_predicted["outcome_id"] == "fh_new_gsa"]["predicted_outcome"].sum())
+        expected = float(current_predicted[current_predicted["outcome_id"] == "fh_new_gsa"]["incremental_outcome"].sum())
         assert result["current_objective_value"] == pytest.approx(expected)
 
     def test_signup_objective_targets_only_signup_outcome(
@@ -668,7 +668,7 @@ class TestFhSignupVsGsaObjectives:
             objective="fh_signups", approval=approval, **IDENTITY,
         )
         current_predicted = result["current_predicted"]
-        expected = float(current_predicted[current_predicted["outcome_id"] == "fh_new_signup"]["predicted_outcome"].sum())
+        expected = float(current_predicted[current_predicted["outcome_id"] == "fh_new_signup"]["incremental_outcome"].sum())
         assert result["current_objective_value"] == pytest.approx(expected)
         # And it must differ from the GSA objective's total - proof the two
         # objectives are actually scoped to different outcome_ids, not
@@ -770,7 +770,7 @@ class TestOptimiserTargetValidation:
             objective="fh_gsa", approval=approval, **IDENTITY,
         )
         current_predicted = result["current_predicted"]
-        expected = float(current_predicted[current_predicted["outcome_id"] == "fh_new_gsa"]["predicted_outcome"].sum())
+        expected = float(current_predicted[current_predicted["outcome_id"] == "fh_new_gsa"]["incremental_outcome"].sum())
         assert result["current_objective_value"] == pytest.approx(expected)
 
     def test_weighted_mix_with_raw_unit_mismatch_is_rejected(

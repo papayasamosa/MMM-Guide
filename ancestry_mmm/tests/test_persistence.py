@@ -320,7 +320,12 @@ def test_media_input_and_cost_governance_round_trip(tmp_path, sample_project):
         imported["monetary_spend_support"]
         == project["monetary_spend_support"]
     )
-    assert imported["activity_definitions"] == project["activity_definitions"]
+    from ancestry_mmm.core.activities import ActivityDefinition
+
+    assert imported["activity_definitions"] == [
+        ActivityDefinition.from_dict(item).to_dict()
+        for item in project["activity_definitions"]
+    ]
 
 
 def test_export_then_import_reproduces_scenarios_and_constraints(
@@ -332,6 +337,21 @@ def test_export_then_import_reproduces_scenarios_and_constraints(
     assert len(imported["scenarios"]) == 1
     restored_scenario = imported["scenarios"][0]
     assert restored_scenario["name"] == "manual-uk"
+    assert restored_scenario["schema_version"] == 2
+    assert restored_scenario["scenario_plan"] == {
+        "monetary_decisions_by_period": {
+            "2024-01": {"TV_Brand": 100.0}
+        },
+        "activity_quantity_assumptions_by_period": {},
+        "activity_units": None,
+        "schema_version": 1,
+    }
+    assert restored_scenario["planning_objective"]["estimand"] == (
+        "incremental_value"
+    )
+    assert restored_scenario["planning_objective"]["value_currency"] == (
+        "UNSPECIFIED"
+    )
     assert restored_scenario["constraints"] == [
         {
             "kind": "locked_cell",

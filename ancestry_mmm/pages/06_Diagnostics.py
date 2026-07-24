@@ -11,6 +11,10 @@ import pandas as pd
 from ancestry_mmm.utils import init_session_state, get_state, set_state, format_date, format_number, dataframe_column_config, FIELD_HELP
 from ancestry_mmm.components import apply_theme, render_sidebar, render_page_header, render_next_step, render_empty_state, render_glossary, render_drift_status
 from ancestry_mmm.core.approval import ModelApproval
+from ancestry_mmm.core.activities import (
+    ActivityDefinition,
+    activity_by_model_input,
+)
 from ancestry_mmm.core.diagnostics import compute_scorecard, expanding_window_backtest
 from ancestry_mmm.core.fingerprint import fingerprint_dataframe, fingerprint_model_spec, fingerprint_posterior
 from ancestry_mmm.core.funnel import FunnelLink, funnel_coherence_diagnostics
@@ -156,6 +160,39 @@ model_spec_dict = get_state("model_spec")
 prior_config = get_state("prior_config") or {}
 dna_lag_weeks = get_state("dna_lag_weeks", 4)
 model_run_id = get_state("model_run_id")
+activity_items = get_state("activity_definitions") or []
+activity_definitions = [
+    ActivityDefinition.from_dict(item) for item in activity_items
+]
+activity_governance_errors = []
+if not activity_definitions:
+    activity_governance_errors.append("No activity definitions are saved.")
+elif meta is not None:
+    for activity_market in meta.markets:
+        try:
+            resolved_activities = activity_by_model_input(
+                activity_definitions,
+                activity_market,
+            )
+        except ValueError as error:
+            activity_governance_errors.append(str(error))
+            continue
+        missing_inputs = set(meta.channels) - set(resolved_activities)
+        if missing_inputs:
+            activity_governance_errors.append(
+                f"{activity_market} is missing {sorted(missing_inputs)}"
+            )
+        unapproved = sorted(
+            definition.activity_id
+            for column, definition in resolved_activities.items()
+            if column in meta.channels
+            and definition.approval_status != "approved"
+        )
+        if unapproved:
+            activity_governance_errors.append(
+                f"{activity_market} has unapproved activities {unapproved}"
+            )
+activity_governance_ready = not activity_governance_errors
 
 current_identity = None
 if model_run_id and posterior_params is not None and model_spec_dict is not None:
@@ -174,6 +211,13 @@ if model_run_id and posterior_params is not None and model_spec_dict is not None
     }
 
 approval_dict = get_state("model_approval")
+if approval_dict and not activity_governance_ready:
+    set_state("model_approval", None)
+    approval_dict = None
+    st.warning(
+        "The previous model approval was invalidated because required activity "
+        "and causal-role governance is incomplete."
+    )
 approval_matches_current = (
     approval_dict is not None
     and current_identity is not None
@@ -205,6 +249,12 @@ if approval_dict:
         st.rerun()
 elif not scorecard:
     st.info("Compute the scorecard above before approving this model.")
+elif not activity_governance_ready:
+    st.error(
+        "Model approval is blocked until Activity & causal-role governance "
+        "is complete and approved on Channel & Media Units: "
+        + "; ".join(activity_governance_errors)
+    )
 elif current_identity is None:
     st.warning(
         "Can't approve yet: the current model run's identity (run ID, data/specification/"

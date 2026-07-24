@@ -33,8 +33,25 @@ from .market_specific_predict import (
     generate_market_channel_curve,
 )
 from .media_units import compute_cpa_by_product
-from .optimization import AnyPosteriorParams, evaluate_scenario
+from .optimization import (
+    AnyPosteriorParams,
+    PlanningObjective,
+    evaluate_scenario,
+)
+from .outcomes import (
+    METRIC_KEY_DNA_KIT_SALE,
+    METRIC_KEY_FH_GSA,
+    METRIC_KEY_FH_NET_BILLTHROUGH_COUNT,
+    METRIC_KEY_FH_SIGNUP,
+    dna_kit_sale_outcome_ids,
+    fh_gsa_outcome_ids,
+    fh_net_billthrough_outcome_ids,
+    fh_signup_outcome_ids,
+)
 from .predict import extract_posterior_params, generate_channel_curve
+from .activities import ActivityDefinition
+from .media_costs import CostMappingRegistry
+from .scenario_governance import CounterfactualPolicy, ScenarioPlan
 
 DEFAULT_N_DRAWS = 100
 DEFAULT_CRED_MASS = 0.9
@@ -189,6 +206,20 @@ def _summarize_scenario_draws(draws: List[pd.DataFrame], cred_mass: float) -> pd
         predicted_outcome_median=("predicted_outcome", "median"),
         predicted_outcome_lower=("predicted_outcome", lambda s: s.quantile(tail)),
         predicted_outcome_upper=("predicted_outcome", lambda s: s.quantile(1.0 - tail)),
+        incremental_outcome_mean=("incremental_outcome", "mean"),
+        incremental_outcome_median=("incremental_outcome", "median"),
+        incremental_outcome_lower=(
+            "incremental_outcome",
+            lambda s: s.quantile(tail),
+        ),
+        incremental_outcome_upper=(
+            "incremental_outcome",
+            lambda s: s.quantile(1.0 - tail),
+        ),
+        probability_incremental_positive=(
+            "incremental_outcome",
+            lambda s: float((s > 0).mean()),
+        ),
         value_mean=("value", "mean"),
         value_median=("value", "median"),
         value_lower=("value", lambda s: s.quantile(tail)),
@@ -205,6 +236,29 @@ def _summarize_scenario_draws(draws: List[pd.DataFrame], cred_mass: float) -> pd
         dna_avg_cpa_median=("dna_avg_cpa", "median"),
         dna_avg_cpa_lower=("dna_avg_cpa", lambda s: s.quantile(tail)),
         dna_avg_cpa_upper=("dna_avg_cpa", lambda s: s.quantile(1.0 - tail)),
+        incremental_nbt_cpa_mean=("whole_plan_incremental_nbt_cpa", "mean"),
+        incremental_nbt_cpa_median=(
+            "whole_plan_incremental_nbt_cpa",
+            "median",
+        ),
+        incremental_nbt_cpa_lower=(
+            "whole_plan_incremental_nbt_cpa",
+            lambda s: s.quantile(tail),
+        ),
+        incremental_nbt_cpa_upper=(
+            "whole_plan_incremental_nbt_cpa",
+            lambda s: s.quantile(1.0 - tail),
+        ),
+        incremental_roi_mean=("whole_plan_incremental_roi", "mean"),
+        incremental_roi_median=("whole_plan_incremental_roi", "median"),
+        incremental_roi_lower=(
+            "whole_plan_incremental_roi",
+            lambda s: s.quantile(tail),
+        ),
+        incremental_roi_upper=(
+            "whole_plan_incremental_roi",
+            lambda s: s.quantile(1.0 - tail),
+        ),
         total_value_mean=("total_value", "mean"),
         total_value_median=("total_value", "median"),
         total_value_lower=("total_value", lambda s: s.quantile(tail)),
@@ -232,6 +286,14 @@ def evaluate_scenario_with_uncertainty(
     model_spec_fingerprint: str,
     posterior_fingerprint: str,
     baseline_spend_plan: Optional[Dict[str, Dict[str, float]]] = None,
+    scenario_plan: Optional[ScenarioPlan] = None,
+    baseline_scenario_plan: Optional[ScenarioPlan] = None,
+    activity_definitions: Optional[List[ActivityDefinition]] = None,
+    counterfactual_policy: Optional[CounterfactualPolicy] = None,
+    planning_objective: Optional[PlanningObjective] = None,
+    cost_mapping_registry: Optional[CostMappingRegistry] = None,
+    cost_context_id: Optional[str] = None,
+    cost_as_of_by_month: Optional[Dict[str, str]] = None,
 ) -> Dict[str, object]:
     """
     Per-draw scenario evaluation: `core.optimization.evaluate_scenario` run
@@ -255,29 +317,117 @@ def evaluate_scenario_with_uncertainty(
     """
     extract_fn = extract_market_specific_posterior_params if model_type == "market_specific" else extract_posterior_params
 
-    def _evaluate(plan: Dict[str, Dict[str, float]], params: AnyPosteriorParams) -> pd.DataFrame:
+    def _evaluate(
+        plan: Dict[str, Dict[str, float]],
+        params: AnyPosteriorParams,
+        typed_plan: Optional[ScenarioPlan],
+    ) -> pd.DataFrame:
         return evaluate_scenario(
             plan, market, meta, params, reference_context_by_month, ltv,
             model_type=model_type, approval=approval, model_run_id=model_run_id,
             data_fingerprint=data_fingerprint, model_spec_fingerprint=model_spec_fingerprint,
             posterior_fingerprint=posterior_fingerprint,
+            scenario_plan=typed_plan,
+            activity_definitions=activity_definitions,
+            counterfactual_policy=counterfactual_policy,
+            planning_objective=planning_objective,
+            cost_mapping_registry=cost_mapping_registry,
+            cost_context_id=cost_context_id,
+            cost_as_of_by_month=cost_as_of_by_month,
         )
 
     draw_indices = sample_draw_indices(trace, n_draws, seed)
     proposed_draws: List[pd.DataFrame] = []
     baseline_draws: List[pd.DataFrame] = []
-    for at in draw_indices:
+    draw_frames: List[pd.DataFrame] = []
+    for draw_id, at in enumerate(draw_indices):
         params = extract_fn(trace, meta, at=at)
-        proposed_draws.append(_evaluate(spend_plan, params))
+        proposed = _evaluate(spend_plan, params, scenario_plan)
+        proposed_draws.append(proposed)
+        draw_frame = proposed.copy()
+        draw_frame["posterior_draw"] = draw_id
+        draw_frame["chain_index"] = at[0]
+        draw_frame["draw_index"] = at[1]
+        draw_frames.append(draw_frame)
         if baseline_spend_plan is not None:
-            baseline_draws.append(_evaluate(baseline_spend_plan, params))
+            baseline_draws.append(
+                _evaluate(
+                    baseline_spend_plan,
+                    params,
+                    baseline_scenario_plan,
+                )
+            )
 
     summary = _summarize_scenario_draws(proposed_draws, cred_mass)
 
     prob_outperforms_baseline = None
+    comparison_column = None
     if baseline_draws:
-        proposed_totals = np.array([df["value"].sum() for df in proposed_draws])
-        baseline_totals = np.array([df["value"].sum() for df in baseline_draws])
+        use_value = all(
+            frame["total_value_is_complete"].all()
+            for frame in [*proposed_draws, *baseline_draws]
+        )
+        metric_columns = {
+            METRIC_KEY_FH_GSA: "incremental_fh_gsa",
+            METRIC_KEY_FH_SIGNUP: "incremental_fh_signups",
+            METRIC_KEY_FH_NET_BILLTHROUGH_COUNT: (
+                "incremental_fh_net_billthrough"
+            ),
+            METRIC_KEY_DNA_KIT_SALE: "incremental_dna_kits",
+        }
+        if (
+            planning_objective is not None
+            and planning_objective.estimand == "incremental_value"
+        ):
+            if not use_value:
+                raise ValueError(
+                    "candidate-versus-current value probability requires "
+                    "complete value coverage"
+                )
+            comparison_column = "incremental_total_value"
+        elif planning_objective is not None:
+            comparison_column = metric_columns.get(
+                planning_objective.metric_key
+            )
+            if comparison_column is None:
+                raise ValueError(
+                    "candidate-versus-current probability does not support "
+                    f"metric {planning_objective.metric_key!r}"
+                )
+        elif use_value:
+            comparison_column = "incremental_total_value"
+        elif fh_net_billthrough_outcome_ids(meta):
+            comparison_column = "incremental_fh_net_billthrough"
+        elif fh_gsa_outcome_ids(meta):
+            comparison_column = "incremental_fh_gsa"
+        elif fh_signup_outcome_ids(meta):
+            comparison_column = "incremental_fh_signups"
+        elif dna_kit_sale_outcome_ids(meta):
+            comparison_column = "incremental_dna_kits"
+        else:
+            raise ValueError(
+                "candidate-versus-current probability requires an explicit "
+                "supported PlanningObjective"
+            )
+        proposed_totals = np.array(
+            [
+                frame.groupby("month")[comparison_column].first().sum()
+                for frame in proposed_draws
+            ]
+        )
+        baseline_totals = np.array(
+            [
+                frame.groupby("month")[comparison_column].first().sum()
+                for frame in baseline_draws
+            ]
+        )
         prob_outperforms_baseline = float(np.mean(proposed_totals > baseline_totals))
 
-    return {"summary": summary, "prob_outperforms_baseline": prob_outperforms_baseline, "n_draws": len(draw_indices)}
+    return {
+        "summary": summary,
+        "draws": pd.concat(draw_frames, ignore_index=True),
+        "prob_outperforms_baseline": prob_outperforms_baseline,
+        "comparison_metric": comparison_column,
+        "n_draws": len(draw_indices),
+        "cred_mass": cred_mass,
+    }

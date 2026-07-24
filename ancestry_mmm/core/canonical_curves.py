@@ -26,7 +26,11 @@ import numpy as np
 import pandas as pd
 
 from .hierarchical_model import FHModelMeta
-from .activities import ActivityDefinition, activity_definitions_fingerprint
+from .activities import (
+    ActivityDefinition,
+    activity_by_model_input,
+    activity_definitions_fingerprint,
+)
 from .media_costs import (
     CostMappingRegistry,
     MediaCostMapping,
@@ -893,7 +897,9 @@ def generate_canonical_curve_draws(
     cost_mapping_registry: Optional[CostMappingRegistry] = None,
     cost_context_id: str = "default",
     cost_as_of_date: Optional[str] = None,
-    activity_definitions: Optional[Mapping[str, ActivityDefinition]] = None,
+    activity_definitions: Optional[
+        Sequence[ActivityDefinition] | Mapping[str, ActivityDefinition]
+    ] = None,
 ) -> pd.DataFrame:
     """Generate component response decomposition on the outcome-count scale.
 
@@ -909,9 +915,11 @@ def generate_canonical_curve_draws(
     legacy_monetary = curve_type is None
     effective_curve_type = "monetary" if legacy_monetary else curve_type
     input_specs = dict(media_input_specs or {})
-    activities = dict(activity_definitions or {})
-    if activities and set(activities) != set(meta.channels):
-        raise ValueError("Provide exactly one activity definition per channel")
+    activity_rows = (
+        list(activity_definitions.values())
+        if isinstance(activity_definitions, Mapping)
+        else list(activity_definitions or ())
+    )
     governed_costs = dict(cost_mappings or {})
     if governed_costs and cost_mapping_registry is not None:
         raise ValueError(
@@ -1032,6 +1040,13 @@ def generate_canonical_curve_draws(
             context = reference_contexts[market]
             currency = currencies[market]
             fx_rate = currency["fx_rate"]
+            activities = activity_by_model_input(activity_rows, market)
+            if activities and set(activities) != set(meta.channels):
+                raise ValueError(
+                    "Provide exactly one activity definition per model input "
+                    f"for {market}; expected {sorted(meta.channels)}, got "
+                    f"{sorted(activities)}"
+                )
             for channel in meta.channels:
                 channel_support = support[(market, channel)]
                 axis = _axis_for_channel(spend_points, channel_support, n_points)
@@ -1464,9 +1479,9 @@ def generate_canonical_curve_draws(
                                     ),
                                     "activity_definitions_fingerprint": (
                                         activity_definitions_fingerprint(
-                                            activities.values()
+                                            activity_rows
                                         )
-                                        if activities
+                                        if activity_rows
                                         else None
                                     ),
                                     "monetary_governance_fingerprint": (
