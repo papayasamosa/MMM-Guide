@@ -175,6 +175,29 @@ class OptimizationResource:
         return cls(**{key: value for key, value in payload.items() if key in known})
 
 
+def _resolved_currency_by_activity(
+    candidates: Mapping[str, ActivityDefinition],
+    market: str,
+    cost_mapping_registry: Optional[CostMappingRegistry],
+    cost_context_id: str,
+    cost_as_of: Optional[str],
+) -> Dict[str, str]:
+    """Effective mapping currency for each candidate, when resolvable.
+    An activity with no approved effective mapping at `cost_as_of` is
+    simply absent from the result - callers treat that as "unresolvable",
+    never as an implicit currency match."""
+    if cost_mapping_registry is None:
+        return {}
+    resolved: Dict[str, str] = {}
+    for activity_id, definition in candidates.items():
+        mapping = cost_mapping_registry.resolve(
+            market, definition.channel, cost_context_id, as_of=cost_as_of,
+        )
+        if mapping is not None:
+            resolved[activity_id] = mapping.currency
+    return resolved
+
+
 def monetary_optimization_resource(
     activity_definitions: List[ActivityDefinition],
     market: str,
@@ -185,6 +208,7 @@ def monetary_optimization_resource(
     cost_mapping_registry: Optional[CostMappingRegistry] = None,
     cost_context_id: str = "default",
     cost_as_of: Optional[str] = None,
+    channels: Optional[List[str]] = None,
 ) -> OptimizationResource:
     """Default resource: every cost-bearing, optimisable activity for this
     market that is denominated in one governed currency - the monetary
@@ -192,6 +216,14 @@ def monetary_optimization_resource(
     quantities, controls, events, mediators and fixed/scenario-only
     activity are never included, whatever `planning_eligibility` they
     carry - they are not denominated in this resource's unit.
+
+    `channels`, when given, restricts candidates to activities resolved
+    from exactly those model-input channels - the specific decision
+    variables of the optimisation this resource will drive - rather than
+    every activity registered for this market in the wider governance
+    system (which may include activities from other models or channels
+    entirely). Omit only when building a resource independently of any
+    particular `optimize_scenario` call.
 
     A resource must never silently pool decisions from more than one
     currency into one conserved total (the same currency-purity rule as
@@ -208,9 +240,14 @@ def monetary_optimization_resource(
     the caller has already validated currency purity itself)."""
 
     by_input = activity_by_model_input(activity_definitions, market)
+    pool = (
+        {channel: by_input[channel] for channel in channels if channel in by_input}
+        if channels is not None
+        else by_input
+    )
     candidates = {
         definition.activity_id: definition
-        for definition in by_input.values()
+        for definition in pool.values()
         if definition.is_cost_bearing
         and definition.planning_eligibility == "optimisable"
     }
@@ -223,14 +260,9 @@ def monetary_optimization_resource(
             total=total,
         )
 
-    currency_by_activity: Dict[str, str] = {}
-    for activity_id, definition in candidates.items():
-        mapping = cost_mapping_registry.resolve(
-            market, definition.channel, cost_context_id, as_of=cost_as_of,
-        )
-        if mapping is not None:
-            currency_by_activity[activity_id] = mapping.currency
-
+    currency_by_activity = _resolved_currency_by_activity(
+        candidates, market, cost_mapping_registry, cost_context_id, cost_as_of,
+    )
     resolved_currencies = set(currency_by_activity.values())
     if currency is None:
         if len(resolved_currencies) > 1:
@@ -257,6 +289,162 @@ def monetary_optimization_resource(
         eligible_activity_ids=eligible,
         total=total,
     )
+
+
+def validate_optimization_resource(
+    resource: OptimizationResource,
+    activity_definitions: List[ActivityDefinition],
+    market: str,
+    channels: List[str],
+    *,
+    cost_mapping_registry: Optional[CostMappingRegistry] = None,
+    cost_context_id: str = "default",
+    cost_as_of: Optional[str] = None,
+) -> None:
+    """Reject an `OptimizationResource` before it drives the solver.
+
+    `monetary_optimization_resource`'s default output is already safe by
+    construction; this exists because a caller may supply
+    `optimize_scenario(optimization_resource=...)` directly, and that
+    custom resource cannot be trusted to already respect the same rules
+    (PR G2A.6b workstream 1). Raises ValueError, naming the resource and
+    the offending activity ID(s), on:
+
+    - a blank `unit`
+    - duplicate activity IDs
+    - no eligible activities at all (nothing for the solver to move)
+    - an activity ID not registered for this market
+    - an activity ID not among this optimisation's `channels`
+    - an activity not applicable to `market`
+    - an activity whose `planning_eligibility` is not `"optimisable"`
+    - a non-cost-bearing activity in a `unit="currency"` resource
+    - (when `cost_mapping_registry` is given) an activity with no
+      resolvable effective mapping, or spanning more than one currency
+    - a non-finite or negative `total`
+    """
+    if not resource.unit:
+        raise ValueError(
+            f"OptimizationResource {resource.resource_id!r} has a blank unit"
+        )
+    if len(set(resource.eligible_activity_ids)) != len(resource.eligible_activity_ids):
+        raise ValueError(
+            f"OptimizationResource {resource.resource_id!r} lists duplicate "
+            f"activity IDs: {resource.eligible_activity_ids}"
+        )
+    if not resource.eligible_activity_ids:
+        raise ValueError(
+            f"OptimizationResource {resource.resource_id!r} has no eligible "
+            "activities - there is nothing for the solver to move under this "
+            "resource. Check activity economic_treatment, planning_eligibility, "
+            "and approved cost-mapping coverage."
+        )
+    if resource.total is not None and (
+        not np.isfinite(resource.total) or resource.total < 0
+    ):
+        raise ValueError(
+            f"OptimizationResource {resource.resource_id!r}.total must be "
+            "finite and non-negative"
+        )
+
+    by_input = activity_by_model_input(activity_definitions, market)
+    by_id: Dict[str, ActivityDefinition] = {}
+    for definition in by_input.values():
+        by_id.setdefault(definition.activity_id, definition)
+    plan_activity_ids = {
+        by_input[channel].activity_id
+        for channel in channels
+        if channel in by_input
+    }
+
+    unknown = [
+        activity_id
+        for activity_id in resource.eligible_activity_ids
+        if activity_id not in by_id
+    ]
+    if unknown:
+        raise ValueError(
+            f"OptimizationResource {resource.resource_id!r} references "
+            f"unknown activity ID(s): {sorted(unknown)}"
+        )
+
+    not_in_plan = [
+        activity_id
+        for activity_id in resource.eligible_activity_ids
+        if activity_id not in plan_activity_ids
+    ]
+    if not_in_plan:
+        raise ValueError(
+            f"OptimizationResource {resource.resource_id!r} references "
+            "activity ID(s) not present among this optimisation's channels: "
+            f"{sorted(not_in_plan)}"
+        )
+
+    not_in_market = [
+        activity_id
+        for activity_id in resource.eligible_activity_ids
+        if not by_id[activity_id].applies_to_market(market)
+    ]
+    if not_in_market:
+        raise ValueError(
+            f"OptimizationResource {resource.resource_id!r} references "
+            f"activity ID(s) not applicable to market {market!r}: "
+            f"{sorted(not_in_market)}"
+        )
+
+    not_optimisable = [
+        activity_id
+        for activity_id in resource.eligible_activity_ids
+        if by_id[activity_id].planning_eligibility != "optimisable"
+    ]
+    if not_optimisable:
+        raise ValueError(
+            f"OptimizationResource {resource.resource_id!r} references "
+            f"activity ID(s) that are not planning_eligibility='optimisable': "
+            f"{sorted(not_optimisable)}"
+        )
+
+    if resource.unit == "currency":
+        not_cost_bearing = [
+            activity_id
+            for activity_id in resource.eligible_activity_ids
+            if not by_id[activity_id].is_cost_bearing
+        ]
+        if not_cost_bearing:
+            raise ValueError(
+                f"OptimizationResource {resource.resource_id!r} is a "
+                "currency resource but references non-cost-bearing "
+                f"activity ID(s): {sorted(not_cost_bearing)}"
+            )
+
+        if cost_mapping_registry is not None:
+            candidates = {
+                activity_id: by_id[activity_id]
+                for activity_id in resource.eligible_activity_ids
+            }
+            currency_by_activity = _resolved_currency_by_activity(
+                candidates, market, cost_mapping_registry, cost_context_id, cost_as_of,
+            )
+            unresolved = [
+                activity_id
+                for activity_id in resource.eligible_activity_ids
+                if activity_id not in currency_by_activity
+            ]
+            if unresolved:
+                raise ValueError(
+                    f"OptimizationResource {resource.resource_id!r} "
+                    "references activity ID(s) with no approved, effective "
+                    f"cost mapping: {sorted(unresolved)}"
+                )
+            currencies = set(currency_by_activity.values())
+            if resource.currency is not None:
+                currencies.add(resource.currency)
+            if len(currencies) > 1:
+                raise ValueError(
+                    f"OptimizationResource {resource.resource_id!r} spans "
+                    f"more than one currency: {sorted(currencies)} - a "
+                    "monetary resource must never pool decisions across "
+                    "currencies into one conserved total."
+                )
 
 
 def seed_monetary_and_quantity_defaults(
@@ -1385,19 +1573,33 @@ def optimize_scenario(
     )
     resource: Optional[OptimizationResource] = None
     resource_channels: Optional[List[str]] = None
+    reference_resource_total: Optional[float] = None
+    optimisation_resource_total: Optional[float] = None
     if activity_definitions is not None:
         missing_activity = set(channels) - set(activity_map)
         if missing_activity:
             raise ValueError(
                 f"Missing activity definitions for {sorted(missing_activity)}"
             )
+        resource_cost_as_of = (
+            (cost_as_of_by_month or {}).get(months[0]) if months else None
+        )
         resource = optimization_resource or monetary_optimization_resource(
             activity_definitions, market,
             cost_mapping_registry=cost_mapping_registry,
             cost_context_id=cost_context_id or "default",
-            cost_as_of=(
-                (cost_as_of_by_month or {}).get(months[0]) if months else None
-            ),
+            cost_as_of=resource_cost_as_of,
+            channels=channels,
+        )
+        # Validate unconditionally - a caller-supplied `optimization_resource`
+        # cannot be trusted to already respect these rules, and the default
+        # resource is cheap to re-check for defense in depth (PR G2A.6b
+        # workstream 1). Raises before the (potentially slow) SLSQP call.
+        validate_optimization_resource(
+            resource, activity_definitions, market, channels,
+            cost_mapping_registry=cost_mapping_registry,
+            cost_context_id=cost_context_id or "default",
+            cost_as_of=resource_cost_as_of,
         )
         resource_channels = [
             channel
@@ -1416,14 +1618,12 @@ def optimize_scenario(
         # run. A response-only/quantity activity marked "optimisable" for
         # scenario purposes is still not denominated in this resource's
         # unit, so it must never be traded against it (PR G2A.6 workstream A).
+        # `resource.eligible_activity_ids` is already validated above, so
+        # membership alone is sufficient here.
         for month in months:
             for channel in channels:
                 definition = activity_map[channel]
-                eligible = (
-                    definition.activity_id in resource.eligible_activity_ids
-                    and definition.planning_eligibility == "optimisable"
-                )
-                if not eligible:
+                if definition.activity_id not in resource.eligible_activity_ids:
                     index = _cell_index(month, channel, months, channels)
                     value = float(current_spend[index])
                     bounds[index] = (value, value)
@@ -1435,14 +1635,27 @@ def optimize_scenario(
                 for month in months
                 for channel in resource_channels
             ]
-            if eligible_indices:
-                total_row = np.zeros(len(current_spend))
-                total_row[eligible_indices] = 1
-                target = float(current_spend[eligible_indices].sum())
-                linear_constraints.append(
-                    LinearConstraint(total_row, lb=target, ub=target)
+            # `resource_channels` is non-empty here: validate_optimization_resource
+            # above already rejected an empty resource, and every eligible
+            # activity ID was confirmed present among `channels`.
+            reference_resource_total = float(current_spend[eligible_indices].sum())
+            optimisation_resource_total = (
+                float(resource.total)
+                if resource.total is not None
+                else reference_resource_total
+            )
+            total_row = np.zeros(len(current_spend))
+            total_row[eligible_indices] = 1
+            linear_constraints.append(
+                LinearConstraint(
+                    total_row,
+                    lb=optimisation_resource_total,
+                    ub=optimisation_resource_total,
                 )
+            )
         else:
+            reference_resource_total = float(current_spend.sum())
+            optimisation_resource_total = reference_resource_total
             total_row = np.ones(len(current_spend))
             linear_constraints.append(LinearConstraint(total_row, lb=current_spend.sum(), ub=current_spend.sum()))
 
@@ -1585,6 +1798,8 @@ def optimize_scenario(
         "counterfactual_policy": policy.to_dict(),
         "counterfactual_policy_fingerprint": policy.fingerprint(),
         "optimization_resource": resource.to_dict() if resource is not None else None,
+        "reference_resource_total": reference_resource_total,
+        "optimisation_resource_total": optimisation_resource_total,
         "activity_definitions_fingerprint": (
             activity_definitions_fingerprint(activity_definitions)
             if activity_definitions is not None

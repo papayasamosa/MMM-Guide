@@ -24,6 +24,7 @@ from ancestry_mmm.core.optimization import (
     scenario_from_dict,
     scenario_to_dict,
     seed_monetary_and_quantity_defaults,
+    validate_optimization_resource,
     VALID_OBJECTIVES,
 )
 from ancestry_mmm.core.outcomes import FAMILY_HISTORY, DNA, METRIC_GSA, METRIC_KIT_SALE, OutcomeDefinition
@@ -483,9 +484,75 @@ def test_saved_scenario_preserves_typed_objective_and_activity_fingerprint():
     assert restored["activity_definitions_fingerprint"] == "activity-fp"
 
 
-def test_non_optimisable_activity_is_held_fixed(
+def test_non_optimisable_activity_is_held_fixed(approval):
+    # A monetary resource with zero eligible activities now raises (PR
+    # G2A.6b workstream 1's "fail clearly on empty resources"), so this
+    # needs a second, cost-bearing optimisable channel alongside the fixed
+    # one - the point of the test is that the fixed channel doesn't move,
+    # not that the whole optimisation is a no-op.
+    meta = FHModelMeta(
+        markets=["UK"], outcome_ids=["New"], channels=["TV_Brand", "Search_Paid"],
+        dna_channels=[], dna_channel_idx=[], non_dna_idx=[0, 1],
+        dna_outcome_id="New", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+    )
+    params = FHPosteriorParams(
+        decay_rate={"TV_Brand": 0.5, "Search_Paid": 0.3},
+        hill_K={"TV_Brand": 1000.0, "Search_Paid": 500.0},
+        hill_S={"TV_Brand": 1.0, "Search_Paid": 1.0},
+        beta={"New": {"TV_Brand": 0.1, "Search_Paid": 0.2}},
+        pathway_strength={}, promo_coef={"New": 0.1},
+        market_offset={"UK": {"New": 0.0}}, intercept={"New": 3.0}, trend_coef={"New": 0.0},
+        gamma_fourier={"New": np.zeros(6)}, alpha={"New": 5.0}, control_coef={}, outcome_control_coef={},
+    )
+    reference_context = {
+        "2024-01": {"trend": 1.0, "fourier": np.zeros(6), "promo": {"New": 0.0}, "controls": {}, "outcome_controls": {}}
+    }
+    fixed_activity = ActivityDefinition(
+        activity_id="owned-tv",
+        channel="TV_Brand",
+        activity_ownership="owned",
+        model_role="intervention",
+        economic_treatment="response_only",
+        planning_eligibility="scenario_only",
+        source="owned delivery plan",
+    )
+    optimisable_activity = _paid_activity("search-paid", "Search_Paid")
+    spend_plan = {"2024-01": {"TV_Brand": 1000.0, "Search_Paid": 500.0}}
+    registry = CostMappingRegistry([
+        FixedCostPerUnitMapping(
+            mapping_id="uk-search-paid-map", market="UK", channel="Search_Paid", currency="GBP",
+            cost_context_id="default", source="finance rate card",
+            approval_status="approved", approved_by="finance-owner",
+            approved_at="2026-01-01T10:00:00Z", owner="media-finance",
+            approval_note="approved", last_reviewed_at="2026-01-01", cost_per_media_input=1.0,
+        ),
+    ])
+    result = optimize_scenario(
+        spend_plan,
+        ["2024-01"],
+        ["TV_Brand", "Search_Paid"],
+        "UK",
+        meta,
+        params,
+        reference_context,
+        objective="fh_gsa",
+        activity_definitions=[fixed_activity, optimisable_activity],
+        approval=approval,
+        cost_mapping_registry=registry,
+        cost_context_id="default",
+        cost_as_of_by_month={"2024-01": "2024-01-01"},
+        **IDENTITY,
+    )
+    assert result["spend_plan"]["2024-01"]["TV_Brand"] == pytest.approx(1000.0)
+    assert result["activity_definitions_fingerprint"]
+
+
+def test_optimize_scenario_raises_clearly_on_an_empty_monetary_resource(
     meta, params, approval, spend_plan, reference_context
 ):
+    # The only activity is response-only, so the default monetary resource
+    # has no eligible activities - this must fail loudly, not silently
+    # return the current plan as if optimisation had run.
     activity = ActivityDefinition(
         activity_id="owned-tv",
         channel="TV_Brand",
@@ -495,21 +562,20 @@ def test_non_optimisable_activity_is_held_fixed(
         planning_eligibility="scenario_only",
         source="owned delivery plan",
     )
-    result = optimize_scenario(
-        spend_plan,
-        ["2024-01"],
-        ["TV_Brand"],
-        "UK",
-        meta,
-        params,
-        reference_context,
-        objective="fh_gsa",
-        activity_definitions=[activity],
-        approval=approval,
-        **IDENTITY,
-    )
-    assert result["spend_plan"] == spend_plan
-    assert result["activity_definitions_fingerprint"]
+    with pytest.raises(ValueError, match="no eligible activities"):
+        optimize_scenario(
+            spend_plan,
+            ["2024-01"],
+            ["TV_Brand"],
+            "UK",
+            meta,
+            params,
+            reference_context,
+            objective="fh_gsa",
+            activity_definitions=[activity],
+            approval=approval,
+            **IDENTITY,
+        )
 
     def test_invalid_objective_raises_before_optimising(self, meta, params, approval, spend_plan, reference_context, monkeypatch):
         import ancestry_mmm.core.optimization as optimization_module
@@ -1105,6 +1171,194 @@ class TestOptimizationResource:
         assert resource.eligible_activity_ids == ("tv-paid",)
         assert resource.currency == "GBP"
 
+    def test_monetary_resource_scopes_to_given_channels_not_the_whole_governance_registry(self):
+        activities = [
+            _paid_activity("tv-paid", "TV_Paid"),
+            # Registered for this market but not part of this optimisation's
+            # channels - e.g. belongs to a different fitted model.
+            _paid_activity("other-market-channel", "Other_Channel"),
+        ]
+        resource = monetary_optimization_resource(
+            activities, "UK", channels=["TV_Paid"],
+        )
+        assert resource.eligible_activity_ids == ("tv-paid",)
+
+
+# ---------------------------------------------------------------------------
+# PR G2A.6b workstream 1: reject a caller-supplied OptimizationResource that
+# would reintroduce mixed units, unknown activities, or other invalid state
+# rather than trusting it to already be safe.
+# ---------------------------------------------------------------------------
+
+class TestValidateOptimizationResource:
+    def _activities(self):
+        return [
+            _paid_activity("tv-paid", "TV_Paid"),
+            _paid_activity("search-paid", "Search_Paid"),
+            _response_only_activity("organic-social", "Organic_Social"),
+            _paid_activity("tv-fixed", "TV_Fixed", planning_eligibility="fixed"),
+        ]
+
+    def _channels(self):
+        return ["TV_Paid", "Search_Paid", "Organic_Social", "TV_Fixed"]
+
+    def test_valid_custom_resource_passes(self):
+        resource = OptimizationResource(
+            resource_id="custom", unit="currency", currency="GBP",
+            eligible_activity_ids=("tv-paid", "search-paid"),
+        )
+        validate_optimization_resource(
+            resource, self._activities(), "UK", self._channels(),
+        )  # no raise
+
+    def test_rejects_unknown_activity_id(self):
+        resource = OptimizationResource(
+            resource_id="custom", unit="currency",
+            eligible_activity_ids=("does-not-exist",),
+        )
+        with pytest.raises(ValueError, match="unknown activity ID"):
+            validate_optimization_resource(
+                resource, self._activities(), "UK", self._channels(),
+            )
+
+    def test_rejects_duplicate_activity_ids(self):
+        resource = OptimizationResource(
+            resource_id="custom", unit="currency",
+            eligible_activity_ids=("tv-paid", "tv-paid"),
+        )
+        with pytest.raises(ValueError, match="duplicate"):
+            validate_optimization_resource(
+                resource, self._activities(), "UK", self._channels(),
+            )
+
+    def test_rejects_empty_resource(self):
+        resource = OptimizationResource(
+            resource_id="custom", unit="currency", eligible_activity_ids=(),
+        )
+        with pytest.raises(ValueError, match="no eligible activities"):
+            validate_optimization_resource(
+                resource, self._activities(), "UK", self._channels(),
+            )
+
+    def test_rejects_blank_unit(self):
+        resource = OptimizationResource(
+            resource_id="custom", unit="", eligible_activity_ids=("tv-paid",),
+        )
+        with pytest.raises(ValueError, match="blank unit"):
+            validate_optimization_resource(
+                resource, self._activities(), "UK", self._channels(),
+            )
+
+    def test_rejects_non_cost_bearing_activity_in_a_currency_resource(self):
+        resource = OptimizationResource(
+            resource_id="custom", unit="currency",
+            eligible_activity_ids=("organic-social",),
+        )
+        with pytest.raises(ValueError, match="non-cost-bearing"):
+            validate_optimization_resource(
+                resource, self._activities(), "UK", self._channels(),
+            )
+
+    def test_rejects_non_optimisable_activity(self):
+        resource = OptimizationResource(
+            resource_id="custom", unit="currency",
+            eligible_activity_ids=("tv-fixed",),
+        )
+        with pytest.raises(ValueError, match="not planning_eligibility"):
+            validate_optimization_resource(
+                resource, self._activities(), "UK", self._channels(),
+            )
+
+    def test_rejects_activity_not_among_this_optimisations_channels(self):
+        activities = self._activities() + [_paid_activity("other", "Other_Channel")]
+        resource = OptimizationResource(
+            resource_id="custom", unit="currency",
+            eligible_activity_ids=("tv-paid", "other"),
+        )
+        with pytest.raises(ValueError, match="not present among this optimisation's channels"):
+            validate_optimization_resource(
+                resource, activities, "UK", self._channels(),
+            )
+
+    def test_rejects_activity_not_applicable_to_market(self):
+        activities = self._activities() + [
+            ActivityDefinition(
+                activity_id="au-only-tv", channel="TV_Paid", market="Australia",
+                activity_ownership="paid", model_role="intervention",
+                economic_treatment="paid_media_cost", planning_eligibility="optimisable",
+                source="finance",
+            )
+        ]
+        resource = OptimizationResource(
+            resource_id="custom", unit="currency",
+            eligible_activity_ids=("au-only-tv",),
+        )
+        with pytest.raises(ValueError, match="not applicable to market"):
+            validate_optimization_resource(
+                resource, activities, "UK", self._channels(),
+            )
+
+    def test_rejects_mixed_currency_when_registry_given(self):
+        activities = self._activities()
+        registry = CostMappingRegistry([
+            FixedCostPerUnitMapping(
+                mapping_id="uk-tv-paid-map", market="UK", channel="TV_Paid", currency="GBP",
+                cost_context_id="default", source="finance", approval_status="approved",
+                approved_by="finance-owner", approved_at="2026-01-01T10:00:00Z",
+                owner="media-finance", approval_note="approved", last_reviewed_at="2026-01-01",
+                cost_per_media_input=1.0,
+            ),
+            FixedCostPerUnitMapping(
+                mapping_id="uk-search-paid-map", market="UK", channel="Search_Paid", currency="USD",
+                cost_context_id="default", source="finance", approval_status="approved",
+                approved_by="finance-owner", approved_at="2026-01-01T10:00:00Z",
+                owner="media-finance", approval_note="approved", last_reviewed_at="2026-01-01",
+                cost_per_media_input=1.0,
+            ),
+        ])
+        resource = OptimizationResource(
+            resource_id="custom", unit="currency",
+            eligible_activity_ids=("tv-paid", "search-paid"),
+        )
+        with pytest.raises(ValueError, match="more than one currency"):
+            validate_optimization_resource(
+                resource, activities, "UK", self._channels(),
+                cost_mapping_registry=registry, cost_context_id="default",
+                cost_as_of="2026-06-01",
+            )
+
+    def test_rejects_activity_with_no_resolvable_mapping_when_registry_given(self):
+        activities = self._activities()
+        registry = CostMappingRegistry([
+            FixedCostPerUnitMapping(
+                mapping_id="uk-tv-paid-map", market="UK", channel="TV_Paid", currency="GBP",
+                cost_context_id="default", source="finance", approval_status="approved",
+                approved_by="finance-owner", approved_at="2026-01-01T10:00:00Z",
+                owner="media-finance", approval_note="approved", last_reviewed_at="2026-01-01",
+                cost_per_media_input=1.0,
+            ),
+        ])
+        resource = OptimizationResource(
+            resource_id="custom", unit="currency",
+            eligible_activity_ids=("tv-paid", "search-paid"),
+        )
+        with pytest.raises(ValueError, match="no approved, effective cost mapping"):
+            validate_optimization_resource(
+                resource, activities, "UK", self._channels(),
+                cost_mapping_registry=registry, cost_context_id="default",
+                cost_as_of="2026-06-01",
+            )
+
+    def test_rejects_non_finite_or_negative_total(self):
+        resource = OptimizationResource(
+            resource_id="custom", unit="currency",
+            eligible_activity_ids=("tv-paid",), total=-100.0,
+        )
+        with pytest.raises(ValueError, match="finite and non-negative"):
+            validate_optimization_resource(
+                resource, self._activities(), "UK", self._channels(),
+            )
+
 
 class TestOptimizerDimensionalCorrectness:
     def test_optimizer_never_trades_currency_against_a_response_only_quantity(self, approval):
@@ -1190,6 +1444,81 @@ class TestOptimizerDimensionalCorrectness:
         )
         assert linear_constraints[0].lb == pytest.approx(800.0)
         assert linear_constraints[0].ub == pytest.approx(800.0)
+
+    def _single_channel_registry(self, channel: str, activity_id: str) -> CostMappingRegistry:
+        return CostMappingRegistry([
+            FixedCostPerUnitMapping(
+                mapping_id=f"uk-{activity_id}-map", market="UK", channel=channel, currency="GBP",
+                cost_context_id="default", source="finance rate card",
+                approval_status="approved", approved_by="finance-owner",
+                approved_at="2026-01-01T10:00:00Z", owner="media-finance",
+                approval_note="approved", last_reviewed_at="2026-01-01", cost_per_media_input=1.0,
+            ),
+        ])
+
+    def test_declared_resource_total_is_conserved_instead_of_the_current_plan_total(self, approval):
+        # PR G2A.6b workstream 1: OptimizationResource.total, when given,
+        # must be the conserved target - not silently ignored in favour of
+        # the current plan's sum.
+        meta = FHModelMeta(
+            markets=["UK"], outcome_ids=["New"], channels=["TV_Paid"],
+            dna_channels=[], dna_channel_idx=[], non_dna_idx=[0],
+            dna_outcome_id="New", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+        )
+        params = FHPosteriorParams(
+            decay_rate={"TV_Paid": 0.5}, hill_K={"TV_Paid": 5000.0}, hill_S={"TV_Paid": 1.0},
+            beta={"New": {"TV_Paid": 0.1}}, pathway_strength={}, promo_coef={"New": 0.1},
+            market_offset={"UK": {"New": 0.0}}, intercept={"New": 3.0}, trend_coef={"New": 0.0},
+            gamma_fourier={"New": np.zeros(6)}, alpha={"New": 5.0}, control_coef={}, outcome_control_coef={},
+        )
+        reference_context = {
+            "2024-01": {"trend": 1.0, "fourier": np.zeros(6), "promo": {"New": 0.0}, "controls": {}, "outcome_controls": {}}
+        }
+        activity = _paid_activity("tv-paid", "TV_Paid")
+        current_plan = {"2024-01": {"TV_Paid": 1000.0}}
+        resource = OptimizationResource(
+            resource_id="declared_budget", unit="currency", currency="GBP",
+            eligible_activity_ids=("tv-paid",), total=2500.0,
+        )
+        result = optimize_scenario(
+            current_plan, ["2024-01"], meta.channels, "UK", meta, params, reference_context,
+            objective="fh_gsa", activity_definitions=[activity], approval=approval,
+            cost_mapping_registry=self._single_channel_registry("TV_Paid", "tv-paid"),
+            cost_context_id="default", cost_as_of_by_month={"2024-01": "2024-01-01"},
+            optimization_resource=resource,
+            **IDENTITY,
+        )
+        assert result["spend_plan"]["2024-01"]["TV_Paid"] == pytest.approx(2500.0)
+        assert result["reference_resource_total"] == pytest.approx(1000.0)
+        assert result["optimisation_resource_total"] == pytest.approx(2500.0)
+
+    def test_reference_and_target_totals_agree_when_no_declared_total_is_given(self, approval):
+        meta = FHModelMeta(
+            markets=["UK"], outcome_ids=["New"], channels=["TV_Paid"],
+            dna_channels=[], dna_channel_idx=[], non_dna_idx=[0],
+            dna_outcome_id="New", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+        )
+        params = FHPosteriorParams(
+            decay_rate={"TV_Paid": 0.5}, hill_K={"TV_Paid": 5000.0}, hill_S={"TV_Paid": 1.0},
+            beta={"New": {"TV_Paid": 0.1}}, pathway_strength={}, promo_coef={"New": 0.1},
+            market_offset={"UK": {"New": 0.0}}, intercept={"New": 3.0}, trend_coef={"New": 0.0},
+            gamma_fourier={"New": np.zeros(6)}, alpha={"New": 5.0}, control_coef={}, outcome_control_coef={},
+        )
+        reference_context = {
+            "2024-01": {"trend": 1.0, "fourier": np.zeros(6), "promo": {"New": 0.0}, "controls": {}, "outcome_controls": {}}
+        }
+        activity = _paid_activity("tv-paid", "TV_Paid")
+        current_plan = {"2024-01": {"TV_Paid": 1000.0}}
+        result = optimize_scenario(
+            current_plan, ["2024-01"], meta.channels, "UK", meta, params, reference_context,
+            objective="fh_gsa", activity_definitions=[activity], approval=approval,
+            cost_mapping_registry=self._single_channel_registry("TV_Paid", "tv-paid"),
+            cost_context_id="default", cost_as_of_by_month={"2024-01": "2024-01-01"},
+            **IDENTITY,
+        )
+        assert result["reference_resource_total"] == pytest.approx(1000.0)
+        assert result["optimisation_resource_total"] == pytest.approx(1000.0)
+        assert result["spend_plan"]["2024-01"]["TV_Paid"] == pytest.approx(1000.0)
 
 
 # ---------------------------------------------------------------------------

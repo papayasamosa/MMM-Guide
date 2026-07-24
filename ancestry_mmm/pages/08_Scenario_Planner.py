@@ -247,12 +247,31 @@ for d, m in zip(month_dates, months):
 # media_input_to_spend, never by treating the raw model input as spend
 # (PR G2A.6 workstream C). Activities without a resolvable effective
 # mapping default to 0 rather than mislabel media-input units as currency.
+#
+# The mapping used for that conversion is resolved as of the most recent
+# *historical* observation for this market, never the future plan-start
+# date - applying a not-yet-effective future cost assumption to historical
+# delivery would misstate the reference plan (PR G2A.6b workstream 2).
+# There is no genuine historical spend series retained separately from the
+# fitted model input in this project's data model, so this reverse
+# conversion remains an estimated reference, not a record of actual spend.
+by_input_for_seeding = (
+    activity_by_model_input(activity_definitions, market) if activity_definitions else {}
+)
 if market_mask.any():
     avg_weekly_media_input = frame["X_media"][market_mask].mean(axis=0)
+    historical_reference_date = pd.Timestamp(frame["dates"][market_mask][-1])
 else:
     avg_weekly_media_input = frame["X_media"].mean(axis=0)
+    historical_reference_date = (
+        pd.Timestamp(frame["dates"][-1]) if len(frame["dates"]) else None
+    )
 avg_weekly_by_channel = dict(zip(meta.channels, avg_weekly_media_input))
-seed_as_of = f"{months[0]}-01" if months and len(months[0]) == 7 else months[0]
+seed_as_of = (
+    historical_reference_date.strftime("%Y-%m-%d")
+    if historical_reference_date is not None
+    else None
+)
 default_by_channel, unmapped_cost_bearing_channels = (
     seed_monetary_and_quantity_defaults(
         avg_weekly_media_input=avg_weekly_by_channel,
@@ -270,6 +289,15 @@ if unmapped_cost_bearing_channels:
         "cost mapping (never inferred from the raw model input): "
         + ", ".join(readable_label(c) for c in sorted(unmapped_cost_bearing_channels))
         + ". Configure a mapping on Channel & Media Units to seed a spend default."
+    )
+if historical_reference_date is not None and any(
+    definition.is_cost_bearing for definition in by_input_for_seeding.values()
+):
+    st.caption(
+        "Monetary defaults for cost-bearing activities are an **estimated reference**: "
+        f"historical average model input as of {historical_reference_date.date()} "
+        "(the most recent observed period for this market), converted through the cost "
+        "mapping effective on that date - not a record of actual historical spend."
     )
 
 plan_key = f"spend_plan_editor_{market}_{n_months}_{start_month}"
