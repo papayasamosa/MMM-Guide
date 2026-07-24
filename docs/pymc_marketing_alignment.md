@@ -1,6 +1,6 @@
 # PyMC Marketing alignment
 
-Status: G2A.3, reviewed 2026-07-23.
+Status: G2A.4, reviewed 2026-07-24.
 
 The product claim is: **Built in PyMC and informed by PyMC Marketing.**
 

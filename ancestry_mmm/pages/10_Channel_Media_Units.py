@@ -18,6 +18,13 @@ from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.market_config import (
     ChannelMediaUnitConfig, MarketSpecConfig, UNIT_TYPE_SUGGESTIONS, COST_BASIS_SUGGESTIONS,
 )
+from ancestry_mmm.core.activities import (
+    ECONOMIC_TREATMENTS,
+    MODEL_ROLES,
+    OWNERSHIP,
+    PLANNING_ELIGIBILITY,
+    ActivityDefinition,
+)
 from ancestry_mmm.data import detect_column_types
 
 st.set_page_config(page_title="Channel & Media Units - Ancestry FH MMM", page_icon="🧬", layout="wide")
@@ -52,6 +59,10 @@ numeric_cols = hints["numeric"]
 
 config_dict = get_state("market_spec_config")
 market_config = MarketSpecConfig.from_dict(config_dict)
+existing_activities = {
+    item["channel"]: item
+    for item in (get_state("activity_definitions") or [])
+}
 
 for market in spec.markets:
     with st.expander(f"Market: {market}", expanded=len(spec.markets) == 1):
@@ -95,9 +106,89 @@ for market in spec.markets:
             ))
             st.markdown("---")
 
+st.markdown("### Activity ownership and planning governance")
+st.caption(
+    "Owned and earned activity can be measured without inventing a zero cost. "
+    "Mediators, controls, and events cannot be freely optimised."
+)
+activity_definitions = []
+activity_errors = []
+for channel in spec.channels:
+    existing = existing_activities.get(channel, {})
+    with st.expander(f"Activity: {readable_label(channel)}"):
+        c1, c2, c3, c4 = st.columns(4)
+        ownership = c1.selectbox(
+            "Ownership",
+            sorted(OWNERSHIP),
+            index=sorted(OWNERSHIP).index(
+                existing.get("activity_ownership", "paid")
+            ),
+            key=f"activity_owner_{channel}",
+        )
+        role = c2.selectbox(
+            "Model role",
+            sorted(MODEL_ROLES),
+            index=sorted(MODEL_ROLES).index(
+                existing.get("model_role", "intervention")
+            ),
+            key=f"activity_role_{channel}",
+        )
+        economics = c3.selectbox(
+            "Economic treatment",
+            sorted(ECONOMIC_TREATMENTS),
+            index=sorted(ECONOMIC_TREATMENTS).index(
+                existing.get("economic_treatment", "paid_media_cost")
+            ),
+            key=f"activity_economics_{channel}",
+        )
+        planning = c4.selectbox(
+            "Planning eligibility",
+            sorted(PLANNING_ELIGIBILITY),
+            index=sorted(PLANNING_ELIGIBILITY).index(
+                existing.get("planning_eligibility", "optimisable")
+            ),
+            key=f"activity_planning_{channel}",
+        )
+        try:
+            activity_definitions.append(
+                ActivityDefinition(
+                    activity_id=existing.get("activity_id", channel),
+                    channel=channel,
+                    activity_ownership=ownership,
+                    model_role=role,
+                    economic_treatment=economics,
+                    planning_eligibility=planning,
+                    source=existing.get("source", "channel mapping UI"),
+                    evidence_status=existing.get(
+                        "evidence_status", "not_assessed"
+                    ),
+                    governance_notes=existing.get("governance_notes", ""),
+                )
+            )
+        except ValueError as error:
+            activity_errors.append(f"{readable_label(channel)}: {error}")
+            st.error(f"{readable_label(channel)}: {error}")
+
 if st.button("Save channel & media-unit mapping", type="primary"):
-    set_state("market_spec_config", market_config.to_dict())
-    mapped = sum(1 for c in market_config.channel_media_units.values() if c.has_media_unit())
-    st.success(f"Saved. {mapped} of {len(spec.markets) * len(spec.channels)} channel/market combinations have a media-unit mapping.")
+    if activity_errors:
+        st.error(
+            "Nothing was saved. Resolve every activity-governance error first."
+        )
+    else:
+        set_state("market_spec_config", market_config.to_dict())
+        set_state(
+            "activity_definitions",
+            [definition.to_dict() for definition in activity_definitions],
+        )
+        mapped = sum(
+            1
+            for config in market_config.channel_media_units.values()
+            if config.has_media_unit()
+        )
+        st.success(
+            f"Saved. {mapped} of "
+            f"{len(spec.markets) * len(spec.channels)} channel/market "
+            "combinations have a media-unit mapping."
+        )
 
 render_next_step("channel_media_units")

@@ -26,12 +26,14 @@ import numpy as np
 import pandas as pd
 
 from .hierarchical_model import FHModelMeta
+from .activities import ActivityDefinition, activity_definitions_fingerprint
 from .media_costs import (
     CostMappingRegistry,
     MediaCostMapping,
     MediaInputSpec,
     MediaInputSupport,
     MonetarySpendSupport,
+    monetary_governance_fingerprint,
 )
 from .market_specific_predict import (
     extract_market_specific_posterior_params,
@@ -87,7 +89,7 @@ IDENTITY_COLUMNS = [
 ]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class CurveReferenceContext:
     """Business context held fixed while one channel's spend is varied."""
 
@@ -99,23 +101,65 @@ class CurveReferenceContext:
     promo: Mapping[str, float]
     controls: Mapping[str, float]
     outcome_controls: Mapping[str, Mapping[str, float]]
-    other_channel_spend: Mapping[str, float]
-    counterfactual_spend: float = 0.0
+    other_channel_media_input: Mapping[str, float]
+    counterfactual_value: float = 0.0
+    counterfactual_axis_type: str = "model_input"
     reference_period_start: Optional[str] = None
     reference_period_end: Optional[str] = None
     other_media_assumption: str = "held_at_reference"
     promotion_assumption: str = "explicit_reference_values"
     seasonality_assumption: str = "explicit_fourier_values"
 
-    @property
-    def other_channel_media_input(self) -> Mapping[str, float]:
-        """Model-input values held fixed for non-selected channels."""
-        return self.other_channel_spend
+    def __init__(
+        self,
+        reference_context_id: str,
+        mode: str,
+        market: str,
+        trend: float,
+        fourier: Tuple[float, ...],
+        promo: Mapping[str, float],
+        controls: Mapping[str, float],
+        outcome_controls: Mapping[str, Mapping[str, float]],
+        other_channel_media_input: Optional[Mapping[str, float]] = None,
+        counterfactual_value: float = 0.0,
+        counterfactual_axis_type: str = "model_input",
+        reference_period_start: Optional[str] = None,
+        reference_period_end: Optional[str] = None,
+        other_media_assumption: str = "held_at_reference",
+        promotion_assumption: str = "explicit_reference_values",
+        seasonality_assumption: str = "explicit_fourier_values",
+        *,
+        other_channel_spend: Optional[Mapping[str, float]] = None,
+        counterfactual_spend: Optional[float] = None,
+    ) -> None:
+        if other_channel_media_input is None:
+            if other_channel_spend is None:
+                raise ValueError("other_channel_media_input is required")
+            warnings.warn(
+                "other_channel_spend is deprecated; values are model inputs",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            other_channel_media_input = other_channel_spend
+        if counterfactual_spend is not None:
+            warnings.warn(
+                "counterfactual_spend is deprecated; use counterfactual_value",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            counterfactual_value = counterfactual_spend
+        for name, value in locals().copy().items():
+            if name not in {"self", "other_channel_spend", "counterfactual_spend"}:
+                object.__setattr__(self, name, value)
+        self.__post_init__()
 
     @property
-    def counterfactual_value(self) -> float:
-        """Selected-channel value on the curve's declared axis."""
-        return self.counterfactual_spend
+    def other_channel_spend(self) -> Mapping[str, float]:
+        return self.other_channel_media_input
+
+    @property
+    def counterfactual_spend(self) -> float:
+        return self.counterfactual_value
 
     def __post_init__(self) -> None:
         if not self.reference_context_id:
@@ -128,11 +172,13 @@ class CurveReferenceContext:
             raise ValueError("reference market is required")
         if not np.isfinite(self.trend):
             raise ValueError("reference trend must be finite")
-        if self.counterfactual_spend < 0 or not np.isfinite(
-            self.counterfactual_spend
+        if self.counterfactual_axis_type not in {"model_input", "monetary"}:
+            raise ValueError("counterfactual_axis_type must be model_input or monetary")
+        if self.counterfactual_value < 0 or not np.isfinite(
+            self.counterfactual_value
         ):
             raise ValueError("counterfactual_spend must be finite and non-negative")
-        if any(value < 0 or not np.isfinite(value) for value in self.other_channel_spend.values()):
+        if any(value < 0 or not np.isfinite(value) for value in self.other_channel_media_input.values()):
             raise ValueError("other-channel reference spend must be finite and non-negative")
 
     def prediction_context(self) -> dict:
@@ -146,6 +192,49 @@ class CurveReferenceContext:
             },
         }
 
+    def to_dict(self) -> dict:
+        return {
+            "reference_context_id": self.reference_context_id,
+            "mode": self.mode,
+            "market": self.market,
+            "trend": self.trend,
+            "fourier": list(self.fourier),
+            "promo": dict(self.promo),
+            "controls": dict(self.controls),
+            "outcome_controls": {
+                key: dict(value)
+                for key, value in self.outcome_controls.items()
+            },
+            "other_channel_media_input": dict(
+                self.other_channel_media_input
+            ),
+            "counterfactual_value": self.counterfactual_value,
+            "counterfactual_axis_type": self.counterfactual_axis_type,
+            "reference_period_start": self.reference_period_start,
+            "reference_period_end": self.reference_period_end,
+            "other_media_assumption": self.other_media_assumption,
+            "promotion_assumption": self.promotion_assumption,
+            "seasonality_assumption": self.seasonality_assumption,
+            "schema_version": 2,
+        }
+
+    @classmethod
+    def from_dict(cls, values: Mapping[str, object]) -> "CurveReferenceContext":
+        payload = dict(values)
+        payload.pop("schema_version", None)
+        if "other_channel_media_input" not in payload:
+            payload["other_channel_spend"] = payload.pop(
+                "other_channel_spend"
+            )
+        if "counterfactual_value" not in payload:
+            payload["counterfactual_spend"] = payload.pop(
+                "counterfactual_spend", 0.0
+            )
+        payload.setdefault("counterfactual_axis_type", "model_input")
+        if "fourier" in payload:
+            payload["fourier"] = tuple(payload["fourier"])
+        return cls(**payload)
+
     def metadata(self) -> dict:
         return {
             "reference_context_id": self.reference_context_id,
@@ -156,11 +245,8 @@ class CurveReferenceContext:
             "other_media_assumption": self.other_media_assumption,
             "promotion_assumption": self.promotion_assumption,
             "seasonality_assumption": self.seasonality_assumption,
-            "counterfactual_spend": float(self.counterfactual_spend),
             "counterfactual_value": float(self.counterfactual_value),
-            "reference_other_channel_spend": json.dumps(
-                dict(self.other_channel_spend), sort_keys=True
-            ),
+            "counterfactual_axis_type": self.counterfactual_axis_type,
             "reference_other_channel_media_input": json.dumps(
                 dict(self.other_channel_media_input), sort_keys=True
             ),
@@ -483,8 +569,11 @@ def reference_context_from_model_frame(
     period_start: Optional[str] = None,
     period_end: Optional[str] = None,
     specific_week: Optional[str] = None,
+    other_channel_media_input: Optional[Mapping[str, float]] = None,
+    counterfactual_value: float = 0.0,
+    counterfactual_axis_type: str = "model_input",
     other_channel_spend: Optional[Mapping[str, float]] = None,
-    counterfactual_spend: float = 0.0,
+    counterfactual_spend: Optional[float] = None,
 ) -> CurveReferenceContext:
     """Build a recent/period/week reference context from prepared arrays.
 
@@ -551,9 +640,23 @@ def reference_context_from_model_frame(
         outcome_controls[outcome_id] = {
             name: float(averages[index]) for index, name in enumerate(names)
         }
+    if other_channel_media_input is None and other_channel_spend is not None:
+        warnings.warn(
+            "other_channel_spend is deprecated; use other_channel_media_input",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        other_channel_media_input = other_channel_spend
+    if counterfactual_spend is not None:
+        warnings.warn(
+            "counterfactual_spend is deprecated; use counterfactual_value",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        counterfactual_value = counterfactual_spend
     reference_spend = (
-        dict(other_channel_spend)
-        if other_channel_spend is not None
+        dict(other_channel_media_input)
+        if other_channel_media_input is not None
         else {
             channel: float(media[:, index].mean())
             for index, channel in enumerate(meta.channels)
@@ -569,13 +672,14 @@ def reference_context_from_model_frame(
         promo=promo,
         controls=controls,
         outcome_controls=outcome_controls,
-        other_channel_spend=reference_spend,
-        counterfactual_spend=counterfactual_spend,
+        other_channel_media_input=reference_spend,
+        counterfactual_value=counterfactual_value,
+        counterfactual_axis_type=counterfactual_axis_type,
         reference_period_start=str(pd.Timestamp(selected_dates.min()).date()),
         reference_period_end=str(pd.Timestamp(selected_dates.max()).date()),
         other_media_assumption=(
             "explicit_reference"
-            if other_channel_spend is not None
+            if other_channel_media_input is not None
             else f"{mode}_observed_average"
         ),
         promotion_assumption=f"{mode}_observed_average",
@@ -789,6 +893,7 @@ def generate_canonical_curve_draws(
     cost_mapping_registry: Optional[CostMappingRegistry] = None,
     cost_context_id: str = "default",
     cost_as_of_date: Optional[str] = None,
+    activity_definitions: Optional[Mapping[str, ActivityDefinition]] = None,
 ) -> pd.DataFrame:
     """Generate component response decomposition on the outcome-count scale.
 
@@ -804,6 +909,9 @@ def generate_canonical_curve_draws(
     legacy_monetary = curve_type is None
     effective_curve_type = "monetary" if legacy_monetary else curve_type
     input_specs = dict(media_input_specs or {})
+    activities = dict(activity_definitions or {})
+    if activities and set(activities) != set(meta.channels):
+        raise ValueError("Provide exactly one activity definition per channel")
     governed_costs = dict(cost_mappings or {})
     if governed_costs and cost_mapping_registry is not None:
         raise ValueError(
@@ -865,7 +973,7 @@ def generate_canonical_curve_draws(
                 f"Reference context {context.reference_context_id} targets "
                 f"{context.market}, not mapping key {market}"
             )
-        missing_channels = set(meta.channels) - set(context.other_channel_spend)
+        missing_channels = set(meta.channels) - set(context.other_channel_media_input)
         if missing_channels:
             raise ValueError(
                 f"Reference context {context.reference_context_id} is missing "
@@ -929,6 +1037,32 @@ def generate_canonical_curve_draws(
                 axis = _axis_for_channel(spend_points, channel_support, n_points)
                 input_spec = input_specs.get((market, channel))
                 cost_mapping = resolve_cost(market, channel)
+                activity = activities.get(channel)
+                economics_availability = (
+                    activity.economics_status(
+                        has_approved_cost_basis=cost_mapping is not None
+                    )
+                    if activity is not None
+                    else (
+                        "monetary_economics_available"
+                        if cost_mapping is not None or legacy_monetary
+                        else "mapping_missing"
+                    )
+                )
+                monetary_fingerprint = (
+                    monetary_governance_fingerprint(
+                        cost_mappings=(
+                            cost_mapping.to_dict() if cost_mapping else {}
+                        ),
+                        activity_definitions=(
+                            activity.to_dict() if activity else {}
+                        ),
+                        fx_metadata=currency,
+                        planning_support=channel_support,
+                    )
+                    if effective_curve_type == "monetary"
+                    else None
+                )
                 if (
                     not legacy_monetary
                     and cost_mapping is not None
@@ -948,7 +1082,14 @@ def generate_canonical_curve_draws(
                     if model_type == "market_specific"
                     else params.beta
                 )
-                counterfactual_axis = float(context.counterfactual_spend)
+                if (
+                    not legacy_monetary
+                    and context.counterfactual_axis_type != effective_curve_type
+                ):
+                    raise ValueError(
+                        "Reference counterfactual axis does not match curve_type"
+                    )
+                counterfactual_axis = float(context.counterfactual_value)
                 counterfactual = (
                     float(cost_mapping.spend_to_media_input(counterfactual_axis))
                     if effective_curve_type == "monetary"
@@ -956,7 +1097,7 @@ def generate_canonical_curve_draws(
                     and cost_mapping is not None
                     else counterfactual_axis
                 )
-                without_plan = dict(context.other_channel_spend)
+                without_plan = dict(context.other_channel_media_input)
                 without_plan[channel] = counterfactual
                 mu_without = _predict(
                     market=market,
@@ -975,7 +1116,7 @@ def generate_canonical_curve_draws(
                         and cost_mapping is not None
                         else raw_spend
                     )
-                    with_plan = dict(context.other_channel_spend)
+                    with_plan = dict(context.other_channel_media_input)
                     with_plan[channel] = media_input
                     mu_with = _predict(
                         market=market,
@@ -1297,6 +1438,40 @@ def generate_canonical_curve_draws(
                                         )
                                     ),
                                     "cost_context_id": cost_context_id,
+                                    "activity_id": (
+                                        activity.activity_id if activity else None
+                                    ),
+                                    "activity_ownership": (
+                                        activity.activity_ownership
+                                        if activity
+                                        else None
+                                    ),
+                                    "model_role": (
+                                        activity.model_role if activity else None
+                                    ),
+                                    "economic_treatment": (
+                                        activity.economic_treatment
+                                        if activity
+                                        else None
+                                    ),
+                                    "planning_eligibility": (
+                                        activity.planning_eligibility
+                                        if activity
+                                        else None
+                                    ),
+                                    "economics_availability_status": (
+                                        economics_availability
+                                    ),
+                                    "activity_definitions_fingerprint": (
+                                        activity_definitions_fingerprint(
+                                            activities.values()
+                                        )
+                                        if activities
+                                        else None
+                                    ),
+                                    "monetary_governance_fingerprint": (
+                                        monetary_fingerprint
+                                    ),
                                     "cost_mapping_fingerprint": (
                                         hashlib.sha256(
                                             json.dumps(
@@ -1598,10 +1773,15 @@ def generate_canonical_curve_draws(
                                     "coefficient": coefficient,
                                     "pathway_strength": strength,
                                     "include_in_attribution": component.include_in_attribution,
-                                    "include_in_headline": component.include_in_headline,
+                                    "include_in_headline": (
+                                        component.include_in_headline
+                                        and not legacy_monetary
+                                    ),
+                                    "legacy_ungoverned_curve": legacy_monetary,
                                     "include_in_planning": (
                                         component.include_in_planning
                                         and observed_status == SUPPORT_AVAILABLE
+                                        and not legacy_monetary
                                     ),
                                     "evidence_status": evidence.get(
                                         (market, channel),
@@ -1746,6 +1926,10 @@ def aggregate_curve_draws(
         curve_type=("curve_type", "first"),
         counterfactual_media_input=("counterfactual_media_input", "max"),
         cost_mapping_id=("cost_mapping_id", "first"),
+        economics_availability_status=(
+            "economics_availability_status",
+            "first",
+        ),
     ).reset_index()
     values = dict(value_per_response or {})
     economics = []
@@ -1787,8 +1971,25 @@ def aggregate_curve_draws(
                 currency_valid=row["spend_unit"] != "mixed",
                 near_zero=DEFAULT_NEAR_ZERO,
             ))
+    economics_columns = [
+        "average_cpa",
+        "marginal_cpa",
+        "average_roi",
+        "marginal_roi",
+        "average_economics_status",
+        "marginal_economics_status",
+        "roi_status",
+    ]
     result = pd.concat(
-        [result, pd.DataFrame(economics, index=result.index)], axis=1
+        [
+            result,
+            pd.DataFrame(
+                economics,
+                index=result.index,
+                columns=economics_columns,
+            ),
+        ],
+        axis=1,
     )
     # A caller may supply outcome values at aggregation time for a draw table
     # generated without them. For mixed-outcome totals, draw-level component
@@ -1820,6 +2021,9 @@ def aggregate_curve_draws(
     cost_unavailable = (
         (result["curve_type"] != "monetary")
         | result["cost_mapping_id"].isna()
+        | result["economics_availability_status"].isin(
+            ["response_only", "economics_not_applicable", "mapping_missing"]
+        )
     )
     result.loc[
         cost_unavailable,
@@ -1832,12 +2036,16 @@ def aggregate_curve_draws(
     ] = np.nan
     result.loc[
         cost_unavailable,
-        [
-            "average_economics_status",
-            "marginal_economics_status",
-            "roi_status",
-        ],
-    ] = ECONOMICS_COST_MAPPING_MISSING
+        ["average_economics_status", "marginal_economics_status", "roi_status"],
+    ] = result.loc[
+        cost_unavailable, "economics_availability_status"
+    ].replace(
+        {
+            "mapping_missing": ECONOMICS_COST_MAPPING_MISSING,
+            "response_only": "response_only",
+            "economics_not_applicable": "economics_not_applicable",
+        }
+    )
     if not economics_allowed:
         result.loc[:, ["average_roi", "marginal_roi"]] = np.nan
         result["roi_status"] = ECONOMICS_COMPONENT_COST_UNALLOCATED

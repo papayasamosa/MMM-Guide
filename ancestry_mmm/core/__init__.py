@@ -77,6 +77,12 @@ from .media_costs import (
     UploadedPlanCostMapping,
     cost_mapping_from_dict,
     derive_monetary_support,
+    monetary_governance_fingerprint,
+)
+from .activities import (
+    ActivityDefinition,
+    activity_by_channel,
+    activity_definitions_fingerprint,
 )
 from .evidence_tiers import (
     classify_market_evidence,
@@ -104,6 +110,7 @@ from .attribution import (
     calculate_roi,
 )
 from .optimization import (
+    PlanningObjective,
     SpendConstraint,
     evaluate_scenario,
     optimize_scenario,
@@ -275,6 +282,10 @@ __all__ = [
     "UploadedPlanCostMapping",
     "cost_mapping_from_dict",
     "derive_monetary_support",
+    "monetary_governance_fingerprint",
+    "ActivityDefinition",
+    "activity_by_channel",
+    "activity_definitions_fingerprint",
     "cpa_stability_flags",
     "extract_cost_per_unit_series",
     "historical_cost_trend",
@@ -297,6 +308,7 @@ __all__ = [
     "decompose_sales",
     "calculate_roi",
     "SpendConstraint",
+    "PlanningObjective",
     "evaluate_scenario",
     "optimize_scenario",
     "scenario_to_dict",

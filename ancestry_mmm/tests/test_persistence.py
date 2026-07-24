@@ -299,6 +299,17 @@ def test_media_input_and_cost_governance_round_trip(tmp_path, sample_project):
             "cost_mapping_fingerprint": "cost-fp",
         }
     ]
+    project["activity_definitions"] = [
+        {
+            "activity_id": "tv-paid",
+            "channel": "TV_Brand",
+            "activity_ownership": "paid",
+            "model_role": "intervention",
+            "economic_treatment": "paid_media_cost",
+            "planning_eligibility": "optimisable",
+            "source": "media plan",
+        }
+    ]
     imported = import_project(
         export_project(tmp_path / "cost-governance.zip", **project)
     )
@@ -309,6 +320,7 @@ def test_media_input_and_cost_governance_round_trip(tmp_path, sample_project):
         imported["monetary_spend_support"]
         == project["monetary_spend_support"]
     )
+    assert imported["activity_definitions"] == project["activity_definitions"]
 
 
 def test_export_then_import_reproduces_scenarios_and_constraints(

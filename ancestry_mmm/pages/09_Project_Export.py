@@ -131,6 +131,7 @@ if st.button("Build export bundle", type="primary"):
             media_cost_mappings=get_state("media_cost_mappings"),
             media_input_support=get_state("media_input_support") or [],
             monetary_spend_support=get_state("monetary_spend_support") or [],
+            activity_definitions=get_state("activity_definitions") or [],
         )
     st.success(f"Project bundle built: {output_path}")
     with open(output_path, "rb") as f:
@@ -196,6 +197,10 @@ if uploaded_zip is not None and st.button("Import bundle"):
         set_state(
             "monetary_spend_support",
             imported.get("monetary_spend_support") or [],
+        )
+        set_state(
+            "activity_definitions",
+            imported.get("activity_definitions") or [],
         )
         set_state("model_type", imported["model_type"])
         set_state("outcome_definitions", imported["outcome_definitions"])

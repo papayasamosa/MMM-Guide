@@ -1,4 +1,4 @@
-# Outcome-scale counterfactual curves and economics (G2A.3)
+# Outcome-scale counterfactual curves and economics (G2A.4)
 
 `core.canonical_curves` is the non-UI source of truth for posterior curves,
 economics, governance views, reconciliation, and curve exports.

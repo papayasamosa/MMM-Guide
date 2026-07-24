@@ -15,14 +15,29 @@ from ancestry_mmm.utils import (
 )
 from ancestry_mmm.components import apply_theme, render_sidebar, render_page_header, render_next_step, render_empty_state, render_glossary, render_drift_status
 from ancestry_mmm.core.approval import ApprovalMismatchError, ModelApproval
+from ancestry_mmm.core.activities import ActivityDefinition
 from ancestry_mmm.core.fingerprint import fingerprint_dataframe, fingerprint_model_spec, fingerprint_posterior
 from ancestry_mmm.core.outcomes import (
-    fh_signup_outcome_ids, dna_kit_sale_outcome_ids, outcome_catalogue_fingerprint_payload, resolve_outcome_definitions,
+    METRIC_KEY_DNA_KIT_SALE,
+    METRIC_KEY_FH_GSA,
+    METRIC_KEY_FH_NET_BILLTHROUGH_COUNT,
+    METRIC_KEY_FH_SIGNUP,
+    dna_kit_sale_outcome_ids,
+    fh_net_billthrough_outcome_ids,
+    fh_signup_outcome_ids,
+    outcome_catalogue_fingerprint_payload,
+    resolve_outcome_definitions,
 )
 from ancestry_mmm.core.pathways import pathway_catalogue_fingerprint_payload
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.optimization import (
-    SpendConstraint, evaluate_scenario, optimize_scenario, scenario_to_dict, compare_scenarios, WEEKS_PER_MONTH,
+    PlanningObjective,
+    SpendConstraint,
+    WEEKS_PER_MONTH,
+    compare_scenarios,
+    evaluate_scenario,
+    optimize_scenario,
+    scenario_to_dict,
 )
 from ancestry_mmm.core.uncertainty import evaluate_scenario_with_uncertainty
 from ancestry_mmm.core.evidence_tiers import classify_market_evidence
@@ -38,17 +53,25 @@ def _scenario_cpa_summary(predicted_df: pd.DataFrame) -> dict:
     PR E.1). `total_spend`/`fh_gsa`/`fh_signups`/`dna_kits` are month-level
     totals repeated per outcome_id row (core.optimization.evaluate_scenario),
     so de-duplicated by month before summing across the whole plan."""
-    cols = ["total_spend", "fh_gsa", "dna_kits"] + (["fh_signups"] if "fh_signups" in predicted_df.columns else [])
+    cols = [
+        "total_spend",
+        "incremental_fh_gsa",
+        "incremental_dna_kits",
+    ] + (
+        ["incremental_fh_signups"]
+        if "incremental_fh_signups" in predicted_df.columns
+        else []
+    )
     by_month = predicted_df.groupby("month")[cols].first()
     total_spend = by_month["total_spend"].sum()
-    fh_gsa = by_month["fh_gsa"].sum()
-    dna_kits = by_month["dna_kits"].sum()
+    fh_gsa = by_month["incremental_fh_gsa"].sum()
+    dna_kits = by_month["incremental_dna_kits"].sum()
     result = {
         "fh_avg_cpa": float(total_spend / fh_gsa) if fh_gsa > 0 else None,
         "dna_avg_cpa": float(total_spend / dna_kits) if dna_kits > 0 else None,
     }
-    if "fh_signups" in cols:
-        fh_signups = by_month["fh_signups"].sum()
+    if "incremental_fh_signups" in cols:
+        fh_signups = by_month["incremental_fh_signups"].sum()
         result["fh_signup_avg_cpa"] = float(total_spend / fh_signups) if fh_signups > 0 else None
     return result
 
@@ -69,6 +92,10 @@ meta = get_state("model_meta")
 params = get_state("posterior_params")
 spec_dict = get_state("model_spec")
 trace = get_state("trace")
+activity_definitions = [
+    ActivityDefinition.from_dict(item)
+    for item in (get_state("activity_definitions") or [])
+]
 if frame is None or meta is None or params is None:
     st.markdown("---")
     render_empty_state(
@@ -270,10 +297,17 @@ spend_plan = {m: {c: float(edited.loc[m, c]) for c in meta.channels} for m in mo
 
 _has_dna_kit_segments = bool(dna_kit_sale_outcome_ids(meta))
 _has_fh_signup_outcomes = bool(fh_signup_outcome_ids(meta))
-_objective_options = ["fh_gsa", "expected_value"] + (["dna_kits"] if _has_dna_kit_segments else []) + (
+_has_fh_nbt_outcomes = bool(fh_net_billthrough_outcome_ids(meta))
+_objective_options = (
+    (["fh_net_billthrough"] if _has_fh_nbt_outcomes else [])
+    + ["fh_gsa", "expected_value"]
+    + (["dna_kits"] if _has_dna_kit_segments else [])
+    + (
     ["fh_signups"] if _has_fh_signup_outcomes else []
+    )
 )
 _objective_labels = {
+    "fh_net_billthrough": "Maximise incremental Family History net bill-through",
     "fh_gsa": "Maximise Family History GSAs",
     "fh_signups": "Maximise Family History sign-ups",
     "dna_kits": "Maximise DNA kit sales",
@@ -282,6 +316,20 @@ _objective_labels = {
 objective = st.radio(
     "Optimisation objective", _objective_options, horizontal=True,
     format_func=lambda x: _objective_labels[x], help=FIELD_HELP["ltv"],
+)
+_objective_metric_keys = {
+    "fh_net_billthrough": METRIC_KEY_FH_NET_BILLTHROUGH_COUNT,
+    "fh_gsa": METRIC_KEY_FH_GSA,
+    "fh_signups": METRIC_KEY_FH_SIGNUP,
+    "dna_kits": METRIC_KEY_DNA_KIT_SALE,
+}
+planning_objective = (
+    PlanningObjective(
+        estimand="incremental_outcome",
+        metric_key=_objective_metric_keys[objective],
+    )
+    if objective in _objective_metric_keys
+    else None
 )
 st.caption(
     "Each objective states exactly what it maximises - Family History GSAs, Family History sign-ups "
@@ -300,7 +348,17 @@ tab_manual, tab_constrained, tab_unconstrained = st.tabs(["Manual", "Constrained
 with tab_manual:
     st.markdown("Predicted outcomes for the spend plan as edited above.")
     try:
-        predicted = evaluate_scenario(spend_plan, market, meta, params, reference_context_by_month, ltv, **identity_kwargs)
+        predicted = evaluate_scenario(
+            spend_plan,
+            market,
+            meta,
+            params,
+            reference_context_by_month,
+            ltv,
+            planning_objective=planning_objective,
+            activity_definitions=activity_definitions or None,
+            **identity_kwargs,
+        )
     except ApprovalMismatchError as e:
         st.error(f"Cannot evaluate this scenario: {e}")
         st.stop()
@@ -329,19 +387,32 @@ with tab_manual:
     cpa_summary = _scenario_cpa_summary(predicted)
     st.caption(
         "**Spend scope: whole-plan** - total spend across every channel in this plan, divided by "
-        "this plan's total for one KPI (`whole_plan_cost_per_fh_gsa` etc.) - not a channel-specific "
-        "number (see Results & Curve Bank for channel-incremental CPA instead)."
+        "the plan's incremental KPI relative to the displayed counterfactual. "
+        "Total forecast outcomes are shown separately."
     )
-    c2.metric("Whole-plan avg CPA (FH GSAs)", f"{cpa_summary['fh_avg_cpa']:,.2f}" if cpa_summary["fh_avg_cpa"] is not None else "n/a")
+    c2.metric("Whole-plan incremental CPA (FH GSAs)", f"{cpa_summary['fh_avg_cpa']:,.2f}" if cpa_summary["fh_avg_cpa"] is not None else "n/a")
     if _has_fh_signup_outcomes:
-        c3.metric("Whole-plan avg CPA (FH sign-ups)", f"{cpa_summary.get('fh_signup_avg_cpa'):,.2f}" if cpa_summary.get("fh_signup_avg_cpa") is not None else "n/a")
+        c3.metric("Whole-plan incremental CPA (FH sign-ups)", f"{cpa_summary.get('fh_signup_avg_cpa'):,.2f}" if cpa_summary.get("fh_signup_avg_cpa") is not None else "n/a")
     if _has_dna_kit_segments:
-        c4.metric("Whole-plan avg CPA (DNA kits)", f"{cpa_summary['dna_avg_cpa']:,.2f}" if cpa_summary["dna_avg_cpa"] is not None else "n/a")
+        c4.metric("Whole-plan incremental CPA (DNA kits)", f"{cpa_summary['dna_avg_cpa']:,.2f}" if cpa_summary["dna_avg_cpa"] is not None else "n/a")
 
     scenario_name = st.text_input("Scenario name *", value=f"manual-{market}-{months[0]}", key="manual_name")
     if st.button("Save this scenario"):
         scenarios = get_state("scenarios") or []
-        scenarios.append(scenario_to_dict(scenario_name, market, spend_plan, objective, [], notes="manual"))
+        scenarios.append(
+            scenario_to_dict(
+                scenario_name,
+                market,
+                spend_plan,
+                objective,
+                [],
+                notes="manual",
+                planning_objective=planning_objective,
+                activity_definitions_fingerprint=(
+                    predicted["activity_definitions_fingerprint"].iloc[0]
+                ),
+            )
+        )
         scenarios[-1]["predicted"] = predicted
         set_state("scenarios", scenarios)
         st.success(f"Saved scenario '{scenario_name}'.")
@@ -444,7 +515,12 @@ with tab_constrained:
                 try:
                     result = optimize_scenario(
                         spend_plan, months, meta.channels, market, meta, params, reference_context_by_month,
-                        ltv, objective=objective, constraints=st.session_state["scenario_constraints"], conserve_total_budget=True,
+                        ltv,
+                        objective=objective if planning_objective is None else None,
+                        planning_objective=planning_objective,
+                        constraints=st.session_state["scenario_constraints"],
+                        conserve_total_budget=True,
+                        activity_definitions=activity_definitions or None,
                         **identity_kwargs,
                     )
                 except ApprovalMismatchError as e:
@@ -464,7 +540,7 @@ with tab_constrained:
         current_cpa = _scenario_cpa_summary(result["current_predicted"])
         optimised_cpa = _scenario_cpa_summary(result["predicted"])
         c3.metric(
-            "Whole-plan avg CPA (FH GSAs)",
+            "Whole-plan incremental CPA (FH GSAs)",
             f"{optimised_cpa['fh_avg_cpa']:,.2f}" if optimised_cpa["fh_avg_cpa"] is not None else "n/a",
             delta=f"{optimised_cpa['fh_avg_cpa'] - current_cpa['fh_avg_cpa']:,.2f}" if (optimised_cpa["fh_avg_cpa"] is not None and current_cpa["fh_avg_cpa"] is not None) else None,
             delta_color="inverse",  # lower CPA is an improvement
@@ -472,7 +548,7 @@ with tab_constrained:
         )
         if _has_dna_kit_segments:
             c4.metric(
-                "Whole-plan avg CPA (DNA kits)",
+                "Whole-plan incremental CPA (DNA kits)",
                 f"{optimised_cpa['dna_avg_cpa']:,.2f}" if optimised_cpa["dna_avg_cpa"] is not None else "n/a",
                 delta=f"{optimised_cpa['dna_avg_cpa'] - current_cpa['dna_avg_cpa']:,.2f}" if (optimised_cpa["dna_avg_cpa"] is not None and current_cpa["dna_avg_cpa"] is not None) else None,
                 delta_color="inverse",
@@ -485,7 +561,18 @@ with tab_constrained:
         name = st.text_input("Scenario name *", value=f"constrained-{market}-{months[0]}", key="constrained_name")
         if st.button("Save this scenario", key="save_constrained"):
             scenarios = get_state("scenarios") or []
-            s = scenario_to_dict(name, market, result["spend_plan"], objective, st.session_state["scenario_constraints"], notes="constrained")
+            s = scenario_to_dict(
+                name,
+                market,
+                result["spend_plan"],
+                objective,
+                st.session_state["scenario_constraints"],
+                notes="constrained",
+                planning_objective=result["planning_objective"],
+                activity_definitions_fingerprint=result[
+                    "activity_definitions_fingerprint"
+                ],
+            )
             s["predicted"] = result["predicted"]
             scenarios.append(s)
             set_state("scenarios", scenarios)
@@ -506,7 +593,12 @@ with tab_unconstrained:
                 try:
                     result = optimize_scenario(
                         spend_plan, months, meta.channels, market, meta, params, reference_context_by_month,
-                        ltv, objective=objective, constraints=[], conserve_total_budget=True,
+                        ltv,
+                        objective=objective if planning_objective is None else None,
+                        planning_objective=planning_objective,
+                        constraints=[],
+                        conserve_total_budget=True,
+                        activity_definitions=activity_definitions or None,
                         **identity_kwargs,
                     )
                 except ApprovalMismatchError as e:
@@ -524,7 +616,7 @@ with tab_unconstrained:
         current_cpa = _scenario_cpa_summary(result["current_predicted"])
         optimised_cpa = _scenario_cpa_summary(result["predicted"])
         c3.metric(
-            "Whole-plan avg CPA (FH GSAs)",
+            "Whole-plan incremental CPA (FH GSAs)",
             f"{optimised_cpa['fh_avg_cpa']:,.2f}" if optimised_cpa["fh_avg_cpa"] is not None else "n/a",
             delta=f"{optimised_cpa['fh_avg_cpa'] - current_cpa['fh_avg_cpa']:,.2f}" if (optimised_cpa["fh_avg_cpa"] is not None and current_cpa["fh_avg_cpa"] is not None) else None,
             delta_color="inverse",
@@ -532,7 +624,7 @@ with tab_unconstrained:
         )
         if _has_dna_kit_segments:
             c4.metric(
-                "Whole-plan avg CPA (DNA kits)",
+                "Whole-plan incremental CPA (DNA kits)",
                 f"{optimised_cpa['dna_avg_cpa']:,.2f}" if optimised_cpa["dna_avg_cpa"] is not None else "n/a",
                 delta=f"{optimised_cpa['dna_avg_cpa'] - current_cpa['dna_avg_cpa']:,.2f}" if (optimised_cpa["dna_avg_cpa"] is not None and current_cpa["dna_avg_cpa"] is not None) else None,
                 delta_color="inverse",

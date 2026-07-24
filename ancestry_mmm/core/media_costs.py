@@ -616,6 +616,28 @@ def derive_monetary_support(
     )
 
 
+def monetary_governance_fingerprint(
+    *,
+    cost_mappings: Mapping[str, Any] | dict,
+    activity_definitions: object,
+    fx_metadata: object,
+    planning_support: object,
+) -> str:
+    """Fingerprint every non-model input that governs monetary artefacts."""
+
+    payload = {
+        "cost_mappings": cost_mappings,
+        "activity_definitions": activity_definitions,
+        "fx_metadata": fx_metadata,
+        "planning_support": planning_support,
+    }
+    return hashlib.sha256(
+        json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), default=str
+        ).encode()
+    ).hexdigest()
+
+
 def _validate_period(start: Optional[str], end: Optional[str]) -> None:
     start_date = date.fromisoformat(start) if start else None
     end_date = date.fromisoformat(end) if end else None

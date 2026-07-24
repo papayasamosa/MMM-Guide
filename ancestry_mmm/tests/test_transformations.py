@@ -41,6 +41,8 @@ def test_geometric_adstock_matrix_matches_per_channel_calls():
 def test_geometric_adstock_matches_pymc_marketing_unnormalized():
     """Guard the portion of the upstream transform we intentionally match."""
     pytest.importorskip("pymc_marketing")
+    import inspect
+
     import pytensor.tensor as pt
     from pymc_marketing.mmm.transformers import (
         geometric_adstock as upstream_geometric_adstock,
@@ -48,11 +50,20 @@ def test_geometric_adstock_matches_pymc_marketing_unnormalized():
 
     values = np.array([10.0, 0.0, 4.0, 1.0, 0.0])
     alpha = 0.35
+    upstream_kwargs = {
+        "alpha": alpha,
+        "l_max": len(values),
+        "normalize": False,
+    }
+    upstream_input = pt.as_tensor_variable(values)
+    if "dim" in inspect.signature(upstream_geometric_adstock).parameters:
+        import pytensor.xtensor as ptx
+
+        upstream_input = ptx.as_xtensor(upstream_input, dims=("time",))
+        upstream_kwargs["dim"] = "time"
     upstream = upstream_geometric_adstock(
-        pt.as_tensor_variable(values),
-        alpha=alpha,
-        l_max=len(values),
-        normalize=False,
+        upstream_input,
+        **upstream_kwargs,
     ).eval()
     np.testing.assert_allclose(
         geometric_adstock(values, alpha, normalize=False),

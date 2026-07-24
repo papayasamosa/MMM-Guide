@@ -36,6 +36,7 @@ def init_session_state():
         "media_cost_mappings": None,
         "media_input_support": [],
         "monetary_spend_support": [],
+        "activity_definitions": [],
         # Model configuration
         "prior_config": dict(DEFAULT_FH_PRIORS),
         "dna_lag_weeks": DEFAULT_DNA_LAG_WEEKS,

@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from ancestry_mmm.core.activities import ActivityDefinition
 from ancestry_mmm.core.canonical_curves import (
     ECONOMICS_COMPONENT_COST_UNALLOCATED,
     ECONOMICS_MISSING_VALUE,
@@ -156,7 +157,10 @@ def _trace(market_specific=False):
     return az.from_dict(posterior=posterior, coords=coords, dims=dims)
 
 
-def _contexts(*, trend=0.5, fourier=0.25, promo=0.0, other_tv=20.0):
+def _contexts(
+    *, trend=0.5, fourier=0.25, promo=0.0, other_tv=20.0,
+    counterfactual_axis_type="model_input",
+):
     return {
         market: CurveReferenceContext(
             reference_context_id=f"{market}-recent",
@@ -167,8 +171,9 @@ def _contexts(*, trend=0.5, fourier=0.25, promo=0.0, other_tv=20.0):
             promo={oid: promo for oid in OUTCOMES},
             controls={"macro": 0.4},
             outcome_controls={},
-            other_channel_spend={"TV": other_tv, "DNA": 30.0},
-            counterfactual_spend=0.0,
+            other_channel_media_input={"TV": other_tv, "DNA": 30.0},
+            counterfactual_value=0.0,
+            counterfactual_axis_type=counterfactual_axis_type,
             reference_period_start="2026-04-01",
             reference_period_end="2026-06-30",
         )
@@ -196,10 +201,16 @@ def _generate(meta, *, model_type="shared", contexts=None, **kwargs):
     value_map = kwargs.pop("value_per_response", VALUES)
     support = kwargs.pop("support_by_market_channel", _support())
     points = kwargs.pop("spend_points", [0.0, 50.0, 150.0])
+    curve_type = kwargs.get("curve_type")
+    selected_contexts = contexts or _contexts(
+        counterfactual_axis_type=(
+            curve_type if curve_type in {"model_input", "monetary"} else "model_input"
+        )
+    )
     return generate_canonical_curve_draws(
         model_run_id="run-1", meta=meta,
         trace=_trace(model_type == "market_specific"),
-        reference_contexts=contexts or _contexts(),
+        reference_contexts=selected_contexts,
         model_type=model_type, n_draws=4,
         spend_points=points,
         currency_by_market={"UK": "GBP", "AU": "AUD"},
@@ -554,7 +565,10 @@ def test_governance_views_are_channel_safe_and_labelled(meta):
     }
     for purpose, view in views.items():
         assert "channel" in view
-        assert set(view["governance_view"]) == {purpose}
+        if view.empty:
+            assert purpose in {"headline", "planning"}
+        else:
+            assert set(view["governance_view"]) == {purpose}
     assert views["product"]["average_roi"].notna().any()
 
 
@@ -796,3 +810,60 @@ def test_direct_and_halo_governance_views_are_response_only(meta):
         assert views[name]["economics_scope"].eq(
             "decomposition_response_only"
         ).all()
+
+
+def test_owned_response_only_activity_never_receives_cpa_or_roi(meta):
+    specs, costs = _governed_inputs_and_costs()
+    activities = {
+        "TV": ActivityDefinition(
+            activity_id="tv-paid", channel="TV",
+            activity_ownership="paid", model_role="intervention",
+            economic_treatment="paid_media_cost",
+            planning_eligibility="optimisable", source="media plan",
+        ),
+        "DNA": ActivityDefinition(
+            activity_id="organic-social", channel="DNA",
+            activity_ownership="owned", model_role="intervention",
+            economic_treatment="response_only",
+            planning_eligibility="scenario_only", source="social analytics",
+        ),
+    }
+    draws = _generate(
+        meta,
+        curve_type="monetary",
+        media_input_specs=specs,
+        cost_mappings=costs,
+        cost_context_id="curve",
+        support_by_market_channel=_typed_support(specs, costs),
+        activity_definitions=activities,
+    )
+    owned = aggregate_curve_draws(
+        draws[draws["channel"] == "DNA"],
+        by=[
+            "model_run_id", "reference_context_id", "market", "channel",
+            "spend_point", "outcome_id",
+        ],
+    )
+    assert owned["average_cpa"].isna().all()
+    assert owned["average_roi"].isna().all()
+    assert owned["economics_availability_status"].eq("response_only").all()
+
+
+def test_reference_context_migrates_legacy_spend_names():
+    legacy = {
+        "reference_context_id": "legacy",
+        "mode": "steady_state_reference",
+        "market": "UK",
+        "trend": 0.0,
+        "fourier": [],
+        "promo": {},
+        "controls": {},
+        "outcome_controls": {},
+        "other_channel_spend": {"TV": 10.0},
+        "counterfactual_spend": 2.0,
+    }
+    with pytest.warns(DeprecationWarning):
+        restored = CurveReferenceContext.from_dict(legacy)
+    assert restored.other_channel_media_input == {"TV": 10.0}
+    assert restored.counterfactual_value == 2.0
+    assert "other_channel_spend" not in restored.to_dict()

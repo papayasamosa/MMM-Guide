@@ -3,9 +3,18 @@ import pandas as pd
 import pytest
 
 from ancestry_mmm.core.approval import ApprovalMismatchError, ModelApproval
+from ancestry_mmm.core.activities import ActivityDefinition
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
 from ancestry_mmm.core.market_specific_predict import FHMarketSpecificPosteriorParams
-from ancestry_mmm.core.optimization import compare_scenarios, evaluate_scenario, optimize_scenario, VALID_OBJECTIVES
+from ancestry_mmm.core.optimization import (
+    PlanningObjective,
+    compare_scenarios,
+    evaluate_scenario,
+    optimize_scenario,
+    scenario_from_dict,
+    scenario_to_dict,
+    VALID_OBJECTIVES,
+)
 from ancestry_mmm.core.outcomes import FAMILY_HISTORY, DNA, METRIC_GSA, METRIC_KIT_SALE, OutcomeDefinition
 from ancestry_mmm.core.predict import FHPosteriorParams
 from ancestry_mmm.tests.conftest import pathway_strength_from_flat
@@ -199,11 +208,39 @@ class TestModelTypeDispatch:
 
 
 class TestAverageCpa:
-    def test_avg_cpa_is_total_spend_over_total_predicted_gsa(self, meta, params, approval, spend_plan, reference_context):
+    def test_avg_cpa_is_spend_over_incremental_gsa(self, meta, params, approval, spend_plan, reference_context):
         result = evaluate_scenario(spend_plan, "UK", meta, params, reference_context, approval=approval, **IDENTITY)
         total_spend = result["total_spend"].iloc[0]
-        total_gsa = result["predicted_outcome"].sum()
-        assert result["avg_cpa"].iloc[0] == pytest.approx(total_spend / total_gsa)
+        incremental_gsa = result["incremental_outcome"].sum()
+        assert result["avg_cpa"].iloc[0] == pytest.approx(
+            total_spend / incremental_gsa
+        )
+        assert np.allclose(
+            result["predicted_total_outcome"]
+            - result["predicted_counterfactual_outcome"],
+            result["incremental_outcome"],
+        )
+
+    def test_explicit_equal_counterfactual_suppresses_incremental_cpa(
+        self, meta, params, approval, spend_plan, reference_context
+    ):
+        result = evaluate_scenario(
+            spend_plan,
+            "UK",
+            meta,
+            params,
+            reference_context,
+            approval=approval,
+            counterfactual_media_input_by_month=spend_plan,
+            **IDENTITY,
+        )
+        assert np.allclose(result["incremental_outcome"], 0)
+        assert result["avg_cpa"].isna().all()
+        assert result["whole_plan_incremental_nbt_cpa"].isna().all()
+
+    def test_typed_value_objective_requires_currency(self):
+        with pytest.raises(ValueError, match="value_currency"):
+            PlanningObjective(estimand="incremental_value")
 
     def test_avg_cpa_is_repeated_across_every_segment_row_for_the_same_month(
         self, market_specific_meta, market_specific_params, approval, reference_context,
@@ -292,8 +329,8 @@ class TestProductAwareScenarioOutputs:
         plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0}}
         result = evaluate_scenario(plan, "UK", meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment, approval=approval, **IDENTITY)
         total_spend = result["total_spend"].iloc[0]
-        fh_gsa = result["fh_gsa"].iloc[0]
-        dna_kits = result["dna_kits"].iloc[0]
+        fh_gsa = result["incremental_fh_gsa"].iloc[0]
+        dna_kits = result["incremental_dna_kits"].iloc[0]
         assert fh_gsa > 0 and dna_kits > 0  # both non-trivial - a genuinely mixed scenario
         assert result["avg_cpa"].iloc[0] == pytest.approx(total_spend / fh_gsa)
         assert result["avg_cpa"].iloc[0] != pytest.approx(total_spend / (fh_gsa + dna_kits))
@@ -379,6 +416,89 @@ class TestExplicitOptimisationObjectives:
     def plan_with_kit_segment(self):
         return {"2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0}}
 
+
+def test_response_only_activity_suppresses_fake_monetary_economics(
+    meta,
+    params,
+    approval,
+    reference_context,
+    spend_plan,
+):
+    activity = ActivityDefinition(
+        activity_id="crm-email",
+        channel="TV_Brand",
+        activity_ownership="owned",
+        model_role="intervention",
+        economic_treatment="response_only",
+        planning_eligibility="scenario_only",
+        source="crm-platform",
+    )
+    result = evaluate_scenario(
+        spend_plan,
+        "UK",
+        meta,
+        params,
+        reference_context,
+        {"New": 2.0},
+        approval=approval,
+        activity_definitions=[activity],
+        **IDENTITY,
+    )
+
+    assert (result["economics_availability_status"] == "response_only").all()
+    assert result["avg_cpa"].isna().all()
+    assert result["whole_plan_incremental_roi"].isna().all()
+    assert result["activity_definitions_fingerprint"].notna().all()
+
+
+def test_saved_scenario_preserves_typed_objective_and_activity_fingerprint():
+    objective = PlanningObjective(
+        estimand="incremental_outcome",
+        metric_key="fh_net_billthrough_count",
+    )
+    saved = scenario_to_dict(
+        "Plan A",
+        "UK",
+        {"2024-01": {"TV": 100.0}},
+        "fh_net_billthrough",
+        [],
+        planning_objective=objective,
+        activity_definitions_fingerprint="activity-fp",
+    )
+    restored = scenario_from_dict(saved)
+
+    assert restored["planning_objective"] == objective.to_dict()
+    assert restored["activity_definitions_fingerprint"] == "activity-fp"
+
+
+def test_non_optimisable_activity_is_held_fixed(
+    meta, params, approval, spend_plan, reference_context
+):
+    activity = ActivityDefinition(
+        activity_id="owned-tv",
+        channel="TV_Brand",
+        activity_ownership="owned",
+        model_role="intervention",
+        economic_treatment="response_only",
+        planning_eligibility="scenario_only",
+        source="owned delivery plan",
+    )
+    result = optimize_scenario(
+        spend_plan,
+        ["2024-01"],
+        ["TV_Brand"],
+        "UK",
+        meta,
+        params,
+        reference_context,
+        objective="fh_gsa",
+        activity_definitions=[activity],
+        approval=approval,
+        **IDENTITY,
+    )
+    assert result["spend_plan"] == spend_plan
+    assert result["activity_definitions_fingerprint"]
+
     def test_invalid_objective_raises_before_optimising(self, meta, params, approval, spend_plan, reference_context, monkeypatch):
         import ancestry_mmm.core.optimization as optimization_module
 
@@ -401,7 +521,7 @@ class TestExplicitOptimisationObjectives:
             approval=approval, **IDENTITY,
         )
         current_predicted = result["current_predicted"]
-        expected = float(current_predicted[current_predicted["outcome_id"] == "New"]["predicted_outcome"].sum())
+        expected = float(current_predicted[current_predicted["outcome_id"] == "New"]["incremental_outcome"].sum())
         assert result["current_objective_value"] == pytest.approx(expected)
 
     def test_dna_kits_objective_raises_when_model_has_no_kit_only_segments(self, meta, params, approval, spend_plan, reference_context):
