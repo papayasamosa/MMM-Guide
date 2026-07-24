@@ -11,6 +11,7 @@ import pandas as pd
 from ancestry_mmm.utils import init_session_state, get_state, set_state, curve_bank_dir, dataframe_column_config, format_date, FIELD_HELP
 from ancestry_mmm.components import apply_theme, render_sidebar, render_page_header, render_next_step, render_empty_state, render_drift_status
 from ancestry_mmm.core.approval import ApprovalMismatchError, ModelApproval
+from ancestry_mmm.core.activities import ActivityDefinition, activity_fit_fingerprint
 from ancestry_mmm.core.fingerprint import fingerprint_dataframe, fingerprint_model_spec, fingerprint_posterior
 from ancestry_mmm.core.outcomes import fh_gsa_outcome_ids, fh_signup_outcome_ids, dna_kit_sale_outcome_ids, outcome_catalogue_fingerprint_payload, resolve_outcome_definitions
 from ancestry_mmm.core.pathways import pathway_catalogue_fingerprint_payload
@@ -171,6 +172,10 @@ frame = get_state("frame")
 meta = get_state("model_meta")
 params = get_state("posterior_params")
 spec_dict = get_state("model_spec")
+activity_definitions = [
+    ActivityDefinition.from_dict(item)
+    for item in (get_state("activity_definitions") or [])
+]
 if trace is None or frame is None or meta is None or params is None:
     st.markdown("---")
     render_empty_state(
@@ -421,6 +426,9 @@ if model_run_id and spec_dict is not None:
             outcome_catalogue=outcome_catalogue_fingerprint_payload(meta.outcome_catalogue_at_fit) if meta is not None else None,
             funnel_links=get_state("funnel_links"),
             media_outcome_pathways=pathway_catalogue_fingerprint_payload(meta.pathway_catalogue_at_fit) if meta is not None else None,
+            activity_fit_fingerprint=(
+                activity_fit_fingerprint(activity_definitions) if activity_definitions else None
+            ),
         ),
         "posterior_fingerprint": fingerprint_posterior(params),
     }

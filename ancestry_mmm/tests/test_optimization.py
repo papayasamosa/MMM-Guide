@@ -1081,20 +1081,38 @@ class TestValueWeightNeverSilentlyDefaultsToOne:
 # against impressions, CRM sends, or event indicators.
 # ---------------------------------------------------------------------------
 
-def _paid_activity(activity_id: str, channel: str, *, planning_eligibility: str = "optimisable") -> ActivityDefinition:
-    return ActivityDefinition(
+def _paid_activity(
+    activity_id: str, channel: str, *,
+    planning_eligibility: str = "optimisable",
+    approval_status: str = "approved",
+) -> ActivityDefinition:
+    kwargs = dict(
         activity_id=activity_id, channel=channel, activity_ownership="paid",
         model_role="intervention", economic_treatment="paid_media_cost",
         planning_eligibility=planning_eligibility, source="finance",
+        approval_status=approval_status,
     )
+    if approval_status == "approved":
+        kwargs["approved_by"] = "reviewer"
+        kwargs["approved_at"] = "2026-01-01"
+    return ActivityDefinition(**kwargs)
 
 
-def _response_only_activity(activity_id: str, channel: str, *, planning_eligibility: str = "optimisable") -> ActivityDefinition:
-    return ActivityDefinition(
+def _response_only_activity(
+    activity_id: str, channel: str, *,
+    planning_eligibility: str = "optimisable",
+    approval_status: str = "approved",
+) -> ActivityDefinition:
+    kwargs = dict(
         activity_id=activity_id, channel=channel, activity_ownership="owned",
         model_role="intervention", economic_treatment="response_only",
         planning_eligibility=planning_eligibility, source="social team",
+        approval_status=approval_status,
     )
+    if approval_status == "approved":
+        kwargs["approved_by"] = "reviewer"
+        kwargs["approved_at"] = "2026-01-01"
+    return ActivityDefinition(**kwargs)
 
 
 class TestOptimizationResource:
@@ -1410,6 +1428,53 @@ class TestValidateOptimizationResource:
                 resource, self._activities(), "UK", self._channels(),
             )
 
+    def test_rejects_invalid_governance_mode(self):
+        resource = OptimizationResource(
+            resource_id="custom", unit="currency",
+            eligible_activity_ids=("tv-paid",),
+        )
+        with pytest.raises(ValueError, match="governance_mode"):
+            validate_optimization_resource(
+                resource, self._activities(), "UK", self._channels(),
+                governance_mode="bogus",
+            )
+
+    def test_official_mode_rejects_unapproved_activity(self):
+        draft_activities = [
+            _paid_activity("tv-paid", "TV_Paid", approval_status="draft"),
+        ]
+        resource = OptimizationResource(
+            resource_id="custom", unit="currency",
+            eligible_activity_ids=("tv-paid",),
+        )
+        with pytest.raises(ValueError, match="official mode"):
+            validate_optimization_resource(
+                resource, draft_activities, "UK", ["TV_Paid"],
+            )
+
+    def test_exploratory_mode_accepts_unapproved_activity(self):
+        draft_activities = [
+            _paid_activity("tv-paid", "TV_Paid", approval_status="draft"),
+        ]
+        resource = OptimizationResource(
+            resource_id="custom", unit="currency",
+            eligible_activity_ids=("tv-paid",),
+        )
+        validate_optimization_resource(
+            resource, draft_activities, "UK", ["TV_Paid"],
+            governance_mode="exploratory",
+        )  # no raise
+
+    def test_official_mode_accepts_approved_activity(self):
+        # self._activities() defaults every activity to approved.
+        resource = OptimizationResource(
+            resource_id="custom", unit="currency",
+            eligible_activity_ids=("tv-paid",),
+        )
+        validate_optimization_resource(
+            resource, self._activities(), "UK", self._channels(),
+        )  # no raise
+
 
 class TestOptimizerDimensionalCorrectness:
     def test_optimizer_never_trades_currency_against_a_response_only_quantity(self, approval):
@@ -1570,6 +1635,55 @@ class TestOptimizerDimensionalCorrectness:
         assert result["reference_resource_total"] == pytest.approx(1000.0)
         assert result["optimisation_resource_total"] == pytest.approx(1000.0)
         assert result["spend_plan"]["2024-01"]["TV_Paid"] == pytest.approx(1000.0)
+
+    def test_optimize_scenario_blocks_unapproved_activity_governance_in_official_mode(self, approval):
+        # PR G2A.6c workstream F: a draft (default) activity must not drive
+        # an official optimisation, on top of the pre-existing structural
+        # checks (planning_eligibility, currency purity, etc).
+        meta = FHModelMeta(
+            markets=["UK"], outcome_ids=["New"], channels=["TV_Paid"],
+            dna_channels=[], dna_channel_idx=[], non_dna_idx=[0],
+            dna_outcome_id="New", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+        )
+        params = FHPosteriorParams(
+            decay_rate={"TV_Paid": 0.5}, hill_K={"TV_Paid": 2000.0}, hill_S={"TV_Paid": 1.0},
+            beta={"New": {"TV_Paid": 0.1}}, pathway_strength={}, promo_coef={"New": 0.1},
+            market_offset={"UK": {"New": 0.0}}, intercept={"New": 3.0}, trend_coef={"New": 0.0},
+            gamma_fourier={"New": np.zeros(6)}, alpha={"New": 5.0}, control_coef={}, outcome_control_coef={},
+        )
+        reference_context = {
+            "2024-01": {"trend": 1.0, "fourier": np.zeros(6), "promo": {"New": 0.0}, "controls": {}, "outcome_controls": {}}
+        }
+        draft_activity = _paid_activity("tv-paid", "TV_Paid", approval_status="draft")
+        registry = CostMappingRegistry([
+            FixedCostPerUnitMapping(
+                mapping_id="uk-tv-paid-gov-map", market="UK", channel="TV_Paid", currency="GBP",
+                cost_context_id="default", source="finance", approval_status="approved",
+                approved_by="finance-owner", approved_at="2026-01-01T10:00:00Z",
+                owner="media-finance", approval_note="approved", last_reviewed_at="2026-01-01",
+                cost_per_media_input=1.0,
+            ),
+        ])
+        plan = {"2024-01": {"TV_Paid": 800.0}}
+        with pytest.raises(ValueError, match="official mode"):
+            optimize_scenario(
+                plan, ["2024-01"], ["TV_Paid"], "UK", meta, params, reference_context,
+                objective="fh_gsa", activity_definitions=[draft_activity], approval=approval,
+                cost_mapping_registry=registry, cost_context_id="default",
+                cost_as_of_by_month={"2024-01": "2024-01-01"},
+                **IDENTITY,
+            )
+        # Exploratory mode is a deliberate, visibly-labelled escape hatch.
+        result = optimize_scenario(
+            plan, ["2024-01"], ["TV_Paid"], "UK", meta, params, reference_context,
+            objective="fh_gsa", activity_definitions=[draft_activity], approval=approval,
+            cost_mapping_registry=registry, cost_context_id="default",
+            cost_as_of_by_month={"2024-01": "2024-01-01"},
+            governance_mode="exploratory",
+            **IDENTITY,
+        )
+        assert result["success"]
+        assert result["governance_mode"] == "exploratory"
 
 
 # ---------------------------------------------------------------------------

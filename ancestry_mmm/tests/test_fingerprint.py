@@ -347,6 +347,80 @@ class TestFingerprintModelSpecMediaOutcomePathways:
         fp_ba = fingerprint_model_spec(spec, {}, 4, media_outcome_pathways=[b, a])
         assert fp_ab == fp_ba
 
+
+class TestFingerprintModelSpecActivityFitFingerprint:
+    """PR G2A.6c workstream F: including the fit-relevant activity
+    fingerprint (core.activities.activity_fit_fingerprint) in model
+    identity so changing an activity's model_role, model-input column, or
+    pathway linkage automatically stales the fit and any bound approval -
+    fingerprinted the same way as funnel_links/media_outcome_pathways."""
+
+    def test_omitting_activity_fit_fingerprint_is_backward_compatible(self):
+        spec = {"markets": ["UK"]}
+        assert fingerprint_model_spec(spec, {}, 4) == fingerprint_model_spec(spec, {}, 4, activity_fit_fingerprint=None)
+        assert fingerprint_model_spec(spec, {}, 4) == fingerprint_model_spec(spec, {}, 4, activity_fit_fingerprint="")
+
+    def test_a_different_activity_fit_fingerprint_changes_the_model_spec_fingerprint(self):
+        spec = {"markets": ["UK"]}
+        fp_a = fingerprint_model_spec(spec, {}, 4, activity_fit_fingerprint="fp-intervention")
+        fp_b = fingerprint_model_spec(spec, {}, 4, activity_fit_fingerprint="fp-mediator")
+        assert fp_a != fp_b
+
+    def test_using_the_real_activity_fit_fingerprint_function_end_to_end(self):
+        from ancestry_mmm.core.activities import ActivityDefinition, activity_fit_fingerprint
+
+        spec = {"markets": ["UK"]}
+        intervention = ActivityDefinition(
+            activity_id="tv-paid", channel="TV_Paid", activity_ownership="paid",
+            model_role="intervention", economic_treatment="paid_media_cost",
+            planning_eligibility="optimisable", source="finance",
+        )
+        mediator = ActivityDefinition(
+            activity_id="tv-paid", channel="TV_Paid", activity_ownership="paid",
+            model_role="mediator", economic_treatment="paid_media_cost",
+            planning_eligibility="fixed", source="finance",
+        )
+        fp_intervention = fingerprint_model_spec(
+            spec, {}, 4, activity_fit_fingerprint=activity_fit_fingerprint([intervention]),
+        )
+        fp_mediator = fingerprint_model_spec(
+            spec, {}, 4, activity_fit_fingerprint=activity_fit_fingerprint([mediator]),
+        )
+        # model_role is fit-relevant - intervention vs mediator must stale the fit.
+        assert fp_intervention != fp_mediator
+
+        fp_intervention_again = fingerprint_model_spec(
+            spec, {}, 4, activity_fit_fingerprint=activity_fit_fingerprint([intervention]),
+        )
+        assert fp_intervention == fp_intervention_again
+
+    def test_non_fit_relevant_activity_fields_do_not_change_the_fingerprint(self):
+        from ancestry_mmm.core.activities import ActivityDefinition, activity_fit_fingerprint
+
+        spec = {"markets": ["UK"]}
+        draft = ActivityDefinition(
+            activity_id="tv-paid", channel="TV_Paid", activity_ownership="paid",
+            model_role="intervention", economic_treatment="paid_media_cost",
+            planning_eligibility="optimisable", source="finance",
+            approval_status="draft",
+        )
+        approved = ActivityDefinition(
+            activity_id="tv-paid", channel="TV_Paid", activity_ownership="paid",
+            model_role="intervention", economic_treatment="response_only",
+            planning_eligibility="fixed", source="finance",
+            approval_status="approved", approved_by="reviewer", approved_at="2026-01-01",
+        )
+        # economic_treatment, planning_eligibility and approval metadata are
+        # not fit-relevant - only model_role/model-input column/pathway_ids
+        # are (they don't change what gets fitted).
+        fp_draft = fingerprint_model_spec(
+            spec, {}, 4, activity_fit_fingerprint=activity_fit_fingerprint([draft]),
+        )
+        fp_approved = fingerprint_model_spec(
+            spec, {}, 4, activity_fit_fingerprint=activity_fit_fingerprint([approved]),
+        )
+        assert fp_draft == fp_approved
+
     def test_changing_a_pathway_role_changes_the_fingerprint(self):
         spec = {"markets": ["UK"]}
         fp_a = fingerprint_model_spec(spec, {}, 4, media_outcome_pathways=[

@@ -14,6 +14,7 @@ from ancestry_mmm.core.approval import ModelApproval
 from ancestry_mmm.core.activities import (
     ActivityDefinition,
     activity_by_model_input,
+    activity_fit_fingerprint,
 )
 from ancestry_mmm.core.diagnostics import compute_scorecard, expanding_window_backtest
 from ancestry_mmm.core.fingerprint import fingerprint_dataframe, fingerprint_model_spec, fingerprint_posterior
@@ -206,6 +207,9 @@ if model_run_id and posterior_params is not None and model_spec_dict is not None
             outcome_catalogue=outcome_catalogue_fingerprint_payload(meta.outcome_catalogue_at_fit) if meta is not None else None,
             funnel_links=get_state("funnel_links"),
             media_outcome_pathways=pathway_catalogue_fingerprint_payload(meta.pathway_catalogue_at_fit) if meta is not None else None,
+            activity_fit_fingerprint=(
+                activity_fit_fingerprint(activity_definitions) if activity_definitions else None
+            ),
         ),
         "posterior_fingerprint": fingerprint_posterior(posterior_params),
     }

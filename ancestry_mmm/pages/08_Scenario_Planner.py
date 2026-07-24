@@ -18,6 +18,7 @@ from ancestry_mmm.core.approval import ApprovalMismatchError, ModelApproval
 from ancestry_mmm.core.activities import (
     ActivityDefinition,
     activity_by_model_input,
+    activity_fit_fingerprint,
 )
 from ancestry_mmm.core.fingerprint import fingerprint_dataframe, fingerprint_model_spec, fingerprint_posterior
 from ancestry_mmm.core.outcomes import (
@@ -108,6 +109,9 @@ if model_run_id and spec_dict is not None:
             outcome_catalogue=outcome_catalogue_fingerprint_payload(meta.outcome_catalogue_at_fit) if meta is not None else None,
             funnel_links=get_state("funnel_links"),
             media_outcome_pathways=pathway_catalogue_fingerprint_payload(meta.pathway_catalogue_at_fit) if meta is not None else None,
+            activity_fit_fingerprint=(
+                activity_fit_fingerprint(activity_definitions) if activity_definitions else None
+            ),
         ),
         "posterior_fingerprint": fingerprint_posterior(params),
     }
@@ -396,6 +400,28 @@ demand_capture_rule = st.radio(
 counterfactual_policy = CounterfactualPolicy(
     demand_capture_rule=demand_capture_rule,
 )
+
+governance_mode = st.radio(
+    "Governance mode",
+    ["official", "exploratory"],
+    horizontal=True,
+    format_func=lambda value: {
+        "official": "Official - requires approved activity governance",
+        "exploratory": "Exploratory - sensitivity only, skips approval gates",
+    }[value],
+    help=(
+        "Official mode blocks optimisation against any activity whose governance "
+        "isn't approved (draft or rejected model role, economic treatment, or "
+        "planning eligibility must not drive an official recommendation). "
+        "Exploratory mode skips that check - always visibly labelled below, "
+        "never a silent fallback."
+    ),
+)
+if governance_mode == "exploratory":
+    st.warning(
+        "**Exploratory mode** - this run may use activity governance that is not yet "
+        "approved. Results here are a sensitivity, not an official recommendation."
+    )
 cost_as_of_by_month = {
     month: f"{month}-01" if len(month) == 7 else month for month in months
 }
@@ -679,6 +705,7 @@ with tab_constrained:
                         cost_as_of_by_month=cost_as_of_by_month,
                         posterior_trace=trace,
                         posterior_evaluation_draws=50,
+                        governance_mode=governance_mode,
                         **identity_kwargs,
                     )
                 except (ApprovalMismatchError, ValueError) as e:
@@ -776,6 +803,7 @@ with tab_unconstrained:
                         cost_as_of_by_month=cost_as_of_by_month,
                         posterior_trace=trace,
                         posterior_evaluation_draws=50,
+                        governance_mode=governance_mode,
                         **identity_kwargs,
                     )
                 except (ApprovalMismatchError, ValueError) as e:
