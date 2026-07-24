@@ -38,9 +38,11 @@ from ancestry_mmm.core.optimization import (
     SpendConstraint,
     compare_scenarios,
     evaluate_scenario,
+    monthly_economics_table,
     optimize_scenario,
     scenario_to_dict,
     seed_monetary_and_quantity_defaults,
+    whole_plan_scope_compatible,
 )
 from ancestry_mmm.core.uncertainty import evaluate_scenario_with_uncertainty
 from ancestry_mmm.core.evidence_tiers import classify_market_evidence
@@ -53,36 +55,6 @@ from ancestry_mmm.core.scenario_governance import (
     classify_activity_plan,
 )
 from ancestry_mmm.data.preprocessor import create_fourier_features_from_calendar
-
-
-def _scenario_cpa_summary(predicted_df: pd.DataFrame) -> dict:
-    """Metric-aware average CPA across a whole predicted-outcomes DataFrame
-    (every month, every outcome) - never a blended total-spend /
-    (FH-GSAs-plus-sign-ups-plus-DNA-kits) number (docs/dna_fh_causal_structure.md,
-    PR E.1). `total_spend`/`fh_gsa`/`fh_signups`/`dna_kits` are month-level
-    totals repeated per outcome_id row (core.optimization.evaluate_scenario),
-    so de-duplicated by month before summing across the whole plan."""
-    cols = [
-        "total_spend",
-        "incremental_fh_gsa",
-        "incremental_dna_kits",
-    ] + (
-        ["incremental_fh_signups"]
-        if "incremental_fh_signups" in predicted_df.columns
-        else []
-    )
-    by_month = predicted_df.groupby("month")[cols].first()
-    total_spend = by_month["total_spend"].sum()
-    fh_gsa = by_month["incremental_fh_gsa"].sum()
-    dna_kits = by_month["incremental_dna_kits"].sum()
-    result = {
-        "fh_avg_cpa": float(total_spend / fh_gsa) if fh_gsa > 0 else None,
-        "dna_avg_cpa": float(total_spend / dna_kits) if dna_kits > 0 else None,
-    }
-    if "incremental_fh_signups" in cols:
-        fh_signups = by_month["incremental_fh_signups"].sum()
-        result["fh_signup_avg_cpa"] = float(total_spend / fh_signups) if fh_signups > 0 else None
-    return result
 
 
 st.set_page_config(page_title="Scenario Planner - Ancestry FH MMM", page_icon="🧬", layout="wide")
@@ -533,20 +505,24 @@ with tab_manual:
     }
     if "fh_signups" in by_month_cols:
         _objective_totals["fh_signups"] = ("Total predicted FH sign-ups", float(by_month_totals["fh_signups"].sum()))
-    c1, c2, c3, c4 = st.columns(4)
     total_label, total_value = _objective_totals[objective]
-    c1.metric(total_label, f"{total_value:,.0f}")
-    cpa_summary = _scenario_cpa_summary(predicted)
+    st.metric(total_label, f"{total_value:,.0f}")
+
+    st.markdown("**Governed economics by month**")
     st.caption(
-        "**Spend scope: whole-plan** - total spend across every channel in this plan, divided by "
-        "the plan's incremental KPI relative to the displayed counterfactual. "
-        "Total forecast outcomes are shown separately."
+        "Straight from the core evaluator - never recomputed on this page. `whole_plan_*` "
+        "fields are blank for a month where response-only activity contributes to the "
+        "incremental outcome without a corresponding spend (a whole-plan cost-per-outcome "
+        "would be misleading there); `paid_media_*` fields are scoped to paid spend only and "
+        "are never suppressed this way."
     )
-    c2.metric("Whole-plan incremental CPA (FH GSAs)", f"{cpa_summary['fh_avg_cpa']:,.2f}" if cpa_summary["fh_avg_cpa"] is not None else "n/a")
-    if _has_fh_signup_outcomes:
-        c3.metric("Whole-plan incremental CPA (FH sign-ups)", f"{cpa_summary.get('fh_signup_avg_cpa'):,.2f}" if cpa_summary.get("fh_signup_avg_cpa") is not None else "n/a")
-    if _has_dna_kit_segments:
-        c4.metric("Whole-plan incremental CPA (DNA kits)", f"{cpa_summary['dna_avg_cpa']:,.2f}" if cpa_summary["dna_avg_cpa"] is not None else "n/a")
+    econ_table = monthly_economics_table(predicted)
+    st.dataframe(econ_table, width="stretch", column_config=dataframe_column_config(econ_table))
+    if not whole_plan_scope_compatible(predicted):
+        st.caption(
+            "Whole-plan CPA/ROI is unavailable for one or more months above - see paid-media-only "
+            "CPA/ROI instead."
+        )
 
     scenario_name = st.text_input("Scenario name *", value=f"manual-{market}-{months[0]}", key="manual_name")
     if st.button("Save this scenario"):
@@ -715,27 +691,33 @@ with tab_constrained:
 
     result = st.session_state.get("constrained_result")
     if result:
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2 = st.columns(2)
         c1.metric(f"Current total ({_objective_labels[objective]})", f"{result['current_objective_value']:,.0f}")
         c2.metric("Optimised total", f"{result['objective_value']:,.0f}",
                    delta=f"{result['objective_value'] - result['current_objective_value']:,.0f}")
-        current_cpa = _scenario_cpa_summary(result["current_predicted"])
-        optimised_cpa = _scenario_cpa_summary(result["predicted"])
-        c3.metric(
-            "Whole-plan incremental CPA (FH GSAs)",
-            f"{optimised_cpa['fh_avg_cpa']:,.2f}" if optimised_cpa["fh_avg_cpa"] is not None else "n/a",
-            delta=f"{optimised_cpa['fh_avg_cpa'] - current_cpa['fh_avg_cpa']:,.2f}" if (optimised_cpa["fh_avg_cpa"] is not None and current_cpa["fh_avg_cpa"] is not None) else None,
-            delta_color="inverse",  # lower CPA is an improvement
-            help="Total spend / total predicted FH GSAs across the whole plan - current plan vs this optimised one.",
+
+        st.markdown("**Governed economics by month: current vs optimised**")
+        st.caption(
+            "Straight from the core evaluator - never recomputed on this page. `whole_plan_*` "
+            "fields are blank for a month where response-only activity contributes to the "
+            "incremental outcome without a corresponding spend; `paid_media_*` fields are "
+            "scoped to paid spend only and are never suppressed this way."
         )
-        if _has_dna_kit_segments:
-            c4.metric(
-                "Whole-plan incremental CPA (DNA kits)",
-                f"{optimised_cpa['dna_avg_cpa']:,.2f}" if optimised_cpa["dna_avg_cpa"] is not None else "n/a",
-                delta=f"{optimised_cpa['dna_avg_cpa'] - current_cpa['dna_avg_cpa']:,.2f}" if (optimised_cpa["dna_avg_cpa"] is not None and current_cpa["dna_avg_cpa"] is not None) else None,
-                delta_color="inverse",
-                help="Total spend / total predicted DNA kits across the whole plan - current plan vs this optimised one.",
+        current_econ = monthly_economics_table(result["current_predicted"])
+        current_econ.insert(0, "plan", "current")
+        optimised_econ = monthly_economics_table(result["predicted"])
+        optimised_econ.insert(0, "plan", "optimised")
+        combined_econ = pd.concat([current_econ, optimised_econ], ignore_index=True)
+        st.dataframe(combined_econ, width="stretch", column_config=dataframe_column_config(combined_econ))
+        if not (
+            whole_plan_scope_compatible(result["current_predicted"])
+            and whole_plan_scope_compatible(result["predicted"])
+        ):
+            st.caption(
+                "Whole-plan CPA/ROI is unavailable for one or more months above - see "
+                "paid-media-only CPA/ROI instead."
             )
+
         plan_result_df = pd.DataFrame(result["spend_plan"]).T
         st.dataframe(plan_result_df, width="stretch", column_config=dataframe_column_config(plan_result_df))
         st.dataframe(result["predicted"], width="stretch", column_config=dataframe_column_config(result["predicted"]))
@@ -804,27 +786,33 @@ with tab_unconstrained:
 
     result = st.session_state.get("unconstrained_result")
     if result:
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2 = st.columns(2)
         c1.metric(f"Current total ({_objective_labels[objective]})", f"{result['current_objective_value']:,.0f}")
         c2.metric("Theoretical optimum", f"{result['objective_value']:,.0f}",
                    delta=f"{result['objective_value'] - result['current_objective_value']:,.0f}")
-        current_cpa = _scenario_cpa_summary(result["current_predicted"])
-        optimised_cpa = _scenario_cpa_summary(result["predicted"])
-        c3.metric(
-            "Whole-plan incremental CPA (FH GSAs)",
-            f"{optimised_cpa['fh_avg_cpa']:,.2f}" if optimised_cpa["fh_avg_cpa"] is not None else "n/a",
-            delta=f"{optimised_cpa['fh_avg_cpa'] - current_cpa['fh_avg_cpa']:,.2f}" if (optimised_cpa["fh_avg_cpa"] is not None and current_cpa["fh_avg_cpa"] is not None) else None,
-            delta_color="inverse",
-            help="Total spend / total predicted FH GSAs across the whole plan - current plan vs this theoretical optimum.",
+
+        st.markdown("**Governed economics by month: current vs theoretical optimum**")
+        st.caption(
+            "Straight from the core evaluator - never recomputed on this page. `whole_plan_*` "
+            "fields are blank for a month where response-only activity contributes to the "
+            "incremental outcome without a corresponding spend; `paid_media_*` fields are "
+            "scoped to paid spend only and are never suppressed this way."
         )
-        if _has_dna_kit_segments:
-            c4.metric(
-                "Whole-plan incremental CPA (DNA kits)",
-                f"{optimised_cpa['dna_avg_cpa']:,.2f}" if optimised_cpa["dna_avg_cpa"] is not None else "n/a",
-                delta=f"{optimised_cpa['dna_avg_cpa'] - current_cpa['dna_avg_cpa']:,.2f}" if (optimised_cpa["dna_avg_cpa"] is not None and current_cpa["dna_avg_cpa"] is not None) else None,
-                delta_color="inverse",
-                help="Total spend / total predicted DNA kits across the whole plan - current plan vs this theoretical optimum.",
+        current_econ = monthly_economics_table(result["current_predicted"])
+        current_econ.insert(0, "plan", "current")
+        optimised_econ = monthly_economics_table(result["predicted"])
+        optimised_econ.insert(0, "plan", "theoretical optimum")
+        combined_econ = pd.concat([current_econ, optimised_econ], ignore_index=True)
+        st.dataframe(combined_econ, width="stretch", column_config=dataframe_column_config(combined_econ))
+        if not (
+            whole_plan_scope_compatible(result["current_predicted"])
+            and whole_plan_scope_compatible(result["predicted"])
+        ):
+            st.caption(
+                "Whole-plan CPA/ROI is unavailable for one or more months above - see "
+                "paid-media-only CPA/ROI instead."
             )
+
         unconstrained_plan_df = pd.DataFrame(result["spend_plan"]).T
         st.dataframe(unconstrained_plan_df, width="stretch", column_config=dataframe_column_config(unconstrained_plan_df))
 

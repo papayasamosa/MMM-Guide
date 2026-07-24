@@ -20,11 +20,13 @@ from ancestry_mmm.core.optimization import (
     compare_scenarios,
     evaluate_scenario,
     monetary_optimization_resource,
+    monthly_economics_table,
     optimize_scenario,
     scenario_from_dict,
     scenario_to_dict,
     seed_monetary_and_quantity_defaults,
     validate_optimization_resource,
+    whole_plan_scope_compatible,
     VALID_OBJECTIVES,
 )
 from ancestry_mmm.core.outcomes import FAMILY_HISTORY, DNA, METRIC_GSA, METRIC_KIT_SALE, OutcomeDefinition
@@ -1681,3 +1683,137 @@ class TestSeedMonetaryAndQuantityDefaults:
         ) * WEEKS_PER_MONTH
         assert defaults["TV_Paid"] == pytest.approx(correct_spend)
         assert abs(defaults["TV_Paid"] - scale_before_convert_bug) > 1.0
+
+
+# ---------------------------------------------------------------------------
+# PR G2A.6c workstream C: monthly_economics_table/whole_plan_scope_compatible
+# are the one authoritative economics-rendering implementation, replacing
+# the Scenario Planner UI's deleted `_scenario_cpa_summary`, which recomputed
+# total_spend / incremental_outcome from raw columns and could resurrect a
+# whole-plan CPA the core had deliberately suppressed. These do no CPA/ROI
+# arithmetic themselves - only column selection and de-duplication - so
+# they cannot reintroduce that defect.
+# ---------------------------------------------------------------------------
+
+class TestGovernedEconomicsSummary:
+    def test_monthly_economics_table_selects_only_governed_columns_and_dedupes_by_month(self):
+        row = {
+            "whole_plan_incremental_nbt_cpa": 5.0, "paid_media_incremental_nbt_cpa": 4.0,
+            "whole_plan_incremental_roi": 2.0, "paid_media_incremental_roi": 2.5,
+            "whole_plan_cost_per_fh_gsa": 6.0, "paid_media_incremental_cpa": 5.5,
+            "whole_plan_cost_per_dna_kit": None, "whole_plan_cost_per_fh_signup": None,
+            "economics_coverage": {"whole_plan_scope_compatible": True},
+        }
+        predicted = pd.DataFrame([
+            {"month": "2024-01", "outcome_id": "New", "predicted_outcome": 100.0, **row},
+            {"month": "2024-01", "outcome_id": "DNA_Kit", "predicted_outcome": 10.0, **row},
+        ])
+        table = monthly_economics_table(predicted)
+        assert list(table["month"]) == ["2024-01"]
+        assert "predicted_outcome" not in table.columns
+        assert "outcome_id" not in table.columns
+        assert table["whole_plan_incremental_nbt_cpa"].iloc[0] == 5.0
+
+    def test_whole_plan_scope_compatible_requires_every_month_compatible(self):
+        mixed = pd.DataFrame([
+            {"month": "2024-01", "economics_coverage": {"whole_plan_scope_compatible": True}},
+            {"month": "2024-02", "economics_coverage": {"whole_plan_scope_compatible": False}},
+        ])
+        assert whole_plan_scope_compatible(mixed) is False
+
+        all_compatible = pd.DataFrame([
+            {"month": "2024-01", "economics_coverage": {"whole_plan_scope_compatible": True}},
+            {"month": "2024-02", "economics_coverage": {"whole_plan_scope_compatible": True}},
+        ])
+        assert whole_plan_scope_compatible(all_compatible) is True
+
+    def test_mixed_plan_suppresses_whole_plan_but_not_paid_media_economics(self, approval):
+        # Real evaluate_scenario integration: a response-only activity
+        # contributing to the incremental outcome must suppress whole-plan
+        # CPA/ROI (evaluate_scenario's own rule), while paid-media-only
+        # CPA/ROI - scoped to paid spend and the paid-decision counterfactual
+        # only - remains available. monthly_economics_table/
+        # whole_plan_scope_compatible must reflect exactly this, since they
+        # perform no arithmetic of their own.
+        meta = FHModelMeta(
+            markets=["UK"], outcome_ids=["New"], channels=["TV_Paid", "Organic_Social"],
+            dna_channels=[], dna_channel_idx=[], non_dna_idx=[0, 1],
+            dna_outcome_id="New", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+        )
+        params = FHPosteriorParams(
+            decay_rate={"TV_Paid": 0.5, "Organic_Social": 0.4},
+            hill_K={"TV_Paid": 2000.0, "Organic_Social": 400.0},
+            hill_S={"TV_Paid": 1.0, "Organic_Social": 1.0},
+            beta={"New": {"TV_Paid": 0.1, "Organic_Social": 0.2}},
+            pathway_strength={}, promo_coef={"New": 0.1},
+            market_offset={"UK": {"New": 0.0}}, intercept={"New": 3.0}, trend_coef={"New": 0.0},
+            gamma_fourier={"New": np.zeros(6)}, alpha={"New": 5.0}, control_coef={}, outcome_control_coef={},
+        )
+        reference_context = {
+            "2024-01": {"trend": 1.0, "fourier": np.zeros(6), "promo": {"New": 0.0}, "controls": {}, "outcome_controls": {}}
+        }
+        tv = _paid_activity("tv-paid", "TV_Paid")
+        organic = _response_only_activity("organic-social", "Organic_Social")
+        registry = CostMappingRegistry([
+            FixedCostPerUnitMapping(
+                mapping_id="uk-tv-paid-econ-map", market="UK", channel="TV_Paid", currency="GBP",
+                cost_context_id="default", source="finance", approval_status="approved",
+                approved_by="finance-owner", approved_at="2026-01-01T10:00:00Z",
+                owner="media-finance", approval_note="approved", last_reviewed_at="2026-01-01",
+                cost_per_media_input=1.0,
+            ),
+        ])
+        plan = {"2024-01": {"TV_Paid": 800.0, "Organic_Social": 300.0}}
+        predicted = evaluate_scenario(
+            plan, "UK", meta, params, reference_context, {"New": 2.0},
+            approval=approval, activity_definitions=[tv, organic],
+            cost_mapping_registry=registry, cost_context_id="default",
+            cost_as_of_by_month={"2024-01": "2024-01-01"},
+            **IDENTITY,
+        )
+        assert whole_plan_scope_compatible(predicted) is False
+        table = monthly_economics_table(predicted)
+        # NBT-scoped fields need explicit outcome-catalogue metadata this
+        # fixture doesn't set up (fh_net_billthrough_outcome_ids returns []
+        # without it) - GSA has a legacy fallback ("every non-DNA-kit
+        # outcome"), so it's the meaningful field to assert on here.
+        assert table["whole_plan_cost_per_fh_gsa"].isna().all()
+        assert table["whole_plan_incremental_roi"].isna().all()
+        assert table["paid_media_incremental_cpa"].notna().any()
+
+    def test_fully_paid_plan_leaves_whole_plan_economics_available(self, approval):
+        meta = FHModelMeta(
+            markets=["UK"], outcome_ids=["New"], channels=["TV_Paid"],
+            dna_channels=[], dna_channel_idx=[], non_dna_idx=[0],
+            dna_outcome_id="New", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+        )
+        params = FHPosteriorParams(
+            decay_rate={"TV_Paid": 0.5}, hill_K={"TV_Paid": 2000.0}, hill_S={"TV_Paid": 1.0},
+            beta={"New": {"TV_Paid": 0.1}}, pathway_strength={}, promo_coef={"New": 0.1},
+            market_offset={"UK": {"New": 0.0}}, intercept={"New": 3.0}, trend_coef={"New": 0.0},
+            gamma_fourier={"New": np.zeros(6)}, alpha={"New": 5.0}, control_coef={}, outcome_control_coef={},
+        )
+        reference_context = {
+            "2024-01": {"trend": 1.0, "fourier": np.zeros(6), "promo": {"New": 0.0}, "controls": {}, "outcome_controls": {}}
+        }
+        tv = _paid_activity("tv-paid", "TV_Paid")
+        registry = CostMappingRegistry([
+            FixedCostPerUnitMapping(
+                mapping_id="uk-tv-paid-econ-map2", market="UK", channel="TV_Paid", currency="GBP",
+                cost_context_id="default", source="finance", approval_status="approved",
+                approved_by="finance-owner", approved_at="2026-01-01T10:00:00Z",
+                owner="media-finance", approval_note="approved", last_reviewed_at="2026-01-01",
+                cost_per_media_input=1.0,
+            ),
+        ])
+        plan = {"2024-01": {"TV_Paid": 800.0}}
+        predicted = evaluate_scenario(
+            plan, "UK", meta, params, reference_context, {"New": 2.0},
+            approval=approval, activity_definitions=[tv],
+            cost_mapping_registry=registry, cost_context_id="default",
+            cost_as_of_by_month={"2024-01": "2024-01-01"},
+            **IDENTITY,
+        )
+        assert whole_plan_scope_compatible(predicted) is True
+        table = monthly_economics_table(predicted)
+        assert table["whole_plan_cost_per_fh_gsa"].notna().any()

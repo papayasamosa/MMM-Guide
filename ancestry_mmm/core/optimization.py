@@ -2005,6 +2005,56 @@ def compare_scenarios(scenarios: List[Dict], predicted_key: str = "predicted") -
 
 
 # ---------------------------------------------------------------------------
+# PR G2A.6c workstream C: there must be one authoritative economics
+# implementation. `evaluate_scenario` already computes CPA/ROI correctly
+# scoped per month, deliberately nulling whole-plan fields when
+# response-only activity contributes to the incremental outcome without a
+# corresponding spend (see its `whole_plan_scope_compatible` gate above). A
+# caller (the Scenario Planner UI previously had its own
+# `_scenario_cpa_summary`) that recomputed total_spend / incremental_outcome
+# from raw columns could silently resurrect exactly the number the core
+# suppressed. These two helpers only select and de-duplicate columns the
+# core already computed - no CPA/ROI arithmetic happens outside
+# evaluate_scenario.
+# ---------------------------------------------------------------------------
+
+GOVERNED_ECONOMICS_COLUMNS = [
+    "whole_plan_incremental_nbt_cpa",
+    "paid_media_incremental_nbt_cpa",
+    "whole_plan_incremental_roi",
+    "paid_media_incremental_roi",
+    "whole_plan_cost_per_fh_gsa",
+    "paid_media_incremental_cpa",
+    "whole_plan_cost_per_dna_kit",
+    "whole_plan_cost_per_fh_signup",
+]
+
+
+def monthly_economics_table(predicted_df: pd.DataFrame) -> pd.DataFrame:
+    """Governed per-month economics, straight from evaluate_scenario's own
+    output columns (`GOVERNED_ECONOMICS_COLUMNS`, whichever are present).
+    Every `whole_plan_*` field is already `None` for a month the core
+    marked scope-incompatible; `paid_media_*` fields are never suppressed
+    this way. De-duplicated by month since every field here is repeated
+    once per outcome_id row within a month."""
+    cols = [c for c in GOVERNED_ECONOMICS_COLUMNS if c in predicted_df.columns]
+    return predicted_df.groupby("month")[cols].first().reset_index()
+
+
+def whole_plan_scope_compatible(predicted_df: pd.DataFrame) -> bool:
+    """True only if every month in `predicted_df` was whole-plan
+    scope-compatible (`economics_coverage["whole_plan_scope_compatible"]`) -
+    the same condition evaluate_scenario itself checks before populating
+    the `whole_plan_*` columns, exposed here so a caller can explain an
+    unavailable metric instead of silently omitting it."""
+    return bool(
+        predicted_df["economics_coverage"]
+        .apply(lambda coverage: bool(coverage.get("whole_plan_scope_compatible")))
+        .all()
+    )
+
+
+# ---------------------------------------------------------------------------
 # Generic single-KPI helpers, kept for reuse
 # ---------------------------------------------------------------------------
 
