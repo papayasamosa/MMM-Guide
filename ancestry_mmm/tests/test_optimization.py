@@ -6,7 +6,11 @@ from ancestry_mmm.core.approval import ApprovalMismatchError, ModelApproval
 from ancestry_mmm.core.activities import ActivityDefinition
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
 from ancestry_mmm.core.market_specific_predict import FHMarketSpecificPosteriorParams
-from ancestry_mmm.core.media_costs import CostMappingRegistry, FixedCostPerUnitMapping
+from ancestry_mmm.core.media_costs import (
+    CostMappingRegistry,
+    FixedCostPerUnitMapping,
+    PiecewiseLinearCostMapping,
+)
 from ancestry_mmm.core.optimization import (
     OptimizationResource,
     PlanningObjective,
@@ -1044,6 +1048,63 @@ class TestOptimizationResource:
         restored = OptimizationResource.from_dict(resource.to_dict())
         assert restored == resource
 
+    def _mapping(self, activity_id: str, channel: str, currency: str) -> FixedCostPerUnitMapping:
+        return FixedCostPerUnitMapping(
+            mapping_id=f"uk-{activity_id}-map", market="UK", channel=channel, currency=currency,
+            cost_context_id="default", source="finance rate card",
+            approval_status="approved", approved_by="finance-owner",
+            approved_at="2026-01-01T10:00:00Z", owner="media-finance",
+            approval_note="approved", last_reviewed_at="2026-01-01", cost_per_media_input=1.0,
+        )
+
+    def test_monetary_resource_excludes_activity_with_no_resolvable_mapping_when_registry_given(self):
+        activities = [
+            _paid_activity("tv-paid", "TV_Paid"),
+            _paid_activity("search-paid", "Search_Paid"),
+        ]
+        registry = CostMappingRegistry([self._mapping("tv-paid", "TV_Paid", "GBP")])
+        resource = monetary_optimization_resource(
+            activities, "UK", cost_mapping_registry=registry, cost_context_id="default",
+            cost_as_of="2026-06-01",
+        )
+        # search-paid has no approved effective mapping, so it cannot be
+        # verified as GBP-denominated - excluded rather than pooled in.
+        assert resource.eligible_activity_ids == ("tv-paid",)
+        assert resource.currency == "GBP"
+
+    def test_monetary_resource_raises_on_mixed_currency_without_explicit_currency(self):
+        activities = [
+            _paid_activity("tv-paid", "TV_Paid"),
+            _paid_activity("search-paid", "Search_Paid"),
+        ]
+        registry = CostMappingRegistry([
+            self._mapping("tv-paid", "TV_Paid", "GBP"),
+            self._mapping("search-paid", "Search_Paid", "USD"),
+        ])
+        with pytest.raises(ValueError, match="more than one currency"):
+            monetary_optimization_resource(
+                activities, "UK", cost_mapping_registry=registry, cost_context_id="default",
+                cost_as_of="2026-06-01",
+            )
+
+    def test_monetary_resource_scopes_to_explicit_currency(self):
+        activities = [
+            _paid_activity("tv-paid", "TV_Paid"),
+            _paid_activity("search-paid", "Search_Paid"),
+        ]
+        registry = CostMappingRegistry([
+            self._mapping("tv-paid", "TV_Paid", "GBP"),
+            self._mapping("search-paid", "Search_Paid", "USD"),
+        ])
+        resource = monetary_optimization_resource(
+            activities, "UK", currency="GBP", cost_mapping_registry=registry,
+            cost_context_id="default", cost_as_of="2026-06-01",
+        )
+        # A USD-denominated decision must never be pooled into a GBP resource,
+        # even when explicitly excluded rather than raising.
+        assert resource.eligible_activity_ids == ("tv-paid",)
+        assert resource.currency == "GBP"
+
 
 class TestOptimizerDimensionalCorrectness:
     def test_optimizer_never_trades_currency_against_a_response_only_quantity(self, approval):
@@ -1212,3 +1273,33 @@ class TestSeedMonetaryAndQuantityDefaults:
         assert model_input["2026-06"]["TV_Paid"] == pytest.approx(
             weekly_media_input * WEEKS_PER_MONTH
         )
+
+    def test_seed_applies_a_nonlinear_mapping_to_the_monthly_quantity_not_the_weekly_one(self):
+        # A linear mapping can't distinguish "convert weekly, then scale" from
+        # "scale, then convert" - only a mapping with nonlinear marginal cost
+        # (piecewise-linear knots) can catch scaling before vs. after conversion.
+        activity = _paid_activity("tv-paid", "TV_Paid")
+        mapping = PiecewiseLinearCostMapping(
+            mapping_id="uk-tv-piecewise", market="UK", channel="TV_Paid", currency="GBP",
+            cost_context_id="default", source="finance rate card",
+            approval_status="approved", approved_by="finance-owner",
+            approved_at="2026-01-01T10:00:00Z", owner="media-finance",
+            approval_note="approved", last_reviewed_at="2026-01-01",
+            spend_knots=(0.0, 150.0, 900.0), media_input_knots=(0.0, 100.0, 1000.0),
+            allow_extrapolation=True,
+        )
+        registry = CostMappingRegistry([mapping])
+        weekly_media_input = 100.0
+        defaults, _ = seed_monetary_and_quantity_defaults(
+            avg_weekly_media_input={"TV_Paid": weekly_media_input},
+            activity_definitions=[activity], market="UK",
+            cost_mapping_registry=registry, cost_context_id="default", as_of="2026-06-01",
+        )
+        correct_spend = float(
+            mapping.media_input_to_spend(weekly_media_input * WEEKS_PER_MONTH)
+        )
+        scale_before_convert_bug = float(
+            mapping.media_input_to_spend(weekly_media_input)
+        ) * WEEKS_PER_MONTH
+        assert defaults["TV_Paid"] == pytest.approx(correct_spend)
+        assert abs(defaults["TV_Paid"] - scale_before_convert_bug) > 1.0

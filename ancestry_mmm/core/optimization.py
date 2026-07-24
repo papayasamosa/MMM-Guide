@@ -182,27 +182,79 @@ def monetary_optimization_resource(
     resource_id: str = "monetary_budget",
     currency: Optional[str] = None,
     total: Optional[float] = None,
+    cost_mapping_registry: Optional[CostMappingRegistry] = None,
+    cost_context_id: str = "default",
+    cost_as_of: Optional[str] = None,
 ) -> OptimizationResource:
     """Default resource: every cost-bearing, optimisable activity for this
-    market - the monetary budget a spend optimisation is allowed to move.
-    Response-only quantities, controls, events, mediators and fixed/
-    scenario-only activity are never included, however `planning_eligibility`
-    they carry - they are not denominated in this resource's unit."""
+    market that is denominated in one governed currency - the monetary
+    budget a spend optimisation is allowed to move. Response-only
+    quantities, controls, events, mediators and fixed/scenario-only
+    activity are never included, whatever `planning_eligibility` they
+    carry - they are not denominated in this resource's unit.
+
+    A resource must never silently pool decisions from more than one
+    currency into one conserved total (the same currency-purity rule as
+    `_validate_no_mixed_currency_value_weights`) - one USD must not be
+    conserved as interchangeable with one GBP. When `cost_mapping_registry`
+    is given, each candidate's effective mapping currency is resolved via
+    `cost_context_id`/`cost_as_of`; a candidate with no resolvable mapping,
+    or whose resolved currency disagrees with the resource's currency, is
+    excluded rather than pooled in. If resolvable candidates span more than
+    one currency and `currency` wasn't given explicitly, raises - the
+    caller must state which currency this resource optimises. Without a
+    `cost_mapping_registry`, currency cannot be checked and every
+    cost-bearing optimisable activity is included as before (only safe when
+    the caller has already validated currency purity itself)."""
 
     by_input = activity_by_model_input(activity_definitions, market)
-    eligible = sorted(
-        {
-            definition.activity_id
-            for definition in by_input.values()
-            if definition.is_cost_bearing
-            and definition.planning_eligibility == "optimisable"
-        }
+    candidates = {
+        definition.activity_id: definition
+        for definition in by_input.values()
+        if definition.is_cost_bearing
+        and definition.planning_eligibility == "optimisable"
+    }
+    if cost_mapping_registry is None:
+        return OptimizationResource(
+            resource_id=resource_id,
+            unit="currency",
+            currency=currency,
+            eligible_activity_ids=tuple(sorted(candidates)),
+            total=total,
+        )
+
+    currency_by_activity: Dict[str, str] = {}
+    for activity_id, definition in candidates.items():
+        mapping = cost_mapping_registry.resolve(
+            market, definition.channel, cost_context_id, as_of=cost_as_of,
+        )
+        if mapping is not None:
+            currency_by_activity[activity_id] = mapping.currency
+
+    resolved_currencies = set(currency_by_activity.values())
+    if currency is None:
+        if len(resolved_currencies) > 1:
+            raise ValueError(
+                "cost-bearing activities resolve to more than one currency "
+                f"({sorted(resolved_currencies)}) - pass an explicit "
+                "currency= to select which one this resource optimises; a "
+                "monetary resource must never pool decisions across "
+                "currencies into one conserved total."
+            )
+        currency = next(iter(resolved_currencies), None)
+
+    eligible = tuple(
+        sorted(
+            activity_id
+            for activity_id, resolved in currency_by_activity.items()
+            if resolved == currency
+        )
     )
     return OptimizationResource(
         resource_id=resource_id,
         unit="currency",
         currency=currency,
-        eligible_activity_ids=tuple(eligible),
+        eligible_activity_ids=eligible,
         total=total,
     )
 
@@ -256,9 +308,15 @@ def seed_monetary_and_quantity_defaults(
             defaults[channel] = 0.0
             unmapped.append(channel)
             continue
+        # Scale to the monthly media-input quantity *before* converting
+        # through the mapping - a nonlinear mapping (e.g. piecewise-linear
+        # marginal cost) does not commute with scaling, so
+        # media_input_to_spend(weekly) * weeks_per_month is only correct
+        # for a linear mapping and silently seeds the wrong monthly spend
+        # for anything else.
         defaults[channel] = float(
-            mapping.media_input_to_spend(float(weekly_value))
-        ) * weeks_per_month
+            mapping.media_input_to_spend(float(weekly_value) * weeks_per_month)
+        )
     return defaults, unmapped
 
 
@@ -1335,6 +1393,11 @@ def optimize_scenario(
             )
         resource = optimization_resource or monetary_optimization_resource(
             activity_definitions, market,
+            cost_mapping_registry=cost_mapping_registry,
+            cost_context_id=cost_context_id or "default",
+            cost_as_of=(
+                (cost_as_of_by_month or {}).get(months[0]) if months else None
+            ),
         )
         resource_channels = [
             channel
