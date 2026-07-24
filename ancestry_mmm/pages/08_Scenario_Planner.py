@@ -18,6 +18,7 @@ from ancestry_mmm.core.approval import ApprovalMismatchError, ModelApproval
 from ancestry_mmm.core.activities import (
     ActivityDefinition,
     activity_by_model_input,
+    activity_fit_fingerprint,
 )
 from ancestry_mmm.core.fingerprint import fingerprint_dataframe, fingerprint_model_spec, fingerprint_posterior
 from ancestry_mmm.core.outcomes import (
@@ -108,6 +109,9 @@ if model_run_id and spec_dict is not None:
             outcome_catalogue=outcome_catalogue_fingerprint_payload(meta.outcome_catalogue_at_fit) if meta is not None else None,
             funnel_links=get_state("funnel_links"),
             media_outcome_pathways=pathway_catalogue_fingerprint_payload(meta.pathway_catalogue_at_fit) if meta is not None else None,
+            activity_fit_fingerprint=(
+                activity_fit_fingerprint(activity_definitions) if activity_definitions else None
+            ),
         ),
         "posterior_fingerprint": fingerprint_posterior(params),
     }
@@ -396,6 +400,28 @@ demand_capture_rule = st.radio(
 counterfactual_policy = CounterfactualPolicy(
     demand_capture_rule=demand_capture_rule,
 )
+
+governance_mode = st.radio(
+    "Governance mode",
+    ["official", "exploratory"],
+    horizontal=True,
+    format_func=lambda value: {
+        "official": "Official - requires approved activity governance",
+        "exploratory": "Exploratory - sensitivity only, skips approval gates",
+    }[value],
+    help=(
+        "Official mode blocks optimisation against any activity whose governance "
+        "isn't approved (draft or rejected model role, economic treatment, or "
+        "planning eligibility must not drive an official recommendation). "
+        "Exploratory mode skips that check - always visibly labelled below, "
+        "never a silent fallback."
+    ),
+)
+if governance_mode == "exploratory":
+    st.warning(
+        "**Exploratory mode** - this run may use activity governance that is not yet "
+        "approved. Results here are a sensitivity, not an official recommendation."
+    )
 cost_as_of_by_month = {
     month: f"{month}-01" if len(month) == 7 else month for month in months
 }
@@ -544,6 +570,7 @@ with tab_manual:
                 economics_coverage=predicted[
                     "economics_coverage"
                 ].iloc[0],
+                governance_mode="not_applicable",
             )
         )
         scenarios[-1]["predicted"] = predicted
@@ -679,6 +706,7 @@ with tab_constrained:
                         cost_as_of_by_month=cost_as_of_by_month,
                         posterior_trace=trace,
                         posterior_evaluation_draws=50,
+                        governance_mode=governance_mode,
                         **identity_kwargs,
                     )
                 except (ApprovalMismatchError, ValueError) as e:
@@ -690,7 +718,20 @@ with tab_constrained:
                 st.session_state["constrained_result"] = result
 
     result = st.session_state.get("constrained_result")
+    if result and result.get("governance_mode") != governance_mode:
+        # The governance-mode control changed since this result was
+        # computed (e.g. switched back to "official" after an exploratory
+        # run) - the cached result no longer matches what's displayed above,
+        # so it must never be shown or saved under the new, mismatched label.
+        st.session_state["constrained_result"] = None
+        result = None
+        st.info(
+            "Governance mode changed since this result was computed - re-run the "
+            "optimisation to refresh it."
+        )
     if result:
+        governance_badge = "⚠️ Exploratory" if result["governance_mode"] == "exploratory" else "Official"
+        st.caption(f"**Governance mode: {governance_badge}** (persisted with this result)")
         c1, c2 = st.columns(2)
         c1.metric(f"Current total ({_objective_labels[objective]})", f"{result['current_objective_value']:,.0f}")
         c2.metric("Optimised total", f"{result['objective_value']:,.0f}",
@@ -743,6 +784,7 @@ with tab_constrained:
                 economics_coverage=result["predicted"][
                     "economics_coverage"
                 ].iloc[0],
+                governance_mode=result["governance_mode"],
             )
             s["predicted"] = result["predicted"]
             scenarios.append(s)
@@ -776,6 +818,7 @@ with tab_unconstrained:
                         cost_as_of_by_month=cost_as_of_by_month,
                         posterior_trace=trace,
                         posterior_evaluation_draws=50,
+                        governance_mode=governance_mode,
                         **identity_kwargs,
                     )
                 except (ApprovalMismatchError, ValueError) as e:
@@ -785,7 +828,16 @@ with tab_unconstrained:
                 st.session_state["unconstrained_result"] = result
 
     result = st.session_state.get("unconstrained_result")
+    if result and result.get("governance_mode") != governance_mode:
+        st.session_state["unconstrained_result"] = None
+        result = None
+        st.info(
+            "Governance mode changed since this result was computed - re-run the "
+            "optimisation to refresh it."
+        )
     if result:
+        governance_badge = "⚠️ Exploratory" if result["governance_mode"] == "exploratory" else "Official"
+        st.caption(f"**Governance mode: {governance_badge}**")
         c1, c2 = st.columns(2)
         c1.metric(f"Current total ({_objective_labels[objective]})", f"{result['current_objective_value']:,.0f}")
         c2.metric("Theoretical optimum", f"{result['objective_value']:,.0f}",

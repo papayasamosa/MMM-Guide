@@ -51,7 +51,7 @@ import pandas as pd
 import arviz as az
 
 from .approval import ModelApproval
-from .activities import ActivityDefinition
+from .activities import ActivityDefinition, activity_fit_fingerprint
 from .fingerprint import (
     fingerprint_dataframe,
     fingerprint_model_spec,
@@ -816,6 +816,11 @@ def verify_imported_approval(
         funnel_links=imported.get("funnel_links"),
         media_outcome_pathways=pathway_catalogue_fingerprint_payload(
             pathway_catalogue_at_fit
+        ),
+        activity_fit_fingerprint=(
+            activity_fit_fingerprint(imported["activity_definitions"])
+            if imported.get("activity_definitions")
+            else None
         ),
     )
     posterior_fp = fingerprint_posterior(posterior_params)

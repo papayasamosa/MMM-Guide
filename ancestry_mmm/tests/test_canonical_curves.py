@@ -820,12 +820,14 @@ def test_owned_response_only_activity_never_receives_cpa_or_roi(meta):
             activity_ownership="paid", model_role="intervention",
             economic_treatment="paid_media_cost",
             planning_eligibility="optimisable", source="media plan",
+            approval_status="approved", approved_by="reviewer", approved_at="2026-01-01",
         ),
         "DNA": ActivityDefinition(
             activity_id="organic-social", channel="DNA",
             activity_ownership="owned", model_role="intervention",
             economic_treatment="response_only",
             planning_eligibility="scenario_only", source="social analytics",
+            approval_status="approved", approved_by="reviewer", approved_at="2026-01-01",
         ),
     }
     draws = _generate(
@@ -847,6 +849,55 @@ def test_owned_response_only_activity_never_receives_cpa_or_roi(meta):
     assert owned["average_cpa"].isna().all()
     assert owned["average_roi"].isna().all()
     assert owned["economics_availability_status"].eq("response_only").all()
+
+
+def _unapproved_activities():
+    return {
+        "TV": ActivityDefinition(
+            activity_id="tv-paid", channel="TV",
+            activity_ownership="paid", model_role="intervention",
+            economic_treatment="paid_media_cost",
+            planning_eligibility="optimisable", source="media plan",
+        ),
+        "DNA": ActivityDefinition(
+            activity_id="dna-paid", channel="DNA",
+            activity_ownership="paid", model_role="intervention",
+            economic_treatment="paid_media_cost",
+            planning_eligibility="optimisable", source="media plan",
+        ),
+    }
+
+
+def test_monetary_curve_is_blocked_in_official_mode_without_approved_activity_governance(meta):
+    # PR G2A.6c workstream F: a draft (default approval_status) activity's
+    # economic_treatment must not drive an official monetary curve, on top
+    # of the pre-existing approved-cost-mapping requirement.
+    specs, costs = _governed_inputs_and_costs()
+    with pytest.raises(ValueError, match="official mode"):
+        _generate(
+            meta,
+            curve_type="monetary",
+            media_input_specs=specs,
+            cost_mappings=costs,
+            cost_context_id="curve",
+            support_by_market_channel=_typed_support(specs, costs),
+            activity_definitions=_unapproved_activities(),
+        )
+
+
+def test_monetary_curve_succeeds_in_exploratory_mode_without_approved_activity_governance(meta):
+    specs, costs = _governed_inputs_and_costs()
+    draws = _generate(
+        meta,
+        curve_type="monetary",
+        media_input_specs=specs,
+        cost_mappings=costs,
+        cost_context_id="curve",
+        support_by_market_channel=_typed_support(specs, costs),
+        activity_definitions=_unapproved_activities(),
+        governance_mode="exploratory",
+    )
+    assert not draws.empty
 
 
 def test_reference_context_migrates_legacy_spend_names():

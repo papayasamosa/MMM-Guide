@@ -316,6 +316,7 @@ def validate_optimization_resource(
     cost_mapping_registry: Optional[CostMappingRegistry] = None,
     cost_context_id: str = "default",
     cost_as_of_dates: Optional[List[Optional[str]]] = None,
+    governance_mode: str = "official",
 ) -> None:
     """Reject an `OptimizationResource` before it drives the solver.
 
@@ -345,7 +346,21 @@ def validate_optimization_resource(
       or whose resolved currency varies across them or spans more than
       one currency overall
     - a non-finite or negative `total`
+    - (PR G2A.6c workstream F, `governance_mode="official"` only) any
+      activity resolved for this plan's `channels` - not only this
+      resource's own eligible members - whose `approval_status` is not
+      `"approved"`. A fixed or `scenario_only` activity is still part of
+      the plan being predicted against (pinned to its current value, not
+      removed), so a draft or rejected activity must not drive an official
+      optimisation even when it never moves. Pass
+      `governance_mode="exploratory"` for a clearly non-official run that
+      skips this one check only; every other rule above still applies
+      regardless of mode.
     """
+    if governance_mode not in {"official", "exploratory"}:
+        raise ValueError(
+            f"governance_mode must be 'official' or 'exploratory', got {governance_mode!r}"
+        )
     if not resource.unit:
         raise ValueError(
             f"OptimizationResource {resource.resource_id!r} has a blank unit"
@@ -446,6 +461,36 @@ def validate_optimization_resource(
             f"activity ID(s) that are not planning_eligibility='optimisable': "
             f"{sorted(not_optimisable)}"
         )
+
+    if governance_mode == "official":
+        # Every activity resolved for this plan's `channels`, not just this
+        # resource's own eligible members - a fixed, scenario_only, or
+        # otherwise non-eligible activity is still part of the plan
+        # `optimize_scenario` predicts against (it's pinned to its current
+        # value, not removed), so its model role, quantity assumption, and
+        # response still influence an official optimisation even though it
+        # never moves. Checking only `resource.eligible_activity_ids` would
+        # let a draft or rejected fixed activity drive an official result
+        # undetected.
+        plan_activities_by_id = {
+            by_input[channel].activity_id: by_input[channel]
+            for channel in channels
+            if channel in by_input
+        }
+        not_approved = sorted(
+            activity_id
+            for activity_id, definition in plan_activities_by_id.items()
+            if definition.approval_status != "approved"
+        )
+        if not_approved:
+            raise ValueError(
+                f"OptimizationResource {resource.resource_id!r} is blocked in "
+                "official mode - this optimisation's plan includes activity "
+                f"ID(s) without approved governance: {not_approved} (every "
+                "activity in the plan, not only this resource's own eligible "
+                "members). Pass governance_mode='exploratory' for a clearly "
+                "labelled non-official optimisation."
+            )
 
     if resource.unit == "currency":
         not_cost_bearing = [
@@ -1569,6 +1614,7 @@ def optimize_scenario(
     posterior_trace: Optional[Any] = None,
     posterior_evaluation_draws: int = 100,
     optimization_resource: Optional[OptimizationResource] = None,
+    governance_mode: str = "official",
 ) -> Dict:
     """
     Optimise a spend plan. `constraints=None` (or empty) + conserve_total_budget=True
@@ -1671,6 +1717,7 @@ def optimize_scenario(
             cost_mapping_registry=cost_mapping_registry,
             cost_context_id=cost_context_id or "default",
             cost_as_of_dates=resource_cost_as_of_dates,
+            governance_mode=governance_mode,
         )
         resource_channels = [
             channel
@@ -1871,6 +1918,7 @@ def optimize_scenario(
         "optimization_resource": resource.to_dict() if resource is not None else None,
         "reference_resource_total": reference_resource_total,
         "optimisation_resource_total": optimisation_resource_total,
+        "governance_mode": governance_mode,
         "activity_definitions_fingerprint": (
             activity_definitions_fingerprint(activity_definitions)
             if activity_definitions is not None
@@ -1894,6 +1942,7 @@ def scenario_to_dict(
         CounterfactualPolicy | Dict[str, object]
     ] = None,
     economics_coverage: Optional[Dict[str, object]] = None,
+    governance_mode: Optional[str] = None,
 ) -> dict:
     objective_payload = (
         planning_objective.to_dict()
@@ -1920,6 +1969,7 @@ def scenario_to_dict(
             else None
         ),
         "economics_coverage": economics_coverage,
+        "governance_mode": governance_mode,
         "schema_version": 2,
     }
 
@@ -1994,6 +2044,7 @@ def compare_scenarios(scenarios: List[Dict], predicted_key: str = "predicted") -
         rows.append({
             "scenario": s["name"],
             "market": s.get("market"),
+            "governance_mode": s.get("governance_mode"),
             "total_spend": total_spend,
             "total_value": pred["value"].sum(min_count=1) if "value" in pred else np.nan,
             "total_value_is_complete": total_value_is_complete,

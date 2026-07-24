@@ -114,6 +114,7 @@ def fingerprint_model_spec(
     outcome_catalogue: Optional[List[Dict[str, Any]]] = None,
     funnel_links: Optional[List[Dict[str, Any]]] = None,
     media_outcome_pathways: Optional[List[Dict[str, Any]]] = None,
+    activity_fit_fingerprint: Optional[str] = None,
 ) -> str:
     """
     Fingerprint the full set of inputs that determine how the model is
@@ -181,20 +182,33 @@ def fingerprint_model_spec(
     the outcome catalogue is. Sorted by `(channel, target_outcome_id)` here
     defensively, `[]` when omitted.
 
+    `activity_fit_fingerprint` (PR G2A.6c workstream F -
+    `core.activities.activity_fit_fingerprint(activity_definitions)`) covers
+    only the fit-relevant activity fields (market, activity_id, model_role,
+    resolved model-input column, pathway_ids) - never economic_treatment,
+    planning_eligibility or governance/approval metadata, which don't change
+    what gets fitted. Changing an activity from `intervention` to `mediator`,
+    repointing it at a different model-input column, or relinking its
+    pathways therefore changes this fingerprint and correctly stales any
+    approval bound to the old one, the same way changing `model_type` does.
+    `""` when omitted (no activity governance data available).
+
     Note: adding `pipeline_steps`, `market_spec_config`,
-    `direct_dna_outcome_ids`, `outcome_catalogue`, `funnel_links` and
-    `media_outcome_pathways` to this payload is an intentional breaking
-    change to every fingerprint this function produces, including for
-    callers who pass none of them (the payload always carries
-    `"pipeline_steps": []`, `"market_relevant_config": {}`,
+    `direct_dna_outcome_ids`, `outcome_catalogue`, `funnel_links`,
+    `media_outcome_pathways` and `activity_fit_fingerprint` to this payload
+    is an intentional breaking change to every fingerprint this function
+    produces, including for callers who pass none of them (the payload
+    always carries `"pipeline_steps": []`, `"market_relevant_config": {}`,
     `"direct_dna_outcome_ids": []`, `"outcome_catalogue": []`,
-    `"funnel_links": []` and `"media_outcome_pathways": []` keys now) - the
-    same pattern used when `model_type` was added (docs/decision_log.md).
-    Every pre-existing approval is invalidated by upgrading to this version,
-    which is correct: an approval bound to a fingerprint that didn't cover
-    the transformation recipe, media-unit/currency config, DNA-kit outcome
-    membership, or the full outcome catalogue was never actually binding on
-    them, so forcing re-review is the honest behaviour, not a regression.
+    `"funnel_links": []`, `"media_outcome_pathways": []` and
+    `"activity_fit_fingerprint": ""` keys now) - the same pattern used when
+    `model_type` was added (docs/decision_log.md). Every pre-existing
+    approval is invalidated by upgrading to this version, which is correct:
+    an approval bound to a fingerprint that didn't cover the transformation
+    recipe, media-unit/currency config, DNA-kit outcome membership, the full
+    outcome catalogue, or fit-relevant activity governance was never
+    actually binding on them, so forcing re-review is the honest behaviour,
+    not a regression.
 
     Canonical JSON with sorted dict keys, so insertion order never matters;
     list order is preserved (json.dumps does not reorder lists), since list
@@ -221,6 +235,7 @@ def fingerprint_model_spec(
             sorted(media_outcome_pathways, key=lambda p: (p.get("channel", ""), p.get("target_outcome_id", "")))
             if media_outcome_pathways else []
         ),
+        "activity_fit_fingerprint": activity_fit_fingerprint or "",
     }
     blob = _canonical_json(payload)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()

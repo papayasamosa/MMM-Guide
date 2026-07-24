@@ -900,6 +900,7 @@ def generate_canonical_curve_draws(
     activity_definitions: Optional[
         Sequence[ActivityDefinition] | Mapping[str, ActivityDefinition]
     ] = None,
+    governance_mode: str = "official",
 ) -> pd.DataFrame:
     """Generate component response decomposition on the outcome-count scale.
 
@@ -907,11 +908,27 @@ def generate_canonical_curve_draws(
     (NaN) because no component cost-allocation method is defined. Use
     :func:`aggregate_curve_draws` with a channel in the grouping to obtain
     valid channel-total economics.
+
+    ``governance_mode`` (PR G2A.6c workstream F) - ``"official"`` (default)
+    or ``"exploratory"``. When ``activity_definitions`` is supplied and a
+    monetary curve is requested in official mode, every (market, channel)
+    must resolve to an ``ActivityDefinition`` with ``approval_status ==
+    "approved"`` - a draft or rejected activity's economic_treatment must
+    not drive an official monetary curve, on top of the existing approved-
+    cost-mapping requirement. Pass ``governance_mode="exploratory"`` for a
+    clearly non-official curve that skips this check (the cost-mapping
+    requirement above still applies regardless of mode - there is no
+    override for "no mapping at all"). Omitting ``activity_definitions``
+    skips this check entirely (ungoverned/legacy curve generation).
     """
     if model_type not in {"shared", "market_specific"}:
         raise ValueError("model_type must be 'shared' or 'market_specific'")
     if curve_type not in {None, "model_input", "monetary"}:
         raise ValueError("curve_type must be 'model_input' or 'monetary'")
+    if governance_mode not in {"official", "exploratory"}:
+        raise ValueError(
+            f"governance_mode must be 'official' or 'exploratory', got {governance_mode!r}"
+        )
     legacy_monetary = curve_type is None
     effective_curve_type = "monetary" if legacy_monetary else curve_type
     input_specs = dict(media_input_specs or {})
@@ -971,6 +988,22 @@ def generate_canonical_curve_draws(
                 "Monetary curves are blocked without an approved, effective "
                 f"cost mapping for {sorted(missing_costs)}"
             )
+        if activity_rows and governance_mode == "official":
+            unapproved_curve_activities = []
+            for market in meta.markets:
+                by_input = activity_by_model_input(activity_rows, market)
+                for channel in meta.channels:
+                    definition = by_input.get(channel)
+                    if definition is None or definition.approval_status != "approved":
+                        unapproved_curve_activities.append((market, channel))
+            if unapproved_curve_activities:
+                raise ValueError(
+                    "Monetary curves are blocked in official mode without "
+                    "approved activity governance (economic_treatment) for "
+                    f"{sorted(unapproved_curve_activities)} - pass "
+                    "governance_mode='exploratory' for a clearly labelled "
+                    "non-official curve."
+                )
     if not model_run_id:
         raise ValueError("model_run_id is required")
     if set(reference_contexts) != set(meta.markets):
