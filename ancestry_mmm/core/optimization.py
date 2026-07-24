@@ -180,21 +180,34 @@ def _resolved_currency_by_activity(
     market: str,
     cost_mapping_registry: Optional[CostMappingRegistry],
     cost_context_id: str,
-    cost_as_of: Optional[str],
+    cost_as_of_dates: Optional[List[Optional[str]]],
 ) -> Dict[str, str]:
-    """Effective mapping currency for each candidate, when resolvable.
-    An activity with no approved effective mapping at `cost_as_of` is
-    simply absent from the result - callers treat that as "unresolvable",
-    never as an implicit currency match."""
+    """Effective mapping currency for each candidate, required to resolve
+    to the exact same currency at every date in `cost_as_of_dates` - e.g.
+    every period a multi-month plan spans, not just the first. A plan can
+    cross a mapping's effective-date boundary, so checking only one date
+    would miss a channel that is GBP in month one and USD (or unmapped) in
+    a later month while the solver still sums every month's decisions into
+    one conserved total. An activity that is unresolvable, or resolves to
+    more than one currency, at any checked date is absent from the result
+    - callers treat that as "unresolvable", never as an implicit match."""
     if cost_mapping_registry is None:
         return {}
+    dates = list(dict.fromkeys(cost_as_of_dates)) if cost_as_of_dates else [None]
     resolved: Dict[str, str] = {}
     for activity_id, definition in candidates.items():
-        mapping = cost_mapping_registry.resolve(
-            market, definition.channel, cost_context_id, as_of=cost_as_of,
-        )
-        if mapping is not None:
-            resolved[activity_id] = mapping.currency
+        currencies_at_each_date = set()
+        fully_resolvable = True
+        for as_of in dates:
+            mapping = cost_mapping_registry.resolve(
+                market, definition.channel, cost_context_id, as_of=as_of,
+            )
+            if mapping is None:
+                fully_resolvable = False
+                break
+            currencies_at_each_date.add(mapping.currency)
+        if fully_resolvable and len(currencies_at_each_date) == 1:
+            resolved[activity_id] = next(iter(currencies_at_each_date))
     return resolved
 
 
@@ -207,7 +220,7 @@ def monetary_optimization_resource(
     total: Optional[float] = None,
     cost_mapping_registry: Optional[CostMappingRegistry] = None,
     cost_context_id: str = "default",
-    cost_as_of: Optional[str] = None,
+    cost_as_of_dates: Optional[List[Optional[str]]] = None,
     channels: Optional[List[str]] = None,
 ) -> OptimizationResource:
     """Default resource: every cost-bearing, optimisable activity for this
@@ -230,11 +243,14 @@ def monetary_optimization_resource(
     `_validate_no_mixed_currency_value_weights`) - one USD must not be
     conserved as interchangeable with one GBP. When `cost_mapping_registry`
     is given, each candidate's effective mapping currency is resolved via
-    `cost_context_id`/`cost_as_of`; a candidate with no resolvable mapping,
-    or whose resolved currency disagrees with the resource's currency, is
-    excluded rather than pooled in. If resolvable candidates span more than
-    one currency and `currency` wasn't given explicitly, raises - the
-    caller must state which currency this resource optimises. Without a
+    `cost_context_id` at every date in `cost_as_of_dates` (e.g. every
+    period a multi-month plan spans, not just the first - a plan can cross
+    a mapping's effective-date boundary); a candidate with no resolvable
+    mapping at any of those dates, or whose currency disagrees with the
+    resource's currency or varies across them, is excluded rather than
+    pooled in. If resolvable candidates span more than one currency and
+    `currency` wasn't given explicitly, raises - the caller must state
+    which currency this resource optimises. Without a
     `cost_mapping_registry`, currency cannot be checked and every
     cost-bearing optimisable activity is included as before (only safe when
     the caller has already validated currency purity itself)."""
@@ -261,7 +277,7 @@ def monetary_optimization_resource(
         )
 
     currency_by_activity = _resolved_currency_by_activity(
-        candidates, market, cost_mapping_registry, cost_context_id, cost_as_of,
+        candidates, market, cost_mapping_registry, cost_context_id, cost_as_of_dates,
     )
     resolved_currencies = set(currency_by_activity.values())
     if currency is None:
@@ -299,7 +315,7 @@ def validate_optimization_resource(
     *,
     cost_mapping_registry: Optional[CostMappingRegistry] = None,
     cost_context_id: str = "default",
-    cost_as_of: Optional[str] = None,
+    cost_as_of_dates: Optional[List[Optional[str]]] = None,
 ) -> None:
     """Reject an `OptimizationResource` before it drives the solver.
 
@@ -313,13 +329,21 @@ def validate_optimization_resource(
     - a blank `unit`
     - duplicate activity IDs
     - no eligible activities at all (nothing for the solver to move)
-    - an activity ID not registered for this market
+    - an activity ID not registered anywhere in `activity_definitions`
     - an activity ID not among this optimisation's `channels`
     - an activity not applicable to `market`
     - an activity whose `planning_eligibility` is not `"optimisable"`
     - a non-cost-bearing activity in a `unit="currency"` resource
+    - a cost-bearing activity in a resource whose `unit` is not
+      `"currency"` - `optimize_scenario` always resolves a cost-bearing
+      activity's plan cell as monetary regardless of the resource's
+      declared unit, so this would silently mislabel and mis-conserve a
+      currency decision as if it were denominated in something else
     - (when `cost_mapping_registry` is given) an activity with no
-      resolvable effective mapping, or spanning more than one currency
+      resolvable effective mapping at every date in `cost_as_of_dates`
+      (e.g. every period a multi-month plan spans, not just the first),
+      or whose resolved currency varies across them or spans more than
+      one currency overall
     - a non-finite or negative `total`
     """
     if not resource.unit:
@@ -347,9 +371,23 @@ def validate_optimization_resource(
         )
 
     by_input = activity_by_model_input(activity_definitions, market)
+    # Built from the *unfiltered* `activity_definitions`, not `by_input`
+    # (which `activity_by_model_input` already restricts to definitions
+    # applicable to `market`) - otherwise an activity registered only for
+    # a different market is invisible here, and the "not applicable to
+    # market" check below can never fire; it would instead misreport as
+    # "unknown activity ID". Prefers a definition that actually applies to
+    # `market` when the same activity_id is somehow registered more than
+    # once, falling back to any match so an activity with no
+    # market-applicable definition still resolves to something (for a
+    # clear "not applicable" error) rather than looking unknown.
     by_id: Dict[str, ActivityDefinition] = {}
-    for definition in by_input.values():
+    for definition in activity_definitions:
         by_id.setdefault(definition.activity_id, definition)
+    for specificity in ("*", market):
+        for definition in activity_definitions:
+            if definition.market == specificity:
+                by_id[definition.activity_id] = definition
     plan_activity_ids = {
         by_input[channel].activity_id
         for channel in channels
@@ -367,18 +405,12 @@ def validate_optimization_resource(
             f"unknown activity ID(s): {sorted(unknown)}"
         )
 
-    not_in_plan = [
-        activity_id
-        for activity_id in resource.eligible_activity_ids
-        if activity_id not in plan_activity_ids
-    ]
-    if not_in_plan:
-        raise ValueError(
-            f"OptimizationResource {resource.resource_id!r} references "
-            "activity ID(s) not present among this optimisation's channels: "
-            f"{sorted(not_in_plan)}"
-        )
-
+    # Checked before "not in plan channels": an activity registered only
+    # for a different market is structurally invisible to
+    # `activity_by_model_input(..., market)` (it can never resolve for any
+    # of this market's channels), so it would always also fail the
+    # plan-membership check below - naming the market mismatch first is
+    # the more specific, more useful diagnosis.
     not_in_market = [
         activity_id
         for activity_id in resource.eligible_activity_ids
@@ -389,6 +421,18 @@ def validate_optimization_resource(
             f"OptimizationResource {resource.resource_id!r} references "
             f"activity ID(s) not applicable to market {market!r}: "
             f"{sorted(not_in_market)}"
+        )
+
+    not_in_plan = [
+        activity_id
+        for activity_id in resource.eligible_activity_ids
+        if activity_id not in plan_activity_ids
+    ]
+    if not_in_plan:
+        raise ValueError(
+            f"OptimizationResource {resource.resource_id!r} references "
+            "activity ID(s) not present among this optimisation's channels: "
+            f"{sorted(not_in_plan)}"
         )
 
     not_optimisable = [
@@ -422,7 +466,8 @@ def validate_optimization_resource(
                 for activity_id in resource.eligible_activity_ids
             }
             currency_by_activity = _resolved_currency_by_activity(
-                candidates, market, cost_mapping_registry, cost_context_id, cost_as_of,
+                candidates, market, cost_mapping_registry, cost_context_id,
+                cost_as_of_dates,
             )
             unresolved = [
                 activity_id
@@ -445,6 +490,28 @@ def validate_optimization_resource(
                     "monetary resource must never pool decisions across "
                     "currencies into one conserved total."
                 )
+    else:
+        # optimize_scenario resolves a cost-bearing activity's plan cell as
+        # monetary purely from ActivityDefinition.is_cost_bearing, never
+        # from a resource's declared unit - a non-currency resource
+        # (e.g. unit="impressions") containing a cost-bearing activity
+        # would have its `total` labelled and conserved as that unit while
+        # the solver actually treats and converts it as currency.
+        cost_bearing_in_non_currency = [
+            activity_id
+            for activity_id in resource.eligible_activity_ids
+            if by_id[activity_id].is_cost_bearing
+        ]
+        if cost_bearing_in_non_currency:
+            raise ValueError(
+                f"OptimizationResource {resource.resource_id!r} has unit "
+                f"{resource.unit!r} but references cost-bearing activity "
+                f"ID(s): {sorted(cost_bearing_in_non_currency)} - "
+                "optimize_scenario always resolves a cost-bearing "
+                "activity's decisions as monetary regardless of the "
+                "resource's declared unit, so a non-currency resource must "
+                "never include one."
+            )
 
 
 def seed_monetary_and_quantity_defaults(
@@ -1581,14 +1648,18 @@ def optimize_scenario(
             raise ValueError(
                 f"Missing activity definitions for {sorted(missing_activity)}"
             )
-        resource_cost_as_of = (
-            (cost_as_of_by_month or {}).get(months[0]) if months else None
-        )
+        # Every period's date, not just the first - a multi-month plan can
+        # cross a mapping's effective-date boundary, so resource
+        # eligibility/currency must hold across the whole plan, not just
+        # its first month (PR G2A.6b Codex follow-up).
+        resource_cost_as_of_dates = [
+            (cost_as_of_by_month or {}).get(month) for month in months
+        ]
         resource = optimization_resource or monetary_optimization_resource(
             activity_definitions, market,
             cost_mapping_registry=cost_mapping_registry,
             cost_context_id=cost_context_id or "default",
-            cost_as_of=resource_cost_as_of,
+            cost_as_of_dates=resource_cost_as_of_dates,
             channels=channels,
         )
         # Validate unconditionally - a caller-supplied `optimization_resource`
@@ -1599,7 +1670,7 @@ def optimize_scenario(
             resource, activity_definitions, market, channels,
             cost_mapping_registry=cost_mapping_registry,
             cost_context_id=cost_context_id or "default",
-            cost_as_of=resource_cost_as_of,
+            cost_as_of_dates=resource_cost_as_of_dates,
         )
         resource_channels = [
             channel

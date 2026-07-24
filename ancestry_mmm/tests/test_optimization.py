@@ -1131,7 +1131,7 @@ class TestOptimizationResource:
         registry = CostMappingRegistry([self._mapping("tv-paid", "TV_Paid", "GBP")])
         resource = monetary_optimization_resource(
             activities, "UK", cost_mapping_registry=registry, cost_context_id="default",
-            cost_as_of="2026-06-01",
+            cost_as_of_dates=["2026-06-01"],
         )
         # search-paid has no approved effective mapping, so it cannot be
         # verified as GBP-denominated - excluded rather than pooled in.
@@ -1150,7 +1150,7 @@ class TestOptimizationResource:
         with pytest.raises(ValueError, match="more than one currency"):
             monetary_optimization_resource(
                 activities, "UK", cost_mapping_registry=registry, cost_context_id="default",
-                cost_as_of="2026-06-01",
+                cost_as_of_dates=["2026-06-01"],
             )
 
     def test_monetary_resource_scopes_to_explicit_currency(self):
@@ -1164,7 +1164,7 @@ class TestOptimizationResource:
         ])
         resource = monetary_optimization_resource(
             activities, "UK", currency="GBP", cost_mapping_registry=registry,
-            cost_context_id="default", cost_as_of="2026-06-01",
+            cost_context_id="default", cost_as_of_dates=["2026-06-01"],
         )
         # A USD-denominated decision must never be pooled into a GBP resource,
         # even when explicitly excluded rather than raising.
@@ -1182,6 +1182,41 @@ class TestOptimizationResource:
             activities, "UK", channels=["TV_Paid"],
         )
         assert resource.eligible_activity_ids == ("tv-paid",)
+
+    def test_monetary_resource_excludes_activity_whose_currency_changes_across_plan_periods(self):
+        # A plan can cross a mapping's effective-date boundary - checking
+        # only the first period's date would wrongly conclude this channel
+        # is safely GBP for the whole plan.
+        activity = _paid_activity("tv-paid", "TV_Paid")
+        registry = CostMappingRegistry([
+            FixedCostPerUnitMapping(
+                mapping_id="uk-tv-paid-jan", market="UK", channel="TV_Paid", currency="GBP",
+                cost_context_id="default", source="finance", approval_status="approved",
+                approved_by="finance-owner", approved_at="2026-01-01T10:00:00Z",
+                owner="media-finance", approval_note="approved", last_reviewed_at="2026-01-01",
+                cost_per_media_input=1.0,
+                effective_period_start="2026-01-01", effective_period_end="2026-02-28",
+            ),
+            FixedCostPerUnitMapping(
+                mapping_id="uk-tv-paid-mar", market="UK", channel="TV_Paid", currency="USD",
+                cost_context_id="default", source="finance", approval_status="approved",
+                approved_by="finance-owner", approved_at="2026-01-01T10:00:00Z",
+                owner="media-finance", approval_note="approved", last_reviewed_at="2026-01-01",
+                cost_per_media_input=1.0,
+                effective_period_start="2026-03-01", effective_period_end="2026-04-30",
+            ),
+        ])
+        single_period = monetary_optimization_resource(
+            [activity], "UK", cost_mapping_registry=registry, cost_context_id="default",
+            cost_as_of_dates=["2026-01-15"],
+        )
+        assert single_period.eligible_activity_ids == ("tv-paid",)
+
+        multi_period = monetary_optimization_resource(
+            [activity], "UK", cost_mapping_registry=registry, cost_context_id="default",
+            cost_as_of_dates=["2026-01-15", "2026-03-15"],
+        )
+        assert multi_period.eligible_activity_ids == ()
 
 
 # ---------------------------------------------------------------------------
@@ -1324,7 +1359,7 @@ class TestValidateOptimizationResource:
             validate_optimization_resource(
                 resource, activities, "UK", self._channels(),
                 cost_mapping_registry=registry, cost_context_id="default",
-                cost_as_of="2026-06-01",
+                cost_as_of_dates=["2026-06-01"],
             )
 
     def test_rejects_activity_with_no_resolvable_mapping_when_registry_given(self):
@@ -1346,7 +1381,7 @@ class TestValidateOptimizationResource:
             validate_optimization_resource(
                 resource, activities, "UK", self._channels(),
                 cost_mapping_registry=registry, cost_context_id="default",
-                cost_as_of="2026-06-01",
+                cost_as_of_dates=["2026-06-01"],
             )
 
     def test_rejects_non_finite_or_negative_total(self):
@@ -1355,6 +1390,20 @@ class TestValidateOptimizationResource:
             eligible_activity_ids=("tv-paid",), total=-100.0,
         )
         with pytest.raises(ValueError, match="finite and non-negative"):
+            validate_optimization_resource(
+                resource, self._activities(), "UK", self._channels(),
+            )
+
+    def test_rejects_cost_bearing_activity_in_a_non_currency_resource(self):
+        # optimize_scenario resolves a cost-bearing activity's plan cell as
+        # monetary purely from is_cost_bearing, never from the resource's
+        # declared unit - a unit="impressions" resource containing a
+        # cost-bearing activity would mislabel and mis-conserve currency.
+        resource = OptimizationResource(
+            resource_id="custom", unit="impressions",
+            eligible_activity_ids=("tv-paid",),
+        )
+        with pytest.raises(ValueError, match="optimize_scenario always resolves"):
             validate_optimization_resource(
                 resource, self._activities(), "UK", self._channels(),
             )
