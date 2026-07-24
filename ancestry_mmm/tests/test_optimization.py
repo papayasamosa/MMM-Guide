@@ -541,6 +541,7 @@ def test_non_optimisable_activity_is_held_fixed(approval):
         economic_treatment="response_only",
         planning_eligibility="scenario_only",
         source="owned delivery plan",
+        approval_status="approved", approved_by="reviewer", approved_at="2026-01-01",
     )
     optimisable_activity = _paid_activity("search-paid", "Search_Paid")
     spend_plan = {"2024-01": {"TV_Brand": 1000.0, "Search_Paid": 500.0}}
