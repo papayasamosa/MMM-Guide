@@ -6,6 +6,14 @@ These instructions apply to the whole `papayasamosa/MMM-Guide` repository.
 
 More specific `AGENTS.md` files under `ancestry_mmm/core`, `ancestry_mmm/pages`, and `ancestry_mmm/tests` add rules for those areas. The most specific applicable file takes precedence, but no nested instruction may weaken the business definitions, mathematical-correctness requirements, or governance rules in this root file.
 
+## Source of truth
+
+The approved Ancestry MMM PRD (`Ancestry MMM PRD v1.1`: Parts 1–11 plus their `v1.1 Replacement Sections`, and any later-approved amendment) is the source of truth for business requirements. It is maintained outside this code repository; `docs/*.md` in this repo (e.g. `docs/outcomes.md`, `docs/net_billthrough.md`, `docs/brand_search.md`, `docs/media_outcome_pathways.md`, `docs/g2a5_scenario_governance.md`) records how the approved decisions are implemented here, not the requirements themselves.
+
+`AGENTS.md` files summarise stable implementation invariants distilled from that PRD. They must not create new business definitions, invent an unresolved decision, or override an approved PRD decision.
+
+If an `AGENTS.md` rule conflicts with the current PRD, stop, identify the conflict, and update or escalate it before implementing the feature. Do not silently follow the stale `AGENTS.md` wording, and do not silently invent a replacement business definition either.
+
 ## Product objective
 
 Build an internal, transparent, resumable Bayesian MMM application for Ancestry that can be operated without an ongoing vendor licence.
@@ -15,35 +23,31 @@ The application must support:
 - data upload, validation, transformation, and provenance
 - saved project bundles that can be downloaded and re-uploaded later
 - separate Family History New, DNA cross-sell, and Winback outcomes
-- DNA kit outcomes
-- hierarchical and partially pooled market/segment models
-- direct, cross-product halo, exploratory, mediated-diagnostic, and excluded pathways
-- net bill-through as the primary Family History marketing outcome
-- Brand Search sensitivity analysis
+- DNA kit outcomes, split into new customer versus existing Family History customer where the data supports it (do not require self-activated/gifted/unactivated sub-segments without a separate approved decision)
+- hierarchical, partially pooled, unpooled, or curve-transfer market/segment models, chosen per approved use case — do not require every market to remain unpooled
+- a versioned outcome-definition registry, not one hard-coded primary outcome
+- a governed pathway taxonomy covering direct, mediated, capacity-constrained/censored, cross-product halo, moderated, residual-interaction, and excluded/diagnostic-only pathways
+- an explicit full-funnel Search object model (demand, paid delivery, cap, organic/direct, residual incrementality) rather than one generic `Brand Search` variable
+- explicit lower-funnel capacity/cap semantics, separate from realised spend
+- causally distinct future-variable roles for forward planning, including a bounded role for Chronos-2 or another external forecaster
 - posterior response curves
 - average and marginal CPA and ROI
 - response horizons
 - year-on-year comparison
-- constrained scenario planning
+- constrained and full-funnel scenario planning and optimisation
 - later brand-health and DNA purchase-composition modules
 
 Model correctness takes priority over interface breadth.
 
-## Business definitions that must not drift
+## Outcome registry, not a fixed primary outcome
 
-### Family History
+Do not assume a primary Family History outcome.
 
-The primary marketing outcome is weekly Family History net bill-through count attributed to original signup week.
+Candidate measures include sign-up, GSA (using only the approved Ancestry definition), Gross Bill Through, Bill Through, Net Bill Through, revenue, contribution, and lifetime value. These are distinct possible measures. Never treat them as synonyms, and never assume a fixed ordering or conversion sequence between them (e.g. `sign-up → Net Bill Through → GSA`) unless Finance and Product have explicitly approved that relationship.
 
-Keep separate:
+Every model, report, curve, scenario, and optimisation must reference an approved, versioned outcome definition, minimally including: event definition, date basis, cohort/attribution basis, maturity rule, exclusions, reconciliation source, owner, and version/approval status.
 
-- net bill-through count
-- signup count
-- net bill-through rate
-- finance-date GSA count
-- revenue/value
-
-Never use a rate as a CPA denominator. Never silently alias NBT to GSA.
+**Net Bill Through must not be used** — as a model outcome, a value layer, a curve label, or a pre-populated default — until Finance and Product have approved its event definition, date basis, cohort basis, maturity rule, exclusions, and reconciliation source. The application must not pre-populate NBT as the primary or default outcome. The initial UK delivery may use a different approved outcome depending on the resolved business decision.
 
 Fit the main Family History segments separately:
 
@@ -53,34 +57,82 @@ Fit the main Family History segments separately:
 
 Totals may be calculated from draw-level segment outcomes after fitting.
 
-### DNA
+## Pathway taxonomy
 
-Fit total DNA kit sales first unless separate self/gift composition is demonstrably identifiable.
+Distinguish, per the approved causal graph:
 
-Do not classify every unactivated kit as gifted.
+- **direct** pathways — effect on the outcome not operating through a mediator
+- **mediated** pathways — effect realised through a selected funnel-state mediator
+- **capacity-constrained / censored** pathways — a mediator whose realised value is capped by a budget, delivery, or operational limit, distinct from the latent unconstrained demand behind it
+- **cross-product halo** pathways
+- **moderated** pathways — e.g. promotion changing media response
+- **residual-interaction** pathways — incremental joint response remaining *after* the structural pathways, common controls, adstock, and saturation have been represented
+- **excluded / diagnostic-only** pathways
 
-Future categories may include:
+Prefer a known structural mechanism (mediation, capacity constraint, cross-product halo, promotion moderation) over a generic multiplicative interaction whenever the mechanism is known. A generic interaction must not substitute for mediation, capacity, halo, or moderation, and must remain shrunk toward zero absent strong support.
 
-- self-activated
-- gifted-activated
-- mature unactivated
-- immature unactivated
-- unknown linkage
-- cancelled/returned
+Keep the existing governance separation between an activity/pathway being: fitted in the model; visible in analyst attribution; approved for headline reporting; eligible for planning; eligible for optimisation. A pathway being fitted does not make it automatically eligible for any of the later stages.
 
-### Brand Search
+## Full-funnel Search object model
 
-Do not treat Brand Search as fully incremental by default.
+The generic label `Brand Search` (or `brand_search`) is invalid until the variable has been classified. Keep separate, wherever relevant:
 
-Maintain explicit alternatives:
+- branded-search demand (a latent demand signal)
+- Paid Search spend
+- Paid Search delivery (impressions, clicks, or another observed measure)
+- Paid Search budget or delivery cap (a decision/constraint, never the same object as realised delivery)
+- organic-search traffic
+- direct navigation
+- final outcome
+- residual Paid Search incrementality (a model output, never a raw source metric)
 
-- direct-channel benchmark
-- excluded sensitivity
-- assumption-based demand-capture reallocation
-- experiment-calibrated incrementality
-- genuine fitted mediation only when a valid causal model exists
+An implementation must not silently use one of these as a proxy for another.
 
-A post-hoc reallocation is not fitted mediation.
+Retain useful comparison views — platform-reported performance, raw MMM association, excluded sensitivity, assumption-adjusted demand-capture view, experiment-calibrated incrementality — but label each as diagnostic, sensitivity, benchmark, or calibrated, never as production mediation. A post-hoc demand-capture reallocation is not fitted mediation. Production mediation requires an explicit causal structure, temporal model, direct and indirect effects, uncertainty propagation, and identification assessment.
+
+## Capacity and cap invariants
+
+A lower-funnel cap (budget, delivery, or operational limit) is a decision or constraint. It is never the same object as realised spend or delivery.
+
+- Realised lower-funnel spend/delivery is a model **output** when the pathway is capacity-constrained, not a value the user enters directly.
+- A cap is not guaranteed spend: expected unused cap must remain a representable, non-zero possibility.
+- Raising a non-binding cap must not create artificial incremental value.
+- Cap-hit status and binding probability must be represented explicitly (capped / uncapped / ambiguous / unavailable).
+- The model may estimate latent demand, captured demand, and unmet demand. Captured demand plus unmet demand must reconcile to latent demand under the approved definition.
+- Cap data requires a governed source and a versioned cap-hit rule.
+- A scenario defined in cap terms must not let the user overwrite model-generated realised spend as though it were the same input.
+
+Conceptually, for an approved capacity-constrained pathway:
+
+```text
+upstream media
+    -> latent demand
+    -> realised lower-funnel delivery under cap
+    -> captured demand / unmet demand
+    -> final outcome
+```
+
+Do not prescribe one exact probability distribution or censoring mechanism for this beyond what the PRD or an approved model specification requires — enforce the semantics and reconciliation above, not one frozen algebraic form.
+
+## Future-variable roles
+
+Every future/planning variable must have exactly one approved operational role:
+
+1. **planned decision variable** — spend, delivery, promotions, prices, or caps set by the user
+2. **exogenous forecastable control** — e.g. CPI, unemployment, weather; may be forecast with Chronos-2 or another method
+3. **cost/translation assumption** — CPM, CPC, cost per GRP, FX, and similar conversion inputs
+4. **endogenous funnel state** — a mediator (e.g. branded-search demand) generated by the approved causal model from the proposed plan, not independently forecast
+5. **latent baseline state** — the time-varying intercept, projected from its own fitted statistical process, never treated as an ordinary external control
+6. **fixed business assumption** (or historical-diagnostic-only, where applicable)
+
+Rules:
+
+- External forecast methods such as Chronos-2 are permitted only for suitable exogenous controls and cost/translation series. They must not independently forecast an endogenous mediator the scenario model is meant to generate.
+- A mediator must not also be configured as an independent future control without an approved joint decomposition (`M_t = M_t^{exogenous} + M_t^{media-driven}`, itself identified and validated).
+- A latent baseline must not be configured as a Chronos (or any ordinary external forecast) target.
+- A Paid Search (or other lower-funnel) cap must not be labelled or entered as realised spend.
+- Invalid role/source combinations are blocking errors, not warnings to route around.
+- Stress-test overrides of an endogenous or latent-baseline value must be explicit, visibly labelled, and excluded from ordinary optimisation unless separately approved.
 
 ## PyMC and PyMC Labs reference policy
 
@@ -145,6 +197,21 @@ Before creating or changing modelling functionality:
    - parameter-recovery or simulation tests where applicable
 8. Re-check compatibility whenever PyMC or PyMC Marketing versions change.
 
+## Engine-capability boundary
+
+Every approved model specification must record, per capability, whether it is:
+
+- native to the selected engine
+- implemented through a supported extension
+- implemented through an external linked model
+- a planning-layer approximation
+- experimental
+- not supported
+
+Do not imply that Meridian, PyMC Marketing, PyMC, Chronos-2, or another dependency natively provides every platform capability. Meridian may be used for the core Bayesian MMM, media transformations, priors, calibration, and standard optimisation where its supported model form is sufficient; it must not be assumed to natively support a bespoke censored lower-funnel model, an arbitrary multi-stage causal graph, or a custom maturity likelihood unless verified in the implemented version. PyMC/PyMC-Marketing is the custom-modelling path for censored lower-funnel demand, joint linked outcomes, bespoke time-varying structures, custom maturity/survival models, and full posterior mediation/capacity effects. The platform may launch with one engine behind a stable adapter boundary rather than both at once.
+
+Where relevant, maintain a capability matrix or alignment document recording: feature, engine, implementation mode, supported version, validation evidence, known limitations, and reporting/planning/optimisation eligibility.
+
 ## Claim policy
 
 Do not claim that the application is "built on PyMC Marketing" merely because `pymc-marketing` appears in dependencies.
@@ -200,6 +267,8 @@ Core logic must be callable without Streamlit so it can later be exposed through
 
 Do not import Streamlit from `ancestry_mmm/core`.
 
+Prefer a reusable Python analytical core plus a modular monolith (with background workers for heavy computation) over splitting into microservices without an operational reason. Physical service separation is a scaling decision, not a default product requirement. Logical module boundaries must stay clear even when deployed together.
+
 ## Mathematical rules
 
 - The fitted count model uses a log link, so linear-predictor media terms are not outcome counts.
@@ -213,6 +282,8 @@ Do not import Streamlit from `ancestry_mmm/core`.
 - Do not assume every channel's model input is currency. TV may use TVRs, other channels may use impressions, clicks, GRPs, or spend.
 - Monetary response curves require a governed market/channel/time cost mapping from spend to model input.
 - Do not fabricate observed support from a posterior saturation parameter.
+- For a capacity-constrained pathway, do not treat realised lower-funnel delivery as unconstrained latent demand; the censoring/capacity mechanism must be explicit (see `ancestry_mmm/core/AGENTS.md`).
+- Direct, mediated, total, and (where identified) unconstrained-potential and unmet effects must reconcile under the approved effect definition; no component may double-count against another (see `ancestry_mmm/core/AGENTS.md`).
 
 ## Model hierarchy
 
@@ -227,7 +298,7 @@ Document which parameters are:
 - channel-specific
 - unpooled
 
-Do not describe the model as having fully independent segment curves when only response amplitude varies by segment.
+Do not describe the model as having fully independent segment curves when only response amplitude varies by segment. Do not require every market to remain unpooled — market-specific estimation, partial pooling, no pooling, and governed curve/prior transfer must all remain available choices, selected per approved use case.
 
 ## Governance
 
@@ -237,10 +308,13 @@ Keep separate:
 - visible in analyst attribution
 - approved for headline reporting
 - eligible for planning
+- eligible for optimisation
 
 Evidence status is not reporting approval.
 
 Exploratory and mediated-diagnostic pathways are planning-disabled by default.
+
+Full-funnel/capacity-constrained outputs carry their own evidence grade (exploratory, directional, planning-eligible, optimisation-eligible), independent of the base MMM's status — a strong final-outcome fit does not automatically make a weakly identified mediator or capacity pathway optimisation-eligible.
 
 Stale models must not drive official reporting or planning.
 
@@ -252,13 +326,13 @@ A saved project should preserve, where applicable:
 - transformed data
 - transformation history
 - model-ready data
-- outcomes
-- pathways
+- the versioned outcome-definition registry and which outcome(s) are selected
+- pathways, including capacity/censoring configuration where used
+- Search-object mapping (demand, delivery, cap, organic/direct) where used
+- future-variable role assignments and their approved sources
 - controls and promotions
 - priors
 - pooling settings
-- NBT metadata
-- Brand Search configuration
 - model metadata
 - posterior artefacts
 - diagnostics

@@ -4,7 +4,7 @@
 
 These instructions apply to `ancestry_mmm/core`.
 
-The root `AGENTS.md` also applies.
+The root `AGENTS.md` also applies, including its outcome-registry, pathway-taxonomy, Search-object, capacity/cap, and future-variable-role rules. This file adds core-modelling-specific detail; it must not restate a weaker version of the root business rules.
 
 ## Core modelling policy
 
@@ -18,6 +18,17 @@ Before editing adstock, saturation, priors, response curves, attribution, calibr
 4. use upstream public APIs where they satisfy the Ancestry requirement
 5. add numerical compatibility tests for custom equivalents
 
+## Current implementation versus approved invariant versus target capability
+
+When describing core behaviour, distinguish:
+
+- **current implemented behaviour** — what the code does today
+- **approved invariant** — a business or mathematical rule from the PRD that must never be violated (e.g. never aliasing NBT to GSA, never treating a cap as realised spend)
+- **target platform capability** — a PRD requirement not yet built (e.g. the full capacity-constrained two-stage model, DNA halo, Chronos-2 integration)
+- **backward-compatibility/migration requirement** — a rule that exists only to keep old saved projects loadable
+
+Do not describe a current implementation choice (e.g. today's custom single-outcome-per-call model builders, or a project's markets currently being fit unpooled) as if it were a permanent invariant. Do not describe a target capability as already delivered.
+
 ## Current custom-model reality
 
 The current application contains custom PyMC model builders for Ancestry's multi-outcome, pathway-governed structure.
@@ -28,15 +39,14 @@ Preserve:
 
 - multiple FH segment outcomes
 - DNA outcomes
-- market hierarchy
+- market hierarchy (see root `AGENTS.md` — pooling choice is per approved use case, not fixed to unpooled)
 - direct and cross-product pathway components
 - component-specific lag and governance
-- NBT semantics
-- unpooled markets
+- approved, versioned outcome semantics (see root `AGENTS.md`) and compatibility with existing saved projects that reference a legacy outcome label
 - outcome-specific controls
 - saved-project compatibility
 
-Where PyMC Marketing does not directly support this structure, use it as an implementation and validation reference rather than forcing the business problem into an unsuitable API.
+Where PyMC Marketing does not directly support this structure, use it as an implementation and validation reference rather than forcing the business problem into an unsuitable API. See root `AGENTS.md`'s engine-capability boundary: record whether a given capability is native, extension-based, linked, planner-approximated, experimental, or unsupported.
 
 ## PyMC Marketing alignment targets
 
@@ -84,6 +94,77 @@ The mapping may vary by:
 
 Do not use one global `spend_unit_scale` as a substitute for channel-specific cost mappings.
 
+## Capacity-constrained / censored pathway semantics
+
+For an approved lower-funnel (or other) capacity-constrained pathway, keep the following objects distinct — never collapse two of them into one variable:
+
+- `U_t` — upstream media and other demand-generating activity
+- `X^L_t` — lower-funnel-stage controls
+- `L*_t` — latent unconstrained lower-funnel demand/desired delivery (a model output, never a raw observed fact)
+- `C_t` — observed budget, delivery, or operational cap
+- `L_t` — realised lower-funnel spend/delivery (also a model output when demand is capacity-constrained, not a user-entered value)
+- `X^Y_t` — final-outcome-stage controls
+- `Y_t` — final commercial outcome
+
+Conceptually:
+
+```text
+L*_t = f_L(U_t, X^L_t, baseline_L, adstock_L, saturation_L)
+L_t  = g(L*_t, C_t, cost_t, epsilon_L_t)
+Y_t  = f_Y(U_t, L_t, X^Y_t, baseline_Y, adstock_Y, saturation_Y)
+```
+
+This is a conceptual contract, not one mandated likelihood. The censoring/capacity mechanism (Tobit/censored continuous, censored count, hurdle/selection, deterministic cap mapping with uncertain latent demand, or a platform-specific opportunity/capture model) is chosen per approved model specification, but must satisfy:
+
+- cap and realised-delivery units reconcile
+- capped, uncapped, and ambiguous periods are identified and exposed, not silently pooled
+- within-period cap changes are handled or explicitly excluded
+- cap status is never derived using future information
+- the mechanism can be simulated under a new, counterfactual cap
+
+The lower-funnel stage and the final-outcome stage must support separate candidate specifications for baseline/trend, time-varying intercept, seasonality, promotions, price, macro/category controls, competitor variables, media transformations, and likelihood — a control appropriate for `L*_t` may be a bad control for `Y_t`, and vice versa.
+
+Valid estimation patterns: joint Bayesian estimation of both stages; sequential posterior propagation (fit Stage 1, pass posterior draws — not point estimates — into Stage 2, preserving draw alignment); or an approximate planning emulator verified against the full model on key scenarios. A point-estimate plug-in without an explicit, documented approximation-error acknowledgement is not sufficient for a production total-effect uncertainty claim.
+
+## Search decomposition
+
+The model must distinguish, per the root `AGENTS.md`'s Search object model: branded-search demand, Paid Search spend and delivery, Paid Search cap/capacity, organic/direct navigation, and residual Paid Search incrementality. A variable named `brand_search` cannot enter the model until it is assigned one of these roles.
+
+## Direct, mediated, and constrained-effect reconciliation
+
+For upstream channel `j` on an approved pathway, derive where supported:
+
+- **direct effect** — impact on `Y_t` not operating through the selected mediator
+- **mediated effect** — impact through `L*_t` and realised `L_t`
+- **total (realised) effect** — direct plus mediated effect under the specified cap: `total = direct + mediated`
+- **unconstrained potential effect** — total effect under a counterfactual non-binding cap, only if identification supports it
+- **unmet effect** — `unconstrained potential − realised total`, only when the unconstrained potential is itself identified
+
+State explicitly whether other media, costs, baseline, and caps are held fixed or jointly varied when reporting an effect. Require:
+
+- no double counting across direct, mediated, halo, and interaction components (the same effect must never appear simultaneously as direct upper-funnel contribution, mediated lower-funnel contribution, a generic upper×lower interaction, and a post-model Search-cost reattribution)
+- posterior-draw-level reconciliation before any summary statistic
+- the total effect reconciles to its approved components within numerical/posterior tolerance
+- channel spend is counted once unless an explicit cost-allocation rule exists
+- no component CPA or ROI without an approved cost allocation
+- no claim of mediation from a post-hoc reallocation — legacy reattribution views (e.g. prior "Google Tax" adjustments) may be reproduced as a labelled comparison view, never as the production result
+
+Do not weaken the existing log-link, counterfactual-response, monetary-mapping, or posterior-aggregation safeguards below when extending them to a linked/capacity-constrained pathway.
+
+## Structural pathway before residual interaction
+
+When a plausible causal mechanism is known (mediation, capacity constraint, cross-product halo, promotion moderation), model it directly before adding a generic interaction. A residual interaction represents only the incremental joint response remaining after structural pathways, common controls, adstock, and saturation have been represented — it must use strong shrinkage/hierarchical regularisation (prior expectation near zero absent experiment or strong domain evidence) and requires: a stated mechanism, directional expectation, time ordering, minimum support, a structural-overlap check (it does not duplicate a mediator, capacity, halo, or moderation term), an out-of-sample comparison, a stability test, and explicit approval.
+
+## Endogenous-state generation and latent-baseline projection
+
+- An endogenous funnel state (mediator) used in forward simulation must be generated by the approved causal model from the proposed plan — not independently forecast — for every ordinary scenario. An analyst override is a labelled stress test that must retain and display the model-generated reference path alongside it, never silently replace it.
+- The time-varying intercept/latent baseline must be projected from its own fitted statistical process. It may be stress-tested, but must not be converted into an ordinary external-forecast (e.g. Chronos-2) target merely because it varies over time.
+- Where a mediator has both an exogenous and a media-driven component, that decomposition (`M_t = M_t^{exogenous} + M_t^{media-driven}`) must be explicit, identified, and validated — not asserted.
+
+## Uncertainty propagation for linked stages
+
+Where a linked/capacity-constrained model's stages are estimated sequentially, propagate Stage 1 posterior draws into Stage 2 rather than plugging in point estimates, and quantify any approximation error against a fuller draw-based calculation. Do not claim full joint posterior uncertainty for a linked total effect while actually inserting a point-estimate mediator forecast into Stage 2, unless that approximation is explicitly documented and governed.
+
 ## Curves and economics
 
 For log-link count models:
@@ -124,6 +205,8 @@ Curves must store:
 - uncertainty
 - extrapolation status
 
+A curve expressed in an approved downstream outcome (see root `AGENTS.md`'s outcome registry) must additionally identify: outcome definition and version, analysis as-of date, maturity method, observed-versus-expected-final component, attribution from initial acquisition to the downstream outcome, and short-/long-term window. The label "Net Bill Through curve" must never be used as a default placeholder.
+
 ## Steady-state versus sequential
 
 Label steady-state curves and planner outputs explicitly.
@@ -149,9 +232,9 @@ Do not alter hierarchy without:
 - prior sensitivity
 - identification assessment
 
-Document the pooling structure by parameter class.
+Document the pooling structure by parameter class. Market-specific estimation, partial pooling, no pooling, and governed curve/prior transfer are all legitimate choices per approved use case (see root `AGENTS.md`) — do not treat "all markets unpooled" as a permanent architectural constraint.
 
-## Brand Search
+## Brand Search / demand-capture mediation
 
 Do not let diagnostic mediation code enter headline ROI or optimisation.
 
@@ -164,6 +247,8 @@ A production mediator model requires:
 - hierarchy
 - measurement considerations
 - identification tests
+
+Label any current Search demand-capture treatment as a sensitivity analysis (see root `AGENTS.md`'s Search object model) until the above is satisfied — do not describe it as production mediation or as a capacity-constrained model.
 
 ## Numerical reconciliation
 
