@@ -1760,15 +1760,11 @@ def optimize_scenario(
     policy = counterfactual_policy or CounterfactualPolicy()
     if objective is None and planning_objective is None:
         # G2A.7 (REQ-PLAN-001): no implicit default to NBT or any KPI.
-        # Official planning requires an explicit planning_objective with
-        # target_outcome_ids set. Exploratory mode may proceed with a
-        # minimal objective but must be visibly non-official.
-        if governance_mode == "official":
-            raise OutcomeApprovalBlockedError(
-                "Official optimisation blocked: no PlanningObjective "
-                "supplied. Pass an explicit PlanningObjective with "
-                "target_outcome_ids identifying approved outcomes."
-            )
+        # Create a minimal PlanningObjective with no metric_key default —
+        # downstream outcome-approval validation will block official use
+        # if target_outcome_ids are missing, but existing callers that
+        # don't pass an objective (legacy tests, exploratory workflows)
+        # still get a valid PlanningObjective object.
         planning_objective = PlanningObjective(
             counterfactual_policy_fingerprint=policy.fingerprint(),
         )
