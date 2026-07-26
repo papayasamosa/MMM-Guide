@@ -286,6 +286,7 @@ def test_mixed_plan_preserves_paid_media_economics():
         ),
         cost_context_id="base-plan",
         cost_as_of_by_month={"2026-03": "2026-03-01"},
+        governance_mode="exploratory",
         approval=approval,
         **IDENTITY,
     )

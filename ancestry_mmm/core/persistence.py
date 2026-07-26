@@ -570,7 +570,7 @@ def resolve_imported_outcome_approvals(
       at all) is migrated correctly too, not only bundles with an explicit
       persisted outcome catalogue.
     """
-    from .outcome_approval import OutcomeApproval, legacy_unapproved_approval, _normalise_datetime
+    from .outcome_approval import OutcomeApproval, legacy_unapproved_approval
     from .outcomes import resolve_outcome_definitions
 
     raw_approvals = imported.get("outcome_approvals")
@@ -731,7 +731,7 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
         for a_dict in approvals:
             try:
                 approval = OutcomeApproval.from_dict(a_dict)
-            except Exception:
+            except (TypeError, ValueError, KeyError, AttributeError):
                 official_blocking_reasons.append({
                     "artefact_type": "outcome_approval",
                     "artefact_id": a_dict.get("approval_id", "<unknown>"),
@@ -770,8 +770,10 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
                     "successfully."
                 )
 
-        # G2A.7a.2: for scenarios checkpoint, check that saved scenario
-        # targets have matching approvals for planning/optimisation
+        # G2A.7a.2, G2A.7a.3: for scenarios checkpoint, check that saved
+        # scenario targets have matching approvals for the correct use —
+        # manual scenarios require "planning", optimiser results require
+        # "optimisation".
         if declared == "scenarios" and officially_resumable:
             scenarios = imported.get("scenarios") or []
             for idx, sc in enumerate(scenarios):
@@ -780,10 +782,18 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
                 sc_gov = sc.get("governance_mode", "exploratory")
                 if sc_gov != "official":
                     continue  # exploratory scenarios don't need approval
+                # Determine required use from the artefact
+                # Optimiser results carry optimisation_metadata; manual
+                # scenarios do not.
+                sc_constraints = sc.get("constraints") or []
+                if sc.get("optimization_metadata") or sc_constraints:
+                    required_use = "optimisation"
+                else:
+                    required_use = "planning"
                 for target_id in sc_targets:
                     has_approval = any(
                         a.get("outcome_id") == target_id
-                        and "planning" in (a.get("allowed_uses") or [])
+                        and required_use in (a.get("allowed_uses") or [])
                         for a in active_approvals
                     )
                     if not has_approval:
@@ -792,8 +802,8 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
                             "artefact_type": "scenario",
                             "artefact_id": sc.get("name", f"scenario_{idx}"),
                             "outcome_id": target_id,
-                            "required_use": "planning",
-                            "reason": "no_active_planning_approval",
+                            "required_use": required_use,
+                            "reason": f"no_active_{required_use}_approval",
                         })
 
     return {

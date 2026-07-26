@@ -43,6 +43,8 @@ calculate_marginal_roi_loglog, optimize_budget_marginal_roi, calculate_expected_
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
+import hashlib
+import json
 import warnings
 from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 
@@ -89,47 +91,19 @@ PLANNING_ESTIMANDS = {
 
 
 # ---------------------------------------------------------------------------
-# G2A.7a.2 exception model (see brief section 5.3)
+# G2A.7a.3 exception model: one boundary exception family.
+# OutcomeApprovalBlockedError (from core.outcome_approval) is the primary
+# gate exception. ObjectiveMissingError is the only additional governance
+# exception that is actually raised — all other specific classes defined in
+# PR #39 were never raised and have been removed.
 # ---------------------------------------------------------------------------
 
-class GovernanceError(Exception):
-    """Base for all governance-related blocking errors."""
 
-
-class ObjectiveMissingError(GovernanceError):
+class ObjectiveMissingError(Exception):
     """Official planning/optimisation requires an explicit objective."""
-
-
-class ObjectiveTargetMismatchError(GovernanceError):
-    """A target outcome does not match the objective's metric or is not in the model."""
-
-
-class OutcomeApprovalMissingError(GovernanceError):
-    """No active OutcomeApproval exists for the required use."""
-
-
-class OutcomeApprovalExpiredError(GovernanceError):
-    """An OutcomeApproval exists but is expired."""
-
-
-class OutcomeApprovalScopeError(GovernanceError):
-    """An OutcomeApproval exists but does not cover the required scope."""
-
-
-class OutcomeDefinitionStaleError(GovernanceError):
-    """The outcome definition fingerprint does not match the approval."""
-
-
-class NBTCompletenessMissingError(GovernanceError):
-    """NBT completeness metadata is missing or incomplete."""
-
-
-class NBTCompletenessStaleError(GovernanceError):
-    """NBT completeness metadata is stale for the current definition."""
-
-
-class ScenarioDependencyStaleError(GovernanceError):
-    """A saved scenario's governance dependencies are stale."""
+    # Not a subclass of OutcomeApprovalBlockedError because it is raised
+    # before any approval check runs — the objective is missing regardless
+    # of whether approvals exist.
 
 
 # ---------------------------------------------------------------------------
@@ -141,12 +115,19 @@ class ResolvedOutcomeAuthorisation:
     """Proof that one outcome has been authorised for a specific use.
 
     Carried through the optimiser into nested calculations so they never
-    need to re-validate or downgrade to exploratory."""
+    need to re-validate or downgrade to exploratory.
+
+    G2A.7a.3: ``scope_fingerprint`` was removed — it duplicated the
+    definition fingerprint. Explicit scope values (market, product,
+    segment) are persisted instead, so the authorisation's scope is
+    auditable without re-deriving it from the definition."""
     outcome_id: str
     requested_use: str  # "planning" or "optimisation"
     approval_id: str
     definition_fingerprint: str
-    scope_fingerprint: str
+    market: Optional[str] = None
+    product: Optional[str] = None
+    segment: Optional[str] = None
     nbt_completeness_fingerprint: Optional[str] = None
 
     def to_dict(self) -> dict:
@@ -165,9 +146,20 @@ class ResolvedPlanningGovernance:
 
     A nested calculation that receives this object may skip duplicate
     validation because it carries proof of prior validation. It must
-    never be downgraded to exploratory."""
+    never be downgraded to exploratory.
+
+    G2A.7a.3: includes full model identity and market so the recipient
+    can verify the proof applies to the current calculation context. A
+    ``from_dict`` payload that fails validation is rejected, not silently
+    accepted."""
     governance_mode: str  # "official" or "exploratory"
+    operation: str  # "planning" or "optimisation"
     objective_fingerprint: str
+    model_run_id: str
+    data_fingerprint: str
+    model_spec_fingerprint: str
+    posterior_fingerprint: str
+    market: str
     authorisations: Tuple[ResolvedOutcomeAuthorisation, ...]
 
     @property
@@ -177,7 +169,13 @@ class ResolvedPlanningGovernance:
     def to_dict(self) -> dict:
         return {
             "governance_mode": self.governance_mode,
+            "operation": self.operation,
             "objective_fingerprint": self.objective_fingerprint,
+            "model_run_id": self.model_run_id,
+            "data_fingerprint": self.data_fingerprint,
+            "model_spec_fingerprint": self.model_spec_fingerprint,
+            "posterior_fingerprint": self.posterior_fingerprint,
+            "market": self.market,
             "authorisations": [a.to_dict() for a in self.authorisations],
         }
 
@@ -185,12 +183,81 @@ class ResolvedPlanningGovernance:
     def from_dict(cls, d: dict) -> "ResolvedPlanningGovernance":
         return cls(
             governance_mode=d.get("governance_mode", "exploratory"),
+            operation=d.get("operation", "planning"),
             objective_fingerprint=d.get("objective_fingerprint", ""),
+            model_run_id=d.get("model_run_id", ""),
+            data_fingerprint=d.get("data_fingerprint", ""),
+            model_spec_fingerprint=d.get("model_spec_fingerprint", ""),
+            posterior_fingerprint=d.get("posterior_fingerprint", ""),
+            market=d.get("market", ""),
             authorisations=tuple(
                 ResolvedOutcomeAuthorisation.from_dict(a)
                 for a in d.get("authorisations", [])
             ),
         )
+
+    def validate_against(
+        self,
+        *,
+        operation: str,
+        objective_fingerprint: str,
+        model_run_id: str,
+        data_fingerprint: str,
+        model_spec_fingerprint: str,
+        posterior_fingerprint: str,
+        market: str,
+    ) -> None:
+        """Raises ``OutcomeApprovalBlockedError`` if any field does not
+        match the current calculation context. Prevents forged, empty,
+        or stale resolved-governance objects from bypassing checks."""
+        if self.governance_mode != "official":
+            raise OutcomeApprovalBlockedError(
+                "Resolved governance is not official."
+            )
+        if self.operation != operation:
+            raise OutcomeApprovalBlockedError(
+                f"Resolved governance operation is '{self.operation}' "
+                f"but the current operation is '{operation}'."
+            )
+        if not self.objective_fingerprint:
+            raise OutcomeApprovalBlockedError(
+                "Resolved governance has an empty objective fingerprint."
+            )
+        if self.objective_fingerprint != objective_fingerprint:
+            raise OutcomeApprovalBlockedError(
+                "Resolved governance objective fingerprint does not match "
+                "the current objective."
+            )
+        if not self.model_run_id:
+            raise OutcomeApprovalBlockedError(
+                "Resolved governance has an empty model_run_id."
+            )
+        if self.model_run_id != model_run_id:
+            raise OutcomeApprovalBlockedError(
+                "Resolved governance model_run_id does not match."
+            )
+        if self.data_fingerprint != data_fingerprint:
+            raise OutcomeApprovalBlockedError(
+                "Resolved governance data_fingerprint does not match."
+            )
+        if self.model_spec_fingerprint != model_spec_fingerprint:
+            raise OutcomeApprovalBlockedError(
+                "Resolved governance model_spec_fingerprint does not match."
+            )
+        if self.posterior_fingerprint != posterior_fingerprint:
+            raise OutcomeApprovalBlockedError(
+                "Resolved governance posterior_fingerprint does not match."
+            )
+        if self.market != market:
+            raise OutcomeApprovalBlockedError(
+                f"Resolved governance market is '{self.market}' but the "
+                f"current market is '{market}'."
+            )
+        if not self.authorisations:
+            raise OutcomeApprovalBlockedError(
+                "Resolved governance has zero authorisations — cannot "
+                "authorise an official calculation."
+            )
 
 
 @dataclass(frozen=True)
@@ -284,6 +351,237 @@ def planning_objective_from_legacy(
         # planning validation will require them to be filled in explicitly
         # or will block with a clear message (REQ-PLAN-001).
     )
+
+
+def fingerprint_planning_objective(objective: PlanningObjective) -> str:
+    """Deterministic SHA-256 fingerprint of a PlanningObjective.
+
+    Uses canonical JSON (sorted keys, compact separators) — never
+    ``repr()``, which is implementation-defined and unstable. This is
+    the single fingerprint function used everywhere, including resolved
+    governance and saved scenario dependencies."""
+    payload = objective.to_dict()
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# Scenario dependency validation (G2A.7a.3)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class ScenarioDependencyIssue:
+    """One detected staleness or invalidity issue in a saved scenario's
+    governance dependencies."""
+    artefact_id: str
+    issue_type: str  # "stale", "legacy_unverified", "invalid", "missing"
+    detail: str
+
+
+def validate_scenario_dependencies(
+    scenario: dict,
+    *,
+    current_model_run_id: Optional[str] = None,
+    current_data_fingerprint: Optional[str] = None,
+    current_model_spec_fingerprint: Optional[str] = None,
+    current_posterior_fingerprint: Optional[str] = None,
+    current_planning_objective: Optional[PlanningObjective] = None,
+    current_activity_fingerprint: Optional[str] = None,
+    current_cost_fingerprint: Optional[str] = None,
+    current_counterfactual_fingerprint: Optional[str] = None,
+    current_nbt_completeness_fingerprint: Optional[str] = None,
+) -> List[ScenarioDependencyIssue]:
+    """Validate a saved scenario's governance dependencies against the
+    current project state.
+
+    Returns a list of `ScenarioDependencyIssue` objects — one per
+    detected staleness or invalidity. An empty list means the scenario
+    is ``current``.
+
+    Required states:
+    - ``current``: all dependencies match the current state.
+    - ``stale``: at least one calculation-relevant dependency (objective,
+      model identity, posterior, outcome definition, approval) has changed.
+    - ``legacy_unverified``: old schema version with no validation
+      metadata (migrated by adding null fields).
+    - ``exploratory``: scenario was created in exploratory mode; no
+      governance dependency checking applies.
+    - ``invalid``: a required dependency is missing or malformed.
+    """
+    issues: List[ScenarioDependencyIssue] = []
+
+    schema_ver = scenario.get("schema_version", 1)
+    deps = scenario.get("governance_dependencies") or {}
+    governance_mode = scenario.get("governance_mode", "exploratory")
+
+    if governance_mode != "official":
+        # Exploratory scenarios don't need governance dependency validation
+        return issues
+
+    if schema_ver < 3:
+        issues.append(ScenarioDependencyIssue(
+            artefact_id=scenario.get("name", "<unknown>"),
+            issue_type="legacy_unverified",
+            detail=(
+                f"Scenario schema version {schema_ver} predates governance "
+                "dependency tracking. Migration by adding null fields does "
+                "not produce 'current' status — re-save with explicit "
+                "governance dependencies."
+            ),
+        ))
+        return issues
+
+    if not deps:
+        issues.append(ScenarioDependencyIssue(
+            artefact_id=scenario.get("name", "<unknown>"),
+            issue_type="invalid",
+            detail="Governance dependencies block is empty or missing.",
+        ))
+        return issues
+
+    # Model identity
+    saved_run_id = deps.get("model_run_id")
+    if saved_run_id is None:
+        issues.append(ScenarioDependencyIssue(
+            artefact_id=scenario.get("name", "<unknown>"),
+            issue_type="missing",
+            detail="Governance dependency 'model_run_id' is missing.",
+        ))
+    elif current_model_run_id is not None and saved_run_id != current_model_run_id:
+        issues.append(ScenarioDependencyIssue(
+            artefact_id=scenario.get("name", "<unknown>"),
+            issue_type="stale",
+            detail=(
+                f"Model run changed from {saved_run_id} to "
+                f"{current_model_run_id}."
+            ),
+        ))
+
+    saved_data_fp = deps.get("data_fingerprint")
+    if saved_data_fp is None:
+        issues.append(ScenarioDependencyIssue(
+            artefact_id=scenario.get("name", "<unknown>"),
+            issue_type="missing",
+            detail="Governance dependency 'data_fingerprint' is missing.",
+        ))
+    elif current_data_fingerprint is not None and saved_data_fp != current_data_fingerprint:
+        issues.append(ScenarioDependencyIssue(
+            artefact_id=scenario.get("name", "<unknown>"),
+            issue_type="stale",
+            detail="Data fingerprint has changed.",
+        ))
+
+    saved_spec_fp = deps.get("model_spec_fingerprint")
+    if saved_spec_fp is None:
+        issues.append(ScenarioDependencyIssue(
+            artefact_id=scenario.get("name", "<unknown>"),
+            issue_type="missing",
+            detail="Governance dependency 'model_spec_fingerprint' is missing.",
+        ))
+    elif current_model_spec_fingerprint is not None and saved_spec_fp != current_model_spec_fingerprint:
+        issues.append(ScenarioDependencyIssue(
+            artefact_id=scenario.get("name", "<unknown>"),
+            issue_type="stale",
+            detail="Model spec fingerprint has changed.",
+        ))
+
+    saved_post_fp = deps.get("posterior_fingerprint")
+    if saved_post_fp is None:
+        issues.append(ScenarioDependencyIssue(
+            artefact_id=scenario.get("name", "<unknown>"),
+            issue_type="missing",
+            detail="Governance dependency 'posterior_fingerprint' is missing.",
+        ))
+    elif current_posterior_fingerprint is not None and saved_post_fp != current_posterior_fingerprint:
+        issues.append(ScenarioDependencyIssue(
+            artefact_id=scenario.get("name", "<unknown>"),
+            issue_type="stale",
+            detail="Posterior fingerprint has changed.",
+        ))
+
+    # Objective fingerprint
+    saved_obj_fp = deps.get("planning_objective_fingerprint")
+    if saved_obj_fp is None:
+        issues.append(ScenarioDependencyIssue(
+            artefact_id=scenario.get("name", "<unknown>"),
+            issue_type="missing",
+            detail="Governance dependency 'planning_objective_fingerprint' is missing.",
+        ))
+    elif current_planning_objective is not None:
+        current_obj_fp = fingerprint_planning_objective(current_planning_objective)
+        if saved_obj_fp != current_obj_fp:
+            issues.append(ScenarioDependencyIssue(
+                artefact_id=scenario.get("name", "<unknown>"),
+                issue_type="stale",
+                detail="Planning objective fingerprint has changed.",
+            ))
+
+    # Activity and cost fingerprints (only relevant for specific uses)
+    saved_act_fp = deps.get("activity_definitions_fingerprint")
+    if current_activity_fingerprint is not None and saved_act_fp is not None and saved_act_fp != current_activity_fingerprint:
+        issues.append(ScenarioDependencyIssue(
+            artefact_id=scenario.get("name", "<unknown>"),
+            issue_type="stale",
+            detail="Activity definitions fingerprint has changed.",
+        ))
+
+    saved_cost_fp = deps.get("cost_mapping_fingerprint")
+    if current_cost_fingerprint is not None and saved_cost_fp is not None and saved_cost_fp != current_cost_fingerprint:
+        issues.append(ScenarioDependencyIssue(
+            artefact_id=scenario.get("name", "<unknown>"),
+            issue_type="stale",
+            detail="Cost mapping fingerprint has changed.",
+        ))
+
+    saved_cf_fp = deps.get("counterfactual_policy_fingerprint")
+    if current_counterfactual_fingerprint is not None and saved_cf_fp is not None and saved_cf_fp != current_counterfactual_fingerprint:
+        issues.append(ScenarioDependencyIssue(
+            artefact_id=scenario.get("name", "<unknown>"),
+            issue_type="stale",
+            detail="Counterfactual policy fingerprint has changed.",
+        ))
+
+    saved_nbt_fp = deps.get("nbt_completeness_fingerprint")
+    if current_nbt_completeness_fingerprint is not None and saved_nbt_fp is not None and saved_nbt_fp != current_nbt_completeness_fingerprint:
+        issues.append(ScenarioDependencyIssue(
+            artefact_id=scenario.get("name", "<unknown>"),
+            issue_type="stale",
+            detail="NBT completeness fingerprint has changed.",
+        ))
+
+    # Outcome authorisations
+    saved_authorisations = deps.get("outcome_authorisations") or []
+    if not saved_authorisations:
+        issues.append(ScenarioDependencyIssue(
+            artefact_id=scenario.get("name", "<unknown>"),
+            issue_type="invalid",
+            detail="No outcome authorisations recorded for this official scenario.",
+        ))
+
+    return issues
+
+
+def scenario_dependency_status(
+    scenario: dict,
+    **current_kwargs,
+) -> str:
+    """Convenience wrapper that returns a single status string for a
+    scenario based on its governance dependencies.
+
+    Returns one of: ``current``, ``stale``, ``legacy_unverified``,
+    ``exploratory``, ``invalid``."""
+    governance_mode = scenario.get("governance_mode", "exploratory")
+    if governance_mode != "official":
+        return "exploratory"
+    issues = validate_scenario_dependencies(scenario, **current_kwargs)
+    if not issues:
+        return "current"
+    for issue in issues:
+        if issue.issue_type == "legacy_unverified":
+            return "legacy_unverified"
+        if issue.issue_type == "invalid" or issue.issue_type == "missing":
+            return "invalid"
+    return "stale"
 
 
 @dataclass(frozen=True)
@@ -945,31 +1243,52 @@ def evaluate_scenario(
         model_spec_fingerprint=model_spec_fingerprint,
         posterior_fingerprint=posterior_fingerprint,
     )
-    # --- Outcome-approval gate (G2A.7a.2, REQ-PLAN-001, REQ-USE-001) ---
-    # Official mode with outcome_approvals configured: objective is required.
-    # The requested_use is always "planning" — the caller cannot downgrade.
-    # When no outcome_approvals are configured, the gate is skipped (there
-    # is nothing to validate against — calculation-only scenarios).
-    if _resolved_governance is not None and _resolved_governance.is_official:
-        # Trusted path: the optimiser already validated and passed proof.
-        pass
-    elif governance_mode == "official" and outcome_approvals:
-        if planning_objective is None:
-            raise ObjectiveMissingError(
-                "Official scenario evaluation blocked: no PlanningObjective "
-                "provided. Official planning requires an explicit objective "
-                "with metric_key and target_outcome_ids. Pass "
-                "governance_mode='exploratory' for non-official evaluation, "
-                "or provide a complete PlanningObjective."
+    # --- Outcome-approval gate (G2A.7a.2, G2A.7a.3, REQ-PLAN-001, REQ-USE-001) ---
+    # Official mode: fail closed. Missing or empty approval collections block.
+    # exploratory mode skips approval checks.
+    if governance_mode == "official":
+        if _resolved_governance is not None and _resolved_governance.is_official:
+            # Trusted path: the optimiser already validated and passed proof.
+            # Re-validate against the current context to prevent forging.
+            # Use the operation from the resolved governance — the optimiser
+            # sets "optimisation" for its nested evaluate_scenario calls.
+            _resolved_governance.validate_against(
+                operation=_resolved_governance.operation,
+                objective_fingerprint=(
+                    fingerprint_planning_objective(planning_objective)
+                    if planning_objective is not None
+                    else _resolved_governance.objective_fingerprint
+                ),
+                model_run_id=model_run_id,
+                data_fingerprint=data_fingerprint,
+                model_spec_fingerprint=model_spec_fingerprint,
+                posterior_fingerprint=posterior_fingerprint,
+                market=market,
             )
-        _require_planning_outcome_approvals(
-            planning_objective=planning_objective,
-            meta=meta,
-            outcome_approvals=outcome_approvals,
-            requested_use="planning",
-            market=market,
-            nbt_completeness_metadata=nbt_completeness_metadata,
-        )
+        elif outcome_approvals is None or len(outcome_approvals) == 0:
+            raise OutcomeApprovalBlockedError(
+                "Official scenario evaluation blocked: no outcome approvals "
+                "are configured. Official use requires at least one active "
+                "OutcomeApproval. Pass governance_mode='exploratory' for "
+                "non-official evaluation."
+            )
+        else:
+            if planning_objective is None:
+                raise ObjectiveMissingError(
+                    "Official scenario evaluation blocked: no PlanningObjective "
+                    "provided. Official planning requires an explicit objective "
+                    "with metric_key and target_outcome_ids. Pass "
+                    "governance_mode='exploratory' for non-official evaluation, "
+                    "or provide a complete PlanningObjective."
+                )
+            _require_planning_outcome_approvals(
+                planning_objective=planning_objective,
+                meta=meta,
+                outcome_approvals=outcome_approvals,
+                requested_use="planning",
+                market=market,
+                nbt_completeness_metadata=nbt_completeness_metadata,
+            )
     # --- end outcome-approval gate ---
     response_fn = _steady_state_response_fn(model_type)
     ltv = ltv or {}
@@ -1925,12 +2244,19 @@ def optimize_scenario(
         model_spec_fingerprint=model_spec_fingerprint,
         posterior_fingerprint=posterior_fingerprint,
     )
-    # --- Outcome-approval gate (G2A.7a.2, REQ-PLAN-001, REQ-USE-001) ---
-    # Official mode with outcome_approvals configured: objective is required.
+    # --- Outcome-approval gate (G2A.7a.2, G2A.7a.3, REQ-PLAN-001, REQ-USE-001) ---
+    # Official mode: fail closed. Missing or empty approval collections block.
     # Track whether the caller gave ANY objective information at all
     # (a typed object, or a legacy string) *before* reconstruction below.
     _caller_gave_objective_info = objective is not None or planning_objective is not None
-    if governance_mode == "official" and outcome_approvals:
+    if governance_mode == "official":
+        if outcome_approvals is None or len(outcome_approvals) == 0:
+            raise OutcomeApprovalBlockedError(
+                "Official optimisation blocked: no outcome approvals are "
+                "configured. Official use requires at least one active "
+                "OutcomeApproval. Pass governance_mode='exploratory' for "
+                "non-official optimisation."
+            )
         if not _caller_gave_objective_info:
             raise ObjectiveMissingError(
                 "Official optimisation blocked: no objective provided. "
@@ -2009,14 +2335,15 @@ def optimize_scenario(
     )
     # G2A.7a.2: second gate for the deprecated objective= string path — the
     # planning_objective was resolved from the legacy string above but
-    # wasn't available at the first gate check (which only fires when a
-    # typed PlanningObjective was already passed). Re-gate with the newly
-    # resolved objective, but only when outcome_approvals are configured.
+    # wasn't available at the first gate check (the typed objective may
+    # not have been resolved yet). Re-gate with the newly resolved
+    # objective when in official mode.
     if (
         governance_mode == "official"
-        and outcome_approvals
         and objective is not None
         and planning_objective is not None
+        and outcome_approvals is not None
+        and len(outcome_approvals) > 0
     ):
         _require_planning_outcome_approvals(
             planning_objective=planning_objective,
@@ -2026,6 +2353,47 @@ def optimize_scenario(
             market=market,
             nbt_completeness_metadata=nbt_completeness_metadata,
         )
+    # G2A.7a.3: resolve the complete governance context before the solver.
+    # Fail before expensive work, never reconstruct after.
+    _resolved_gov: Optional[ResolvedPlanningGovernance] = None
+    if governance_mode == "official" and planning_objective is not None:
+        _authorisations: list[ResolvedOutcomeAuthorisation] = []
+        catalogue_by_id = outcome_catalogue_at_fit_by_id(meta)
+        from .outcome_approval import find_matching_outcome_approval
+        for target_id in planning_objective.target_outcome_ids:
+            if target_id in catalogue_by_id:
+                outcome = catalogue_by_id[target_id]
+                matching = find_matching_outcome_approval(
+                    outcome, outcome_approvals or [], "optimisation",
+                    market=market, product=outcome.product, segment=outcome.segment,
+                )
+                if matching is not None:
+                    _authorisations.append(ResolvedOutcomeAuthorisation(
+                        outcome_id=target_id,
+                        requested_use="optimisation",
+                        approval_id=matching.approval_id,
+                        definition_fingerprint=matching.definition_fingerprint,
+                        market=market,
+                        product=outcome.product,
+                        segment=outcome.segment,
+                        nbt_completeness_fingerprint=(
+                            nbt_completeness_metadata.get("definition_fingerprint")
+                            if nbt_completeness_metadata and outcome.metric_key == METRIC_KEY_FH_NET_BILLTHROUGH_COUNT
+                            else None
+                        ),
+                    ))
+        _resolved_gov = ResolvedPlanningGovernance(
+            governance_mode="official",
+            operation="optimisation",
+            objective_fingerprint=fingerprint_planning_objective(planning_objective),
+            model_run_id=model_run_id,
+            data_fingerprint=data_fingerprint,
+            model_spec_fingerprint=model_spec_fingerprint,
+            posterior_fingerprint=posterior_fingerprint,
+            market=market,
+            authorisations=tuple(_authorisations),
+        )
+
     current_spend = _flatten(current_spend_plan, months, channels)
 
     activity_map = (
@@ -2150,41 +2518,6 @@ def optimize_scenario(
 
     optimized_plan = _unflatten(np.clip(result.x, 0, None), months, channels)
 
-    # G2A.7a.2: build a resolved governance proof from the validated
-    # optimisation authorisations. Nested evaluate_scenario calls receive
-    # this via _resolved_governance so they never downgrade to exploratory
-    # and never re-check under the wrong permission.
-    _resolved_gov: Optional[ResolvedPlanningGovernance] = None
-    if governance_mode == "official" and planning_objective is not None:
-        _authorisations: list[ResolvedOutcomeAuthorisation] = []
-        catalogue_by_id = outcome_catalogue_at_fit_by_id(meta)
-        from .outcome_approval import find_matching_outcome_approval, fingerprint_outcome_definition
-        for target_id in planning_objective.target_outcome_ids:
-            if target_id in catalogue_by_id:
-                outcome = catalogue_by_id[target_id]
-                matching = find_matching_outcome_approval(
-                    outcome, outcome_approvals or [], "optimisation",
-                    market=market, product=outcome.product, segment=outcome.segment,
-                )
-                if matching is not None:
-                    _authorisations.append(ResolvedOutcomeAuthorisation(
-                        outcome_id=target_id,
-                        requested_use="optimisation",
-                        approval_id=matching.approval_id,
-                        definition_fingerprint=matching.definition_fingerprint,
-                        scope_fingerprint=fingerprint_outcome_definition(outcome),
-                        nbt_completeness_fingerprint=(
-                            nbt_completeness_metadata.get("definition_fingerprint")
-                            if nbt_completeness_metadata and outcome.metric_key == METRIC_KEY_FH_NET_BILLTHROUGH_COUNT
-                            else None
-                        ),
-                    ))
-        _resolved_gov = ResolvedPlanningGovernance(
-            governance_mode="official",
-            objective_fingerprint=planning_objective.to_dict().__repr__(),  # simplified fingerprint
-            authorisations=tuple(_authorisations),
-        )
-
     identity_kwargs = dict(
         model_type=model_type, approval=approval, model_run_id=model_run_id, data_fingerprint=data_fingerprint,
         model_spec_fingerprint=model_spec_fingerprint, posterior_fingerprint=posterior_fingerprint,
@@ -2196,6 +2529,9 @@ def optimize_scenario(
         activity_definitions=activity_definitions,
         counterfactual_policy=policy,
         outcome_approvals=outcome_approvals,
+        # G2A.7a.3: forward governance_mode so nested evaluate_scenario calls
+        # use the same mode as the optimiser, not the default "official".
+        governance_mode=governance_mode,
         # G2A.7a.2: pass resolved governance proof so nested evaluate calls
         # retain official optimisation identity without re-checking under
         # the wrong permission. They are NEVER labelled exploratory.
@@ -2319,6 +2655,10 @@ def optimize_scenario(
             if activity_definitions is not None
             else None
         ),
+        # G2A.7a.3: resolved governance context for persistence
+        "_resolved_governance": (
+            _resolved_gov.to_dict() if _resolved_gov is not None else None
+        ),
     }
 
 
@@ -2368,7 +2708,7 @@ def scenario_to_dict(
         "model_spec_fingerprint": model_spec_fingerprint,
         "posterior_fingerprint": posterior_fingerprint,
         "planning_objective_fingerprint": (
-            planning_objective.to_dict().__repr__()
+            fingerprint_planning_objective(planning_objective)
             if isinstance(planning_objective, PlanningObjective)
             else None
         ),
@@ -2415,8 +2755,9 @@ def scenario_from_dict(d: dict) -> dict:
         d["planning_objective"] = planning_objective_from_legacy(
             d["objective"]
         ).to_dict()
-    # G2A.7a.2: migrate older schema versions — add empty governance
-    # dependencies block so downstream code doesn't need to handle None
+    # G2A.7a.2, G2A.7a.3: migrate older schema versions — add empty
+    # governance dependencies block. Schema version < 3 results in
+    # legacy_unverified status, never current.
     if "governance_dependencies" not in d:
         d["governance_dependencies"] = {
             "model_run_id": None,
@@ -2432,6 +2773,10 @@ def scenario_from_dict(d: dict) -> dict:
             "nbt_completeness_fingerprint": None,
         }
         d["schema_version"] = max(schema_ver, 3)
+    # A migrated scenario retains its original schema version for staleness
+    # detection — adding null fields does not make it "current".
+    if schema_ver < 3:
+        d["_migrated_from_schema"] = schema_ver
     d["constraints"] = [SpendConstraint.from_dict(c) for c in d.get("constraints", [])]
     return d
 
@@ -2445,6 +2790,27 @@ def require_current_cost_mapping(
         raise ValueError(
             "Artifact is stale because its governed cost mapping changed"
         )
+
+
+def governance_deps_from_optimizer_result(result: dict) -> dict:
+    """Extract governance dependency block from an ``optimize_scenario``
+    result for passing to ``scenario_to_dict``. Returns a dict with all
+    fields populated from the resolved governance context embedded in the
+    result, or empty-string/None defaults when no resolved governance is
+    available (exploratory mode or no planning objective)."""
+    resolved = result.get("_resolved_governance") or {}
+    return {
+        "model_run_id": resolved.get("model_run_id") or "",
+        "data_fingerprint": resolved.get("data_fingerprint") or "",
+        "model_spec_fingerprint": resolved.get("model_spec_fingerprint") or "",
+        "posterior_fingerprint": resolved.get("posterior_fingerprint") or "",
+        "planning_objective_fingerprint": resolved.get("objective_fingerprint") or "",
+        "outcome_authorisations": resolved.get("authorisations") or [],
+        "activity_definitions_fingerprint": result.get("activity_definitions_fingerprint"),
+        "cost_mapping_fingerprint": result.get("cost_mapping_fingerprint"),
+        "counterfactual_policy_fingerprint": result.get("counterfactual_policy_fingerprint"),
+        "nbt_completeness_fingerprint": None,
+    }
 
 
 def compare_scenarios(scenarios: List[Dict], predicted_key: str = "predicted") -> pd.DataFrame:

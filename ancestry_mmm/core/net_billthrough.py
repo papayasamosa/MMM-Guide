@@ -11,8 +11,10 @@ Both are required for official NBT use.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import asdict, dataclass
-from typing import List, Sequence
+from typing import Dict, List, Sequence
 
 import numpy as np
 import pandas as pd
@@ -40,6 +42,26 @@ class NetBillthroughCompletenessMetadata:
     outcome_id: str = ""
     definition_version: str = ""
     definition_fingerprint: str = ""
+
+    def completeness_fingerprint(self) -> str:
+        """Stable SHA-256 fingerprint of this completeness record, covering
+        the data-integrity fields that define the record's identity:
+        source_owner, data_as_of_date, latest_complete_net_billthrough_week,
+        and maturity_rule_description. This is NOT the same as the
+        outcome-definition fingerprint (``definition_fingerprint``) — a
+        completeness record can be updated (newer as-of date, later complete
+        week) without changing the outcome definition, and vice versa."""
+        payload: Dict[str, object] = {
+            "source_owner": self.source_owner,
+            "data_as_of_date": self.data_as_of_date,
+            "latest_complete_net_billthrough_week": self.latest_complete_net_billthrough_week,
+            "maturity_rule_description": self.maturity_rule_description,
+            "outcome_id": self.outcome_id,
+            "definition_version": self.definition_version,
+            "definition_fingerprint": self.definition_fingerprint,
+        }
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -286,13 +308,14 @@ G2A.7a.2: the three binding fields — ``outcome_id``,
             f"'{metadata.outcome_id}', not the requested outcome '{outcome_id}'."
         )
 
-    # G2A.7a.2: definition_version binding is mandatory
+    # G2A.7a.2, G2A.7a.3: definition_version binding is mandatory for both
+    # object and dict outcomes
     if not metadata.definition_version:
         issues.append(
             "Net bill-through completeness metadata is missing the required "
             "definition_version binding field."
         )
-    elif not isinstance(outcome, dict):
+    else:
         outcome_version = _outcome_value(outcome, "definition_version")
         if outcome_version and metadata.definition_version != outcome_version:
             issues.append(
@@ -301,18 +324,30 @@ G2A.7a.2: the three binding fields — ``outcome_id``,
                 f"version '{outcome_version}'."
             )
 
-    # G2A.7a.2: definition_fingerprint binding is mandatory — an empty
-    # fingerprint no longer passes
+    # G2A.7a.2, G2A.7a.3: definition_fingerprint binding is mandatory —
+    # validated for both object and dict outcomes. An empty fingerprint
+    # no longer passes.
     if not metadata.definition_fingerprint:
         issues.append(
             "Net bill-through completeness metadata is missing the required "
             "definition_fingerprint binding field."
         )
-    elif not isinstance(outcome, dict):
-        from .outcome_approval import fingerprint_outcome_definition
+    else:
+        # Handle both OutcomeDefinition objects and dicts
+        if isinstance(outcome, dict):
+            from .outcome_approval import fingerprint_outcome_definition
+            from .outcomes import OutcomeDefinition
 
-        current_fingerprint = fingerprint_outcome_definition(outcome)
-        if metadata.definition_fingerprint != current_fingerprint:
+            try:
+                outcome_def = OutcomeDefinition.from_dict(outcome)
+                current_fingerprint = fingerprint_outcome_definition(outcome_def)
+            except (TypeError, ValueError, KeyError):
+                current_fingerprint = ""
+        else:
+            from .outcome_approval import fingerprint_outcome_definition
+
+            current_fingerprint = fingerprint_outcome_definition(outcome)
+        if current_fingerprint and metadata.definition_fingerprint != current_fingerprint:
             issues.append(
                 "Net bill-through completeness metadata was recorded "
                 "against a different outcome-definition fingerprint; it is "

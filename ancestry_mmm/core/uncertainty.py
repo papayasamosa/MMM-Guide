@@ -297,7 +297,6 @@ def evaluate_scenario_with_uncertainty(
     cost_as_of_by_month: Optional[Dict[str, str]] = None,
     outcome_approvals: Optional[List[OutcomeApproval]] = None,
     governance_mode: str = "official",
-    requested_use: str = "planning",
     nbt_completeness_metadata: Optional[dict] = None,
     # G2A.7a.2: internal trusted path — when the optimiser has already
     # validated, it passes a ResolvedPlanningGovernance proof so per-draw
@@ -319,16 +318,12 @@ def evaluate_scenario_with_uncertainty(
     is then the fraction of paired draws where `spend_plan`'s total value
     exceeds `baseline_spend_plan`'s.
 
-    G2A.7a.1 (REQ-PLAN-001, REQ-USE-001): `outcome_approvals`/`governance_mode`/
-    `requested_use`/`nbt_completeness_metadata` are forwarded unchanged to
-    every per-draw `evaluate_scenario` call, so posterior uncertainty is
-    governed under the same context as the point-estimate evaluation it
-    summarises - manual posterior uncertainty (default `requested_use=
-    "planning"`) and the optimiser's own posterior evaluation (which passes
-    `governance_mode="exploratory"`, since it has already validated the
-    correct `"optimisation"` authorisation before calling this function -
-    see `optimize_scenario`) both flow through the same parameters rather
-    than each needing separate plumbing.
+    G2A.7a.2: manual uncertainty always uses planning authorisation
+    (``governance_mode`` is forwarded; the caller never passes
+    ``requested_use`` — that is resolved internally as ``"planning"`` for
+    manual scenarios). The optimiser passes a ``_resolved_governance``
+    proof so per-draw evaluation retains its validated optimisation
+    context without re-checking under the wrong permission.
 
     Returns `{"summary": DataFrame, "prob_outperforms_baseline": float or
     None, "n_draws": int}`. Raises `ApprovalMismatchError` exactly as
@@ -356,7 +351,6 @@ def evaluate_scenario_with_uncertainty(
             cost_as_of_by_month=cost_as_of_by_month,
             outcome_approvals=outcome_approvals,
             governance_mode=governance_mode,
-            requested_use=requested_use,
             nbt_completeness_metadata=nbt_completeness_metadata,
             _resolved_governance=_resolved_governance,
         )

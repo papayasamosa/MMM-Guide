@@ -19,7 +19,7 @@ import hashlib
 import json
 import re
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
 from .outcomes import OutcomeDefinition, AGGREGATION_TYPES, DATE_BASIS_VALUES, METRIC_REGISTRY
@@ -91,13 +91,6 @@ def _normalise_datetime(value: str) -> datetime:
 
     return dt.astimezone(timezone.utc)
 
-
-def _normalise_date_only(value: str) -> datetime:
-    """Like _normalise_datetime but always truncates to date midnight UTC.
-    Used for date-only comparison where timestamps should be compared at
-    day granularity."""
-    dt = _normalise_datetime(value)
-    return dt.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=timezone.utc)
 
 # ---------------------------------------------------------------------------
 # Approved vocabularies
@@ -178,21 +171,24 @@ class OutcomeApproval:
         """True if this approval is currently in effect (approved, not expired,
         not future-dated).
 
-        G2A.7a: when `as_of` is omitted, compares against the current UTC date.
-        Expiry is evaluated as `as_of >= expires_at` — the approval expires at
-        the start of the expiry date (inclusive).
+        G2A.7a.3: when ``as_of`` is omitted, defaults to the current UTC
+        *instant* (not a date-only string at midnight), so an approval
+        created earlier today at 10:30 UTC is correctly treated as active.
+        Date-only user inputs are preserved as UTC midnight under the
+        documented policy. Expiry is evaluated as ``as_of >= expires_at``
+        — the approval expires at the start of the expiry date (inclusive).
 
         G2A.7a.1 (REQ-OUT-002 section 7.4): dates are parsed, not compared as
-        raw strings, and a future-dated `approved_at` (relative to `as_of`)
+        raw strings, and a future-dated ``approved_at`` (relative to ``as_of``)
         does not authorise current use - an approval recorded for a future
         effective date must not be treated as already in force today.
 
-        G2A.7a.2: all datetime comparisons go through `_normalise_datetime`
+        G2A.7a.2: all datetime comparisons go through ``_normalise_datetime``
         so timezone-aware timestamps (e.g. ``2026-07-26T10:30:00Z``) and
         timezone-naive values are compared safely without TypeError."""
         if self.status != "approved":
             return False
-        effective_as_of = as_of or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        effective_as_of = as_of or datetime.now(timezone.utc).isoformat()
         try:
             as_of_dt = _normalise_datetime(effective_as_of)
         except (ValueError, TypeError):
