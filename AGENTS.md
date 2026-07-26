@@ -6,13 +6,30 @@ These instructions apply to the whole `papayasamosa/MMM-Guide` repository.
 
 More specific `AGENTS.md` files under `ancestry_mmm/core`, `ancestry_mmm/pages`, and `ancestry_mmm/tests` add rules for those areas. The most specific applicable file takes precedence, but no nested instruction may weaken the business definitions, mathematical-correctness requirements, or governance rules in this root file.
 
-## Source of truth
+## Requirements authority
 
-The approved Ancestry MMM PRD (`Ancestry MMM PRD v1.1`: Parts 1–11 plus their `v1.1 Replacement Sections`, and any later-approved amendment) is the source of truth for business requirements. It is maintained outside this code repository; `docs/*.md` in this repo (e.g. `docs/outcomes.md`, `docs/net_billthrough.md`, `docs/brand_search.md`, `docs/media_outcome_pathways.md`, `docs/g2a5_scenario_governance.md`) records how the approved decisions are implemented here, not the requirements themselves.
+Business requirements implemented in this repository must come from either:
 
-`AGENTS.md` files summarise stable implementation invariants distilled from that PRD. They must not create new business definitions, invent an unresolved decision, or override an approved PRD decision.
+1. a task-specific approved implementation brief, or
+2. a repository-controlled approved requirements manifest or decision record (see `docs/approved_requirements/` and `docs/decision_log.md`).
 
-If an `AGENTS.md` rule conflicts with the current PRD, stop, identify the conflict, and update or escalate it before implementing the feature. Do not silently follow the stale `AGENTS.md` wording, and do not silently invent a replacement business definition either.
+Coding agents must not independently interpret, reconcile, amend, or supersede the external Ancestry MMM PRD.
+
+The external PRD is an upstream human product document. Its approved decisions are translated into scoped implementation briefs and stable repository invariants before coding work begins.
+
+For each task, follow this order of authority:
+
+1. the supplied implementation brief
+2. repository-controlled approved requirements and decision records
+3. the most specific applicable `AGENTS.md` file
+4. existing schemas, migrations, tests, and documented code contracts
+5. existing implementation behaviour, where it does not conflict with the above
+
+If these sources conflict, stop and report the conflict. Do not invent a business decision, silently reinterpret the PRD, or choose one requirement based on personal judgement.
+
+`AGENTS.md` files summarise stable implementation invariants distilled from approved decisions. They must not create new business definitions or invent an unresolved decision.
+
+Human-facing traceability from implementation requirements back to the external PRD should be maintained in an approved requirements manifest or decision log (`docs/approved_requirements/`, `docs/decision_log.md`). Coding agents should cite the requirement ID or implementation brief, not reinterpret the PRD text.
 
 ## Product objective
 
@@ -112,7 +129,7 @@ upstream media
     -> final outcome
 ```
 
-Do not prescribe one exact probability distribution or censoring mechanism for this beyond what the PRD or an approved model specification requires — enforce the semantics and reconciliation above, not one frozen algebraic form.
+Do not prescribe one exact probability distribution or censoring mechanism for this beyond what an approved model specification requires — enforce the semantics and reconciliation above, not one frozen algebraic form.
 
 ## Future-variable roles
 

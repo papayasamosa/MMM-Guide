@@ -4,7 +4,11 @@
 
 These instructions apply to `ancestry_mmm/pages`.
 
-The root `AGENTS.md` also applies, including its outcome-registry, pathway-taxonomy, Search-object, capacity/cap, and future-variable-role rules.
+The root `AGENTS.md` also applies, including its outcome-registry, pathway-taxonomy, Search-object, capacity/cap, future-variable-role, and requirements-authority rules.
+
+## Requirements authority
+
+Pages must render the contracts supplied by core and repository-controlled requirements. They must not create new business labels, default outcomes, pathway meanings, approval rules, or scenario semantics from free-text interpretation.
 
 ## Thin UI rule
 

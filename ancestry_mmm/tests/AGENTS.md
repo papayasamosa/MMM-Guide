@@ -4,7 +4,11 @@
 
 These instructions apply to `ancestry_mmm/tests`.
 
-The root `AGENTS.md` also applies, including its outcome-registry, pathway-taxonomy, Search-object, capacity/cap, and future-variable-role rules.
+The root `AGENTS.md` also applies, including its outcome-registry, pathway-taxonomy, Search-object, capacity/cap, future-variable-role, and requirements-authority rules.
+
+## Requirements authority
+
+Every business-critical test should identify the repository requirement, decision record, schema contract, or implementation-brief acceptance criterion it enforces. Do not derive a new expected behaviour directly from an external PRD passage during implementation.
 
 ## No untested modelling changes
 
