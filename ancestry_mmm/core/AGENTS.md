@@ -4,7 +4,11 @@
 
 These instructions apply to `ancestry_mmm/core`.
 
-The root `AGENTS.md` also applies, including its outcome-registry, pathway-taxonomy, Search-object, capacity/cap, and future-variable-role rules. This file adds core-modelling-specific detail; it must not restate a weaker version of the root business rules.
+The root `AGENTS.md` also applies, including its outcome-registry, pathway-taxonomy, Search-object, capacity/cap, future-variable-role, and requirements-authority rules. This file adds core-modelling-specific detail; it must not restate a weaker version of the root business rules.
+
+## Requirements authority
+
+Core modelling code must implement the supplied approved model specification. When a business definition or causal structure is not present in the implementation brief or repository-controlled requirements (see root `AGENTS.md`'s requirements authority), stop and request clarification rather than inferring it from an external product document.
 
 ## Core modelling policy
 
@@ -23,8 +27,8 @@ Before editing adstock, saturation, priors, response curves, attribution, calibr
 When describing core behaviour, distinguish:
 
 - **current implemented behaviour** — what the code does today
-- **approved invariant** — a business or mathematical rule from the PRD that must never be violated (e.g. never aliasing NBT to GSA, never treating a cap as realised spend)
-- **target platform capability** — a PRD requirement not yet built (e.g. the full capacity-constrained two-stage model, DNA halo, Chronos-2 integration)
+- **approved invariant** — a business or mathematical rule established by an approved requirements record that must never be violated (e.g. never aliasing NBT to GSA, never treating a cap as realised spend)
+- **target platform capability** — a capability described in an approved implementation brief or requirements manifest but not yet built (e.g. the full capacity-constrained two-stage model, DNA halo, Chronos-2 integration)
 - **backward-compatibility/migration requirement** — a rule that exists only to keep old saved projects loadable
 
 Do not describe a current implementation choice (e.g. today's custom single-outcome-per-call model builders, or a project's markets currently being fit unpooled) as if it were a permanent invariant. Do not describe a target capability as already delivered.
