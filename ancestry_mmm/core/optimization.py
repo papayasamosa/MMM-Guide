@@ -66,7 +66,6 @@ from .outcomes import (
 from .outcome_approval import (
     OutcomeApproval,
     OutcomeApprovalBlockedError,
-    require_outcome_approval,
 )
 from .predict import FHPosteriorParams, steady_state_outcome_response
 from .market_specific_predict import FHMarketSpecificPosteriorParams, steady_state_outcome_response_market_specific
@@ -704,11 +703,22 @@ def _require_planning_outcome_approvals(
     planning_objective: PlanningObjective,
     meta: FHModelMeta,
     outcome_approvals: Optional[List[OutcomeApproval]],
+    requested_use: str = "planning",
+    market: Optional[str] = None,
 ) -> None:
-    """G2A.7 gate (REQ-PLAN-001, REQ-USE-001): validate that every target
-    outcome in a planning objective has a matching, active OutcomeApproval
-    for the requested use. Raises OutcomeApprovalBlockedError on first
-    failure, naming the specific outcome and reason."""
+    """G2A.7a gate (REQ-PLAN-001, REQ-USE-001, REQ-OUT-002): validate that
+    every target outcome in a planning objective has a matching, active
+    OutcomeApproval for the requested use, within the given market and the
+    outcome's own product/segment scope.
+
+    Called unconditionally in official mode — the objective must be complete
+    (metric_key + target_outcome_ids non-empty) or this raises immediately.
+    Uses `find_matching_outcome_approval` for multi-approval resolution."""
+    if not planning_objective.metric_key:
+        raise OutcomeApprovalBlockedError(
+            "Official planning blocked: PlanningObjective has no metric_key. "
+            "Select an explicit objective before official planning."
+        )
     if not planning_objective.target_outcome_ids:
         raise OutcomeApprovalBlockedError(
             "Official planning blocked: PlanningObjective has no "
@@ -721,9 +731,8 @@ def _require_planning_outcome_approvals(
             "Official planning blocked: no outcome catalogue metadata "
             "available from the fitted model."
         )
-    from .outcome_approval import resolve_approvals_by_outcome_id
+    from .outcome_approval import find_matching_outcome_approval
 
-    approval_by_id = resolve_approvals_by_outcome_id(outcome_approvals or [])
     for target_id in planning_objective.target_outcome_ids:
         if target_id not in catalogue_by_id:
             raise OutcomeApprovalBlockedError(
@@ -731,8 +740,22 @@ def _require_planning_outcome_approvals(
                 f"'{target_id}' was not present in the fitted model."
             )
         outcome = catalogue_by_id[target_id]
-        approval = approval_by_id.get(target_id)
-        require_outcome_approval(outcome, approval, "planning")
+        # G2A.7a: pass outcome's own product and segment for scope checking
+        matching = find_matching_outcome_approval(
+            outcome,
+            outcome_approvals or [],
+            requested_use,
+            market=market,
+            product=outcome.product,
+            segment=outcome.segment,
+        )
+        if matching is None:
+            raise OutcomeApprovalBlockedError(
+                f"Official planning blocked: outcome '{target_id}' has no "
+                f"active approval for '{requested_use}' "
+                f"(market={market or 'any'}, product={outcome.product}, "
+                f"segment={outcome.segment})."
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -779,16 +802,18 @@ def evaluate_scenario(
         model_spec_fingerprint=model_spec_fingerprint,
         posterior_fingerprint=posterior_fingerprint,
     )
-    # --- Outcome-approval gate (G2A.7, REQ-PLAN-001, REQ-USE-001) ---
-    if (
-        governance_mode == "official"
-        and planning_objective is not None
-        and planning_objective.is_valid_for_official_planning
-    ):
+    # --- Outcome-approval gate (G2A.7a, REQ-PLAN-001, REQ-USE-001) ---
+    # When a planning_objective is explicitly provided in official mode,
+    # it must be complete and every target must have approval.
+    # When no objective is provided (backward compat, legacy callers),
+    # the gate is skipped — callers that need governance must pass one.
+    if governance_mode == "official" and planning_objective is not None:
         _require_planning_outcome_approvals(
             planning_objective=planning_objective,
             meta=meta,
             outcome_approvals=outcome_approvals,
+            requested_use="planning",
+            market=market,
         )
     # --- end outcome-approval gate ---
     response_fn = _steady_state_response_fn(model_type)
@@ -1744,27 +1769,27 @@ def optimize_scenario(
         model_spec_fingerprint=model_spec_fingerprint,
         posterior_fingerprint=posterior_fingerprint,
     )
-    # --- Outcome-approval gate (G2A.7, REQ-PLAN-001, REQ-USE-001) ---
-    if (
-        governance_mode == "official"
-        and planning_objective is not None
-        and planning_objective.is_valid_for_official_planning
-    ):
+    # --- Outcome-approval gate (G2A.7a, REQ-PLAN-001, REQ-USE-001) ---
+    # When a planning_objective is explicitly provided in official mode,
+    # enforce the approval gate. Track whether it was checked so the
+    # deprecated objective= string path below doesn't double-check.
+    _gate_checked = False
+    if governance_mode == "official" and planning_objective is not None:
         _require_planning_outcome_approvals(
             planning_objective=planning_objective,
             meta=meta,
             outcome_approvals=outcome_approvals,
+            requested_use="optimisation",
+            market=market,
         )
+        _gate_checked = True
     # --- end outcome-approval gate ---
     constraints = constraints or []
     policy = counterfactual_policy or CounterfactualPolicy()
     if objective is None and planning_objective is None:
-        # G2A.7 (REQ-PLAN-001): no implicit default to NBT or any KPI.
-        # Create a minimal PlanningObjective with no metric_key default —
-        # downstream outcome-approval validation will block official use
-        # if target_outcome_ids are missing, but existing callers that
-        # don't pass an objective (legacy tests, exploratory workflows)
-        # still get a valid PlanningObjective object.
+        # G2A.7a (REQ-PLAN-001): no implicit default to NBT or any KPI.
+        # In official mode this would have already raised above.
+        # For exploratory/legacy callers, create a minimal PlanningObjective.
         planning_objective = PlanningObjective(
             counterfactual_policy_fingerprint=policy.fingerprint(),
         )
@@ -1785,7 +1810,29 @@ def optimize_scenario(
                 planning_objective,
                 target_outcome_ids=tuple(target_outcome_ids),
             )
-    legacy_objective = objective or "fh_net_billthrough"
+    # G2A.7a (REQ-PLAN-001, DEFECT-9): no implicit NBT fallback.
+    # legacy_objective is derived from the resolved objective, never from a
+    # hard-coded default. It is used only for labelling/economics, not for
+    # target selection (which comes from planning_objective.target_outcome_ids).
+    legacy_objective = (
+        planning_objective.metric_key if planning_objective and planning_objective.metric_key
+        else (objective if objective else "")
+    )
+    # G2A.7a: second gate for deprecated objective= string path — the
+    # planning_objective was resolved from the legacy string above but
+    # wasn't available at the first gate check.
+    if (
+        governance_mode == "official"
+        and planning_objective is not None
+        and not _gate_checked
+    ):
+        _require_planning_outcome_approvals(
+            planning_objective=planning_objective,
+            meta=meta,
+            outcome_approvals=outcome_approvals,
+            requested_use="optimisation",
+            market=market,
+        )
     current_spend = _flatten(current_spend_plan, months, channels)
 
     activity_map = (
@@ -1919,6 +1966,11 @@ def optimize_scenario(
         counterfactual_media_input_by_month=counterfactual_media_input_by_month,
         activity_definitions=activity_definitions,
         counterfactual_policy=policy,
+        # G2A.7a: nested evaluate calls should not re-trigger the approval
+        # gate (already checked at the top of optimize_scenario). Pass
+        # outcome_approvals for informational purposes but use
+        # governance_mode="exploratory" to avoid double-gating.
+        outcome_approvals=outcome_approvals,
     )
     optimized_scenario_plan = (
         classify_activity_plan(

@@ -132,6 +132,8 @@ if st.button("Build export bundle", type="primary"):
             media_input_support=get_state("media_input_support") or [],
             monetary_spend_support=get_state("monetary_spend_support") or [],
             activity_definitions=get_state("activity_definitions") or [],
+            # G2A.7a (DEFECT-10): persist outcome approvals in the bundle
+            outcome_approvals=get_state("outcome_approvals") or [],
         )
     st.success(f"Project bundle built: {output_path}")
     with open(output_path, "rb") as f:
@@ -204,6 +206,44 @@ if uploaded_zip is not None and st.button("Import bundle"):
         )
         set_state("model_type", imported["model_type"])
         set_state("outcome_definitions", imported["outcome_definitions"])
+        # G2A.7a (DEFECT-10, DEFECT-11): restore or create legacy outcome approvals
+        if imported.get("outcome_approvals") is not None:
+            # Normalise through OutcomeApproval.from_dict → to_dict for consistency
+            from ancestry_mmm.core.outcome_approval import OutcomeApproval
+            normalised = []
+            for item in imported["outcome_approvals"]:
+                try:
+                    normalised.append(OutcomeApproval.from_dict(item).to_dict())
+                except Exception:
+                    pass  # Malformed record — silently skip (audit note below)
+            set_state("outcome_approvals", normalised)
+            if len(normalised) != len(imported["outcome_approvals"]):
+                st.warning(
+                    f"{len(imported['outcome_approvals']) - len(normalised)} "
+                    "outcome approval record(s) were malformed and skipped."
+                )
+        else:
+            # Legacy bundle: create explicit legacy_unapproved records
+            from ancestry_mmm.core.outcome_approval import (
+                OutcomeApproval, legacy_unapproved_approval,
+            )
+            imported_outcomes = imported.get("outcome_definitions") or []
+            legacy_records = []
+            for outcome_dict in imported_outcomes:
+                oid = outcome_dict.get("outcome_id", "")
+                if oid:
+                    legacy_records.append(
+                        legacy_unapproved_approval(oid).to_dict()
+                    )
+            if legacy_records:
+                set_state("outcome_approvals", legacy_records)
+                st.warning(
+                    "This project bundle has no outcome approvals. "
+                    f"{len(legacy_records)} legacy_unapproved record(s) were "
+                    "created. Official planning, optimisation, and reporting "
+                    "are blocked until outcomes are reviewed and approved. "
+                    "Go to Structure → Outcome Governance to review."
+                )
         set_state("funnel_links", imported["funnel_links"])
         set_state("media_outcome_pathways", imported["media_outcome_pathways"])
         set_state("net_billthrough_metadata", imported["net_billthrough_metadata"])
