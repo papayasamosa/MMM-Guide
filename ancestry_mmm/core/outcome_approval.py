@@ -99,22 +99,46 @@ class OutcomeApproval:
                 )
 
     def is_active(self, as_of: Optional[str] = None) -> bool:
-        """True if this approval is currently in effect (approved, not expired).
+        """True if this approval is currently in effect (approved, not expired,
+        not future-dated).
 
         G2A.7a: when `as_of` is omitted, compares against the current UTC date.
         Expiry is evaluated as `as_of >= expires_at` — the approval expires at
-        the start of the expiry date (inclusive)."""
+        the start of the expiry date (inclusive).
+
+        G2A.7a.1 (REQ-OUT-002 section 7.4): dates are parsed, not compared as
+        raw strings, and a future-dated `approved_at` (relative to `as_of`)
+        does not authorise current use - an approval recorded for a future
+        effective date must not be treated as already in force today."""
         if self.status != "approved":
             return False
-        if self.expires_at is not None:
-            effective_as_of = as_of or datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            if effective_as_of >= self.expires_at:
-                return False
-        # Validate dates for approved records
+        effective_as_of = as_of or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        try:
+            as_of_dt = datetime.fromisoformat(effective_as_of)
+        except (ValueError, TypeError):
+            return False
+        # Validate dates for approved records. `approved_at` presence itself
+        # is enforced by `_validate_approved_record` in the full gate chain
+        # (outcome_is_approved_for_use / require_outcome_approval /
+        # find_matching_outcome_approval); here we only validate the dates
+        # that ARE present, so `is_active()` stays a pure "is this record
+        # currently in force" question, not a completeness check.
+        approved_at_dt = None
         if self.approved_at:
             try:
-                datetime.fromisoformat(self.approved_at)
+                approved_at_dt = datetime.fromisoformat(self.approved_at)
             except (ValueError, TypeError):
+                return False
+            if approved_at_dt > as_of_dt:
+                return False
+        if self.expires_at is not None:
+            try:
+                expires_at_dt = datetime.fromisoformat(self.expires_at)
+            except (ValueError, TypeError):
+                return False
+            if approved_at_dt is not None and expires_at_dt <= approved_at_dt:
+                return False
+            if as_of_dt >= expires_at_dt:
                 return False
         return True
 
@@ -128,19 +152,36 @@ class OutcomeApproval:
         market: Optional[str] = None,
         product: Optional[str] = None,
         segment: Optional[str] = None,
+        require_explicit_scoped_dimensions: bool = False,
     ) -> bool:
         """True if this approval's scope covers the requested market/product/segment.
 
         None scope on the approval means "unrestricted" for that dimension.
-        None passed by the caller means "don't filter on that dimension"."""
-        if self.market_scope is not None and market is not None:
-            if market not in self.market_scope:
+        None passed by the caller means "don't filter on that dimension" -
+        unless `require_explicit_scoped_dimensions=True` (G2A.7a.1, REQ-OUT-002
+        section 7.3), in which case a caller omitting a dimension the
+        approval itself scopes to (market_scope/product_scope/segment_scope
+        not None) fails closed instead of silently matching. Official-use
+        resolution (`find_matching_outcome_approval`) always passes this;
+        the default stays permissive for exploratory/display callers that
+        may not always have every dimension available."""
+        if self.market_scope is not None:
+            if market is None:
+                if require_explicit_scoped_dimensions:
+                    return False
+            elif market not in self.market_scope:
                 return False
-        if self.product_scope is not None and product is not None:
-            if product not in self.product_scope:
+        if self.product_scope is not None:
+            if product is None:
+                if require_explicit_scoped_dimensions:
+                    return False
+            elif product not in self.product_scope:
                 return False
-        if self.segment_scope is not None and segment is not None:
-            if segment not in self.segment_scope:
+        if self.segment_scope is not None:
+            if segment is None:
+                if require_explicit_scoped_dimensions:
+                    return False
+            elif segment not in self.segment_scope:
                 return False
         return True
 
@@ -236,13 +277,20 @@ def _required_definition_fields() -> Tuple[str, ...]:
 
 def validate_outcome_definition_for_approval(outcome: OutcomeDefinition) -> List[str]:
     """Return a list of human-readable issues that prevent this outcome from
-    being approved. Empty list means the definition is complete enough for
-    approval review (it does NOT mean approval is automatically granted -
-    that still requires an OutcomeApproval record).
+    being approved for ANY use. Empty list means the definition is complete
+    enough for approval review (it does NOT mean approval is automatically
+    granted - that still requires an OutcomeApproval record).
 
     G2A.7a: also validates vocabulary, effective-date ordering, custom-metric
-    unit, metric-registry restrictions, rate-metric restrictions, and
-    non-empty fingerprint."""
+    unit, and non-empty fingerprint.
+
+    G2A.7a.1 (REQ-OUT-002 fix): metric-registry restrictions on optimisation
+    eligibility and CPA-denominator validity are deliberately NOT checked
+    here - a rate metric (e.g. `fh_net_billthrough_rate`) is not allowed as
+    an optimisation target or a CPA denominator, but that must not make it
+    unapprovable for every other use (`model_fit`, `technical_reporting`,
+    ...). See `validate_outcome_for_requested_use` for those use-scoped
+    restrictions."""
     issues: List[str] = []
     # Required fields
     for field_name in _required_definition_fields():
@@ -262,13 +310,6 @@ def validate_outcome_definition_for_approval(outcome: OutcomeDefinition) -> List
     # Custom metric must have explicit unit
     if outcome.metric_key == "custom" and not outcome.unit:
         issues.append("Custom-metric outcomes must have an explicit unit set")
-    # Metric registry restrictions
-    reg = METRIC_REGISTRY.get(outcome.metric_key)
-    if reg is not None:
-        if not reg.allowed_in_optimiser and outcome.include_in_optimisation:
-            issues.append(f"Metric '{outcome.metric_key}' is not allowed in optimisation per the metric registry")
-        if not reg.allowed_in_cpa:
-            issues.append(f"Metric '{outcome.metric_key}' is not valid as a CPA denominator per the metric registry")
     # Effective-date ordering
     if outcome.effective_from and outcome.effective_to:
         try:
@@ -282,6 +323,35 @@ def validate_outcome_definition_for_approval(outcome: OutcomeDefinition) -> List
     fp = fingerprint_outcome_definition(outcome)
     if not fp or len(fp) < 16:
         issues.append("Outcome definition fingerprint is missing or too short")
+    return issues
+
+
+def validate_outcome_for_requested_use(outcome: OutcomeDefinition, requested_use: str) -> List[str]:
+    """Requested-use-aware metric restrictions, separate from definition
+    completeness (G2A.7a.1, REQ-OUT-002 fix). A metric invalid for one use
+    (a rate metric as an optimisation target or a CPA denominator) must not
+    make the outcome unapprovable for every other use - an NBT rate may
+    still be approved for `model_fit` or `technical_reporting`.
+
+    `requested_use` accepts every value in `OUTCOME_USES` (checked here only
+    for `"optimisation"`) plus the pseudo-use `"cpa_denominator"` - not an
+    approvable use in its own right, but a recognised value for this
+    function only, used wherever an outcome is about to be divided into as a
+    CPA denominator."""
+    issues: List[str] = []
+    reg = METRIC_REGISTRY.get(outcome.metric_key)
+    if reg is None:
+        return issues
+    if requested_use == "optimisation" and not reg.allowed_in_optimiser:
+        issues.append(
+            f"Metric '{outcome.metric_key}' is not allowed as an optimisation "
+            "target per the metric registry"
+        )
+    if requested_use == "cpa_denominator" and not reg.allowed_in_cpa:
+        issues.append(
+            f"Metric '{outcome.metric_key}' is not valid as a CPA denominator "
+            "per the metric registry"
+        )
     return issues
 
 
@@ -369,6 +439,9 @@ def outcome_is_approved_for_use(
     # G2A.7a: definition must be complete
     if validate_outcome_definition_for_approval(outcome):
         return False
+    # G2A.7a.1 (REQ-OUT-002 fix): requested-use-aware metric restrictions
+    if validate_outcome_for_requested_use(outcome, requested_use):
+        return False
     if not approval.is_active(as_of=as_of):
         return False
     if not outcome_approval_matches_definition(outcome, approval):
@@ -404,6 +477,16 @@ def require_outcome_approval(
         raise OutcomeApprovalBlockedError(
             f"Outcome '{outcome.outcome_id}' definition is incomplete for "
             f"official use '{requested_use}': {'; '.join(defn_issues)}"
+        )
+    # G2A.7a.1 (REQ-OUT-002 fix): requested-use-aware metric restrictions
+    # (e.g. a rate metric is not a valid optimisation target) — separate
+    # from general definition completeness, so a metric restricted for THIS
+    # use does not block every other use.
+    use_issues = validate_outcome_for_requested_use(outcome, requested_use)
+    if use_issues:
+        raise OutcomeApprovalBlockedError(
+            f"Outcome '{outcome.outcome_id}' is not valid for use "
+            f"'{requested_use}': {'; '.join(use_issues)}"
         )
     if approval is None:
         raise OutcomeApprovalBlockedError(
@@ -462,13 +545,27 @@ def find_matching_outcome_approval(
 ) -> Optional[OutcomeApproval]:
     """Find one matching approval from a list of candidates for an outcome.
 
-    Filters candidates by: outcome_id, active status, fingerprint match,
-    requested use, and scope. If multiple valid candidates remain, returns
-    the one with the latest approved_at (deterministic tiebreak).
+    Filters candidates by: outcome definition completeness, requested-use
+    metric restrictions, outcome_id, active status, fingerprint match,
+    requested use, and scope (fail-closed: a caller omitting a dimension
+    the approval itself scopes to does not match). If multiple valid
+    candidates remain, returns the one with the latest approved_at
+    (deterministic tiebreak).
 
     G2A.7a: replaces the simple last-wins resolve_approvals_by_outcome_id
     for use-site resolution — the old approach could let a later narrow or
-    rejected record hide a valid record for a different scope."""
+    rejected record hide a valid record for a different scope.
+
+    G2A.7a.1 (REQ-OUT-002 section 7.1, 7.2, 7.3): a matching fingerprint on
+    an incomplete definition, or on a definition restricted from this
+    requested use (e.g. a rate metric requested for optimisation), never
+    authorises official use — validated here, not only by the single-
+    approval helpers above, since this is the resolver the real planning/
+    optimisation gate actually calls."""
+    if validate_outcome_definition_for_approval(outcome):
+        return None
+    if validate_outcome_for_requested_use(outcome, requested_use):
+        return None
     candidates = [
         a for a in approvals
         if a.outcome_id == outcome.outcome_id
@@ -477,7 +574,10 @@ def find_matching_outcome_approval(
         and a.is_active(as_of=as_of)
         and a.definition_fingerprint == fingerprint_outcome_definition(outcome)
         and a.allows_use(requested_use)
-        and a.matches_scope(market=market, product=product, segment=segment)
+        and a.matches_scope(
+            market=market, product=product, segment=segment,
+            require_explicit_scoped_dimensions=True,
+        )
     ]
     if not candidates:
         return None

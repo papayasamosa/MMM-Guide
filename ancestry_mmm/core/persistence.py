@@ -543,6 +543,73 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
     return result
 
 
+def resolve_imported_outcome_approvals(
+    imported: Dict[str, Any],
+) -> Tuple[List[dict], List[str]]:
+    """G2A.7a.1 (REQ-OUT-002 section 12.1): resolve the outcome-approval
+    records an imported bundle should use to `legacy_unapproved` migration
+    lives in core (callable without Streamlit), not only in the project-
+    export page, so a programmatic import (API, script, test) gets the same
+    behaviour a UI-driven import does.
+
+    Call this after `import_project()`, passing its result. Returns
+    `(approvals, warnings)`:
+
+    - If the bundle has an `outcome_approvals.json` file (`imported
+      ["outcome_approvals"] is not None`), each record is round-tripped
+      through `OutcomeApproval.from_dict`/`to_dict` for validation. A
+      malformed record is quarantined (dropped), never silently discarded
+      without a trace (REQ-OUT-002 section 12.3) - it is named by index and
+      approval_id in `warnings`, and excluded from the returned list.
+    - If the bundle has no approvals file at all (a legacy bundle predating
+      G2A.7), one `legacy_unapproved` record is synthesised per outcome in
+      the resolved outcome catalogue. The catalogue is resolved via
+      `resolve_outcome_definitions` - the same derivation every other
+      consumer uses - so a bundle whose outcomes are only derivable from
+      `model_spec.segment_outcomes` (no persisted `outcome_definitions.json`
+      at all) is migrated correctly too, not only bundles with an explicit
+      persisted outcome catalogue.
+    """
+    from .outcome_approval import OutcomeApproval, legacy_unapproved_approval
+    from .outcomes import resolve_outcome_definitions
+
+    raw_approvals = imported.get("outcome_approvals")
+    warnings: List[str] = []
+    if raw_approvals is not None:
+        normalised: List[dict] = []
+        for index, item in enumerate(raw_approvals):
+            try:
+                normalised.append(OutcomeApproval.from_dict(item).to_dict())
+            except (TypeError, ValueError, KeyError) as exc:
+                approval_id = (
+                    item.get("approval_id", "<unknown>")
+                    if isinstance(item, dict) else "<unknown>"
+                )
+                warnings.append(
+                    f"Outcome approval record {index} (approval_id="
+                    f"{approval_id!r}) was malformed and was quarantined "
+                    f"(dropped, not silently kept): {exc}"
+                )
+        return normalised, warnings
+
+    model_spec_dict = imported.get("model_spec")
+    segment_outcomes: Dict[str, str] = {}
+    segment_ltv: Optional[Dict[str, float]] = None
+    if model_spec_dict:
+        spec = ModelSpec.from_dict(model_spec_dict)
+        segment_outcomes = spec.segment_outcomes
+        segment_ltv = spec.segment_ltv
+    resolved_outcomes = resolve_outcome_definitions(
+        imported.get("outcome_definitions"), segment_outcomes, segment_ltv,
+    )
+    legacy_records = [
+        legacy_unapproved_approval(outcome.outcome_id).to_dict()
+        for outcome in resolved_outcomes
+        if outcome.outcome_id
+    ]
+    return legacy_records, warnings
+
+
 def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
     """Audit whether an imported bundle can resume its declared checkpoint.
 
@@ -637,8 +704,29 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
             "components. Analyst attribution is preserved, but headline reporting "
             "and planning remain blocked until governance review."
         )
+    # G2A.7a.1 (REQ-OUT-002 section 12.2): a bundle may be technically
+    # loadable ("resumable") while official use of its checkpoint remains
+    # blocked by outcome governance - a checkpoint that implies official
+    # artefacts (approved model / curves / scenarios) additionally requires
+    # at least one outcome with an active "approved" approval, not merely a
+    # bundle that loads without error.
+    officially_resumable = not missing
+    outcome_governance_warnings: List[str] = []
+    if declared in {"approved", "curves", "scenarios"}:
+        approvals, _ = resolve_imported_outcome_approvals(imported)
+        if not any(a.get("status") == "approved" for a in approvals):
+            officially_resumable = False
+            outcome_governance_warnings.append(
+                "No outcome has an active 'approved' OutcomeApproval - "
+                "official curves, scenarios, and reports remain blocked "
+                "until outcomes are reviewed and approved on Structure -> "
+                "Outcome Governance, even though this bundle loaded "
+                "successfully."
+            )
     return {
         "resumable": not missing,
+        "officially_resumable": officially_resumable,
+        "outcome_governance_warnings": outcome_governance_warnings,
         "checkpoint": declared,
         "missing_required": missing,
         "warnings": warnings,

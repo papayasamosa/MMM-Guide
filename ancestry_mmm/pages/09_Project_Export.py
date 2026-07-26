@@ -27,6 +27,7 @@ from ancestry_mmm.core.persistence import (
     import_project,
     export_excel_summary,
     reconstruct_model_state,
+    resolve_imported_outcome_approvals,
     verify_imported_approval,
     UnsafeZipEntryError,
     audit_project_resumability,
@@ -206,44 +207,23 @@ if uploaded_zip is not None and st.button("Import bundle"):
         )
         set_state("model_type", imported["model_type"])
         set_state("outcome_definitions", imported["outcome_definitions"])
-        # G2A.7a (DEFECT-10, DEFECT-11): restore or create legacy outcome approvals
-        if imported.get("outcome_approvals") is not None:
-            # Normalise through OutcomeApproval.from_dict → to_dict for consistency
-            from ancestry_mmm.core.outcome_approval import OutcomeApproval
-            normalised = []
-            for item in imported["outcome_approvals"]:
-                try:
-                    normalised.append(OutcomeApproval.from_dict(item).to_dict())
-                except Exception:
-                    pass  # Malformed record — silently skip (audit note below)
-            set_state("outcome_approvals", normalised)
-            if len(normalised) != len(imported["outcome_approvals"]):
-                st.warning(
-                    f"{len(imported['outcome_approvals']) - len(normalised)} "
-                    "outcome approval record(s) were malformed and skipped."
-                )
-        else:
-            # Legacy bundle: create explicit legacy_unapproved records
-            from ancestry_mmm.core.outcome_approval import (
-                OutcomeApproval, legacy_unapproved_approval,
+        # G2A.7a.1 (REQ-OUT-002 section 12.1, 12.3): migration now lives in
+        # core (resolve_imported_outcome_approvals) - a programmatic import
+        # gets the same legacy_unapproved migration a UI-driven import does,
+        # and a malformed record is reported by index/id, not silently
+        # dropped via a bare `except Exception`.
+        resolved_approvals, approval_warnings = resolve_imported_outcome_approvals(imported)
+        set_state("outcome_approvals", resolved_approvals)
+        for approval_warning in approval_warnings:
+            st.warning(approval_warning)
+        if imported.get("outcome_approvals") is None and resolved_approvals:
+            st.warning(
+                "This project bundle has no outcome approvals. "
+                f"{len(resolved_approvals)} legacy_unapproved record(s) were "
+                "created. Official planning, optimisation, and reporting "
+                "are blocked until outcomes are reviewed and approved. "
+                "Go to Structure → Outcome Governance to review."
             )
-            imported_outcomes = imported.get("outcome_definitions") or []
-            legacy_records = []
-            for outcome_dict in imported_outcomes:
-                oid = outcome_dict.get("outcome_id", "")
-                if oid:
-                    legacy_records.append(
-                        legacy_unapproved_approval(oid).to_dict()
-                    )
-            if legacy_records:
-                set_state("outcome_approvals", legacy_records)
-                st.warning(
-                    "This project bundle has no outcome approvals. "
-                    f"{len(legacy_records)} legacy_unapproved record(s) were "
-                    "created. Official planning, optimisation, and reporting "
-                    "are blocked until outcomes are reviewed and approved. "
-                    "Go to Structure → Outcome Governance to review."
-                )
         set_state("funnel_links", imported["funnel_links"])
         set_state("media_outcome_pathways", imported["media_outcome_pathways"])
         set_state("net_billthrough_metadata", imported["net_billthrough_metadata"])
@@ -320,8 +300,20 @@ if uploaded_zip is not None and st.button("Import bundle"):
                 "Bundle imported, but its declared checkpoint is incomplete: "
                 + ", ".join(resume_audit["missing_required"])
             )
+        # G2A.7a.1 (REQ-OUT-002 section 12.2): a bundle can be technically
+        # loadable while official use of its checkpoint remains blocked by
+        # outcome governance - reported separately so "resumable" is never
+        # read as "officially usable".
+        if resume_audit["resumable"] and not resume_audit.get("officially_resumable", True):
+            st.warning(
+                "This bundle loaded successfully, but is not **officially** "
+                "resumable at its checkpoint - see the outcome-governance "
+                "note(s) below."
+            )
         for audit_warning in resume_audit["warnings"]:
             st.caption(audit_warning)
+        for outcome_governance_warning in resume_audit.get("outcome_governance_warnings", []):
+            st.caption(outcome_governance_warning)
 
         verified_approval, message = verify_imported_approval(imported, reconstructed)
         set_state(

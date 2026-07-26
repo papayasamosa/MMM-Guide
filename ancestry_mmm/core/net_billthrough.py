@@ -248,6 +248,78 @@ def validate_supplied_net_billthrough(
     return errors
 
 
+def validate_nbt_completeness_metadata_for_outcome(
+    outcome: object,
+    metadata: "NetBillthroughCompletenessMetadata | dict | None",
+) -> List[str]:
+    """G2A.7a.1 (REQ-NBT-001, section 10): planning-time NBT completeness
+    gate. Confirms the supplied completeness metadata still references
+    *this* outcome definition and passes its own internal-consistency
+    checks - it does not re-validate the full historical dataframe (that is
+    `validate_supplied_net_billthrough`, enforced at model-training time via
+    `assert_model_frame_net_billthrough_complete`). An approved outcome
+    definition alone is not sufficient for official NBT use; both an
+    approval and passing completeness metadata are required."""
+    issues: List[str] = []
+    if metadata is None:
+        return [
+            "Net bill-through completeness metadata is required for "
+            "official NBT use - an approved definition alone is not "
+            "sufficient."
+        ]
+    if isinstance(metadata, dict):
+        metadata = NetBillthroughCompletenessMetadata.from_dict(metadata)
+
+    outcome_id = _outcome_value(outcome, "outcome_id")
+    if metadata.outcome_id and outcome_id and metadata.outcome_id != outcome_id:
+        issues.append(
+            f"Net bill-through completeness metadata references outcome "
+            f"'{metadata.outcome_id}', not the requested outcome '{outcome_id}'."
+        )
+    if not isinstance(outcome, dict):
+        from .outcome_approval import fingerprint_outcome_definition
+
+        current_fingerprint = fingerprint_outcome_definition(outcome)
+        if (
+            metadata.definition_fingerprint
+            and metadata.definition_fingerprint != current_fingerprint
+        ):
+            issues.append(
+                "Net bill-through completeness metadata was recorded "
+                "against a different outcome-definition fingerprint; it is "
+                "stale for the current definition."
+            )
+
+    try:
+        start = pd.Timestamp(metadata.model_start_week).normalize()
+        end = pd.Timestamp(metadata.model_end_week).normalize()
+        latest = pd.Timestamp(metadata.latest_complete_net_billthrough_week).normalize()
+        as_of = pd.Timestamp(metadata.data_as_of_date).normalize()
+    except (TypeError, ValueError):
+        return issues + [
+            "Net bill-through completeness metadata contains invalid dates."
+        ]
+    if start > end:
+        issues.append("model_start_week must not be after model_end_week.")
+    if latest < end:
+        issues.append(
+            f"latest complete net bill-through week {latest.date()} is "
+            f"earlier than model end week {end.date()}."
+        )
+    if latest > as_of:
+        issues.append(
+            "latest_complete_net_billthrough_week cannot be after data_as_of_date."
+        )
+    if (
+        not metadata.maturity_rule_description.strip()
+        or not metadata.source_owner.strip()
+    ):
+        issues.append(
+            "Net bill-through metadata requires a maturity rule and source owner."
+        )
+    return issues
+
+
 def assert_supplied_net_billthrough_complete(*args, **kwargs) -> None:
     """Raise before model construction when the authoritative KPI is invalid."""
     errors = validate_supplied_net_billthrough(*args, **kwargs)

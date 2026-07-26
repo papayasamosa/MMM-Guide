@@ -274,3 +274,92 @@ class TestEvaluateScenarioWithUncertainty:
         assert np.all(summary["dna_avg_cpa_mean"].isna())  # no kit-only segments in this fixture
         assert np.all(summary["total_value_lower"] <= summary["total_value_mean"] + 1e-9)
         assert np.all(summary["total_value_mean"] <= summary["total_value_upper"] + 1e-9)
+
+
+class TestEvaluateScenarioWithUncertaintyGovernance:
+    """G2A.7a.1 (section 4.3, REQ-PLAN-001, REQ-USE-001): before this fix,
+    evaluate_scenario_with_uncertainty had no outcome_approvals/governance_mode
+    parameters at all, so a caller passing them (e.g. the Scenario Planner
+    page's manual-uncertainty checkbox) got `TypeError: got an unexpected
+    keyword argument`. These tests are a regression guard for that crash,
+    plus confirmation that governance is actually enforced/forwarded, not
+    just silently accepted."""
+
+    @pytest.fixture
+    def meta_with_catalogue(self) -> FHModelMeta:
+        from ancestry_mmm.core.outcomes import FAMILY_HISTORY, METRIC_KEY_FH_GSA, OutcomeDefinition
+
+        catalogue = [
+            OutcomeDefinition(
+                outcome_id="New", product=FAMILY_HISTORY, segment="New", metric="GSA",
+                metric_key=METRIC_KEY_FH_GSA, source_column="GSA_New", unit="GSA",
+                aggregation_type="count", event_definition="A new subscriber",
+                date_basis="event_date", cohort_or_attribution_basis="signup_cohort",
+                completeness_or_maturity_policy="Mature after 12 weeks",
+                exclusions="Excludes internal/test accounts",
+                reconciliation_source="Finance report", business_owner="Analytics",
+                definition_version="1.0",
+            ),
+        ]
+        return FHModelMeta(
+            markets=MARKETS, outcome_ids=OUTCOME_IDS, channels=CHANNELS,
+            dna_channels=["DNA_Media"], dna_channel_idx=[1], non_dna_idx=[0],
+            dna_outcome_id="DNA_CrossSell", dna_lag_weeks=1, unpooled_markets=[], control_names=[],
+            outcome_catalogue_at_fit=catalogue,
+        )
+
+    def test_accepts_outcome_governance_kwargs_without_typeerror(self, meta, market_trace, approval, reference_context):
+        spend_plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Media": 200.0}}
+        # Must not raise TypeError - the confirmed P0 crash this fixes.
+        result = evaluate_scenario_with_uncertainty(
+            spend_plan, "UK", meta, market_trace, reference_context,
+            model_type="market_specific", n_draws=10, seed=1,
+            approval=approval, outcome_approvals=[], governance_mode="exploratory",
+            nbt_completeness_metadata=None, **IDENTITY,
+        )
+        assert "summary" in result
+
+    def test_official_mode_with_planning_objective_and_no_approval_blocks(
+        self, meta_with_catalogue, market_trace, approval, reference_context,
+    ):
+        from ancestry_mmm.core.optimization import PlanningObjective
+        from ancestry_mmm.core.outcome_approval import OutcomeApprovalBlockedError
+        from ancestry_mmm.core.outcomes import METRIC_KEY_FH_GSA
+
+        spend_plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Media": 200.0}}
+        planning_objective = PlanningObjective(
+            estimand="incremental_outcome", metric_key=METRIC_KEY_FH_GSA, target_outcome_ids=("New",),
+        )
+        with pytest.raises(OutcomeApprovalBlockedError):
+            evaluate_scenario_with_uncertainty(
+                spend_plan, "UK", meta_with_catalogue, market_trace, reference_context,
+                model_type="market_specific", n_draws=10, seed=1,
+                approval=approval, planning_objective=planning_objective,
+                governance_mode="official", **IDENTITY,
+            )
+
+    def test_official_mode_with_matching_approval_succeeds(
+        self, meta_with_catalogue, market_trace, approval, reference_context,
+    ):
+        from ancestry_mmm.core.optimization import PlanningObjective
+        from ancestry_mmm.core.outcome_approval import OutcomeApproval, fingerprint_outcome_definition
+        from ancestry_mmm.core.outcomes import METRIC_KEY_FH_GSA
+
+        spend_plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Media": 200.0}}
+        planning_objective = PlanningObjective(
+            estimand="incremental_outcome", metric_key=METRIC_KEY_FH_GSA, target_outcome_ids=("New",),
+        )
+        gsa_definition = meta_with_catalogue.outcome_catalogue_at_fit[0]
+        gsa_approval = OutcomeApproval(
+            approval_id="apr-gsa", outcome_id="New",
+            definition_fingerprint=fingerprint_outcome_definition(gsa_definition),
+            status="approved", allowed_uses=("planning",),
+            approved_by="Jane Analyst", approved_at="2026-01-01",
+        )
+        result = evaluate_scenario_with_uncertainty(
+            spend_plan, "UK", meta_with_catalogue, market_trace, reference_context,
+            model_type="market_specific", n_draws=10, seed=1,
+            approval=approval, planning_objective=planning_objective,
+            outcome_approvals=[gsa_approval], governance_mode="official", **IDENTITY,
+        )
+        assert "summary" in result
