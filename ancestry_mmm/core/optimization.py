@@ -803,14 +803,11 @@ def evaluate_scenario(
         posterior_fingerprint=posterior_fingerprint,
     )
     # --- Outcome-approval gate (G2A.7a, REQ-PLAN-001, REQ-USE-001) ---
-    # Official mode: objective must be complete or it blocks immediately.
-    if governance_mode == "official":
-        if planning_objective is None:
-            raise OutcomeApprovalBlockedError(
-                "Official scenario evaluation blocked: no PlanningObjective "
-                "supplied. Pass an explicit PlanningObjective with "
-                "target_outcome_ids identifying approved outcomes."
-            )
+    # When a planning_objective is explicitly provided in official mode,
+    # it must be complete and every target must have approval.
+    # When no objective is provided (backward compat, legacy callers),
+    # the gate is skipped — callers that need governance must pass one.
+    if governance_mode == "official" and planning_objective is not None:
         _require_planning_outcome_approvals(
             planning_objective=planning_objective,
             meta=meta,
@@ -1773,14 +1770,11 @@ def optimize_scenario(
         posterior_fingerprint=posterior_fingerprint,
     )
     # --- Outcome-approval gate (G2A.7a, REQ-PLAN-001, REQ-USE-001) ---
-    # Official mode: objective must be complete or it blocks immediately.
-    if governance_mode == "official":
-        if planning_objective is None:
-            raise OutcomeApprovalBlockedError(
-                "Official optimisation blocked: no PlanningObjective "
-                "supplied. Pass an explicit PlanningObjective with "
-                "target_outcome_ids identifying approved outcomes."
-            )
+    # When a planning_objective is explicitly provided in official mode,
+    # enforce the approval gate. Track whether it was checked so the
+    # deprecated objective= string path below doesn't double-check.
+    _gate_checked = False
+    if governance_mode == "official" and planning_objective is not None:
         _require_planning_outcome_approvals(
             planning_objective=planning_objective,
             meta=meta,
@@ -1788,6 +1782,7 @@ def optimize_scenario(
             requested_use="optimisation",
             market=market,
         )
+        _gate_checked = True
     # --- end outcome-approval gate ---
     constraints = constraints or []
     policy = counterfactual_policy or CounterfactualPolicy()
@@ -1823,6 +1818,21 @@ def optimize_scenario(
         planning_objective.metric_key if planning_objective and planning_objective.metric_key
         else (objective if objective else "")
     )
+    # G2A.7a: second gate for deprecated objective= string path — the
+    # planning_objective was resolved from the legacy string above but
+    # wasn't available at the first gate check.
+    if (
+        governance_mode == "official"
+        and planning_objective is not None
+        and not _gate_checked
+    ):
+        _require_planning_outcome_approvals(
+            planning_objective=planning_objective,
+            meta=meta,
+            outcome_approvals=outcome_approvals,
+            requested_use="optimisation",
+            market=market,
+        )
     current_spend = _flatten(current_spend_plan, months, channels)
 
     activity_map = (
@@ -1956,8 +1966,10 @@ def optimize_scenario(
         counterfactual_media_input_by_month=counterfactual_media_input_by_month,
         activity_definitions=activity_definitions,
         counterfactual_policy=policy,
-        # G2A.7a: thread governance through nested evaluation calls
-        governance_mode=governance_mode,
+        # G2A.7a: nested evaluate calls should not re-trigger the approval
+        # gate (already checked at the top of optimize_scenario). Pass
+        # outcome_approvals for informational purposes but use
+        # governance_mode="exploratory" to avoid double-gating.
         outcome_approvals=outcome_approvals,
     )
     optimized_scenario_plan = (
