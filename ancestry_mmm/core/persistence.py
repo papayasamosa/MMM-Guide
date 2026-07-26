@@ -45,7 +45,7 @@ import tempfile
 import zipfile
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 import pandas as pd
 import arviz as az
@@ -570,7 +570,7 @@ def resolve_imported_outcome_approvals(
       at all) is migrated correctly too, not only bundles with an explicit
       persisted outcome catalogue.
     """
-    from .outcome_approval import OutcomeApproval, legacy_unapproved_approval
+    from .outcome_approval import OutcomeApproval, legacy_unapproved_approval, _normalise_datetime
     from .outcomes import resolve_outcome_definitions
 
     raw_approvals = imported.get("outcome_approvals")
@@ -578,13 +578,22 @@ def resolve_imported_outcome_approvals(
     if raw_approvals is not None:
         normalised: List[dict] = []
         for index, item in enumerate(raw_approvals):
+            # G2A.7a.2: validate that each record is a mapping before
+            # deserialisation. Non-mapping values (None, string, number,
+            # list) would fail with AttributeError on .items() — the old
+            # (TypeError, ValueError, KeyError) tuple didn't catch this.
+            if not isinstance(item, Mapping):
+                input_type = type(item).__name__
+                warnings.append(
+                    f"Outcome approval record {index} is not a mapping "
+                    f"(type={input_type!r}) and was quarantined "
+                    "(dropped, not silently kept)."
+                )
+                continue
             try:
                 normalised.append(OutcomeApproval.from_dict(item).to_dict())
-            except (TypeError, ValueError, KeyError) as exc:
-                approval_id = (
-                    item.get("approval_id", "<unknown>")
-                    if isinstance(item, dict) else "<unknown>"
-                )
+            except (TypeError, ValueError, KeyError, AttributeError) as exc:
+                approval_id = item.get("approval_id", "<unknown>")
                 warnings.append(
                     f"Outcome approval record {index} (approval_id="
                     f"{approval_id!r}) was malformed and was quarantined "
@@ -704,29 +713,94 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
             "components. Analyst attribution is preserved, but headline reporting "
             "and planning remain blocked until governance review."
         )
-    # G2A.7a.1 (REQ-OUT-002 section 12.2): a bundle may be technically
+    # G2A.7a.2 (REQ-OUT-002 section 12.2): a bundle may be technically
     # loadable ("resumable") while official use of its checkpoint remains
     # blocked by outcome governance - a checkpoint that implies official
     # artefacts (approved model / curves / scenarios) additionally requires
-    # at least one outcome with an active "approved" approval, not merely a
-    # bundle that loads without error.
+    # at least one outcome with an active, valid "approved" approval that
+    # covers the required use, not merely a bundle that loads without error.
     officially_resumable = not missing
     outcome_governance_warnings: List[str] = []
+    official_blocking_reasons: List[dict] = []
     if declared in {"approved", "curves", "scenarios"}:
         approvals, _ = resolve_imported_outcome_approvals(imported)
-        if not any(a.get("status") == "approved" for a in approvals):
+        from .outcome_approval import OutcomeApproval
+
+        # G2A.7a.2: validate each approval record beyond status == "approved"
+        active_approvals: list[dict] = []
+        for a_dict in approvals:
+            try:
+                approval = OutcomeApproval.from_dict(a_dict)
+            except Exception:
+                official_blocking_reasons.append({
+                    "artefact_type": "outcome_approval",
+                    "artefact_id": a_dict.get("approval_id", "<unknown>"),
+                    "reason": "malformed_approval_record",
+                })
+                continue
+            if approval.status != "approved":
+                continue
+            if not approval.is_active():
+                official_blocking_reasons.append({
+                    "artefact_type": "outcome_approval",
+                    "artefact_id": approval.approval_id,
+                    "outcome_id": approval.outcome_id,
+                    "reason": "approval_not_active",
+                })
+                continue
+            if not approval.definition_fingerprint:
+                official_blocking_reasons.append({
+                    "artefact_type": "outcome_approval",
+                    "artefact_id": approval.approval_id,
+                    "outcome_id": approval.outcome_id,
+                    "reason": "missing_definition_fingerprint",
+                })
+                continue
+            # Valid active approval
+            active_approvals.append(a_dict)
+
+        if not active_approvals:
             officially_resumable = False
-            outcome_governance_warnings.append(
-                "No outcome has an active 'approved' OutcomeApproval - "
-                "official curves, scenarios, and reports remain blocked "
-                "until outcomes are reviewed and approved on Structure -> "
-                "Outcome Governance, even though this bundle loaded "
-                "successfully."
-            )
+            if not any(r["reason"] == "malformed_approval_record" for r in official_blocking_reasons):
+                outcome_governance_warnings.append(
+                    "No outcome has an active 'approved' OutcomeApproval - "
+                    "official curves, scenarios, and reports remain blocked "
+                    "until outcomes are reviewed and approved on Structure -> "
+                    "Outcome Governance, even though this bundle loaded "
+                    "successfully."
+                )
+
+        # G2A.7a.2: for scenarios checkpoint, check that saved scenario
+        # targets have matching approvals for planning/optimisation
+        if declared == "scenarios" and officially_resumable:
+            scenarios = imported.get("scenarios") or []
+            for idx, sc in enumerate(scenarios):
+                sc_objective = sc.get("planning_objective") or {}
+                sc_targets = sc_objective.get("target_outcome_ids") or []
+                sc_gov = sc.get("governance_mode", "exploratory")
+                if sc_gov != "official":
+                    continue  # exploratory scenarios don't need approval
+                for target_id in sc_targets:
+                    has_approval = any(
+                        a.get("outcome_id") == target_id
+                        and "planning" in (a.get("allowed_uses") or [])
+                        for a in active_approvals
+                    )
+                    if not has_approval:
+                        officially_resumable = False
+                        official_blocking_reasons.append({
+                            "artefact_type": "scenario",
+                            "artefact_id": sc.get("name", f"scenario_{idx}"),
+                            "outcome_id": target_id,
+                            "required_use": "planning",
+                            "reason": "no_active_planning_approval",
+                        })
+
     return {
         "resumable": not missing,
         "officially_resumable": officially_resumable,
         "outcome_governance_warnings": outcome_governance_warnings,
+        "official_blocking_reasons": official_blocking_reasons,
         "checkpoint": declared,
         "missing_required": missing,
         "warnings": warnings,

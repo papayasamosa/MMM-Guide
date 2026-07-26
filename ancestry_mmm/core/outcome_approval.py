@@ -17,11 +17,87 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Tuple
 
 from .outcomes import OutcomeDefinition, AGGREGATION_TYPES, DATE_BASIS_VALUES, METRIC_REGISTRY
+
+# ---------------------------------------------------------------------------
+# G2A.7a.2 date normalisation (REQ-OUT-002 section 7.4)
+# ---------------------------------------------------------------------------
+
+# Regex for ISO timestamps with optional timezone: 2026-07-26T10:30:00Z,
+# 2026-07-26T10:30:00+01:00, 2026-07-26T10:30:00-05:00, or naive
+# 2026-07-26T10:30:00. Also matches date-only YYYY-MM-DD.
+_ISO_TS_RE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2})"
+    r"(?:[T ](\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?))?"
+    r"(Z|[+-]\d{2}:?\d{2})?$"
+)
+
+
+def _normalise_datetime(value: str) -> datetime:
+    """Parse a date or timestamp string into a timezone-aware UTC datetime.
+
+    Supports:
+    - ``YYYY-MM-DD`` (treated as UTC midnight)
+    - ISO timestamps with ``Z`` suffix
+    - ISO timestamps with ``+HH:MM`` or ``-HH:MM`` offset
+    - ISO timestamps with ``+HHMM`` (no colon) offset
+    - timezone-naive ISO timestamps (treated as UTC — documented policy:
+      a naive timestamp carries no offset information so we normalise to
+      UTC rather than guessing a local timezone)
+
+    Raises ValueError for unparseable input so callers can block rather
+    than silently default.
+
+    G2A.7a.2: this is the single normalisation point all approval-date
+    comparisons pass through — no caller should compare raw
+    `datetime.fromisoformat()` values directly, because aware-vs-naive
+    comparison raises TypeError.
+    """
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"invalid date value: {value!r}")
+    value = value.strip()
+    m = _ISO_TS_RE.match(value)
+    if not m:
+        # Fall back to fromisoformat for other ISO shapes Python accepts
+        dt = datetime.fromisoformat(value)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+
+    date_part = m.group(1)
+    time_part = m.group(2)
+    tz_part = m.group(3)
+
+    if time_part is None:
+        # Date-only: treat as UTC midnight
+        dt = datetime.strptime(date_part, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    else:
+        dt_str = f"{date_part}T{time_part}"
+        # Expand +HHMM to +HH:MM for fromisoformat compatibility
+        if tz_part and len(tz_part) == 5 and ":" not in tz_part:
+            tz_part = f"{tz_part[:3]}:{tz_part[3:]}"
+        if tz_part and tz_part != "Z":
+            dt_str += tz_part
+        elif tz_part == "Z":
+            dt_str += "+00:00"
+        dt = datetime.fromisoformat(dt_str)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+
+    return dt.astimezone(timezone.utc)
+
+
+def _normalise_date_only(value: str) -> datetime:
+    """Like _normalise_datetime but always truncates to date midnight UTC.
+    Used for date-only comparison where timestamps should be compared at
+    day granularity."""
+    dt = _normalise_datetime(value)
+    return dt.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=timezone.utc)
 
 # ---------------------------------------------------------------------------
 # Approved vocabularies
@@ -109,12 +185,16 @@ class OutcomeApproval:
         G2A.7a.1 (REQ-OUT-002 section 7.4): dates are parsed, not compared as
         raw strings, and a future-dated `approved_at` (relative to `as_of`)
         does not authorise current use - an approval recorded for a future
-        effective date must not be treated as already in force today."""
+        effective date must not be treated as already in force today.
+
+        G2A.7a.2: all datetime comparisons go through `_normalise_datetime`
+        so timezone-aware timestamps (e.g. ``2026-07-26T10:30:00Z``) and
+        timezone-naive values are compared safely without TypeError."""
         if self.status != "approved":
             return False
         effective_as_of = as_of or datetime.now(timezone.utc).strftime("%Y-%m-%d")
         try:
-            as_of_dt = datetime.fromisoformat(effective_as_of)
+            as_of_dt = _normalise_datetime(effective_as_of)
         except (ValueError, TypeError):
             return False
         # Validate dates for approved records. `approved_at` presence itself
@@ -126,14 +206,14 @@ class OutcomeApproval:
         approved_at_dt = None
         if self.approved_at:
             try:
-                approved_at_dt = datetime.fromisoformat(self.approved_at)
+                approved_at_dt = _normalise_datetime(self.approved_at)
             except (ValueError, TypeError):
                 return False
             if approved_at_dt > as_of_dt:
                 return False
         if self.expires_at is not None:
             try:
-                expires_at_dt = datetime.fromisoformat(self.expires_at)
+                expires_at_dt = _normalise_datetime(self.expires_at)
             except (ValueError, TypeError):
                 return False
             if approved_at_dt is not None and expires_at_dt <= approved_at_dt:
@@ -392,14 +472,27 @@ def _validate_approved_record(approval: OutcomeApproval) -> List[str]:
         issues.append("approved_at is required")
     else:
         try:
-            datetime.fromisoformat(approval.approved_at)
+            _normalise_datetime(approval.approved_at)
         except (ValueError, TypeError):
             issues.append(f"approved_at '{approval.approved_at}' is not a valid ISO date")
     if approval.expires_at is not None:
         try:
-            datetime.fromisoformat(approval.expires_at)
+            _normalise_datetime(approval.expires_at)
         except (ValueError, TypeError):
             issues.append(f"expires_at '{approval.expires_at}' is not a valid ISO date")
+        else:
+            # Cross-validate: expiry must be after approval
+            if approval.approved_at:
+                try:
+                    approved_dt = _normalise_datetime(approval.approved_at)
+                    expires_dt = _normalise_datetime(approval.expires_at)
+                    if expires_dt <= approved_dt:
+                        issues.append(
+                            f"expires_at '{approval.expires_at}' is not after "
+                            f"approved_at '{approval.approved_at}'"
+                        )
+                except (ValueError, TypeError):
+                    pass  # already reported above
     return issues
 
 

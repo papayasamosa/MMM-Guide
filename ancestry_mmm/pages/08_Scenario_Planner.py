@@ -27,6 +27,7 @@ from ancestry_mmm.core.outcomes import (
     METRIC_KEY_FH_NET_BILLTHROUGH_COUNT,
     METRIC_KEY_FH_SIGNUP,
     dna_kit_sale_outcome_ids,
+    eligible_outcome_ids,
     fh_gsa_outcome_ids,
     fh_net_billthrough_outcome_ids,
     fh_signup_outcome_ids,
@@ -512,9 +513,16 @@ planning_objective = (
     else PlanningObjective(
         estimand="incremental_value",
         metric_key="expected_value",
+        # G2A.7a.2: use core role-based eligibility resolver, not raw
+        # dict logic. eligible_outcome_ids resolves include_in_value=None
+        # from the role's default (diagnostic and funnel_intermediate
+        # roles are excluded where their defaults require exclusion).
         target_outcome_ids=tuple(
-            o["outcome_id"] for o in outcome_definitions
-            if o.get("include_in_value", True)
+            eligible_outcome_ids(
+                meta,
+                list(meta.outcome_ids),
+                "include_in_value",
+            )
         ),
         value_currency="project_value_currency",
         counterfactual_policy_fingerprint=(
