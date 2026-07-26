@@ -18,9 +18,10 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
-from .outcomes import OutcomeDefinition
+from .outcomes import OutcomeDefinition, AGGREGATION_TYPES, DATE_BASIS_VALUES, METRIC_REGISTRY
 
 # ---------------------------------------------------------------------------
 # Approved vocabularies
@@ -72,7 +73,7 @@ class OutcomeApproval:
     approval_id: str
     outcome_id: str
     definition_fingerprint: str
-    status: str = "approved"
+    status: str = "draft"
     allowed_uses: Tuple[str, ...] = ()
     market_scope: Optional[Tuple[str, ...]] = None
     product_scope: Optional[Tuple[str, ...]] = None
@@ -98,11 +99,22 @@ class OutcomeApproval:
                 )
 
     def is_active(self, as_of: Optional[str] = None) -> bool:
-        """True if this approval is currently in effect (approved, not expired)."""
-        if self.status not in ("approved",):
+        """True if this approval is currently in effect (approved, not expired).
+
+        G2A.7a: when `as_of` is omitted, compares against the current UTC date.
+        Expiry is evaluated as `as_of >= expires_at` — the approval expires at
+        the start of the expiry date (inclusive)."""
+        if self.status != "approved":
             return False
-        if self.expires_at is not None and as_of is not None:
-            if as_of > self.expires_at:
+        if self.expires_at is not None:
+            effective_as_of = as_of or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            if effective_as_of >= self.expires_at:
+                return False
+        # Validate dates for approved records
+        if self.approved_at:
+            try:
+                datetime.fromisoformat(self.approved_at)
+            except (ValueError, TypeError):
                 return False
         return True
 
@@ -201,9 +213,10 @@ def fingerprint_outcome_definition(outcome: OutcomeDefinition) -> str:
 
 
 def _required_definition_fields() -> Tuple[str, ...]:
-    """Fields that must be non-blank for an outcome to be approvable."""
+    """Fields that must be non-blank for an outcome to be approvable (G2A.7a)."""
     return (
         "outcome_id",
+        "definition_version",
         "product",
         "segment",
         "metric",
@@ -212,8 +225,10 @@ def _required_definition_fields() -> Tuple[str, ...]:
         "unit",
         "aggregation_type",
         "event_definition",
+        "date_basis",
         "cohort_or_attribution_basis",
         "completeness_or_maturity_policy",
+        "exclusions",
         "reconciliation_source",
         "business_owner",
     )
@@ -223,16 +238,50 @@ def validate_outcome_definition_for_approval(outcome: OutcomeDefinition) -> List
     """Return a list of human-readable issues that prevent this outcome from
     being approved. Empty list means the definition is complete enough for
     approval review (it does NOT mean approval is automatically granted -
-    that still requires an OutcomeApproval record)."""
+    that still requires an OutcomeApproval record).
+
+    G2A.7a: also validates vocabulary, effective-date ordering, custom-metric
+    unit, metric-registry restrictions, rate-metric restrictions, and
+    non-empty fingerprint."""
     issues: List[str] = []
+    # Required fields
     for field_name in _required_definition_fields():
         value = getattr(outcome, field_name, None)
         if value is None or (isinstance(value, str) and not value.strip()):
             issues.append(
                 f"Required definition field '{field_name}' is missing or blank"
             )
+    # date_basis: blank is invalid (must be explicit or "not_applicable")
+    if outcome.date_basis is None or (isinstance(outcome.date_basis, str) and not outcome.date_basis.strip()):
+        issues.append("date_basis must be an explicit value from DATE_BASIS_VALUES or 'not_applicable'")
+    elif outcome.date_basis not in DATE_BASIS_VALUES and outcome.date_basis != "not_applicable":
+        issues.append(f"date_basis '{outcome.date_basis}' is not a recognised value; must be one of {DATE_BASIS_VALUES} or 'not_applicable'")
+    # aggregation_type vocabulary
+    if outcome.aggregation_type and outcome.aggregation_type not in AGGREGATION_TYPES:
+        issues.append(f"aggregation_type '{outcome.aggregation_type}' is not one of {AGGREGATION_TYPES}")
+    # Custom metric must have explicit unit
     if outcome.metric_key == "custom" and not outcome.unit:
         issues.append("Custom-metric outcomes must have an explicit unit set")
+    # Metric registry restrictions
+    reg = METRIC_REGISTRY.get(outcome.metric_key)
+    if reg is not None:
+        if not reg.allowed_in_optimiser and outcome.include_in_optimisation:
+            issues.append(f"Metric '{outcome.metric_key}' is not allowed in optimisation per the metric registry")
+        if not reg.allowed_in_cpa:
+            issues.append(f"Metric '{outcome.metric_key}' is not valid as a CPA denominator per the metric registry")
+    # Effective-date ordering
+    if outcome.effective_from and outcome.effective_to:
+        try:
+            from_dt = datetime.fromisoformat(outcome.effective_from)
+            to_dt = datetime.fromisoformat(outcome.effective_to)
+            if from_dt >= to_dt:
+                issues.append("effective_from must be before effective_to")
+        except (ValueError, TypeError):
+            issues.append("effective_from/effective_to must be valid ISO dates")
+    # Non-empty fingerprint
+    fp = fingerprint_outcome_definition(outcome)
+    if not fp or len(fp) < 16:
+        issues.append("Outcome definition fingerprint is missing or too short")
     return issues
 
 
@@ -256,6 +305,34 @@ def outcome_approval_matches_definition(
     )
 
 
+def _validate_approved_record(approval: OutcomeApproval) -> List[str]:
+    """G2A.7a: validate that an 'approved' record has required fields."""
+    issues: List[str] = []
+    if not approval.approval_id:
+        issues.append("approval_id is required for an approved record")
+    if not approval.outcome_id:
+        issues.append("outcome_id is required")
+    if not approval.definition_fingerprint:
+        issues.append("definition_fingerprint is required")
+    if not approval.allowed_uses:
+        issues.append("at least one allowed_use is required")
+    if not approval.approved_by:
+        issues.append("approved_by is required")
+    if not approval.approved_at:
+        issues.append("approved_at is required")
+    else:
+        try:
+            datetime.fromisoformat(approval.approved_at)
+        except (ValueError, TypeError):
+            issues.append(f"approved_at '{approval.approved_at}' is not a valid ISO date")
+    if approval.expires_at is not None:
+        try:
+            datetime.fromisoformat(approval.expires_at)
+        except (ValueError, TypeError):
+            issues.append(f"expires_at '{approval.expires_at}' is not a valid ISO date")
+    return issues
+
+
 def outcome_is_approved_for_use(
     outcome: OutcomeDefinition,
     approval: Optional[OutcomeApproval],
@@ -269,14 +346,28 @@ def outcome_is_approved_for_use(
     """True if the outcome has a matching, active approval that includes the
     requested use within the given scope.
 
+    G2A.7a: also validates that the outcome definition is complete and the
+    approval record itself is valid. A matching fingerprint on an incomplete
+    definition or invalid approval record is not sufficient.
+
     Returns False (never raises) when:
     - approval is None
     - approval status is not 'approved'
     - approval has expired
     - approval fingerprint doesn't match
     - requested use is not in allowed_uses
-    - scope doesn't match"""
+    - scope doesn't match
+    - outcome definition is incomplete
+    - approval record is invalid"""
     if approval is None:
+        return False
+    if approval.status != "approved":
+        return False
+    # G2A.7a: validate the approval record itself
+    if _validate_approved_record(approval):
+        return False
+    # G2A.7a: definition must be complete
+    if validate_outcome_definition_for_approval(outcome):
         return False
     if not approval.is_active(as_of=as_of):
         return False
@@ -303,17 +394,38 @@ def require_outcome_approval(
     """Raise OutcomeApprovalBlockedError unless the outcome has a matching,
     active approval for the requested use.
 
+    G2A.7a: first validates definition completeness, then checks approval.
     The error message names the specific reason (missing, stale, expired,
-    wrong scope, use not allowed) so callers can surface it clearly."""
+    wrong scope, use not allowed, incomplete definition) so callers can
+    surface it clearly."""
+    # G2A.7a: definition must be complete first
+    defn_issues = validate_outcome_definition_for_approval(outcome)
+    if defn_issues:
+        raise OutcomeApprovalBlockedError(
+            f"Outcome '{outcome.outcome_id}' definition is incomplete for "
+            f"official use '{requested_use}': {'; '.join(defn_issues)}"
+        )
     if approval is None:
         raise OutcomeApprovalBlockedError(
             f"Outcome '{outcome.outcome_id}' has no approval record. "
             f"Official use '{requested_use}' is blocked."
         )
-    if not approval.is_active():
+    if approval.status != "approved":
         raise OutcomeApprovalBlockedError(
             f"Outcome '{outcome.outcome_id}' approval status is "
             f"'{approval.status}'. Official use '{requested_use}' is blocked."
+        )
+    record_issues = _validate_approved_record(approval)
+    if record_issues:
+        raise OutcomeApprovalBlockedError(
+            f"Outcome '{outcome.outcome_id}' approval record is invalid: "
+            f"{'; '.join(record_issues)}"
+        )
+    if not approval.is_active():
+        raise OutcomeApprovalBlockedError(
+            f"Outcome '{outcome.outcome_id}' approval is not active "
+            f"(status={approval.status}, expires={approval.expires_at}). "
+            f"Official use '{requested_use}' is blocked."
         )
     if not outcome_approval_matches_definition(outcome, approval):
         raise OutcomeApprovalBlockedError(
@@ -334,16 +446,54 @@ def require_outcome_approval(
 
 
 # ---------------------------------------------------------------------------
-# Bulk resolution helpers
+# Multi-approval resolution (G2A.7a)
 # ---------------------------------------------------------------------------
+
+
+def find_matching_outcome_approval(
+    outcome: OutcomeDefinition,
+    approvals: List[OutcomeApproval],
+    requested_use: str,
+    *,
+    market: Optional[str] = None,
+    product: Optional[str] = None,
+    segment: Optional[str] = None,
+    as_of: Optional[str] = None,
+) -> Optional[OutcomeApproval]:
+    """Find one matching approval from a list of candidates for an outcome.
+
+    Filters candidates by: outcome_id, active status, fingerprint match,
+    requested use, and scope. If multiple valid candidates remain, returns
+    the one with the latest approved_at (deterministic tiebreak).
+
+    G2A.7a: replaces the simple last-wins resolve_approvals_by_outcome_id
+    for use-site resolution — the old approach could let a later narrow or
+    rejected record hide a valid record for a different scope."""
+    candidates = [
+        a for a in approvals
+        if a.outcome_id == outcome.outcome_id
+        and a.status == "approved"
+        and not _validate_approved_record(a)
+        and a.is_active(as_of=as_of)
+        and a.definition_fingerprint == fingerprint_outcome_definition(outcome)
+        and a.allows_use(requested_use)
+        and a.matches_scope(market=market, product=product, segment=segment)
+    ]
+    if not candidates:
+        return None
+    # Deterministic tiebreak: latest approved_at
+    candidates.sort(key=lambda a: a.approved_at or "", reverse=True)
+    return candidates[0]
 
 
 def resolve_approvals_by_outcome_id(
     approvals: List[OutcomeApproval],
 ) -> Dict[str, OutcomeApproval]:
     """Index approvals by outcome_id. When multiple approvals exist for the
-    same outcome_id, the most recently approved one wins (simple last-wins
-    resolution — callers with more complex needs should filter first)."""
+    same outcome_id, the most recently approved one wins.
+
+    Prefer `find_matching_outcome_approval` for use-site checks where
+    scope matters. This flat index is appropriate for listing/discovery."""
     by_id: Dict[str, OutcomeApproval] = {}
     for approval in sorted(approvals, key=lambda a: a.approved_at or ""):
         by_id[approval.outcome_id] = approval
@@ -357,12 +507,12 @@ def approved_outcome_ids_for_use(
     **scope: Optional[str],
 ) -> List[str]:
     """Return outcome_ids that have an active, matching approval for the
-    requested use. Outcome IDs without any approval are filtered out."""
-    approval_by_id = resolve_approvals_by_outcome_id(approvals)
+    requested use, using multi-approval resolution (find_matching_outcome_approval)."""
     result: List[str] = []
     for outcome in outcomes:
-        approval = approval_by_id.get(outcome.outcome_id)
-        if outcome_is_approved_for_use(outcome, approval, requested_use, **scope):
+        if find_matching_outcome_approval(
+            outcome, approvals, requested_use, **scope,
+        ):
             result.append(outcome.outcome_id)
     return result
 

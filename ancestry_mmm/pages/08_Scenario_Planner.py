@@ -27,10 +27,14 @@ from ancestry_mmm.core.outcomes import (
     METRIC_KEY_FH_NET_BILLTHROUGH_COUNT,
     METRIC_KEY_FH_SIGNUP,
     dna_kit_sale_outcome_ids,
+    fh_gsa_outcome_ids,
     fh_net_billthrough_outcome_ids,
     fh_signup_outcome_ids,
     outcome_catalogue_fingerprint_payload,
     resolve_outcome_definitions,
+)
+from ancestry_mmm.core.outcome_approval import (
+    OutcomeApproval,
 )
 from ancestry_mmm.core.pathways import pathway_catalogue_fingerprint_payload
 from ancestry_mmm.core.schema import ModelSpec
@@ -84,6 +88,16 @@ cost_mapping_registry = CostMappingRegistry.from_dict(
 governed_cost_registry = (
     cost_mapping_registry if cost_mapping_registry.to_dict()["mappings"] else None
 )
+# G2A.7a (DEFECT-7): load outcome approvals from session state
+outcome_approvals = [
+    OutcomeApproval.from_dict(item)
+    for item in (get_state("outcome_approvals") or [])
+]
+outcome_definitions = [
+    outcome for outcome in (get_state("outcome_definitions") or [])
+]
+# G2A.7a: governance mode for the whole page
+governance_mode = get_state("governance_mode", "official")
 if frame is None or meta is None or params is None:
     st.markdown("---")
     render_empty_state(
@@ -143,7 +157,13 @@ if not approval_matches_current:
     st.stop()
 
 approval = ModelApproval.from_dict(approval_dict)
-identity_kwargs = dict(model_type=model_type, approval=approval, **current_identity)
+identity_kwargs = dict(
+    model_type=model_type, approval=approval, **current_identity,
+    # G2A.7a (DEFECT-7, DEFECT-8): thread outcome approvals and governance
+    # mode through all evaluate/optimize calls
+    outcome_approvals=outcome_approvals,
+    governance_mode=governance_mode,
+)
 
 spec = ModelSpec.from_dict(spec_dict)
 ltv = spec.segment_ltv
@@ -455,10 +475,18 @@ _objective_metric_keys = {
     "fh_signups": METRIC_KEY_FH_SIGNUP,
     "dna_kits": METRIC_KEY_DNA_KIT_SALE,
 }
+# G2A.7a (DEFECT-6): resolve target outcome IDs for each objective
+_objective_target_resolvers = {
+    "fh_gsa": lambda m: tuple(fh_gsa_outcome_ids(m)),
+    "fh_signups": lambda m: tuple(fh_signup_outcome_ids(m)),
+    "fh_net_billthrough": lambda m: tuple(fh_net_billthrough_outcome_ids(m)),
+    "dna_kits": lambda m: tuple(dna_kit_sale_outcome_ids(m)),
+}
 planning_objective = (
     PlanningObjective(
         estimand="incremental_outcome",
         metric_key=_objective_metric_keys[objective],
+        target_outcome_ids=_objective_target_resolvers[objective](meta),
         counterfactual_policy_fingerprint=(
             counterfactual_policy.fingerprint()
         ),
@@ -467,6 +495,10 @@ planning_objective = (
     else PlanningObjective(
         estimand="incremental_value",
         metric_key="expected_value",
+        target_outcome_ids=tuple(
+            o["outcome_id"] for o in outcome_definitions
+            if o.get("include_in_value", True)
+        ),
         value_currency="project_value_currency",
         counterfactual_policy_fingerprint=(
             counterfactual_policy.fingerprint()

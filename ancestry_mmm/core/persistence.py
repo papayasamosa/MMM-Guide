@@ -65,7 +65,7 @@ from .schema import ModelSpec
 from .optimization import SpendConstraint, planning_objective_from_legacy
 from .scenario_governance import ScenarioPlan
 
-PROJECT_BUNDLE_SCHEMA_VERSION = 7
+PROJECT_BUNDLE_SCHEMA_VERSION = 8
 PROJECT_APP_VERSION = "0.1.0"
 
 
@@ -303,6 +303,7 @@ def export_project(
                 "diagnostics": bool(diagnostics),
                 "curves": (tmp / "curve_bank").exists(),
                 "approval": model_approval is not None,
+                "outcome_approvals": outcome_approvals is not None and bool(outcome_approvals),
                 "scenarios": bool(scenarios),
                 "notes": bool(notes),
             },
