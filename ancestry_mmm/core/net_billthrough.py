@@ -259,7 +259,10 @@ def validate_nbt_completeness_metadata_for_outcome(
     `validate_supplied_net_billthrough`, enforced at model-training time via
     `assert_model_frame_net_billthrough_complete`). An approved outcome
     definition alone is not sufficient for official NBT use; both an
-    approval and passing completeness metadata are required."""
+G2A.7a.2: the three binding fields — ``outcome_id``,
+    ``definition_version``, and ``definition_fingerprint`` — are mandatory.
+    Missing, blank, or mismatched values block official NBT use. An empty
+    fingerprint no longer passes.""" 
     issues: List[str] = []
     if metadata is None:
         return [
@@ -271,19 +274,45 @@ def validate_nbt_completeness_metadata_for_outcome(
         metadata = NetBillthroughCompletenessMetadata.from_dict(metadata)
 
     outcome_id = _outcome_value(outcome, "outcome_id")
-    if metadata.outcome_id and outcome_id and metadata.outcome_id != outcome_id:
+    # G2A.7a.2: outcome_id binding is mandatory — blank or mismatched blocks
+    if not metadata.outcome_id:
+        issues.append(
+            "Net bill-through completeness metadata is missing the required "
+            "outcome_id binding field."
+        )
+    elif outcome_id and metadata.outcome_id != outcome_id:
         issues.append(
             f"Net bill-through completeness metadata references outcome "
             f"'{metadata.outcome_id}', not the requested outcome '{outcome_id}'."
         )
-    if not isinstance(outcome, dict):
+
+    # G2A.7a.2: definition_version binding is mandatory
+    if not metadata.definition_version:
+        issues.append(
+            "Net bill-through completeness metadata is missing the required "
+            "definition_version binding field."
+        )
+    elif not isinstance(outcome, dict):
+        outcome_version = _outcome_value(outcome, "definition_version")
+        if outcome_version and metadata.definition_version != outcome_version:
+            issues.append(
+                f"Net bill-through completeness metadata references definition "
+                f"version '{metadata.definition_version}', not the current "
+                f"version '{outcome_version}'."
+            )
+
+    # G2A.7a.2: definition_fingerprint binding is mandatory — an empty
+    # fingerprint no longer passes
+    if not metadata.definition_fingerprint:
+        issues.append(
+            "Net bill-through completeness metadata is missing the required "
+            "definition_fingerprint binding field."
+        )
+    elif not isinstance(outcome, dict):
         from .outcome_approval import fingerprint_outcome_definition
 
         current_fingerprint = fingerprint_outcome_definition(outcome)
-        if (
-            metadata.definition_fingerprint
-            and metadata.definition_fingerprint != current_fingerprint
-        ):
+        if metadata.definition_fingerprint != current_fingerprint:
             issues.append(
                 "Net bill-through completeness metadata was recorded "
                 "against a different outcome-definition fingerprint; it is "

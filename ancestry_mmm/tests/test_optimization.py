@@ -117,7 +117,7 @@ class TestEvaluateScenarioApprovalEnforcement:
     def test_correctly_approved_model_can_be_evaluated(self, meta, params, approval, spend_plan, reference_context):
         result = evaluate_scenario(
             spend_plan, "UK", meta, params, reference_context,
-            approval=approval, **IDENTITY,
+            approval=approval, governance_mode="exploratory", **IDENTITY,
         )
         assert not result.empty
         assert set(result.columns) >= {"month", "outcome_id", "predicted_outcome", "value"}
@@ -407,43 +407,6 @@ class TestProductAwareScenarioOutputs:
         assert compare_df["total_dna_kits"].iloc[0] == pytest.approx(0.0)
 
 
-class TestExplicitOptimisationObjectives:
-    """optimize_scenario's objective must be one of VALID_OBJECTIVES - no
-    generic "maximise volume" that silently sums FH GSAs and DNA kits (the
-    instruction document's audit-confirmed defect)."""
-
-    @pytest.fixture
-    def meta_with_kit_segment(self) -> FHModelMeta:
-        return FHModelMeta(
-            markets=["UK"], outcome_ids=["New", "DNA_Kit"], channels=["TV_Brand", "DNA_Ad"],
-            dna_channels=["DNA_Ad"], dna_channel_idx=[1], non_dna_idx=[0],
-            dna_outcome_id="New", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
-            direct_dna_outcome_ids=["New", "DNA_Kit"],
-        )
-
-    @pytest.fixture
-    def params_with_kit_segment(self) -> FHPosteriorParams:
-        return FHPosteriorParams(
-            decay_rate={"TV_Brand": 0.5, "DNA_Ad": 0.5},
-            hill_K={"TV_Brand": 1000.0, "DNA_Ad": 500.0},
-            hill_S={"TV_Brand": 1.0, "DNA_Ad": 1.0},
-            beta={"New": {"TV_Brand": 0.1, "DNA_Ad": 0.05}, "DNA_Kit": {"TV_Brand": 0.0, "DNA_Ad": 0.2}},
-            pathway_strength=pathway_strength_from_flat({"New": 0.3, "DNA_Kit": 0.0}, "DNA_Ad"), promo_coef={"New": 0.1, "DNA_Kit": 0.1},
-            market_offset={"UK": {"New": 0.0, "DNA_Kit": 0.0}}, intercept={"New": 3.0, "DNA_Kit": 2.0},
-            trend_coef={"New": 0.0, "DNA_Kit": 0.0},
-            gamma_fourier={"New": np.zeros(6), "DNA_Kit": np.zeros(6)},
-            alpha={"New": 5.0, "DNA_Kit": 5.0}, control_coef={}, outcome_control_coef={},
-        )
-
-    @pytest.fixture
-    def ref_with_kit_segment(self):
-        return {"2024-01": {"trend": 1.0, "fourier": np.zeros(6), "promo": {"New": 0.0, "DNA_Kit": 0.0}, "controls": {}, "outcome_controls": {}}}
-
-    @pytest.fixture
-    def plan_with_kit_segment(self):
-        return {"2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0}}
-
-
 def test_response_only_activity_suppresses_fake_monetary_economics(
     meta,
     params,
@@ -621,6 +584,43 @@ def test_optimize_scenario_raises_clearly_on_an_empty_monetary_resource(
             governance_mode="exploratory",
             **IDENTITY,
         )
+
+
+class TestExplicitOptimisationObjectives:
+    """optimize_scenario's objective must be one of VALID_OBJECTIVES - no
+    generic "maximise volume" that silently sums FH GSAs and DNA kits (the
+    instruction document's audit-confirmed defect)."""
+
+    @pytest.fixture
+    def meta_with_kit_segment(self) -> FHModelMeta:
+        return FHModelMeta(
+            markets=["UK"], outcome_ids=["New", "DNA_Kit"], channels=["TV_Brand", "DNA_Ad"],
+            dna_channels=["DNA_Ad"], dna_channel_idx=[1], non_dna_idx=[0],
+            dna_outcome_id="New", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+            direct_dna_outcome_ids=["New", "DNA_Kit"],
+        )
+
+    @pytest.fixture
+    def params_with_kit_segment(self) -> FHPosteriorParams:
+        return FHPosteriorParams(
+            decay_rate={"TV_Brand": 0.5, "DNA_Ad": 0.5},
+            hill_K={"TV_Brand": 1000.0, "DNA_Ad": 500.0},
+            hill_S={"TV_Brand": 1.0, "DNA_Ad": 1.0},
+            beta={"New": {"TV_Brand": 0.1, "DNA_Ad": 0.05}, "DNA_Kit": {"TV_Brand": 0.0, "DNA_Ad": 0.2}},
+            pathway_strength=pathway_strength_from_flat({"New": 0.3, "DNA_Kit": 0.0}, "DNA_Ad"), promo_coef={"New": 0.1, "DNA_Kit": 0.1},
+            market_offset={"UK": {"New": 0.0, "DNA_Kit": 0.0}}, intercept={"New": 3.0, "DNA_Kit": 2.0},
+            trend_coef={"New": 0.0, "DNA_Kit": 0.0},
+            gamma_fourier={"New": np.zeros(6), "DNA_Kit": np.zeros(6)},
+            alpha={"New": 5.0, "DNA_Kit": 5.0}, control_coef={}, outcome_control_coef={},
+        )
+
+    @pytest.fixture
+    def ref_with_kit_segment(self):
+        return {"2024-01": {"trend": 1.0, "fourier": np.zeros(6), "promo": {"New": 0.0, "DNA_Kit": 0.0}, "controls": {}, "outcome_controls": {}}}
+
+    @pytest.fixture
+    def plan_with_kit_segment(self):
+        return {"2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0}}
 
     def test_invalid_objective_raises_before_optimising(self, meta, params, approval, spend_plan, reference_context, monkeypatch):
         import ancestry_mmm.core.optimization as optimization_module

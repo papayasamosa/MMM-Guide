@@ -299,6 +299,10 @@ def evaluate_scenario_with_uncertainty(
     governance_mode: str = "official",
     requested_use: str = "planning",
     nbt_completeness_metadata: Optional[dict] = None,
+    # G2A.7a.2: internal trusted path — when the optimiser has already
+    # validated, it passes a ResolvedPlanningGovernance proof so per-draw
+    # evaluate_scenario calls retain official identity without re-checking.
+    _resolved_governance=None,
 ) -> Dict[str, object]:
     """
     Per-draw scenario evaluation: `core.optimization.evaluate_scenario` run
@@ -354,6 +358,7 @@ def evaluate_scenario_with_uncertainty(
             governance_mode=governance_mode,
             requested_use=requested_use,
             nbt_completeness_metadata=nbt_completeness_metadata,
+            _resolved_governance=_resolved_governance,
         )
 
     draw_indices = sample_draw_indices(trace, n_draws, seed)
