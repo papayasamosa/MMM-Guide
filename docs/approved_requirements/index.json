@@ -1,0 +1,123 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-07-26",
+  "requirements": [
+    {
+      "requirement_id": "REQ-AUTH-001",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-AUTH-001.md",
+      "affected_modules": [
+        "AGENTS.md",
+        "docs/approved_requirements/README.md"
+      ],
+      "required_tests": [
+        "test_outcome_approval.py::test_authority_wording_consistency"
+      ]
+    },
+    {
+      "requirement_id": "REQ-OUT-001",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-OUT-001.md",
+      "affected_modules": [
+        "ancestry_mmm/core/outcomes.py",
+        "ancestry_mmm/core/optimization.py",
+        "ancestry_mmm/core/attribution.py",
+        "ancestry_mmm/core/curve_bank.py"
+      ],
+      "required_tests": [
+        "test_outcomes.py::test_distinct_metric_keys_remain_distinct",
+        "test_outcome_approval.py::test_normalize_does_not_alias_stable_keys"
+      ]
+    },
+    {
+      "requirement_id": "REQ-OUT-002",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-OUT-002.md",
+      "affected_modules": [
+        "ancestry_mmm/core/outcome_approval.py",
+        "ancestry_mmm/core/outcomes.py",
+        "ancestry_mmm/core/optimization.py",
+        "ancestry_mmm/core/persistence.py",
+        "ancestry_mmm/core/fingerprint.py"
+      ],
+      "required_tests": [
+        "test_outcome_approval.py::test_approval_for_reporting_does_not_permit_optimisation",
+        "test_outcome_approval.py::test_stale_fingerprint_blocks_use",
+        "test_outcome_approval.py::test_expired_approval_blocks_use",
+        "test_outcome_approval.py::test_rejected_approval_blocks_use",
+        "test_outcome_approval.py::test_wrong_scope_blocks_use",
+        "test_outcome_approval.py::test_role_eligibility_alone_never_grants_approval"
+      ]
+    },
+    {
+      "requirement_id": "REQ-NBT-001",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-NBT-001.md",
+      "affected_modules": [
+        "ancestry_mmm/core/net_billthrough.py",
+        "ancestry_mmm/core/outcome_approval.py",
+        "ancestry_mmm/core/optimization.py"
+      ],
+      "required_tests": [
+        "test_outcome_approval.py::test_complete_nbt_no_approval_blocked",
+        "test_outcome_approval.py::test_approved_nbt_incomplete_data_blocked",
+        "test_outcome_approval.py::test_approved_nbt_complete_data_allowed",
+        "test_outcome_approval.py::test_nbt_fit_approval_not_optimisation",
+        "test_outcome_approval.py::test_nbt_definition_change_stales_approval",
+        "test_outcome_approval.py::test_no_nbt_outcome_no_metadata_required",
+        "test_outcome_approval.py::test_legacy_nbt_imports_unapproved"
+      ]
+    },
+    {
+      "requirement_id": "REQ-PLAN-001",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-PLAN-001.md",
+      "affected_modules": [
+        "ancestry_mmm/core/optimization.py",
+        "ancestry_mmm/core/outcome_approval.py"
+      ],
+      "required_tests": [
+        "test_outcome_approval.py::test_planning_objective_no_default_metric_key",
+        "test_outcome_approval.py::test_legacy_nbt_intent_requires_approval",
+        "test_outcome_approval.py::test_official_planning_unapproved_target_blocked",
+        "test_outcome_approval.py::test_exploratory_planning_labelled",
+        "test_outcome_approval.py::test_target_ids_must_be_in_fitted_model",
+        "test_outcome_approval.py::test_rate_outcomes_invalid_denominator_and_target"
+      ]
+    },
+    {
+      "requirement_id": "REQ-USE-001",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-USE-001.md",
+      "affected_modules": [
+        "ancestry_mmm/core/outcome_approval.py",
+        "ancestry_mmm/core/scenario_governance.py",
+        "ancestry_mmm/core/curve_bank.py"
+      ],
+      "required_tests": [
+        "test_outcome_approval.py::test_official_curve_save_requires_approval",
+        "test_outcome_approval.py::test_official_scenario_requires_planning_approval",
+        "test_outcome_approval.py::test_official_optimisation_requires_optimisation_approval",
+        "test_outcome_approval.py::test_exploratory_mode_visible_labelling"
+      ]
+    },
+    {
+      "requirement_id": "REQ-STALE-001",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-STALE-001.md",
+      "affected_modules": [
+        "ancestry_mmm/core/outcome_approval.py",
+        "ancestry_mmm/core/fingerprint.py",
+        "ancestry_mmm/core/outcomes.py"
+      ],
+      "required_tests": [
+        "test_outcome_approval.py::test_event_definition_change_changes_fingerprint",
+        "test_outcome_approval.py::test_date_basis_change_changes_fingerprint",
+        "test_outcome_approval.py::test_exclusions_change_changes_fingerprint",
+        "test_outcome_approval.py::test_review_notes_do_not_change_fingerprint",
+        "test_outcome_approval.py::test_definition_fingerprint_deterministic",
+        "test_outcome_approval.py::test_approval_fails_after_fingerprint_change"
+      ]
+    }
+  ]
+}

@@ -58,6 +58,31 @@ build_fh_market_specific_model`) takes an explicit outcome catalogue (`outcomes=
 outcomes are **opt-in**: mapping one on Structure: Segments & Markets does not, by itself,
 retroactively change any existing fit, but the next time the modelling frame is prepared on Model
 Configuration, `core.outcomes.dna_kit_outcome_columns` feeds the mapped DNA outcome_id(s) into
+
+## Definition, eligibility, and approval (G2A.7)
+
+Three separate concepts govern whether an outcome can be used officially:
+
+1. **Definition** (`OutcomeDefinition`): what the outcome is — its event definition, date basis,
+   cohort/attribution basis, completeness policy, exclusions, reconciliation source, business owner,
+   and effective dates. These fields capture the business meaning; blank fields make the outcome
+   unapprovable but do not prevent exploratory fitting.
+
+2. **Analytical eligibility** (the four `include_in_*` flags): how the outcome's numbers should be
+   treated — whether it appears in default reporting, counts toward official totals, feeds value
+   calculations, or is eligible for optimisation. A `primary` role defaults all four to True, but
+   this is an analytical default, not business approval.
+
+3. **Approval for use** (`OutcomeApproval`, `core.outcome_approval`): whether Product and Finance
+   have reviewed the definition and authorised specific uses (model_fit, technical_reporting,
+   headline_reporting, curve_publication, planning, optimisation, value_layer, external_distribution).
+   Approval is fingerprint-bound; changing the definition stales the approval.
+
+Official use requires both analytical eligibility AND a matching, active OutcomeApproval for the
+requested use. A fitted outcome without approval remains visible in exploratory/diagnostic views
+but cannot drive official reporting, curve publication, planning, or optimisation.
+
+No planning objective silently defaults to NBT, GSA, or any other KPI (REQ-PLAN-001).
 `prepare_fh_modeling_frame`'s `outcomes` parameter, and from there into the model builders'
 `direct_dna_outcome_ids` - DNA-targeted media then gets full, direct response on that outcome_id, not
 the shrunk-toward-zero halo pathway other outcomes get. See `docs/dna_fh_causal_structure.md` for the

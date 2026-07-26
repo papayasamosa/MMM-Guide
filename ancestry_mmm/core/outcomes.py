@@ -349,6 +349,23 @@ class OutcomeDefinition:
     aggregation_type: str = ""
     date_basis: Optional[str] = None
     maturity_required: Optional[bool] = None
+    # -------------------------------------------------------------------
+    # Business-definition fields (G2A.7 - REQ-OUT-002, REQ-STALE-001)
+    #
+    # These are the metadata Product and Finance must approve before an
+    # outcome can be used officially. Blank/None values make the outcome
+    # unapprovable but do not prevent it from being defined, fitted
+    # exploratorily, or loaded from a legacy bundle.
+    # -------------------------------------------------------------------
+    definition_version: str = ""
+    event_definition: str = ""
+    cohort_or_attribution_basis: str = ""
+    completeness_or_maturity_policy: str = ""
+    exclusions: str = ""
+    reconciliation_source: str = ""
+    business_owner: str = ""
+    effective_from: Optional[str] = None
+    effective_to: Optional[str] = None
 
     def __post_init__(self) -> None:
         # metric_key first: unit's default (below) is looked up by
@@ -976,6 +993,13 @@ _FINGERPRINT_FIELDS = (
     "role", "included_in_fit", "value_weight", "value_currency",
     "include_in_default_reporting", "include_in_official_total",
     "include_in_value", "include_in_optimisation",
+    # G2A.7 (REQ-STALE-001): business-definition fields that affect
+    # what the outcome *is* — changing any of these must stale the
+    # model-spec fingerprint and thus the model approval.
+    "definition_version", "event_definition", "date_basis",
+    "cohort_or_attribution_basis", "completeness_or_maturity_policy",
+    "exclusions", "reconciliation_source", "business_owner",
+    "effective_from", "effective_to",
 )
 
 
