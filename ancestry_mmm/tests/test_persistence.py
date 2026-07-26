@@ -35,6 +35,7 @@ from ancestry_mmm.core.persistence import (
     export_project,
     import_project,
     reconstruct_model_state,
+    resolve_imported_outcome_approvals,
     verify_imported_approval,
 )
 from ancestry_mmm.core.predict import extract_posterior_params
@@ -464,6 +465,149 @@ def test_resumability_audit_reports_legacy_mask_only_governance():
     )
     assert any("mask-only" in warning for warning in audit["warnings"])
     assert any("planning remain blocked" in warning for warning in audit["warnings"])
+
+
+# ---------------------------------------------------------------------------
+# G2A.7a.1 (REQ-OUT-002 section 12): outcome-approval migration lives in
+# core, and official resumability is reported separately from technical
+# loadability.
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_imported_outcome_approvals_legacy_bundle_with_persisted_outcomes_creates_legacy_unapproved():
+    imported = {
+        "model_spec": None,
+        "outcome_definitions": [
+            {
+                "outcome_id": "fh_new_gsa", "product": FAMILY_HISTORY, "segment": "New",
+                "metric": "GSA", "source_column": "GSA_New",
+            },
+            {
+                "outcome_id": "fh_new_signup", "product": FAMILY_HISTORY, "segment": "New",
+                "metric": "Sign-up", "source_column": "Signup_New",
+            },
+        ],
+        "outcome_approvals": None,
+    }
+    approvals, warnings = resolve_imported_outcome_approvals(imported)
+    assert warnings == []
+    assert {a["outcome_id"] for a in approvals} == {"fh_new_gsa", "fh_new_signup"}
+    assert all(a["status"] == "legacy_unapproved" for a in approvals)
+
+
+def test_resolve_imported_outcome_approvals_legacy_bundle_with_derived_outcomes_creates_legacy_unapproved():
+    # No outcome_definitions.json at all (predates PR2) - outcomes must be
+    # derived live from model_spec.segment_outcomes, same as every other
+    # consumer of resolve_outcome_definitions.
+    model_spec = ModelSpec(
+        date_col="date", market_col="market", markets=["UK"],
+        segment_outcomes={"New": "fh_new_gsa", "Winback": "fh_winback_gsa"},
+        channels=["TV_Brand"],
+    ).to_dict()
+    imported = {"model_spec": model_spec, "outcome_definitions": None, "outcome_approvals": None}
+    approvals, warnings = resolve_imported_outcome_approvals(imported)
+    assert warnings == []
+    # fh_outcomes_from_spec derives outcome_id as f"fh_{segment.lower()}".
+    assert {a["outcome_id"] for a in approvals} == {"fh_new", "fh_winback"}
+    assert all(a["status"] == "legacy_unapproved" for a in approvals)
+
+
+def test_resolve_imported_outcome_approvals_no_legacy_migration_when_approvals_file_present():
+    imported = {
+        "model_spec": None, "outcome_definitions": [],
+        "outcome_approvals": [
+            {
+                "approval_id": "apr-1", "outcome_id": "fh_new_gsa",
+                "definition_fingerprint": "fp1", "status": "approved",
+                "allowed_uses": ["planning"], "approved_by": "Jane", "approved_at": "2026-01-01",
+            },
+        ],
+    }
+    approvals, warnings = resolve_imported_outcome_approvals(imported)
+    assert warnings == []
+    assert len(approvals) == 1
+    assert approvals[0]["status"] == "approved"
+
+
+def test_resolve_imported_outcome_approvals_reports_malformed_records_by_index():
+    imported = {
+        "model_spec": None, "outcome_definitions": [],
+        "outcome_approvals": [
+            {
+                "approval_id": "apr-1", "outcome_id": "fh_new_gsa",
+                "definition_fingerprint": "fp1", "status": "not_a_real_status",
+            },
+        ],
+    }
+    approvals, warnings = resolve_imported_outcome_approvals(imported)
+    assert approvals == []
+    assert len(warnings) == 1
+    assert "0" in warnings[0] and "apr-1" in warnings[0]
+
+
+def test_audit_resumability_officially_resumable_false_without_approvals():
+    imported = {
+        "raw_sources": {"source": pd.DataFrame({"x": [1]})},
+        "transformed_data": pd.DataFrame({"x": [1]}),
+        "model_spec": ModelSpec(
+            date_col="date", market_col="market", markets=["UK"],
+            segment_outcomes={"New": "fh_new_gsa"}, channels=["TV_Brand"],
+        ).to_dict(),
+        "trace": object(),
+        "model_meta": {},
+        "model_approval": {"approved_by": "Jane"},
+        "outcome_definitions": None,
+        "outcome_approvals": None,
+        "manifest": {"workflow_checkpoint": "approved"},
+    }
+    audit = audit_project_resumability(imported)
+    assert audit["resumable"]
+    assert audit["officially_resumable"] is False
+    assert audit["outcome_governance_warnings"]
+
+
+def test_audit_resumability_officially_resumable_true_with_active_approval():
+    imported = {
+        "raw_sources": {"source": pd.DataFrame({"x": [1]})},
+        "transformed_data": pd.DataFrame({"x": [1]}),
+        "model_spec": ModelSpec(
+            date_col="date", market_col="market", markets=["UK"],
+            segment_outcomes={"New": "fh_new_gsa"}, channels=["TV_Brand"],
+        ).to_dict(),
+        "trace": object(),
+        "model_meta": {},
+        "model_approval": {"approved_by": "Jane"},
+        "outcome_definitions": None,
+        "outcome_approvals": [
+            {
+                "approval_id": "apr-1", "outcome_id": "fh_new_gsa",
+                "definition_fingerprint": "fp1", "status": "approved",
+                "allowed_uses": ["planning"], "approved_by": "Jane", "approved_at": "2026-01-01",
+            },
+        ],
+        "manifest": {"workflow_checkpoint": "approved"},
+    }
+    audit = audit_project_resumability(imported)
+    assert audit["resumable"]
+    assert audit["officially_resumable"] is True
+    assert audit["outcome_governance_warnings"] == []
+
+
+def test_audit_resumability_officially_resumable_not_gated_before_fitted_checkpoint():
+    # A pre_fit checkpoint has no official-use claim at all - official
+    # resumability should not spuriously block it for lack of approvals.
+    imported = {
+        "raw_sources": {"source": pd.DataFrame({"x": [1]})},
+        "transformed_data": pd.DataFrame({"x": [1]}),
+        "model_spec": ModelSpec(
+            date_col="date", market_col="market", markets=["UK"],
+            segment_outcomes={"New": "fh_new_gsa"}, channels=["TV_Brand"],
+        ).to_dict(),
+        "manifest": {"workflow_checkpoint": "pre_fit"},
+    }
+    audit = audit_project_resumability(imported)
+    assert audit["resumable"]
+    assert audit["officially_resumable"] is True
 
 
 def test_export_then_import_reproduces_market_spec_config(tmp_path, sample_project):

@@ -96,8 +96,7 @@ outcome_approvals = [
 outcome_definitions = [
     outcome for outcome in (get_state("outcome_definitions") or [])
 ]
-# G2A.7a: governance mode for the whole page
-governance_mode = get_state("governance_mode", "official")
+nbt_completeness_metadata = get_state("net_billthrough_metadata")
 if frame is None or meta is None or params is None:
     st.markdown("---")
     render_empty_state(
@@ -157,12 +156,14 @@ if not approval_matches_current:
     st.stop()
 
 approval = ModelApproval.from_dict(approval_dict)
+# G2A.7a.1 (section 4.1): model-identity kwargs ONLY - governance kwargs
+# (outcome_approvals/governance_mode) are built separately, after the
+# governance-mode radio is rendered below, and must never be merged into
+# this dict - passing both `identity_kwargs` and an explicit
+# `governance_mode=` to the same call raises "got multiple values for
+# keyword argument 'governance_mode'" (the confirmed G2A.7a.1 P0 defect).
 identity_kwargs = dict(
     model_type=model_type, approval=approval, **current_identity,
-    # G2A.7a (DEFECT-7, DEFECT-8): thread outcome approvals and governance
-    # mode through all evaluate/optimize calls
-    outcome_approvals=outcome_approvals,
-    governance_mode=governance_mode,
 )
 
 spec = ModelSpec.from_dict(spec_dict)
@@ -421,27 +422,43 @@ counterfactual_policy = CounterfactualPolicy(
     demand_capture_rule=demand_capture_rule,
 )
 
+# G2A.7a.1 (section 4.2): one source of truth. The radio's own return
+# value IS the authoritative governance mode for this rerun - it is never
+# read from session state before this point, and every call below is built
+# from this value, not from a stale read captured earlier in the script.
 governance_mode = st.radio(
     "Governance mode",
     ["official", "exploratory"],
     horizontal=True,
+    key="scenario_governance_mode",
     format_func=lambda value: {
-        "official": "Official - requires approved activity governance",
+        "official": "Official - requires approved activity and outcome governance",
         "exploratory": "Exploratory - sensitivity only, skips approval gates",
     }[value],
     help=(
         "Official mode blocks optimisation against any activity whose governance "
         "isn't approved (draft or rejected model role, economic treatment, or "
-        "planning eligibility must not drive an official recommendation). "
-        "Exploratory mode skips that check - always visibly labelled below, "
+        "planning eligibility must not drive an official recommendation), and "
+        "against any target outcome without a matching, active approval. "
+        "Exploratory mode skips both checks - always visibly labelled below, "
         "never a silent fallback."
     ),
 )
 if governance_mode == "exploratory":
     st.warning(
-        "**Exploratory mode** - this run may use activity governance that is not yet "
-        "approved. Results here are a sensitivity, not an official recommendation."
+        "**Exploratory mode** - this run may use activity or outcome governance "
+        "that is not yet approved. Results here are a sensitivity, not an "
+        "official recommendation."
     )
+# G2A.7a.1 (section 4.1, 4.2): governance kwargs, built AFTER the radio so
+# every consumer below sees the same rerun's selection - separate from
+# identity_kwargs (model identity only) so no call ever receives
+# governance_mode twice.
+scenario_governance_kwargs = dict(
+    outcome_approvals=outcome_approvals,
+    governance_mode=governance_mode,
+    nbt_completeness_metadata=nbt_completeness_metadata,
+)
 cost_as_of_by_month = {
     month: f"{month}-01" if len(month) == 7 else month for month in months
 }
@@ -539,6 +556,7 @@ with tab_manual:
             cost_context_id="default",
             cost_as_of_by_month=cost_as_of_by_month,
             **identity_kwargs,
+            **scenario_governance_kwargs,
         )
     except (ApprovalMismatchError, ValueError) as e:
         st.error(f"Cannot evaluate this scenario: {e}")
@@ -605,7 +623,10 @@ with tab_manual:
                 economics_coverage=predicted[
                     "economics_coverage"
                 ].iloc[0],
-                governance_mode="not_applicable",
+                # G2A.7a.1 (section 11.1): a manual scenario is a planning
+                # artefact - persist the actual selected governance_mode
+                # ("official" or "exploratory"), never "not_applicable".
+                governance_mode=governance_mode,
             )
         )
         scenarios[-1]["predicted"] = predicted
@@ -647,6 +668,7 @@ with tab_manual:
                         cost_context_id="default",
                         cost_as_of_by_month=cost_as_of_by_month,
                         **identity_kwargs,
+                        **scenario_governance_kwargs,
                     )
                 except (ApprovalMismatchError, ValueError) as e:
                     st.error(f"Cannot evaluate this scenario: {e}")
@@ -741,8 +763,8 @@ with tab_constrained:
                         cost_as_of_by_month=cost_as_of_by_month,
                         posterior_trace=trace,
                         posterior_evaluation_draws=50,
-                        governance_mode=governance_mode,
                         **identity_kwargs,
+                        **scenario_governance_kwargs,
                     )
                 except (ApprovalMismatchError, ValueError) as e:
                     st.error(f"Cannot run optimisation: {e}")
@@ -853,8 +875,8 @@ with tab_unconstrained:
                         cost_as_of_by_month=cost_as_of_by_month,
                         posterior_trace=trace,
                         posterior_evaluation_draws=50,
-                        governance_mode=governance_mode,
                         **identity_kwargs,
+                        **scenario_governance_kwargs,
                     )
                 except (ApprovalMismatchError, ValueError) as e:
                     st.error(f"Cannot run optimisation: {e}")

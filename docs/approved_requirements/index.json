@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "generated_at": "2026-07-26",
   "requirements": [
     {
@@ -11,7 +11,13 @@
         "docs/approved_requirements/README.md"
       ],
       "required_tests": [
-        "test_outcome_approval.py::test_authority_wording_consistency"
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_root_agents_md_mentions_approved_requirements_not_forbids",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique"
       ]
     },
     {
@@ -25,8 +31,7 @@
         "ancestry_mmm/core/curve_bank.py"
       ],
       "required_tests": [
-        "test_outcomes.py::test_distinct_metric_keys_remain_distinct",
-        "test_outcome_approval.py::test_normalize_does_not_alias_stable_keys"
+        "ancestry_mmm/tests/test_outcomes.py::TestOutcomeCatalogueFingerprintPayload::test_only_fingerprint_relevant_fields_included"
       ]
     },
     {
@@ -41,12 +46,22 @@
         "ancestry_mmm/core/fingerprint.py"
       ],
       "required_tests": [
-        "test_outcome_approval.py::test_approval_for_reporting_does_not_permit_optimisation",
-        "test_outcome_approval.py::test_stale_fingerprint_blocks_use",
-        "test_outcome_approval.py::test_expired_approval_blocks_use",
-        "test_outcome_approval.py::test_rejected_approval_blocks_use",
-        "test_outcome_approval.py::test_wrong_scope_blocks_use",
-        "test_outcome_approval.py::test_role_eligibility_alone_never_grants_approval"
+        "ancestry_mmm/tests/test_outcome_approval.py::TestOutcomeApprovalMatching::test_matching_approved_passes_for_allowed_use",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestOutcomeApprovalMatching::test_approval_for_reporting_does_not_permit_optimisation",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestOutcomeApprovalMatching::test_stale_fingerprint_blocks_use",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestOutcomeApprovalMatching::test_expired_approval_blocks_use",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestOutcomeApprovalMatching::test_rejected_approval_blocks_use",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestOutcomeApprovalMatching::test_wrong_market_scope_blocks_use",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestOutcomeApprovalMatching::test_role_eligibility_alone_never_grants_approval",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestDefinitionValidation::test_complete_definition_passes_validation",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestBulkResolution::test_approved_outcome_ids_for_use_filters_unapproved",
+        "ancestry_mmm/tests/test_persistence.py::test_resolve_imported_outcome_approvals_legacy_bundle_with_persisted_outcomes_creates_legacy_unapproved",
+        "ancestry_mmm/tests/test_persistence.py::test_resolve_imported_outcome_approvals_legacy_bundle_with_derived_outcomes_creates_legacy_unapproved",
+        "ancestry_mmm/tests/test_persistence.py::test_resolve_imported_outcome_approvals_no_legacy_migration_when_approvals_file_present",
+        "ancestry_mmm/tests/test_persistence.py::test_resolve_imported_outcome_approvals_reports_malformed_records_by_index",
+        "ancestry_mmm/tests/test_persistence.py::test_audit_resumability_officially_resumable_false_without_approvals",
+        "ancestry_mmm/tests/test_persistence.py::test_audit_resumability_officially_resumable_true_with_active_approval",
+        "ancestry_mmm/tests/test_persistence.py::test_audit_resumability_officially_resumable_not_gated_before_fitted_checkpoint"
       ]
     },
     {
@@ -59,13 +74,23 @@
         "ancestry_mmm/core/optimization.py"
       ],
       "required_tests": [
-        "test_outcome_approval.py::test_complete_nbt_no_approval_blocked",
-        "test_outcome_approval.py::test_approved_nbt_incomplete_data_blocked",
-        "test_outcome_approval.py::test_approved_nbt_complete_data_allowed",
-        "test_outcome_approval.py::test_nbt_fit_approval_not_optimisation",
-        "test_outcome_approval.py::test_nbt_definition_change_stales_approval",
-        "test_outcome_approval.py::test_no_nbt_outcome_no_metadata_required",
-        "test_outcome_approval.py::test_legacy_nbt_imports_unapproved"
+        "ancestry_mmm/tests/test_outcome_approval.py::TestConditionalNBTUse::test_no_approval_blocks_nbt",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestConditionalNBTUse::test_approved_nbt_allowed_for_approved_use",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestConditionalNBTUse::test_nbt_fit_approval_not_optimisation",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestConditionalNBTUse::test_nbt_definition_change_stales_approval",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestConditionalNBTUse::test_legacy_nbt_imports_unapproved",
+        "ancestry_mmm/tests/test_net_billthrough.py::TestNBTCompletenessGate::test_missing_metadata_blocks",
+        "ancestry_mmm/tests/test_net_billthrough.py::TestNBTCompletenessGate::test_complete_metadata_matching_outcome_passes",
+        "ancestry_mmm/tests/test_net_billthrough.py::TestNBTCompletenessGate::test_metadata_for_a_different_outcome_id_blocks",
+        "ancestry_mmm/tests/test_net_billthrough.py::TestNBTCompletenessGate::test_stale_definition_fingerprint_blocks",
+        "ancestry_mmm/tests/test_net_billthrough.py::TestNBTCompletenessGate::test_latest_complete_week_before_model_end_blocks",
+        "ancestry_mmm/tests/test_net_billthrough.py::TestNBTCompletenessGate::test_latest_complete_week_after_as_of_blocks",
+        "ancestry_mmm/tests/test_net_billthrough.py::TestNBTCompletenessGate::test_missing_maturity_rule_or_owner_blocks",
+        "ancestry_mmm/tests/test_optimization.py::TestNBTCombinedPlanningGate::test_approved_nbt_without_completeness_metadata_blocks",
+        "ancestry_mmm/tests/test_optimization.py::TestNBTCombinedPlanningGate::test_completeness_metadata_without_approval_blocks",
+        "ancestry_mmm/tests/test_optimization.py::TestNBTCombinedPlanningGate::test_metadata_for_a_different_outcome_blocks",
+        "ancestry_mmm/tests/test_optimization.py::TestNBTCombinedPlanningGate::test_approval_plus_matching_completeness_metadata_permits_official_planning",
+        "ancestry_mmm/tests/test_optimization.py::TestNBTCombinedPlanningGate::test_optimisation_additionally_requires_optimisation_permission"
       ]
     },
     {
@@ -77,12 +102,16 @@
         "ancestry_mmm/core/outcome_approval.py"
       ],
       "required_tests": [
-        "test_outcome_approval.py::test_planning_objective_no_default_metric_key",
-        "test_outcome_approval.py::test_legacy_nbt_intent_requires_approval",
-        "test_outcome_approval.py::test_official_planning_unapproved_target_blocked",
-        "test_outcome_approval.py::test_exploratory_planning_labelled",
-        "test_outcome_approval.py::test_target_ids_must_be_in_fitted_model",
-        "test_outcome_approval.py::test_rate_outcomes_invalid_denominator_and_target"
+        "ancestry_mmm/tests/test_outcome_approval.py::TestPlanningObjectiveDefaults::test_planning_objective_no_default_metric_key",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestPlanningObjectiveDefaults::test_empty_metric_key_not_valid_for_official",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestPlanningObjectiveDefaults::test_explicit_target_is_valid_for_official",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestPlanningObjectiveDefaults::test_from_dict_strips_old_nbt_default",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestPlanningObjectiveDefaults::test_rate_outcomes_invalid_target",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestPlanningObjectiveLegacy::test_legacy_fh_net_billthrough_maps_but_no_target",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestPlanningObjectiveLegacy::test_legacy_fh_gsa_maps_correctly",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestPlanningObjectiveLegacy::test_unknown_legacy_raises",
+        "ancestry_mmm/tests/test_optimization.py::TestOptimiserTargetValidation::test_unknown_target_outcome_id_is_rejected",
+        "ancestry_mmm/tests/test_optimization.py::TestOptimiserTargetValidation::test_metric_mismatched_target_outcome_id_is_rejected"
       ]
     },
     {
@@ -95,10 +124,15 @@
         "ancestry_mmm/core/curve_bank.py"
       ],
       "required_tests": [
-        "test_outcome_approval.py::test_official_curve_save_requires_approval",
-        "test_outcome_approval.py::test_official_scenario_requires_planning_approval",
-        "test_outcome_approval.py::test_official_optimisation_requires_optimisation_approval",
-        "test_outcome_approval.py::test_exploratory_mode_visible_labelling"
+        "ancestry_mmm/tests/test_outcome_approval.py::TestRequireOutcomeApproval::test_no_approval_raises",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestRequireOutcomeApproval::test_rejected_approval_raises",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestRequireOutcomeApproval::test_stale_approval_raises",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestRequireOutcomeApproval::test_wrong_use_raises",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestRequireOutcomeApproval::test_valid_approval_succeeds",
+        "ancestry_mmm/tests/test_optimization.py::TestPlanningVsOptimisationPermissionPropagation::test_optimisation_only_approval_does_not_fail_on_nested_planning_check",
+        "ancestry_mmm/tests/test_optimization.py::TestPlanningVsOptimisationPermissionPropagation::test_planning_only_approval_blocks_optimisation",
+        "ancestry_mmm/tests/test_optimization.py::TestPlanningVsOptimisationPermissionPropagation::test_planning_only_approval_permits_manual_evaluation",
+        "ancestry_mmm/tests/test_optimization.py::TestOptimizerDimensionalCorrectness::test_optimize_scenario_blocks_unapproved_activity_governance_in_official_mode"
       ]
     },
     {
@@ -111,12 +145,13 @@
         "ancestry_mmm/core/outcomes.py"
       ],
       "required_tests": [
-        "test_outcome_approval.py::test_event_definition_change_changes_fingerprint",
-        "test_outcome_approval.py::test_date_basis_change_changes_fingerprint",
-        "test_outcome_approval.py::test_exclusions_change_changes_fingerprint",
-        "test_outcome_approval.py::test_review_notes_do_not_change_fingerprint",
-        "test_outcome_approval.py::test_definition_fingerprint_deterministic",
-        "test_outcome_approval.py::test_approval_fails_after_fingerprint_change"
+        "ancestry_mmm/tests/test_outcome_approval.py::TestDefinitionFingerprint::test_fingerprint_is_deterministic",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestDefinitionFingerprint::test_event_definition_change_changes_fingerprint",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestDefinitionFingerprint::test_date_basis_change_changes_fingerprint",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestDefinitionFingerprint::test_exclusions_change_changes_fingerprint",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestDefinitionFingerprint::test_definition_version_change_changes_fingerprint",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestDefinitionFingerprint::test_review_notes_do_not_change_definition_fingerprint",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestOutcomeApprovalMatching::test_stale_fingerprint_blocks_use"
       ]
     }
   ]

@@ -1167,4 +1167,10 @@ class TestOutcomeCatalogueFingerprintPayload:
             "role", "included_in_fit", "value_weight", "value_currency",
             "include_in_default_reporting", "include_in_official_total",
             "include_in_value", "include_in_optimisation",
+            # G2A.7 (REQ-STALE-001): business-definition fields also affect
+            # what the outcome *is* and must stale the model-spec fingerprint.
+            "definition_version", "event_definition", "date_basis",
+            "cohort_or_attribution_basis", "completeness_or_maturity_policy",
+            "exclusions", "reconciliation_source", "business_owner",
+            "effective_from", "effective_to",
         }

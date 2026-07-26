@@ -35,6 +35,7 @@ from .market_specific_predict import (
 from .media_units import compute_cpa_by_product
 from .optimization import (
     AnyPosteriorParams,
+    OutcomeApproval,
     PlanningObjective,
     evaluate_scenario,
 )
@@ -294,6 +295,10 @@ def evaluate_scenario_with_uncertainty(
     cost_mapping_registry: Optional[CostMappingRegistry] = None,
     cost_context_id: Optional[str] = None,
     cost_as_of_by_month: Optional[Dict[str, str]] = None,
+    outcome_approvals: Optional[List[OutcomeApproval]] = None,
+    governance_mode: str = "official",
+    requested_use: str = "planning",
+    nbt_completeness_metadata: Optional[dict] = None,
 ) -> Dict[str, object]:
     """
     Per-draw scenario evaluation: `core.optimization.evaluate_scenario` run
@@ -309,6 +314,17 @@ def evaluate_scenario_with_uncertainty(
     draws instead of one shared draw per comparison) - `prob_outperforms_baseline`
     is then the fraction of paired draws where `spend_plan`'s total value
     exceeds `baseline_spend_plan`'s.
+
+    G2A.7a.1 (REQ-PLAN-001, REQ-USE-001): `outcome_approvals`/`governance_mode`/
+    `requested_use`/`nbt_completeness_metadata` are forwarded unchanged to
+    every per-draw `evaluate_scenario` call, so posterior uncertainty is
+    governed under the same context as the point-estimate evaluation it
+    summarises - manual posterior uncertainty (default `requested_use=
+    "planning"`) and the optimiser's own posterior evaluation (which passes
+    `governance_mode="exploratory"`, since it has already validated the
+    correct `"optimisation"` authorisation before calling this function -
+    see `optimize_scenario`) both flow through the same parameters rather
+    than each needing separate plumbing.
 
     Returns `{"summary": DataFrame, "prob_outperforms_baseline": float or
     None, "n_draws": int}`. Raises `ApprovalMismatchError` exactly as
@@ -334,6 +350,10 @@ def evaluate_scenario_with_uncertainty(
             cost_mapping_registry=cost_mapping_registry,
             cost_context_id=cost_context_id,
             cost_as_of_by_month=cost_as_of_by_month,
+            outcome_approvals=outcome_approvals,
+            governance_mode=governance_mode,
+            requested_use=requested_use,
+            nbt_completeness_metadata=nbt_completeness_metadata,
         )
 
     draw_indices = sample_draw_indices(trace, n_draws, seed)

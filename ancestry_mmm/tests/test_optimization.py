@@ -29,7 +29,12 @@ from ancestry_mmm.core.optimization import (
     whole_plan_scope_compatible,
     VALID_OBJECTIVES,
 )
-from ancestry_mmm.core.outcomes import FAMILY_HISTORY, DNA, METRIC_GSA, METRIC_KIT_SALE, OutcomeDefinition
+from ancestry_mmm.core.outcomes import (
+    FAMILY_HISTORY, DNA, METRIC_GSA, METRIC_KIT_SALE, METRIC_KEY_FH_GSA, OutcomeDefinition,
+)
+from ancestry_mmm.core.outcome_approval import (
+    OutcomeApproval, OutcomeApprovalBlockedError, fingerprint_outcome_definition,
+)
 from ancestry_mmm.core.predict import FHPosteriorParams
 from ancestry_mmm.core.scenario_governance import ScenarioPlan, resolve_scenario_plan
 from ancestry_mmm.tests.conftest import pathway_strength_from_flat
@@ -153,9 +158,15 @@ class TestOptimizeScenarioApprovalEnforcement:
             )
 
     def test_correctly_approved_model_can_be_optimized(self, meta, params, approval, spend_plan, reference_context):
+        # This test exercises ModelApproval enforcement, not outcome
+        # governance or objective resolution - an explicit objective is
+        # required regardless of governance_mode (there is nothing to
+        # optimise toward otherwise, by design - REQ-PLAN-001 removed the
+        # old implicit KPI default), and the bare `meta` fixture has no
+        # outcome catalogue for official-mode outcome governance to check.
         result = optimize_scenario(
             spend_plan, ["2024-01"], ["TV_Brand"], "UK", meta, params, reference_context,
-            approval=approval, **IDENTITY,
+            objective="fh_gsa", approval=approval, governance_mode="exploratory", **IDENTITY,
         )
         assert "spend_plan" in result and "predicted" in result
 
@@ -216,7 +227,8 @@ class TestModelTypeDispatch:
     ):
         result = optimize_scenario(
             spend_plan, ["2024-01"], ["TV_Brand"], "UK", market_specific_meta, market_specific_params,
-            reference_context, model_type="market_specific", approval=approval, **IDENTITY,
+            reference_context, model_type="market_specific", objective="fh_gsa", approval=approval,
+            governance_mode="exploratory", **IDENTITY,
         )
         assert "spend_plan" in result and "predicted" in result
         assert not result["predicted"].empty
@@ -568,6 +580,11 @@ def test_non_optimisable_activity_is_held_fixed(approval):
         cost_mapping_registry=registry,
         cost_context_id="default",
         cost_as_of_by_month={"2024-01": "2024-01-01"},
+        # This test exercises activity-fixing dispatch, not outcome
+        # governance - the bare `meta` fixture has no outcome catalogue, so
+        # official-mode outcome governance would block unconditionally
+        # (REQ-OUT-002, G2A.7a.1).
+        governance_mode="exploratory",
         **IDENTITY,
     )
     assert result["spend_plan"]["2024-01"]["TV_Brand"] == pytest.approx(1000.0)
@@ -601,6 +618,7 @@ def test_optimize_scenario_raises_clearly_on_an_empty_monetary_resource(
             objective="fh_gsa",
             activity_definitions=[activity],
             approval=approval,
+            governance_mode="exploratory",
             **IDENTITY,
         )
 
@@ -757,9 +775,13 @@ class TestFhSignupVsGsaObjectives:
     def test_gsa_objective_targets_only_gsa_outcome(
         self, meta_with_signup_and_gsa, params_with_signup_and_gsa, approval, ref_with_signup_and_gsa, plan,
     ):
+        # This class tests metric-aware target selection (fh_gsa vs
+        # fh_signups), not outcome governance - fixtures here have no
+        # outcome catalogue, so official-mode outcome governance would
+        # block unconditionally (REQ-OUT-002, G2A.7a.1).
         result = optimize_scenario(
             plan, ["2024-01"], ["TV_Brand"], "UK", meta_with_signup_and_gsa, params_with_signup_and_gsa, ref_with_signup_and_gsa,
-            objective="fh_gsa", approval=approval, **IDENTITY,
+            objective="fh_gsa", approval=approval, governance_mode="exploratory", **IDENTITY,
         )
         current_predicted = result["current_predicted"]
         expected = float(current_predicted[current_predicted["outcome_id"] == "fh_new_gsa"]["incremental_outcome"].sum())
@@ -770,7 +792,7 @@ class TestFhSignupVsGsaObjectives:
     ):
         result = optimize_scenario(
             plan, ["2024-01"], ["TV_Brand"], "UK", meta_with_signup_and_gsa, params_with_signup_and_gsa, ref_with_signup_and_gsa,
-            objective="fh_signups", approval=approval, **IDENTITY,
+            objective="fh_signups", approval=approval, governance_mode="exploratory", **IDENTITY,
         )
         current_predicted = result["current_predicted"]
         expected = float(current_predicted[current_predicted["outcome_id"] == "fh_new_signup"]["incremental_outcome"].sum())
@@ -780,7 +802,7 @@ class TestFhSignupVsGsaObjectives:
         # coincidentally computing the same number.
         gsa_result = optimize_scenario(
             plan, ["2024-01"], ["TV_Brand"], "UK", meta_with_signup_and_gsa, params_with_signup_and_gsa, ref_with_signup_and_gsa,
-            objective="fh_gsa", approval=approval, **IDENTITY,
+            objective="fh_gsa", approval=approval, governance_mode="exploratory", **IDENTITY,
         )
         assert result["current_objective_value"] != pytest.approx(gsa_result["current_objective_value"])
 
@@ -788,7 +810,7 @@ class TestFhSignupVsGsaObjectives:
         with pytest.raises(ValueError, match="fh_signups"):
             optimize_scenario(
                 spend_plan, ["2024-01"], ["TV_Brand"], "UK", meta, params, reference_context,
-                objective="fh_signups", approval=approval, **IDENTITY,
+                objective="fh_signups", approval=approval, governance_mode="exploratory", **IDENTITY,
             )
 
 
@@ -841,11 +863,17 @@ class TestOptimiserTargetValidation:
     def plan_3(self):
         return {"2024-01": {"TV_Brand": 1000.0}}
 
+    # This class tests target-outcome-id validation (`_validate_target_outcome_ids`
+    # / `_objective_weight`), not outcome governance - fixtures here have no
+    # outcome catalogue, so official-mode outcome governance would block
+    # unconditionally with an unrelated error (REQ-OUT-002, G2A.7a.1).
+
     def test_unknown_target_outcome_id_is_rejected(self, meta_with_diagnostic_outcome, params_3, approval, ref_3, plan_3):
         with pytest.raises(ValueError, match="not fitted in this model"):
             optimize_scenario(
                 plan_3, ["2024-01"], ["TV_Brand"], "UK", meta_with_diagnostic_outcome, params_3, ref_3,
-                objective="fh_gsa", target_outcome_ids=["does_not_exist"], approval=approval, **IDENTITY,
+                objective="fh_gsa", target_outcome_ids=["does_not_exist"], approval=approval,
+                governance_mode="exploratory", **IDENTITY,
             )
 
     def test_metric_mismatched_target_outcome_id_is_rejected(
@@ -856,7 +884,8 @@ class TestOptimiserTargetValidation:
         with pytest.raises(ValueError, match="do not match this objective's metric"):
             optimize_scenario(
                 plan_3, ["2024-01"], ["TV_Brand"], "UK", meta_with_diagnostic_outcome, params_3, ref_3,
-                objective="fh_gsa", target_outcome_ids=["fh_new_signup"], approval=approval, **IDENTITY,
+                objective="fh_gsa", target_outcome_ids=["fh_new_signup"], approval=approval,
+                governance_mode="exploratory", **IDENTITY,
             )
 
     def test_diagnostic_outcome_cannot_be_optimised(self, meta_with_diagnostic_outcome, params_3, approval, ref_3, plan_3):
@@ -864,7 +893,8 @@ class TestOptimiserTargetValidation:
         with pytest.raises(ValueError, match="not eligible for optimisation"):
             optimize_scenario(
                 plan_3, ["2024-01"], ["TV_Brand"], "UK", meta_with_diagnostic_outcome, params_3, ref_3,
-                objective="fh_gsa", target_outcome_ids=["fh_diag"], approval=approval, **IDENTITY,
+                objective="fh_gsa", target_outcome_ids=["fh_diag"], approval=approval,
+                governance_mode="exploratory", **IDENTITY,
             )
 
     def test_diagnostic_outcome_excluded_from_default_fh_gsa_total(
@@ -872,7 +902,7 @@ class TestOptimiserTargetValidation:
     ):
         result = optimize_scenario(
             plan_3, ["2024-01"], ["TV_Brand"], "UK", meta_with_diagnostic_outcome, params_3, ref_3,
-            objective="fh_gsa", approval=approval, **IDENTITY,
+            objective="fh_gsa", approval=approval, governance_mode="exploratory", **IDENTITY,
         )
         current_predicted = result["current_predicted"]
         expected = float(current_predicted[current_predicted["outcome_id"] == "fh_new_gsa"]["incremental_outcome"].sum())
@@ -888,7 +918,7 @@ class TestOptimiserTargetValidation:
             optimize_scenario(
                 plan_3, ["2024-01"], ["TV_Brand"], "UK", meta_with_diagnostic_outcome, params_3, ref_3,
                 objective="weighted_mix", weights={"fh_new_gsa": 1.0, "fh_new_signup": 1.0},
-                approval=approval, **IDENTITY,
+                approval=approval, governance_mode="exploratory", **IDENTITY,
             )
 
     def test_weighted_mix_with_raw_unit_mismatch_allowed_when_explicitly_value_scaled(
@@ -897,7 +927,7 @@ class TestOptimiserTargetValidation:
         result = optimize_scenario(
             plan_3, ["2024-01"], ["TV_Brand"], "UK", meta_with_diagnostic_outcome, params_3, ref_3,
             objective="weighted_mix", weights={"fh_new_gsa": 2.0, "fh_new_signup": 0.5},
-            assume_value_scaled_weights=True, approval=approval, **IDENTITY,
+            assume_value_scaled_weights=True, approval=approval, governance_mode="exploratory", **IDENTITY,
         )
         assert "success" in result
         assert isinstance(result["objective_value"], float)
@@ -906,13 +936,15 @@ class TestOptimiserTargetValidation:
         with pytest.raises(ValueError, match="non-negative"):
             optimize_scenario(
                 plan_3, ["2024-01"], ["TV_Brand"], "UK", meta_with_diagnostic_outcome, params_3, ref_3,
-                objective="weighted_mix", weights={"fh_new_gsa": -1.0}, approval=approval, **IDENTITY,
+                objective="weighted_mix", weights={"fh_new_gsa": -1.0}, approval=approval,
+                governance_mode="exploratory", **IDENTITY,
             )
 
     def test_weighted_mix_rejects_unknown_outcome_id(self, meta_with_diagnostic_outcome, params_3, approval, ref_3, plan_3):
         with pytest.raises(ValueError, match="not fitted in this model"):
             optimize_scenario(
                 plan_3, ["2024-01"], ["TV_Brand"], "UK", meta_with_diagnostic_outcome, params_3, ref_3,
+                governance_mode="exploratory",
                 objective="weighted_mix", weights={"does_not_exist": 1.0}, approval=approval, **IDENTITY,
             )
 
@@ -1036,7 +1068,8 @@ class TestValueWeightNeverSilentlyDefaultsToOne:
             optimize_scenario(
                 plan_with_kit_segment, ["2024-01"], ["TV_Brand", "DNA_Ad"], "UK",
                 meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment,
-                objective="expected_value", ltv={"New": 2.0}, approval=approval, **IDENTITY,
+                objective="expected_value", ltv={"New": 2.0}, approval=approval,
+                governance_mode="exploratory", **IDENTITY,
             )
 
     def test_expected_value_objective_rejects_negative_weight(
@@ -1046,7 +1079,8 @@ class TestValueWeightNeverSilentlyDefaultsToOne:
             optimize_scenario(
                 plan_with_kit_segment, ["2024-01"], ["TV_Brand", "DNA_Ad"], "UK",
                 meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment,
-                objective="expected_value", ltv={"New": 2.0, "DNA_Kit": -5.0}, approval=approval, **IDENTITY,
+                objective="expected_value", ltv={"New": 2.0, "DNA_Kit": -5.0}, approval=approval,
+                governance_mode="exploratory", **IDENTITY,
             )
 
     def test_expected_value_objective_succeeds_with_complete_coverage(
@@ -1055,7 +1089,8 @@ class TestValueWeightNeverSilentlyDefaultsToOne:
         result = optimize_scenario(
             plan_with_kit_segment, ["2024-01"], ["TV_Brand", "DNA_Ad"], "UK",
             meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment,
-            objective="expected_value", ltv={"New": 2.0, "DNA_Kit": 50.0}, approval=approval, **IDENTITY,
+            objective="expected_value", ltv={"New": 2.0, "DNA_Kit": 50.0}, approval=approval,
+            governance_mode="exploratory", **IDENTITY,
         )
         assert "spend_plan" in result
 
@@ -1577,6 +1612,10 @@ class TestOptimizerDimensionalCorrectness:
             objective="fh_gsa", activity_definitions=activities, approval=approval,
             cost_mapping_registry=cost_registry, cost_context_id="default",
             cost_as_of_by_month={"2024-01": "2024-01-01"},
+            # This test exercises resource-eligibility dispatch (currency
+            # vs. response-only), not outcome governance - `meta` has no
+            # outcome catalogue (REQ-OUT-002, G2A.7a.1).
+            governance_mode="exploratory",
             **IDENTITY,
         )
         optimized = result["spend_plan"]["2024-01"]
@@ -1653,6 +1692,7 @@ class TestOptimizerDimensionalCorrectness:
             cost_mapping_registry=self._single_channel_registry("TV_Paid", "tv-paid"),
             cost_context_id="default", cost_as_of_by_month={"2024-01": "2024-01-01"},
             optimization_resource=resource,
+            governance_mode="exploratory",
             **IDENTITY,
         )
         assert result["spend_plan"]["2024-01"]["TV_Paid"] == pytest.approx(2500.0)
@@ -1681,6 +1721,7 @@ class TestOptimizerDimensionalCorrectness:
             objective="fh_gsa", activity_definitions=[activity], approval=approval,
             cost_mapping_registry=self._single_channel_registry("TV_Paid", "tv-paid"),
             cost_context_id="default", cost_as_of_by_month={"2024-01": "2024-01-01"},
+            governance_mode="exploratory",
             **IDENTITY,
         )
         assert result["reference_resource_total"] == pytest.approx(1000.0)
@@ -1691,10 +1732,32 @@ class TestOptimizerDimensionalCorrectness:
         # PR G2A.6c workstream F: a draft (default) activity must not drive
         # an official optimisation, on top of the pre-existing structural
         # checks (planning_eligibility, currency purity, etc).
+        #
+        # G2A.7a.1: this test isolates ACTIVITY governance, so the "New"
+        # outcome itself is given a complete, approved definition here -
+        # official-mode OUTCOME governance (REQ-OUT-002) must pass cleanly,
+        # leaving the draft ACTIVITY as the only thing that blocks.
+        outcome_def = OutcomeDefinition(
+            outcome_id="New", product=FAMILY_HISTORY, segment="New", metric="GSA",
+            metric_key=METRIC_KEY_FH_GSA, source_column="GSA_New", unit="GSA",
+            aggregation_type="count", event_definition="A new subscriber",
+            date_basis="event_date", cohort_or_attribution_basis="signup_cohort",
+            completeness_or_maturity_policy="Mature after 12 weeks",
+            exclusions="Excludes internal/test accounts",
+            reconciliation_source="Finance report", business_owner="Analytics",
+            definition_version="1.0",
+        )
+        outcome_approval = OutcomeApproval(
+            approval_id="apr-new-gsa", outcome_id="New",
+            definition_fingerprint=fingerprint_outcome_definition(outcome_def),
+            status="approved", allowed_uses=("optimisation",),
+            approved_by="Jane Analyst", approved_at="2026-01-01",
+        )
         meta = FHModelMeta(
             markets=["UK"], outcome_ids=["New"], channels=["TV_Paid"],
             dna_channels=[], dna_channel_idx=[], non_dna_idx=[0],
             dna_outcome_id="New", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+            outcome_catalogue_at_fit=[outcome_def],
         )
         params = FHPosteriorParams(
             decay_rate={"TV_Paid": 0.5}, hill_K={"TV_Paid": 2000.0}, hill_S={"TV_Paid": 1.0},
@@ -1722,6 +1785,7 @@ class TestOptimizerDimensionalCorrectness:
                 objective="fh_gsa", activity_definitions=[draft_activity], approval=approval,
                 cost_mapping_registry=registry, cost_context_id="default",
                 cost_as_of_by_month={"2024-01": "2024-01-01"},
+                outcome_approvals=[outcome_approval],
                 **IDENTITY,
             )
         # Exploratory mode is a deliberate, visibly-labelled escape hatch.
@@ -1982,3 +2046,262 @@ class TestGovernedEconomicsSummary:
         assert whole_plan_scope_compatible(predicted) is True
         table = monthly_economics_table(predicted)
         assert table["whole_plan_cost_per_fh_gsa"].notna().any()
+
+
+# ---------------------------------------------------------------------------
+# G2A.7a.1 (REQ-NBT-001 section 10): official NBT planning/optimisation
+# requires BOTH an approved outcome definition AND matching completeness
+# metadata - an approval alone is not sufficient.
+# ---------------------------------------------------------------------------
+
+
+def _nbt_outcome_for_planning(**overrides) -> OutcomeDefinition:
+    from ancestry_mmm.core.outcomes import METRIC_KEY_FH_NET_BILLTHROUGH_COUNT
+
+    values = dict(
+        outcome_id="fh_new_nbt", product=FAMILY_HISTORY, segment="New",
+        metric="Net bill-through count", metric_key=METRIC_KEY_FH_NET_BILLTHROUGH_COUNT,
+        source_column="fh_net_billthrough_count", unit="bill-through subscriber",
+        aggregation_type="count", event_definition="Net bill-through subscriber count",
+        date_basis="signup_date_attributed", cohort_or_attribution_basis="signup_cohort",
+        completeness_or_maturity_policy="Mature after 26 weeks",
+        exclusions="Excludes cancelled within 30 days",
+        reconciliation_source="Finance NBT report", business_owner="Analytics",
+        definition_version="1.0",
+    )
+    values.update(overrides)
+    return OutcomeDefinition(**values)
+
+
+class TestNBTCombinedPlanningGate:
+    """REQ-NBT-001 (G2A.7a.1 section 10): official NBT planning requires
+    both approval and completeness metadata; neither alone is sufficient."""
+
+    @pytest.fixture
+    def nbt_outcome(self) -> OutcomeDefinition:
+        return _nbt_outcome_for_planning()
+
+    @pytest.fixture
+    def nbt_meta(self, nbt_outcome) -> FHModelMeta:
+        return FHModelMeta(
+            markets=["UK"], outcome_ids=["fh_new_nbt"], channels=["TV_Brand"],
+            dna_channels=[], dna_channel_idx=[], non_dna_idx=[0],
+            dna_outcome_id="fh_new_nbt", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+            outcome_catalogue_at_fit=[nbt_outcome],
+        )
+
+    @pytest.fixture
+    def nbt_params(self) -> FHPosteriorParams:
+        return FHPosteriorParams(
+            decay_rate={"TV_Brand": 0.5}, hill_K={"TV_Brand": 1000.0}, hill_S={"TV_Brand": 1.0},
+            beta={"fh_new_nbt": {"TV_Brand": 0.1}}, pathway_strength={}, promo_coef={"fh_new_nbt": 0.1},
+            market_offset={"UK": {"fh_new_nbt": 0.0}}, intercept={"fh_new_nbt": 3.0}, trend_coef={"fh_new_nbt": 0.0},
+            gamma_fourier={"fh_new_nbt": np.zeros(6)}, alpha={"fh_new_nbt": 5.0}, control_coef={}, outcome_control_coef={},
+        )
+
+    @pytest.fixture
+    def nbt_reference_context(self):
+        return {"2024-01": {"trend": 1.0, "fourier": np.zeros(6), "promo": {"fh_new_nbt": 0.0}, "controls": {}, "outcome_controls": {}}}
+
+    @pytest.fixture
+    def nbt_plan(self):
+        return {"2024-01": {"TV_Brand": 1000.0}}
+
+    @pytest.fixture
+    def nbt_approval(self, nbt_outcome) -> OutcomeApproval:
+        return OutcomeApproval(
+            approval_id="apr-nbt", outcome_id="fh_new_nbt",
+            definition_fingerprint=fingerprint_outcome_definition(nbt_outcome),
+            status="approved", allowed_uses=("planning", "optimisation"),
+            approved_by="Jane Analyst", approved_at="2026-01-01",
+        )
+
+    @staticmethod
+    def _nbt_planning_objective() -> PlanningObjective:
+        from ancestry_mmm.core.outcomes import METRIC_KEY_FH_NET_BILLTHROUGH_COUNT
+
+        return PlanningObjective(
+            estimand="incremental_outcome", metric_key=METRIC_KEY_FH_NET_BILLTHROUGH_COUNT,
+            target_outcome_ids=("fh_new_nbt",),
+        )
+
+    @staticmethod
+    def _complete_nbt_metadata(nbt_outcome: OutcomeDefinition) -> dict:
+        return {
+            "data_as_of_date": "2026-07-20",
+            "model_start_week": "2026-01-05",
+            "model_end_week": "2026-07-13",
+            "latest_complete_net_billthrough_week": "2026-07-13",
+            "maturity_rule_description": "Mature after 26 weeks",
+            "source_owner": "Finance",
+            "outcome_id": nbt_outcome.outcome_id,
+            "definition_version": nbt_outcome.definition_version,
+            "definition_fingerprint": fingerprint_outcome_definition(nbt_outcome),
+        }
+
+    def test_approved_nbt_without_completeness_metadata_blocks(
+        self, nbt_meta, nbt_params, approval, nbt_reference_context, nbt_plan, nbt_approval,
+    ):
+        with pytest.raises(OutcomeApprovalBlockedError, match="Net Bill-Through"):
+            evaluate_scenario(
+                nbt_plan, "UK", nbt_meta, nbt_params, nbt_reference_context,
+                planning_objective=self._nbt_planning_objective(),
+                outcome_approvals=[nbt_approval],
+                approval=approval, **IDENTITY,
+            )
+
+    def test_completeness_metadata_without_approval_blocks(
+        self, nbt_meta, nbt_params, approval, nbt_reference_context, nbt_plan, nbt_outcome,
+    ):
+        with pytest.raises(OutcomeApprovalBlockedError):
+            evaluate_scenario(
+                nbt_plan, "UK", nbt_meta, nbt_params, nbt_reference_context,
+                planning_objective=self._nbt_planning_objective(),
+                outcome_approvals=[],
+                nbt_completeness_metadata=self._complete_nbt_metadata(nbt_outcome),
+                approval=approval, **IDENTITY,
+            )
+
+    def test_metadata_for_a_different_outcome_blocks(
+        self, nbt_meta, nbt_params, approval, nbt_reference_context, nbt_plan, nbt_outcome, nbt_approval,
+    ):
+        mismatched = self._complete_nbt_metadata(nbt_outcome)
+        mismatched["outcome_id"] = "some_other_outcome"
+        with pytest.raises(OutcomeApprovalBlockedError, match="Net Bill-Through"):
+            evaluate_scenario(
+                nbt_plan, "UK", nbt_meta, nbt_params, nbt_reference_context,
+                planning_objective=self._nbt_planning_objective(),
+                outcome_approvals=[nbt_approval],
+                nbt_completeness_metadata=mismatched,
+                approval=approval, **IDENTITY,
+            )
+
+    def test_approval_plus_matching_completeness_metadata_permits_official_planning(
+        self, nbt_meta, nbt_params, approval, nbt_reference_context, nbt_plan, nbt_outcome, nbt_approval,
+    ):
+        result = evaluate_scenario(
+            nbt_plan, "UK", nbt_meta, nbt_params, nbt_reference_context,
+            planning_objective=self._nbt_planning_objective(),
+            outcome_approvals=[nbt_approval],
+            nbt_completeness_metadata=self._complete_nbt_metadata(nbt_outcome),
+            approval=approval, **IDENTITY,
+        )
+        assert not result.empty
+
+    def test_optimisation_additionally_requires_optimisation_permission(
+        self, nbt_meta, nbt_params, approval, nbt_reference_context, nbt_plan, nbt_outcome,
+    ):
+        # An approval covering only "planning" must not authorise "optimisation".
+        planning_only_approval = OutcomeApproval(
+            approval_id="apr-nbt-planning-only", outcome_id="fh_new_nbt",
+            definition_fingerprint=fingerprint_outcome_definition(nbt_outcome),
+            status="approved", allowed_uses=("planning",),
+            approved_by="Jane Analyst", approved_at="2026-01-01",
+        )
+        with pytest.raises(OutcomeApprovalBlockedError):
+            optimize_scenario(
+                nbt_plan, ["2024-01"], ["TV_Brand"], "UK", nbt_meta, nbt_params, nbt_reference_context,
+                planning_objective=self._nbt_planning_objective(),
+                outcome_approvals=[planning_only_approval],
+                nbt_completeness_metadata=self._complete_nbt_metadata(nbt_outcome),
+                approval=approval, **IDENTITY,
+            )
+
+
+class TestPlanningVsOptimisationPermissionPropagation:
+    """G2A.7a.1 (REQ-USE-001 section 9): the optimiser's nested point-estimate
+    evaluation must preserve the already-resolved 'optimisation' authorisation
+    rather than re-checking under evaluate_scenario's own 'planning' default -
+    a valid optimisation-only approval must not fail because a nested helper
+    independently asks for planning permission, and a planning-only approval
+    must never authorise optimisation."""
+
+    @pytest.fixture
+    def gsa_outcome(self) -> OutcomeDefinition:
+        return OutcomeDefinition(
+            outcome_id="New", product=FAMILY_HISTORY, segment="New", metric="GSA",
+            metric_key=METRIC_KEY_FH_GSA, source_column="GSA_New", unit="GSA",
+            aggregation_type="count", event_definition="A new subscriber",
+            date_basis="event_date", cohort_or_attribution_basis="signup_cohort",
+            completeness_or_maturity_policy="Mature after 12 weeks",
+            exclusions="Excludes internal/test accounts",
+            reconciliation_source="Finance report", business_owner="Analytics",
+            definition_version="1.0",
+        )
+
+    @pytest.fixture
+    def gsa_meta(self, gsa_outcome) -> FHModelMeta:
+        return FHModelMeta(
+            markets=["UK"], outcome_ids=["New"], channels=["TV_Brand"],
+            dna_channels=[], dna_channel_idx=[], non_dna_idx=[0],
+            dna_outcome_id="New", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+            outcome_catalogue_at_fit=[gsa_outcome],
+        )
+
+    def test_optimisation_only_approval_does_not_fail_on_nested_planning_check(
+        self, gsa_meta, gsa_outcome, params, approval, reference_context, spend_plan,
+    ):
+        # Approved for "optimisation" only - NOT "planning". Before the
+        # G2A.7a.1 fix, optimize_scenario's nested evaluate_scenario calls
+        # (used to compute `predicted`/`current_predicted`) re-checked under
+        # evaluate_scenario's hardcoded "planning" requested_use, which this
+        # approval does not cover - the whole call would incorrectly raise.
+        optimisation_only_approval = OutcomeApproval(
+            approval_id="apr-optimisation-only", outcome_id="New",
+            definition_fingerprint=fingerprint_outcome_definition(gsa_outcome),
+            status="approved", allowed_uses=("optimisation",),
+            approved_by="Jane Analyst", approved_at="2026-01-01",
+        )
+        planning_objective = PlanningObjective(
+            estimand="incremental_outcome", metric_key=METRIC_KEY_FH_GSA,
+            target_outcome_ids=("New",),
+        )
+        result = optimize_scenario(
+            spend_plan, ["2024-01"], ["TV_Brand"], "UK", gsa_meta, params, reference_context,
+            planning_objective=planning_objective,
+            outcome_approvals=[optimisation_only_approval],
+            approval=approval, **IDENTITY,
+        )
+        assert "predicted" in result and "current_predicted" in result
+
+    def test_planning_only_approval_blocks_optimisation(
+        self, gsa_meta, gsa_outcome, params, approval, reference_context, spend_plan,
+    ):
+        planning_only_approval = OutcomeApproval(
+            approval_id="apr-planning-only", outcome_id="New",
+            definition_fingerprint=fingerprint_outcome_definition(gsa_outcome),
+            status="approved", allowed_uses=("planning",),
+            approved_by="Jane Analyst", approved_at="2026-01-01",
+        )
+        planning_objective = PlanningObjective(
+            estimand="incremental_outcome", metric_key=METRIC_KEY_FH_GSA,
+            target_outcome_ids=("New",),
+        )
+        with pytest.raises(OutcomeApprovalBlockedError):
+            optimize_scenario(
+                spend_plan, ["2024-01"], ["TV_Brand"], "UK", gsa_meta, params, reference_context,
+                planning_objective=planning_objective,
+                outcome_approvals=[planning_only_approval],
+                approval=approval, **IDENTITY,
+            )
+
+    def test_planning_only_approval_permits_manual_evaluation(
+        self, gsa_meta, gsa_outcome, params, approval, reference_context, spend_plan,
+    ):
+        planning_only_approval = OutcomeApproval(
+            approval_id="apr-planning-only", outcome_id="New",
+            definition_fingerprint=fingerprint_outcome_definition(gsa_outcome),
+            status="approved", allowed_uses=("planning",),
+            approved_by="Jane Analyst", approved_at="2026-01-01",
+        )
+        planning_objective = PlanningObjective(
+            estimand="incremental_outcome", metric_key=METRIC_KEY_FH_GSA,
+            target_outcome_ids=("New",),
+        )
+        result = evaluate_scenario(
+            spend_plan, "UK", gsa_meta, params, reference_context,
+            planning_objective=planning_objective,
+            outcome_approvals=[planning_only_approval],
+            approval=approval, **IDENTITY,
+        )
+        assert not result.empty

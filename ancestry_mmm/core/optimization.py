@@ -705,15 +705,26 @@ def _require_planning_outcome_approvals(
     outcome_approvals: Optional[List[OutcomeApproval]],
     requested_use: str = "planning",
     market: Optional[str] = None,
+    nbt_completeness_metadata: Optional[dict] = None,
 ) -> None:
-    """G2A.7a gate (REQ-PLAN-001, REQ-USE-001, REQ-OUT-002): validate that
-    every target outcome in a planning objective has a matching, active
-    OutcomeApproval for the requested use, within the given market and the
-    outcome's own product/segment scope.
+    """G2A.7a/.7a.1 gate (REQ-PLAN-001, REQ-USE-001, REQ-OUT-002, REQ-NBT-001):
+    validate that every target outcome in a planning objective has a
+    matching, active OutcomeApproval for the requested use, within the given
+    market and the outcome's own product/segment scope. This is the single
+    resolver both `evaluate_scenario` and `optimize_scenario` call - neither
+    duplicates this logic, and both must pass the `requested_use` that
+    actually matches what they are about to do ('planning' vs
+    'optimisation') so a planning-only approval never authorises
+    optimisation and vice versa.
 
     Called unconditionally in official mode — the objective must be complete
     (metric_key + target_outcome_ids non-empty) or this raises immediately.
-    Uses `find_matching_outcome_approval` for multi-approval resolution."""
+    Uses `find_matching_outcome_approval` for multi-approval resolution.
+
+    G2A.7a.1 (REQ-NBT-001, section 10): when a target's metric is Net
+    Bill-Through, official use additionally requires `nbt_completeness_metadata`
+    to reference the *same* outcome and pass its own internal-consistency
+    checks - an approved definition alone is not sufficient for NBT."""
     if not planning_objective.metric_key:
         raise OutcomeApprovalBlockedError(
             "Official planning blocked: PlanningObjective has no metric_key. "
@@ -756,6 +767,19 @@ def _require_planning_outcome_approvals(
                 f"(market={market or 'any'}, product={outcome.product}, "
                 f"segment={outcome.segment})."
             )
+        if outcome.metric_key == METRIC_KEY_FH_NET_BILLTHROUGH_COUNT:
+            from .net_billthrough import validate_nbt_completeness_metadata_for_outcome
+
+            nbt_issues = validate_nbt_completeness_metadata_for_outcome(
+                outcome, nbt_completeness_metadata,
+            )
+            if nbt_issues:
+                raise OutcomeApprovalBlockedError(
+                    f"Official planning blocked: outcome '{target_id}' is "
+                    "Net Bill-Through and requires both an approved "
+                    "definition AND valid completeness metadata for "
+                    f"'{requested_use}': {'; '.join(nbt_issues)}"
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -788,13 +812,22 @@ def evaluate_scenario(
     counterfactual_policy: Optional[CounterfactualPolicy] = None,
     outcome_approvals: Optional[List[OutcomeApproval]] = None,
     governance_mode: str = "official",
+    nbt_completeness_metadata: Optional[dict] = None,
+    requested_use: str = "planning",
 ) -> pd.DataFrame:
     """Evaluate total and incremental outcomes under governed activity scopes.
 
     G2A.7 (REQ-PLAN-001, REQ-USE-001): when `governance_mode="official"` and
     `planning_objective` is set, each target outcome must have a matching,
-    active OutcomeApproval for 'planning'. Pass `governance_mode="exploratory"`
-    for a clearly non-official evaluation that skips outcome-approval checks."""
+    active OutcomeApproval for `requested_use` (default `"planning"` - the
+    manual-evaluation use; `optimize_scenario`'s nested calls pass
+    `governance_mode="exploratory"` instead of overriding this, since they
+    have already validated the correct `"optimisation"` authorisation
+    up front - see that function's docstring). Pass
+    `governance_mode="exploratory"` for a clearly non-official evaluation
+    that skips outcome-approval checks. `nbt_completeness_metadata`
+    (REQ-NBT-001) is additionally required whenever a target outcome's
+    metric is Net Bill-Through."""
     require_matching_approval(
         approval,
         model_run_id=model_run_id,
@@ -812,8 +845,9 @@ def evaluate_scenario(
             planning_objective=planning_objective,
             meta=meta,
             outcome_approvals=outcome_approvals,
-            requested_use="planning",
+            requested_use=requested_use,
             market=market,
+            nbt_completeness_metadata=nbt_completeness_metadata,
         )
     # --- end outcome-approval gate ---
     response_fn = _steady_state_response_fn(model_type)
@@ -1736,6 +1770,7 @@ def optimize_scenario(
     optimization_resource: Optional[OptimizationResource] = None,
     governance_mode: str = "official",
     outcome_approvals: Optional[List[OutcomeApproval]] = None,
+    nbt_completeness_metadata: Optional[dict] = None,
 ) -> Dict:
     """
     Optimise a spend plan. `constraints=None` (or empty) + conserve_total_budget=True
@@ -1769,10 +1804,18 @@ def optimize_scenario(
         model_spec_fingerprint=model_spec_fingerprint,
         posterior_fingerprint=posterior_fingerprint,
     )
-    # --- Outcome-approval gate (G2A.7a, REQ-PLAN-001, REQ-USE-001) ---
+    # --- Outcome-approval gate (G2A.7a/.7a.1, REQ-PLAN-001, REQ-USE-001) ---
     # When a planning_objective is explicitly provided in official mode,
-    # enforce the approval gate. Track whether it was checked so the
-    # deprecated objective= string path below doesn't double-check.
+    # enforce the approval gate immediately. Track whether the caller gave
+    # ANY objective information at all (a typed object, or a legacy string)
+    # *before* the reconstruction below runs - a caller giving neither is
+    # making no business-outcome claim this function can check anything
+    # about, and is treated symmetrically with evaluate_scenario's own gate
+    # (which likewise only fires when planning_objective is not None): it is
+    # not gated here either. A caller that DOES give an objective (typed or
+    # legacy string) is fully gated in official mode - see the second gate
+    # below for the legacy-string/target-id-resolution path.
+    _caller_gave_objective_info = objective is not None or planning_objective is not None
     _gate_checked = False
     if governance_mode == "official" and planning_objective is not None:
         _require_planning_outcome_approvals(
@@ -1781,6 +1824,7 @@ def optimize_scenario(
             outcome_approvals=outcome_approvals,
             requested_use="optimisation",
             market=market,
+            nbt_completeness_metadata=nbt_completeness_metadata,
         )
         _gate_checked = True
     # --- end outcome-approval gate ---
@@ -1788,8 +1832,7 @@ def optimize_scenario(
     policy = counterfactual_policy or CounterfactualPolicy()
     if objective is None and planning_objective is None:
         # G2A.7a (REQ-PLAN-001): no implicit default to NBT or any KPI.
-        # In official mode this would have already raised above.
-        # For exploratory/legacy callers, create a minimal PlanningObjective.
+        # Nothing to gate - see _caller_gave_objective_info above.
         planning_objective = PlanningObjective(
             counterfactual_policy_fingerprint=policy.fingerprint(),
         )
@@ -1810,6 +1853,32 @@ def optimize_scenario(
                 planning_objective,
                 target_outcome_ids=tuple(target_outcome_ids),
             )
+        elif not planning_objective.target_outcome_ids:
+            # G2A.7a.1 (REQ-PLAN-001 section 5.2): a deprecated string
+            # objective must resolve to the *exact* set of outcome_ids it
+            # would actually optimise over - the same resolution
+            # `_objective_weight` itself performs - before approval
+            # validation runs, rather than leaving target_outcome_ids empty
+            # (which would either block ambiguously on "no target_outcome_ids"
+            # for a caller that legitimately meant "every fitted <metric>
+            # outcome", or let the gate check a narrower objective than what
+            # is actually optimised). Resolution failures (missing ltv,
+            # unknown weights, an objective with no matching fitted outcomes)
+            # are deliberately swallowed here and left to surface naturally,
+            # with a more specific message, from `_objective_factory`'s own
+            # call to `_objective_weight` later in this function.
+            try:
+                resolved_weight = _objective_weight(
+                    objective, meta, ltv, None, weights,
+                    assume_value_scaled_weights=assume_value_scaled_weights,
+                )
+                resolved_ids = tuple(sorted(resolved_weight))
+            except ValueError:
+                resolved_ids = ()
+            if resolved_ids:
+                planning_objective = replace(
+                    planning_objective, target_outcome_ids=resolved_ids,
+                )
     # G2A.7a (REQ-PLAN-001, DEFECT-9): no implicit NBT fallback.
     # legacy_objective is derived from the resolved objective, never from a
     # hard-coded default. It is used only for labelling/economics, not for
@@ -1818,12 +1887,15 @@ def optimize_scenario(
         planning_objective.metric_key if planning_objective and planning_objective.metric_key
         else (objective if objective else "")
     )
-    # G2A.7a: second gate for deprecated objective= string path — the
+    # G2A.7a.1: second gate for the deprecated objective= string path — the
     # planning_objective was resolved from the legacy string above but
-    # wasn't available at the first gate check.
+    # wasn't available at the first gate check. Only fires when the caller
+    # actually gave objective information (see _caller_gave_objective_info
+    # above); a caller giving neither an objective nor a planning_objective
+    # was never gated by evaluate_scenario either.
     if (
         governance_mode == "official"
-        and planning_objective is not None
+        and _caller_gave_objective_info
         and not _gate_checked
     ):
         _require_planning_outcome_approvals(
@@ -1832,6 +1904,7 @@ def optimize_scenario(
             outcome_approvals=outcome_approvals,
             requested_use="optimisation",
             market=market,
+            nbt_completeness_metadata=nbt_completeness_metadata,
         )
     current_spend = _flatten(current_spend_plan, months, channels)
 
@@ -1966,11 +2039,18 @@ def optimize_scenario(
         counterfactual_media_input_by_month=counterfactual_media_input_by_month,
         activity_definitions=activity_definitions,
         counterfactual_policy=policy,
-        # G2A.7a: nested evaluate calls should not re-trigger the approval
-        # gate (already checked at the top of optimize_scenario). Pass
-        # outcome_approvals for informational purposes but use
-        # governance_mode="exploratory" to avoid double-gating.
+        # G2A.7a.1 (REQ-USE-001, section 9): nested evaluate calls must not
+        # re-trigger the approval gate under evaluate_scenario's own
+        # "planning" default requested_use - the correct "optimisation"
+        # authorisation was already validated once, above, before the
+        # (potentially slow) SLSQP call ran. Pass outcome_approvals for
+        # informational/persistence purposes but governance_mode="exploratory"
+        # so these nested calls do not re-check under the wrong permission -
+        # a planning-only approval must never silently satisfy an
+        # optimisation-only gate, or vice versa, and re-checking here with
+        # the wrong requested_use would do exactly that.
         outcome_approvals=outcome_approvals,
+        governance_mode="exploratory",
     )
     optimized_scenario_plan = (
         classify_activity_plan(
@@ -2043,6 +2123,12 @@ def optimize_scenario(
             cost_mapping_registry=cost_mapping_registry,
             cost_context_id=cost_context_id,
             cost_as_of_by_month=cost_as_of_by_month,
+            # G2A.7a.1 (REQ-USE-001, section 9): same reasoning as
+            # identity_kwargs above - the "optimisation" authorisation was
+            # already validated once, before the SLSQP call; posterior
+            # evaluation must not re-check under a different requested_use.
+            outcome_approvals=outcome_approvals,
+            governance_mode="exploratory",
         )
 
     return {

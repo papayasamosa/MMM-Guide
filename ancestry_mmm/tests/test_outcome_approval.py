@@ -136,10 +136,13 @@ class TestOutcomeApprovalMatching:
             unit="GSA",
             aggregation_type="count",
             event_definition="A new subscriber",
+            date_basis="event_date",
             cohort_or_attribution_basis="signup_cohort",
             completeness_or_maturity_policy="Fully mature after 12 weeks",
+            exclusions="Excludes internal/test accounts",
             reconciliation_source="Finance report",
             business_owner="Analytics",
+            definition_version="1.0",
         )
 
     def test_matching_approved_passes_for_allowed_use(self):
@@ -152,6 +155,8 @@ class TestOutcomeApprovalMatching:
             definition_fingerprint=fp,
             status="approved",
             allowed_uses=("planning", "optimisation"),
+            approved_by="Jane Analyst",
+            approved_at="2026-01-01",
         )
         assert outcome_is_approved_for_use(outcome, approval, "planning")
 
@@ -165,6 +170,8 @@ class TestOutcomeApprovalMatching:
             definition_fingerprint=fp,
             status="approved",
             allowed_uses=("headline_reporting",),
+            approved_by="Jane Analyst",
+            approved_at="2026-01-01",
         )
         assert not outcome_is_approved_for_use(outcome, approval, "planning")
         assert not outcome_is_approved_for_use(outcome, approval, "optimisation")
@@ -322,10 +329,13 @@ class TestRequireOutcomeApproval:
             unit="GSA",
             aggregation_type="count",
             event_definition="A new subscriber",
+            date_basis="event_date",
             cohort_or_attribution_basis="signup_cohort",
             completeness_or_maturity_policy="Fully mature after 12 weeks",
+            exclusions="Excludes internal/test accounts",
             reconciliation_source="Finance report",
             business_owner="Analytics",
+            definition_version="1.0",
         )
 
     def test_no_approval_raises(self):
@@ -357,6 +367,8 @@ class TestRequireOutcomeApproval:
             definition_fingerprint="wrong-fingerprint",
             status="approved",
             allowed_uses=("planning",),
+            approved_by="Jane Analyst",
+            approved_at="2026-01-01",
         )
         with pytest.raises(OutcomeApprovalBlockedError, match="stale"):
             require_outcome_approval(outcome, approval, "planning")
@@ -371,6 +383,8 @@ class TestRequireOutcomeApproval:
             definition_fingerprint=fp,
             status="approved",
             allowed_uses=("headline_reporting",),
+            approved_by="Jane Analyst",
+            approved_at="2026-01-01",
         )
         with pytest.raises(OutcomeApprovalBlockedError, match="not for"):
             require_outcome_approval(outcome, approval, "planning")
@@ -385,6 +399,8 @@ class TestRequireOutcomeApproval:
             definition_fingerprint=fp,
             status="approved",
             allowed_uses=("planning",),
+            approved_by="Jane Analyst",
+            approved_at="2026-01-01",
         )
         # Should not raise
         require_outcome_approval(outcome, approval, "planning")
@@ -416,6 +432,7 @@ class TestConditionalNBTUse:
             exclusions="Excludes cancelled within 30 days",
             reconciliation_source="Finance NBT report",
             business_owner="Analytics",
+            definition_version="1.0",
         )
 
     def test_no_approval_blocks_nbt(self):
@@ -433,6 +450,8 @@ class TestConditionalNBTUse:
             definition_fingerprint=fp,
             status="approved",
             allowed_uses=("model_fit", "planning"),
+            approved_by="Jane Analyst",
+            approved_at="2026-01-01",
         )
         assert outcome_is_approved_for_use(outcome, approval, "model_fit")
         assert outcome_is_approved_for_use(outcome, approval, "planning")
@@ -447,6 +466,8 @@ class TestConditionalNBTUse:
             definition_fingerprint=fp,
             status="approved",
             allowed_uses=("model_fit",),
+            approved_by="Jane Analyst",
+            approved_at="2026-01-01",
         )
         assert outcome_is_approved_for_use(outcome, approval, "model_fit")
         assert not outcome_is_approved_for_use(outcome, approval, "optimisation")
@@ -496,10 +517,13 @@ class TestDefinitionValidation:
             unit="GSA",
             aggregation_type="count",
             event_definition="A new subscriber",
+            date_basis="event_date",
             cohort_or_attribution_basis="signup_cohort",
             completeness_or_maturity_policy="Mature after 12 weeks",
+            exclusions="Excludes internal/test accounts",
             reconciliation_source="Finance report",
             business_owner="Analytics",
+            definition_version="1.0",
         )
         issues = validate_outcome_definition_for_approval(outcome)
         assert len(issues) == 0
@@ -572,10 +596,13 @@ class TestBulkResolution:
             unit="GSA",
             aggregation_type="count",
             event_definition="An event",
+            date_basis="event_date",
             cohort_or_attribution_basis="signup_cohort",
             completeness_or_maturity_policy="Mature after 12 weeks",
+            exclusions="Excludes internal/test accounts",
             reconciliation_source="Finance report",
             business_owner="Analytics",
+            definition_version="1.0",
         )
         fp = fingerprint_outcome_definition(outcome)
         approval = OutcomeApproval(
@@ -584,6 +611,8 @@ class TestBulkResolution:
             definition_fingerprint=fp,
             status="approved",
             allowed_uses=("planning",),
+            approved_by="Jane Analyst",
+            approved_at="2026-01-01",
         )
         ids = approved_outcome_ids_for_use(
             [outcome], [approval], "planning",
