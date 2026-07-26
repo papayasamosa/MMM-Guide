@@ -32,10 +32,6 @@ from ancestry_mmm.core.outcomes import (
     outcome_catalogue_fingerprint_payload,
     resolve_outcome_definitions,
 )
-from ancestry_mmm.core.outcome_approval import (
-    OutcomeApproval,
-    outcome_is_approved_for_use,
-)
 from ancestry_mmm.core.pathways import pathway_catalogue_fingerprint_payload
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.optimization import (

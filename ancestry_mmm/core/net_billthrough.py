@@ -12,7 +12,7 @@ Both are required for official NBT use.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import List, Optional, Sequence
+from typing import List, Sequence
 
 import numpy as np
 import pandas as pd

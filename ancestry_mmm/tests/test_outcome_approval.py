@@ -8,20 +8,17 @@ REQ-STALE-001: Definition-bound invalidation
 """
 
 import json
-from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from ancestry_mmm.core.outcome_approval import (
     OUTCOME_APPROVAL_STATUSES,
-    OUTCOME_USES,
     OutcomeApproval,
     OutcomeApprovalBlockedError,
     approved_outcome_ids_for_use,
     fingerprint_outcome_definition,
     legacy_unapproved_approval,
-    outcome_approval_matches_definition,
     outcome_is_approved_for_use,
     require_outcome_approval,
     resolve_approvals_by_outcome_id,

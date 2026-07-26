@@ -66,7 +66,6 @@ from .outcomes import (
 from .outcome_approval import (
     OutcomeApproval,
     OutcomeApprovalBlockedError,
-    outcome_is_approved_for_use,
     require_outcome_approval,
 )
 from .predict import FHPosteriorParams, steady_state_outcome_response
