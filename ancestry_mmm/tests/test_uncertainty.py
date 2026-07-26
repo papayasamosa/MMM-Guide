@@ -286,6 +286,14 @@ class TestEvaluateScenarioWithUncertaintyGovernance:
     just silently accepted."""
 
     @pytest.fixture
+    def approval(self) -> ModelApproval:
+        return ModelApproval(approved_by="Jane Analyst", **IDENTITY)
+
+    @pytest.fixture
+    def reference_context(self):
+        return {"2024-01": {"trend": 1.0, "fourier": np.zeros(4), "promo": {s: 0.0 for s in OUTCOME_IDS}, "controls": {}, "outcome_controls": {}}}
+
+    @pytest.fixture
     def meta_with_catalogue(self) -> FHModelMeta:
         from ancestry_mmm.core.outcomes import FAMILY_HISTORY, METRIC_KEY_FH_GSA, OutcomeDefinition
 

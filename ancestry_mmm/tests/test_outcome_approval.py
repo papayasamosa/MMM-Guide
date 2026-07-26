@@ -367,6 +367,8 @@ class TestRequireOutcomeApproval:
             definition_fingerprint="wrong-fingerprint",
             status="approved",
             allowed_uses=("planning",),
+            approved_by="Jane Analyst",
+            approved_at="2026-01-01",
         )
         with pytest.raises(OutcomeApprovalBlockedError, match="stale"):
             require_outcome_approval(outcome, approval, "planning")
@@ -381,6 +383,8 @@ class TestRequireOutcomeApproval:
             definition_fingerprint=fp,
             status="approved",
             allowed_uses=("headline_reporting",),
+            approved_by="Jane Analyst",
+            approved_at="2026-01-01",
         )
         with pytest.raises(OutcomeApprovalBlockedError, match="not for"):
             require_outcome_approval(outcome, approval, "planning")
@@ -395,6 +399,8 @@ class TestRequireOutcomeApproval:
             definition_fingerprint=fp,
             status="approved",
             allowed_uses=("planning",),
+            approved_by="Jane Analyst",
+            approved_at="2026-01-01",
         )
         # Should not raise
         require_outcome_approval(outcome, approval, "planning")
