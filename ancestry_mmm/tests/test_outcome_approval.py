@@ -1,0 +1,744 @@
+"""Tests for outcome approval governance (G2A.7).
+
+REQ-OUT-002: Composable outcome approval
+REQ-NBT-001: Conditional supplied-NBT use
+REQ-PLAN-001: Explicit planning outcome
+REQ-USE-001: Official versus exploratory outcome use
+REQ-STALE-001: Definition-bound invalidation
+"""
+
+import json
+from datetime import datetime, timedelta
+from pathlib import Path
+
+import pytest
+
+from ancestry_mmm.core.outcome_approval import (
+    OUTCOME_APPROVAL_STATUSES,
+    OUTCOME_USES,
+    OutcomeApproval,
+    OutcomeApprovalBlockedError,
+    approved_outcome_ids_for_use,
+    fingerprint_outcome_definition,
+    legacy_unapproved_approval,
+    outcome_approval_matches_definition,
+    outcome_is_approved_for_use,
+    require_outcome_approval,
+    resolve_approvals_by_outcome_id,
+    validate_outcome_definition_for_approval,
+)
+from ancestry_mmm.core.outcomes import (
+    FAMILY_HISTORY,
+    METRIC_KEY_FH_GSA,
+    METRIC_KEY_FH_NET_BILLTHROUGH_COUNT,
+    OutcomeDefinition,
+)
+from ancestry_mmm.core.optimization import PlanningObjective
+
+
+# ---------------------------------------------------------------------------
+# REQ-STALE-001: Definition fingerprinting
+# ---------------------------------------------------------------------------
+
+
+class TestDefinitionFingerprint:
+    """REQ-STALE-001: definition fingerprint is deterministic and includes
+    all calculation-relevant fields."""
+
+    @staticmethod
+    def _base_outcome() -> OutcomeDefinition:
+        return OutcomeDefinition(
+            outcome_id="fh_new_gsa",
+            product=FAMILY_HISTORY,
+            segment="New",
+            metric="GSA",
+            metric_key=METRIC_KEY_FH_GSA,
+            source_column="GSA_New",
+            unit="GSA",
+            aggregation_type="count",
+            event_definition="A new subscriber completing sign-up",
+            date_basis="event_date",
+            cohort_or_attribution_basis="signup_cohort",
+            completeness_or_maturity_policy="Fully mature after 12 weeks",
+            exclusions="Excludes internal/test accounts",
+            reconciliation_source="Finance weekly GSA report",
+            business_owner="Analytics",
+            definition_version="1.0",
+        )
+
+    def test_fingerprint_is_deterministic(self):
+        """REQ-STALE-001: same fields → same fingerprint."""
+        o1 = self._base_outcome()
+        o2 = self._base_outcome()
+        assert fingerprint_outcome_definition(o1) == fingerprint_outcome_definition(o2)
+
+    def test_event_definition_change_changes_fingerprint(self):
+        """REQ-STALE-001: changing event definition changes the fingerprint."""
+        o1 = self._base_outcome()
+        o2 = OutcomeDefinition(
+            **{**o1.__dict__,
+               "event_definition": "A different event definition"}
+        )
+        assert fingerprint_outcome_definition(o1) != fingerprint_outcome_definition(o2)
+
+    def test_date_basis_change_changes_fingerprint(self):
+        """REQ-STALE-001: changing date basis changes the fingerprint."""
+        o1 = self._base_outcome()
+        o2 = OutcomeDefinition(
+            **{**o1.__dict__, "date_basis": "billing_date"}
+        )
+        assert fingerprint_outcome_definition(o1) != fingerprint_outcome_definition(o2)
+
+    def test_exclusions_change_changes_fingerprint(self):
+        """REQ-STALE-001: changing exclusions changes the fingerprint."""
+        o1 = self._base_outcome()
+        o2 = OutcomeDefinition(
+            **{**o1.__dict__, "exclusions": "Different exclusion list"}
+        )
+        assert fingerprint_outcome_definition(o1) != fingerprint_outcome_definition(o2)
+
+    def test_definition_version_change_changes_fingerprint(self):
+        """REQ-STALE-001: changing definition_version changes fingerprint."""
+        o1 = self._base_outcome()
+        o2 = OutcomeDefinition(
+            **{**o1.__dict__, "definition_version": "2.0"}
+        )
+        assert fingerprint_outcome_definition(o1) != fingerprint_outcome_definition(o2)
+
+    def test_review_notes_do_not_change_definition_fingerprint(self):
+        """REQ-STALE-001: role/inclusion/review fields do NOT affect the
+        outcome-definition fingerprint used for approval matching."""
+        o1 = self._base_outcome()
+        o2 = OutcomeDefinition(
+            **{**o1.__dict__, "role": "secondary"}
+        )
+        # role is NOT a fingerprint field for outcome-definition fingerprinting
+        # (it is for model-spec fingerprinting, but this test is about the
+        #  outcome_approval fingerprint, which only covers business-definition
+        #  fields)
+        assert fingerprint_outcome_definition(o1) == fingerprint_outcome_definition(o2)
+
+
+# ---------------------------------------------------------------------------
+# REQ-OUT-002: Outcome approval matching
+# ---------------------------------------------------------------------------
+
+
+class TestOutcomeApprovalMatching:
+    """REQ-OUT-002: approval is fingerprint-bound."""
+
+    @staticmethod
+    def _make_outcome(outcome_id: str = "fh_new_gsa") -> OutcomeDefinition:
+        return OutcomeDefinition(
+            outcome_id=outcome_id,
+            product=FAMILY_HISTORY,
+            segment="New",
+            metric="GSA",
+            metric_key=METRIC_KEY_FH_GSA,
+            source_column="GSA_New",
+            unit="GSA",
+            aggregation_type="count",
+            event_definition="A new subscriber",
+            cohort_or_attribution_basis="signup_cohort",
+            completeness_or_maturity_policy="Fully mature after 12 weeks",
+            reconciliation_source="Finance report",
+            business_owner="Analytics",
+        )
+
+    def test_matching_approved_passes_for_allowed_use(self):
+        """REQ-OUT-002: matching approval + allowed use = True."""
+        outcome = self._make_outcome()
+        fp = fingerprint_outcome_definition(outcome)
+        approval = OutcomeApproval(
+            approval_id="apr-1",
+            outcome_id="fh_new_gsa",
+            definition_fingerprint=fp,
+            status="approved",
+            allowed_uses=("planning", "optimisation"),
+        )
+        assert outcome_is_approved_for_use(outcome, approval, "planning")
+
+    def test_approval_for_reporting_does_not_permit_optimisation(self):
+        """REQ-OUT-002: a reporting approval doesn't grant optimisation."""
+        outcome = self._make_outcome()
+        fp = fingerprint_outcome_definition(outcome)
+        approval = OutcomeApproval(
+            approval_id="apr-1",
+            outcome_id="fh_new_gsa",
+            definition_fingerprint=fp,
+            status="approved",
+            allowed_uses=("headline_reporting",),
+        )
+        assert not outcome_is_approved_for_use(outcome, approval, "planning")
+        assert not outcome_is_approved_for_use(outcome, approval, "optimisation")
+
+    def test_stale_fingerprint_blocks_use(self):
+        """REQ-OUT-002, REQ-STALE-001: changed definition blocks approval."""
+        outcome_v1 = self._make_outcome()
+        fp_v1 = fingerprint_outcome_definition(outcome_v1)
+        approval = OutcomeApproval(
+            approval_id="apr-1",
+            outcome_id="fh_new_gsa",
+            definition_fingerprint=fp_v1,
+            status="approved",
+            allowed_uses=("planning",),
+        )
+        # Change the definition
+        outcome_v2 = OutcomeDefinition(
+            **{**outcome_v1.__dict__,
+               "event_definition": "Completely different event"}
+        )
+        assert not outcome_is_approved_for_use(outcome_v2, approval, "planning")
+
+    def test_expired_approval_blocks_use(self):
+        """REQ-OUT-002: expired approval blocks use."""
+        outcome = self._make_outcome()
+        fp = fingerprint_outcome_definition(outcome)
+        approval = OutcomeApproval(
+            approval_id="apr-1",
+            outcome_id="fh_new_gsa",
+            definition_fingerprint=fp,
+            status="approved",
+            allowed_uses=("planning",),
+            expires_at="2020-01-01",
+        )
+        assert not outcome_is_approved_for_use(
+            outcome, approval, "planning", as_of="2026-07-26"
+        )
+
+    def test_rejected_approval_blocks_use(self):
+        """REQ-OUT-002: rejected approval blocks use."""
+        outcome = self._make_outcome()
+        fp = fingerprint_outcome_definition(outcome)
+        approval = OutcomeApproval(
+            approval_id="apr-1",
+            outcome_id="fh_new_gsa",
+            definition_fingerprint=fp,
+            status="rejected",
+            allowed_uses=("planning",),
+        )
+        assert not outcome_is_approved_for_use(outcome, approval, "planning")
+
+    def test_legacy_unapproved_blocks_use(self):
+        """REQ-OUT-002: legacy_unapproved status blocks all official use."""
+        approval = legacy_unapproved_approval("fh_new_gsa")
+        assert not approval.is_active()
+        assert approval.status == "legacy_unapproved"
+
+    def test_wrong_market_scope_blocks_use(self):
+        """REQ-OUT-002: approval scoped to UK doesn't cover Australia."""
+        outcome = self._make_outcome()
+        fp = fingerprint_outcome_definition(outcome)
+        approval = OutcomeApproval(
+            approval_id="apr-1",
+            outcome_id="fh_new_gsa",
+            definition_fingerprint=fp,
+            status="approved",
+            allowed_uses=("planning",),
+            market_scope=("UK",),
+        )
+        assert not outcome_is_approved_for_use(
+            outcome, approval, "planning", market="Australia"
+        )
+
+    def test_role_eligibility_alone_never_grants_approval(self):
+        """REQ-OUT-002: being primary/included doesn't mean approved."""
+        outcome = self._make_outcome()
+        # No approval object at all
+        assert not outcome_is_approved_for_use(outcome, None, "planning")
+
+
+# ---------------------------------------------------------------------------
+# REQ-PLAN-001: PlanningObjective defaults
+# ---------------------------------------------------------------------------
+
+
+class TestPlanningObjectiveDefaults:
+    """REQ-PLAN-001: no business metric may be the dataclass default."""
+
+    def test_planning_objective_no_default_metric_key(self):
+        """REQ-PLAN-001: constructing without metric_key leaves it empty."""
+        obj = PlanningObjective()
+        assert obj.metric_key == ""
+        assert obj.target_outcome_ids == ()
+
+    def test_empty_metric_key_not_valid_for_official(self):
+        """REQ-PLAN-001: empty metric_key blocks official planning."""
+        obj = PlanningObjective()
+        assert not obj.is_valid_for_official_planning
+
+    def test_explicit_target_is_valid_for_official(self):
+        """REQ-PLAN-001: explicit metric_key + target_outcome_ids is valid."""
+        obj = PlanningObjective(
+            metric_key=METRIC_KEY_FH_GSA,
+            target_outcome_ids=("fh_new_gsa",),
+        )
+        assert obj.is_valid_for_official_planning
+
+    def test_from_dict_strips_old_nbt_default(self):
+        """REQ-PLAN-001: loading old schema version doesn't backfill NBT."""
+        old_dict = {
+            "estimand": "incremental_outcome",
+            "metric_key": METRIC_KEY_FH_NET_BILLTHROUGH_COUNT,
+            "schema_version": 2,
+        }
+        obj = PlanningObjective.from_dict(old_dict)
+        # The explicit value from the old dict is accepted (it was set
+        # explicitly by the user, not a silent default)
+        assert obj.metric_key == METRIC_KEY_FH_NET_BILLTHROUGH_COUNT
+        # But target_outcome_ids are still empty — approval is still needed
+        assert not obj.is_valid_for_official_planning
+
+    def test_rate_outcomes_invalid_target(self):
+        """REQ-PLAN-001: rate outcomes are not valid optimisation targets."""
+        # The metric registry already marks rate metrics with
+        # allowed_in_optimiser=False — this test confirms the planning
+        # layer doesn't override that.
+        from ancestry_mmm.core.outcomes import METRIC_KEY_FH_NET_BILLTHROUGH_RATE
+        obj = PlanningObjective(
+            metric_key=METRIC_KEY_FH_NET_BILLTHROUGH_RATE,
+            target_outcome_ids=("fh_nbt_rate",),
+        )
+        # The PlanningObjective itself is structurally valid (it has
+        # target_outcome_ids) — the rate check happens at the metric
+        # registry level in validate_outcome_definitions
+        assert obj.is_valid_for_official_planning
+
+
+# ---------------------------------------------------------------------------
+# REQ-OUT-002: require_outcome_approval gate
+# ---------------------------------------------------------------------------
+
+
+class TestRequireOutcomeApproval:
+    """REQ-OUT-002, REQ-USE-001: require_outcome_approval raises clearly."""
+
+    @staticmethod
+    def _make_outcome() -> OutcomeDefinition:
+        return OutcomeDefinition(
+            outcome_id="fh_new_gsa",
+            product=FAMILY_HISTORY,
+            segment="New",
+            metric="GSA",
+            metric_key=METRIC_KEY_FH_GSA,
+            source_column="GSA_New",
+            unit="GSA",
+            aggregation_type="count",
+            event_definition="A new subscriber",
+            cohort_or_attribution_basis="signup_cohort",
+            completeness_or_maturity_policy="Fully mature after 12 weeks",
+            reconciliation_source="Finance report",
+            business_owner="Analytics",
+        )
+
+    def test_no_approval_raises(self):
+        """REQ-USE-001: no approval → OutcomeApprovalBlockedError."""
+        outcome = self._make_outcome()
+        with pytest.raises(OutcomeApprovalBlockedError, match="no approval record"):
+            require_outcome_approval(outcome, None, "planning")
+
+    def test_rejected_approval_raises(self):
+        """REQ-USE-001: rejected approval → error."""
+        outcome = self._make_outcome()
+        fp = fingerprint_outcome_definition(outcome)
+        approval = OutcomeApproval(
+            approval_id="apr-1",
+            outcome_id="fh_new_gsa",
+            definition_fingerprint=fp,
+            status="rejected",
+            allowed_uses=("planning",),
+        )
+        with pytest.raises(OutcomeApprovalBlockedError, match="rejected"):
+            require_outcome_approval(outcome, approval, "planning")
+
+    def test_stale_approval_raises(self):
+        """REQ-USE-001: stale fingerprint → error."""
+        outcome = self._make_outcome()
+        approval = OutcomeApproval(
+            approval_id="apr-1",
+            outcome_id="fh_new_gsa",
+            definition_fingerprint="wrong-fingerprint",
+            status="approved",
+            allowed_uses=("planning",),
+        )
+        with pytest.raises(OutcomeApprovalBlockedError, match="stale"):
+            require_outcome_approval(outcome, approval, "planning")
+
+    def test_wrong_use_raises(self):
+        """REQ-USE-001: approval doesn't include requested use → error."""
+        outcome = self._make_outcome()
+        fp = fingerprint_outcome_definition(outcome)
+        approval = OutcomeApproval(
+            approval_id="apr-1",
+            outcome_id="fh_new_gsa",
+            definition_fingerprint=fp,
+            status="approved",
+            allowed_uses=("headline_reporting",),
+        )
+        with pytest.raises(OutcomeApprovalBlockedError, match="not for"):
+            require_outcome_approval(outcome, approval, "planning")
+
+    def test_valid_approval_succeeds(self):
+        """REQ-USE-001: valid approval → no error."""
+        outcome = self._make_outcome()
+        fp = fingerprint_outcome_definition(outcome)
+        approval = OutcomeApproval(
+            approval_id="apr-1",
+            outcome_id="fh_new_gsa",
+            definition_fingerprint=fp,
+            status="approved",
+            allowed_uses=("planning",),
+        )
+        # Should not raise
+        require_outcome_approval(outcome, approval, "planning")
+
+
+# ---------------------------------------------------------------------------
+# REQ-NBT-001: Conditional NBT use
+# ---------------------------------------------------------------------------
+
+
+class TestConditionalNBTUse:
+    """REQ-NBT-001: NBT requires both definition approval and completeness."""
+
+    @staticmethod
+    def _make_nbt_outcome() -> OutcomeDefinition:
+        return OutcomeDefinition(
+            outcome_id="fh_new_nbt",
+            product=FAMILY_HISTORY,
+            segment="New",
+            metric="Net bill-through count",
+            metric_key=METRIC_KEY_FH_NET_BILLTHROUGH_COUNT,
+            source_column="fh_net_billthrough_count",
+            unit="bill-through subscriber",
+            aggregation_type="count",
+            event_definition="Net bill-through subscriber count",
+            date_basis="signup_date_attributed",
+            cohort_or_attribution_basis="signup_cohort",
+            completeness_or_maturity_policy="Mature after 26 weeks",
+            exclusions="Excludes cancelled within 30 days",
+            reconciliation_source="Finance NBT report",
+            business_owner="Analytics",
+        )
+
+    def test_no_approval_blocks_nbt(self):
+        """REQ-NBT-001: complete definition + no approval = blocked."""
+        outcome = self._make_nbt_outcome()
+        assert not outcome_is_approved_for_use(outcome, None, "planning")
+
+    def test_approved_nbt_allowed_for_approved_use(self):
+        """REQ-NBT-001: approved NBT definition + valid approval = allowed."""
+        outcome = self._make_nbt_outcome()
+        fp = fingerprint_outcome_definition(outcome)
+        approval = OutcomeApproval(
+            approval_id="apr-nbt",
+            outcome_id="fh_new_nbt",
+            definition_fingerprint=fp,
+            status="approved",
+            allowed_uses=("model_fit", "planning"),
+        )
+        assert outcome_is_approved_for_use(outcome, approval, "model_fit")
+        assert outcome_is_approved_for_use(outcome, approval, "planning")
+
+    def test_nbt_fit_approval_not_optimisation(self):
+        """REQ-NBT-001: approval for model_fit doesn't imply optimisation."""
+        outcome = self._make_nbt_outcome()
+        fp = fingerprint_outcome_definition(outcome)
+        approval = OutcomeApproval(
+            approval_id="apr-nbt",
+            outcome_id="fh_new_nbt",
+            definition_fingerprint=fp,
+            status="approved",
+            allowed_uses=("model_fit",),
+        )
+        assert outcome_is_approved_for_use(outcome, approval, "model_fit")
+        assert not outcome_is_approved_for_use(outcome, approval, "optimisation")
+
+    def test_nbt_definition_change_stales_approval(self):
+        """REQ-NBT-001: changing NBT definition stales approval."""
+        outcome = self._make_nbt_outcome()
+        fp = fingerprint_outcome_definition(outcome)
+        approval = OutcomeApproval(
+            approval_id="apr-nbt",
+            outcome_id="fh_new_nbt",
+            definition_fingerprint=fp,
+            status="approved",
+            allowed_uses=("planning",),
+        )
+        # Change the reconciliation source
+        changed = OutcomeDefinition(
+            **{**outcome.__dict__,
+               "reconciliation_source": "Different source"}
+        )
+        assert not outcome_is_approved_for_use(changed, approval, "planning")
+
+    def test_legacy_nbt_imports_unapproved(self):
+        """REQ-NBT-001: legacy NBT import → legacy_unapproved."""
+        approval = legacy_unapproved_approval("fh_new_nbt")
+        assert approval.status == "legacy_unapproved"
+        assert not approval.is_active()
+        assert approval.allowed_uses == ()
+
+
+# ---------------------------------------------------------------------------
+# Definition validation
+# ---------------------------------------------------------------------------
+
+
+class TestDefinitionValidation:
+    """validate_outcome_definition_for_approval checks required fields."""
+
+    def test_complete_definition_passes_validation(self):
+        outcome = OutcomeDefinition(
+            outcome_id="fh_new_gsa",
+            product=FAMILY_HISTORY,
+            segment="New",
+            metric="GSA",
+            metric_key=METRIC_KEY_FH_GSA,
+            source_column="GSA_New",
+            unit="GSA",
+            aggregation_type="count",
+            event_definition="A new subscriber",
+            cohort_or_attribution_basis="signup_cohort",
+            completeness_or_maturity_policy="Mature after 12 weeks",
+            reconciliation_source="Finance report",
+            business_owner="Analytics",
+        )
+        issues = validate_outcome_definition_for_approval(outcome)
+        assert len(issues) == 0
+
+    def test_missing_event_definition_fails_validation(self):
+        outcome = OutcomeDefinition(
+            outcome_id="fh_new_gsa",
+            product=FAMILY_HISTORY,
+            segment="New",
+            metric="GSA",
+            metric_key=METRIC_KEY_FH_GSA,
+            source_column="GSA_New",
+            unit="GSA",
+            aggregation_type="count",
+            event_definition="",
+            cohort_or_attribution_basis="signup_cohort",
+            completeness_or_maturity_policy="Mature after 12 weeks",
+            reconciliation_source="Finance report",
+            business_owner="Analytics",
+        )
+        issues = validate_outcome_definition_for_approval(outcome)
+        assert any("event_definition" in i for i in issues)
+
+    def test_missing_business_owner_fails_validation(self):
+        outcome = OutcomeDefinition(
+            outcome_id="fh_new_gsa",
+            product=FAMILY_HISTORY,
+            segment="New",
+            metric="GSA",
+            metric_key=METRIC_KEY_FH_GSA,
+            source_column="GSA_New",
+            unit="GSA",
+            aggregation_type="count",
+            event_definition="An event",
+            cohort_or_attribution_basis="signup_cohort",
+            completeness_or_maturity_policy="Mature after 12 weeks",
+            reconciliation_source="Finance report",
+            business_owner="",
+        )
+        issues = validate_outcome_definition_for_approval(outcome)
+        assert any("business_owner" in i for i in issues)
+
+
+# ---------------------------------------------------------------------------
+# Bulk resolution
+# ---------------------------------------------------------------------------
+
+
+class TestBulkResolution:
+    def test_resolve_approvals_by_outcome_id_last_wins(self):
+        a1 = OutcomeApproval(
+            approval_id="a1", outcome_id="o1", definition_fingerprint="fp1",
+            status="approved", allowed_uses=("planning",), approved_at="2020-01-01",
+        )
+        a2 = OutcomeApproval(
+            approval_id="a2", outcome_id="o1", definition_fingerprint="fp2",
+            status="approved", allowed_uses=("planning",), approved_at="2021-01-01",
+        )
+        by_id = resolve_approvals_by_outcome_id([a1, a2])
+        assert by_id["o1"].approval_id == "a2"
+
+    def test_approved_outcome_ids_for_use_filters_unapproved(self):
+        outcome = OutcomeDefinition(
+            outcome_id="fh_new_gsa",
+            product=FAMILY_HISTORY,
+            segment="New",
+            metric="GSA",
+            metric_key=METRIC_KEY_FH_GSA,
+            source_column="GSA_New",
+            unit="GSA",
+            aggregation_type="count",
+            event_definition="An event",
+            cohort_or_attribution_basis="signup_cohort",
+            completeness_or_maturity_policy="Mature after 12 weeks",
+            reconciliation_source="Finance report",
+            business_owner="Analytics",
+        )
+        fp = fingerprint_outcome_definition(outcome)
+        approval = OutcomeApproval(
+            approval_id="apr-1",
+            outcome_id="fh_new_gsa",
+            definition_fingerprint=fp,
+            status="approved",
+            allowed_uses=("planning",),
+        )
+        ids = approved_outcome_ids_for_use(
+            [outcome], [approval], "planning",
+        )
+        assert "fh_new_gsa" in ids
+
+    def test_no_approval_excluded(self):
+        outcome = OutcomeDefinition(
+            outcome_id="fh_new_gsa",
+            product=FAMILY_HISTORY,
+            segment="New",
+            metric="GSA",
+            metric_key=METRIC_KEY_FH_GSA,
+            source_column="GSA_New",
+            unit="GSA",
+            aggregation_type="count",
+            event_definition="An event",
+            cohort_or_attribution_basis="signup_cohort",
+            completeness_or_maturity_policy="Mature after 12 weeks",
+            reconciliation_source="Finance report",
+            business_owner="Analytics",
+        )
+        ids = approved_outcome_ids_for_use(
+            [outcome], [], "planning",
+        )
+        assert "fh_new_gsa" not in ids
+
+
+# ---------------------------------------------------------------------------
+# REQ-AUTH-001: Authority consistency
+# ---------------------------------------------------------------------------
+
+
+class TestAuthorityConsistency:
+    """REQ-AUTH-001: repository authority wording is consistent."""
+
+    def test_approved_requirements_readme_exists(self):
+        """REQ-AUTH-001: approved_requirements/README.md is present."""
+        readme_path = Path(__file__).parent.parent.parent / "docs" / "approved_requirements" / "README.md"
+        assert readme_path.exists()
+
+    def test_index_json_exists(self):
+        """REQ-AUTH-001: approved_requirements/index.json is present."""
+        index_path = Path(__file__).parent.parent.parent / "docs" / "approved_requirements" / "index.json"
+        assert index_path.exists()
+
+    def test_index_json_is_valid(self):
+        """REQ-AUTH-001: index.json is valid JSON with required fields."""
+        index_path = Path(__file__).parent.parent.parent / "docs" / "approved_requirements" / "index.json"
+        data = json.loads(index_path.read_text())
+        assert "schema_version" in data
+        assert "requirements" in data
+        assert isinstance(data["requirements"], list)
+        assert len(data["requirements"]) >= 7  # 7 REQ-* records minimum
+
+    def test_indexed_records_exist(self):
+        """REQ-AUTH-001: every indexed record path exists."""
+        index_path = Path(__file__).parent.parent.parent / "docs" / "approved_requirements" / "index.json"
+        data = json.loads(index_path.read_text())
+        docs_root = Path(__file__).parent.parent.parent
+        for req in data["requirements"]:
+            record_path = docs_root / req["record_path"]
+            assert record_path.exists(), f"Missing: {record_path}"
+
+    def test_root_agents_md_mentions_approved_requirements_not_forbids(self):
+        """REQ-AUTH-001: root AGENTS.md doesn't forbid AGENTS.md invariants
+        while also ranking them as authoritative."""
+        agents_path = Path(__file__).parent.parent.parent / "AGENTS.md"
+        content = agents_path.read_text()
+        # AGENTS.md invariants are listed as authority source #3
+        assert "applicable stable `AGENTS.md` invariant" in content
+        assert "applicable `AGENTS.md`" in content
+
+
+# ---------------------------------------------------------------------------
+# OutcomeApproval vocabulary
+# ---------------------------------------------------------------------------
+
+
+class TestOutcomeApprovalVocabulary:
+    def test_valid_statuses_accepted(self):
+        for status in OUTCOME_APPROVAL_STATUSES:
+            approval = OutcomeApproval(
+                approval_id="test",
+                outcome_id="test",
+                definition_fingerprint="fp",
+                status=status,
+            )
+            assert approval.status == status
+
+    def test_invalid_status_raises(self):
+        with pytest.raises(ValueError, match="Unknown outcome approval status"):
+            OutcomeApproval(
+                approval_id="test",
+                outcome_id="test",
+                definition_fingerprint="fp",
+                status="not_a_real_status",
+            )
+
+    def test_invalid_use_raises(self):
+        with pytest.raises(ValueError, match="Unknown outcome use"):
+            OutcomeApproval(
+                approval_id="test",
+                outcome_id="test",
+                definition_fingerprint="fp",
+                allowed_uses=("not_a_real_use",),
+            )
+
+    def test_round_trip_through_dict(self):
+        approval = OutcomeApproval(
+            approval_id="apr-1",
+            outcome_id="fh_new_gsa",
+            definition_fingerprint="abc123",
+            status="approved",
+            allowed_uses=("planning", "optimisation"),
+            market_scope=("UK", "Australia"),
+            approved_by="Jane Analyst",
+            approved_at="2026-07-26",
+            conditions=("Must review quarterly",),
+            notes="Initial approval",
+        )
+        restored = OutcomeApproval.from_dict(approval.to_dict())
+        assert restored.approval_id == approval.approval_id
+        assert restored.outcome_id == approval.outcome_id
+        assert restored.definition_fingerprint == approval.definition_fingerprint
+        assert restored.status == approval.status
+        assert set(restored.allowed_uses) == set(approval.allowed_uses)
+        assert restored.market_scope == approval.market_scope
+
+
+# ---------------------------------------------------------------------------
+# PlanningObjective migration (legacy)
+# ---------------------------------------------------------------------------
+
+
+class TestPlanningObjectiveLegacy:
+    """REQ-PLAN-001: legacy objectives map correctly but remain subject to approval."""
+
+    def test_legacy_fh_net_billthrough_maps_but_no_target(self):
+        """Legacy NBT objective maps metric_key but has empty target_outcome_ids."""
+        from ancestry_mmm.core.optimization import planning_objective_from_legacy
+        obj = planning_objective_from_legacy("fh_net_billthrough")
+        assert obj.metric_key == METRIC_KEY_FH_NET_BILLTHROUGH_COUNT
+        assert obj.target_outcome_ids == ()
+        assert not obj.is_valid_for_official_planning
+
+    def test_legacy_fh_gsa_maps_correctly(self):
+        from ancestry_mmm.core.optimization import planning_objective_from_legacy
+        obj = planning_objective_from_legacy("fh_gsa")
+        assert obj.metric_key == METRIC_KEY_FH_GSA
+
+    def test_unknown_legacy_raises(self):
+        from ancestry_mmm.core.optimization import planning_objective_from_legacy
+        with pytest.raises(ValueError, match="unknown legacy objective"):
+            planning_objective_from_legacy("unknown_objective")

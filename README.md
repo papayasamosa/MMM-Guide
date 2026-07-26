@@ -10,11 +10,11 @@ Built in PyMC and informed by PyMC Marketing. The exact upstream alignment,
 tested compatibility, and intentional custom behaviour are documented in
 [`docs/pymc_marketing_alignment.md`](docs/pymc_marketing_alignment.md).
 
-The application lives in [`ancestry_mmm/`](ancestry_mmm/) and runs as a Streamlit app. See
-[`docs/ancestry_fh_mmm.md`](docs/ancestry_fh_mmm.md) for the full requirements brief it was built
-against - why segments are modelled jointly, why the DNA halo pathway is explicit, why the
-scenario planner defaults to constrained rather than unconstrained optimisation, and why the model
-approval gate exists.
+The application lives in [`ancestry_mmm/`](ancestry_mmm/) and runs as a Streamlit app.
+[`docs/ancestry_fh_mmm.md`](docs/ancestry_fh_mmm.md) provides the original requirements
+context. Implementation contributors should refer to scoped implementation briefs and
+approved requirement records in [`docs/approved_requirements/`](docs/approved_requirements/),
+not interpret the upstream PRD independently.
 
 ## Quick start
 
@@ -84,6 +84,14 @@ Requires Python 3.11 or 3.12 (see [Deployment](#deployment) below for why there'
   movement, minimum-spend floors), and a clearly-labelled unconstrained benchmark - market-aware
   for Model C, with a media-unit planning mode - all evaluated with a documented steady-state
   response approximation using the model's real fitted curves, not literal MCMC-in-the-loop.
+  **Current state:** the Scenario Planner is a steady-state monthly approximation. The full
+  sequential weekly planner, capacity-constrained Search model, and Chronos-2 integration are
+  not yet implemented (see `docs/approved_requirements/` for the capability roadmap).
+- **Outcome governance** (`ancestry_mmm/core/outcome_approval.py`): separate outcome definition,
+  analytical eligibility, and approval for use — a fitted outcome does not automatically become
+  planning-eligible. Net Bill Through is conditionally available: it requires both an approved
+  outcome definition and validated completeness metadata. No outcome silently defaults to NBT,
+  GSA, or any other KPI in planning or optimisation.
 - **Project persistence** (`ancestry_mmm/core/persistence.py`): a downloadable/re-importable
   bundle (Parquet + JSON + NetCDF, all open formats), with path-traversal-safe zip import, an
   Excel export for stakeholders who consume spreadsheets, not code, and a reproducible Markdown/

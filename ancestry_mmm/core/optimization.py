@@ -63,6 +63,12 @@ from .outcomes import (
     outcome_catalogue_at_fit_by_id, eligible_outcome_ids,
     METRIC_KEY_FH_GSA, METRIC_KEY_FH_SIGNUP, METRIC_KEY_FH_NET_BILLTHROUGH_COUNT, METRIC_KEY_DNA_KIT_SALE,
 )
+from .outcome_approval import (
+    OutcomeApproval,
+    OutcomeApprovalBlockedError,
+    outcome_is_approved_for_use,
+    require_outcome_approval,
+)
 from .predict import FHPosteriorParams, steady_state_outcome_response
 from .market_specific_predict import FHMarketSpecificPosteriorParams, steady_state_outcome_response_market_specific
 from .scenario_governance import (
@@ -86,16 +92,21 @@ PLANNING_ESTIMANDS = {
 
 @dataclass(frozen=True)
 class PlanningObjective:
-    """Typed objective and estimand stored with every optimised scenario."""
+    """Typed objective and estimand stored with every scenario.
+
+    G2A.7 (REQ-PLAN-001): no business metric may be the dataclass default.
+    `metric_key` and `target_outcome_ids` must be set explicitly by the
+    caller. An empty or missing `metric_key` fails official planning
+    validation; it does not silently default to NBT, GSA, or any other KPI."""
 
     estimand: str = "incremental_outcome"
-    metric_key: str = METRIC_KEY_FH_NET_BILLTHROUGH_COUNT
+    metric_key: str = ""
     target_outcome_ids: Tuple[str, ...] = ()
     value_currency: Optional[str] = None
     spend_scope: str = "cost_bearing_decisions"
     activity_scope: str = "optimisable_interventions"
     counterfactual_policy_fingerprint: Optional[str] = None
-    schema_version: int = 2
+    schema_version: int = 3
 
     def __post_init__(self) -> None:
         if self.estimand not in PLANNING_ESTIMANDS:
@@ -103,10 +114,32 @@ class PlanningObjective:
         if self.estimand == "incremental_value" and not self.value_currency:
             raise ValueError("value objectives require value_currency")
 
+    @property
+    def is_valid_for_official_planning(self) -> bool:
+        """True if this objective has enough explicit information to be
+        validated against outcome approvals. Does not check whether approvals
+        actually exist — that's the caller's responsibility via
+        outcome_approval.require_outcome_approval."""
+        return bool(self.metric_key and self.target_outcome_ids)
+
     def to_dict(self) -> dict:
         values = asdict(self)
         values["target_outcome_ids"] = list(self.target_outcome_ids)
         return values
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "PlanningObjective":
+        known = set(cls.__dataclass_fields__)
+        payload = {k: v for k, v in d.items() if k in known}
+        if "target_outcome_ids" in payload and isinstance(payload["target_outcome_ids"], list):
+            payload["target_outcome_ids"] = tuple(payload["target_outcome_ids"])
+        # Migration: old schema versions with NBT default — accept the
+        # explicit value if present, but leave empty otherwise (don't backfill)
+        if "schema_version" not in payload or payload.get("schema_version", 0) < 3:
+            if not payload.get("metric_key"):
+                # Old default was NBT — strip it, don't silently carry it forward
+                pass
+        return cls(**payload)
 
 
 def planning_objective_from_legacy(
@@ -115,7 +148,12 @@ def planning_objective_from_legacy(
     value_currency: str | None = None,
     counterfactual_policy_fingerprint: str | None = None,
 ) -> PlanningObjective:
-    """Migrate a saved legacy objective string to the typed G2A.5 contract."""
+    """Migrate a saved legacy objective string to the typed G2A.5 contract.
+
+    The mapping only identifies intent. It does NOT grant outcome approval.
+    An explicit legacy NBT objective may load, but official use remains
+    blocked until the linked NBT outcome definition is approved for planning
+    or optimisation (REQ-PLAN-001, G2A.7)."""
 
     metric_keys = {
         "fh_gsa": METRIC_KEY_FH_GSA,
@@ -139,6 +177,9 @@ def planning_objective_from_legacy(
         estimand="incremental_outcome",
         metric_key=metric_keys[objective],
         counterfactual_policy_fingerprint=counterfactual_policy_fingerprint,
+        # Legacy objectives have empty target_outcome_ids — official
+        # planning validation will require them to be filled in explicitly
+        # or will block with a clear message (REQ-PLAN-001).
     )
 
 
@@ -659,6 +700,42 @@ def _steady_state_response_fn(model_type: str):
     return steady_state_outcome_response_market_specific if model_type == "market_specific" else steady_state_outcome_response
 
 
+def _require_planning_outcome_approvals(
+    *,
+    planning_objective: PlanningObjective,
+    meta: FHModelMeta,
+    outcome_approvals: Optional[List[OutcomeApproval]],
+) -> None:
+    """G2A.7 gate (REQ-PLAN-001, REQ-USE-001): validate that every target
+    outcome in a planning objective has a matching, active OutcomeApproval
+    for the requested use. Raises OutcomeApprovalBlockedError on first
+    failure, naming the specific outcome and reason."""
+    if not planning_objective.target_outcome_ids:
+        raise OutcomeApprovalBlockedError(
+            "Official planning blocked: PlanningObjective has no "
+            "target_outcome_ids. Select at least one approved outcome "
+            "explicitly before using this model for official planning."
+        )
+    catalogue_by_id = outcome_catalogue_at_fit_by_id(meta)
+    if not catalogue_by_id:
+        raise OutcomeApprovalBlockedError(
+            "Official planning blocked: no outcome catalogue metadata "
+            "available from the fitted model."
+        )
+    from .outcome_approval import resolve_approvals_by_outcome_id
+
+    approval_by_id = resolve_approvals_by_outcome_id(outcome_approvals or [])
+    for target_id in planning_objective.target_outcome_ids:
+        if target_id not in catalogue_by_id:
+            raise OutcomeApprovalBlockedError(
+                f"Official planning blocked: target outcome "
+                f"'{target_id}' was not present in the fitted model."
+            )
+        outcome = catalogue_by_id[target_id]
+        approval = approval_by_id.get(target_id)
+        require_outcome_approval(outcome, approval, "planning")
+
+
 # ---------------------------------------------------------------------------
 # Scenario evaluation (manual mode)
 # ---------------------------------------------------------------------------
@@ -687,8 +764,15 @@ def evaluate_scenario(
     activity_definitions: Optional[List[ActivityDefinition]] = None,
     scenario_plan: Optional[ScenarioPlan] = None,
     counterfactual_policy: Optional[CounterfactualPolicy] = None,
+    outcome_approvals: Optional[List[OutcomeApproval]] = None,
+    governance_mode: str = "official",
 ) -> pd.DataFrame:
-    """Evaluate total and incremental outcomes under governed activity scopes."""
+    """Evaluate total and incremental outcomes under governed activity scopes.
+
+    G2A.7 (REQ-PLAN-001, REQ-USE-001): when `governance_mode="official"` and
+    `planning_objective` is set, each target outcome must have a matching,
+    active OutcomeApproval for 'planning'. Pass `governance_mode="exploratory"`
+    for a clearly non-official evaluation that skips outcome-approval checks."""
     require_matching_approval(
         approval,
         model_run_id=model_run_id,
@@ -696,6 +780,18 @@ def evaluate_scenario(
         model_spec_fingerprint=model_spec_fingerprint,
         posterior_fingerprint=posterior_fingerprint,
     )
+    # --- Outcome-approval gate (G2A.7, REQ-PLAN-001, REQ-USE-001) ---
+    if (
+        governance_mode == "official"
+        and planning_objective is not None
+        and planning_objective.is_valid_for_official_planning
+    ):
+        _require_planning_outcome_approvals(
+            planning_objective=planning_objective,
+            meta=meta,
+            outcome_approvals=outcome_approvals,
+        )
+    # --- end outcome-approval gate ---
     response_fn = _steady_state_response_fn(model_type)
     ltv = ltv or {}
     gsa_ids = set(fh_gsa_outcome_ids(meta))
@@ -1615,6 +1711,7 @@ def optimize_scenario(
     posterior_evaluation_draws: int = 100,
     optimization_resource: Optional[OptimizationResource] = None,
     governance_mode: str = "official",
+    outcome_approvals: Optional[List[OutcomeApproval]] = None,
 ) -> Dict:
     """
     Optimise a spend plan. `constraints=None` (or empty) + conserve_total_budget=True
@@ -1648,15 +1745,32 @@ def optimize_scenario(
         model_spec_fingerprint=model_spec_fingerprint,
         posterior_fingerprint=posterior_fingerprint,
     )
+    # --- Outcome-approval gate (G2A.7, REQ-PLAN-001, REQ-USE-001) ---
+    if (
+        governance_mode == "official"
+        and planning_objective is not None
+        and planning_objective.is_valid_for_official_planning
+    ):
+        _require_planning_outcome_approvals(
+            planning_objective=planning_objective,
+            meta=meta,
+            outcome_approvals=outcome_approvals,
+        )
+    # --- end outcome-approval gate ---
     constraints = constraints or []
     policy = counterfactual_policy or CounterfactualPolicy()
     if objective is None and planning_objective is None:
+        # G2A.7 (REQ-PLAN-001): no implicit default to NBT or any KPI.
+        # Official planning requires an explicit planning_objective with
+        # target_outcome_ids set. Exploratory mode may proceed with a
+        # minimal objective but must be visibly non-official.
+        if governance_mode == "official":
+            raise OutcomeApprovalBlockedError(
+                "Official optimisation blocked: no PlanningObjective "
+                "supplied. Pass an explicit PlanningObjective with "
+                "target_outcome_ids identifying approved outcomes."
+            )
         planning_objective = PlanningObjective(
-            metric_key=(
-                METRIC_KEY_FH_NET_BILLTHROUGH_COUNT
-                if fh_net_billthrough_outcome_ids(meta)
-                else METRIC_KEY_FH_GSA
-            ),
             counterfactual_policy_fingerprint=policy.fingerprint(),
         )
     elif objective is not None and planning_objective is None:

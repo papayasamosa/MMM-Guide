@@ -3,12 +3,16 @@
 Net bill-through is an input KPI, not a transformation performed by the MMM.
 This module deliberately contains no signup, billing, cancellation, refund,
 offer or maturity-estimation logic.
+
+G2A.7 (REQ-NBT-001): NBT completeness validation remains a data-integrity
+gate; business-definition approval is separate (see core.outcome_approval).
+Both are required for official NBT use.
 """
 
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import List, Sequence
+from typing import List, Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -30,6 +34,12 @@ class NetBillthroughCompletenessMetadata:
     aggregation_type: str = "count"
     date_basis: str = NBT_DATE_BASIS
     unit: str = NBT_UNIT
+    # G2A.7 (REQ-NBT-001): bind completeness metadata to the specific
+    # outcome definition this data belongs to — completeness is about
+    # data integrity for a particular outcome, not a global property.
+    outcome_id: str = ""
+    definition_version: str = ""
+    definition_fingerprint: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)

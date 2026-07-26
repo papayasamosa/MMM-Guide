@@ -32,6 +32,10 @@ from ancestry_mmm.core.outcomes import (
     outcome_catalogue_fingerprint_payload,
     resolve_outcome_definitions,
 )
+from ancestry_mmm.core.outcome_approval import (
+    OutcomeApproval,
+    outcome_is_approved_for_use,
+)
 from ancestry_mmm.core.pathways import pathway_catalogue_fingerprint_payload
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.optimization import (
@@ -429,13 +433,14 @@ cost_as_of_by_month = {
 _has_dna_kit_segments = bool(dna_kit_sale_outcome_ids(meta))
 _has_fh_signup_outcomes = bool(fh_signup_outcome_ids(meta))
 _has_fh_nbt_outcomes = bool(fh_net_billthrough_outcome_ids(meta))
+# G2A.7 (REQ-PLAN-001): NBT is no longer first in the selector — no outcome
+# is a privileged default. NBT appears only when an NBT outcome is actually
+# in the fitted model, at the end of the list, not promoted above others.
 _objective_options = (
-    (["fh_net_billthrough"] if _has_fh_nbt_outcomes else [])
-    + ["fh_gsa", "expected_value"]
+    ["fh_gsa", "expected_value"]
     + (["dna_kits"] if _has_dna_kit_segments else [])
-    + (
-    ["fh_signups"] if _has_fh_signup_outcomes else []
-    )
+    + (["fh_signups"] if _has_fh_signup_outcomes else [])
+    + (["fh_net_billthrough"] if _has_fh_nbt_outcomes else [])
 )
 _objective_labels = {
     "fh_net_billthrough": "Maximise incremental Family History net bill-through",
@@ -475,7 +480,9 @@ planning_objective = (
 st.caption(
     "Each objective states exactly what it maximises - Family History GSAs, Family History sign-ups "
     "and DNA kit sales are never silently combined into one generic 'volume' number "
-    "(docs/dna_fh_causal_structure.md)."
+    "(docs/dna_fh_causal_structure.md). "
+    "**Official planning requires each target outcome to have an approved definition "
+    "(Structure → Outcome Governance).**"
 )
 if objective == "expected_value" and not ltv:
     st.warning(

@@ -8,10 +8,7 @@ More specific `AGENTS.md` files under `ancestry_mmm/core`, `ancestry_mmm/pages`,
 
 ## Requirements authority
 
-Business requirements implemented in this repository must come from either:
-
-1. a task-specific approved implementation brief, or
-2. a repository-controlled approved requirements manifest or decision record (see `docs/approved_requirements/` and `docs/decision_log.md`).
+Business requirements implemented in this repository must be supplied through a task-specific approved implementation brief, a repository-controlled approved requirement or decision record, or an applicable stable `AGENTS.md` invariant, following the authority hierarchy below.
 
 Coding agents must not independently interpret, reconcile, amend, or supersede the external Ancestry MMM PRD.
 

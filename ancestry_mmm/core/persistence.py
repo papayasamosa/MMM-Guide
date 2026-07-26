@@ -148,6 +148,7 @@ def export_project(
     media_input_support: Optional[List[dict]] = None,
     monetary_spend_support: Optional[List[dict]] = None,
     activity_definitions: Optional[List[dict]] = None,
+    outcome_approvals: Optional[List[dict]] = None,
 ) -> Path:
     output_path = Path(output_path)
     with tempfile.TemporaryDirectory() as tmp:
@@ -248,6 +249,10 @@ def export_project(
         if migration_review is not None:
             (tmp / "config" / "migration_review.json").write_text(
                 json.dumps(migration_review, indent=2, default=str)
+            )
+        if outcome_approvals is not None:
+            (tmp / "config" / "outcome_approvals.json").write_text(
+                json.dumps(outcome_approvals, indent=2, default=str)
             )
         if diagnostics is not None:
             for name, value in diagnostics.items():
@@ -366,6 +371,10 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         "model_comparison_candidates": [],
         "migration_review": None,
         "curve_bank_binary_files": {},
+        # G2A.7 (REQ-OUT-002): outcome approvals - None for legacy bundles
+        # (no approvals on file). Imported bundles without this file get
+        # legacy_unapproved status for every outcome, never implicit approval.
+        "outcome_approvals": None,
     }
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
@@ -472,6 +481,13 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         if (config_dir / "migration_review.json").exists():
             result["migration_review"] = json.loads(
                 (config_dir / "migration_review.json").read_text()
+            )
+        # G2A.7 (REQ-OUT-002): outcome approvals persisted alongside outcome
+        # definitions. Absent in legacy bundles — treated as no approvals on
+        # file, not an error.
+        if (config_dir / "outcome_approvals.json").exists():
+            result["outcome_approvals"] = json.loads(
+                (config_dir / "outcome_approvals.json").read_text()
             )
         if (config_dir / "scenarios.json").exists():
             scenarios_meta = json.loads((config_dir / "scenarios.json").read_text())
