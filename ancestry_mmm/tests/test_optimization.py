@@ -198,14 +198,14 @@ class TestOptimizeScenarioApprovalEnforcement:
 class TestModelTypeDispatch:
     def test_default_model_type_is_shared(self, meta, params, approval, spend_plan, reference_context):
         # No model_type kwarg at all - must behave exactly as before Phase 3c.
-        result = evaluate_scenario(spend_plan, "UK", meta, params, reference_context, approval=approval, **IDENTITY)
+        result = evaluate_scenario(spend_plan, "UK", meta, params, reference_context, approval=approval, governance_mode="exploratory", **IDENTITY)
         assert not result.empty
 
     def test_invalid_model_type_raises(self, meta, params, approval, spend_plan, reference_context):
         with pytest.raises(ValueError, match="model_type must be"):
             evaluate_scenario(
                 spend_plan, "UK", meta, params, reference_context,
-                model_type="not_a_real_type", approval=approval, **IDENTITY,
+                model_type="not_a_real_type", approval=approval, governance_mode="exploratory", **IDENTITY,
             )
 
     def test_market_specific_evaluate_scenario_uses_that_markets_own_curve(
@@ -213,11 +213,11 @@ class TestModelTypeDispatch:
     ):
         uk_result = evaluate_scenario(
             spend_plan, "UK", market_specific_meta, market_specific_params, reference_context,
-            model_type="market_specific", approval=approval, **IDENTITY,
+            model_type="market_specific", approval=approval, governance_mode="exploratory", **IDENTITY,
         )
         au_result = evaluate_scenario(
             spend_plan, "Australia", market_specific_meta, market_specific_params, reference_context,
-            model_type="market_specific", approval=approval, **IDENTITY,
+            model_type="market_specific", approval=approval, governance_mode="exploratory", **IDENTITY,
         )
         # Different beta/K between markets -> different predicted GSAs for the same spend plan.
         assert uk_result["predicted_outcome"].iloc[0] != pytest.approx(au_result["predicted_outcome"].iloc[0])
@@ -236,7 +236,7 @@ class TestModelTypeDispatch:
 
 class TestAverageCpa:
     def test_avg_cpa_is_spend_over_incremental_gsa(self, meta, params, approval, spend_plan, reference_context):
-        result = evaluate_scenario(spend_plan, "UK", meta, params, reference_context, approval=approval, **IDENTITY)
+        result = evaluate_scenario(spend_plan, "UK", meta, params, reference_context, approval=approval, governance_mode="exploratory", **IDENTITY)
         total_spend = result["total_spend"].iloc[0]
         incremental_gsa = result["incremental_outcome"].sum()
         assert result["avg_cpa"].iloc[0] == pytest.approx(
@@ -259,6 +259,7 @@ class TestAverageCpa:
             reference_context,
             approval=approval,
             counterfactual_media_input_by_month=spend_plan,
+            governance_mode="exploratory",
             **IDENTITY,
         )
         assert np.allclose(result["incremental_outcome"], 0)
@@ -291,7 +292,7 @@ class TestAverageCpa:
         ref = {"2024-01": {"trend": 1.0, "fourier": np.zeros(6), "promo": {"New": 0.0, "Winback": 0.0}, "controls": {}, "outcome_controls": {}}}
         result = evaluate_scenario(
             {"2024-01": {"TV_Brand": 1000.0}}, "UK", meta_two_segments, params, ref,
-            approval=approval, **IDENTITY,
+            approval=approval, governance_mode="exploratory", **IDENTITY,
         )
         assert len(result) == 2  # one row per segment
         assert result["avg_cpa"].nunique() == 1
@@ -299,7 +300,7 @@ class TestAverageCpa:
     def test_whole_plan_cost_per_fh_gsa_alias_matches_avg_cpa(self, meta, params, approval, spend_plan, reference_context):
         # PR E.2 #8 - the explicit-spend-scope name must never silently
         # diverge from the bare avg_cpa/cost_per_fh_gsa numbers.
-        result = evaluate_scenario(spend_plan, "UK", meta, params, reference_context, approval=approval, **IDENTITY)
+        result = evaluate_scenario(spend_plan, "UK", meta, params, reference_context, approval=approval, governance_mode="exploratory", **IDENTITY)
         assert np.array_equal(
             result["whole_plan_cost_per_fh_gsa"].to_numpy(dtype=float), result["avg_cpa"].to_numpy(dtype=float), equal_nan=True,
         )
@@ -341,7 +342,7 @@ class TestProductAwareScenarioOutputs:
         self, meta_with_kit_segment, params_with_kit_segment, approval, ref_with_kit_segment,
     ):
         plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0}}
-        result = evaluate_scenario(plan, "UK", meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment, approval=approval, **IDENTITY)
+        result = evaluate_scenario(plan, "UK", meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment, approval=approval, governance_mode="exploratory", **IDENTITY)
         new_row = result[result["outcome_id"] == "New"].iloc[0]
         kit_row = result[result["outcome_id"] == "DNA_Kit"].iloc[0]
         assert new_row["fh_gsa"] == pytest.approx(new_row["predicted_outcome"])
@@ -354,7 +355,7 @@ class TestProductAwareScenarioOutputs:
         self, meta_with_kit_segment, params_with_kit_segment, approval, ref_with_kit_segment,
     ):
         plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0}}
-        result = evaluate_scenario(plan, "UK", meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment, approval=approval, **IDENTITY)
+        result = evaluate_scenario(plan, "UK", meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment, approval=approval, governance_mode="exploratory", **IDENTITY)
         total_spend = result["total_spend"].iloc[0]
         fh_gsa = result["incremental_fh_gsa"].iloc[0]
         dna_kits = result["incremental_dna_kits"].iloc[0]
@@ -366,7 +367,7 @@ class TestProductAwareScenarioOutputs:
         assert result["whole_plan_cost_per_dna_kit"].iloc[0] == pytest.approx(result["dna_avg_cpa"].iloc[0])
 
     def test_dna_avg_cpa_is_none_when_no_kit_only_segments(self, meta, params, approval, spend_plan, reference_context):
-        result = evaluate_scenario(spend_plan, "UK", meta, params, reference_context, approval=approval, **IDENTITY)
+        result = evaluate_scenario(spend_plan, "UK", meta, params, reference_context, approval=approval, governance_mode="exploratory", **IDENTITY)
         assert result["dna_avg_cpa"].iloc[0] is None
 
     def test_total_value_sums_ltv_weighted_value_across_every_segment(
@@ -374,7 +375,7 @@ class TestProductAwareScenarioOutputs:
     ):
         plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0}}
         ltv = {"New": 2.0, "DNA_Kit": 50.0}
-        result = evaluate_scenario(plan, "UK", meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment, ltv, approval=approval, **IDENTITY)
+        result = evaluate_scenario(plan, "UK", meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment, ltv, approval=approval, governance_mode="exploratory", **IDENTITY)
         assert result["total_value"].iloc[0] == pytest.approx(result["value"].sum())
 
     def test_compare_scenarios_splits_fh_gsa_and_dna_kits_without_double_counting(
@@ -386,7 +387,7 @@ class TestProductAwareScenarioOutputs:
             "2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0},
             "2024-02": {"TV_Brand": 1000.0, "DNA_Ad": 500.0},
         }
-        predicted = evaluate_scenario(plan, "UK", meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment, approval=approval, **IDENTITY)
+        predicted = evaluate_scenario(plan, "UK", meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment, approval=approval, governance_mode="exploratory", **IDENTITY)
         compare_df = compare_scenarios([{"name": "Plan A", "market": "UK", "spend_plan": plan, "predicted": predicted}])
         expected_fh_gsa = predicted.groupby("month")["fh_gsa"].first().sum()
         expected_dna_kits = predicted.groupby("month")["dna_kits"].first().sum()
@@ -400,7 +401,7 @@ class TestProductAwareScenarioOutputs:
     def test_compare_scenarios_falls_back_when_predicted_has_no_product_split(self, meta, params, approval, spend_plan, reference_context):
         # Defensive against a hand-built/legacy `predicted` DataFrame that
         # predates the fh_gsa/dna_kits columns.
-        predicted = evaluate_scenario(spend_plan, "UK", meta, params, reference_context, approval=approval, **IDENTITY)
+        predicted = evaluate_scenario(spend_plan, "UK", meta, params, reference_context, approval=approval, governance_mode="exploratory", **IDENTITY)
         legacy_predicted = predicted.drop(columns=["fh_gsa", "dna_kits"])
         compare_df = compare_scenarios([{"name": "Legacy", "market": "UK", "spend_plan": spend_plan, "predicted": legacy_predicted}])
         assert compare_df["total_fh_gsa"].iloc[0] == pytest.approx(legacy_predicted["predicted_outcome"].sum())
@@ -432,6 +433,7 @@ def test_response_only_activity_suppresses_fake_monetary_economics(
         {"New": 2.0},
         approval=approval,
         activity_definitions=[activity],
+        governance_mode="exploratory",
         **IDENTITY,
     )
 
@@ -629,10 +631,10 @@ class TestExplicitOptimisationObjectives:
             raise AssertionError("minimize() should not be called for an invalid objective")
 
         monkeypatch.setattr(optimization_module, "minimize", _fail_if_called)
-        with pytest.raises(ValueError, match="objective must be one of"):
+        with pytest.raises(ValueError, match="cannot migrate unknown legacy objective"):
             optimize_scenario(
                 spend_plan, ["2024-01"], ["TV_Brand"], "UK", meta, params, reference_context,
-                objective="volume", approval=approval, **IDENTITY,
+                objective="volume", approval=approval, governance_mode="exploratory", **IDENTITY,
             )
 
     def test_default_objective_is_fh_gsa_and_excludes_kit_only_segments(
@@ -641,7 +643,7 @@ class TestExplicitOptimisationObjectives:
         result = optimize_scenario(
             plan_with_kit_segment, ["2024-01"], ["TV_Brand", "DNA_Ad"], "UK",
             meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment,
-            approval=approval, **IDENTITY,
+            objective="fh_gsa", approval=approval, governance_mode="exploratory", **IDENTITY,
         )
         current_predicted = result["current_predicted"]
         expected = float(current_predicted[current_predicted["outcome_id"] == "New"]["incremental_outcome"].sum())
@@ -651,7 +653,7 @@ class TestExplicitOptimisationObjectives:
         with pytest.raises(ValueError, match="no DNA-kit outcomes"):
             optimize_scenario(
                 spend_plan, ["2024-01"], ["TV_Brand"], "UK", meta, params, reference_context,
-                objective="dna_kits", approval=approval, **IDENTITY,
+                objective="dna_kits", approval=approval, governance_mode="exploratory", **IDENTITY,
             )
 
     def test_dna_kits_objective_targets_only_kit_only_segments(
@@ -660,30 +662,30 @@ class TestExplicitOptimisationObjectives:
         result = optimize_scenario(
             plan_with_kit_segment, ["2024-01"], ["TV_Brand", "DNA_Ad"], "UK",
             meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment,
-            objective="dna_kits", approval=approval, **IDENTITY,
+            objective="dna_kits", approval=approval, governance_mode="exploratory", **IDENTITY,
         )
         current_predicted = result["current_predicted"]
-        expected = float(current_predicted[current_predicted["outcome_id"] == "DNA_Kit"]["predicted_outcome"].sum())
+        expected = float(current_predicted[current_predicted["outcome_id"] == "DNA_Kit"]["incremental_outcome"].sum())
         assert result["current_objective_value"] == pytest.approx(expected)
 
     def test_weighted_mix_without_weights_raises(self, meta, params, approval, spend_plan, reference_context):
         with pytest.raises(ValueError, match="weighted_mix.*requires"):
             optimize_scenario(
                 spend_plan, ["2024-01"], ["TV_Brand"], "UK", meta, params, reference_context,
-                objective="weighted_mix", approval=approval, **IDENTITY,
+                objective="weighted_mix", approval=approval, governance_mode="exploratory", **IDENTITY,
             )
 
     def test_expected_value_without_ltv_raises(self, meta, params, approval, spend_plan, reference_context):
         with pytest.raises(ValueError, match="expected_value.*requires"):
             optimize_scenario(
                 spend_plan, ["2024-01"], ["TV_Brand"], "UK", meta, params, reference_context,
-                objective="expected_value", approval=approval, **IDENTITY,
+                objective="expected_value", approval=approval, governance_mode="exploratory", **IDENTITY,
             )
 
     def test_expected_value_with_ltv_runs(self, meta, params, approval, spend_plan, reference_context):
         result = optimize_scenario(
             spend_plan, ["2024-01"], ["TV_Brand"], "UK", meta, params, reference_context,
-            ltv={"New": 2.0}, objective="expected_value", approval=approval, **IDENTITY,
+            ltv={"New": 2.0}, objective="expected_value", approval=approval, governance_mode="exploratory", **IDENTITY,
         )
         assert "spend_plan" in result
 
@@ -693,10 +695,10 @@ class TestExplicitOptimisationObjectives:
         result = optimize_scenario(
             plan_with_kit_segment, ["2024-01"], ["TV_Brand", "DNA_Ad"], "UK",
             meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment,
-            objective="fh_gsa", target_outcome_ids=["New"], approval=approval, **IDENTITY,
+            objective="fh_gsa", target_outcome_ids=["New"], approval=approval, governance_mode="exploratory", **IDENTITY,
         )
         current_predicted = result["current_predicted"]
-        expected = float(current_predicted[current_predicted["outcome_id"] == "New"]["predicted_outcome"].sum())
+        expected = float(current_predicted[current_predicted["outcome_id"] == "New"]["incremental_outcome"].sum())
         assert result["current_objective_value"] == pytest.approx(expected)
 
     def test_a_segment_omitted_from_weighted_mix_contributes_nothing(
@@ -706,10 +708,10 @@ class TestExplicitOptimisationObjectives:
         result = optimize_scenario(
             plan_with_kit_segment, ["2024-01"], ["TV_Brand", "DNA_Ad"], "UK",
             meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment,
-            objective="weighted_mix", weights={"New": 3.0}, approval=approval, **IDENTITY,
+            objective="weighted_mix", weights={"New": 3.0}, approval=approval, governance_mode="exploratory", **IDENTITY,
         )
         current_predicted = result["current_predicted"]
-        expected = 3.0 * float(current_predicted[current_predicted["outcome_id"] == "New"]["predicted_outcome"].sum())
+        expected = 3.0 * float(current_predicted[current_predicted["outcome_id"] == "New"]["incremental_outcome"].sum())
         assert result["current_objective_value"] == pytest.approx(expected)
 
     def test_all_valid_objectives_are_exercised_above(self):
@@ -763,7 +765,7 @@ class TestFhSignupVsGsaObjectives:
     def test_evaluate_scenario_fh_gsa_excludes_signup(
         self, meta_with_signup_and_gsa, params_with_signup_and_gsa, approval, ref_with_signup_and_gsa, plan,
     ):
-        result = evaluate_scenario(plan, "UK", meta_with_signup_and_gsa, params_with_signup_and_gsa, ref_with_signup_and_gsa, approval=approval, **IDENTITY)
+        result = evaluate_scenario(plan, "UK", meta_with_signup_and_gsa, params_with_signup_and_gsa, ref_with_signup_and_gsa, approval=approval, governance_mode="exploratory", **IDENTITY)
         gsa_row = result[result["outcome_id"] == "fh_new_gsa"].iloc[0]
         signup_row = result[result["outcome_id"] == "fh_new_signup"].iloc[0]
         assert gsa_row["fh_gsa"] == pytest.approx(gsa_row["predicted_outcome"])
@@ -958,7 +960,7 @@ class TestValueWeightNeverSilentlyDefaultsToOne:
     ):
         plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0}}
         ltv = {"New": 2.0}  # DNA_Kit deliberately has no weight
-        result = evaluate_scenario(plan, "UK", meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment, ltv, approval=approval, **IDENTITY)
+        result = evaluate_scenario(plan, "UK", meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment, ltv, approval=approval, governance_mode="exploratory", **IDENTITY)
         kit_row = result[result["outcome_id"] == "DNA_Kit"].iloc[0]
         assert pd.isna(kit_row["value"])
         assert kit_row["value"] != pytest.approx(kit_row["predicted_outcome"])  # would be true if weight silently defaulted to 1.0
@@ -969,7 +971,7 @@ class TestValueWeightNeverSilentlyDefaultsToOne:
     ):
         plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0}}
         ltv = {"New": 2.0}
-        result = evaluate_scenario(plan, "UK", meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment, ltv, approval=approval, **IDENTITY)
+        result = evaluate_scenario(plan, "UK", meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment, ltv, approval=approval, governance_mode="exploratory", **IDENTITY)
         new_row = result[result["outcome_id"] == "New"].iloc[0]
         assert result["total_value"].iloc[0] == pytest.approx(new_row["predicted_outcome"] * 2.0)
 
@@ -980,7 +982,7 @@ class TestValueWeightNeverSilentlyDefaultsToOne:
         # the exact unpriced outcome_ids named - not just a bare boolean.
         plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0}}
         ltv = {"New": 2.0}
-        result = evaluate_scenario(plan, "UK", meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment, ltv, approval=approval, **IDENTITY)
+        result = evaluate_scenario(plan, "UK", meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment, ltv, approval=approval, governance_mode="exploratory", **IDENTITY)
         assert (result["value_status"] == "partial").all()
         assert result["unpriced_outcome_ids"].iloc[0] == ["DNA_Kit"]
         assert not result["total_value_is_complete"].iloc[0]
@@ -990,7 +992,7 @@ class TestValueWeightNeverSilentlyDefaultsToOne:
     ):
         plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0}}
         ltv = {"New": 2.0, "DNA_Kit": 50.0}
-        result = evaluate_scenario(plan, "UK", meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment, ltv, approval=approval, **IDENTITY)
+        result = evaluate_scenario(plan, "UK", meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment, ltv, approval=approval, governance_mode="exploratory", **IDENTITY)
         assert (result["value_status"] == "complete").all()
         assert result["unpriced_outcome_ids"].iloc[0] == []
         assert result["total_value_is_complete"].iloc[0]
@@ -1019,7 +1021,7 @@ class TestValueWeightNeverSilentlyDefaultsToOne:
         plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0}}
         ltv = {"New": 2.0, "DNA_Kit": 50.0}
         with pytest.raises(ValueError, match="different currencies"):
-            evaluate_scenario(plan, "UK", meta, params_with_kit_segment, ref_with_kit_segment, ltv, approval=approval, **IDENTITY)
+            evaluate_scenario(plan, "UK", meta, params_with_kit_segment, ref_with_kit_segment, ltv, approval=approval, governance_mode="exploratory", **IDENTITY)
 
     def test_evaluate_scenario_allows_same_currency_value_weights(
         self, params_with_kit_segment, approval, ref_with_kit_segment,
@@ -1042,7 +1044,7 @@ class TestValueWeightNeverSilentlyDefaultsToOne:
         )
         plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0}}
         ltv = {"New": 2.0, "DNA_Kit": 50.0}
-        result = evaluate_scenario(plan, "UK", meta, params_with_kit_segment, ref_with_kit_segment, ltv, approval=approval, **IDENTITY)
+        result = evaluate_scenario(plan, "UK", meta, params_with_kit_segment, ref_with_kit_segment, ltv, approval=approval, governance_mode="exploratory", **IDENTITY)
         assert (result["value_status"] == "complete").all()
 
     def test_evaluate_scenario_value_is_none_not_raw_units_when_ltv_entirely_omitted(
@@ -1053,7 +1055,7 @@ class TestValueWeightNeverSilentlyDefaultsToOne:
         # counts are not monetary value and must never be silently presented
         # as one, even when no ltv was supplied at all.
         plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0}}
-        result = evaluate_scenario(plan, "UK", meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment, approval=approval, **IDENTITY)
+        result = evaluate_scenario(plan, "UK", meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment, approval=approval, governance_mode="exploratory", **IDENTITY)
         assert not result["total_value_is_complete"].iloc[0]
         assert (result["value_status"] == "not configured").all()
         assert pd.isna(result["total_value"].iloc[0])
@@ -1098,7 +1100,7 @@ class TestValueWeightNeverSilentlyDefaultsToOne:
         self, meta_with_kit_segment, params_with_kit_segment, approval, ref_with_kit_segment,
     ):
         plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0}}
-        predicted = evaluate_scenario(plan, "UK", meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment, {"New": 2.0}, approval=approval, **IDENTITY)
+        predicted = evaluate_scenario(plan, "UK", meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment, {"New": 2.0}, approval=approval, governance_mode="exploratory", **IDENTITY)
         compare_df = compare_scenarios([{"name": "Plan A", "market": "UK", "spend_plan": plan, "predicted": predicted}])
         assert not compare_df["total_value_is_complete"].iloc[0]
 
@@ -1995,7 +1997,7 @@ class TestGovernedEconomicsSummary:
         plan = {"2024-01": {"TV_Paid": 800.0, "Organic_Social": 300.0}}
         predicted = evaluate_scenario(
             plan, "UK", meta, params, reference_context, {"New": 2.0},
-            approval=approval, activity_definitions=[tv, organic],
+            approval=approval, activity_definitions=[tv, organic], governance_mode="exploratory",
             cost_mapping_registry=registry, cost_context_id="default",
             cost_as_of_by_month={"2024-01": "2024-01-01"},
             **IDENTITY,
@@ -2041,6 +2043,7 @@ class TestGovernedEconomicsSummary:
             approval=approval, activity_definitions=[tv],
             cost_mapping_registry=registry, cost_context_id="default",
             cost_as_of_by_month={"2024-01": "2024-01-01"},
+            governance_mode="exploratory",
             **IDENTITY,
         )
         assert whole_plan_scope_compatible(predicted) is True
