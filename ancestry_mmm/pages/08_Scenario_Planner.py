@@ -22,13 +22,7 @@ from ancestry_mmm.core.activities import (
 )
 from ancestry_mmm.core.fingerprint import fingerprint_dataframe, fingerprint_model_spec, fingerprint_posterior
 from ancestry_mmm.core.outcomes import (
-    METRIC_KEY_DNA_KIT_SALE,
-    METRIC_KEY_FH_GSA,
-    METRIC_KEY_FH_NET_BILLTHROUGH_COUNT,
-    METRIC_KEY_FH_SIGNUP,
     dna_kit_sale_outcome_ids,
-    eligible_outcome_ids,
-    fh_gsa_outcome_ids,
     fh_net_billthrough_outcome_ids,
     fh_signup_outcome_ids,
     outcome_catalogue_fingerprint_payload,
@@ -41,16 +35,14 @@ from ancestry_mmm.core.outcome_approval import (
 from ancestry_mmm.core.pathways import pathway_catalogue_fingerprint_payload
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.optimization import (
-    PlanningObjective,
     ScenarioGovernanceDependencies,
     SpendConstraint,
     compare_scenarios,
     evaluate_manual_scenario,
-    evaluate_scenario,
-    fingerprint_planning_objective,
     governance_deps_from_optimizer_result,
     monthly_economics_table,
     optimize_scenario,
+    resolve_planning_objective,
     scenario_to_dict,
     seed_monetary_and_quantity_defaults,
     whole_plan_scope_compatible,
@@ -60,7 +52,6 @@ from ancestry_mmm.core.evidence_tiers import classify_market_evidence
 from ancestry_mmm.core.market_config import MarketSpecConfig
 from ancestry_mmm.core.media_units import extract_cost_per_unit_series, historical_cost_trend
 from ancestry_mmm.core.media_costs import CostMappingRegistry
-from ancestry_mmm.core.net_billthrough import NetBillthroughCompletenessMetadata
 from ancestry_mmm.core.scenario_governance import (
     CounterfactualPolicy,
     ScenarioPlan,
@@ -493,49 +484,48 @@ objective = st.radio(
     "Optimisation objective", _objective_options, horizontal=True,
     format_func=lambda x: _objective_labels[x], help=FIELD_HELP["ltv"],
 )
-_objective_metric_keys = {
-    "fh_net_billthrough": METRIC_KEY_FH_NET_BILLTHROUGH_COUNT,
-    "fh_gsa": METRIC_KEY_FH_GSA,
-    "fh_signups": METRIC_KEY_FH_SIGNUP,
-    "dna_kits": METRIC_KEY_DNA_KIT_SALE,
-}
-# G2A.7a (DEFECT-6): resolve target outcome IDs for each objective
-_objective_target_resolvers = {
-    "fh_gsa": lambda m: tuple(fh_gsa_outcome_ids(m)),
-    "fh_signups": lambda m: tuple(fh_signup_outcome_ids(m)),
-    "fh_net_billthrough": lambda m: tuple(fh_net_billthrough_outcome_ids(m)),
-    "dna_kits": lambda m: tuple(dna_kit_sale_outcome_ids(m)),
-}
-planning_objective = (
-    PlanningObjective(
-        estimand="incremental_outcome",
-        metric_key=_objective_metric_keys[objective],
-        target_outcome_ids=_objective_target_resolvers[objective](meta),
-        counterfactual_policy_fingerprint=(
-            counterfactual_policy.fingerprint()
-        ),
-    )
-    if objective in _objective_metric_keys
-    else PlanningObjective(
-        estimand="incremental_value",
-        metric_key="expected_value",
-        # G2A.7a.2: use core role-based eligibility resolver, not raw
-        # dict logic. eligible_outcome_ids resolves include_in_value=None
-        # from the role's default (diagnostic and funnel_intermediate
-        # roles are excluded where their defaults require exclusion).
-        target_outcome_ids=tuple(
-            eligible_outcome_ids(
-                meta,
-                list(meta.outcome_ids),
-                "include_in_value",
-            )
-        ),
-        value_currency="project_value_currency",
-        counterfactual_policy_fingerprint=(
-            counterfactual_policy.fingerprint()
-        ),
-    )
+# G2A.7a.5: build value weights from outcome catalogue
+value_weights_by_outcome_id: dict[str, float] = {}
+if hasattr(meta, 'outcome_catalogue_at_fit') and meta.outcome_catalogue_at_fit:
+    for outcome in meta.outcome_catalogue_at_fit:
+        weight = getattr(outcome, 'value_weight', None)
+        if weight is not None:
+            value_weights_by_outcome_id[outcome.outcome_id] = weight
+
+# Derive value currency from outcome catalogue
+value_currency = None
+if hasattr(meta, 'outcome_catalogue_at_fit') and meta.outcome_catalogue_at_fit:
+    currencies = {
+        getattr(o, 'value_currency', None)
+        for o in meta.outcome_catalogue_at_fit
+        if getattr(o, 'value_currency', None)
+    }
+    if len(currencies) == 1:
+        value_currency = currencies.pop()
+    elif len(currencies) > 1:
+        value_currency = "project_value_currency"  # Single conversion layer needed
+
+# G2A.7a.5: use core objective resolver for planning and optimsation separately
+planning_objective = resolve_planning_objective(
+    objective_kind=objective,
+    meta=meta,
+    operation="planning",
+    ltv=ltv,
+    value_currency=value_currency,
+    counterfactual_policy_fingerprint=counterfactual_policy.fingerprint(),
+    value_weights_by_outcome_id=value_weights_by_outcome_id or None,
 )
+
+optimisation_objective = resolve_planning_objective(
+    objective_kind=objective,
+    meta=meta,
+    operation="optimisation",
+    ltv=ltv,
+    value_currency=value_currency,
+    counterfactual_policy_fingerprint=counterfactual_policy.fingerprint(),
+    value_weights_by_outcome_id=value_weights_by_outcome_id or None,
+)
+
 st.caption(
     "Each objective states exactly what it maximises - Family History GSAs, Family History sign-ups "
     "and DNA kit sales are never silently combined into one generic 'volume' number "
@@ -543,10 +533,11 @@ st.caption(
     "**Official planning requires each target outcome to have an approved definition "
     "(Structure → Outcome Governance).**"
 )
-if objective == "expected_value" and not ltv:
+if objective == "expected_value" and not ltv and not value_weights_by_outcome_id:
     st.warning(
-        "No LTV weights are configured for this project - 'Maximise expected value' needs at "
-        "least one segment's LTV set on the Structure page before optimisation can run."
+        "No LTV weights or outcome value weights are configured for this project - "
+        "'Maximise expected value' needs at least one outcome with a value weight set "
+        "(Structure page) before optimisation can run."
     )
 
 st.markdown("---")
@@ -773,8 +764,9 @@ with tab_constrained:
                         spend_plan, months, meta.channels, market, meta, params, reference_context_by_month,
                         ltv,
                         objective=objective if planning_objective is None else None,
-                        planning_objective=planning_objective,
+                        planning_objective=optimisation_objective,
                         constraints=st.session_state["scenario_constraints"],
+                        artefact_kind="constrained_optimisation",
                         conserve_total_budget=True,
                         activity_definitions=activity_definitions or None,
                         counterfactual_policy=counterfactual_policy,
@@ -890,8 +882,9 @@ with tab_unconstrained:
                         spend_plan, months, meta.channels, market, meta, params, reference_context_by_month,
                         ltv,
                         objective=objective if planning_objective is None else None,
-                        planning_objective=planning_objective,
+                        planning_objective=optimisation_objective,
                         constraints=[],
+                        artefact_kind="unconstrained_benchmark",
                         conserve_total_budget=True,
                         activity_definitions=activity_definitions or None,
                         counterfactual_policy=counterfactual_policy,

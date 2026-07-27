@@ -770,34 +770,29 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
         # "optimisation".
         if declared == "scenarios" and officially_resumable:
             scenarios = imported.get("scenarios") or []
+            from .optimization import validate_scenario_dependencies
+            from .outcome_approval import OutcomeApproval
+            current_outcome_approvals = [
+                a_dict for a_dict in active_approvals
+            ]
             for idx, sc in enumerate(scenarios):
-                sc_objective = sc.get("planning_objective") or {}
-                sc_targets = sc_objective.get("target_outcome_ids") or []
                 sc_gov = sc.get("governance_mode", "exploratory")
                 if sc_gov != "official":
-                    continue  # exploratory scenarios don't need approval
-                # G2A.7a.4: determine required use from artefact_kind
-                # rather than inferring from constraints or metadata.
-                artefact_kind = sc.get("artefact_kind", "manual_scenario")
-                from .optimization import ARTEFACT_KIND_REQUIRED_USE
-                required_use = ARTEFACT_KIND_REQUIRED_USE.get(
-                    artefact_kind, "planning"
+                    continue
+                # G2A.7a.5: use shared validate_scenario_dependencies
+                issues = validate_scenario_dependencies(
+                    sc,
+                    current_outcome_approvals=current_outcome_approvals,
                 )
-                for target_id in sc_targets:
-                    has_approval = any(
-                        a.get("outcome_id") == target_id
-                        and required_use in (a.get("allowed_uses") or [])
-                        for a in active_approvals
-                    )
-                    if not has_approval:
-                        officially_resumable = False
-                        official_blocking_reasons.append({
-                            "artefact_type": "scenario",
-                            "artefact_id": sc.get("name", f"scenario_{idx}"),
-                            "outcome_id": target_id,
-                            "required_use": required_use,
-                            "reason": f"no_active_{required_use}_approval",
-                        })
+                for issue in issues:
+                    officially_resumable = False
+                    official_blocking_reasons.append({
+                        "artefact_type": "scenario",
+                        "artefact_id": sc.get("name", f"scenario_{idx}"),
+                        "outcome_id": "",
+                        "required_use": "",
+                        "reason": f"{issue.reason_code or issue.issue_type}: {issue.detail}",
+                    })
 
     return {
         "resumable": not missing,
