@@ -297,9 +297,21 @@ class ResolvedPlanningGovernance:
             raise OutcomeApprovalBlockedError(
                 "Resolved governance model_run_id does not match."
             )
-        if self.model_approval_fingerprint and model_approval_fingerprint and self.model_approval_fingerprint != model_approval_fingerprint:
+        # G2A.7a.8: fail-closed model-approval fingerprint check
+        if not self.model_approval_fingerprint:
             raise OutcomeApprovalBlockedError(
-                "Resolved governance model_approval_fingerprint does not match."
+                "Resolved governance has a blank model_approval_fingerprint — "
+                "cannot authorise an official calculation."
+            )
+        if not model_approval_fingerprint:
+            raise OutcomeApprovalBlockedError(
+                "Current model approval fingerprint is absent — "
+                "cannot verify resolved governance."
+            )
+        if self.model_approval_fingerprint != model_approval_fingerprint:
+            raise OutcomeApprovalBlockedError(
+                "Resolved governance model_approval_fingerprint does not match "
+                "the current model approval."
             )
         if self.data_fingerprint != data_fingerprint:
             raise OutcomeApprovalBlockedError(
@@ -827,7 +839,10 @@ def validate_scenario_dependencies(
         current_cost_fingerprint = current_cost_fingerprint or context.cost_fingerprint
         current_counterfactual_fingerprint = current_counterfactual_fingerprint or context.counterfactual_fingerprint
         current_nbt_completeness_fingerprint = current_nbt_completeness_fingerprint or (
-            context.nbt_completeness_metadata.get("definition_fingerprint")
+            _resolve_nbt_completeness_fingerprint(
+                context.nbt_completeness_metadata,
+                fail_closed=True,
+            )
             if context.nbt_completeness_metadata else None
         )
         current_outcome_definitions = current_outcome_definitions or context.outcome_definitions
