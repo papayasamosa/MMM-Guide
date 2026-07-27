@@ -73,7 +73,6 @@ def resolve_planning_governance(
     posterior_fingerprint: str,
     market: str,
     meta: FHModelMeta,
-    outcome_definitions: Sequence[object],
     outcome_approvals: Sequence[OutcomeApproval],
     nbt_completeness_metadata: dict | NetBillthroughCompletenessMetadata | None = None,
 ) -> ResolvedPlanningGovernance:
@@ -84,10 +83,16 @@ def resolve_planning_governance(
     - exactly one active approval per target
     - no extra approval records in the resolved proof
     - market, product and segment binding
-    - current definition fingerprints
+    - each matched approval's own definition fingerprint (via
+      find_matching_outcome_approval, against meta's fitted catalogue)
     - required use
-    - model approval and identity
+    - model approval identity (fingerprinted into the resolved proof)
     - NBT completeness where required
+
+    G2A.7a.10: no longer accepts a separate ``outcome_definitions`` sequence
+    - it was never read (targets are always resolved from ``meta``'s fitted
+    catalogue via ``outcome_catalogue_at_fit_by_id``), so keeping it would
+    document validation this function does not perform.
 
     Returns an immutable, serialisable ``ResolvedPlanningGovernance`` proof.
     """

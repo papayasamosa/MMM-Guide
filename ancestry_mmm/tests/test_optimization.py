@@ -1792,6 +1792,7 @@ class TestOptimizerDimensionalCorrectness:
                 cost_mapping_registry=registry, cost_context_id="default",
                 cost_as_of_by_month={"2024-01": "2024-01-01"},
                 outcome_approvals=[outcome_approval],
+                artefact_kind="unconstrained_benchmark",
                 **IDENTITY,
             )
         # Exploratory mode is a deliberate, visibly-labelled escape hatch.
@@ -2267,7 +2268,7 @@ class TestPlanningVsOptimisationPermissionPropagation:
             spend_plan, ["2024-01"], ["TV_Brand"], "UK", gsa_meta, params, reference_context,
             planning_objective=planning_objective,
             outcome_approvals=[optimisation_only_approval],
-            approval=approval, **IDENTITY,
+            approval=approval, artefact_kind="unconstrained_benchmark", **IDENTITY,
         )
         assert "predicted" in result and "current_predicted" in result
 

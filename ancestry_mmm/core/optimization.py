@@ -420,11 +420,14 @@ def classify_artefact_kind(
     *,
     explicit_kind: str | None = None,
 ) -> str:
-    """Classify a scenario's artefact kind.
+    """Classify a scenario's artefact kind for a NEW official artefact.
 
     When ``explicit_kind`` is provided it is authoritative — never infer
-    from constraints, names, or notes. If absent, fall back to heuristics
-    for backward compatibility (legacy scenarios without the field)."""
+    from constraints, names, or notes. If absent, raises: a new official
+    artefact must state its kind explicitly (G2A.7a.10, brief section 13).
+    ``scenario_from_dict``'s legacy-import path has its own separate
+    inference that pairs with ``_migrated_from_schema``/``legacy_unverified``
+    marking — this function is not used there."""
     if explicit_kind is not None:
         if explicit_kind not in ARTEFACT_KINDS:
             raise ValueError(
@@ -570,6 +573,17 @@ class OutcomeValueMapping:
                     f"OutcomeValueMapping: outcome '{oid}' has a non-finite or "
                     f"None value ({val}). Every target must have a finite value."
                 )
+            # G2A.7a.10 (brief section 9.4): until Finance approves negative
+            # value semantics, official marketing value/LTV mappings reject
+            # negative values rather than silently accepting a business
+            # meaning ("this outcome destroys value") no one has signed off.
+            if val < 0:
+                raise ValueError(
+                    f"OutcomeValueMapping: outcome '{oid}' has a negative value "
+                    f"({val}). Negative outcome values are not a governed "
+                    "policy - Finance has not approved negative value "
+                    "semantics."
+                )
         for oid, curr in self.currency_by_outcome_id.items():
             if not curr or not isinstance(curr, str) or len(curr) != 3 or not curr.isupper():
                 raise ValueError(
@@ -577,12 +591,17 @@ class OutcomeValueMapping:
                     f"'{curr}'. Must be a three-letter uppercase ISO code."
                 )
         calculated = self._calculate_fingerprint()
+        # G2A.7a.10 (brief section 9.3): a caller-supplied mapping_fingerprint
+        # that disagrees with the calculated one must not survive silently -
+        # raise, don't only warn (the fingerprint is meant to be the
+        # authoritative proof a saved mapping is exactly what was approved).
         if self.mapping_fingerprint and self.mapping_fingerprint != calculated:
-            import warnings
-            warnings.warn(
-                f"OutcomeValueMapping.mapping_fingerprint ({self.mapping_fingerprint[:16]}...) "
-                f"disagrees with calculated fingerprint ({calculated[:16]}...). "
-                "Using calculated fingerprint.",
+            raise ValueError(
+                f"OutcomeValueMapping.mapping_fingerprint "
+                f"({self.mapping_fingerprint[:16]}...) disagrees with the "
+                f"calculated fingerprint ({calculated[:16]}...) of the "
+                "supplied content. A caller-supplied fingerprint must match "
+                "the content exactly, or be omitted."
             )
 
     def _calculate_fingerprint(self) -> str:
@@ -2924,6 +2943,8 @@ def evaluate_manual_scenario(
     governance_mode: str = "official",
     nbt_completeness_metadata: Optional[dict] = None,
     artefact_kind: str = "manual_scenario",
+    value_mapping: Optional["OutcomeValueMapping"] = None,
+    currency_context: Optional["CurrencyContext"] = None,
 ) -> ScenarioEvaluationResult:
     """Trusted manual scenario evaluation service (G2A.7a.5).
 
@@ -2934,8 +2955,17 @@ def evaluate_manual_scenario(
 
     This is the public planning API. It does NOT accept ``_resolved_governance``
     — the service resolves governance itself, so there is no forged-proof
-    surface."""
+    surface.
+
+    G2A.7a.10: when ``value_mapping`` is given, it is the single
+    authoritative source of value weights for this calculation - its
+    ``value_by_outcome_id`` is used in place of ``ltv`` and its identity is
+    persisted into the saved governance dependencies. Legacy callers may
+    still pass ``ltv`` directly; ``value_mapping`` takes precedence when
+    both are given."""
     from .planning_governance import resolve_planning_governance
+
+    effective_ltv = dict(value_mapping.value_by_outcome_id) if value_mapping is not None else ltv
 
     # Resolve governance for official mode
     resolved_gov = None
@@ -2956,7 +2986,6 @@ def evaluate_manual_scenario(
             posterior_fingerprint=posterior_fingerprint,
             market=market,
             meta=meta,
-            outcome_definitions=[],
             outcome_approvals=outcome_approvals or [],
             nbt_completeness_metadata=nbt_completeness_metadata,
         )
@@ -2969,6 +2998,11 @@ def evaluate_manual_scenario(
             posterior_fingerprint=posterior_fingerprint,
             planning_objective_fingerprint=resolved_gov.objective_fingerprint,
             outcome_authorisations=resolved_gov.authorisations,
+            value_mapping_id=value_mapping.mapping_id if value_mapping is not None else None,
+            value_mapping_fingerprint=value_mapping.fingerprint if value_mapping is not None else None,
+            currency_context_fingerprint=(
+                currency_context.fingerprint() if currency_context is not None else None
+            ),
             activity_definitions_fingerprint=(
                 activity_definitions_fingerprint(activity_definitions)
                 if activity_definitions is not None
@@ -3002,7 +3036,7 @@ def evaluate_manual_scenario(
     # exact proof (resolved_gov) is returned to the caller. The numerical
     # calculation does NOT re-validate governance.
     predicted = _calculate_scenario(
-        spend_plan, market, meta, params, reference_context_by_month, ltv,
+        spend_plan, market, meta, params, reference_context_by_month, effective_ltv,
         model_type=model_type,
         cost_mapping_registry=cost_mapping_registry,
         cost_context_id=cost_context_id,
@@ -3518,6 +3552,8 @@ def optimize_scenario(
     nbt_completeness_metadata: Optional[dict] = None,
     artefact_kind: Optional[str] = None,
     value_currency: Optional[str] = None,
+    value_mapping: Optional["OutcomeValueMapping"] = None,
+    currency_context: Optional["CurrencyContext"] = None,
 ) -> Dict:
     """
     Optimise a spend plan. `constraints=None` (or empty) + conserve_total_budget=True
@@ -3551,6 +3587,12 @@ def optimize_scenario(
         model_spec_fingerprint=model_spec_fingerprint,
         posterior_fingerprint=posterior_fingerprint,
     )
+    # G2A.7a.10: when value_mapping is given, it is the single authoritative
+    # value source - used for objective resolution, the SLSQP objective
+    # function, the current/optimised predicted-value calculations, and
+    # posterior evaluation alike, replacing the previous split where target
+    # resolution used catalogue weights but calculation used legacy ltv.
+    effective_ltv = dict(value_mapping.value_by_outcome_id) if value_mapping is not None else ltv
     # --- Outcome-approval gate (G2A.7a.2, G2A.7a.3, REQ-PLAN-001, REQ-USE-001) ---
     # Official mode: fail closed. Missing or empty approval collections block.
     # Track whether the caller gave ANY objective information at all
@@ -3582,6 +3624,22 @@ def optimize_scenario(
             )
     # --- end outcome-approval gate ---
     constraints = constraints or []
+    # G2A.7a.10 (brief section 13): a new official artefact must state its
+    # kind explicitly - never inferred from whether constraints happen to be
+    # present. Resolved after the outcome-approval gate (so a missing
+    # approval/objective still raises its own specific error first) but
+    # before the slow SLSQP optimisation runs. Exploratory results keep the
+    # legacy inferred fallback (unofficial, never persisted as an official
+    # artefact kind).
+    resolved_artefact_kind = (
+        classify_artefact_kind(constraints, explicit_kind=artefact_kind)
+        if governance_mode == "official"
+        else (
+            artefact_kind
+            if artefact_kind is not None
+            else ("constrained_optimisation" if constraints else "unconstrained_benchmark")
+        )
+    )
     policy = counterfactual_policy or CounterfactualPolicy()
     if objective is None and planning_objective is None:
         # G2A.7a (REQ-PLAN-001): no implicit default to NBT or any KPI.
@@ -3623,7 +3681,7 @@ def optimize_scenario(
             # call to `_objective_weight` later in this function.
             try:
                 resolved_weight = _objective_weight(
-                    objective, meta, ltv, None, weights,
+                    objective, meta, effective_ltv, None, weights,
                     assume_value_scaled_weights=assume_value_scaled_weights,
                 )
                 resolved_ids = tuple(sorted(resolved_weight))
@@ -3676,7 +3734,6 @@ def optimize_scenario(
             posterior_fingerprint=posterior_fingerprint,
             market=market,
             meta=meta,
-            outcome_definitions=[],
             outcome_approvals=outcome_approvals or [],
             nbt_completeness_metadata=nbt_completeness_metadata,
         )
@@ -3782,7 +3839,7 @@ def optimize_scenario(
             linear_constraints.append(LinearConstraint(total_row, lb=current_spend.sum(), ub=current_spend.sum()))
 
     objective_fn = _objective_factory(
-        months, channels, market, meta, params, reference_context_by_month, ltv, legacy_objective, model_type,
+        months, channels, market, meta, params, reference_context_by_month, effective_ltv, legacy_objective, model_type,
         target_outcome_ids=target_outcome_ids, weights=weights,
         assume_value_scaled_weights=assume_value_scaled_weights,
         cost_mapping_registry=cost_mapping_registry,
@@ -3836,12 +3893,12 @@ def optimize_scenario(
         counterfactual_policy=policy,
     )
     predicted = _calculate_scenario(
-        optimized_plan, market, meta, params, reference_context_by_month, ltv,
+        optimized_plan, market, meta, params, reference_context_by_month, effective_ltv,
         scenario_plan=optimized_scenario_plan,
         **_calculate_kwargs,
     )
     current_predicted = _calculate_scenario(
-        current_spend_plan, market, meta, params, reference_context_by_month, ltv,
+        current_spend_plan, market, meta, params, reference_context_by_month, effective_ltv,
         scenario_plan=current_scenario_plan,
         **_calculate_kwargs,
     )
@@ -3865,7 +3922,7 @@ def optimize_scenario(
             meta,
             posterior_trace,
             reference_context_by_month,
-            ltv,
+            effective_ltv,
             model_type=model_type,
             n_draws=posterior_evaluation_draws,
             approval=approval,
@@ -3909,6 +3966,18 @@ def optimize_scenario(
             if cost_mapping_registry is not None
             else None
         ),
+        # G2A.7a.10: the exact value_mapping/currency_context used for this
+        # calculation, for the caller to persist unchanged via
+        # governance_deps_from_optimizer_result - never recomputed later.
+        "value_mapping_id": (
+            value_mapping.mapping_id if value_mapping is not None else None
+        ),
+        "value_mapping_fingerprint": (
+            value_mapping.fingerprint if value_mapping is not None else None
+        ),
+        "currency_context_fingerprint": (
+            currency_context.fingerprint() if currency_context is not None else None
+        ),
         "planning_objective": (
             planning_objective.to_dict()
             if planning_objective is not None
@@ -3928,16 +3997,10 @@ def optimize_scenario(
             if activity_definitions is not None
             else None
         ),
-        # G2A.7a.5: explicit artefact kind — caller provides, never inferred
-        "artefact_kind": (
-            artefact_kind
-            if artefact_kind is not None
-            else (
-                "constrained_optimisation"
-                if constraints
-                else "unconstrained_benchmark"
-            )
-        ),
+        # G2A.7a.10: resolved once, up front (see resolved_artefact_kind
+        # above) - required explicitly for official artefacts, never
+        # inferred from constraints for those.
+        "artefact_kind": resolved_artefact_kind,
         # G2A.7a.3: resolved governance context for persistence
         "_resolved_governance": (
             _resolved_gov.to_dict() if _resolved_gov is not None else None
@@ -4013,20 +4076,25 @@ def scenario_to_dict(
             "nbt_completeness_fingerprint": nbt_completeness_fingerprint,
         }
 
-    # G2A.7a.4: resolve artefact kind
-    resolved_kind = artefact_kind
-    if resolved_kind is None:
-        # Legacy fallback: infer from constraints for backward compat
-        resolved_kind = (
-            "constrained_optimisation"
-            if constraints
-            else "manual_scenario"
-        )
-    elif resolved_kind not in ARTEFACT_KINDS:
-        raise ValueError(
-            f"Unknown artefact kind {resolved_kind!r}. "
-            f"Must be one of {sorted(ARTEFACT_KINDS)}."
-        )
+    # G2A.7a.10 (brief section 13): a new official artefact must state its
+    # kind explicitly - never inferred from constraints. Non-official saves
+    # (governance_mode != "official", including the historical None default)
+    # keep the legacy inferred fallback for backward compatibility.
+    if governance_mode == "official":
+        resolved_kind = classify_artefact_kind(constraints, explicit_kind=artefact_kind)
+    else:
+        resolved_kind = artefact_kind
+        if resolved_kind is None:
+            resolved_kind = (
+                "constrained_optimisation"
+                if constraints
+                else "manual_scenario"
+            )
+        elif resolved_kind not in ARTEFACT_KINDS:
+            raise ValueError(
+                f"Unknown artefact kind {resolved_kind!r}. "
+                f"Must be one of {sorted(ARTEFACT_KINDS)}."
+            )
 
     return {
         "name": name, "market": market, "spend_plan": spend_plan,

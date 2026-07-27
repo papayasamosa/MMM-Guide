@@ -36,6 +36,7 @@ from .media_units import compute_cpa_by_product
 from .optimization import (
     AnyPosteriorParams,
     OutcomeApproval,
+    OutcomeValueMapping,
     PlanningObjective,
     _calculate_scenario,
 )
@@ -299,6 +300,7 @@ def evaluate_scenario_with_uncertainty(
     governance_mode: str = "official",
     operation: str = "planning",
     nbt_completeness_metadata: Optional[dict] = None,
+    value_mapping: Optional[OutcomeValueMapping] = None,
 ) -> Dict[str, object]:
     """
     Per-draw scenario evaluation: `core.optimization.evaluate_scenario` run
@@ -368,12 +370,17 @@ def evaluate_scenario_with_uncertainty(
             posterior_fingerprint=posterior_fingerprint,
             market=market,
             meta=meta,
-            outcome_definitions=[],
             outcome_approvals=outcome_approvals,
             nbt_completeness_metadata=nbt_completeness_metadata,
         )
 
     extract_fn = extract_market_specific_posterior_params if model_type == "market_specific" else extract_posterior_params
+
+    # G2A.7a.10: value_mapping, when given, is the single authoritative
+    # value source for every draw - the same mapping the trusted caller
+    # (manual service or optimiser) already used for its own point
+    # calculation, not a second, independently-supplied ltv.
+    effective_ltv = dict(value_mapping.value_by_outcome_id) if value_mapping is not None else ltv
 
     def _evaluate(
         plan: Dict[str, Dict[str, float]],
@@ -385,7 +392,7 @@ def evaluate_scenario_with_uncertainty(
         # optimiser or manual service) — the posterior evaluation does
         # not re-resolve approvals on every draw.
         return _calculate_scenario(
-            plan, market, meta, params, reference_context_by_month, ltv,
+            plan, market, meta, params, reference_context_by_month, effective_ltv,
             model_type=model_type,
             scenario_plan=typed_plan,
             activity_definitions=activity_definitions,
