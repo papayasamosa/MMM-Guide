@@ -11,7 +11,7 @@ core.optimization for backward compatibility.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Literal, Optional, Sequence
+from typing import Literal, Sequence
 
 from .approval import ModelApproval, fingerprint_model_approval
 from .hierarchical_model import FHModelMeta
@@ -19,7 +19,6 @@ from .net_billthrough import NetBillthroughCompletenessMetadata
 from .outcome_approval import (
     OutcomeApproval,
     OutcomeApprovalBlockedError,
-    PlanningGovernanceError,
     find_matching_outcome_approval,
 )
 from .outcomes import METRIC_KEY_FH_NET_BILLTHROUGH_COUNT
@@ -29,7 +28,6 @@ from .optimization import (
     ResolvedOutcomeAuthorisation,
     ResolvedPlanningGovernance,
     fingerprint_planning_objective,
-    resolve_planning_objective,
 )
 
 

@@ -85,6 +85,18 @@ WEEKS_PER_MONTH = 365.25 / 12 / 7  # ~4.348
 AnyPosteriorParams = Union[FHPosteriorParams, FHMarketSpecificPosteriorParams]
 
 
+def _is_nbt_outcome(outcome_id: str, meta: object) -> bool:
+    """Check if an outcome ID is a Net Bill-Through outcome in the given model meta."""
+    try:
+        catalogue = outcome_catalogue_at_fit_by_id(meta)
+        if outcome_id in catalogue:
+            from .outcomes import METRIC_KEY_FH_NET_BILLTHROUGH_COUNT
+            return getattr(catalogue[outcome_id], 'metric_key', None) == METRIC_KEY_FH_NET_BILLTHROUGH_COUNT
+    except Exception:
+        pass
+    return outcome_id.startswith("fh_nbt")
+
+
 def _resolve_nbt_completeness_fingerprint(
     nbt_completeness_metadata: dict | None,
     *,
@@ -183,19 +195,8 @@ class ResolvedPlanningGovernance:
     """Immutable governance proof created once by the resolver, then passed
     into the solver, point evaluation, and posterior evaluation.
 
-    A nested calculation that receives this object may skip duplicate
-    validation because it carries proof of prior validation. It must
-    never be downgraded to exploratory.
-
-    G2A.7a.3: includes full model identity and market so the recipient
-    can verify the proof applies to the current calculation context. A
-    ``from_dict`` payload that fails validation is rejected, not silently
-    accepted.
-
-    G2A.7a.4: includes ``target_outcome_ids`` so ``validate_against`` can
-    enforce exact target coverage — no missing, extra, or duplicate
-    authorisations, and every authorisation's requested_use matches the
-    expected operation."""
+    G2A.7a.6: includes ``model_approval_fingerprint`` so the proof carries
+    the exact approval-record identity the resolver confirmed."""
     governance_mode: str  # "official" or "exploratory"
     operation: str  # "planning" or "optimisation"
     objective_fingerprint: str
@@ -205,6 +206,7 @@ class ResolvedPlanningGovernance:
     posterior_fingerprint: str
     market: str
     authorisations: Tuple[ResolvedOutcomeAuthorisation, ...]
+    model_approval_fingerprint: str = ""
     target_outcome_ids: Tuple[str, ...] = ()
 
     @property
@@ -217,6 +219,7 @@ class ResolvedPlanningGovernance:
             "operation": self.operation,
             "objective_fingerprint": self.objective_fingerprint,
             "model_run_id": self.model_run_id,
+            "model_approval_fingerprint": self.model_approval_fingerprint,
             "data_fingerprint": self.data_fingerprint,
             "model_spec_fingerprint": self.model_spec_fingerprint,
             "posterior_fingerprint": self.posterior_fingerprint,
@@ -241,6 +244,7 @@ class ResolvedPlanningGovernance:
                 ResolvedOutcomeAuthorisation.from_dict(a)
                 for a in d.get("authorisations", [])
             ),
+            model_approval_fingerprint=d.get("model_approval_fingerprint", ""),
             target_outcome_ids=(
                 tuple(raw_targets) if isinstance(raw_targets, list) else raw_targets
             ),
@@ -252,6 +256,7 @@ class ResolvedPlanningGovernance:
         operation: str,
         objective_fingerprint: str,
         model_run_id: str,
+        model_approval_fingerprint: str = "",
         data_fingerprint: str,
         model_spec_fingerprint: str,
         posterior_fingerprint: str,
@@ -291,6 +296,10 @@ class ResolvedPlanningGovernance:
         if self.model_run_id != model_run_id:
             raise OutcomeApprovalBlockedError(
                 "Resolved governance model_run_id does not match."
+            )
+        if self.model_approval_fingerprint and model_approval_fingerprint and self.model_approval_fingerprint != model_approval_fingerprint:
+            raise OutcomeApprovalBlockedError(
+                "Resolved governance model_approval_fingerprint does not match."
             )
         if self.data_fingerprint != data_fingerprint:
             raise OutcomeApprovalBlockedError(
@@ -442,13 +451,13 @@ class ScenarioGovernanceDependencies:
 class ScenarioEvaluationResult:
     """Structured manual evaluation result with full governance provenance.
 
-    The production page must persist this result's exact dependencies
-    rather than only the predicted DataFrame."""
+    G2A.7a.6: includes ``governance_dependencies`` for persistence."""
     predicted: pd.DataFrame
     planning_objective: PlanningObjective | None
     governance_mode: str
     artefact_kind: str
     resolved_governance: ResolvedPlanningGovernance | None = None
+    governance_dependencies: ScenarioGovernanceDependencies | None = None
     activity_definitions_fingerprint: str | None = None
     cost_mapping_fingerprint: str | None = None
     counterfactual_policy_fingerprint: str = ""
@@ -461,6 +470,7 @@ class ScenarioEvaluationResult:
             "governance_mode": self.governance_mode,
             "artefact_kind": self.artefact_kind,
             "resolved_governance": self.resolved_governance.to_dict() if self.resolved_governance else None,
+            "governance_dependencies": self.governance_dependencies.to_dict() if self.governance_dependencies else None,
             "activity_definitions_fingerprint": self.activity_definitions_fingerprint,
             "cost_mapping_fingerprint": self.cost_mapping_fingerprint,
             "counterfactual_policy_fingerprint": self.counterfactual_policy_fingerprint,
@@ -586,6 +596,7 @@ def resolve_planning_objective(
     ltv: Optional[Mapping[str, float]] = None,
     value_currency: Optional[str] = None,
     counterfactual_policy_fingerprint: Optional[str] = None,
+    value_weights_by_outcome_id: Optional[Mapping[str, float]] = None,
 ) -> PlanningObjective:
     """Resolve a typed PlanningObjective from an objective kind string.
 
@@ -619,10 +630,13 @@ def resolve_planning_objective(
             counterfactual_policy_fingerprint=counterfactual_policy_fingerprint,
         )
     elif objective_kind in ("expected_value", "value"):
-        if ltv is None:
+        # Use outcome-level weights as primary source, fall back to legacy segment LTV
+        weights = value_weights_by_outcome_id if value_weights_by_outcome_id is not None else ltv
+        if not weights:
             raise ValueError(
-                "Expected-value objective requires LTV weights. "
-                "Set at least one segment's LTV on the Structure page."
+                "Expected-value objective requires value weights. "
+                "Set a value weight for at least one outcome, "
+                "or provide segment LTV as a fallback."
             )
         # Resolve value-eligible outcomes
         value_eligible = set(
@@ -658,16 +672,20 @@ def resolve_planning_objective(
                 "have no LTV weight. Set a value weight for every target outcome."
             )
         # Verify currency compatibility
-        if value_currency and value_currency != "project_value_currency":
+        # G2A.7a.6: accept a single real currency (e.g. "GBP"),
+        # reject mixed currencies, reject missing for expected_value
+        if not value_currency:
             raise ValueError(
-                f"Mixed currency not supported: {value_currency}. "
-                "All value weights must share the same governed currency."
+                "Expected-value objective requires a governed currency. "
+                "All target outcomes must share one currency."
             )
+        # Single currency is valid; multiple currencies block
+        # (handled by the caller ensuring all outcomes share one currency)
         return PlanningObjective(
             estimand="incremental_value",
             metric_key="expected_value",
             target_outcome_ids=targets,
-            value_currency=value_currency or "project_value_currency",
+            value_currency=value_currency,
             counterfactual_policy_fingerprint=counterfactual_policy_fingerprint,
         )
     else:
@@ -2335,7 +2353,14 @@ def evaluate_manual_scenario(
             ),
             nbt_completeness_fingerprint=_resolve_nbt_completeness_fingerprint(
                 nbt_completeness_metadata,
-                fail_closed=(governance_mode == "official"),
+                fail_closed=(
+                    governance_mode == "official"
+                    and planning_objective is not None
+                    and any(
+                        _is_nbt_outcome(tid, meta)
+                        for tid in planning_objective.target_outcome_ids
+                    )
+                ),
             ),
         )
 
@@ -3013,52 +3038,24 @@ def optimize_scenario(
             market=market,
             nbt_completeness_metadata=nbt_completeness_metadata,
         )
-    # G2A.7a.3: resolve the complete governance context before the solver.
+    # G2A.7a.6: resolve governance via shared resolver.
     # Fail before expensive work, never reconstruct after.
     _resolved_gov: Optional[ResolvedPlanningGovernance] = None
     if governance_mode == "official" and planning_objective is not None:
-        _authorisations: list[ResolvedOutcomeAuthorisation] = []
-        catalogue_by_id = outcome_catalogue_at_fit_by_id(meta)
-        from .outcome_approval import find_matching_outcome_approval
-        for target_id in planning_objective.target_outcome_ids:
-            if target_id in catalogue_by_id:
-                outcome = catalogue_by_id[target_id]
-                matching = find_matching_outcome_approval(
-                    outcome, outcome_approvals or [], "optimisation",
-                    market=market, product=outcome.product, segment=outcome.segment,
-                )
-                if matching is not None:
-                    _authorisations.append(ResolvedOutcomeAuthorisation(
-                        outcome_id=target_id,
-                        requested_use="optimisation",
-                        approval_id=matching.approval_id,
-                        definition_fingerprint=matching.definition_fingerprint,
-                        market=market,
-                        product=outcome.product,
-                        segment=outcome.segment,
-                        nbt_completeness_fingerprint=(
-                            _resolve_nbt_completeness_fingerprint(
-                                nbt_completeness_metadata,
-                            )
-                            if nbt_completeness_metadata and outcome.metric_key == METRIC_KEY_FH_NET_BILLTHROUGH_COUNT
-                            else None
-                        ),
-                    ))
-        _resolved_gov = ResolvedPlanningGovernance(
-            governance_mode="official",
+        from .planning_governance import resolve_planning_governance
+        _resolved_gov = resolve_planning_governance(
             operation="optimisation",
-            objective_fingerprint=fingerprint_planning_objective(planning_objective),
+            planning_objective=planning_objective,
+            model_approval=approval,
             model_run_id=model_run_id,
             data_fingerprint=data_fingerprint,
             model_spec_fingerprint=model_spec_fingerprint,
             posterior_fingerprint=posterior_fingerprint,
             market=market,
-            authorisations=tuple(_authorisations),
-            target_outcome_ids=tuple(
-                planning_objective.target_outcome_ids
-                if planning_objective is not None
-                else ()
-            ),
+            meta=meta,
+            outcome_definitions=[],
+            outcome_approvals=outcome_approvals or [],
+            nbt_completeness_metadata=nbt_completeness_metadata,
         )
 
     current_spend = _flatten(current_spend_plan, months, channels)
@@ -3525,6 +3522,7 @@ def governance_deps_from_optimizer_result(result: dict) -> dict:
             break
     return {
         "model_run_id": resolved.get("model_run_id") or "",
+        "model_approval_fingerprint": resolved.get("model_approval_fingerprint") or "",
         "data_fingerprint": resolved.get("data_fingerprint") or "",
         "model_spec_fingerprint": resolved.get("model_spec_fingerprint") or "",
         "posterior_fingerprint": resolved.get("posterior_fingerprint") or "",

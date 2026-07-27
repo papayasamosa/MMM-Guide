@@ -915,7 +915,7 @@ class TestExpectedValueObjective:
             unpooled_markets=[],
             control_names=[],
         )
-        with pytest.raises(ValueError, match="LTV weights"):
+        with pytest.raises(ValueError, match="value weights"):
             resolve_planning_objective(
                 objective_kind="expected_value",
                 meta=meta,
