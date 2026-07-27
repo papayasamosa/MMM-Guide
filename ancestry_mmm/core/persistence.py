@@ -770,19 +770,35 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
         # "optimisation".
         if declared == "scenarios" and officially_resumable:
             scenarios = imported.get("scenarios") or []
-            from .optimization import validate_scenario_dependencies
-            from .outcome_approval import OutcomeApproval
-            current_outcome_approvals = [
-                a_dict for a_dict in active_approvals
-            ]
+            from .optimization import (
+                ScenarioValidationContext,
+                validate_scenario_dependencies,
+            )
+            # Build complete validation context from imported bundle
+            val_context = ScenarioValidationContext(
+                model_run_id=imported.get("model_run_id"),
+                data_fingerprint=(
+                    imported.get("model_approval", {}).get("data_fingerprint")
+                ),
+                model_spec_fingerprint=(
+                    imported.get("model_approval", {}).get("model_spec_fingerprint")
+                ),
+                posterior_fingerprint=(
+                    imported.get("model_approval", {}).get("posterior_fingerprint")
+                ),
+                outcome_approvals=[
+                    a_dict for a_dict in active_approvals
+                ],
+                outcome_definitions=imported.get("outcome_definitions"),
+            )
             for idx, sc in enumerate(scenarios):
                 sc_gov = sc.get("governance_mode", "exploratory")
                 if sc_gov != "official":
                     continue
-                # G2A.7a.5: use shared validate_scenario_dependencies
+                # Use shared validate_scenario_dependencies with full context
                 issues = validate_scenario_dependencies(
                     sc,
-                    current_outcome_approvals=current_outcome_approvals,
+                    context=val_context,
                 )
                 for issue in issues:
                     officially_resumable = False

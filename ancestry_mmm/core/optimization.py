@@ -323,14 +323,46 @@ class ResolvedPlanningGovernance:
                 "Resolved governance has zero authorisations — cannot "
                 "authorise an official calculation."
             )
-        # G2A.7a.4: validate exact target coverage
-        authorised_ids = {a.outcome_id for a in self.authorisations}
-        target_set = set(self.target_outcome_ids)
-        if not target_set:
+        # G2A.7a.7: enforce exact cardinality using explicit counts
+        target_list = list(self.target_outcome_ids)
+        if not target_list:
             raise OutcomeApprovalBlockedError(
                 "Resolved governance has no target outcome IDs — cannot "
                 "authorise an official calculation."
             )
+        # Reject duplicate target IDs
+        if len(target_list) != len(set(target_list)):
+            duplicates = [oid for oid in target_list if target_list.count(oid) > 1]
+            raise OutcomeApprovalBlockedError(
+                f"Resolved governance has duplicate target outcome IDs: "
+                f"{sorted(set(duplicates))}."
+            )
+        # Reject duplicate authorisations for the same outcome
+        auth_id_list = [a.outcome_id for a in self.authorisations]
+        if len(auth_id_list) != len(set(auth_id_list)):
+            duplicates = [oid for oid in auth_id_list if auth_id_list.count(oid) > 1]
+            raise OutcomeApprovalBlockedError(
+                f"Resolved governance has duplicate authorisations for: "
+                f"{sorted(set(duplicates))}."
+            )
+        # Reject duplicate approval IDs
+        approval_ids = [a.approval_id for a in self.authorisations]
+        if len(approval_ids) != len(set(approval_ids)):
+            duplicates = [aid for aid in approval_ids if approval_ids.count(aid) > 1]
+            raise OutcomeApprovalBlockedError(
+                f"Resolved governance has duplicate approval IDs: "
+                f"{sorted(set(duplicates))}."
+            )
+        # Exact count match
+        if len(self.authorisations) != len(target_list):
+            raise OutcomeApprovalBlockedError(
+                f"Resolved governance has {len(self.authorisations)} "
+                f"authorisations for {len(target_list)} targets — "
+                "counts must match."
+            )
+        # Exact set match
+        authorised_ids = {a.outcome_id for a in self.authorisations}
+        target_set = set(target_list)
         if authorised_ids != target_set:
             missing = target_set - authorised_ids
             extra = authorised_ids - target_set
@@ -479,6 +511,28 @@ class ScenarioEvaluationResult:
 
 
 @dataclass(frozen=True)
+class ScenarioValidationContext:
+    """Complete current project state for scenario dependency validation.
+
+    A scenario may be ``current`` only when every required saved dependency
+    was compared with this context. Omitted fields prevent ``current``
+    status."""
+
+    model_run_id: Optional[str] = None
+    model_approval_fingerprint: Optional[str] = None
+    data_fingerprint: Optional[str] = None
+    model_spec_fingerprint: Optional[str] = None
+    posterior_fingerprint: Optional[str] = None
+    planning_objective: Optional[PlanningObjective] = None
+    outcome_definitions: Optional[list] = None
+    outcome_approvals: Optional[list] = None
+    activity_fingerprint: Optional[str] = None
+    cost_fingerprint: Optional[str] = None
+    counterfactual_fingerprint: Optional[str] = None
+    nbt_completeness_metadata: Optional[dict] = None
+
+
+@dataclass(frozen=True)
 class PlanningObjective:
     """Typed objective and estimand stored with every scenario.
 
@@ -501,6 +555,16 @@ class PlanningObjective:
             raise ValueError(f"Unsupported planning estimand: {self.estimand}")
         if self.estimand == "incremental_value" and not self.value_currency:
             raise ValueError("value objectives require value_currency")
+        # G2A.7a.7: reject duplicate target_outcome_ids
+        if len(self.target_outcome_ids) != len(set(self.target_outcome_ids)):
+            dupes = [
+                oid for oid in self.target_outcome_ids
+                if list(self.target_outcome_ids).count(oid) > 1
+            ]
+            raise ValueError(
+                f"PlanningObjective target_outcome_ids contains duplicates: "
+                f"{sorted(set(dupes))}."
+            )
 
     @property
     def is_valid_for_official_planning(self) -> bool:
@@ -714,6 +778,7 @@ class ScenarioDependencyIssue:
 def validate_scenario_dependencies(
     scenario: dict,
     *,
+    context: Optional[ScenarioValidationContext] = None,
     current_model_run_id: Optional[str] = None,
     current_data_fingerprint: Optional[str] = None,
     current_model_spec_fingerprint: Optional[str] = None,
@@ -723,7 +788,6 @@ def validate_scenario_dependencies(
     current_cost_fingerprint: Optional[str] = None,
     current_counterfactual_fingerprint: Optional[str] = None,
     current_nbt_completeness_fingerprint: Optional[str] = None,
-    # G2A.7a.4: extended validation parameters
     current_model_identity: Optional[dict] = None,
     current_model_approval: Optional[dict] = None,
     current_outcome_definitions: Optional[list] = None,
@@ -751,6 +815,23 @@ def validate_scenario_dependencies(
     IDs, status, expiry, use, and scope against current definitions.
     """
     issues: List[ScenarioDependencyIssue] = []
+
+    # G2A.7a.7: use ScenarioValidationContext when provided, fallback to individual params
+    if context is not None:
+        current_model_run_id = current_model_run_id or context.model_run_id
+        current_data_fingerprint = current_data_fingerprint or context.data_fingerprint
+        current_model_spec_fingerprint = current_model_spec_fingerprint or context.model_spec_fingerprint
+        current_posterior_fingerprint = current_posterior_fingerprint or context.posterior_fingerprint
+        current_planning_objective = current_planning_objective or context.planning_objective
+        current_activity_fingerprint = current_activity_fingerprint or context.activity_fingerprint
+        current_cost_fingerprint = current_cost_fingerprint or context.cost_fingerprint
+        current_counterfactual_fingerprint = current_counterfactual_fingerprint or context.counterfactual_fingerprint
+        current_nbt_completeness_fingerprint = current_nbt_completeness_fingerprint or (
+            context.nbt_completeness_metadata.get("definition_fingerprint")
+            if context.nbt_completeness_metadata else None
+        )
+        current_outcome_definitions = current_outcome_definitions or context.outcome_definitions
+        current_outcome_approvals = current_outcome_approvals or context.outcome_approvals
 
     schema_ver = scenario.get("schema_version", 1)
     deps = scenario.get("governance_dependencies") or {}
@@ -1075,6 +1156,7 @@ def validate_scenario_dependencies(
 
 def scenario_dependency_status(
     scenario: dict,
+    context: Optional[ScenarioValidationContext] = None,
     **current_kwargs,
 ) -> str:
     """Convenience wrapper that returns a single status string for a
@@ -1094,7 +1176,11 @@ def scenario_dependency_status(
     governance_mode = scenario.get("governance_mode", "exploratory")
     if governance_mode != "official":
         return "exploratory"
-    issues = validate_scenario_dependencies(scenario, **current_kwargs)
+    issues = validate_scenario_dependencies(
+        scenario,
+        context=context,
+        **current_kwargs,
+    )
     if not issues:
         return "current"
     for issue in issues:

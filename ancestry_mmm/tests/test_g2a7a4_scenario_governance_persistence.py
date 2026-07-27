@@ -140,7 +140,7 @@ class TestResolvedGovernanceTargetValidation:
             ),
             target_outcome_ids=(),
         )
-        with pytest.raises(OutcomeApprovalBlockedError, match="no target outcome"):
+        with pytest.raises(OutcomeApprovalBlockedError, match="no target outcome IDs"):
             governance.validate_against(
                 operation="planning",
                 objective_fingerprint="abc",
@@ -178,7 +178,7 @@ class TestResolvedGovernanceTargetValidation:
             ),
             target_outcome_ids=("fh_gsa_new",),
         )
-        with pytest.raises(OutcomeApprovalBlockedError, match="extra authorisation"):
+        with pytest.raises(OutcomeApprovalBlockedError, match="counts must match|extra authorisation"):
             governance.validate_against(
                 operation="planning",
                 objective_fingerprint="abc",
