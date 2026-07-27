@@ -298,10 +298,6 @@ def evaluate_scenario_with_uncertainty(
     outcome_approvals: Optional[List[OutcomeApproval]] = None,
     governance_mode: str = "official",
     nbt_completeness_metadata: Optional[dict] = None,
-    # G2A.7a.2: internal trusted path — when the optimiser has already
-    # validated, it passes a ResolvedPlanningGovernance proof so per-draw
-    # evaluate_scenario calls retain official identity without re-checking.
-    _resolved_governance=None,
 ) -> Dict[str, object]:
     """
     Per-draw scenario evaluation: `core.optimization.evaluate_scenario` run
@@ -317,13 +313,6 @@ def evaluate_scenario_with_uncertainty(
     draws instead of one shared draw per comparison) - `prob_outperforms_baseline`
     is then the fraction of paired draws where `spend_plan`'s total value
     exceeds `baseline_spend_plan`'s.
-
-    G2A.7a.2: manual uncertainty always uses planning authorisation
-    (``governance_mode`` is forwarded; the caller never passes
-    ``requested_use`` — that is resolved internally as ``"planning"`` for
-    manual scenarios). The optimiser passes a ``_resolved_governance``
-    proof so per-draw evaluation retains its validated optimisation
-    context without re-checking under the wrong permission.
 
     Returns `{"summary": DataFrame, "prob_outperforms_baseline": float or
     None, "n_draws": int}`. Raises `ApprovalMismatchError` exactly as
@@ -352,7 +341,6 @@ def evaluate_scenario_with_uncertainty(
             outcome_approvals=outcome_approvals,
             governance_mode=governance_mode,
             nbt_completeness_metadata=nbt_completeness_metadata,
-            _resolved_governance=_resolved_governance,
         )
 
     draw_indices = sample_draw_indices(trace, n_draws, seed)
