@@ -2131,6 +2131,162 @@ def _validate_no_mixed_currency_value_weights(
 
 
 # ---------------------------------------------------------------------------
+# G2A.7a.5: trusted manual evaluation service
+# ---------------------------------------------------------------------------
+
+
+def evaluate_manual_scenario(
+    spend_plan: Dict[str, Dict[str, float]],
+    market: str,
+    meta: FHModelMeta,
+    params: AnyPosteriorParams,
+    reference_context_by_month: Dict[str, dict],
+    ltv: Optional[Dict[str, float]] = None,
+    *,
+    model_type: str = "shared",
+    approval: ModelApproval,
+    model_run_id: str,
+    data_fingerprint: str,
+    model_spec_fingerprint: str,
+    posterior_fingerprint: str,
+    cost_mapping_registry: Optional[CostMappingRegistry] = None,
+    cost_context_id: Optional[str] = None,
+    cost_as_of_by_month: Optional[Dict[str, str]] = None,
+    counterfactual_media_input_by_month: Optional[Dict[str, Dict[str, float]]] = None,
+    planning_objective: Optional[PlanningObjective] = None,
+    activity_definitions: Optional[List[ActivityDefinition]] = None,
+    scenario_plan: Optional[ScenarioPlan] = None,
+    counterfactual_policy: Optional[CounterfactualPolicy] = None,
+    outcome_approvals: Optional[List[OutcomeApproval]] = None,
+    governance_mode: str = "official",
+    nbt_completeness_metadata: Optional[dict] = None,
+    artefact_kind: str = "manual_scenario",
+) -> ScenarioEvaluationResult:
+    """Trusted manual scenario evaluation service (G2A.7a.5).
+
+    Resolves planning governance, evaluates the scenario, and returns a
+    ``ScenarioEvaluationResult`` containing the exact resolved governance
+    proof used to authorise the calculation. The page must persist this
+    result's ``governance_dependencies`` unchanged.
+
+    This is the public planning API. It does NOT accept ``_resolved_governance``
+    — the service resolves governance itself, so there is no forged-proof
+    surface."""
+    from .planning_governance import resolve_planning_governance
+
+    # Resolve governance for official mode
+    resolved_gov = None
+    governance_deps = None
+
+    if governance_mode == "official":
+        if planning_objective is None:
+            raise ObjectiveMissingError(
+                "Official manual evaluation requires a PlanningObjective."
+            )
+        resolved_gov = resolve_planning_governance(
+            operation="planning",
+            planning_objective=planning_objective,
+            model_approval=approval,
+            model_run_id=model_run_id,
+            data_fingerprint=data_fingerprint,
+            model_spec_fingerprint=model_spec_fingerprint,
+            posterior_fingerprint=posterior_fingerprint,
+            market=market,
+            meta=meta,
+            outcome_definitions=[],
+            outcome_approvals=outcome_approvals or [],
+            nbt_completeness_metadata=nbt_completeness_metadata,
+        )
+        # Build governance dependencies from resolved proof
+        governance_deps = ScenarioGovernanceDependencies(
+            model_run_id=model_run_id,
+            model_approval_fingerprint=resolved_gov.model_approval_fingerprint,
+            data_fingerprint=data_fingerprint,
+            model_spec_fingerprint=model_spec_fingerprint,
+            posterior_fingerprint=posterior_fingerprint,
+            planning_objective_fingerprint=resolved_gov.objective_fingerprint,
+            outcome_authorisations=resolved_gov.authorisations,
+            activity_definitions_fingerprint=(
+                activity_definitions_fingerprint(activity_definitions)
+                if activity_definitions is not None
+                else None
+            ),
+            cost_mapping_fingerprint=(
+                cost_mapping_registry.fingerprint()
+                if cost_mapping_registry is not None
+                else None
+            ),
+            counterfactual_policy_fingerprint=(
+                counterfactual_policy.fingerprint()
+                if counterfactual_policy is not None
+                else ""
+            ),
+            nbt_completeness_fingerprint=_resolve_nbt_completeness_fingerprint(
+                nbt_completeness_metadata
+            ),
+        )
+
+    # Call the existing evaluate_scenario
+    # In official mode, pass the resolved governance proof via _resolved_governance
+    predicted = evaluate_scenario(
+        spend_plan,
+        market,
+        meta,
+        params,
+        reference_context_by_month,
+        ltv,
+        model_type=model_type,
+        approval=approval,
+        model_run_id=model_run_id,
+        data_fingerprint=data_fingerprint,
+        model_spec_fingerprint=model_spec_fingerprint,
+        posterior_fingerprint=posterior_fingerprint,
+        cost_mapping_registry=cost_mapping_registry,
+        cost_context_id=cost_context_id,
+        cost_as_of_by_month=cost_as_of_by_month,
+        counterfactual_media_input_by_month=counterfactual_media_input_by_month,
+        planning_objective=planning_objective,
+        activity_definitions=activity_definitions,
+        scenario_plan=scenario_plan,
+        counterfactual_policy=counterfactual_policy,
+        outcome_approvals=outcome_approvals,
+        governance_mode=governance_mode,
+        nbt_completeness_metadata=nbt_completeness_metadata,
+        _resolved_governance=resolved_gov,
+    )
+
+    # Extract economics coverage from the predicted DataFrame
+    economics_cov = None
+    if "economics_coverage" in predicted.columns and len(predicted) > 0:
+        economics_cov = predicted["economics_coverage"].iloc[0]
+
+    return ScenarioEvaluationResult(
+        predicted=predicted,
+        planning_objective=planning_objective,
+        governance_mode=governance_mode,
+        artefact_kind=artefact_kind,
+        resolved_governance=resolved_gov,
+        governance_dependencies=governance_deps,
+        activity_definitions_fingerprint=(
+            activity_definitions_fingerprint(activity_definitions)
+            if activity_definitions is not None
+            else None
+        ),
+        cost_mapping_fingerprint=(
+            cost_mapping_registry.fingerprint()
+            if cost_mapping_registry is not None
+            else None
+        ),
+        counterfactual_policy_fingerprint=(
+            counterfactual_policy.fingerprint()
+            if counterfactual_policy is not None
+            else ""
+        ),
+        economics_coverage=dict(economics_cov) if isinstance(economics_cov, dict) else None,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Constraints
 # ---------------------------------------------------------------------------
 

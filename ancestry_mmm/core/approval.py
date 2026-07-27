@@ -28,6 +28,8 @@ requires a valid, matching approval.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import time
 from dataclasses import asdict, dataclass, field
 from typing import List, Optional
@@ -137,3 +139,23 @@ def require_matching_approval(
             "Re-approve after review."
         )
     return approval
+
+
+def fingerprint_model_approval(approval: ModelApproval) -> str:
+    """Canonical SHA-256 fingerprint of a ModelApproval's complete record.
+
+    Includes all approval-record fields:
+    - approved_by, approved_at, run_label, notes, known_limitations
+    - diagnostics_accepted
+    - model_run_id, data_fingerprint, model_spec_fingerprint, posterior_fingerprint
+
+    A material change to any of these fields produces a different fingerprint
+    and therefore stales scenarios saved against the previous approval record.
+
+    Returns a 64-character hex string.
+    """
+    payload = approval.to_dict()
+    encoded = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), default=str,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
