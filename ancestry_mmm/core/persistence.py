@@ -62,8 +62,7 @@ from .outcomes import outcome_catalogue_fingerprint_payload
 from .pathways import pathway_catalogue_fingerprint_payload
 from .predict import extract_posterior_params
 from .schema import ModelSpec
-from .optimization import SpendConstraint, planning_objective_from_legacy
-from .scenario_governance import ScenarioPlan
+from .optimization import SpendConstraint
 
 PROJECT_BUNDLE_SCHEMA_VERSION = 8
 PROJECT_APP_VERSION = "0.1.0"
@@ -493,15 +492,9 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         if (config_dir / "scenarios.json").exists():
             scenarios_meta = json.loads((config_dir / "scenarios.json").read_text())
             for i, s in enumerate(scenarios_meta):
-                if "scenario_plan" not in s:
-                    s["scenario_plan"] = ScenarioPlan.from_legacy_spend_plan(
-                        s.get("spend_plan", {})
-                    ).to_dict()
-                    s["schema_version"] = 2
-                if not s.get("planning_objective") and s.get("objective"):
-                    s["planning_objective"] = planning_objective_from_legacy(
-                        s["objective"]
-                    ).to_dict()
+                # G2A.7a.4: use shared scenario_from_dict for migration
+                from .optimization import scenario_from_dict
+                scenarios_meta[i] = scenario_from_dict(s)
                 pred_path = tmp / "scenarios" / f"scenario_{i}_predicted.csv"
                 if pred_path.exists():
                     s["predicted"] = pd.read_csv(pred_path)
@@ -782,14 +775,13 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
                 sc_gov = sc.get("governance_mode", "exploratory")
                 if sc_gov != "official":
                     continue  # exploratory scenarios don't need approval
-                # Determine required use from the artefact
-                # Optimiser results carry optimisation_metadata; manual
-                # scenarios do not.
-                sc_constraints = sc.get("constraints") or []
-                if sc.get("optimization_metadata") or sc_constraints:
-                    required_use = "optimisation"
-                else:
-                    required_use = "planning"
+                # G2A.7a.4: determine required use from artefact_kind
+                # rather than inferring from constraints or metadata.
+                artefact_kind = sc.get("artefact_kind", "manual_scenario")
+                from .optimization import ARTEFACT_KIND_REQUIRED_USE
+                required_use = ARTEFACT_KIND_REQUIRED_USE.get(
+                    artefact_kind, "planning"
+                )
                 for target_id in sc_targets:
                     has_approval = any(
                         a.get("outcome_id") == target_id

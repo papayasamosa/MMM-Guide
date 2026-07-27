@@ -36,14 +36,18 @@ from ancestry_mmm.core.outcomes import (
 )
 from ancestry_mmm.core.outcome_approval import (
     OutcomeApproval,
+    PlanningGovernanceError,
 )
 from ancestry_mmm.core.pathways import pathway_catalogue_fingerprint_payload
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.optimization import (
     PlanningObjective,
+    ScenarioGovernanceDependencies,
     SpendConstraint,
     compare_scenarios,
     evaluate_scenario,
+    fingerprint_planning_objective,
+    governance_deps_from_optimizer_result,
     monthly_economics_table,
     optimize_scenario,
     scenario_to_dict,
@@ -55,6 +59,7 @@ from ancestry_mmm.core.evidence_tiers import classify_market_evidence
 from ancestry_mmm.core.market_config import MarketSpecConfig
 from ancestry_mmm.core.media_units import extract_cost_per_unit_series, historical_cost_trend
 from ancestry_mmm.core.media_costs import CostMappingRegistry
+from ancestry_mmm.core.net_billthrough import NetBillthroughCompletenessMetadata
 from ancestry_mmm.core.scenario_governance import (
     CounterfactualPolicy,
     ScenarioPlan,
@@ -566,7 +571,7 @@ with tab_manual:
             **identity_kwargs,
             **scenario_governance_kwargs,
         )
-    except (ApprovalMismatchError, ValueError) as e:
+    except (ApprovalMismatchError, ValueError, PlanningGovernanceError) as e:
         st.error(f"Cannot evaluate this scenario: {e}")
         st.stop()
     st.dataframe(predicted, width="stretch", column_config=dataframe_column_config(predicted))
@@ -635,6 +640,38 @@ with tab_manual:
                 # artefact - persist the actual selected governance_mode
                 # ("official" or "exploratory"), never "not_applicable".
                 governance_mode=governance_mode,
+                # G2A.7a.4: explicit artefact kind
+                artefact_kind="manual_scenario",
+                # G2A.7a.4: populate governance dependencies from predicted
+                governance_dependencies=ScenarioGovernanceDependencies(
+                    model_run_id=identity_kwargs.get("model_run_id", ""),
+                    model_approval_fingerprint="",
+                    data_fingerprint=identity_kwargs.get("data_fingerprint", ""),
+                    model_spec_fingerprint=identity_kwargs.get("model_spec_fingerprint", ""),
+                    posterior_fingerprint=identity_kwargs.get("posterior_fingerprint", ""),
+                    planning_objective_fingerprint=(
+                        fingerprint_planning_objective(planning_objective)
+                        if planning_objective is not None else ""
+                    ),
+                    outcome_authorisations=(),
+                    activity_definitions_fingerprint=predicted.get(
+                        "activity_definitions_fingerprint"
+                    ).iloc[0] if "activity_definitions_fingerprint" in predicted.columns else None,
+                    cost_mapping_fingerprint=predicted.get(
+                        "cost_mapping_fingerprint"
+                    ).iloc[0] if "cost_mapping_fingerprint" in predicted.columns else None,
+                    counterfactual_policy_fingerprint=(
+                        counterfactual_policy.fingerprint()
+                        if counterfactual_policy else ""
+                    ),
+                    nbt_completeness_fingerprint=(
+                        NetBillthroughCompletenessMetadata.from_dict(
+                            nbt_completeness_metadata
+                        ).completeness_fingerprint()
+                        if nbt_completeness_metadata
+                        else None
+                    ),
+                ),
             )
         )
         scenarios[-1]["predicted"] = predicted
@@ -678,7 +715,7 @@ with tab_manual:
                         **identity_kwargs,
                         **scenario_governance_kwargs,
                     )
-                except (ApprovalMismatchError, ValueError) as e:
+                except (ApprovalMismatchError, ValueError, PlanningGovernanceError) as e:
                     st.error(f"Cannot evaluate this scenario: {e}")
                     uncertainty_result = None
             if uncertainty_result is not None:
@@ -774,7 +811,7 @@ with tab_constrained:
                         **identity_kwargs,
                         **scenario_governance_kwargs,
                     )
-                except (ApprovalMismatchError, ValueError) as e:
+                except (ApprovalMismatchError, ValueError, PlanningGovernanceError) as e:
                     st.error(f"Cannot run optimisation: {e}")
                     result = None
             if result is not None:
@@ -831,6 +868,9 @@ with tab_constrained:
         name = st.text_input("Scenario name *", value=f"constrained-{market}-{months[0]}", key="constrained_name")
         if st.button("Save this scenario", key="save_constrained"):
             scenarios = get_state("scenarios") or []
+            # G2A.7a.4: build structured governance dependencies from result
+            gov_deps_dict = governance_deps_from_optimizer_result(result)
+            gov_deps = ScenarioGovernanceDependencies.from_dict(gov_deps_dict)
             s = scenario_to_dict(
                 name,
                 market,
@@ -850,6 +890,8 @@ with tab_constrained:
                     "economics_coverage"
                 ].iloc[0],
                 governance_mode=result["governance_mode"],
+                artefact_kind="constrained_optimisation",
+                governance_dependencies=gov_deps,
             )
             s["predicted"] = result["predicted"]
             scenarios.append(s)
@@ -886,7 +928,7 @@ with tab_unconstrained:
                         **identity_kwargs,
                         **scenario_governance_kwargs,
                     )
-                except (ApprovalMismatchError, ValueError) as e:
+                except (ApprovalMismatchError, ValueError, PlanningGovernanceError) as e:
                     st.error(f"Cannot run optimisation: {e}")
                     result = None
             if result is not None:
