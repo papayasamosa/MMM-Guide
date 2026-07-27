@@ -672,6 +672,8 @@ class ScenarioDependencyIssue:
     artefact_id: str
     issue_type: str  # "stale", "legacy_unverified", "invalid", "missing"
     detail: str
+    dependency_type: str = "unknown"
+    reason_code: str = ""
 
 
 def validate_scenario_dependencies(
@@ -918,26 +920,120 @@ def validate_scenario_dependencies(
             detail="No outcome authorisations recorded for this official scenario.",
         ))
     else:
-        # G2A.7a.4: validate each authorisation against current state
+        # G2A.7a.5: full approval revalidation using the existing approval service
+        _artefact_id = scenario.get("name", "<unknown>")
         for auth in saved_authorisations:
-            auth_id = auth.get("approval_id", "<unknown>") if isinstance(auth, dict) else "<unknown>"
-            auth_outcome = auth.get("outcome_id", "<unknown>") if isinstance(auth, dict) else "<unknown>"
-            # Check approval exists in current approvals
-            if current_outcome_approvals is not None:
-                still_valid = any(
-                    a.get("approval_id") == auth_id
-                    for a in current_outcome_approvals
-                )
-                if not still_valid:
-                    issues.append(ScenarioDependencyIssue(
-                        artefact_id=scenario.get("name", "<unknown>"),
-                        issue_type="stale",
-                        detail=(
-                            f"Saved approval '{auth_id}' for outcome "
-                            f"'{auth_outcome}' no longer exists in current "
-                            "approvals."
-                        ),
-                    ))
+            if not isinstance(auth, dict):
+                continue
+            auth_id = auth.get("approval_id", "<unknown>")
+            auth_outcome = auth.get("outcome_id", "<unknown>")
+            auth_use = auth.get("requested_use", required_use)
+
+            if current_outcome_approvals is None:
+                continue
+
+            # Find matching current approval by ID
+            from .outcome_approval import OutcomeApproval
+            matching_current = [
+                a for a in current_outcome_approvals
+                if isinstance(a, dict) and a.get("approval_id") == auth_id
+            ]
+            if not matching_current:
+                issues.append(ScenarioDependencyIssue(
+                    artefact_id=_artefact_id,
+                    issue_type="stale",
+                    detail=(
+                        f"Saved approval '{auth_id}' for outcome "
+                        f"'{auth_outcome}' no longer exists in current approvals."
+                    ),
+                    dependency_type="outcome_approval",
+                    reason_code="approval_not_found",
+                ))
+                continue
+
+            try:
+                current_approval = OutcomeApproval.from_dict(matching_current[0])
+            except (TypeError, ValueError, KeyError, AttributeError) as exc:
+                issues.append(ScenarioDependencyIssue(
+                    artefact_id=_artefact_id,
+                    issue_type="invalid",
+                    detail=f"Approval '{auth_id}' record is malformed: {exc}.",
+                    dependency_type="outcome_approval",
+                    reason_code="approval_malformed",
+                ))
+                continue
+
+            # Verify status
+            if current_approval.status != "approved":
+                issues.append(ScenarioDependencyIssue(
+                    artefact_id=_artefact_id,
+                    issue_type="stale",
+                    detail=(
+                        f"Approval '{auth_id}' status is "
+                        f"'{current_approval.status}', not 'approved'."
+                    ),
+                    dependency_type="outcome_approval",
+                    reason_code="approval_not_approved",
+                ))
+
+            # Verify active
+            if not current_approval.is_active():
+                issues.append(ScenarioDependencyIssue(
+                    artefact_id=_artefact_id,
+                    issue_type="stale",
+                    detail=f"Approval '{auth_id}' is not active (expired or future-dated).",
+                    dependency_type="outcome_approval",
+                    reason_code="approval_not_active",
+                ))
+
+            # Verify requested use
+            if auth_use and not current_approval.allows_use(auth_use):
+                issues.append(ScenarioDependencyIssue(
+                    artefact_id=_artefact_id,
+                    issue_type="stale",
+                    detail=(
+                        f"Approval '{auth_id}' does not allow "
+                        f"required use '{auth_use}'."
+                    ),
+                    dependency_type="outcome_approval",
+                    reason_code="approval_use_not_allowed",
+                ))
+
+            # Verify scope (market, product, segment)
+            auth_market = auth.get("market")
+            auth_product = auth.get("product")
+            auth_segment = auth.get("segment")
+            if not current_approval.matches_scope(
+                market=auth_market,
+                product=auth_product,
+                segment=auth_segment,
+            ):
+                issues.append(ScenarioDependencyIssue(
+                    artefact_id=_artefact_id,
+                    issue_type="stale",
+                    detail=(
+                        f"Approval '{auth_id}' scope does not cover "
+                        f"market={auth_market}, product={auth_product}, "
+                        f"segment={auth_segment}."
+                    ),
+                    dependency_type="outcome_approval",
+                    reason_code="approval_scope_mismatch",
+                ))
+
+            # Verify definition fingerprint
+            saved_fp = auth.get("definition_fingerprint")
+            if saved_fp and saved_fp != current_approval.definition_fingerprint:
+                issues.append(ScenarioDependencyIssue(
+                    artefact_id=_artefact_id,
+                    issue_type="stale",
+                    detail=(
+                        f"Approval '{auth_id}' definition fingerprint has changed "
+                        f"(saved '{saved_fp[:16]}...', current "
+                        f"'{current_approval.definition_fingerprint[:16]}...')."
+                    ),
+                    dependency_type="outcome_approval",
+                    reason_code="definition_fingerprint_mismatch",
+                ))
 
     return issues
 

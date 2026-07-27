@@ -45,6 +45,7 @@ from ancestry_mmm.core.optimization import (
     ScenarioGovernanceDependencies,
     SpendConstraint,
     compare_scenarios,
+    evaluate_manual_scenario,
     evaluate_scenario,
     fingerprint_planning_objective,
     governance_deps_from_optimizer_result,
@@ -554,7 +555,8 @@ tab_manual, tab_constrained, tab_unconstrained = st.tabs(["Manual", "Constrained
 with tab_manual:
     st.markdown("Predicted outcomes for the spend plan as edited above.")
     try:
-        predicted = evaluate_scenario(
+        # G2A.7a.5: use evaluate_manual_scenario which returns ScenarioEvaluationResult
+        manual_result = evaluate_manual_scenario(
             spend_plan,
             market,
             meta,
@@ -568,9 +570,11 @@ with tab_manual:
             cost_mapping_registry=governed_cost_registry,
             cost_context_id="default",
             cost_as_of_by_month=cost_as_of_by_month,
+            artefact_kind="manual_scenario",
             **identity_kwargs,
             **scenario_governance_kwargs,
         )
+        predicted = manual_result.predicted
     except (ApprovalMismatchError, ValueError, PlanningGovernanceError) as e:
         st.error(f"Cannot evaluate this scenario: {e}")
         st.stop()
@@ -619,62 +623,33 @@ with tab_manual:
     scenario_name = st.text_input("Scenario name *", value=f"manual-{market}-{months[0]}", key="manual_name")
     if st.button("Save this scenario"):
         scenarios = get_state("scenarios") or []
-        scenarios.append(
-            scenario_to_dict(
-                scenario_name,
-                market,
-                spend_plan,
-                objective,
-                [],
-                notes="manual",
-                planning_objective=planning_objective,
-                activity_definitions_fingerprint=(
-                    predicted["activity_definitions_fingerprint"].iloc[0]
-                ),
-                scenario_plan=scenario_plan,
-                counterfactual_policy=counterfactual_policy,
-                economics_coverage=predicted[
-                    "economics_coverage"
-                ].iloc[0],
-                # G2A.7a.1 (section 11.1): a manual scenario is a planning
-                # artefact - persist the actual selected governance_mode
-                # ("official" or "exploratory"), never "not_applicable".
-                governance_mode=governance_mode,
-                # G2A.7a.4: explicit artefact kind
-                artefact_kind="manual_scenario",
-                # G2A.7a.4: populate governance dependencies from predicted
-                governance_dependencies=ScenarioGovernanceDependencies(
-                    model_run_id=identity_kwargs.get("model_run_id", ""),
-                    model_approval_fingerprint="",
-                    data_fingerprint=identity_kwargs.get("data_fingerprint", ""),
-                    model_spec_fingerprint=identity_kwargs.get("model_spec_fingerprint", ""),
-                    posterior_fingerprint=identity_kwargs.get("posterior_fingerprint", ""),
-                    planning_objective_fingerprint=(
-                        fingerprint_planning_objective(planning_objective)
-                        if planning_objective is not None else ""
-                    ),
-                    outcome_authorisations=(),
-                    activity_definitions_fingerprint=predicted.get(
-                        "activity_definitions_fingerprint"
-                    ).iloc[0] if "activity_definitions_fingerprint" in predicted.columns else None,
-                    cost_mapping_fingerprint=predicted.get(
-                        "cost_mapping_fingerprint"
-                    ).iloc[0] if "cost_mapping_fingerprint" in predicted.columns else None,
-                    counterfactual_policy_fingerprint=(
-                        counterfactual_policy.fingerprint()
-                        if counterfactual_policy else ""
-                    ),
-                    nbt_completeness_fingerprint=(
-                        NetBillthroughCompletenessMetadata.from_dict(
-                            nbt_completeness_metadata
-                        ).completeness_fingerprint()
-                        if nbt_completeness_metadata
-                        else None
-                    ),
-                ),
-            )
+        # G2A.7a.5: use the exact governance dependencies from evaluate_manual_scenario
+        gov_deps = manual_result.governance_dependencies
+        manual_scenario = scenario_to_dict(
+            scenario_name,
+            market,
+            spend_plan,
+            objective,
+            [],
+            notes="manual",
+            planning_objective=planning_objective,
+            activity_definitions_fingerprint=(
+                gov_deps.activity_definitions_fingerprint
+                if gov_deps is not None
+                else predicted["activity_definitions_fingerprint"].iloc[0]
+            ),
+            scenario_plan=scenario_plan,
+            counterfactual_policy=counterfactual_policy,
+            economics_coverage=predicted[
+                "economics_coverage"
+            ].iloc[0],
+            governance_mode=governance_mode,
+            artefact_kind=manual_result.artefact_kind,
+            # Persist the exact governance dependencies from the service
+            governance_dependencies=gov_deps,
         )
-        scenarios[-1]["predicted"] = predicted
+        manual_scenario["predicted"] = predicted
+        scenarios.append(manual_scenario)
         set_state("scenarios", scenarios)
         st.success(f"Saved scenario '{scenario_name}'.")
 
