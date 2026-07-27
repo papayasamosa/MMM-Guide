@@ -494,10 +494,11 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
             for i, s in enumerate(scenarios_meta):
                 # G2A.7a.4: use shared scenario_from_dict for migration
                 from .optimization import scenario_from_dict
-                scenarios_meta[i] = scenario_from_dict(s)
+                migrated = scenario_from_dict(s)
                 pred_path = tmp / "scenarios" / f"scenario_{i}_predicted.csv"
                 if pred_path.exists():
-                    s["predicted"] = pd.read_csv(pred_path)
+                    migrated["predicted"] = pd.read_csv(pred_path)
+                scenarios_meta[i] = migrated
             result["scenarios"] = scenarios_meta
 
         trace_path = tmp / "model" / "trace.nc"
