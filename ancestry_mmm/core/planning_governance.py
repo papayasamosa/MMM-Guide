@@ -27,6 +27,7 @@ from .optimization import (
     PlanningObjective,
     ResolvedOutcomeAuthorisation,
     ResolvedPlanningGovernance,
+    ScenarioDependencyIssue,
     fingerprint_planning_objective,
 )
 
@@ -37,16 +38,6 @@ from .optimization import (
 
 
 @dataclass(frozen=True)
-class ScenarioDependencyIssue:
-    """One detected staleness or invalidity issue in a saved scenario's
-    governance dependencies."""
-    artefact_id: str
-    issue_type: str  # "invalid", "legacy_unverified", "stale", "missing"
-    detail: str
-    dependency_type: str = "unknown"
-    reason_code: str = ""
-
-
 def require_nonblank_dependency(
     value: object,
     name: str,
@@ -136,11 +127,16 @@ def resolve_planning_governance(
             )
         nbt_fp = None
         if getattr(outcome, 'metric_key', None) == METRIC_KEY_FH_NET_BILLTHROUGH_COUNT:
-            if nbt_completeness_metadata is None:
+            from .net_billthrough import validate_nbt_completeness_metadata_for_outcome
+            nbt_issues = validate_nbt_completeness_metadata_for_outcome(
+                outcome, nbt_completeness_metadata,
+            )
+            if nbt_issues:
                 raise OutcomeApprovalBlockedError(
-                    f"Net Bill-Through target '{target_id}' requires valid "
-                    "completeness metadata for official use."
+                    f"Net Bill-Through target '{target_id}' completeness "
+                    f"validation failed: {'; '.join(nbt_issues)}"
                 )
+            # Use canonical fingerprint from valid metadata
             if isinstance(nbt_completeness_metadata, dict):
                 nbt_meta_obj = NetBillthroughCompletenessMetadata.from_dict(
                     nbt_completeness_metadata
