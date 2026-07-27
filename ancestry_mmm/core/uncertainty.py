@@ -298,6 +298,7 @@ def evaluate_scenario_with_uncertainty(
     outcome_approvals: Optional[List[OutcomeApproval]] = None,
     governance_mode: str = "official",
     nbt_completeness_metadata: Optional[dict] = None,
+    _trusted_operation: Optional[str] = None,
 ) -> Dict[str, object]:
     """
     Per-draw scenario evaluation: `core.optimization.evaluate_scenario` run
@@ -341,6 +342,7 @@ def evaluate_scenario_with_uncertainty(
             outcome_approvals=outcome_approvals,
             governance_mode=governance_mode,
             nbt_completeness_metadata=nbt_completeness_metadata,
+            _trusted_operation=_trusted_operation,
         )
 
     draw_indices = sample_draw_indices(trace, n_draws, seed)

@@ -297,9 +297,21 @@ class ResolvedPlanningGovernance:
             raise OutcomeApprovalBlockedError(
                 "Resolved governance model_run_id does not match."
             )
-        if self.model_approval_fingerprint and model_approval_fingerprint and self.model_approval_fingerprint != model_approval_fingerprint:
+        # G2A.7a.8: fail-closed model-approval fingerprint check
+        if not self.model_approval_fingerprint:
             raise OutcomeApprovalBlockedError(
-                "Resolved governance model_approval_fingerprint does not match."
+                "Resolved governance has a blank model_approval_fingerprint — "
+                "cannot authorise an official calculation."
+            )
+        if not model_approval_fingerprint:
+            raise OutcomeApprovalBlockedError(
+                "Current model approval fingerprint is absent — "
+                "cannot verify resolved governance."
+            )
+        if self.model_approval_fingerprint != model_approval_fingerprint:
+            raise OutcomeApprovalBlockedError(
+                "Resolved governance model_approval_fingerprint does not match "
+                "the current model approval."
             )
         if self.data_fingerprint != data_fingerprint:
             raise OutcomeApprovalBlockedError(
@@ -511,24 +523,91 @@ class ScenarioEvaluationResult:
 
 
 @dataclass(frozen=True)
+class OutcomeValueMapping:
+    """Canonical outcome-level value mapping for expected-value calculations.
+
+    Outcome-ID weights are authoritative. Legacy segment LTV is converted
+    through an explicit migration adapter before reaching this type."""
+    value_by_outcome_id: Mapping[str, float]
+    currency_by_outcome_id: Mapping[str, str]
+    mapping_id: str = "default"
+    mapping_fingerprint: str = ""
+    source: str = "outcome_catalogue"
+
+    def to_dict(self) -> dict:
+        return {
+            "value_by_outcome_id": dict(self.value_by_outcome_id),
+            "currency_by_outcome_id": dict(self.currency_by_outcome_id),
+            "mapping_id": self.mapping_id,
+            "mapping_fingerprint": self.mapping_fingerprint,
+            "source": self.source,
+        }
+
+    @classmethod
+    def from_legacy_segment_ltv(
+        cls,
+        segment_ltv: Mapping[str, float],
+        outcome_ids: tuple[str, ...],
+    ) -> "OutcomeValueMapping":
+        """Convert legacy segment-level LTV to outcome-ID value mapping."""
+        return cls(
+            value_by_outcome_id={oid: float(segment_ltv.get(oid, 0.0)) for oid in outcome_ids},
+            currency_by_outcome_id={oid: "GBP" for oid in outcome_ids},
+            mapping_id="legacy_segment_ltv_migration",
+            source="legacy_segment_ltv_migration",
+        )
+
+
+@dataclass(frozen=True)
+class CurrencyContext:
+    """Currency context for scenario planning and reporting.
+
+    For single-market planning: local monetary decisions remain in the
+    market reporting currency. No conversion is performed without a
+    governed rate set or assumption."""
+    market_reporting_currency: str = ""
+    value_currency: str | None = None
+    group_reporting_currency: str | None = None
+    model_currency: str | None = None
+    historical_fx_rate_set_id: str | None = None
+    historical_fx_rate_set_fingerprint: str | None = None
+    future_fx_assumption_id: str | None = None
+    future_fx_assumption_fingerprint: str | None = None
+
+    def to_dict(self) -> dict:
+        from dataclasses import asdict
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "CurrencyContext":
+        known = set(cls.__dataclass_fields__)
+        return cls(**{k: v for k, v in d.items() if k in known})
+
+
+@dataclass(frozen=True)
 class ScenarioValidationContext:
     """Complete current project state for scenario dependency validation.
 
     A scenario may be ``current`` only when every required saved dependency
     was compared with this context. Omitted fields prevent ``current``
-    status."""
+    status.
 
-    model_run_id: Optional[str] = None
-    model_approval_fingerprint: Optional[str] = None
-    data_fingerprint: Optional[str] = None
-    model_spec_fingerprint: Optional[str] = None
-    posterior_fingerprint: Optional[str] = None
-    planning_objective: Optional[PlanningObjective] = None
-    outcome_definitions: Optional[list] = None
-    outcome_approvals: Optional[list] = None
+    Required (non-optional) fields are mandatory for every official check.
+    Optional fields are use-specific (activity, cost, NBT)."""
+
+    model_run_id: str
+    model_approval_fingerprint: str
+    data_fingerprint: str
+    model_spec_fingerprint: str
+    posterior_fingerprint: str
+    planning_objective: PlanningObjective
+    outcome_definitions: tuple
+    outcome_approvals: tuple
+    counterfactual_fingerprint: str
+    value_mapping_fingerprint: str | None = None
+    currency_context_fingerprint: str | None = None
     activity_fingerprint: Optional[str] = None
     cost_fingerprint: Optional[str] = None
-    counterfactual_fingerprint: Optional[str] = None
     nbt_completeness_metadata: Optional[dict] = None
 
 
@@ -815,23 +894,28 @@ def validate_scenario_dependencies(
     IDs, status, expiry, use, and scope against current definitions.
     """
     issues: List[ScenarioDependencyIssue] = []
+    current_model_approval_fingerprint: Optional[str] = None
 
-    # G2A.7a.7: use ScenarioValidationContext when provided, fallback to individual params
+    # G2A.7a.8: use ScenarioValidationContext values directly when provided.
+    # Strict context fields are authoritative; no merging with individual params.
     if context is not None:
-        current_model_run_id = current_model_run_id or context.model_run_id
-        current_data_fingerprint = current_data_fingerprint or context.data_fingerprint
-        current_model_spec_fingerprint = current_model_spec_fingerprint or context.model_spec_fingerprint
-        current_posterior_fingerprint = current_posterior_fingerprint or context.posterior_fingerprint
-        current_planning_objective = current_planning_objective or context.planning_objective
-        current_activity_fingerprint = current_activity_fingerprint or context.activity_fingerprint
-        current_cost_fingerprint = current_cost_fingerprint or context.cost_fingerprint
-        current_counterfactual_fingerprint = current_counterfactual_fingerprint or context.counterfactual_fingerprint
-        current_nbt_completeness_fingerprint = current_nbt_completeness_fingerprint or (
-            context.nbt_completeness_metadata.get("definition_fingerprint")
+        current_model_run_id = context.model_run_id
+        current_model_approval_fingerprint = context.model_approval_fingerprint
+        current_data_fingerprint = context.data_fingerprint
+        current_model_spec_fingerprint = context.model_spec_fingerprint
+        current_posterior_fingerprint = context.posterior_fingerprint
+        current_planning_objective = context.planning_objective
+        current_outcome_approvals = context.outcome_approvals
+        current_activity_fingerprint = context.activity_fingerprint
+        current_cost_fingerprint = context.cost_fingerprint
+        current_counterfactual_fingerprint = context.counterfactual_fingerprint
+        current_nbt_completeness_fingerprint = (
+            _resolve_nbt_completeness_fingerprint(
+                context.nbt_completeness_metadata,
+                fail_closed=True,
+            )
             if context.nbt_completeness_metadata else None
         )
-        current_outcome_definitions = current_outcome_definitions or context.outcome_definitions
-        current_outcome_approvals = current_outcome_approvals or context.outcome_approvals
 
     schema_ver = scenario.get("schema_version", 1)
     deps = scenario.get("governance_dependencies") or {}
@@ -927,9 +1011,16 @@ def validate_scenario_dependencies(
             issue_type="missing",
             detail="Governance dependency 'model_approval_fingerprint' is missing.",
         ))
-    elif current_model_approval is not None:
-        current_fp = current_model_approval.get("fingerprint", "")
-        if saved_approval_fp != current_fp:
+    elif current_model_approval_fingerprint or current_model_approval:
+        if not current_model_approval_fingerprint and current_model_approval:
+            from .approval import ModelApproval, fingerprint_model_approval
+            try:
+                current_model_approval_fingerprint = fingerprint_model_approval(
+                    ModelApproval.from_dict(current_model_approval)
+                )
+            except (TypeError, ValueError):
+                pass
+        if current_model_approval_fingerprint and saved_approval_fp != current_model_approval_fingerprint:
             issues.append(ScenarioDependencyIssue(
                 artefact_id=scenario.get("name", "<unknown>"),
                 issue_type="stale",
@@ -1136,7 +1227,28 @@ def validate_scenario_dependencies(
                     reason_code="approval_scope_mismatch",
                 ))
 
-            # Verify definition fingerprint
+            # Verify outcome definition fingerprint against current definition
+            if current_outcome_definitions is not None and auth_outcome:
+                from .outcome_approval import fingerprint_outcome_definition
+                for defn in current_outcome_definitions:
+                    if isinstance(defn, dict) and defn.get("outcome_id") == auth_outcome:
+                        current_def_fp = fingerprint_outcome_definition(defn)
+                        saved_def_fp = auth.get("definition_fingerprint")
+                        if saved_def_fp and saved_def_fp != current_def_fp:
+                            issues.append(ScenarioDependencyIssue(
+                                artefact_id=_artefact_id,
+                                issue_type="stale",
+                                detail=(
+                                    f"Outcome '{auth_outcome}' definition has changed "
+                                    f"(saved fingerprint '{saved_def_fp[:16]}...', "
+                                    f"current '{current_def_fp[:16]}...')."
+                                ),
+                                dependency_type="outcome_definition",
+                                reason_code="definition_fingerprint_mismatch",
+                            ))
+                        break
+
+            # Verify approval definition fingerprint
             saved_fp = auth.get("definition_fingerprint")
             if saved_fp and saved_fp != current_approval.definition_fingerprint:
                 issues.append(ScenarioDependencyIssue(
@@ -1148,7 +1260,7 @@ def validate_scenario_dependencies(
                         f"'{current_approval.definition_fingerprint[:16]}...')."
                     ),
                     dependency_type="outcome_approval",
-                    reason_code="definition_fingerprint_mismatch",
+                    reason_code="approval_fingerprint_mismatch",
                 ))
 
     return issues
@@ -1823,6 +1935,7 @@ def evaluate_scenario(
     outcome_approvals: Optional[List[OutcomeApproval]] = None,
     governance_mode: str = "official",
     nbt_completeness_metadata: Optional[dict] = None,
+    _trusted_operation: Optional[str] = None,
 ) -> pd.DataFrame:
     """Evaluate total and incremental outcomes under governed activity scopes.
 
@@ -1832,7 +1945,11 @@ def evaluate_scenario(
     let the optimiser handle governance internally.
 
     Pass ``governance_mode="exploratory"`` for a clearly non-official
-    evaluation that skips outcome-approval checks."""
+    evaluation that skips outcome-approval checks.
+
+    ``_trusted_operation`` is an internal parameter for the optimiser to
+    specify ``"optimisation"`` so nested evaluation does not incorrectly
+    demand planning approval. It must never be set by external callers."""
     require_matching_approval(
         approval,
         model_run_id=model_run_id,
@@ -1840,10 +1957,10 @@ def evaluate_scenario(
         model_spec_fingerprint=model_spec_fingerprint,
         posterior_fingerprint=posterior_fingerprint,
     )
-    # --- Outcome-approval gate (G2A.7a.7) ---
+    # --- Outcome-approval gate (G2A.7a.8) ---
     # Official mode: fail closed. exploratory mode skips checks.
-    # No caller-supplied proof is accepted — governance is resolved before
-    # this function is called, or resolved internally here.
+    # _trusted_operation lets the optimiser specify "optimisation" so nested
+    # evaluation does not demand the wrong approval use.
     if governance_mode == "official":
         if outcome_approvals is None or len(outcome_approvals) == 0:
             raise OutcomeApprovalBlockedError(
@@ -1860,11 +1977,12 @@ def evaluate_scenario(
                 "governance_mode='exploratory' for non-official evaluation, "
                 "or provide a complete PlanningObjective."
             )
+        _requested = _trusted_operation if _trusted_operation else "planning"
         _require_planning_outcome_approvals(
                 planning_objective=planning_objective,
                 meta=meta,
                 outcome_approvals=outcome_approvals,
-                requested_use="planning",
+                requested_use=_requested,
                 market=market,
                 nbt_completeness_metadata=nbt_completeness_metadata,
             )
@@ -3282,6 +3400,7 @@ def optimize_scenario(
         ltv,
         scenario_plan=optimized_scenario_plan,
         **identity_kwargs,
+        _trusted_operation="optimisation",
     )
     current_predicted = evaluate_scenario(
         current_spend_plan,
@@ -3292,6 +3411,7 @@ def optimize_scenario(
         ltv,
         scenario_plan=current_scenario_plan,
         **identity_kwargs,
+        _trusted_operation="optimisation",
     )
 
     # Evaluated via the same objective_fn used for optimisation (not
@@ -3327,6 +3447,7 @@ def optimize_scenario(
             cost_context_id=cost_context_id,
             cost_as_of_by_month=cost_as_of_by_month,
             outcome_approvals=outcome_approvals,
+            _trusted_operation="optimisation",
         )
 
     return {
