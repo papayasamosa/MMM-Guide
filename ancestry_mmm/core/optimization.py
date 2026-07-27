@@ -46,7 +46,7 @@ from dataclasses import asdict, dataclass, replace
 import hashlib
 import json
 import warnings
-from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
+from typing import Any, Dict, List, Literal, Mapping, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -68,6 +68,7 @@ from .outcomes import (
 from .outcome_approval import (
     OutcomeApproval,
     OutcomeApprovalBlockedError,
+    PlanningGovernanceError,
 )
 from .predict import FHPosteriorParams, steady_state_outcome_response
 from .market_specific_predict import FHMarketSpecificPosteriorParams, steady_state_outcome_response_market_specific
@@ -82,6 +83,28 @@ from .scenario_governance import (
 WEEKS_PER_MONTH = 365.25 / 12 / 7  # ~4.348
 
 AnyPosteriorParams = Union[FHPosteriorParams, FHMarketSpecificPosteriorParams]
+
+
+def _resolve_nbt_completeness_fingerprint(
+    nbt_completeness_metadata: dict | None,
+) -> str | None:
+    """Resolve the real NBT completeness-record fingerprint from metadata.
+
+    Uses ``NetBillthroughCompletenessMetadata.from_dict`` to normalise the
+    payload and ``completeness_fingerprint()`` to fingerprint the complete
+    canonical metadata — not the outcome-definition fingerprint, which is
+    a separate object (REQ-NBT-001). Returns None when metadata is absent
+    or cannot be parsed."""
+    if nbt_completeness_metadata is None:
+        return None
+    try:
+        from .net_billthrough import NetBillthroughCompletenessMetadata
+        metadata = NetBillthroughCompletenessMetadata.from_dict(
+            nbt_completeness_metadata
+        )
+        return metadata.completeness_fingerprint()
+    except (TypeError, ValueError):
+        return None
 
 PLANNING_ESTIMANDS = {
     "total_outcome",
@@ -99,7 +122,7 @@ PLANNING_ESTIMANDS = {
 # ---------------------------------------------------------------------------
 
 
-class ObjectiveMissingError(Exception):
+class ObjectiveMissingError(PlanningGovernanceError):
     """Official planning/optimisation requires an explicit objective."""
     # Not a subclass of OutcomeApprovalBlockedError because it is raised
     # before any approval check runs — the objective is missing regardless
@@ -151,7 +174,12 @@ class ResolvedPlanningGovernance:
     G2A.7a.3: includes full model identity and market so the recipient
     can verify the proof applies to the current calculation context. A
     ``from_dict`` payload that fails validation is rejected, not silently
-    accepted."""
+    accepted.
+
+    G2A.7a.4: includes ``target_outcome_ids`` so ``validate_against`` can
+    enforce exact target coverage — no missing, extra, or duplicate
+    authorisations, and every authorisation's requested_use matches the
+    expected operation."""
     governance_mode: str  # "official" or "exploratory"
     operation: str  # "planning" or "optimisation"
     objective_fingerprint: str
@@ -161,6 +189,7 @@ class ResolvedPlanningGovernance:
     posterior_fingerprint: str
     market: str
     authorisations: Tuple[ResolvedOutcomeAuthorisation, ...]
+    target_outcome_ids: Tuple[str, ...] = ()
 
     @property
     def is_official(self) -> bool:
@@ -177,10 +206,12 @@ class ResolvedPlanningGovernance:
             "posterior_fingerprint": self.posterior_fingerprint,
             "market": self.market,
             "authorisations": [a.to_dict() for a in self.authorisations],
+            "target_outcome_ids": list(self.target_outcome_ids),
         }
 
     @classmethod
     def from_dict(cls, d: dict) -> "ResolvedPlanningGovernance":
+        raw_targets = d.get("target_outcome_ids", ())
         return cls(
             governance_mode=d.get("governance_mode", "exploratory"),
             operation=d.get("operation", "planning"),
@@ -194,6 +225,9 @@ class ResolvedPlanningGovernance:
                 ResolvedOutcomeAuthorisation.from_dict(a)
                 for a in d.get("authorisations", [])
             ),
+            target_outcome_ids=(
+                tuple(raw_targets) if isinstance(raw_targets, list) else raw_targets
+            ),
         )
 
     def validate_against(
@@ -206,18 +240,24 @@ class ResolvedPlanningGovernance:
         model_spec_fingerprint: str,
         posterior_fingerprint: str,
         market: str,
+        expected_operation: str | None = None,
     ) -> None:
         """Raises ``OutcomeApprovalBlockedError`` if any field does not
-        match the current calculation context. Prevents forged, empty,
-        or stale resolved-governance objects from bypassing checks."""
+        match the current calculation context.
+
+        When ``expected_operation`` is provided (preferred), validates
+        against that value — do not call with ``operation=resolved.operation``
+        as that compares the field with itself."""
         if self.governance_mode != "official":
             raise OutcomeApprovalBlockedError(
                 "Resolved governance is not official."
             )
-        if self.operation != operation:
+        # Use expected_operation when provided — not self.operation
+        check_operation = expected_operation if expected_operation is not None else operation
+        if self.operation != check_operation:
             raise OutcomeApprovalBlockedError(
                 f"Resolved governance operation is '{self.operation}' "
-                f"but the current operation is '{operation}'."
+                f"but the expected operation is '{check_operation}'."
             )
         if not self.objective_fingerprint:
             raise OutcomeApprovalBlockedError(
@@ -258,6 +298,158 @@ class ResolvedPlanningGovernance:
                 "Resolved governance has zero authorisations — cannot "
                 "authorise an official calculation."
             )
+        # G2A.7a.4: validate exact target coverage
+        authorised_ids = {a.outcome_id for a in self.authorisations}
+        target_set = set(self.target_outcome_ids)
+        if not target_set:
+            raise OutcomeApprovalBlockedError(
+                "Resolved governance has no target outcome IDs — cannot "
+                "authorise an official calculation."
+            )
+        if authorised_ids != target_set:
+            missing = target_set - authorised_ids
+            extra = authorised_ids - target_set
+            parts = []
+            if missing:
+                parts.append(f"missing authorisations for: {sorted(missing)}")
+            if extra:
+                parts.append(f"extra authorisations for: {sorted(extra)}")
+            raise OutcomeApprovalBlockedError(
+                "Resolved governance target mismatch: " + "; ".join(parts)
+            )
+        # Validate each authorisation's requested_use matches the operation
+        for auth in self.authorisations:
+            if auth.requested_use != check_operation:
+                raise OutcomeApprovalBlockedError(
+                    f"Authorisation for outcome '{auth.outcome_id}' has "
+                    f"requested_use='{auth.requested_use}' but expected "
+                    f"'{check_operation}'."
+                )
+
+
+# ---------------------------------------------------------------------------
+# G2A.7a.4: artefact kind — explicit scenario type, never inferred from
+# constraints, names, or notes.
+# ---------------------------------------------------------------------------
+
+ARTEFACT_KINDS = frozenset({
+    "manual_scenario",
+    "constrained_optimisation",
+    "unconstrained_benchmark",
+})
+
+# Required use per artefact kind — enforced by governance validation.
+ARTEFACT_KIND_REQUIRED_USE: dict[str, str] = {
+    "manual_scenario": "planning",
+    "constrained_optimisation": "optimisation",
+    "unconstrained_benchmark": "optimisation",
+}
+
+
+def classify_artefact_kind(
+    constraints: list | None,
+    *,
+    explicit_kind: str | None = None,
+) -> str:
+    """Classify a scenario's artefact kind.
+
+    When ``explicit_kind`` is provided it is authoritative — never infer
+    from constraints, names, or notes. If absent, fall back to heuristics
+    for backward compatibility (legacy scenarios without the field)."""
+    if explicit_kind is not None:
+        if explicit_kind not in ARTEFACT_KINDS:
+            raise ValueError(
+                f"Unknown artefact kind {explicit_kind!r}. "
+                f"Must be one of {sorted(ARTEFACT_KINDS)}."
+            )
+        return explicit_kind
+    # Legacy fallback: no explicit kind recorded.
+    raise ValueError("artefact_kind must be explicitly provided; cannot infer.")
+
+
+@dataclass(frozen=True)
+class ScenarioGovernanceDependencies:
+    """Typed governance dependency contract for scenario persistence.
+
+    Every field must be populated for an official save. Missing mandatory
+    fields must block the save, not silently default to None."""
+    model_run_id: str
+    model_approval_fingerprint: str
+    data_fingerprint: str
+    model_spec_fingerprint: str
+    posterior_fingerprint: str
+    planning_objective_fingerprint: str
+    outcome_authorisations: tuple[ResolvedOutcomeAuthorisation, ...]
+    activity_definitions_fingerprint: str | None = None
+    cost_mapping_fingerprint: str | None = None
+    counterfactual_policy_fingerprint: str = ""
+    nbt_completeness_fingerprint: str | None = None
+
+    def to_dict(self) -> dict:
+        return {
+            "model_run_id": self.model_run_id,
+            "model_approval_fingerprint": self.model_approval_fingerprint,
+            "data_fingerprint": self.data_fingerprint,
+            "model_spec_fingerprint": self.model_spec_fingerprint,
+            "posterior_fingerprint": self.posterior_fingerprint,
+            "planning_objective_fingerprint": self.planning_objective_fingerprint,
+            "outcome_authorisations": [
+                a.to_dict() for a in self.outcome_authorisations
+            ],
+            "activity_definitions_fingerprint": self.activity_definitions_fingerprint,
+            "cost_mapping_fingerprint": self.cost_mapping_fingerprint,
+            "counterfactual_policy_fingerprint": self.counterfactual_policy_fingerprint,
+            "nbt_completeness_fingerprint": self.nbt_completeness_fingerprint,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "ScenarioGovernanceDependencies":
+        return cls(
+            model_run_id=d.get("model_run_id", ""),
+            model_approval_fingerprint=d.get("model_approval_fingerprint", ""),
+            data_fingerprint=d.get("data_fingerprint", ""),
+            model_spec_fingerprint=d.get("model_spec_fingerprint", ""),
+            posterior_fingerprint=d.get("posterior_fingerprint", ""),
+            planning_objective_fingerprint=d.get("planning_objective_fingerprint", ""),
+            outcome_authorisations=tuple(
+                ResolvedOutcomeAuthorisation.from_dict(a)
+                for a in d.get("outcome_authorisations", [])
+            ),
+            activity_definitions_fingerprint=d.get("activity_definitions_fingerprint"),
+            cost_mapping_fingerprint=d.get("cost_mapping_fingerprint"),
+            counterfactual_policy_fingerprint=d.get("counterfactual_policy_fingerprint", ""),
+            nbt_completeness_fingerprint=d.get("nbt_completeness_fingerprint"),
+        )
+
+
+@dataclass(frozen=True)
+class ScenarioEvaluationResult:
+    """Structured manual evaluation result with full governance provenance.
+
+    The production page must persist this result's exact dependencies
+    rather than only the predicted DataFrame."""
+    predicted: pd.DataFrame
+    planning_objective: PlanningObjective | None
+    governance_mode: str
+    artefact_kind: str
+    resolved_governance: ResolvedPlanningGovernance | None = None
+    activity_definitions_fingerprint: str | None = None
+    cost_mapping_fingerprint: str | None = None
+    counterfactual_policy_fingerprint: str = ""
+    economics_coverage: dict | None = None
+
+    def to_dict(self) -> dict:
+        return {
+            "predicted": self.predicted,
+            "planning_objective": self.planning_objective.to_dict() if self.planning_objective else None,
+            "governance_mode": self.governance_mode,
+            "artefact_kind": self.artefact_kind,
+            "resolved_governance": self.resolved_governance.to_dict() if self.resolved_governance else None,
+            "activity_definitions_fingerprint": self.activity_definitions_fingerprint,
+            "cost_mapping_fingerprint": self.cost_mapping_fingerprint,
+            "counterfactual_policy_fingerprint": self.counterfactual_policy_fingerprint,
+            "economics_coverage": self.economics_coverage,
+        }
 
 
 @dataclass(frozen=True)
@@ -366,6 +558,110 @@ def fingerprint_planning_objective(objective: PlanningObjective) -> str:
 
 
 # ---------------------------------------------------------------------------
+# G2A.7a.4: expected-value objective resolution
+# ---------------------------------------------------------------------------
+
+
+def resolve_planning_objective(
+    *,
+    objective_kind: str,
+    meta: FHModelMeta,
+    operation: Literal["planning", "optimisation"],
+    ltv: Optional[Mapping[str, float]] = None,
+    value_currency: Optional[str] = None,
+    counterfactual_policy_fingerprint: Optional[str] = None,
+) -> PlanningObjective:
+    """Resolve a typed PlanningObjective from an objective kind string.
+
+    For expected-value optimisation, every target must have:
+    - value eligibility (include_in_value = True)
+    - optimisation eligibility (include_in_optimisation = True)
+    - fitted-model membership
+    - a value weight in ``ltv``
+    - compatible governed currency
+    - optimisation approval
+
+    Raises ``ValueError`` if targets cannot be resolved."""
+    _objective_metric_keys = {
+        "fh_net_billthrough": METRIC_KEY_FH_NET_BILLTHROUGH_COUNT,
+        "fh_gsa": METRIC_KEY_FH_GSA,
+        "fh_signups": METRIC_KEY_FH_SIGNUP,
+        "dna_kits": METRIC_KEY_DNA_KIT_SALE,
+    }
+    _objective_target_resolvers: dict = {
+        "fh_gsa": lambda m: tuple(fh_gsa_outcome_ids(m)),
+        "fh_signups": lambda m: tuple(fh_signup_outcome_ids(m)),
+        "fh_net_billthrough": lambda m: tuple(fh_net_billthrough_outcome_ids(m)),
+        "dna_kits": lambda m: tuple(dna_kit_sale_outcome_ids(m)),
+    }
+
+    if objective_kind in _objective_metric_keys:
+        return PlanningObjective(
+            estimand="incremental_outcome",
+            metric_key=_objective_metric_keys[objective_kind],
+            target_outcome_ids=_objective_target_resolvers[objective_kind](meta),
+            counterfactual_policy_fingerprint=counterfactual_policy_fingerprint,
+        )
+    elif objective_kind in ("expected_value", "value"):
+        if ltv is None:
+            raise ValueError(
+                "Expected-value objective requires LTV weights. "
+                "Set at least one segment's LTV on the Structure page."
+            )
+        # Resolve value-eligible outcomes
+        value_eligible = set(
+            eligible_outcome_ids(
+                meta,
+                list(meta.outcome_ids),
+                "include_in_value",
+            )
+        )
+        # For optimisation, also require optimisation eligibility
+        if operation == "optimisation":
+            optim_eligible = set(
+                eligible_outcome_ids(
+                    meta,
+                    list(meta.outcome_ids),
+                    "include_in_optimisation",
+                )
+            )
+            targets = tuple(sorted(value_eligible & optim_eligible))
+        else:
+            targets = tuple(sorted(value_eligible))
+
+        if not targets:
+            raise ValueError(
+                f"No value-eligible{' and optimisation-eligible' if operation == 'optimisation' else ''} "
+                "outcomes found in the fitted model."
+            )
+        # Verify every target has a value weight
+        missing_weights = [oid for oid in targets if oid not in (ltv or {})]
+        if missing_weights:
+            raise ValueError(
+                f"Expected-value objective: target outcomes {missing_weights} "
+                "have no LTV weight. Set a value weight for every target outcome."
+            )
+        # Verify currency compatibility
+        if value_currency and value_currency != "project_value_currency":
+            raise ValueError(
+                f"Mixed currency not supported: {value_currency}. "
+                "All value weights must share the same governed currency."
+            )
+        return PlanningObjective(
+            estimand="incremental_value",
+            metric_key="expected_value",
+            target_outcome_ids=targets,
+            value_currency=value_currency or "project_value_currency",
+            counterfactual_policy_fingerprint=counterfactual_policy_fingerprint,
+        )
+    else:
+        raise ValueError(
+            f"Unknown objective kind {objective_kind!r}. "
+            f"Must be one of {sorted(_objective_metric_keys)} or 'expected_value'."
+        )
+
+
+# ---------------------------------------------------------------------------
 # Scenario dependency validation (G2A.7a.3)
 # ---------------------------------------------------------------------------
 
@@ -390,6 +686,11 @@ def validate_scenario_dependencies(
     current_cost_fingerprint: Optional[str] = None,
     current_counterfactual_fingerprint: Optional[str] = None,
     current_nbt_completeness_fingerprint: Optional[str] = None,
+    # G2A.7a.4: extended validation parameters
+    current_model_identity: Optional[dict] = None,
+    current_model_approval: Optional[dict] = None,
+    current_outcome_definitions: Optional[list] = None,
+    current_outcome_approvals: Optional[list] = None,
 ) -> List[ScenarioDependencyIssue]:
     """Validate a saved scenario's governance dependencies against the
     current project state.
@@ -407,15 +708,35 @@ def validate_scenario_dependencies(
     - ``exploratory``: scenario was created in exploratory mode; no
       governance dependency checking applies.
     - ``invalid``: a required dependency is missing or malformed.
+
+    G2A.7a.4: validates ``_migrated_from_schema`` for legacy detection,
+    checks ``model_approval_fingerprint``, and validates saved approval
+    IDs, status, expiry, use, and scope against current definitions.
     """
     issues: List[ScenarioDependencyIssue] = []
 
     schema_ver = scenario.get("schema_version", 1)
     deps = scenario.get("governance_dependencies") or {}
     governance_mode = scenario.get("governance_mode", "exploratory")
+    artefact_kind = scenario.get("artefact_kind")
+    migrated_from = scenario.get("_migrated_from_schema")
 
     if governance_mode != "official":
         # Exploratory scenarios don't need governance dependency validation
+        return issues
+
+    # G2A.7a.4: check _migrated_from_schema — a migrated record with
+    # null fields is legacy_unverified, never current.
+    if migrated_from is not None and migrated_from < 3:
+        issues.append(ScenarioDependencyIssue(
+            artefact_id=scenario.get("name", "<unknown>"),
+            issue_type="legacy_unverified",
+            detail=(
+                f"Scenario was migrated from schema version {migrated_from}. "
+                "Migration by adding null fields does not produce 'current' "
+                "status — re-save with explicit governance dependencies."
+            ),
+        ))
         return issues
 
     if schema_ver < 3:
@@ -439,6 +760,29 @@ def validate_scenario_dependencies(
         ))
         return issues
 
+    # G2A.7a.4: validate artefact kind
+    if artefact_kind not in ARTEFACT_KINDS:
+        issues.append(ScenarioDependencyIssue(
+            artefact_id=scenario.get("name", "<unknown>"),
+            issue_type="invalid",
+            detail=f"Unknown or missing artefact kind: {artefact_kind!r}.",
+        ))
+
+    # G2A.7a.4: validate required use from artefact kind
+    required_use = ARTEFACT_KIND_REQUIRED_USE.get(artefact_kind, "planning")
+    saved_authorisations = deps.get("outcome_authorisations") or []
+    for auth in saved_authorisations:
+        if isinstance(auth, dict) and auth.get("requested_use") != required_use:
+            issues.append(ScenarioDependencyIssue(
+                artefact_id=scenario.get("name", "<unknown>"),
+                issue_type="invalid",
+                detail=(
+                    f"Authorisation for outcome '{auth.get('outcome_id')}' "
+                    f"has requested_use='{auth.get('requested_use')}' but "
+                    f"artefact kind '{artefact_kind}' requires '{required_use}'."
+                ),
+            ))
+
     # Model identity
     saved_run_id = deps.get("model_run_id")
     if saved_run_id is None:
@@ -456,6 +800,23 @@ def validate_scenario_dependencies(
                 f"{current_model_run_id}."
             ),
         ))
+
+    # G2A.7a.4: validate model approval fingerprint
+    saved_approval_fp = deps.get("model_approval_fingerprint")
+    if saved_approval_fp is None:
+        issues.append(ScenarioDependencyIssue(
+            artefact_id=scenario.get("name", "<unknown>"),
+            issue_type="missing",
+            detail="Governance dependency 'model_approval_fingerprint' is missing.",
+        ))
+    elif current_model_approval is not None:
+        current_fp = current_model_approval.get("fingerprint", "")
+        if saved_approval_fp != current_fp:
+            issues.append(ScenarioDependencyIssue(
+                artefact_id=scenario.get("name", "<unknown>"),
+                issue_type="stale",
+                detail="Model approval fingerprint has changed.",
+            ))
 
     saved_data_fp = deps.get("data_fingerprint")
     if saved_data_fp is None:
@@ -550,13 +911,33 @@ def validate_scenario_dependencies(
         ))
 
     # Outcome authorisations
-    saved_authorisations = deps.get("outcome_authorisations") or []
     if not saved_authorisations:
         issues.append(ScenarioDependencyIssue(
             artefact_id=scenario.get("name", "<unknown>"),
             issue_type="invalid",
             detail="No outcome authorisations recorded for this official scenario.",
         ))
+    else:
+        # G2A.7a.4: validate each authorisation against current state
+        for auth in saved_authorisations:
+            auth_id = auth.get("approval_id", "<unknown>") if isinstance(auth, dict) else "<unknown>"
+            auth_outcome = auth.get("outcome_id", "<unknown>") if isinstance(auth, dict) else "<unknown>"
+            # Check approval exists in current approvals
+            if current_outcome_approvals is not None:
+                still_valid = any(
+                    a.get("approval_id") == auth_id
+                    for a in current_outcome_approvals
+                )
+                if not still_valid:
+                    issues.append(ScenarioDependencyIssue(
+                        artefact_id=scenario.get("name", "<unknown>"),
+                        issue_type="stale",
+                        detail=(
+                            f"Saved approval '{auth_id}' for outcome "
+                            f"'{auth_outcome}' no longer exists in current "
+                            "approvals."
+                        ),
+                    ))
 
     return issues
 
@@ -569,7 +950,16 @@ def scenario_dependency_status(
     scenario based on its governance dependencies.
 
     Returns one of: ``current``, ``stale``, ``legacy_unverified``,
-    ``exploratory``, ``invalid``."""
+    ``exploratory``, ``invalid``.
+
+    G2A.7a.4: checks ``_migrated_from_schema`` before governance_mode,
+    so legacy scenarios without explicit ``official`` mode still return
+    ``legacy_unverified`` rather than ``exploratory``."""
+    # Check for legacy migration first — a migrated record is never
+    # exploratory even if governance_mode is missing.
+    migrated_from = scenario.get("_migrated_from_schema")
+    if migrated_from is not None and migrated_from < 3:
+        return "legacy_unverified"
     governance_mode = scenario.get("governance_mode", "exploratory")
     if governance_mode != "official":
         return "exploratory"
@@ -2377,7 +2767,9 @@ def optimize_scenario(
                         product=outcome.product,
                         segment=outcome.segment,
                         nbt_completeness_fingerprint=(
-                            nbt_completeness_metadata.get("definition_fingerprint")
+                            _resolve_nbt_completeness_fingerprint(
+                                nbt_completeness_metadata,
+                            )
                             if nbt_completeness_metadata and outcome.metric_key == METRIC_KEY_FH_NET_BILLTHROUGH_COUNT
                             else None
                         ),
@@ -2392,6 +2784,11 @@ def optimize_scenario(
             posterior_fingerprint=posterior_fingerprint,
             market=market,
             authorisations=tuple(_authorisations),
+            target_outcome_ids=tuple(
+                planning_objective.target_outcome_ids
+                if planning_objective is not None
+                else ()
+            ),
         )
 
     current_spend = _flatten(current_spend_plan, months, channels)
@@ -2655,6 +3052,12 @@ def optimize_scenario(
             if activity_definitions is not None
             else None
         ),
+        # G2A.7a.4: explicit artefact kind — constrained or unconstrained
+        "artefact_kind": (
+            "constrained_optimisation"
+            if constraints
+            else "unconstrained_benchmark"
+        ),
         # G2A.7a.3: resolved governance context for persistence
         "_resolved_governance": (
             _resolved_gov.to_dict() if _resolved_gov is not None else None
@@ -2686,6 +3089,9 @@ def scenario_to_dict(
     posterior_fingerprint: Optional[str] = None,
     outcome_authorisations: Optional[List[dict]] = None,
     nbt_completeness_fingerprint: Optional[str] = None,
+    # G2A.7a.4: explicit artefact kind and structured governance deps
+    artefact_kind: Optional[str] = None,
+    governance_dependencies: Optional[ScenarioGovernanceDependencies] = None,
 ) -> dict:
     objective_payload = (
         planning_objective.to_dict()
@@ -2699,29 +3105,48 @@ def scenario_to_dict(
     )
     typed_plan = scenario_plan or ScenarioPlan.from_legacy_spend_plan(spend_plan)
 
-    # G2A.7a.2: versioned governance dependency block so a change to any
-    # calculation-relevant dependency makes the saved official scenario stale.
-    governance_deps: dict = {
-        "model_run_id": model_run_id,
-        "model_approval_fingerprint": model_approval_fingerprint,
-        "data_fingerprint": data_fingerprint,
-        "model_spec_fingerprint": model_spec_fingerprint,
-        "posterior_fingerprint": posterior_fingerprint,
-        "planning_objective_fingerprint": (
-            fingerprint_planning_objective(planning_objective)
-            if isinstance(planning_objective, PlanningObjective)
-            else None
-        ),
-        "outcome_authorisations": outcome_authorisations or [],
-        "activity_definitions_fingerprint": activity_definitions_fingerprint,
-        "cost_mapping_fingerprint": cost_mapping_fingerprint,
-        "counterfactual_policy_fingerprint": (
-            CounterfactualPolicy.from_dict(policy_payload).fingerprint()
-            if policy_payload
-            else None
-        ),
-        "nbt_completeness_fingerprint": nbt_completeness_fingerprint,
-    }
+    # G2A.7a.4: use typed governance dependencies when provided.
+    if governance_dependencies is not None:
+        governance_deps = governance_dependencies.to_dict()
+    else:
+        # G2A.7a.2: versioned governance dependency block so a change to any
+        # calculation-relevant dependency makes the saved official scenario stale.
+        governance_deps: dict = {
+            "model_run_id": model_run_id,
+            "model_approval_fingerprint": model_approval_fingerprint,
+            "data_fingerprint": data_fingerprint,
+            "model_spec_fingerprint": model_spec_fingerprint,
+            "posterior_fingerprint": posterior_fingerprint,
+            "planning_objective_fingerprint": (
+                fingerprint_planning_objective(planning_objective)
+                if isinstance(planning_objective, PlanningObjective)
+                else None
+            ),
+            "outcome_authorisations": outcome_authorisations or [],
+            "activity_definitions_fingerprint": activity_definitions_fingerprint,
+            "cost_mapping_fingerprint": cost_mapping_fingerprint,
+            "counterfactual_policy_fingerprint": (
+                CounterfactualPolicy.from_dict(policy_payload).fingerprint()
+                if policy_payload
+                else None
+            ),
+            "nbt_completeness_fingerprint": nbt_completeness_fingerprint,
+        }
+
+    # G2A.7a.4: resolve artefact kind
+    resolved_kind = artefact_kind
+    if resolved_kind is None:
+        # Legacy fallback: infer from constraints for backward compat
+        resolved_kind = (
+            "constrained_optimisation"
+            if constraints
+            else "manual_scenario"
+        )
+    elif resolved_kind not in ARTEFACT_KINDS:
+        raise ValueError(
+            f"Unknown artefact kind {resolved_kind!r}. "
+            f"Must be one of {sorted(ARTEFACT_KINDS)}."
+        )
 
     return {
         "name": name, "market": market, "spend_plan": spend_plan,
@@ -2739,6 +3164,7 @@ def scenario_to_dict(
         "economics_coverage": economics_coverage,
         "governance_mode": governance_mode,
         "governance_dependencies": governance_deps,
+        "artefact_kind": resolved_kind,
         "schema_version": 3,
     }
 
@@ -2755,9 +3181,8 @@ def scenario_from_dict(d: dict) -> dict:
         d["planning_objective"] = planning_objective_from_legacy(
             d["objective"]
         ).to_dict()
-    # G2A.7a.2, G2A.7a.3: migrate older schema versions — add empty
-    # governance dependencies block. Schema version < 3 results in
-    # legacy_unverified status, never current.
+    # G2A.7a.4: migrate older schema versions — add empty governance
+    # dependencies block and mark as legacy_unverified.
     if "governance_dependencies" not in d:
         d["governance_dependencies"] = {
             "model_run_id": None,
@@ -2773,6 +3198,19 @@ def scenario_from_dict(d: dict) -> dict:
             "nbt_completeness_fingerprint": None,
         }
         d["schema_version"] = max(schema_ver, 3)
+    # G2A.7a.4: migrate artefact_kind from legacy scenarios
+    if "artefact_kind" not in d:
+        # Legacy: infer from constraints — but then mark as migrated
+        has_constraints = bool(d.get("constraints"))
+        d["artefact_kind"] = (
+            "constrained_optimisation"
+            if has_constraints
+            else "manual_scenario"
+        )
+        d["_migrated_from_schema"] = max(
+            d.get("_migrated_from_schema", schema_ver),
+            schema_ver,
+        )
     # A migrated scenario retains its original schema version for staleness
     # detection — adding null fields does not make it "current".
     if schema_ver < 3:
@@ -2797,8 +3235,20 @@ def governance_deps_from_optimizer_result(result: dict) -> dict:
     result for passing to ``scenario_to_dict``. Returns a dict with all
     fields populated from the resolved governance context embedded in the
     result, or empty-string/None defaults when no resolved governance is
-    available (exploratory mode or no planning objective)."""
+    available (exploratory mode or no planning objective).
+
+    G2A.7a.4: the NBT completeness fingerprint is now sourced from the
+    resolved governance's authorisations, not hard-coded to None."""
     resolved = result.get("_resolved_governance") or {}
+    # Derive NBT completeness fingerprint from authorisations
+    nbt_fingerprint = None
+    for auth in resolved.get("authorisations") or []:
+        if isinstance(auth, dict) and auth.get("nbt_completeness_fingerprint"):
+            nbt_fingerprint = auth["nbt_completeness_fingerprint"]
+            break
+        elif hasattr(auth, "nbt_completeness_fingerprint") and auth.nbt_completeness_fingerprint:
+            nbt_fingerprint = auth.nbt_completeness_fingerprint
+            break
     return {
         "model_run_id": resolved.get("model_run_id") or "",
         "data_fingerprint": resolved.get("data_fingerprint") or "",
@@ -2809,7 +3259,7 @@ def governance_deps_from_optimizer_result(result: dict) -> dict:
         "activity_definitions_fingerprint": result.get("activity_definitions_fingerprint"),
         "cost_mapping_fingerprint": result.get("cost_mapping_fingerprint"),
         "counterfactual_policy_fingerprint": result.get("counterfactual_policy_fingerprint"),
-        "nbt_completeness_fingerprint": None,
+        "nbt_completeness_fingerprint": nbt_fingerprint,
     }
 
 

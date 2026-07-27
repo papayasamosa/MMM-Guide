@@ -526,6 +526,7 @@ def test_attribution_headline_and_planning_views_sum_only_eligible_components():
             }
         },
         approval=ModelApproval(approved_by="Analyst", **identity),
+        governance_mode="exploratory",
         **identity,
     )
     assert scenario.loc[0, "predicted_outcome"] == pytest.approx(
@@ -581,6 +582,7 @@ def test_attribution_headline_and_planning_views_sum_only_eligible_components():
         },
         model_type="market_specific",
         approval=ModelApproval(approved_by="Analyst", **identity),
+        governance_mode="exploratory",
         **identity,
     )
     assert market_scenario.loc[0, "predicted_outcome"] == pytest.approx(

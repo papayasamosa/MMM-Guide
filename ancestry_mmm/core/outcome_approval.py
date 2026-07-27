@@ -542,7 +542,15 @@ def outcome_is_approved_for_use(
     return True
 
 
-class OutcomeApprovalBlockedError(RuntimeError):
+class PlanningGovernanceError(RuntimeError):
+    """Base exception for all planning/optimisation governance failures.
+
+    Every governance gate — outcome approval, objective presence, model
+    identity mismatch, stale dependencies — raises a subclass of this so
+    callers can catch one family instead of enumerating exceptions."""
+
+
+class OutcomeApprovalBlockedError(PlanningGovernanceError):
     """Raised when official outcome use is blocked by missing/stale/rejected/
     expired/wrong-scope approval."""
 
