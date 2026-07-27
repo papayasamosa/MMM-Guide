@@ -1823,6 +1823,7 @@ def evaluate_scenario(
     outcome_approvals: Optional[List[OutcomeApproval]] = None,
     governance_mode: str = "official",
     nbt_completeness_metadata: Optional[dict] = None,
+    _trusted_operation: Optional[str] = None,
 ) -> pd.DataFrame:
     """Evaluate total and incremental outcomes under governed activity scopes.
 
@@ -1832,7 +1833,11 @@ def evaluate_scenario(
     let the optimiser handle governance internally.
 
     Pass ``governance_mode="exploratory"`` for a clearly non-official
-    evaluation that skips outcome-approval checks."""
+    evaluation that skips outcome-approval checks.
+
+    ``_trusted_operation`` is an internal parameter for the optimiser to
+    specify ``"optimisation"`` so nested evaluation does not incorrectly
+    demand planning approval. It must never be set by external callers."""
     require_matching_approval(
         approval,
         model_run_id=model_run_id,
@@ -1840,10 +1845,10 @@ def evaluate_scenario(
         model_spec_fingerprint=model_spec_fingerprint,
         posterior_fingerprint=posterior_fingerprint,
     )
-    # --- Outcome-approval gate (G2A.7a.7) ---
+    # --- Outcome-approval gate (G2A.7a.8) ---
     # Official mode: fail closed. exploratory mode skips checks.
-    # No caller-supplied proof is accepted — governance is resolved before
-    # this function is called, or resolved internally here.
+    # _trusted_operation lets the optimiser specify "optimisation" so nested
+    # evaluation does not demand the wrong approval use.
     if governance_mode == "official":
         if outcome_approvals is None or len(outcome_approvals) == 0:
             raise OutcomeApprovalBlockedError(
@@ -1860,11 +1865,12 @@ def evaluate_scenario(
                 "governance_mode='exploratory' for non-official evaluation, "
                 "or provide a complete PlanningObjective."
             )
+        _requested = _trusted_operation if _trusted_operation else "planning"
         _require_planning_outcome_approvals(
                 planning_objective=planning_objective,
                 meta=meta,
                 outcome_approvals=outcome_approvals,
-                requested_use="planning",
+                requested_use=_requested,
                 market=market,
                 nbt_completeness_metadata=nbt_completeness_metadata,
             )
@@ -3282,6 +3288,7 @@ def optimize_scenario(
         ltv,
         scenario_plan=optimized_scenario_plan,
         **identity_kwargs,
+        _trusted_operation="optimisation",
     )
     current_predicted = evaluate_scenario(
         current_spend_plan,
@@ -3292,6 +3299,7 @@ def optimize_scenario(
         ltv,
         scenario_plan=current_scenario_plan,
         **identity_kwargs,
+        _trusted_operation="optimisation",
     )
 
     # Evaluated via the same objective_fn used for optimisation (not
@@ -3327,6 +3335,7 @@ def optimize_scenario(
             cost_context_id=cost_context_id,
             cost_as_of_by_month=cost_as_of_by_month,
             outcome_approvals=outcome_approvals,
+            _trusted_operation="optimisation",
         )
 
     return {

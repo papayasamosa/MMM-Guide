@@ -10,7 +10,6 @@ core.optimization for backward compatibility.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Literal, Sequence
 
 from .approval import ModelApproval, fingerprint_model_approval
@@ -37,7 +36,6 @@ from .optimization import (
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
 def require_nonblank_dependency(
     value: object,
     name: str,
