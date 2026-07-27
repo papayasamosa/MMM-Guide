@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from ancestry_mmm.core.approval import ApprovalMismatchError, ModelApproval
+from ancestry_mmm.core.approval import ApprovalMismatchError, ModelApproval, fingerprint_model_approval
 from ancestry_mmm.core.fingerprint import (
     fingerprint_dataframe,
     fingerprint_model_spec,
@@ -338,7 +338,16 @@ def test_export_then_import_reproduces_scenarios_and_constraints(
     assert len(imported["scenarios"]) == 1
     restored_scenario = imported["scenarios"][0]
     assert restored_scenario["name"] == "manual-uk"
-    assert restored_scenario["schema_version"] == 2
+    # G2A.7a.10: a legacy "value" objective with no governed currency on
+    # record must not be migrated with an invented placeholder currency
+    # (the old "UNSPECIFIED" behaviour this test used to assert) - it stays
+    # loadable but unverified instead. schema_version reaches 3 because the
+    # scenario also predates the governance_dependencies block.
+    assert restored_scenario["schema_version"] == 3
+    assert restored_scenario["_migrated_from_schema"] == 1
+    assert restored_scenario["objective"] == "value"
+    assert restored_scenario["planning_objective"] is None
+    assert restored_scenario["_legacy_unverified_reason"] == "missing_value_currency"
     assert restored_scenario["scenario_plan"] == {
         "monetary_decisions_by_period": {
             "2024-01": {"TV_Brand": 100.0}
@@ -347,13 +356,7 @@ def test_export_then_import_reproduces_scenarios_and_constraints(
         "activity_units": None,
         "schema_version": 1,
     }
-    assert restored_scenario["planning_objective"]["estimand"] == (
-        "incremental_value"
-    )
-    assert restored_scenario["planning_objective"]["value_currency"] == (
-        "UNSPECIFIED"
-    )
-    assert restored_scenario["constraints"] == [
+    assert [c.to_dict() for c in restored_scenario["constraints"]] == [
         {
             "kind": "locked_cell",
             "channel": "TV_Brand",
@@ -368,6 +371,56 @@ def test_export_then_import_reproduces_scenarios_and_constraints(
         restored_scenario["predicted"],
         sample_project["scenarios"][0]["predicted"],
         check_dtype=False,
+    )
+
+
+def test_legacy_value_scenario_without_currency_stays_loadable_and_blocked(
+    tmp_path, sample_project,
+):
+    """G2A.7a.10 (brief section 14.2): a legacy objective="value" scenario
+    with no governed currency on record must remain technically loadable
+    (including through a second export/import cycle) while staying blocked
+    from official planning - "loadable does not mean officially usable"."""
+    from ancestry_mmm.core.optimization import (
+        resolve_planning_objective,
+        scenario_dependency_status,
+    )
+
+    output_path = export_project(tmp_path / "bundle.zip", **sample_project)
+    imported = import_project(output_path)
+    restored_scenario = imported["scenarios"][0]
+
+    # legacy_unverified, not "current" - even though governance_mode was
+    # never explicitly set to "official" on this old record.
+    assert scenario_dependency_status(restored_scenario) == "legacy_unverified"
+
+    # Official planning must still refuse to invent a currency for it.
+    with pytest.raises(ValueError, match="governed currency"):
+        resolve_planning_objective(
+            objective_kind="expected_value",
+            meta=FHModelMeta(
+                markets=["UK"], outcome_ids=["New"], channels=["TV_Brand"],
+                dna_channels=[], dna_channel_idx=[], non_dna_idx=[0],
+                dna_outcome_id=None, dna_lag_weeks=1, unpooled_markets=[], control_names=[],
+            ),
+            operation="planning",
+            ltv={"New": 5.0},
+        )
+
+    # Re-exporting the migrated scenario and importing it again must not
+    # raise or lose the legacy-unverified marker (a second round trip is
+    # still loadable, not a fresh crash surface).
+    reexport_project = dict(sample_project)
+    reexport_project["scenarios"] = imported["scenarios"]
+    second_output_path = export_project(
+        tmp_path / "bundle2.zip", **reexport_project
+    )
+    reimported = import_project(second_output_path)
+    assert reimported["scenarios"][0]["objective"] == "value"
+    assert reimported["scenarios"][0]["planning_objective"] is None
+    assert (
+        scenario_dependency_status(reimported["scenarios"][0])
+        == "legacy_unverified"
     )
 
 
@@ -1883,3 +1936,192 @@ class TestVerifyImportedApproval:
         approval, message = verify_imported_approval(imported, reconstructed)
         assert approval is None
         assert "predates" in message.lower()
+
+
+class TestScenariosCheckpointOfficialResumability:
+    """G2A.7a.10 (brief section 7, 14.4): audit_project_resumability's
+    "scenarios" checkpoint path used to read model_approval_fingerprint from
+    a "fingerprint" dict key ModelApproval.to_dict() never populates (always
+    ""), and passed counterfactual_fingerprint="" - both always blank, so
+    ScenarioValidationContext's required-field check rejected every official
+    scenario with a generic "incomplete_validation_context" message,
+    regardless of whether it was actually current or stale."""
+
+    def _official_scenario(self, *, model_run_id, model_approval_fingerprint, counterfactual_fp="cf-fp-1"):
+        return {
+            "name": "manual-uk",
+            "market": "UK",
+            "spend_plan": {"2024-01": {"TV_Brand": 100.0}},
+            "objective": "fh_gsa",
+            "constraints": [],
+            "notes": "",
+            "scenario_plan": {
+                "monetary_decisions_by_period": {"2024-01": {"TV_Brand": 100.0}},
+                "activity_quantity_assumptions_by_period": {},
+                "activity_units": None,
+                "schema_version": 1,
+            },
+            "planning_objective": {
+                "estimand": "incremental_outcome", "metric_key": "fh_gsa",
+                "target_outcome_ids": ["New"], "value_currency": None,
+                "spend_scope": "cost_bearing_decisions",
+                "activity_scope": "optimisable_interventions",
+                "counterfactual_policy_fingerprint": counterfactual_fp,
+                "schema_version": 3,
+            },
+            "artefact_kind": "manual_scenario",
+            "governance_mode": "official",
+            "schema_version": 3,
+            "governance_dependencies": {
+                "model_run_id": model_run_id,
+                "model_approval_fingerprint": model_approval_fingerprint,
+                "data_fingerprint": "will-be-filled",
+                "model_spec_fingerprint": "will-be-filled",
+                "posterior_fingerprint": "will-be-filled",
+                "planning_objective_fingerprint": "will-be-filled",
+                "outcome_authorisations": [
+                    {
+                        "outcome_id": "New", "requested_use": "planning",
+                        "approval_id": "apr-gsa",
+                        "definition_fingerprint": "will-be-filled",
+                        "market": "UK", "product": None, "segment": "New",
+                    }
+                ],
+                "activity_definitions_fingerprint": None,
+                "cost_mapping_fingerprint": None,
+                "counterfactual_policy_fingerprint": counterfactual_fp or None,
+                "nbt_completeness_fingerprint": None,
+            },
+        }
+
+    def _project_with_official_scenario(self, consistent_project, consistent_meta, *, scenario):
+        from ancestry_mmm.core.outcome_approval import OutcomeApproval, fingerprint_outcome_definition
+        from ancestry_mmm.core.outcomes import FAMILY_HISTORY, METRIC_KEY_FH_GSA, OutcomeDefinition
+        from ancestry_mmm.core.optimization import PlanningObjective, fingerprint_planning_objective
+
+        outcome_def = OutcomeDefinition(
+            outcome_id="New", product=FAMILY_HISTORY, segment="New", metric="GSA",
+            metric_key=METRIC_KEY_FH_GSA, source_column="fh_new_gsa", unit="GSA",
+            aggregation_type="count", event_definition="A new subscriber",
+            date_basis="event_date", cohort_or_attribution_basis="signup_cohort",
+            completeness_or_maturity_policy="Mature after 12 weeks",
+            exclusions="Excludes internal/test accounts",
+            reconciliation_source="Finance report", business_owner="Analytics",
+            definition_version="1.0",
+        )
+        def_fp = fingerprint_outcome_definition(outcome_def)
+        approval_record = OutcomeApproval(
+            approval_id="apr-gsa", outcome_id="New", definition_fingerprint=def_fp,
+            status="approved", allowed_uses=("planning",),
+            approved_by="Jane Analyst", approved_at="2026-01-01",
+        )
+        # Deliberately does NOT add outcome_catalogue_at_fit to model_meta -
+        # validate_scenario_dependencies matches saved authorisations against
+        # the bundle's outcome_definitions.json by outcome_id, not against
+        # model_meta's fitted catalogue, and consistent_project's approval
+        # fingerprints were computed against consistent_meta's *empty*
+        # catalogue - adding one here would change the reconstructed
+        # model_spec_fingerprint and produce a real (not intended) mismatch.
+        scenario["governance_dependencies"]["outcome_authorisations"][0][
+            "definition_fingerprint"
+        ] = def_fp
+        scenario["governance_dependencies"]["planning_objective_fingerprint"] = (
+            fingerprint_planning_objective(
+                PlanningObjective.from_dict(scenario["planning_objective"])
+            )
+        )
+        project = dict(consistent_project)
+        # "raw_sources" must be non-empty for the "scenarios" checkpoint's
+        # required-artefact check (audit_project_resumability's `resumable`).
+        project["raw_sources"] = {"media": project["transformed_data"].copy()}
+        project["model_meta"] = consistent_meta
+        project["outcome_definitions"] = [outcome_def.to_dict()]
+        project["outcome_approvals"] = [approval_record.to_dict()]
+        project["scenarios"] = [scenario]
+        project["workflow_state"] = {"checkpoint": "scenarios"}
+        return project
+
+    def test_current_scenario_reports_officially_resumable_with_canonical_fingerprint(
+        self, tmp_path, consistent_project, consistent_meta,
+    ):
+        approval = ModelApproval.from_dict(consistent_project["model_approval"])
+        canonical_fp = fingerprint_model_approval(approval)
+        scenario = self._official_scenario(
+            model_run_id=consistent_project["model_run_id"],
+            model_approval_fingerprint=canonical_fp,
+            counterfactual_fp="",  # this scenario never declared a counterfactual dependency
+        )
+        project = self._project_with_official_scenario(
+            consistent_project, consistent_meta, scenario=scenario,
+        )
+        # Fill in the real current data/spec/posterior fingerprints the same
+        # way scenario_to_dict would have when this scenario was saved.
+        scenario["governance_dependencies"]["data_fingerprint"] = approval.data_fingerprint
+        scenario["governance_dependencies"]["model_spec_fingerprint"] = approval.model_spec_fingerprint
+        scenario["governance_dependencies"]["posterior_fingerprint"] = approval.posterior_fingerprint
+
+        output_path = export_project(tmp_path / "bundle.zip", **project)
+        imported = import_project(output_path)
+        audit = audit_project_resumability(imported)
+
+        assert audit["resumable"] is True
+        assert audit["officially_resumable"] is True, audit["official_blocking_reasons"]
+
+    def test_mismatched_model_approval_blocks_with_explicit_reason(
+        self, tmp_path, consistent_project, consistent_meta,
+    ):
+        # Corrupt the bundle's *actual* model approval identity (not just
+        # the scenario's saved fingerprint) so require_matching_approval
+        # itself rejects it against the reconstructed current model -
+        # exercising the new early model-identity gate, not the later
+        # per-field staleness comparison.
+        consistent_project = dict(consistent_project)
+        stale_approval = ModelApproval.from_dict(consistent_project["model_approval"])
+        stale_approval = replace(stale_approval, data_fingerprint="a-different-data-fingerprint")
+        consistent_project["model_approval"] = stale_approval.to_dict()
+
+        scenario = self._official_scenario(
+            model_run_id=consistent_project["model_run_id"],
+            model_approval_fingerprint=fingerprint_model_approval(stale_approval),
+            counterfactual_fp="",
+        )
+        project = self._project_with_official_scenario(
+            consistent_project, consistent_meta, scenario=scenario,
+        )
+        output_path = export_project(tmp_path / "bundle.zip", **project)
+        imported = import_project(output_path)
+        audit = audit_project_resumability(imported)
+
+        # Loadable does not mean officially usable.
+        assert audit["resumable"] is True
+        assert audit["officially_resumable"] is False
+        reasons = " ".join(r["reason"] for r in audit["official_blocking_reasons"])
+        assert "model_approval_mismatch" in reasons
+
+    def test_scenario_with_counterfactual_dependency_reports_unverifiable(
+        self, tmp_path, consistent_project, consistent_meta,
+    ):
+        approval = ModelApproval.from_dict(consistent_project["model_approval"])
+        canonical_fp = fingerprint_model_approval(approval)
+        scenario = self._official_scenario(
+            model_run_id=consistent_project["model_run_id"],
+            model_approval_fingerprint=canonical_fp,
+            counterfactual_fp="cf-fp-real",
+        )
+        scenario["governance_dependencies"]["data_fingerprint"] = approval.data_fingerprint
+        scenario["governance_dependencies"]["model_spec_fingerprint"] = approval.model_spec_fingerprint
+        scenario["governance_dependencies"]["posterior_fingerprint"] = approval.posterior_fingerprint
+        project = self._project_with_official_scenario(
+            consistent_project, consistent_meta, scenario=scenario,
+        )
+        output_path = export_project(tmp_path / "bundle.zip", **project)
+        imported = import_project(output_path)
+        audit = audit_project_resumability(imported)
+
+        assert audit["resumable"] is True
+        assert audit["officially_resumable"] is False
+        reasons = " ".join(r["reason"] for r in audit["official_blocking_reasons"])
+        assert "counterfactual_identity_unverifiable" in reasons
+        # Never a generic, uninformative message pretending the scenario
+        # was compared against itself.
+        assert "incomplete_validation_context" not in reasons

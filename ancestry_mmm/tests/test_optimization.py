@@ -685,7 +685,8 @@ class TestExplicitOptimisationObjectives:
     def test_expected_value_with_ltv_runs(self, meta, params, approval, spend_plan, reference_context):
         result = optimize_scenario(
             spend_plan, ["2024-01"], ["TV_Brand"], "UK", meta, params, reference_context,
-            ltv={"New": 2.0}, objective="expected_value", approval=approval, governance_mode="exploratory", **IDENTITY,
+            ltv={"New": 2.0}, objective="expected_value",
+            value_currency="GBP", approval=approval, governance_mode="exploratory", **IDENTITY,
         )
         assert "spend_plan" in result
 
@@ -1070,7 +1071,8 @@ class TestValueWeightNeverSilentlyDefaultsToOne:
             optimize_scenario(
                 plan_with_kit_segment, ["2024-01"], ["TV_Brand", "DNA_Ad"], "UK",
                 meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment,
-                objective="expected_value", ltv={"New": 2.0}, approval=approval,
+                objective="expected_value", ltv={"New": 2.0},
+                value_currency="GBP", approval=approval,
                 governance_mode="exploratory", **IDENTITY,
             )
 
@@ -1081,7 +1083,8 @@ class TestValueWeightNeverSilentlyDefaultsToOne:
             optimize_scenario(
                 plan_with_kit_segment, ["2024-01"], ["TV_Brand", "DNA_Ad"], "UK",
                 meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment,
-                objective="expected_value", ltv={"New": 2.0, "DNA_Kit": -5.0}, approval=approval,
+                objective="expected_value", ltv={"New": 2.0, "DNA_Kit": -5.0},
+                value_currency="GBP", approval=approval,
                 governance_mode="exploratory", **IDENTITY,
             )
 
@@ -1091,7 +1094,8 @@ class TestValueWeightNeverSilentlyDefaultsToOne:
         result = optimize_scenario(
             plan_with_kit_segment, ["2024-01"], ["TV_Brand", "DNA_Ad"], "UK",
             meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment,
-            objective="expected_value", ltv={"New": 2.0, "DNA_Kit": 50.0}, approval=approval,
+            objective="expected_value", ltv={"New": 2.0, "DNA_Kit": 50.0},
+            value_currency="GBP", approval=approval,
             governance_mode="exploratory", **IDENTITY,
         )
         assert "spend_plan" in result

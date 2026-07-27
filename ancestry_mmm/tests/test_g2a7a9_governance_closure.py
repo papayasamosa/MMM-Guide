@@ -683,6 +683,158 @@ class TestCurrency:
 
 
 # ============================================================================
+# G2A.7a.10 (brief section 8, 14.6, 14.7): symmetric value/currency
+# dependency validation
+# ============================================================================
+
+
+class TestValueCurrencyDependencySymmetry:
+    """REQ-VALUE-002/REQ-CURRENCY-002: validate_scenario_dependencies used to
+    only compare a saved value_mapping_fingerprint/currency_context_fingerprint
+    against the current context when the current context happened to supply
+    one (`context.X_fingerprint is not None`) - a saved scenario with a real
+    dependency on record silently passed as "current" whenever the caller's
+    context omitted the field. Whether the dependency is required is now
+    determined from the saved scenario's own planning_objective.estimand,
+    never from what the current context happens to provide."""
+
+    def _value_scenario(self, *, value_mapping_fp, currency_context_fp) -> dict:
+        return scenario_to_dict(
+            name="value-scenario",
+            market="UK",
+            spend_plan={"2024-01": {"TV_Brand": 100.0}},
+            objective="expected_value",
+            constraints=[],
+            planning_objective=_make_planning_objective(
+                estimand="incremental_value",
+                metric_key="expected_value",
+                value_currency="GBP",
+            ),
+            artefact_kind="manual_scenario",
+            governance_mode="official",
+            governance_dependencies=ScenarioGovernanceDependencies(
+                **IDENTITY,
+                model_approval_fingerprint="approval-fp",
+                planning_objective_fingerprint="obj-fp",
+                outcome_authorisations=(),
+                value_mapping_fingerprint=value_mapping_fp,
+                currency_context_fingerprint=currency_context_fp,
+                counterfactual_policy_fingerprint="cf-fp",
+            ),
+        )
+
+    def _issues_of_type(self, issues, dependency_type):
+        return [i for i in issues if i.dependency_type == dependency_type]
+
+    def test_saved_value_mapping_with_current_missing_is_invalid(self):
+        scenario = self._value_scenario(value_mapping_fp="vmf-saved", currency_context_fp="ccf-saved")
+        context = _make_blank_context(
+            value_mapping_fingerprint=None, currency_context_fingerprint="ccf-saved",
+        )
+        issues = validate_scenario_dependencies(scenario, context=context)
+        vm_issues = self._issues_of_type(issues, "value_mapping")
+        assert vm_issues, "saved value mapping with no current value mapping must not pass silently"
+        assert vm_issues[0].issue_type == "invalid"
+        assert vm_issues[0].reason_code == "missing_current_value_mapping"
+
+    def test_saved_currency_context_with_current_missing_is_invalid(self):
+        scenario = self._value_scenario(value_mapping_fp="vmf-saved", currency_context_fp="ccf-saved")
+        context = _make_blank_context(
+            value_mapping_fingerprint="vmf-saved", currency_context_fingerprint=None,
+        )
+        issues = validate_scenario_dependencies(scenario, context=context)
+        cc_issues = self._issues_of_type(issues, "currency_context")
+        assert cc_issues, "saved currency context with no current currency context must not pass silently"
+        assert cc_issues[0].issue_type == "invalid"
+        assert cc_issues[0].reason_code == "missing_current_currency_context"
+
+    def test_value_objective_with_no_saved_value_mapping_is_invalid(self):
+        """estimand=incremental_value requires a value mapping regardless of
+        whether one happens to be saved."""
+        scenario = self._value_scenario(value_mapping_fp=None, currency_context_fp="ccf-saved")
+        context = _make_blank_context(
+            value_mapping_fingerprint="vmf-current", currency_context_fingerprint="ccf-saved",
+        )
+        issues = validate_scenario_dependencies(scenario, context=context)
+        vm_issues = self._issues_of_type(issues, "value_mapping")
+        assert vm_issues
+        assert vm_issues[0].issue_type == "invalid"
+        assert vm_issues[0].reason_code == "missing_value_mapping_fingerprint"
+
+    def test_value_objective_with_no_saved_currency_context_is_invalid(self):
+        scenario = self._value_scenario(value_mapping_fp="vmf-saved", currency_context_fp=None)
+        context = _make_blank_context(
+            value_mapping_fingerprint="vmf-saved", currency_context_fingerprint="ccf-current",
+        )
+        issues = validate_scenario_dependencies(scenario, context=context)
+        cc_issues = self._issues_of_type(issues, "currency_context")
+        assert cc_issues
+        assert cc_issues[0].issue_type == "invalid"
+        assert cc_issues[0].reason_code == "missing_currency_context_fingerprint"
+
+    def test_changed_value_mapping_fingerprint_is_stale(self):
+        scenario = self._value_scenario(value_mapping_fp="vmf-old", currency_context_fp="ccf-saved")
+        context = _make_blank_context(
+            value_mapping_fingerprint="vmf-new", currency_context_fingerprint="ccf-saved",
+        )
+        issues = validate_scenario_dependencies(scenario, context=context)
+        vm_issues = self._issues_of_type(issues, "value_mapping")
+        assert vm_issues
+        assert vm_issues[0].issue_type == "stale"
+        assert vm_issues[0].reason_code == "value_mapping_stale"
+
+    def test_changed_currency_context_fingerprint_is_stale(self):
+        scenario = self._value_scenario(value_mapping_fp="vmf-saved", currency_context_fp="ccf-old")
+        context = _make_blank_context(
+            value_mapping_fingerprint="vmf-saved", currency_context_fingerprint="ccf-new",
+        )
+        issues = validate_scenario_dependencies(scenario, context=context)
+        cc_issues = self._issues_of_type(issues, "currency_context")
+        assert cc_issues
+        assert cc_issues[0].issue_type == "stale"
+        assert cc_issues[0].reason_code == "currency_context_stale"
+
+    def test_matching_value_mapping_and_currency_context_raise_no_issue(self):
+        scenario = self._value_scenario(value_mapping_fp="vmf-match", currency_context_fp="ccf-match")
+        context = _make_blank_context(
+            value_mapping_fingerprint="vmf-match", currency_context_fingerprint="ccf-match",
+        )
+        issues = validate_scenario_dependencies(scenario, context=context)
+        assert not self._issues_of_type(issues, "value_mapping")
+        assert not self._issues_of_type(issues, "currency_context")
+
+    def test_non_value_objective_does_not_require_value_mapping(self):
+        """A plain incremental_outcome scenario with no value dependency on
+        record must not be forced to have one just because the current
+        context happens to carry one."""
+        scenario = scenario_to_dict(
+            name="outcome-scenario",
+            market="UK",
+            spend_plan={"2024-01": {"TV_Brand": 100.0}},
+            objective="fh_gsa",
+            constraints=[],
+            planning_objective=_make_planning_objective(estimand="incremental_outcome"),
+            artefact_kind="manual_scenario",
+            governance_mode="official",
+            governance_dependencies=ScenarioGovernanceDependencies(
+                **IDENTITY,
+                model_approval_fingerprint="approval-fp",
+                planning_objective_fingerprint="obj-fp",
+                outcome_authorisations=(),
+                value_mapping_fingerprint=None,
+                currency_context_fingerprint=None,
+                counterfactual_policy_fingerprint="cf-fp",
+            ),
+        )
+        context = _make_blank_context(
+            value_mapping_fingerprint="vmf-current", currency_context_fingerprint="ccf-current",
+        )
+        issues = validate_scenario_dependencies(scenario, context=context)
+        assert not self._issues_of_type(issues, "value_mapping")
+        assert not self._issues_of_type(issues, "currency_context")
+
+
+# ============================================================================
 # 13.9 Persistence lifecycle
 # ============================================================================
 

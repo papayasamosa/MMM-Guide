@@ -1591,17 +1591,46 @@ def validate_scenario_dependencies(
                     reason_code="approval_fingerprint_mismatch",
                 ))
 
-    # G2A.7a.9: validate value-mapping and currency-context identity
-    # when the saved scenario depends on them.
+    # G2A.7a.10: validate value-mapping and currency-context identity
+    # symmetrically. Whether a dependency is *required* is determined from
+    # the saved scenario's own planning objective (an expected-value
+    # objective always needs a value mapping and a currency) - never from
+    # whether the current context happens to supply a value. The previous
+    # `context is not None and context.X_fingerprint is not None` guard
+    # silently skipped the whole check whenever the current side omitted
+    # the field, even though the saved scenario had a real one on record -
+    # a fail-open hole for exactly the dependency official value/currency
+    # planning most needs to trust.
+    saved_planning_objective = scenario.get("planning_objective") or {}
+    requires_value_and_currency = (
+        saved_planning_objective.get("estimand") == "incremental_value"
+    )
+
     saved_value_mapping_fp = deps.get("value_mapping_fingerprint")
-    if context is not None and context.value_mapping_fingerprint is not None:
-        if saved_value_mapping_fp is None:
+    if requires_value_and_currency or saved_value_mapping_fp:
+        if not saved_value_mapping_fp:
             issues.append(ScenarioDependencyIssue(
                 artefact_id=scenario.get("name", "<unknown>"),
-                issue_type="missing",
-                detail="Governance dependency 'value_mapping_fingerprint' is missing.",
+                issue_type="invalid",
+                detail=(
+                    "This scenario's objective requires a value mapping, "
+                    "but no 'value_mapping_fingerprint' governance "
+                    "dependency was saved."
+                ),
                 dependency_type="value_mapping",
                 reason_code="missing_value_mapping_fingerprint",
+            ))
+        elif context is None or context.value_mapping_fingerprint is None:
+            issues.append(ScenarioDependencyIssue(
+                artefact_id=scenario.get("name", "<unknown>"),
+                issue_type="invalid",
+                detail=(
+                    "Saved scenario has a value mapping on record, but the "
+                    "current project supplies no current value mapping to "
+                    "verify it against."
+                ),
+                dependency_type="value_mapping",
+                reason_code="missing_current_value_mapping",
             ))
         elif saved_value_mapping_fp != context.value_mapping_fingerprint:
             issues.append(ScenarioDependencyIssue(
@@ -1613,14 +1642,30 @@ def validate_scenario_dependencies(
             ))
 
     saved_currency_context_fp = deps.get("currency_context_fingerprint")
-    if context is not None and context.currency_context_fingerprint is not None:
-        if saved_currency_context_fp is None:
+    if requires_value_and_currency or saved_currency_context_fp:
+        if not saved_currency_context_fp:
             issues.append(ScenarioDependencyIssue(
                 artefact_id=scenario.get("name", "<unknown>"),
-                issue_type="missing",
-                detail="Governance dependency 'currency_context_fingerprint' is missing.",
+                issue_type="invalid",
+                detail=(
+                    "This scenario's objective requires a currency context, "
+                    "but no 'currency_context_fingerprint' governance "
+                    "dependency was saved."
+                ),
                 dependency_type="currency_context",
                 reason_code="missing_currency_context_fingerprint",
+            ))
+        elif context is None or context.currency_context_fingerprint is None:
+            issues.append(ScenarioDependencyIssue(
+                artefact_id=scenario.get("name", "<unknown>"),
+                issue_type="invalid",
+                detail=(
+                    "Saved scenario has a currency context on record, but "
+                    "the current project supplies no current currency "
+                    "context to verify it against."
+                ),
+                dependency_type="currency_context",
+                reason_code="missing_current_currency_context",
             ))
         elif saved_currency_context_fp != context.currency_context_fingerprint:
             issues.append(ScenarioDependencyIssue(
@@ -3810,10 +3855,10 @@ def optimize_scenario(
     if posterior_trace is not None:
         from .uncertainty import evaluate_scenario_with_uncertainty
 
-        # G2A.7a.9: posterior evaluation uses the same resolved governance
-        # — no separate approval resolution. The _trusted_operation parameter
-        # has been removed from the public API; governance is inherited from
-        # the optimiser's own resolved proof.
+        # G2A.7a.10: posterior evaluation uses the same approval/objective/
+        # outcome_approvals the optimiser itself already resolved above, and
+        # inherits the optimiser's own governance_mode/operation - it is not
+        # a second, independent resolution against different inputs.
         posterior_evaluation = evaluate_scenario_with_uncertainty(
             optimized_plan,
             market,
@@ -3838,6 +3883,9 @@ def optimize_scenario(
             cost_context_id=cost_context_id,
             cost_as_of_by_month=cost_as_of_by_month,
             outcome_approvals=outcome_approvals,
+            governance_mode=governance_mode,
+            operation="optimisation",
+            nbt_completeness_metadata=nbt_completeness_metadata,
         )
 
     return {
@@ -4010,9 +4058,21 @@ def scenario_from_dict(d: dict) -> dict:
         ).to_dict()
         d["schema_version"] = max(schema_ver, 2)
     if not d.get("planning_objective") and d.get("objective"):
-        d["planning_objective"] = planning_objective_from_legacy(
-            d["objective"]
-        ).to_dict()
+        try:
+            d["planning_objective"] = planning_objective_from_legacy(
+                d["objective"]
+            ).to_dict()
+        except ValueError:
+            # G2A.7a.10: a legacy 'value'/'expected_value' objective with no
+            # governed currency on record cannot be migrated to a typed
+            # PlanningObjective without inventing a currency. Retain the
+            # original objective string and predictions; leave
+            # planning_objective unset so official use stays blocked via the
+            # legacy_unverified path below (loadable does not mean
+            # officially usable).
+            d["planning_objective"] = None
+            d["_legacy_unverified_reason"] = "missing_value_currency"
+            d.setdefault("_migrated_from_schema", schema_ver)
     # G2A.7a.4: migrate older schema versions — add empty governance
     # dependencies block and mark as legacy_unverified.
     # G2A.7a.9: includes value_mapping_fingerprint, currency_context_fingerprint,

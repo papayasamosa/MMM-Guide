@@ -50,7 +50,7 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 import pandas as pd
 import arviz as az
 
-from .approval import ModelApproval
+from .approval import ApprovalMismatchError, ModelApproval, fingerprint_model_approval, require_matching_approval
 from .activities import ActivityDefinition, activity_fit_fingerprint
 from .fingerprint import (
     fingerprint_dataframe,
@@ -782,6 +782,52 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
             current_outcome_appr = tuple(
                 a_dict for a_dict in active_approvals
             )
+
+            # G2A.7a.10: the model-approval fingerprint and current identity
+            # fingerprints used to be read from a "fingerprint" dict key that
+            # ModelApproval.to_dict() never populates (always "") and the
+            # approval's own self-reported data/spec/posterior fields (which
+            # would make the check tautological - the approval always
+            # "matches itself"). Instead, reconstruct the bundle's actual
+            # current model identity once and validate the approval against
+            # it - the canonical model_approval_fingerprint is calculated
+            # via fingerprint_model_approval(), never looked up as a dict key.
+            reconstructed = reconstruct_model_state(imported)
+            verified_model_approval_fingerprint = ""
+            current_data_fp = current_spec_fp = current_posterior_fp = ""
+            model_identity_reason: Optional[str] = None
+            if reconstructed.get("frame") is None or reconstructed.get("posterior_params") is None:
+                model_identity_reason = (
+                    "model_identity_unreconstructable: could not rebuild this "
+                    "bundle's modelling frame/posterior well enough to verify "
+                    "its model approval."
+                )
+            else:
+                current_data_fp, current_spec_fp, current_posterior_fp = (
+                    _current_model_identity_fingerprints(imported, reconstructed)
+                )
+                raw_approval = imported.get("model_approval")
+                if not raw_approval:
+                    model_identity_reason = (
+                        "model_approval_missing: no model approval is recorded "
+                        "in this bundle."
+                    )
+                else:
+                    try:
+                        approval_obj = ModelApproval.from_dict(raw_approval)
+                        require_matching_approval(
+                            approval_obj,
+                            model_run_id=imported.get("model_run_id", ""),
+                            data_fingerprint=current_data_fp,
+                            model_spec_fingerprint=current_spec_fp,
+                            posterior_fingerprint=current_posterior_fp,
+                        )
+                        verified_model_approval_fingerprint = fingerprint_model_approval(
+                            approval_obj
+                        )
+                    except (TypeError, ValueError, ApprovalMismatchError) as exc:
+                        model_identity_reason = f"model_approval_mismatch: {exc}"
+
             for idx, sc in enumerate(scenarios):
                 sc_gov = sc.get("governance_mode", "exploratory")
                 if sc_gov != "official":
@@ -802,26 +848,56 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
                         "reason": "invalid_planning_objective: saved objective cannot be deserialised",
                     })
                     continue
+
+                if model_identity_reason is not None:
+                    officially_resumable = False
+                    official_blocking_reasons.append({
+                        "artefact_type": "scenario",
+                        "artefact_id": sc.get("name", f"scenario_{idx}"),
+                        "reason": model_identity_reason,
+                    })
+                    continue
+
+                # G2A.7a.10 (brief section 7.2): no project-level
+                # CounterfactualPolicy is persisted anywhere in a bundle -
+                # only each scenario's own saved counterfactual identity is.
+                # A scenario that depends on counterfactual identity
+                # (governance_dependencies.counterfactual_policy_fingerprint
+                # is set) cannot have that dependency verified against a
+                # "current" policy that does not exist in the bundle -
+                # comparing it against itself would not be verification.
+                # Classify as unverifiable with an explicit reason rather
+                # than passing an empty-string placeholder that
+                # ScenarioValidationContext rejects with a generic message.
+                sc_cf_fp = (sc.get("governance_dependencies") or {}).get(
+                    "counterfactual_policy_fingerprint"
+                )
+                if sc_cf_fp:
+                    officially_resumable = False
+                    official_blocking_reasons.append({
+                        "artefact_type": "scenario",
+                        "artefact_id": sc.get("name", f"scenario_{idx}"),
+                        "reason": (
+                            "counterfactual_identity_unverifiable: this bundle "
+                            "has no project-level counterfactual policy to "
+                            "verify the scenario's saved counterfactual "
+                            "identity against."
+                        ),
+                    })
+                    continue
+
                 # Build per-scenario validation context
                 try:
                     val_context = validation_context_from_legacy_args(
                         model_run_id=imported.get("model_run_id", ""),
-                        model_approval_fingerprint=(
-                            imported.get("model_approval", {}).get("fingerprint", "")
-                        ),
-                        data_fingerprint=(
-                            imported.get("model_approval", {}).get("data_fingerprint", "")
-                        ),
-                        model_spec_fingerprint=(
-                            imported.get("model_approval", {}).get("model_spec_fingerprint", "")
-                        ),
-                        posterior_fingerprint=(
-                            imported.get("model_approval", {}).get("posterior_fingerprint", "")
-                        ),
+                        model_approval_fingerprint=verified_model_approval_fingerprint,
+                        data_fingerprint=current_data_fp,
+                        model_spec_fingerprint=current_spec_fp,
+                        posterior_fingerprint=current_posterior_fp,
                         planning_objective=sc_po,
                         outcome_definitions=current_outcome_defns,
                         outcome_approvals=current_outcome_appr,
-                        counterfactual_fingerprint="",
+                        counterfactual_fingerprint=sc_cf_fp or "unverifiable",
                     )
                 except ValueError as exc:
                     officially_resumable = False
@@ -967,42 +1043,24 @@ def reconstruct_model_state(imported: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
-def verify_imported_approval(
+def _current_model_identity_fingerprints(
     imported: Dict[str, Any],
     reconstructed: Dict[str, Any],
-) -> Tuple[Optional[ModelApproval], str]:
+) -> Tuple[str, str, str]:
+    """Recompute the current (data, model-spec, posterior) identity
+    fingerprints from a `reconstruct_model_state(imported)` result - the
+    same recipe `verify_imported_approval` uses to check an approval, shared
+    here so `audit_project_resumability` can validate a scenario's saved
+    `model_approval_fingerprint` against the bundle's *actual* reconstructed
+    model, not the approval's own self-reported fields (G2A.7a.10 - the
+    latter would make the check tautological, always "matching" whatever
+    the approval itself claims).
+
+    Callers must check `reconstructed["frame"]`/`reconstructed["posterior_params"]`
+    are not None before calling this - it assumes reconstruction succeeded.
     """
-    Decide whether an imported project's approval is still valid against its
-    (reconstructed) model artefacts. Never silently accepts or discards a
-    mismatch: always returns an explanatory message alongside the verdict,
-    for the caller to show the user. Returns (None, reason) when the
-    approval should NOT be treated as valid; (approval, reason) when it is
-    verified.
-
-    `imported` is an import_project() result; `reconstructed` is a
-    reconstruct_model_state(imported) result.
-    """
-    approval_dict = imported.get("model_approval")
-    if approval_dict is None:
-        return None, "No approval was included in this project bundle."
-
-    approval = ModelApproval.from_dict(approval_dict)
-    if not approval.is_model_bound():
-        return None, (
-            "The imported approval predates model-bound approval (no run ID or "
-            "fingerprints were recorded) - treated as unverified. The model must be "
-            "reviewed and approved again."
-        )
-
-    frame = reconstructed.get("frame")
-    posterior_params = reconstructed.get("posterior_params")
-    if frame is None or posterior_params is None:
-        return None, (
-            "Could not reconstruct this project's model artefacts (data, specification "
-            "or posterior) well enough to verify its approval - treated as unverified. "
-            "The model must be reviewed and approved again."
-        )
-
+    frame = reconstructed["frame"]
+    posterior_params = reconstructed["posterior_params"]
     model_meta = reconstructed.get("model_meta")
     data_fp = fingerprint_dataframe(frame["df"])
     # Fingerprint the exact outcome catalogue this model was fit against
@@ -1049,6 +1107,48 @@ def verify_imported_approval(
         ),
     )
     posterior_fp = fingerprint_posterior(posterior_params)
+    return data_fp, spec_fp, posterior_fp
+
+
+def verify_imported_approval(
+    imported: Dict[str, Any],
+    reconstructed: Dict[str, Any],
+) -> Tuple[Optional[ModelApproval], str]:
+    """
+    Decide whether an imported project's approval is still valid against its
+    (reconstructed) model artefacts. Never silently accepts or discards a
+    mismatch: always returns an explanatory message alongside the verdict,
+    for the caller to show the user. Returns (None, reason) when the
+    approval should NOT be treated as valid; (approval, reason) when it is
+    verified.
+
+    `imported` is an import_project() result; `reconstructed` is a
+    reconstruct_model_state(imported) result.
+    """
+    approval_dict = imported.get("model_approval")
+    if approval_dict is None:
+        return None, "No approval was included in this project bundle."
+
+    approval = ModelApproval.from_dict(approval_dict)
+    if not approval.is_model_bound():
+        return None, (
+            "The imported approval predates model-bound approval (no run ID or "
+            "fingerprints were recorded) - treated as unverified. The model must be "
+            "reviewed and approved again."
+        )
+
+    frame = reconstructed.get("frame")
+    posterior_params = reconstructed.get("posterior_params")
+    if frame is None or posterior_params is None:
+        return None, (
+            "Could not reconstruct this project's model artefacts (data, specification "
+            "or posterior) well enough to verify its approval - treated as unverified. "
+            "The model must be reviewed and approved again."
+        )
+
+    data_fp, spec_fp, posterior_fp = _current_model_identity_fingerprints(
+        imported, reconstructed
+    )
     current_run_id = imported.get("model_run_id") or approval.model_run_id
 
     if approval.matches_current_model(

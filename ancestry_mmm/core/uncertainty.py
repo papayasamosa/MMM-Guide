@@ -297,6 +297,7 @@ def evaluate_scenario_with_uncertainty(
     cost_as_of_by_month: Optional[Dict[str, str]] = None,
     outcome_approvals: Optional[List[OutcomeApproval]] = None,
     governance_mode: str = "official",
+    operation: str = "planning",
     nbt_completeness_metadata: Optional[dict] = None,
 ) -> Dict[str, object]:
     """
@@ -315,16 +316,35 @@ def evaluate_scenario_with_uncertainty(
     exceeds `baseline_spend_plan`'s.
 
     Returns `{"summary": DataFrame, "prob_outperforms_baseline": float or
-    None, "n_draws": int}`. Raises `ApprovalMismatchError` exactly as
-    `evaluate_scenario` does (checked once per draw - cheap, and avoids
-    duplicating that logic here).
+    None, "n_draws": int}`. In official mode, raises `ApprovalMismatchError`
+    if `approval` does not match the current model run identity, and
+    `OutcomeApprovalBlockedError` if the outcome approvals don't cover every
+    target outcome for `operation` - both checked once at entry, not once per
+    draw.
 
-    G2A.7a.9: governance is validated once at entry (not per draw). The
-    inner draw loop uses the private ``_calculate_scenario`` which has no
-    governance logic.
+    G2A.7a.10: `approval` is validated against the model run identity (it was
+    previously accepted but never checked - a caller could pass anything
+    truthy and it would be silently ignored). `outcome_approvals` is
+    resolved through the same `resolve_planning_governance` used by
+    `evaluate_manual_scenario`/`optimize_scenario` - real per-target
+    status/expiry/scope/use/NBT validation, not just a non-empty check. The
+    caller (the optimiser, or a trusted manual service) passes its own
+    already-resolved `approval`/`planning_objective`/`outcome_approvals` and
+    `operation` here; this function resolves governance itself rather than
+    accepting a pre-resolved proof, but with the exact same inputs the caller
+    already validated, so it is not a materially separate authorisation.
     """
-    # G2A.7a.9: single governance validation at entry
+    # G2A.7a.10: single governance validation at entry - not per draw.
     if governance_mode == "official":
+        from .approval import require_matching_approval
+
+        require_matching_approval(
+            approval,
+            model_run_id=model_run_id,
+            data_fingerprint=data_fingerprint,
+            model_spec_fingerprint=model_spec_fingerprint,
+            posterior_fingerprint=posterior_fingerprint,
+        )
         if planning_objective is None:
             from .outcome_approval import OutcomeApprovalBlockedError
             raise OutcomeApprovalBlockedError(
@@ -336,6 +356,22 @@ def evaluate_scenario_with_uncertainty(
                 "Official posterior evaluation requires at least one "
                 "OutcomeApproval."
             )
+        from .planning_governance import resolve_planning_governance
+
+        resolve_planning_governance(
+            operation=operation,
+            planning_objective=planning_objective,
+            model_approval=approval,
+            model_run_id=model_run_id,
+            data_fingerprint=data_fingerprint,
+            model_spec_fingerprint=model_spec_fingerprint,
+            posterior_fingerprint=posterior_fingerprint,
+            market=market,
+            meta=meta,
+            outcome_definitions=[],
+            outcome_approvals=outcome_approvals,
+            nbt_completeness_metadata=nbt_completeness_metadata,
+        )
 
     extract_fn = extract_market_specific_posterior_params if model_type == "market_specific" else extract_posterior_params
 

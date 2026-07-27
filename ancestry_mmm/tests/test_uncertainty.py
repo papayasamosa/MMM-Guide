@@ -199,6 +199,14 @@ class TestGenerateMarketChannelCurveWithUncertainty:
 
 
 class TestEvaluateScenarioWithUncertainty:
+    """G2A.7a.10 (brief section 6.3): these tests exercise numerical
+    properties only (credible-interval ordering, paired baseline-comparison
+    probabilities, summary column presence) - not governance semantics, which
+    TestEvaluateScenarioWithUncertaintyGovernance below covers with real
+    approval/outcome-approval fixtures. governance_mode="exploratory" is used
+    deliberately here rather than supplying a PlanningObjective + matching
+    OutcomeApprovals these tests don't otherwise need."""
+
     @pytest.fixture
     def approval(self) -> ModelApproval:
         return ModelApproval(approved_by="Jane Analyst", **IDENTITY)
@@ -215,7 +223,7 @@ class TestEvaluateScenarioWithUncertainty:
         result = evaluate_scenario_with_uncertainty(
             spend_plan, "UK", meta, market_trace, reference_context, ltv=ltv,
             model_type="market_specific", n_draws=20, seed=1,
-            approval=approval, **IDENTITY,
+            approval=approval, governance_mode="exploratory", **IDENTITY,
         )
         summary = result["summary"]
         assert np.all(summary["value_lower"] <= summary["value_mean"] + 1e-9)
@@ -242,7 +250,8 @@ class TestEvaluateScenarioWithUncertainty:
         result = evaluate_scenario_with_uncertainty(
             higher_spend, "UK", meta, market_trace, reference_context, ltv=ltv,
             model_type="market_specific", n_draws=20, seed=1,
-            approval=approval, baseline_spend_plan=lower_spend, **IDENTITY,
+            approval=approval, governance_mode="exploratory",
+            baseline_spend_plan=lower_spend, **IDENTITY,
         )
         assert result["prob_outperforms_baseline"] == pytest.approx(1.0)
 
@@ -253,7 +262,8 @@ class TestEvaluateScenarioWithUncertainty:
         result = evaluate_scenario_with_uncertainty(
             lower_spend, "UK", meta, market_trace, reference_context, ltv=ltv,
             model_type="market_specific", n_draws=20, seed=1,
-            approval=approval, baseline_spend_plan=higher_spend, **IDENTITY,
+            approval=approval, governance_mode="exploratory",
+            baseline_spend_plan=higher_spend, **IDENTITY,
         )
         assert result["prob_outperforms_baseline"] == pytest.approx(0.0)
 
@@ -267,7 +277,7 @@ class TestEvaluateScenarioWithUncertainty:
         result = evaluate_scenario_with_uncertainty(
             spend_plan, "UK", meta, market_trace, reference_context, ltv=ltv,
             model_type="market_specific", n_draws=20, seed=1,
-            approval=approval, **IDENTITY,
+            approval=approval, governance_mode="exploratory", **IDENTITY,
         )
         summary = result["summary"]
         assert {"dna_avg_cpa_mean", "dna_avg_cpa_lower", "dna_avg_cpa_upper", "total_value_mean", "total_value_lower", "total_value_upper"} <= set(summary.columns)
@@ -371,3 +381,224 @@ class TestEvaluateScenarioWithUncertaintyGovernance:
             outcome_approvals=[gsa_approval], governance_mode="official", **IDENTITY,
         )
         assert "summary" in result
+
+    def test_optimisation_operation_accepts_optimisation_scoped_approval(
+        self, meta_with_catalogue, market_trace, approval, reference_context,
+    ):
+        """G2A.7a.10 (brief section 6.2, 12.1): optimize_scenario's posterior
+        evaluation now passes operation="optimisation" (matching its own
+        already-resolved optimisation proof) instead of implicitly resolving
+        for "planning" - an approval scoped to "optimisation" only (not
+        "planning") must succeed here, the same as it does inside
+        optimize_scenario itself."""
+        from ancestry_mmm.core.optimization import PlanningObjective
+        from ancestry_mmm.core.outcome_approval import OutcomeApproval, fingerprint_outcome_definition
+        from ancestry_mmm.core.outcomes import METRIC_KEY_FH_GSA
+
+        spend_plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Media": 200.0}}
+        planning_objective = PlanningObjective(
+            estimand="incremental_outcome", metric_key=METRIC_KEY_FH_GSA, target_outcome_ids=("New",),
+        )
+        gsa_definition = meta_with_catalogue.outcome_catalogue_at_fit[0]
+        optimisation_approval = OutcomeApproval(
+            approval_id="apr-gsa", outcome_id="New",
+            definition_fingerprint=fingerprint_outcome_definition(gsa_definition),
+            status="approved", allowed_uses=("optimisation",),
+            approved_by="Jane Analyst", approved_at="2026-01-01",
+        )
+        result = evaluate_scenario_with_uncertainty(
+            spend_plan, "UK", meta_with_catalogue, market_trace, reference_context,
+            model_type="market_specific", n_draws=10, seed=1,
+            approval=approval, planning_objective=planning_objective,
+            outcome_approvals=[optimisation_approval],
+            governance_mode="official", operation="optimisation", **IDENTITY,
+        )
+        assert "summary" in result
+
+    # -- G2A.7a.10 (brief section 6, 14.3): evaluate_scenario_with_uncertainty
+    # previously accepted `approval` without ever validating it, and only
+    # checked `outcome_approvals` for truthiness - not status, expiry, use,
+    # scope, or fingerprint. These tests lock in the real validation now
+    # wired through the same resolve_planning_governance() used by
+    # evaluate_manual_scenario/optimize_scenario.
+
+    def test_object_list_as_outcome_approvals_never_authorises_official_output(
+        self, meta_with_catalogue, market_trace, approval, reference_context,
+    ):
+        from ancestry_mmm.core.optimization import PlanningObjective
+        from ancestry_mmm.core.outcomes import METRIC_KEY_FH_GSA
+
+        spend_plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Media": 200.0}}
+        planning_objective = PlanningObjective(
+            estimand="incremental_outcome", metric_key=METRIC_KEY_FH_GSA, target_outcome_ids=("New",),
+        )
+        # A list of junk objects is truthy (passes the old `not
+        # outcome_approvals` check) but must never authorise official
+        # output - it fails resolving real approval identity instead of
+        # silently succeeding.
+        with pytest.raises(Exception):
+            evaluate_scenario_with_uncertainty(
+                spend_plan, "UK", meta_with_catalogue, market_trace, reference_context,
+                model_type="market_specific", n_draws=10, seed=1,
+                approval=approval, planning_objective=planning_objective,
+                outcome_approvals=[object()], governance_mode="official", **IDENTITY,
+            )
+
+    def test_stale_model_approval_blocks(
+        self, meta_with_catalogue, market_trace, reference_context,
+    ):
+        from ancestry_mmm.core.approval import ApprovalMismatchError
+        from ancestry_mmm.core.optimization import PlanningObjective
+        from ancestry_mmm.core.outcome_approval import OutcomeApproval, fingerprint_outcome_definition
+        from ancestry_mmm.core.outcomes import METRIC_KEY_FH_GSA
+
+        stale_approval = ModelApproval(
+            approved_by="Jane Analyst",
+            model_run_id="run-OLD", data_fingerprint="data-fp-1",
+            model_spec_fingerprint="spec-fp-1", posterior_fingerprint="posterior-fp-1",
+        )
+        spend_plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Media": 200.0}}
+        planning_objective = PlanningObjective(
+            estimand="incremental_outcome", metric_key=METRIC_KEY_FH_GSA, target_outcome_ids=("New",),
+        )
+        gsa_definition = meta_with_catalogue.outcome_catalogue_at_fit[0]
+        gsa_approval = OutcomeApproval(
+            approval_id="apr-gsa", outcome_id="New",
+            definition_fingerprint=fingerprint_outcome_definition(gsa_definition),
+            status="approved", allowed_uses=("planning",),
+            approved_by="Jane Analyst", approved_at="2026-01-01",
+        )
+        with pytest.raises(ApprovalMismatchError):
+            evaluate_scenario_with_uncertainty(
+                spend_plan, "UK", meta_with_catalogue, market_trace, reference_context,
+                model_type="market_specific", n_draws=10, seed=1,
+                approval=stale_approval, planning_objective=planning_objective,
+                outcome_approvals=[gsa_approval], governance_mode="official", **IDENTITY,
+            )
+
+    def test_rejected_outcome_approval_blocks(
+        self, meta_with_catalogue, market_trace, approval, reference_context,
+    ):
+        from ancestry_mmm.core.optimization import PlanningObjective
+        from ancestry_mmm.core.outcome_approval import (
+            OutcomeApproval,
+            OutcomeApprovalBlockedError,
+            fingerprint_outcome_definition,
+        )
+        from ancestry_mmm.core.outcomes import METRIC_KEY_FH_GSA
+
+        spend_plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Media": 200.0}}
+        planning_objective = PlanningObjective(
+            estimand="incremental_outcome", metric_key=METRIC_KEY_FH_GSA, target_outcome_ids=("New",),
+        )
+        gsa_definition = meta_with_catalogue.outcome_catalogue_at_fit[0]
+        rejected_approval = OutcomeApproval(
+            approval_id="apr-gsa", outcome_id="New",
+            definition_fingerprint=fingerprint_outcome_definition(gsa_definition),
+            status="rejected", allowed_uses=("planning",),
+            approved_by="Jane Analyst", approved_at="2026-01-01",
+        )
+        with pytest.raises(OutcomeApprovalBlockedError):
+            evaluate_scenario_with_uncertainty(
+                spend_plan, "UK", meta_with_catalogue, market_trace, reference_context,
+                model_type="market_specific", n_draws=10, seed=1,
+                approval=approval, planning_objective=planning_objective,
+                outcome_approvals=[rejected_approval], governance_mode="official", **IDENTITY,
+            )
+
+    def test_expired_outcome_approval_blocks(
+        self, meta_with_catalogue, market_trace, approval, reference_context,
+    ):
+        from ancestry_mmm.core.optimization import PlanningObjective
+        from ancestry_mmm.core.outcome_approval import (
+            OutcomeApproval,
+            OutcomeApprovalBlockedError,
+            fingerprint_outcome_definition,
+        )
+        from ancestry_mmm.core.outcomes import METRIC_KEY_FH_GSA
+
+        spend_plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Media": 200.0}}
+        planning_objective = PlanningObjective(
+            estimand="incremental_outcome", metric_key=METRIC_KEY_FH_GSA, target_outcome_ids=("New",),
+        )
+        gsa_definition = meta_with_catalogue.outcome_catalogue_at_fit[0]
+        expired_approval = OutcomeApproval(
+            approval_id="apr-gsa", outcome_id="New",
+            definition_fingerprint=fingerprint_outcome_definition(gsa_definition),
+            status="approved", allowed_uses=("planning",),
+            approved_by="Jane Analyst", approved_at="2020-01-01",
+            expires_at="2020-06-01",
+        )
+        with pytest.raises(OutcomeApprovalBlockedError):
+            evaluate_scenario_with_uncertainty(
+                spend_plan, "UK", meta_with_catalogue, market_trace, reference_context,
+                model_type="market_specific", n_draws=10, seed=1,
+                approval=approval, planning_objective=planning_objective,
+                outcome_approvals=[expired_approval], governance_mode="official", **IDENTITY,
+            )
+
+    def test_wrong_use_outcome_approval_blocks(
+        self, meta_with_catalogue, market_trace, approval, reference_context,
+    ):
+        from ancestry_mmm.core.optimization import PlanningObjective
+        from ancestry_mmm.core.outcome_approval import (
+            OutcomeApproval,
+            OutcomeApprovalBlockedError,
+            fingerprint_outcome_definition,
+        )
+        from ancestry_mmm.core.outcomes import METRIC_KEY_FH_GSA
+
+        spend_plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Media": 200.0}}
+        planning_objective = PlanningObjective(
+            estimand="incremental_outcome", metric_key=METRIC_KEY_FH_GSA, target_outcome_ids=("New",),
+        )
+        gsa_definition = meta_with_catalogue.outcome_catalogue_at_fit[0]
+        # Approved for "optimisation" only - this call resolves for the
+        # default operation="planning".
+        optimisation_only_approval = OutcomeApproval(
+            approval_id="apr-gsa", outcome_id="New",
+            definition_fingerprint=fingerprint_outcome_definition(gsa_definition),
+            status="approved", allowed_uses=("optimisation",),
+            approved_by="Jane Analyst", approved_at="2026-01-01",
+        )
+        with pytest.raises(OutcomeApprovalBlockedError):
+            evaluate_scenario_with_uncertainty(
+                spend_plan, "UK", meta_with_catalogue, market_trace, reference_context,
+                model_type="market_specific", n_draws=10, seed=1,
+                approval=approval, planning_objective=planning_objective,
+                outcome_approvals=[optimisation_only_approval],
+                governance_mode="official", operation="planning", **IDENTITY,
+            )
+
+    def test_wrong_scope_outcome_approval_blocks(
+        self, meta_with_catalogue, market_trace, approval, reference_context,
+    ):
+        from ancestry_mmm.core.optimization import PlanningObjective
+        from ancestry_mmm.core.outcome_approval import (
+            OutcomeApproval,
+            OutcomeApprovalBlockedError,
+            fingerprint_outcome_definition,
+        )
+        from ancestry_mmm.core.outcomes import METRIC_KEY_FH_GSA
+
+        spend_plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Media": 200.0}}
+        planning_objective = PlanningObjective(
+            estimand="incremental_outcome", metric_key=METRIC_KEY_FH_GSA, target_outcome_ids=("New",),
+        )
+        gsa_definition = meta_with_catalogue.outcome_catalogue_at_fit[0]
+        # Approved for the "AU" market only - this evaluation is for "UK".
+        wrong_market_approval = OutcomeApproval(
+            approval_id="apr-gsa", outcome_id="New",
+            definition_fingerprint=fingerprint_outcome_definition(gsa_definition),
+            status="approved", allowed_uses=("planning",),
+            approved_by="Jane Analyst", approved_at="2026-01-01",
+            market_scope=("AU",),
+        )
+        with pytest.raises(OutcomeApprovalBlockedError):
+            evaluate_scenario_with_uncertainty(
+                spend_plan, "UK", meta_with_catalogue, market_trace, reference_context,
+                model_type="market_specific", n_draws=10, seed=1,
+                approval=approval, planning_objective=planning_objective,
+                outcome_approvals=[wrong_market_approval],
+                governance_mode="official", **IDENTITY,
+            )
