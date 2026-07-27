@@ -771,35 +771,67 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
         if declared == "scenarios" and officially_resumable:
             scenarios = imported.get("scenarios") or []
             from .optimization import (
-                ScenarioValidationContext,
+                PlanningObjective,
+                validation_context_from_legacy_args,
                 validate_scenario_dependencies,
             )
-            # Build complete validation context from imported bundle
-            val_context = ScenarioValidationContext(
-                model_run_id=imported.get("model_run_id"),
-                data_fingerprint=(
-                    imported.get("model_approval", {}).get("data_fingerprint")
-                ),
-                model_spec_fingerprint=(
-                    imported.get("model_approval", {}).get("model_spec_fingerprint")
-                ),
-                posterior_fingerprint=(
-                    imported.get("model_approval", {}).get("posterior_fingerprint")
-                ),
-                outcome_approvals=[
-                    a_dict for a_dict in active_approvals
-                ],
-                outcome_definitions=imported.get("outcome_definitions"),
+            # G2A.7a.9: build a complete validation context per scenario.
+            # Each official scenario has its own planning objective which
+            # must match the current project state.
+            current_outcome_defns = imported.get("outcome_definitions") or ()
+            current_outcome_appr = tuple(
+                a_dict for a_dict in active_approvals
             )
             for idx, sc in enumerate(scenarios):
                 sc_gov = sc.get("governance_mode", "exploratory")
                 if sc_gov != "official":
                     continue
-                # Use shared validate_scenario_dependencies with full context
-                issues = validate_scenario_dependencies(
-                    sc,
-                    context=val_context,
-                )
+                # Build scenario-specific planning objective
+                sc_po_raw = sc.get("planning_objective")
+                try:
+                    sc_po = (
+                        PlanningObjective.from_dict(sc_po_raw)
+                        if isinstance(sc_po_raw, dict)
+                        else PlanningObjective()
+                    )
+                except (TypeError, ValueError):
+                    officially_resumable = False
+                    official_blocking_reasons.append({
+                        "artefact_type": "scenario",
+                        "artefact_id": sc.get("name", f"scenario_{idx}"),
+                        "reason": "invalid_planning_objective: saved objective cannot be deserialised",
+                    })
+                    continue
+                # Build per-scenario validation context
+                try:
+                    val_context = validation_context_from_legacy_args(
+                        model_run_id=imported.get("model_run_id", ""),
+                        model_approval_fingerprint=(
+                            imported.get("model_approval", {}).get("fingerprint", "")
+                        ),
+                        data_fingerprint=(
+                            imported.get("model_approval", {}).get("data_fingerprint", "")
+                        ),
+                        model_spec_fingerprint=(
+                            imported.get("model_approval", {}).get("model_spec_fingerprint", "")
+                        ),
+                        posterior_fingerprint=(
+                            imported.get("model_approval", {}).get("posterior_fingerprint", "")
+                        ),
+                        planning_objective=sc_po,
+                        outcome_definitions=current_outcome_defns,
+                        outcome_approvals=current_outcome_appr,
+                        counterfactual_fingerprint="",
+                    )
+                except ValueError as exc:
+                    officially_resumable = False
+                    official_blocking_reasons.append({
+                        "artefact_type": "scenario",
+                        "artefact_id": sc.get("name", f"scenario_{idx}"),
+                        "reason": f"incomplete_validation_context: {exc}",
+                    })
+                    continue
+                issues = validate_scenario_dependencies(sc, context=val_context)
                 for issue in issues:
                     officially_resumable = False
                     official_blocking_reasons.append({

@@ -37,7 +37,7 @@ from .optimization import (
     AnyPosteriorParams,
     OutcomeApproval,
     PlanningObjective,
-    evaluate_scenario,
+    _calculate_scenario,
 )
 from .outcomes import (
     METRIC_KEY_DNA_KIT_SALE,
@@ -298,7 +298,6 @@ def evaluate_scenario_with_uncertainty(
     outcome_approvals: Optional[List[OutcomeApproval]] = None,
     governance_mode: str = "official",
     nbt_completeness_metadata: Optional[dict] = None,
-    _trusted_operation: Optional[str] = None,
 ) -> Dict[str, object]:
     """
     Per-draw scenario evaluation: `core.optimization.evaluate_scenario` run
@@ -319,7 +318,25 @@ def evaluate_scenario_with_uncertainty(
     None, "n_draws": int}`. Raises `ApprovalMismatchError` exactly as
     `evaluate_scenario` does (checked once per draw - cheap, and avoids
     duplicating that logic here).
+
+    G2A.7a.9: governance is validated once at entry (not per draw). The
+    inner draw loop uses the private ``_calculate_scenario`` which has no
+    governance logic.
     """
+    # G2A.7a.9: single governance validation at entry
+    if governance_mode == "official":
+        if planning_objective is None:
+            from .outcome_approval import OutcomeApprovalBlockedError
+            raise OutcomeApprovalBlockedError(
+                "Official posterior evaluation requires a PlanningObjective."
+            )
+        if not outcome_approvals:
+            from .outcome_approval import OutcomeApprovalBlockedError
+            raise OutcomeApprovalBlockedError(
+                "Official posterior evaluation requires at least one "
+                "OutcomeApproval."
+            )
+
     extract_fn = extract_market_specific_posterior_params if model_type == "market_specific" else extract_posterior_params
 
     def _evaluate(
@@ -327,11 +344,13 @@ def evaluate_scenario_with_uncertainty(
         params: AnyPosteriorParams,
         typed_plan: Optional[ScenarioPlan],
     ) -> pd.DataFrame:
-        return evaluate_scenario(
+        # G2A.7a.9: use the private numerical function directly.
+        # Governance has been resolved by the trusted caller (e.g. the
+        # optimiser or manual service) — the posterior evaluation does
+        # not re-resolve approvals on every draw.
+        return _calculate_scenario(
             plan, market, meta, params, reference_context_by_month, ltv,
-            model_type=model_type, approval=approval, model_run_id=model_run_id,
-            data_fingerprint=data_fingerprint, model_spec_fingerprint=model_spec_fingerprint,
-            posterior_fingerprint=posterior_fingerprint,
+            model_type=model_type,
             scenario_plan=typed_plan,
             activity_definitions=activity_definitions,
             counterfactual_policy=counterfactual_policy,
@@ -339,10 +358,6 @@ def evaluate_scenario_with_uncertainty(
             cost_mapping_registry=cost_mapping_registry,
             cost_context_id=cost_context_id,
             cost_as_of_by_month=cost_as_of_by_month,
-            outcome_approvals=outcome_approvals,
-            governance_mode=governance_mode,
-            nbt_completeness_metadata=nbt_completeness_metadata,
-            _trusted_operation=_trusted_operation,
         )
 
     draw_indices = sample_draw_indices(trace, n_draws, seed)
