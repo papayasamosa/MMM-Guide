@@ -23,6 +23,7 @@ from ancestry_mmm.core.activities import (
 from ancestry_mmm.core.fingerprint import fingerprint_dataframe, fingerprint_model_spec, fingerprint_posterior
 from ancestry_mmm.core.outcomes import (
     dna_kit_sale_outcome_ids,
+    fh_gsa_outcome_ids,
     fh_net_billthrough_outcome_ids,
     fh_signup_outcome_ids,
     outcome_catalogue_fingerprint_payload,
@@ -461,18 +462,22 @@ cost_as_of_by_month = {
     month: f"{month}-01" if len(month) == 7 else month for month in months
 }
 
+# G2A.7a.7: build objective options from fitted outcome catalogue
+_fitted_outcome_ids = set(meta.outcome_ids) if hasattr(meta, 'outcome_ids') else set()
+_has_fh_gsa = bool(fh_gsa_outcome_ids(meta)) if hasattr(meta, 'outcome_ids') else False
 _has_dna_kit_segments = bool(dna_kit_sale_outcome_ids(meta))
-_has_fh_signup_outcomes = bool(fh_signup_outcome_ids(meta))
-_has_fh_nbt_outcomes = bool(fh_net_billthrough_outcome_ids(meta))
-# G2A.7 (REQ-PLAN-001): NBT is no longer first in the selector — no outcome
-# is a privileged default. NBT appears only when an NBT outcome is actually
-# in the fitted model, at the end of the list, not promoted above others.
-_objective_options = (
-    ["fh_gsa", "expected_value"]
-    + (["dna_kits"] if _has_dna_kit_segments else [])
-    + (["fh_signups"] if _has_fh_signup_outcomes else [])
-    + (["fh_net_billthrough"] if _has_fh_nbt_outcomes else [])
-)
+_has_fh_signups = bool(fh_signup_outcome_ids(meta))
+_has_fh_nbt = bool(fh_net_billthrough_outcome_ids(meta))
+_objective_options = []
+if _has_fh_gsa:
+    _objective_options.append("fh_gsa")
+if _has_dna_kit_segments:
+    _objective_options.append("dna_kits")
+if _has_fh_signups:
+    _objective_options.append("fh_signups")
+if _has_fh_nbt:
+    _objective_options.append("fh_net_billthrough")
+_objective_options.append("expected_value")  # Always available if value config exists
 _objective_labels = {
     "fh_net_billthrough": "Maximise incremental Family History net bill-through",
     "fh_gsa": "Maximise Family History GSAs",
@@ -505,26 +510,35 @@ if hasattr(meta, 'outcome_catalogue_at_fit') and meta.outcome_catalogue_at_fit:
     elif len(currencies) > 1:
         value_currency = None  # Mixed currencies need explicit FX layer
 
-# G2A.7a.5: use core objective resolver for planning and optimsation separately
-planning_objective = resolve_planning_objective(
-    objective_kind=objective,
-    meta=meta,
-    operation="planning",
-    ltv=ltv,
-    value_currency=value_currency,
-    counterfactual_policy_fingerprint=counterfactual_policy.fingerprint(),
-    value_weights_by_outcome_id=value_weights_by_outcome_id or None,
-)
+# G2A.7a.7: protected objective resolution with error boundary
+planning_objective = None
+optimisation_objective = None
+_objective_error = None
+try:
+    planning_objective = resolve_planning_objective(
+        objective_kind=objective,
+        meta=meta,
+        operation="planning",
+        ltv=ltv,
+        value_currency=value_currency,
+        counterfactual_policy_fingerprint=counterfactual_policy.fingerprint(),
+        value_weights_by_outcome_id=value_weights_by_outcome_id or None,
+    )
+except (ValueError, PlanningGovernanceError) as e:
+    _objective_error = f"Planning objective: {e}"
 
-optimisation_objective = resolve_planning_objective(
-    objective_kind=objective,
-    meta=meta,
-    operation="optimisation",
-    ltv=ltv,
-    value_currency=value_currency,
-    counterfactual_policy_fingerprint=counterfactual_policy.fingerprint(),
-    value_weights_by_outcome_id=value_weights_by_outcome_id or None,
-)
+try:
+    optimisation_objective = resolve_planning_objective(
+        objective_kind=objective,
+        meta=meta,
+        operation="optimisation",
+        ltv=ltv,
+        value_currency=value_currency,
+        counterfactual_policy_fingerprint=counterfactual_policy.fingerprint(),
+        value_weights_by_outcome_id=value_weights_by_outcome_id or None,
+    )
+except (ValueError, PlanningGovernanceError) as e:
+    _objective_error = (_objective_error or "") + f" Optimisation objective: {e}"
 
 st.caption(
     "Each objective states exactly what it maximises - Family History GSAs, Family History sign-ups "
@@ -533,12 +547,18 @@ st.caption(
     "**Official planning requires each target outcome to have an approved definition "
     "(Structure → Outcome Governance).**"
 )
-if objective == "expected_value" and not ltv and not value_weights_by_outcome_id:
-    st.warning(
-        "No LTV weights or outcome value weights are configured for this project - "
-        "'Maximise expected value' needs at least one outcome with a value weight set "
-        "(Structure page) before optimisation can run."
-    )
+if _objective_error:
+    st.error(f"Objective configuration: {_objective_error}")
+elif objective == "expected_value":
+    # Display actual currency when available
+    if value_currency:
+        st.caption(f"Value currency: **{value_currency}**")
+    if not value_weights_by_outcome_id and not ltv:
+        st.warning(
+            "No value weights are configured for this project - "
+            "'Maximise expected value' needs at least one outcome with a value weight "
+            "(set on the Structure page) before running."
+        )
 
 st.markdown("---")
 tab_manual, tab_constrained, tab_unconstrained = st.tabs(["Manual", "Constrained optimisation", "Unconstrained benchmark"])
