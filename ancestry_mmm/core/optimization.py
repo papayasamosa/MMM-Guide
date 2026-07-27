@@ -87,15 +87,26 @@ AnyPosteriorParams = Union[FHPosteriorParams, FHMarketSpecificPosteriorParams]
 
 def _resolve_nbt_completeness_fingerprint(
     nbt_completeness_metadata: dict | None,
+    *,
+    fail_closed: bool = False,
 ) -> str | None:
     """Resolve the real NBT completeness-record fingerprint from metadata.
 
     Uses ``NetBillthroughCompletenessMetadata.from_dict`` to normalise the
     payload and ``completeness_fingerprint()`` to fingerprint the complete
     canonical metadata — not the outcome-definition fingerprint, which is
-    a separate object (REQ-NBT-001). Returns None when metadata is absent
-    or cannot be parsed."""
+    a separate object (REQ-NBT-001).
+
+    When ``fail_closed=True``, raises ``PlanningGovernanceError`` if
+    metadata is absent or cannot be parsed (official mode). When
+    ``fail_closed=False`` (exploratory mode), returns None."""
     if nbt_completeness_metadata is None:
+        if fail_closed:
+            from .outcome_approval import PlanningGovernanceError
+            raise PlanningGovernanceError(
+                "NBT completeness metadata is required for official "
+                "planning or optimisation but was not provided."
+            )
         return None
     try:
         from .net_billthrough import NetBillthroughCompletenessMetadata
@@ -103,7 +114,12 @@ def _resolve_nbt_completeness_fingerprint(
             nbt_completeness_metadata
         )
         return metadata.completeness_fingerprint()
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        if fail_closed:
+            from .outcome_approval import PlanningGovernanceError
+            raise PlanningGovernanceError(
+                f"NBT completeness metadata is malformed: {exc}"
+            )
         return None
 
 PLANNING_ESTIMANDS = {
@@ -2318,7 +2334,8 @@ def evaluate_manual_scenario(
                 else ""
             ),
             nbt_completeness_fingerprint=_resolve_nbt_completeness_fingerprint(
-                nbt_completeness_metadata
+                nbt_completeness_metadata,
+                fail_closed=(governance_mode == "official"),
             ),
         )
 
@@ -2853,6 +2870,7 @@ def optimize_scenario(
     governance_mode: str = "official",
     outcome_approvals: Optional[List[OutcomeApproval]] = None,
     nbt_completeness_metadata: Optional[dict] = None,
+    artefact_kind: Optional[str] = None,
 ) -> Dict:
     """
     Optimise a spend plan. `constraints=None` (or empty) + conserve_total_budget=True
@@ -3304,11 +3322,15 @@ def optimize_scenario(
             if activity_definitions is not None
             else None
         ),
-        # G2A.7a.4: explicit artefact kind — constrained or unconstrained
+        # G2A.7a.5: explicit artefact kind — caller provides, never inferred
         "artefact_kind": (
-            "constrained_optimisation"
-            if constraints
-            else "unconstrained_benchmark"
+            artefact_kind
+            if artefact_kind is not None
+            else (
+                "constrained_optimisation"
+                if constraints
+                else "unconstrained_benchmark"
+            )
         ),
         # G2A.7a.3: resolved governance context for persistence
         "_resolved_governance": (

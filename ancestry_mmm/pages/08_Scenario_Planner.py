@@ -46,8 +46,6 @@ from ancestry_mmm.core.optimization import (
     SpendConstraint,
     compare_scenarios,
     evaluate_manual_scenario,
-    evaluate_scenario,
-    fingerprint_planning_objective,
     governance_deps_from_optimizer_result,
     monthly_economics_table,
     optimize_scenario,
@@ -60,7 +58,6 @@ from ancestry_mmm.core.evidence_tiers import classify_market_evidence
 from ancestry_mmm.core.market_config import MarketSpecConfig
 from ancestry_mmm.core.media_units import extract_cost_per_unit_series, historical_cost_trend
 from ancestry_mmm.core.media_costs import CostMappingRegistry
-from ancestry_mmm.core.net_billthrough import NetBillthroughCompletenessMetadata
 from ancestry_mmm.core.scenario_governance import (
     CounterfactualPolicy,
     ScenarioPlan,
@@ -775,6 +772,7 @@ with tab_constrained:
                         objective=objective if planning_objective is None else None,
                         planning_objective=planning_objective,
                         constraints=st.session_state["scenario_constraints"],
+                        artefact_kind="constrained_optimisation",
                         conserve_total_budget=True,
                         activity_definitions=activity_definitions or None,
                         counterfactual_policy=counterfactual_policy,
@@ -892,6 +890,7 @@ with tab_unconstrained:
                         objective=objective if planning_objective is None else None,
                         planning_objective=planning_objective,
                         constraints=[],
+                        artefact_kind="unconstrained_benchmark",
                         conserve_total_budget=True,
                         activity_definitions=activity_definitions or None,
                         counterfactual_policy=counterfactual_policy,
