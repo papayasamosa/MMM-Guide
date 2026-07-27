@@ -528,19 +528,22 @@ class ScenarioValidationContext:
 
     A scenario may be ``current`` only when every required saved dependency
     was compared with this context. Omitted fields prevent ``current``
-    status."""
+    status.
 
-    model_run_id: Optional[str] = None
-    model_approval_fingerprint: Optional[str] = None
-    data_fingerprint: Optional[str] = None
-    model_spec_fingerprint: Optional[str] = None
-    posterior_fingerprint: Optional[str] = None
-    planning_objective: Optional[PlanningObjective] = None
-    outcome_definitions: Optional[list] = None
-    outcome_approvals: Optional[list] = None
+    Required (non-optional) fields are mandatory for every official check.
+    Optional fields are use-specific (activity, cost, NBT)."""
+
+    model_run_id: str
+    model_approval_fingerprint: str
+    data_fingerprint: str
+    model_spec_fingerprint: str
+    posterior_fingerprint: str
+    planning_objective: PlanningObjective
+    outcome_definitions: tuple
+    outcome_approvals: tuple
+    counterfactual_fingerprint: str
     activity_fingerprint: Optional[str] = None
     cost_fingerprint: Optional[str] = None
-    counterfactual_fingerprint: Optional[str] = None
     nbt_completeness_metadata: Optional[dict] = None
 
 
@@ -827,26 +830,28 @@ def validate_scenario_dependencies(
     IDs, status, expiry, use, and scope against current definitions.
     """
     issues: List[ScenarioDependencyIssue] = []
+    current_model_approval_fingerprint: Optional[str] = None
 
-    # G2A.7a.7: use ScenarioValidationContext when provided, fallback to individual params
+    # G2A.7a.8: use ScenarioValidationContext values directly when provided.
+    # Strict context fields are authoritative; no merging with individual params.
     if context is not None:
-        current_model_run_id = current_model_run_id or context.model_run_id
-        current_data_fingerprint = current_data_fingerprint or context.data_fingerprint
-        current_model_spec_fingerprint = current_model_spec_fingerprint or context.model_spec_fingerprint
-        current_posterior_fingerprint = current_posterior_fingerprint or context.posterior_fingerprint
-        current_planning_objective = current_planning_objective or context.planning_objective
-        current_activity_fingerprint = current_activity_fingerprint or context.activity_fingerprint
-        current_cost_fingerprint = current_cost_fingerprint or context.cost_fingerprint
-        current_counterfactual_fingerprint = current_counterfactual_fingerprint or context.counterfactual_fingerprint
-        current_nbt_completeness_fingerprint = current_nbt_completeness_fingerprint or (
+        current_model_run_id = context.model_run_id
+        current_model_approval_fingerprint = context.model_approval_fingerprint
+        current_data_fingerprint = context.data_fingerprint
+        current_model_spec_fingerprint = context.model_spec_fingerprint
+        current_posterior_fingerprint = context.posterior_fingerprint
+        current_planning_objective = context.planning_objective
+        current_outcome_approvals = context.outcome_approvals
+        current_activity_fingerprint = context.activity_fingerprint
+        current_cost_fingerprint = context.cost_fingerprint
+        current_counterfactual_fingerprint = context.counterfactual_fingerprint
+        current_nbt_completeness_fingerprint = (
             _resolve_nbt_completeness_fingerprint(
                 context.nbt_completeness_metadata,
                 fail_closed=True,
             )
             if context.nbt_completeness_metadata else None
         )
-        current_outcome_definitions = current_outcome_definitions or context.outcome_definitions
-        current_outcome_approvals = current_outcome_approvals or context.outcome_approvals
 
     schema_ver = scenario.get("schema_version", 1)
     deps = scenario.get("governance_dependencies") or {}
@@ -942,9 +947,16 @@ def validate_scenario_dependencies(
             issue_type="missing",
             detail="Governance dependency 'model_approval_fingerprint' is missing.",
         ))
-    elif current_model_approval is not None:
-        current_fp = current_model_approval.get("fingerprint", "")
-        if saved_approval_fp != current_fp:
+    elif current_model_approval_fingerprint or current_model_approval:
+        if not current_model_approval_fingerprint and current_model_approval:
+            from .approval import ModelApproval, fingerprint_model_approval
+            try:
+                current_model_approval_fingerprint = fingerprint_model_approval(
+                    ModelApproval.from_dict(current_model_approval)
+                )
+            except (TypeError, ValueError):
+                pass
+        if current_model_approval_fingerprint and saved_approval_fp != current_model_approval_fingerprint:
             issues.append(ScenarioDependencyIssue(
                 artefact_id=scenario.get("name", "<unknown>"),
                 issue_type="stale",
