@@ -523,6 +523,68 @@ class ScenarioEvaluationResult:
 
 
 @dataclass(frozen=True)
+class OutcomeValueMapping:
+    """Canonical outcome-level value mapping for expected-value calculations.
+
+    Outcome-ID weights are authoritative. Legacy segment LTV is converted
+    through an explicit migration adapter before reaching this type."""
+    value_by_outcome_id: Mapping[str, float]
+    currency_by_outcome_id: Mapping[str, str]
+    mapping_id: str = "default"
+    mapping_fingerprint: str = ""
+    source: str = "outcome_catalogue"
+
+    def to_dict(self) -> dict:
+        return {
+            "value_by_outcome_id": dict(self.value_by_outcome_id),
+            "currency_by_outcome_id": dict(self.currency_by_outcome_id),
+            "mapping_id": self.mapping_id,
+            "mapping_fingerprint": self.mapping_fingerprint,
+            "source": self.source,
+        }
+
+    @classmethod
+    def from_legacy_segment_ltv(
+        cls,
+        segment_ltv: Mapping[str, float],
+        outcome_ids: tuple[str, ...],
+    ) -> "OutcomeValueMapping":
+        """Convert legacy segment-level LTV to outcome-ID value mapping."""
+        return cls(
+            value_by_outcome_id={oid: float(segment_ltv.get(oid, 0.0)) for oid in outcome_ids},
+            currency_by_outcome_id={oid: "GBP" for oid in outcome_ids},
+            mapping_id="legacy_segment_ltv_migration",
+            source="legacy_segment_ltv_migration",
+        )
+
+
+@dataclass(frozen=True)
+class CurrencyContext:
+    """Currency context for scenario planning and reporting.
+
+    For single-market planning: local monetary decisions remain in the
+    market reporting currency. No conversion is performed without a
+    governed rate set or assumption."""
+    market_reporting_currency: str = ""
+    value_currency: str | None = None
+    group_reporting_currency: str | None = None
+    model_currency: str | None = None
+    historical_fx_rate_set_id: str | None = None
+    historical_fx_rate_set_fingerprint: str | None = None
+    future_fx_assumption_id: str | None = None
+    future_fx_assumption_fingerprint: str | None = None
+
+    def to_dict(self) -> dict:
+        from dataclasses import asdict
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "CurrencyContext":
+        known = set(cls.__dataclass_fields__)
+        return cls(**{k: v for k, v in d.items() if k in known})
+
+
+@dataclass(frozen=True)
 class ScenarioValidationContext:
     """Complete current project state for scenario dependency validation.
 
@@ -542,6 +604,8 @@ class ScenarioValidationContext:
     outcome_definitions: tuple
     outcome_approvals: tuple
     counterfactual_fingerprint: str
+    value_mapping_fingerprint: str | None = None
+    currency_context_fingerprint: str | None = None
     activity_fingerprint: Optional[str] = None
     cost_fingerprint: Optional[str] = None
     nbt_completeness_metadata: Optional[dict] = None
@@ -1163,7 +1227,28 @@ def validate_scenario_dependencies(
                     reason_code="approval_scope_mismatch",
                 ))
 
-            # Verify definition fingerprint
+            # Verify outcome definition fingerprint against current definition
+            if current_outcome_definitions is not None and auth_outcome:
+                from .outcome_approval import fingerprint_outcome_definition
+                for defn in current_outcome_definitions:
+                    if isinstance(defn, dict) and defn.get("outcome_id") == auth_outcome:
+                        current_def_fp = fingerprint_outcome_definition(defn)
+                        saved_def_fp = auth.get("definition_fingerprint")
+                        if saved_def_fp and saved_def_fp != current_def_fp:
+                            issues.append(ScenarioDependencyIssue(
+                                artefact_id=_artefact_id,
+                                issue_type="stale",
+                                detail=(
+                                    f"Outcome '{auth_outcome}' definition has changed "
+                                    f"(saved fingerprint '{saved_def_fp[:16]}...', "
+                                    f"current '{current_def_fp[:16]}...')."
+                                ),
+                                dependency_type="outcome_definition",
+                                reason_code="definition_fingerprint_mismatch",
+                            ))
+                        break
+
+            # Verify approval definition fingerprint
             saved_fp = auth.get("definition_fingerprint")
             if saved_fp and saved_fp != current_approval.definition_fingerprint:
                 issues.append(ScenarioDependencyIssue(
@@ -1175,7 +1260,7 @@ def validate_scenario_dependencies(
                         f"'{current_approval.definition_fingerprint[:16]}...')."
                     ),
                     dependency_type="outcome_approval",
-                    reason_code="definition_fingerprint_mismatch",
+                    reason_code="approval_fingerprint_mismatch",
                 ))
 
     return issues
