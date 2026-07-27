@@ -511,6 +511,28 @@ class ScenarioEvaluationResult:
 
 
 @dataclass(frozen=True)
+class ScenarioValidationContext:
+    """Complete current project state for scenario dependency validation.
+
+    A scenario may be ``current`` only when every required saved dependency
+    was compared with this context. Omitted fields prevent ``current``
+    status."""
+
+    model_run_id: Optional[str] = None
+    model_approval_fingerprint: Optional[str] = None
+    data_fingerprint: Optional[str] = None
+    model_spec_fingerprint: Optional[str] = None
+    posterior_fingerprint: Optional[str] = None
+    planning_objective: Optional[PlanningObjective] = None
+    outcome_definitions: Optional[list] = None
+    outcome_approvals: Optional[list] = None
+    activity_fingerprint: Optional[str] = None
+    cost_fingerprint: Optional[str] = None
+    counterfactual_fingerprint: Optional[str] = None
+    nbt_completeness_metadata: Optional[dict] = None
+
+
+@dataclass(frozen=True)
 class PlanningObjective:
     """Typed objective and estimand stored with every scenario.
 
@@ -756,6 +778,7 @@ class ScenarioDependencyIssue:
 def validate_scenario_dependencies(
     scenario: dict,
     *,
+    context: Optional[ScenarioValidationContext] = None,
     current_model_run_id: Optional[str] = None,
     current_data_fingerprint: Optional[str] = None,
     current_model_spec_fingerprint: Optional[str] = None,
@@ -765,7 +788,6 @@ def validate_scenario_dependencies(
     current_cost_fingerprint: Optional[str] = None,
     current_counterfactual_fingerprint: Optional[str] = None,
     current_nbt_completeness_fingerprint: Optional[str] = None,
-    # G2A.7a.4: extended validation parameters
     current_model_identity: Optional[dict] = None,
     current_model_approval: Optional[dict] = None,
     current_outcome_definitions: Optional[list] = None,
@@ -793,6 +815,23 @@ def validate_scenario_dependencies(
     IDs, status, expiry, use, and scope against current definitions.
     """
     issues: List[ScenarioDependencyIssue] = []
+
+    # G2A.7a.7: use ScenarioValidationContext when provided, fallback to individual params
+    if context is not None:
+        current_model_run_id = current_model_run_id or context.model_run_id
+        current_data_fingerprint = current_data_fingerprint or context.data_fingerprint
+        current_model_spec_fingerprint = current_model_spec_fingerprint or context.model_spec_fingerprint
+        current_posterior_fingerprint = current_posterior_fingerprint or context.posterior_fingerprint
+        current_planning_objective = current_planning_objective or context.planning_objective
+        current_activity_fingerprint = current_activity_fingerprint or context.activity_fingerprint
+        current_cost_fingerprint = current_cost_fingerprint or context.cost_fingerprint
+        current_counterfactual_fingerprint = current_counterfactual_fingerprint or context.counterfactual_fingerprint
+        current_nbt_completeness_fingerprint = current_nbt_completeness_fingerprint or (
+            context.nbt_completeness_metadata.get("definition_fingerprint")
+            if context.nbt_completeness_metadata else None
+        )
+        current_outcome_definitions = current_outcome_definitions or context.outcome_definitions
+        current_outcome_approvals = current_outcome_approvals or context.outcome_approvals
 
     schema_ver = scenario.get("schema_version", 1)
     deps = scenario.get("governance_dependencies") or {}
@@ -1117,6 +1156,7 @@ def validate_scenario_dependencies(
 
 def scenario_dependency_status(
     scenario: dict,
+    context: Optional[ScenarioValidationContext] = None,
     **current_kwargs,
 ) -> str:
     """Convenience wrapper that returns a single status string for a
@@ -1136,7 +1176,11 @@ def scenario_dependency_status(
     governance_mode = scenario.get("governance_mode", "exploratory")
     if governance_mode != "official":
         return "exploratory"
-    issues = validate_scenario_dependencies(scenario, **current_kwargs)
+    issues = validate_scenario_dependencies(
+        scenario,
+        context=context,
+        **current_kwargs,
+    )
     if not issues:
         return "current"
     for issue in issues:
