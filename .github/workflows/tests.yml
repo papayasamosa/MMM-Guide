@@ -7,42 +7,89 @@ on:
     branches: [main]
 
 jobs:
-  ancestry-mmm-tests:
-    name: ancestry-mmm-tests-py${{ matrix.python-version }}
+  # ── Python 3.11 unit/integration ──────────────────────────────────
+  py311-tests:
+    name: Python 3.11 tests
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.12"]
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v8.3.2
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v8.3.2
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.11"
           enable-cache: true
           cache-dependency-glob: "uv.lock"
-
-      - name: Install dependencies
-        run: uv sync --locked
-
-      - name: Assert pinned PyMC Marketing compatibility
+      - run: uv sync --locked
+      - name: Assert pinned pymc-marketing (3.11)
         env:
-          EXPECTED_PYMC_MARKETING: ${{ matrix.python-version == '3.11' && '0.19.2' || '0.19.4' }}
+          EXPECTED_PYMC_MARKETING: "0.19.2"
         run: |
           uv run python -c "import os, pymc_marketing; assert pymc_marketing.__version__ == os.environ['EXPECTED_PYMC_MARKETING'], (pymc_marketing.__version__, os.environ['EXPECTED_PYMC_MARKETING'])"
           uv run pytest ancestry_mmm/tests/test_transformations.py -k pymc_marketing -v
-
       - name: Run tests
-        run: uv run pytest ancestry_mmm/tests/ -q
+        run: uv run pytest ancestry_mmm/tests/ -q --ignore=ancestry_mmm/tests/test_persistence.py
 
+  # ── Python 3.12 unit/integration ──────────────────────────────────
+  py312-tests:
+    name: Python 3.12 tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - run: uv sync --locked
+      - name: Assert pinned pymc-marketing (3.12)
+        env:
+          EXPECTED_PYMC_MARKETING: "0.19.4"
+        run: |
+          uv run python -c "import os, pymc_marketing; assert pymc_marketing.__version__ == os.environ['EXPECTED_PYMC_MARKETING'], (pymc_marketing.__version__, os.environ['EXPECTED_PYMC_MARKETING'])"
+          uv run pytest ancestry_mmm/tests/test_transformations.py -k pymc_marketing -v
+      - name: Run tests
+        run: uv run pytest ancestry_mmm/tests/ -q --ignore=ancestry_mmm/tests/test_persistence.py
+
+  # ── Ruff lint ──────────────────────────────────────────────────────
+  ruff:
+    name: Ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - run: uv sync --locked
       - name: Run ruff
         run: uv run ruff check ancestry_mmm
 
-      - name: Streamlit smoke tests (AppTest, every page)
+  # ── Streamlit AppTest ──────────────────────────────────────────────
+  streamlit:
+    name: Streamlit AppTest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - run: uv sync --locked
+      - name: Run Streamlit smoke tests
         run: uv run pytest ancestry_mmm/tests/test_streamlit_smoke.py -v
 
-      - name: Bundle round-trip tests (export/import/reconstruct/approval)
+  # ── Bundle round-trip ──────────────────────────────────────────────
+  bundle:
+    name: Bundle round-trip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - run: uv sync --locked
+      - name: Run bundle round-trip tests
         run: uv run pytest ancestry_mmm/tests/test_persistence.py -v
