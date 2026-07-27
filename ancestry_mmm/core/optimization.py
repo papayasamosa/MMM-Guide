@@ -323,14 +323,46 @@ class ResolvedPlanningGovernance:
                 "Resolved governance has zero authorisations — cannot "
                 "authorise an official calculation."
             )
-        # G2A.7a.4: validate exact target coverage
-        authorised_ids = {a.outcome_id for a in self.authorisations}
-        target_set = set(self.target_outcome_ids)
-        if not target_set:
+        # G2A.7a.7: enforce exact cardinality using explicit counts
+        target_list = list(self.target_outcome_ids)
+        if not target_list:
             raise OutcomeApprovalBlockedError(
                 "Resolved governance has no target outcome IDs — cannot "
                 "authorise an official calculation."
             )
+        # Reject duplicate target IDs
+        if len(target_list) != len(set(target_list)):
+            duplicates = [oid for oid in target_list if target_list.count(oid) > 1]
+            raise OutcomeApprovalBlockedError(
+                f"Resolved governance has duplicate target outcome IDs: "
+                f"{sorted(set(duplicates))}."
+            )
+        # Reject duplicate authorisations for the same outcome
+        auth_id_list = [a.outcome_id for a in self.authorisations]
+        if len(auth_id_list) != len(set(auth_id_list)):
+            duplicates = [oid for oid in auth_id_list if auth_id_list.count(oid) > 1]
+            raise OutcomeApprovalBlockedError(
+                f"Resolved governance has duplicate authorisations for: "
+                f"{sorted(set(duplicates))}."
+            )
+        # Reject duplicate approval IDs
+        approval_ids = [a.approval_id for a in self.authorisations]
+        if len(approval_ids) != len(set(approval_ids)):
+            duplicates = [aid for aid in approval_ids if approval_ids.count(aid) > 1]
+            raise OutcomeApprovalBlockedError(
+                f"Resolved governance has duplicate approval IDs: "
+                f"{sorted(set(duplicates))}."
+            )
+        # Exact count match
+        if len(self.authorisations) != len(target_list):
+            raise OutcomeApprovalBlockedError(
+                f"Resolved governance has {len(self.authorisations)} "
+                f"authorisations for {len(target_list)} targets — "
+                "counts must match."
+            )
+        # Exact set match
+        authorised_ids = {a.outcome_id for a in self.authorisations}
+        target_set = set(target_list)
         if authorised_ids != target_set:
             missing = target_set - authorised_ids
             extra = authorised_ids - target_set
@@ -501,6 +533,16 @@ class PlanningObjective:
             raise ValueError(f"Unsupported planning estimand: {self.estimand}")
         if self.estimand == "incremental_value" and not self.value_currency:
             raise ValueError("value objectives require value_currency")
+        # G2A.7a.7: reject duplicate target_outcome_ids
+        if len(self.target_outcome_ids) != len(set(self.target_outcome_ids)):
+            dupes = [
+                oid for oid in self.target_outcome_ids
+                if list(self.target_outcome_ids).count(oid) > 1
+            ]
+            raise ValueError(
+                f"PlanningObjective target_outcome_ids contains duplicates: "
+                f"{sorted(set(dupes))}."
+            )
 
     @property
     def is_valid_for_official_planning(self) -> bool:
