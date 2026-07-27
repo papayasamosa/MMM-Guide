@@ -554,7 +554,7 @@ def planning_objective_from_legacy(
         return PlanningObjective(
             estimand="incremental_value",
             metric_key="expected_value",
-            value_currency=value_currency or "UNSPECIFIED",
+            value_currency=value_currency or None,
             counterfactual_policy_fingerprint=(
                 counterfactual_policy_fingerprint
             ),
@@ -664,12 +664,13 @@ def resolve_planning_objective(
                 f"No value-eligible{' and optimisation-eligible' if operation == 'optimisation' else ''} "
                 "outcomes found in the fitted model."
             )
-        # Verify every target has a value weight
-        missing_weights = [oid for oid in targets if oid not in (ltv or {})]
+        # Verify every target has a value weight in the selected mapping
+        missing_weights = [oid for oid in targets if oid not in weights]
         if missing_weights:
             raise ValueError(
                 f"Expected-value objective: target outcomes {missing_weights} "
-                "have no LTV weight. Set a value weight for every target outcome."
+                "have no value weight. Set a value weight for every target outcome "
+                "via the outcome catalogue or a legacy LTV migration."
             )
         # Verify currency compatibility
         # G2A.7a.6: accept a single real currency (e.g. "GBP"),
@@ -1736,26 +1737,16 @@ def evaluate_scenario(
     outcome_approvals: Optional[List[OutcomeApproval]] = None,
     governance_mode: str = "official",
     nbt_completeness_metadata: Optional[dict] = None,
-    # G2A.7a.2: internal trusted path — only the optimiser may pass this
-    # to skip duplicate governance validation with proof of prior check.
-    _resolved_governance: Optional[ResolvedPlanningGovernance] = None,
 ) -> pd.DataFrame:
     """Evaluate total and incremental outcomes under governed activity scopes.
 
-    G2A.7a.2 (REQ-PLAN-001, REQ-USE-001): this is the manual scenario
-    evaluation entry point. It always requires ``planning`` authorisation
-    — the caller cannot pass a weaker use. Official mode additionally
-    requires a complete PlanningObjective (metric_key + target_outcome_ids)
-    with active OutcomeApprovals for ``planning``.
+    G2A.7a.7: this is a calculation-only API. It does NOT accept a caller-
+    supplied governance proof. Governance must be resolved before calling;
+    use ``evaluate_manual_scenario()`` for trusted manual evaluation or
+    let the optimiser handle governance internally.
 
     Pass ``governance_mode="exploratory"`` for a clearly non-official
-    evaluation that skips outcome-approval checks.
-
-    The ``_resolved_governance`` parameter is an internal trusted path:
-    when the optimiser has already validated ``optimisation`` authorisation
-    up front, it passes a ``ResolvedPlanningGovernance`` so nested
-    evaluation does not re-check under the wrong permission. Public callers
-    must never set this."""
+    evaluation that skips outcome-approval checks."""
     require_matching_approval(
         approval,
         model_run_id=model_run_id,
@@ -1763,45 +1754,27 @@ def evaluate_scenario(
         model_spec_fingerprint=model_spec_fingerprint,
         posterior_fingerprint=posterior_fingerprint,
     )
-    # --- Outcome-approval gate (G2A.7a.2, G2A.7a.3, REQ-PLAN-001, REQ-USE-001) ---
-    # Official mode: fail closed. Missing or empty approval collections block.
-    # exploratory mode skips approval checks.
+    # --- Outcome-approval gate (G2A.7a.7) ---
+    # Official mode: fail closed. exploratory mode skips checks.
+    # No caller-supplied proof is accepted — governance is resolved before
+    # this function is called, or resolved internally here.
     if governance_mode == "official":
-        if _resolved_governance is not None and _resolved_governance.is_official:
-            # Trusted path: the optimiser already validated and passed proof.
-            # Re-validate against the current context to prevent forging.
-            # Use the operation from the resolved governance — the optimiser
-            # sets "optimisation" for its nested evaluate_scenario calls.
-            _resolved_governance.validate_against(
-                operation=_resolved_governance.operation,
-                objective_fingerprint=(
-                    fingerprint_planning_objective(planning_objective)
-                    if planning_objective is not None
-                    else _resolved_governance.objective_fingerprint
-                ),
-                model_run_id=model_run_id,
-                data_fingerprint=data_fingerprint,
-                model_spec_fingerprint=model_spec_fingerprint,
-                posterior_fingerprint=posterior_fingerprint,
-                market=market,
-            )
-        elif outcome_approvals is None or len(outcome_approvals) == 0:
+        if outcome_approvals is None or len(outcome_approvals) == 0:
             raise OutcomeApprovalBlockedError(
                 "Official scenario evaluation blocked: no outcome approvals "
                 "are configured. Official use requires at least one active "
                 "OutcomeApproval. Pass governance_mode='exploratory' for "
                 "non-official evaluation."
             )
-        else:
-            if planning_objective is None:
-                raise ObjectiveMissingError(
-                    "Official scenario evaluation blocked: no PlanningObjective "
-                    "provided. Official planning requires an explicit objective "
-                    "with metric_key and target_outcome_ids. Pass "
-                    "governance_mode='exploratory' for non-official evaluation, "
-                    "or provide a complete PlanningObjective."
-                )
-            _require_planning_outcome_approvals(
+        if planning_objective is None:
+            raise ObjectiveMissingError(
+                "Official scenario evaluation blocked: no PlanningObjective "
+                "provided. Official planning requires an explicit objective "
+                "with metric_key and target_outcome_ids. Pass "
+                "governance_mode='exploratory' for non-official evaluation, "
+                "or provide a complete PlanningObjective."
+            )
+        _require_planning_outcome_approvals(
                 planning_objective=planning_objective,
                 meta=meta,
                 outcome_approvals=outcome_approvals,
@@ -2390,7 +2363,6 @@ def evaluate_manual_scenario(
         outcome_approvals=outcome_approvals,
         governance_mode=governance_mode,
         nbt_completeness_metadata=nbt_completeness_metadata,
-        _resolved_governance=resolved_gov,
     )
 
     # Extract economics coverage from the predicted DataFrame
@@ -3196,10 +3168,6 @@ def optimize_scenario(
         # G2A.7a.3: forward governance_mode so nested evaluate_scenario calls
         # use the same mode as the optimiser, not the default "official".
         governance_mode=governance_mode,
-        # G2A.7a.2: pass resolved governance proof so nested evaluate calls
-        # retain official optimisation identity without re-checking under
-        # the wrong permission. They are NEVER labelled exploratory.
-        _resolved_governance=_resolved_gov,
     )
     optimized_scenario_plan = (
         classify_activity_plan(
@@ -3273,10 +3241,6 @@ def optimize_scenario(
             cost_context_id=cost_context_id,
             cost_as_of_by_month=cost_as_of_by_month,
             outcome_approvals=outcome_approvals,
-            # G2A.7a.2: pass resolved governance proof — posterior
-            # evaluation retains official optimisation identity and
-            # is never labelled exploratory.
-            _resolved_governance=_resolved_gov,
         )
 
     return {

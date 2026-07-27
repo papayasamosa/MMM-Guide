@@ -503,7 +503,7 @@ if hasattr(meta, 'outcome_catalogue_at_fit') and meta.outcome_catalogue_at_fit:
     if len(currencies) == 1:
         value_currency = currencies.pop()
     elif len(currencies) > 1:
-        value_currency = "project_value_currency"  # Single conversion layer needed
+        value_currency = None  # Mixed currencies need explicit FX layer
 
 # G2A.7a.5: use core objective resolver for planning and optimsation separately
 planning_objective = resolve_planning_objective(
