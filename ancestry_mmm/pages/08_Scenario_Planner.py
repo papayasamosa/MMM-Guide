@@ -23,6 +23,7 @@ from ancestry_mmm.core.activities import (
 from ancestry_mmm.core.fingerprint import fingerprint_dataframe, fingerprint_model_spec, fingerprint_posterior
 from ancestry_mmm.core.outcomes import (
     dna_kit_sale_outcome_ids,
+    eligible_outcome_ids,
     fh_gsa_outcome_ids,
     fh_net_billthrough_outcome_ids,
     fh_signup_outcome_ids,
@@ -36,6 +37,8 @@ from ancestry_mmm.core.outcome_approval import (
 from ancestry_mmm.core.pathways import pathway_catalogue_fingerprint_payload
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.optimization import (
+    CurrencyContext,
+    OutcomeValueMapping,
     ScenarioGovernanceDependencies,
     SpendConstraint,
     compare_scenarios,
@@ -497,18 +500,77 @@ if hasattr(meta, 'outcome_catalogue_at_fit') and meta.outcome_catalogue_at_fit:
         if weight is not None:
             value_weights_by_outcome_id[outcome.outcome_id] = weight
 
-# Derive value currency from outcome catalogue
+# G2A.7a.10 (brief section 10.1): derive value currency from the exact
+# selected/eligible *target* outcome IDs for this objective, not the whole
+# fitted catalogue - a non-target outcome priced in another currency must
+# never block an otherwise single-currency objective.
+if objective in ("expected_value", "value"):
+    _target_ids_for_value = set(
+        eligible_outcome_ids(meta, list(meta.outcome_ids), "include_in_value")
+    )
+else:
+    _target_resolvers_by_objective = {
+        "fh_gsa": fh_gsa_outcome_ids,
+        "fh_signups": fh_signup_outcome_ids,
+        "fh_net_billthrough": fh_net_billthrough_outcome_ids,
+        "dna_kits": dna_kit_sale_outcome_ids,
+    }
+    _target_ids_for_value = set(
+        _target_resolvers_by_objective.get(objective, lambda m: [])(meta)
+    )
+
 value_currency = None
 if hasattr(meta, 'outcome_catalogue_at_fit') and meta.outcome_catalogue_at_fit:
-    currencies = {
+    target_currencies = {
         getattr(o, 'value_currency', None)
         for o in meta.outcome_catalogue_at_fit
-        if getattr(o, 'value_currency', None)
+        if o.outcome_id in _target_ids_for_value and getattr(o, 'value_currency', None)
     }
-    if len(currencies) == 1:
-        value_currency = currencies.pop()
-    elif len(currencies) > 1:
-        value_currency = None  # Mixed currencies need explicit FX layer
+    if len(target_currencies) == 1:
+        value_currency = target_currencies.pop()
+    elif len(target_currencies) > 1:
+        value_currency = None  # Mixed currencies among targets need an explicit FX layer
+
+# G2A.7a.10 (brief section 9, 11): one canonical OutcomeValueMapping drives
+# manual evaluation, both optimiser modes, and posterior uncertainty alike -
+# replacing the previous split where the objective resolved against
+# catalogue weights but calculation used the legacy segment_ltv dict.
+# Prefer outcome-ID-keyed catalogue weights; fall back to the strict legacy
+# segment-LTV adapter only when catalogue weights don't cover every target.
+value_mapping: OutcomeValueMapping | None = None
+if objective == "expected_value" and value_currency and _target_ids_for_value:
+    _catalogue_target_weights = {
+        oid: value_weights_by_outcome_id[oid]
+        for oid in _target_ids_for_value
+        if oid in value_weights_by_outcome_id
+    }
+    if len(_catalogue_target_weights) == len(_target_ids_for_value):
+        value_mapping = OutcomeValueMapping(
+            value_by_outcome_id=_catalogue_target_weights,
+            currency_by_outcome_id={oid: value_currency for oid in _catalogue_target_weights},
+            mapping_id="outcome-catalogue",
+            source="outcome_catalogue",
+        )
+    elif ltv:
+        _segment_by_outcome_id = {
+            o.outcome_id: o.segment
+            for o in (meta.outcome_catalogue_at_fit or [])
+            if o.outcome_id in _target_ids_for_value
+        }
+        try:
+            value_mapping = OutcomeValueMapping.from_legacy_segment_ltv(
+                segment_by_outcome_id=_segment_by_outcome_id,
+                segment_ltv=ltv,
+                currency=value_currency,
+                outcome_ids=tuple(sorted(_target_ids_for_value)),
+            )
+        except (ValueError, KeyError):
+            value_mapping = None
+
+currency_context = (
+    CurrencyContext(market_reporting_currency=value_currency, value_currency=value_currency)
+    if value_currency else None
+)
 
 # G2A.7a.7: protected objective resolution with error boundary
 planning_objective = None
@@ -553,11 +615,12 @@ elif objective == "expected_value":
     # Display actual currency when available
     if value_currency:
         st.caption(f"Value currency: **{value_currency}**")
-    if not value_weights_by_outcome_id and not ltv:
+    if value_mapping is None:
         st.warning(
-            "No value weights are configured for this project - "
-            "'Maximise expected value' needs at least one outcome with a value weight "
-            "(set on the Structure page) before running."
+            "No outcome value mapping is available for this project's target "
+            "outcomes - 'Maximise expected value' needs a value weight for "
+            "every target outcome (set on the Structure page) and a single "
+            "governed currency across them before running."
         )
 
 st.markdown("---")
@@ -582,6 +645,8 @@ with tab_manual:
             cost_context_id="default",
             cost_as_of_by_month=cost_as_of_by_month,
             artefact_kind="manual_scenario",
+            value_mapping=value_mapping,
+            currency_context=currency_context,
             **identity_kwargs,
             **scenario_governance_kwargs,
         )
@@ -698,6 +763,7 @@ with tab_manual:
                         cost_mapping_registry=governed_cost_registry,
                         cost_context_id="default",
                         cost_as_of_by_month=cost_as_of_by_month,
+                        value_mapping=value_mapping,
                         **identity_kwargs,
                         **scenario_governance_kwargs,
                     )
@@ -774,8 +840,8 @@ with tab_constrained:
             st.rerun()
 
     if st.button("Run constrained optimisation", type="primary"):
-        if objective == "expected_value" and not ltv:
-            st.error("Cannot run optimisation: 'Maximise expected value' needs at least one segment's LTV set on the Structure page.")
+        if objective == "expected_value" and value_mapping is None:
+            st.error("Cannot run optimisation: 'Maximise expected value' needs an outcome value mapping - a value weight for every target outcome and a single governed currency across them (set on the Structure page).")
             result = None
         else:
             with st.spinner("Optimising..."):
@@ -795,6 +861,8 @@ with tab_constrained:
                         cost_as_of_by_month=cost_as_of_by_month,
                         posterior_trace=trace,
                         posterior_evaluation_draws=50,
+                        value_mapping=value_mapping,
+                        currency_context=currency_context,
                         **identity_kwargs,
                         **scenario_governance_kwargs,
                     )
@@ -892,8 +960,8 @@ with tab_unconstrained:
         "comparison only."
     )
     if st.button("Run unconstrained benchmark", type="primary"):
-        if objective == "expected_value" and not ltv:
-            st.error("Cannot run optimisation: 'Maximise expected value' needs at least one segment's LTV set on the Structure page.")
+        if objective == "expected_value" and value_mapping is None:
+            st.error("Cannot run optimisation: 'Maximise expected value' needs an outcome value mapping - a value weight for every target outcome and a single governed currency across them (set on the Structure page).")
             result = None
         else:
             with st.spinner("Optimising..."):
@@ -913,6 +981,8 @@ with tab_unconstrained:
                         cost_as_of_by_month=cost_as_of_by_month,
                         posterior_trace=trace,
                         posterior_evaluation_draws=50,
+                        value_mapping=value_mapping,
+                        currency_context=currency_context,
                         **identity_kwargs,
                         **scenario_governance_kwargs,
                     )

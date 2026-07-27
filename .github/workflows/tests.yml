@@ -77,7 +77,7 @@ jobs:
           cache-dependency-glob: "uv.lock"
       - run: uv sync --locked
       - name: Run Streamlit smoke tests
-        run: uv run pytest ancestry_mmm/tests/test_streamlit_smoke.py -v
+        run: uv run pytest ancestry_mmm/tests/test_streamlit_smoke.py ancestry_mmm/tests/test_scenario_planner_apptest.py -v
 
   # ── Bundle round-trip ──────────────────────────────────────────────
   bundle:

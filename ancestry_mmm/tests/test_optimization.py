@@ -685,7 +685,8 @@ class TestExplicitOptimisationObjectives:
     def test_expected_value_with_ltv_runs(self, meta, params, approval, spend_plan, reference_context):
         result = optimize_scenario(
             spend_plan, ["2024-01"], ["TV_Brand"], "UK", meta, params, reference_context,
-            ltv={"New": 2.0}, objective="expected_value", approval=approval, governance_mode="exploratory", **IDENTITY,
+            ltv={"New": 2.0}, objective="expected_value",
+            value_currency="GBP", approval=approval, governance_mode="exploratory", **IDENTITY,
         )
         assert "spend_plan" in result
 
@@ -1070,7 +1071,8 @@ class TestValueWeightNeverSilentlyDefaultsToOne:
             optimize_scenario(
                 plan_with_kit_segment, ["2024-01"], ["TV_Brand", "DNA_Ad"], "UK",
                 meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment,
-                objective="expected_value", ltv={"New": 2.0}, approval=approval,
+                objective="expected_value", ltv={"New": 2.0},
+                value_currency="GBP", approval=approval,
                 governance_mode="exploratory", **IDENTITY,
             )
 
@@ -1081,7 +1083,8 @@ class TestValueWeightNeverSilentlyDefaultsToOne:
             optimize_scenario(
                 plan_with_kit_segment, ["2024-01"], ["TV_Brand", "DNA_Ad"], "UK",
                 meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment,
-                objective="expected_value", ltv={"New": 2.0, "DNA_Kit": -5.0}, approval=approval,
+                objective="expected_value", ltv={"New": 2.0, "DNA_Kit": -5.0},
+                value_currency="GBP", approval=approval,
                 governance_mode="exploratory", **IDENTITY,
             )
 
@@ -1091,7 +1094,8 @@ class TestValueWeightNeverSilentlyDefaultsToOne:
         result = optimize_scenario(
             plan_with_kit_segment, ["2024-01"], ["TV_Brand", "DNA_Ad"], "UK",
             meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment,
-            objective="expected_value", ltv={"New": 2.0, "DNA_Kit": 50.0}, approval=approval,
+            objective="expected_value", ltv={"New": 2.0, "DNA_Kit": 50.0},
+            value_currency="GBP", approval=approval,
             governance_mode="exploratory", **IDENTITY,
         )
         assert "spend_plan" in result
@@ -1788,6 +1792,7 @@ class TestOptimizerDimensionalCorrectness:
                 cost_mapping_registry=registry, cost_context_id="default",
                 cost_as_of_by_month={"2024-01": "2024-01-01"},
                 outcome_approvals=[outcome_approval],
+                artefact_kind="unconstrained_benchmark",
                 **IDENTITY,
             )
         # Exploratory mode is a deliberate, visibly-labelled escape hatch.
@@ -2207,7 +2212,7 @@ class TestNBTCombinedPlanningGate:
                 planning_objective=self._nbt_planning_objective(),
                 outcome_approvals=[planning_only_approval],
                 nbt_completeness_metadata=self._complete_nbt_metadata(nbt_outcome),
-                approval=approval, **IDENTITY,
+                approval=approval, artefact_kind="unconstrained_benchmark", **IDENTITY,
             )
 
 
@@ -2263,7 +2268,7 @@ class TestPlanningVsOptimisationPermissionPropagation:
             spend_plan, ["2024-01"], ["TV_Brand"], "UK", gsa_meta, params, reference_context,
             planning_objective=planning_objective,
             outcome_approvals=[optimisation_only_approval],
-            approval=approval, **IDENTITY,
+            approval=approval, artefact_kind="unconstrained_benchmark", **IDENTITY,
         )
         assert "predicted" in result and "current_predicted" in result
 
@@ -2285,7 +2290,7 @@ class TestPlanningVsOptimisationPermissionPropagation:
                 spend_plan, ["2024-01"], ["TV_Brand"], "UK", gsa_meta, params, reference_context,
                 planning_objective=planning_objective,
                 outcome_approvals=[planning_only_approval],
-                approval=approval, **IDENTITY,
+                approval=approval, artefact_kind="unconstrained_benchmark", **IDENTITY,
             )
 
     def test_planning_only_approval_permits_manual_evaluation(
