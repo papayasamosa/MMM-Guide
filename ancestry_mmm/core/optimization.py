@@ -2826,16 +2826,23 @@ def evaluate_scenario(
 ) -> pd.DataFrame:
     """Evaluate total and incremental outcomes under governed activity scopes.
 
+    G2A.7a.10 (brief section 12.2): this is the exploratory/compatibility
+    numerical API, not the official planning gate. Official callers must use
+    ``evaluate_manual_scenario()``, the trusted service that resolves
+    governance exactly once via ``resolve_planning_governance()`` and returns
+    the exact resolved proof for persistence. This function still performs
+    ``require_matching_approval``/outcome-approval checks when
+    ``governance_mode="official"`` is passed explicitly (so a direct call
+    never silently bypasses model-identity or outcome-approval enforcement),
+    but it is not the authoritative planning gate and does not produce a
+    persistable governance proof - pass ``governance_mode="exploratory"`` for
+    ordinary non-official use, which is what every in-repo caller does.
+
     G2A.7a.9: this is a public calculation API. It performs governance checks
     (model identity, outcome approvals) then delegates to the private
     ``_calculate_scenario`` for numerical evaluation. The ``_trusted_operation``
     parameter has been removed — callers must pass the correct
     ``governance_mode`` and let the API determine the required operation.
-
-    Use ``evaluate_manual_scenario()`` for the trusted manual service that
-    resolves governance once and returns the exact proof. Use
-    ``governance_mode="exploratory"`` for a clearly non-official evaluation
-    that skips outcome-approval checks.
 
     Raises:
         ApprovalMismatchError: if the model approval does not match.
@@ -3594,6 +3601,12 @@ def optimize_scenario(
     # resolution used catalogue weights but calculation used legacy ltv.
     effective_ltv = dict(value_mapping.value_by_outcome_id) if value_mapping is not None else ltv
     # --- Outcome-approval gate (G2A.7a.2, G2A.7a.3, REQ-PLAN-001, REQ-USE-001) ---
+    # G2A.7a.10 (brief section 12.1): cheap, fast-fail presence checks only -
+    # a friendlier error before the (possibly deprecated-string) objective is
+    # even resolved. Per-target approval validation (status, expiry, scope,
+    # use, NBT completeness) is no longer duplicated here - it happens
+    # exactly once, in resolve_planning_governance() below, which is the
+    # single authoritative approval decision for this optimisation.
     # Official mode: fail closed. Missing or empty approval collections block.
     # Track whether the caller gave ANY objective information at all
     # (a typed object, or a legacy string) *before* reconstruction below.
@@ -3612,15 +3625,6 @@ def optimize_scenario(
                 "Official optimisation requires an explicit objective. "
                 "Pass governance_mode='exploratory' for non-official "
                 "optimisation, or provide an objective."
-            )
-        if planning_objective is not None:
-            _require_planning_outcome_approvals(
-                planning_objective=planning_objective,
-                meta=meta,
-                outcome_approvals=outcome_approvals,
-                requested_use="optimisation",
-                market=market,
-                nbt_completeness_metadata=nbt_completeness_metadata,
             )
     # --- end outcome-approval gate ---
     constraints = constraints or []
@@ -3699,26 +3703,11 @@ def optimize_scenario(
         planning_objective.metric_key if planning_objective and planning_objective.metric_key
         else (objective if objective else "")
     )
-    # G2A.7a.2: second gate for the deprecated objective= string path — the
-    # planning_objective was resolved from the legacy string above but
-    # wasn't available at the first gate check (the typed objective may
-    # not have been resolved yet). Re-gate with the newly resolved
-    # objective when in official mode.
-    if (
-        governance_mode == "official"
-        and objective is not None
-        and planning_objective is not None
-        and outcome_approvals is not None
-        and len(outcome_approvals) > 0
-    ):
-        _require_planning_outcome_approvals(
-            planning_objective=planning_objective,
-            meta=meta,
-            outcome_approvals=outcome_approvals,
-            requested_use="optimisation",
-            market=market,
-            nbt_completeness_metadata=nbt_completeness_metadata,
-        )
+    # G2A.7a.10 (brief section 12.1): the deprecated objective= string path
+    # resolves planning_objective above; whether it came from a typed
+    # PlanningObjective or a legacy string, resolve_planning_governance below
+    # is the one and only per-target approval resolution - no separate
+    # re-gate for the string-objective path.
     # G2A.7a.6: resolve governance via shared resolver.
     # Fail before expensive work, never reconstruct after.
     _resolved_gov: Optional[ResolvedPlanningGovernance] = None

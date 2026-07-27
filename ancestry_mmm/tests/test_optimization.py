@@ -2212,7 +2212,7 @@ class TestNBTCombinedPlanningGate:
                 planning_objective=self._nbt_planning_objective(),
                 outcome_approvals=[planning_only_approval],
                 nbt_completeness_metadata=self._complete_nbt_metadata(nbt_outcome),
-                approval=approval, **IDENTITY,
+                approval=approval, artefact_kind="unconstrained_benchmark", **IDENTITY,
             )
 
 
@@ -2290,7 +2290,7 @@ class TestPlanningVsOptimisationPermissionPropagation:
                 spend_plan, ["2024-01"], ["TV_Brand"], "UK", gsa_meta, params, reference_context,
                 planning_objective=planning_objective,
                 outcome_approvals=[planning_only_approval],
-                approval=approval, **IDENTITY,
+                approval=approval, artefact_kind="unconstrained_benchmark", **IDENTITY,
             )
 
     def test_planning_only_approval_permits_manual_evaluation(
