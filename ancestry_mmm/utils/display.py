@@ -100,11 +100,15 @@ def dataframe_column_config(
         label = label_overrides.get(col, readable_label(col_name))
         dtype = df[col].dtype
         if pd.api.types.is_datetime64_any_dtype(dtype):
-            config[col] = st.column_config.DateColumn(label=label, format=DATE_COLUMN_FORMAT)
+            config[col] = st.column_config.DateColumn(
+                label=label, format=DATE_COLUMN_FORMAT
+            )
         elif pd.api.types.is_bool_dtype(dtype):
             config[col] = st.column_config.CheckboxColumn(label=label)
         elif pd.api.types.is_numeric_dtype(dtype):
-            config[col] = st.column_config.NumberColumn(label=label, format=numeric_format, alignment="right")
+            config[col] = st.column_config.NumberColumn(
+                label=label, format=numeric_format, alignment="right"
+            )
         else:
             config[col] = st.column_config.TextColumn(label=label, alignment="left")
     return config

@@ -10,7 +10,10 @@ core.optimization for backward compatibility.
 
 from __future__ import annotations
 
-from typing import Literal, Sequence
+from typing import TYPE_CHECKING, Literal, Optional, Sequence
+
+if TYPE_CHECKING:
+    from .validation_policy import ApprovalReadiness
 
 from .approval import ModelApproval, fingerprint_model_approval
 from .hierarchical_model import FHModelMeta
@@ -141,10 +144,12 @@ def resolve_planning_governance(
                 f"'{target_id}' in market '{market}'."
             )
         nbt_fp = None
-        if getattr(outcome, 'metric_key', None) == METRIC_KEY_FH_NET_BILLTHROUGH_COUNT:
+        if getattr(outcome, "metric_key", None) == METRIC_KEY_FH_NET_BILLTHROUGH_COUNT:
             from .net_billthrough import validate_nbt_completeness_metadata_for_outcome
+
             nbt_issues = validate_nbt_completeness_metadata_for_outcome(
-                outcome, nbt_completeness_metadata,
+                outcome,
+                nbt_completeness_metadata,
             )
             if nbt_issues:
                 raise OutcomeApprovalBlockedError(
@@ -156,7 +161,9 @@ def resolve_planning_governance(
                 nbt_meta_obj = NetBillthroughCompletenessMetadata.from_dict(
                     nbt_completeness_metadata
                 )
-            elif isinstance(nbt_completeness_metadata, NetBillthroughCompletenessMetadata):
+            elif isinstance(
+                nbt_completeness_metadata, NetBillthroughCompletenessMetadata
+            ):
                 nbt_meta_obj = nbt_completeness_metadata
             else:
                 raise OutcomeApprovalBlockedError(
@@ -165,16 +172,18 @@ def resolve_planning_governance(
                 )
             nbt_fp = nbt_meta_obj.completeness_fingerprint()
 
-        auth_list.append(ResolvedOutcomeAuthorisation(
-            outcome_id=target_id,
-            requested_use=operation,
-            approval_id=matching.approval_id,
-            definition_fingerprint=matching.definition_fingerprint,
-            market=market,
-            product=outcome.product,
-            segment=outcome.segment,
-            nbt_completeness_fingerprint=nbt_fp,
-        ))
+        auth_list.append(
+            ResolvedOutcomeAuthorisation(
+                outcome_id=target_id,
+                requested_use=operation,
+                approval_id=matching.approval_id,
+                definition_fingerprint=matching.definition_fingerprint,
+                market=market,
+                product=outcome.product,
+                segment=outcome.segment,
+                nbt_completeness_fingerprint=nbt_fp,
+            )
+        )
 
     return ResolvedPlanningGovernance(
         governance_mode="official",

@@ -22,9 +22,16 @@ CHANNELS = ["TV", "Radio", "Search"]
 
 def _meta() -> FHModelMeta:
     return FHModelMeta(
-        markets=["UK"], outcome_ids=OUTCOME_IDS, channels=CHANNELS,
-        dna_channels=[], dna_channel_idx=[], non_dna_idx=[0, 1, 2],
-        dna_outcome_id="New", dna_lag_weeks=0, unpooled_markets=[], control_names=[],
+        markets=["UK"],
+        outcome_ids=OUTCOME_IDS,
+        channels=CHANNELS,
+        dna_channels=[],
+        dna_channel_idx=[],
+        non_dna_idx=[0, 1, 2],
+        dna_outcome_id="New",
+        dna_lag_weeks=0,
+        unpooled_markets=[],
+        control_names=[],
     )
 
 
@@ -57,7 +64,8 @@ class TestHighCorrelationPairs:
     def test_flags_pairs_above_threshold_once_each(self):
         corr = pd.DataFrame(
             [[1.0, 0.95, 0.1], [0.95, 1.0, 0.2], [0.1, 0.2, 1.0]],
-            index=CHANNELS, columns=CHANNELS,
+            index=CHANNELS,
+            columns=CHANNELS,
         )
         pairs = high_correlation_pairs(corr, threshold=0.7)
         assert pairs == [("TV", "Radio", 0.95)]
@@ -69,7 +77,8 @@ class TestHighCorrelationPairs:
     def test_negative_correlation_is_flagged_by_absolute_value(self):
         corr = pd.DataFrame(
             [[1.0, -0.9, 0.0], [-0.9, 1.0, 0.0], [0.0, 0.0, 1.0]],
-            index=CHANNELS, columns=CHANNELS,
+            index=CHANNELS,
+            columns=CHANNELS,
         )
         pairs = high_correlation_pairs(corr, threshold=0.7)
         assert pairs == [("TV", "Radio", -0.9)]
@@ -106,7 +115,11 @@ class TestPosteriorCoefficientStability:
         rng = np.random.default_rng(5)
         coords = {"outcome": OUTCOME_IDS, "channel": CHANNELS}
         beta = rng.normal(loc=1.0, scale=beta_std, size=(n_chain, n_draw, 1, 3))
-        return az.from_dict(posterior={"beta": beta}, coords=coords, dims={"beta": ["outcome", "channel"]})
+        return az.from_dict(
+            posterior={"beta": beta},
+            coords=coords,
+            dims={"beta": ["outcome", "channel"]},
+        )
 
     def test_high_variance_posterior_has_a_high_coefficient_of_variation(self):
         trace = self._trace(beta_std=0.8)
@@ -132,7 +145,9 @@ class TestPosteriorCoefficientStability:
         coords = {"market": ["UK", "AU"], "outcome": OUTCOME_IDS, "channel": CHANNELS}
         beta = rng.normal(loc=1.0, scale=0.1, size=(n_chain, n_draw, 2, 1, 3))
         trace = az.from_dict(
-            posterior={"beta": beta}, coords=coords, dims={"beta": ["market", "outcome", "channel"]},
+            posterior={"beta": beta},
+            coords=coords,
+            dims={"beta": ["market", "outcome", "channel"]},
         )
         result = posterior_coefficient_stability(trace, _meta())
         assert len(result) == len(OUTCOME_IDS) * len(CHANNELS)
@@ -146,7 +161,9 @@ class TestLeaveOneChannelOutSensitivity:
             return {"TV": 1.01, "Search": 0.5} if dropped == "Radio" else {}
 
         result = leave_one_channel_out_sensitivity(
-            ["Radio"], fit_without, baseline_beta={"TV": 1.0, "Radio": 0.3, "Search": 0.5},
+            ["Radio"],
+            fit_without,
+            baseline_beta={"TV": 1.0, "Radio": 0.3, "Search": 0.5},
         )
         tv_row = result[result["remaining_channel"] == "TV"].iloc[0]
         assert abs(tv_row["pct_change"]) < 5.0
@@ -157,7 +174,9 @@ class TestLeaveOneChannelOutSensitivity:
             return {"TV": 2.0, "Search": 0.5} if dropped == "Radio" else {}
 
         result = leave_one_channel_out_sensitivity(
-            ["Radio"], fit_without, baseline_beta={"TV": 1.0, "Radio": 0.3, "Search": 0.5},
+            ["Radio"],
+            fit_without,
+            baseline_beta={"TV": 1.0, "Radio": 0.3, "Search": 0.5},
         )
         tv_row = result[result["remaining_channel"] == "TV"].iloc[0]
         assert tv_row["pct_change"] == pytest.approx(100.0)
@@ -167,7 +186,9 @@ class TestLeaveOneChannelOutSensitivity:
             return {"TV": 1.0, "Search": 0.5}  # Radio (dropped) intentionally absent
 
         result = leave_one_channel_out_sensitivity(
-            ["Radio"], fit_without, baseline_beta={"TV": 1.0, "Radio": 0.3, "Search": 0.5},
+            ["Radio"],
+            fit_without,
+            baseline_beta={"TV": 1.0, "Radio": 0.3, "Search": 0.5},
         )
         assert "Radio" not in result["remaining_channel"].to_numpy()
 
@@ -176,7 +197,9 @@ class TestLeaveOneChannelOutSensitivity:
             return {"NewChannel": 1.0}
 
         result = leave_one_channel_out_sensitivity(
-            ["Radio"], fit_without, baseline_beta={"TV": 1.0},
+            ["Radio"],
+            fit_without,
+            baseline_beta={"TV": 1.0},
         )
         assert pd.isna(result["pct_change"].iloc[0])
 
@@ -187,7 +210,11 @@ class TestIdentificationReport:
         rng = np.random.default_rng(6)
         coords = {"outcome": OUTCOME_IDS, "channel": CHANNELS}
         beta = rng.normal(loc=1.0, scale=0.01, size=(n_chain, n_draw, 1, 3))
-        return az.from_dict(posterior={"beta": beta}, coords=coords, dims={"beta": ["outcome", "channel"]})
+        return az.from_dict(
+            posterior={"beta": beta},
+            coords=coords,
+            dims={"beta": ["outcome", "channel"]},
+        )
 
     def test_highly_correlated_channels_produce_a_flag(self):
         n = 50
@@ -208,10 +235,20 @@ class TestIdentificationReport:
         n = 200
         rng = np.random.default_rng(9)
         frame = {"X_media": rng.uniform(50, 500, size=(n, 3))}
-        sensitivity_df = pd.DataFrame([
-            {"dropped_channel": "Radio", "remaining_channel": "TV", "baseline_beta": 1.0, "refit_beta": 2.5, "pct_change": 150.0},
-        ])
-        flags = identification_report(frame, _meta(), self._trace(), sensitivity_df=sensitivity_df)
+        sensitivity_df = pd.DataFrame(
+            [
+                {
+                    "dropped_channel": "Radio",
+                    "remaining_channel": "TV",
+                    "baseline_beta": 1.0,
+                    "refit_beta": 2.5,
+                    "pct_change": 150.0,
+                },
+            ]
+        )
+        flags = identification_report(
+            frame, _meta(), self._trace(), sensitivity_df=sensitivity_df
+        )
         assert any("Dropping 'Radio'" in f["message"] for f in flags)
 
     def test_flags_have_the_same_shape_as_curve_plausibility_checks(self):

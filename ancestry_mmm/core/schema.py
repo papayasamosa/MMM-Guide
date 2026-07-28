@@ -105,7 +105,9 @@ class ModelSpec:
             errors.append("At least one media channel must be selected.")
         for ch in self.dna_channels:
             if ch not in self.channels:
-                errors.append(f"DNA channel '{ch}' is not in the selected channel list.")
+                errors.append(
+                    f"DNA channel '{ch}' is not in the selected channel list."
+                )
         for seg in self.segment_ltv:
             if seg not in self.segment_outcomes:
                 errors.append(f"LTV defined for unknown segment '{seg}'.")

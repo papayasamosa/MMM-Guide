@@ -19,14 +19,28 @@ from typing import Dict, List, Optional
 # Suggested unit types for a channel's response-unit column - advisory only,
 # any string is accepted (see docs/media_units_and_inflation.md).
 UNIT_TYPE_SUGGESTIONS = [
-    "Impressions", "Clicks", "GRPs", "TVRs", "Reach", "Frequency",
-    "Insertions", "Spots", "Circulation", "Video views", "Completed views",
+    "Impressions",
+    "Clicks",
+    "GRPs",
+    "TVRs",
+    "Reach",
+    "Frequency",
+    "Insertions",
+    "Spots",
+    "Circulation",
+    "Video views",
+    "Completed views",
 ]
 
 # Suggested cost-basis labels for a channel - advisory only.
 COST_BASIS_SUGGESTIONS = [
-    "CPM", "CPC", "Cost per GRP", "Cost per TVR", "Cost per reach point",
-    "Cost per spot", "Cost per insertion",
+    "CPM",
+    "CPC",
+    "Cost per GRP",
+    "Cost per TVR",
+    "Cost per reach point",
+    "Cost per spot",
+    "Cost per insertion",
 ]
 
 
@@ -164,7 +178,9 @@ class MarketSpecConfig:
     def set_profile(self, profile: MarketProfile) -> None:
         self.market_profiles[profile.market] = profile
 
-    def get_media_unit_config(self, market: str, channel: str) -> Optional[ChannelMediaUnitConfig]:
+    def get_media_unit_config(
+        self, market: str, channel: str
+    ) -> Optional[ChannelMediaUnitConfig]:
         return self.channel_media_units.get(self._key(market, channel))
 
     def set_media_unit_config(self, config: ChannelMediaUnitConfig) -> None:
@@ -181,8 +197,12 @@ class MarketSpecConfig:
 
     def to_dict(self) -> dict:
         return {
-            "market_profiles": {m: p.to_dict() for m, p in self.market_profiles.items()},
-            "channel_media_units": {k: c.to_dict() for k, c in self.channel_media_units.items()},
+            "market_profiles": {
+                m: p.to_dict() for m, p in self.market_profiles.items()
+            },
+            "channel_media_units": {
+                k: c.to_dict() for k, c in self.channel_media_units.items()
+            },
         }
 
     @classmethod
@@ -190,10 +210,12 @@ class MarketSpecConfig:
         d = d or {}
         return cls(
             market_profiles={
-                m: MarketProfile.from_dict(p) for m, p in (d.get("market_profiles") or {}).items()
+                m: MarketProfile.from_dict(p)
+                for m, p in (d.get("market_profiles") or {}).items()
             },
             channel_media_units={
-                k: ChannelMediaUnitConfig.from_dict(c) for k, c in (d.get("channel_media_units") or {}).items()
+                k: ChannelMediaUnitConfig.from_dict(c)
+                for k, c in (d.get("channel_media_units") or {}).items()
             },
         )
 

@@ -11,7 +11,6 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 import arviz as az
-from scipy import stats
 
 from .models import compute_model_diagnostics
 from .hierarchical_model import FHModelMeta
@@ -31,19 +30,23 @@ def _mape(actual: np.ndarray, pred: np.ndarray) -> float:
     return float(np.mean(np.abs((actual[mask] - pred[mask]) / actual[mask])) * 100)
 
 
-def in_sample_fit(frame: Dict, meta: FHModelMeta, params: FHPosteriorParams) -> pd.DataFrame:
+def in_sample_fit(
+    frame: Dict, meta: FHModelMeta, params: FHPosteriorParams
+) -> pd.DataFrame:
     """R-squared and MAPE per outcome_id, comparing posterior-mean prediction to actuals."""
     mu = predict_mu(frame, meta, params)
     Y = frame["Y"]
     rows = []
     for i, oid in enumerate(meta.outcome_ids):
-        rows.append({
-            "outcome_id": oid,
-            "r_squared": _r_squared(Y[:, i], mu[:, i]),
-            "mape_pct": _mape(Y[:, i], mu[:, i]),
-            "actual_mean": float(Y[:, i].mean()),
-            "predicted_mean": float(mu[:, i].mean()),
-        })
+        rows.append(
+            {
+                "outcome_id": oid,
+                "r_squared": _r_squared(Y[:, i], mu[:, i]),
+                "mape_pct": _mape(Y[:, i], mu[:, i]),
+                "actual_mean": float(Y[:, i].mean()),
+                "predicted_mean": float(mu[:, i].mean()),
+            }
+        )
     return pd.DataFrame(rows)
 
 
@@ -100,8 +103,12 @@ def posterior_predictive_coverage(
     n_obs, n_outcomes = Y.shape
 
     # Stack posterior draws into a single sample dimension
-    mu_draws = trace.posterior["mu"].stack(sample=("chain", "draw")).values      # (obs, outcome, sample)
-    alpha_draws = trace.posterior["alpha"].stack(sample=("chain", "draw")).values  # (outcome, sample)
+    mu_draws = (
+        trace.posterior["mu"].stack(sample=("chain", "draw")).values
+    )  # (obs, outcome, sample)
+    alpha_draws = (
+        trace.posterior["alpha"].stack(sample=("chain", "draw")).values
+    )  # (outcome, sample)
     n_samples = mu_draws.shape[2]
 
     rng = np.random.default_rng(random_seed)
@@ -109,11 +116,11 @@ def posterior_predictive_coverage(
     rows = []
 
     for i, oid in enumerate(meta.outcome_ids):
-        mu_i = mu_draws[:, i, :]           # (obs, sample)
-        alpha_i = alpha_draws[i, :]        # (sample,)
+        mu_i = mu_draws[:, i, :]  # (obs, sample)
+        alpha_i = alpha_draws[i, :]  # (sample,)
 
         # NegativeBinomial parameterisation: n = alpha, p = alpha / (alpha + mu)
-        n_param = alpha_i[None, :]          # (1, sample) broadcast over obs
+        n_param = alpha_i[None, :]  # (1, sample) broadcast over obs
         p_param = alpha_i[None, :] / (alpha_i[None, :] + mu_i)  # (obs, sample)
         p_param = np.clip(p_param, 1e-9, 1 - 1e-9)
 
@@ -132,13 +139,15 @@ def posterior_predictive_coverage(
         hi = np.quantile(pred_samples, upper_q, axis=1)
 
         covered = (Y[:, i] >= lo) & (Y[:, i] <= hi)
-        rows.append({
-            "outcome_id": oid,
-            "credible_mass": credible_mass,
-            "coverage_pct": float(covered.mean() * 100),
-            "target_pct": credible_mass * 100,
-            "n_predictive_samples": int(n_samples * predictive_replications),
-        })
+        rows.append(
+            {
+                "outcome_id": oid,
+                "credible_mass": credible_mass,
+                "coverage_pct": float(covered.mean() * 100),
+                "target_pct": credible_mass * 100,
+                "n_predictive_samples": int(n_samples * predictive_replications),
+            }
+        )
 
     return pd.DataFrame(rows)
 
@@ -168,32 +177,38 @@ def curve_plausibility_checks(
         k_val = float(K_mean.sel(channel=ch).values)
 
         if spend_max > 0 and k_val > spend_max * 3:
-            issues.append({
-                "level": "warning",
-                "channel": ch,
-                "message": f"Half-saturation point for '{ch}' (K={k_val:,.0f}) is far above the "
-                           f"highest observed spend ({spend_max:,.0f}) - the saturation curve is "
-                           "essentially unidentified in the observed spend range; treat as ~linear.",
-            })
+            issues.append(
+                {
+                    "level": "warning",
+                    "channel": ch,
+                    "message": f"Half-saturation point for '{ch}' (K={k_val:,.0f}) is far above the "
+                    f"highest observed spend ({spend_max:,.0f}) - the saturation curve is "
+                    "essentially unidentified in the observed spend range; treat as ~linear.",
+                }
+            )
         if spend_nonzero_min and k_val < spend_nonzero_min / 3:
-            issues.append({
-                "level": "warning",
-                "channel": ch,
-                "message": f"Half-saturation point for '{ch}' (K={k_val:,.0f}) is far below the "
-                           f"lowest observed non-zero spend ({spend_nonzero_min:,.0f}) - the channel "
-                           "looks fully saturated across the whole observed range.",
-            })
+            issues.append(
+                {
+                    "level": "warning",
+                    "channel": ch,
+                    "message": f"Half-saturation point for '{ch}' (K={k_val:,.0f}) is far below the "
+                    f"lowest observed non-zero spend ({spend_nonzero_min:,.0f}) - the channel "
+                    "looks fully saturated across the whole observed range.",
+                }
+            )
 
         for oid in meta.outcome_ids:
             b_mean = float(beta_mean.sel(outcome=oid, channel=ch).values)
             b_std = float(beta_std.sel(outcome=oid, channel=ch).values)
             if b_mean > 0 and b_std / b_mean > 1.0:
-                issues.append({
-                    "level": "warning",
-                    "channel": ch,
-                    "message": f"'{ch}' effect on outcome '{oid}' has high relative uncertainty "
-                               f"(std/mean = {b_std / b_mean:.1f}) - treat the point estimate cautiously.",
-                })
+                issues.append(
+                    {
+                        "level": "warning",
+                        "channel": ch,
+                        "message": f"'{ch}' effect on outcome '{oid}' has high relative uncertainty "
+                        f"(std/mean = {b_std / b_mean:.1f}) - treat the point estimate cautiously.",
+                    }
+                )
 
         if ch in roi_bounds:
             lo, hi = roi_bounds[ch]
@@ -211,16 +226,22 @@ def _roi_plausibility_flag(ch, ci, lo, hi, trace, meta, frame):
     S = float(trace.posterior["hill_S"].sel(channel=ch).mean().values)
     spend = frame["X_media"][:, ci]
     mean_spend = spend[spend > 0].mean() if (spend > 0).any() else 1.0
-    slope = (S * (mean_spend ** (S - 1)) * (K ** S)) / ((K ** S + mean_spend ** S) ** 2)
-    beta_sum = float(trace.posterior["beta"].sel(channel=ch).mean().sum(dim=["chain", "draw", "outcome"]).values)
+    slope = (S * (mean_spend ** (S - 1)) * (K**S)) / ((K**S + mean_spend**S) ** 2)
+    beta_sum = float(
+        trace.posterior["beta"]
+        .sel(channel=ch)
+        .mean()
+        .sum(dim=["chain", "draw", "outcome"])
+        .values
+    )
     approx_roi = slope * beta_sum
     if not (lo <= approx_roi <= hi):
         return {
             "level": "warning",
             "channel": ch,
             "message": f"Approximate marginal ROI for '{ch}' ({approx_roi:.2f}) falls outside the "
-                       f"business-expected range [{lo}, {hi}] - worth a sense-check against known "
-                       "channel economics.",
+            f"business-expected range [{lo}, {hi}] - worth a sense-check against known "
+            "channel economics.",
         }
     return None
 
@@ -228,7 +249,9 @@ def _roi_plausibility_flag(ch, ci, lo, hi, trace, meta, frame):
 def expanding_window_backtest(
     df: pd.DataFrame,
     spec,
-    fit_fold_fn: Callable[[pd.DataFrame, pd.DataFrame], Tuple[Dict[str, float], Dict[str, float]]],
+    fit_fold_fn: Callable[
+        [pd.DataFrame, pd.DataFrame], Tuple[Dict[str, float], Dict[str, float]]
+    ],
     n_folds: int = 3,
     min_train_frac: float = 0.6,
 ) -> pd.DataFrame:
@@ -268,14 +291,16 @@ def expanding_window_backtest(
 
         r2_by_seg, mape_by_seg = fit_fold_fn(train_df, test_df)
         for oid in r2_by_seg:
-            rows.append({
-                "fold": fold_i + 1,
-                "train_end": cutoff_date,
-                "test_end": test_end_date,
-                "outcome_id": oid,
-                "r_squared": r2_by_seg[oid],
-                "mape_pct": mape_by_seg[oid],
-            })
+            rows.append(
+                {
+                    "fold": fold_i + 1,
+                    "train_end": cutoff_date,
+                    "test_end": test_end_date,
+                    "outcome_id": oid,
+                    "r_squared": r2_by_seg[oid],
+                    "mape_pct": mape_by_seg[oid],
+                }
+            )
         prev_edge = edge
 
     return pd.DataFrame(rows)
@@ -292,6 +317,8 @@ def compute_scorecard(
     return {
         "convergence": compute_model_diagnostics(trace),
         "in_sample_fit": in_sample_fit(frame, meta, params).to_dict(orient="records"),
-        "ppc_coverage": posterior_predictive_coverage(trace, frame, meta).to_dict(orient="records"),
+        "ppc_coverage": posterior_predictive_coverage(trace, frame, meta).to_dict(
+            orient="records"
+        ),
         "plausibility_flags": curve_plausibility_checks(trace, meta, frame, roi_bounds),
     }

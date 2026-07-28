@@ -60,7 +60,9 @@ class NetBillthroughCompletenessMetadata:
             "definition_version": self.definition_version,
             "definition_fingerprint": self.definition_fingerprint,
         }
-        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+        encoded = json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), default=str
+        ).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()
 
     def to_dict(self) -> dict:
@@ -275,16 +277,16 @@ def validate_nbt_completeness_metadata_for_outcome(
     metadata: "NetBillthroughCompletenessMetadata | dict | None",
 ) -> List[str]:
     """G2A.7a.1 (REQ-NBT-001, section 10): planning-time NBT completeness
-    gate. Confirms the supplied completeness metadata still references
-    *this* outcome definition and passes its own internal-consistency
-    checks - it does not re-validate the full historical dataframe (that is
-    `validate_supplied_net_billthrough`, enforced at model-training time via
-    `assert_model_frame_net_billthrough_complete`). An approved outcome
-    definition alone is not sufficient for official NBT use; both an
-G2A.7a.2: the three binding fields — ``outcome_id``,
-    ``definition_version``, and ``definition_fingerprint`` — are mandatory.
-    Missing, blank, or mismatched values block official NBT use. An empty
-    fingerprint no longer passes.""" 
+        gate. Confirms the supplied completeness metadata still references
+        *this* outcome definition and passes its own internal-consistency
+        checks - it does not re-validate the full historical dataframe (that is
+        `validate_supplied_net_billthrough`, enforced at model-training time via
+        `assert_model_frame_net_billthrough_complete`). An approved outcome
+        definition alone is not sufficient for official NBT use; both an
+    G2A.7a.2: the three binding fields — ``outcome_id``,
+        ``definition_version``, and ``definition_fingerprint`` — are mandatory.
+        Missing, blank, or mismatched values block official NBT use. An empty
+        fingerprint no longer passes."""
     issues: List[str] = []
     if metadata is None:
         return [
@@ -347,7 +349,10 @@ G2A.7a.2: the three binding fields — ``outcome_id``,
             from .outcome_approval import fingerprint_outcome_definition
 
             current_fingerprint = fingerprint_outcome_definition(outcome)
-        if current_fingerprint and metadata.definition_fingerprint != current_fingerprint:
+        if (
+            current_fingerprint
+            and metadata.definition_fingerprint != current_fingerprint
+        ):
             issues.append(
                 "Net bill-through completeness metadata was recorded "
                 "against a different outcome-definition fingerprint; it is "

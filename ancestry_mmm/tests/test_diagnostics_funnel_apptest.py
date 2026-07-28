@@ -17,18 +17,25 @@ PAGE = ROOT / "pages" / "06_Diagnostics.py"
 def _frame_with_one_violation():
     n = 12
     upstream = np.full(n, 100.0)
-    downstream = np.array([40, 42, 38, 41, 110, 39, 40, 41, 42, 38, 39, 40], dtype=float)
+    downstream = np.array(
+        [40, 42, 38, 41, 110, 39, 40, 41, 42, 38, 39, 40], dtype=float
+    )
     return {
         "outcome_ids": ["fh_new_signup", "fh_new_gsa"],
         "Y": np.column_stack([upstream, downstream]),
-        "dates": np.array([f"2024-01-{i + 1:02d}" for i in range(n)], dtype="datetime64[D]"),
+        "dates": np.array(
+            [f"2024-01-{i + 1:02d}" for i in range(n)], dtype="datetime64[D]"
+        ),
         "df": None,
     }
 
 
 def _minimal_meta(outcome_ids):
     from types import SimpleNamespace
-    return SimpleNamespace(outcome_ids=outcome_ids, direct_dna_outcome_ids=[], outcome_catalogue_at_fit=[])
+
+    return SimpleNamespace(
+        outcome_ids=outcome_ids, direct_dna_outcome_ids=[], outcome_catalogue_at_fit=[]
+    )
 
 
 def test_no_funnel_links_shows_info_not_a_crash():
@@ -54,7 +61,9 @@ def test_funnel_link_with_a_violation_shows_warning_icon_and_metrics():
     at.run()
     assert not at.exception, f"page raised: {at.exception}"
 
-    warning_markdown = [m.value for m in at.markdown if "fh_new_signup -> fh_new_gsa" in (m.value or "")]
+    warning_markdown = [
+        m.value for m in at.markdown if "fh_new_signup -> fh_new_gsa" in (m.value or "")
+    ]
     assert warning_markdown, "funnel link heading not rendered"
     assert "⚠️" in warning_markdown[0]
 
@@ -70,8 +79,14 @@ def test_funnel_link_referencing_unknown_outcome_id_warns_without_crashing():
     at.session_state["frame"] = frame
     at.session_state["model_meta"] = _minimal_meta(frame["outcome_ids"])
     at.session_state["funnel_links"] = [
-        {"upstream_outcome_id": "fh_new_signup", "downstream_outcome_id": "does_not_exist"},
+        {
+            "upstream_outcome_id": "fh_new_signup",
+            "downstream_outcome_id": "does_not_exist",
+        },
     ]
     at.run()
     assert not at.exception, f"page raised: {at.exception}"
-    assert any("references an outcome_id not in this fit" in (w.value or "") for w in at.warning)
+    assert any(
+        "references an outcome_id not in this fit" in (w.value or "")
+        for w in at.warning
+    )

@@ -30,10 +30,17 @@ from ancestry_mmm.core.optimization import (
     VALID_OBJECTIVES,
 )
 from ancestry_mmm.core.outcomes import (
-    FAMILY_HISTORY, DNA, METRIC_GSA, METRIC_KIT_SALE, METRIC_KEY_FH_GSA, OutcomeDefinition,
+    FAMILY_HISTORY,
+    DNA,
+    METRIC_GSA,
+    METRIC_KIT_SALE,
+    METRIC_KEY_FH_GSA,
+    OutcomeDefinition,
 )
 from ancestry_mmm.core.outcome_approval import (
-    OutcomeApproval, OutcomeApprovalBlockedError, fingerprint_outcome_definition,
+    OutcomeApproval,
+    OutcomeApprovalBlockedError,
+    fingerprint_outcome_definition,
 )
 from ancestry_mmm.core.predict import FHPosteriorParams
 from ancestry_mmm.core.scenario_governance import ScenarioPlan, resolve_scenario_plan
@@ -50,19 +57,35 @@ IDENTITY = dict(
 @pytest.fixture
 def meta() -> FHModelMeta:
     return FHModelMeta(
-        markets=["UK"], outcome_ids=["New"], channels=["TV_Brand"], dna_channels=[],
-        dna_channel_idx=[], non_dna_idx=[0], dna_outcome_id="New", dna_lag_weeks=4,
-        unpooled_markets=[], control_names=[],
+        markets=["UK"],
+        outcome_ids=["New"],
+        channels=["TV_Brand"],
+        dna_channels=[],
+        dna_channel_idx=[],
+        non_dna_idx=[0],
+        dna_outcome_id="New",
+        dna_lag_weeks=4,
+        unpooled_markets=[],
+        control_names=[],
     )
 
 
 @pytest.fixture
 def params() -> FHPosteriorParams:
     return FHPosteriorParams(
-        decay_rate={"TV_Brand": 0.5}, hill_K={"TV_Brand": 1000.0}, hill_S={"TV_Brand": 1.0},
-        beta={"New": {"TV_Brand": 0.1}}, pathway_strength={}, promo_coef={"New": 0.1},
-        market_offset={"UK": {"New": 0.0}}, intercept={"New": 3.0}, trend_coef={"New": 0.0},
-        gamma_fourier={"New": np.zeros(6)}, alpha={"New": 5.0}, control_coef={}, outcome_control_coef={},
+        decay_rate={"TV_Brand": 0.5},
+        hill_K={"TV_Brand": 1000.0},
+        hill_S={"TV_Brand": 1.0},
+        beta={"New": {"TV_Brand": 0.1}},
+        pathway_strength={},
+        promo_coef={"New": 0.1},
+        market_offset={"UK": {"New": 0.0}},
+        intercept={"New": 3.0},
+        trend_coef={"New": 0.0},
+        gamma_fourier={"New": np.zeros(6)},
+        alpha={"New": 5.0},
+        control_coef={},
+        outcome_control_coef={},
     )
 
 
@@ -73,7 +96,15 @@ def approval() -> ModelApproval:
 
 @pytest.fixture
 def reference_context():
-    return {"2024-01": {"trend": 1.0, "fourier": np.zeros(6), "promo": {"New": 0.0}, "controls": {}, "outcome_controls": {}}}
+    return {
+        "2024-01": {
+            "trend": 1.0,
+            "fourier": np.zeros(6),
+            "promo": {"New": 0.0},
+            "controls": {},
+            "outcome_controls": {},
+        }
+    }
 
 
 @pytest.fixture
@@ -84,9 +115,16 @@ def spend_plan():
 @pytest.fixture
 def market_specific_meta() -> FHModelMeta:
     return FHModelMeta(
-        markets=["UK", "Australia"], outcome_ids=["New"], channels=["TV_Brand"], dna_channels=[],
-        dna_channel_idx=[], non_dna_idx=[0], dna_outcome_id="New", dna_lag_weeks=4,
-        unpooled_markets=[], control_names=[],
+        markets=["UK", "Australia"],
+        outcome_ids=["New"],
+        channels=["TV_Brand"],
+        dna_channels=[],
+        dna_channel_idx=[],
+        non_dna_idx=[0],
+        dna_outcome_id="New",
+        dna_lag_weeks=4,
+        unpooled_markets=[],
+        control_names=[],
     )
 
 
@@ -97,67 +135,131 @@ def market_specific_params() -> FHMarketSpecificPosteriorParams:
         decay_rate={"TV_Brand": 0.5},
         hill_K={"UK": {"TV_Brand": 1000.0}, "Australia": {"TV_Brand": 600.0}},
         hill_S={"TV_Brand": 1.0},
-        beta={"UK": {"New": {"TV_Brand": 0.1}}, "Australia": {"New": {"TV_Brand": 0.15}}},
-        pathway_strength={}, promo_coef={"New": 0.1},
+        beta={
+            "UK": {"New": {"TV_Brand": 0.1}},
+            "Australia": {"New": {"TV_Brand": 0.15}},
+        },
+        pathway_strength={},
+        promo_coef={"New": 0.1},
         market_offset={m: {"New": 0.0} for m in markets},
-        intercept={"New": 3.0}, trend_coef={"New": 0.0},
-        gamma_fourier={"New": np.zeros(6)}, alpha={"New": 5.0},
-        control_coef={}, outcome_control_coef={},
+        intercept={"New": 3.0},
+        trend_coef={"New": 0.0},
+        gamma_fourier={"New": np.zeros(6)},
+        alpha={"New": 5.0},
+        control_coef={},
+        outcome_control_coef={},
     )
 
 
 class TestEvaluateScenarioApprovalEnforcement:
-    def test_unapproved_model_cannot_be_evaluated(self, meta, params, spend_plan, reference_context):
+    def test_unapproved_model_cannot_be_evaluated(
+        self, meta, params, spend_plan, reference_context
+    ):
         with pytest.raises(ApprovalMismatchError):
             evaluate_scenario(
-                spend_plan, "UK", meta, params, reference_context,
-                approval=None, **IDENTITY,
+                spend_plan,
+                "UK",
+                meta,
+                params,
+                reference_context,
+                approval=None,
+                **IDENTITY,
             )
 
-    def test_correctly_approved_model_can_be_evaluated(self, meta, params, approval, spend_plan, reference_context):
+    def test_correctly_approved_model_can_be_evaluated(
+        self, meta, params, approval, spend_plan, reference_context
+    ):
         result = evaluate_scenario(
-            spend_plan, "UK", meta, params, reference_context,
-            approval=approval, governance_mode="exploratory", **IDENTITY,
+            spend_plan,
+            "UK",
+            meta,
+            params,
+            reference_context,
+            approval=approval,
+            governance_mode="exploratory",
+            **IDENTITY,
         )
         assert not result.empty
-        assert set(result.columns) >= {"month", "outcome_id", "predicted_outcome", "value"}
+        assert set(result.columns) >= {
+            "month",
+            "outcome_id",
+            "predicted_outcome",
+            "value",
+        }
 
-    def test_stale_approval_cannot_be_used(self, meta, params, approval, spend_plan, reference_context):
+    def test_stale_approval_cannot_be_used(
+        self, meta, params, approval, spend_plan, reference_context
+    ):
         stale_identity = dict(IDENTITY)
-        stale_identity["posterior_fingerprint"] = "a-different-posterior"  # e.g. model was retrained
+        stale_identity["posterior_fingerprint"] = (
+            "a-different-posterior"  # e.g. model was retrained
+        )
         with pytest.raises(ApprovalMismatchError):
             evaluate_scenario(
-                spend_plan, "UK", meta, params, reference_context,
-                approval=approval, **stale_identity,
+                spend_plan,
+                "UK",
+                meta,
+                params,
+                reference_context,
+                approval=approval,
+                **stale_identity,
             )
 
-    def test_legacy_approval_cannot_be_used(self, meta, params, spend_plan, reference_context):
+    def test_legacy_approval_cannot_be_used(
+        self, meta, params, spend_plan, reference_context
+    ):
         legacy = ModelApproval(approved_by="Jane Analyst")
         with pytest.raises(ApprovalMismatchError):
             evaluate_scenario(
-                spend_plan, "UK", meta, params, reference_context,
-                approval=legacy, **IDENTITY,
+                spend_plan,
+                "UK",
+                meta,
+                params,
+                reference_context,
+                approval=legacy,
+                **IDENTITY,
             )
 
-    def test_the_core_planning_path_rejects_invalid_approval_directly(self, meta, params, spend_plan, reference_context):
+    def test_the_core_planning_path_rejects_invalid_approval_directly(
+        self, meta, params, spend_plan, reference_context
+    ):
         """Calling evaluate_scenario directly - not via the Streamlit page - must still
         be blocked, proving enforcement lives in core, not only in page-level checks."""
         with pytest.raises(ApprovalMismatchError):
             evaluate_scenario(
-                spend_plan, "UK", meta, params, reference_context,
-                approval=None, model_run_id="", data_fingerprint="", model_spec_fingerprint="", posterior_fingerprint="",
+                spend_plan,
+                "UK",
+                meta,
+                params,
+                reference_context,
+                approval=None,
+                model_run_id="",
+                data_fingerprint="",
+                model_spec_fingerprint="",
+                posterior_fingerprint="",
             )
 
 
 class TestOptimizeScenarioApprovalEnforcement:
-    def test_unapproved_model_cannot_be_optimized(self, meta, params, spend_plan, reference_context):
+    def test_unapproved_model_cannot_be_optimized(
+        self, meta, params, spend_plan, reference_context
+    ):
         with pytest.raises(ApprovalMismatchError):
             optimize_scenario(
-                spend_plan, ["2024-01"], ["TV_Brand"], "UK", meta, params, reference_context,
-                approval=None, **IDENTITY,
+                spend_plan,
+                ["2024-01"],
+                ["TV_Brand"],
+                "UK",
+                meta,
+                params,
+                reference_context,
+                approval=None,
+                **IDENTITY,
             )
 
-    def test_correctly_approved_model_can_be_optimized(self, meta, params, approval, spend_plan, reference_context):
+    def test_correctly_approved_model_can_be_optimized(
+        self, meta, params, approval, spend_plan, reference_context
+    ):
         # This test exercises ModelApproval enforcement, not outcome
         # governance or objective resolution - an explicit objective is
         # required regardless of governance_mode (there is nothing to
@@ -165,83 +267,176 @@ class TestOptimizeScenarioApprovalEnforcement:
         # old implicit KPI default), and the bare `meta` fixture has no
         # outcome catalogue for official-mode outcome governance to check.
         result = optimize_scenario(
-            spend_plan, ["2024-01"], ["TV_Brand"], "UK", meta, params, reference_context,
-            objective="fh_gsa", approval=approval, governance_mode="exploratory", **IDENTITY,
+            spend_plan,
+            ["2024-01"],
+            ["TV_Brand"],
+            "UK",
+            meta,
+            params,
+            reference_context,
+            objective="fh_gsa",
+            approval=approval,
+            governance_mode="exploratory",
+            **IDENTITY,
         )
         assert "spend_plan" in result and "predicted" in result
 
-    def test_stale_or_mismatched_approval_cannot_be_used(self, meta, params, approval, spend_plan, reference_context):
+    def test_stale_or_mismatched_approval_cannot_be_used(
+        self, meta, params, approval, spend_plan, reference_context
+    ):
         stale_identity = dict(IDENTITY)
         stale_identity["model_run_id"] = "a-newer-run"
         with pytest.raises(ApprovalMismatchError):
             optimize_scenario(
-                spend_plan, ["2024-01"], ["TV_Brand"], "UK", meta, params, reference_context,
-                approval=approval, **stale_identity,
+                spend_plan,
+                ["2024-01"],
+                ["TV_Brand"],
+                "UK",
+                meta,
+                params,
+                reference_context,
+                approval=approval,
+                **stale_identity,
             )
 
-    def test_rejected_before_running_the_optimiser(self, meta, params, spend_plan, reference_context, monkeypatch):
+    def test_rejected_before_running_the_optimiser(
+        self, meta, params, spend_plan, reference_context, monkeypatch
+    ):
         """Approval is checked up front - the (potentially slow) SLSQP call must never
         run for an invalid approval, not just get its result discarded afterwards."""
         import ancestry_mmm.core.optimization as optimization_module
 
         def _fail_if_called(*args, **kwargs):
-            raise AssertionError("minimize() should not be called when approval is invalid")
+            raise AssertionError(
+                "minimize() should not be called when approval is invalid"
+            )
 
         monkeypatch.setattr(optimization_module, "minimize", _fail_if_called)
         with pytest.raises(ApprovalMismatchError):
             optimize_scenario(
-                spend_plan, ["2024-01"], ["TV_Brand"], "UK", meta, params, reference_context,
-                approval=None, **IDENTITY,
+                spend_plan,
+                ["2024-01"],
+                ["TV_Brand"],
+                "UK",
+                meta,
+                params,
+                reference_context,
+                approval=None,
+                **IDENTITY,
             )
 
 
 class TestModelTypeDispatch:
-    def test_default_model_type_is_shared(self, meta, params, approval, spend_plan, reference_context):
+    def test_default_model_type_is_shared(
+        self, meta, params, approval, spend_plan, reference_context
+    ):
         # No model_type kwarg at all - must behave exactly as before Phase 3c.
-        result = evaluate_scenario(spend_plan, "UK", meta, params, reference_context, approval=approval, governance_mode="exploratory", **IDENTITY)
+        result = evaluate_scenario(
+            spend_plan,
+            "UK",
+            meta,
+            params,
+            reference_context,
+            approval=approval,
+            governance_mode="exploratory",
+            **IDENTITY,
+        )
         assert not result.empty
 
-    def test_invalid_model_type_raises(self, meta, params, approval, spend_plan, reference_context):
+    def test_invalid_model_type_raises(
+        self, meta, params, approval, spend_plan, reference_context
+    ):
         with pytest.raises(ValueError, match="model_type must be"):
             evaluate_scenario(
-                spend_plan, "UK", meta, params, reference_context,
-                model_type="not_a_real_type", approval=approval, governance_mode="exploratory", **IDENTITY,
+                spend_plan,
+                "UK",
+                meta,
+                params,
+                reference_context,
+                model_type="not_a_real_type",
+                approval=approval,
+                governance_mode="exploratory",
+                **IDENTITY,
             )
 
     def test_market_specific_evaluate_scenario_uses_that_markets_own_curve(
-        self, market_specific_meta, market_specific_params, approval, spend_plan, reference_context,
+        self,
+        market_specific_meta,
+        market_specific_params,
+        approval,
+        spend_plan,
+        reference_context,
     ):
         uk_result = evaluate_scenario(
-            spend_plan, "UK", market_specific_meta, market_specific_params, reference_context,
-            model_type="market_specific", approval=approval, governance_mode="exploratory", **IDENTITY,
+            spend_plan,
+            "UK",
+            market_specific_meta,
+            market_specific_params,
+            reference_context,
+            model_type="market_specific",
+            approval=approval,
+            governance_mode="exploratory",
+            **IDENTITY,
         )
         au_result = evaluate_scenario(
-            spend_plan, "Australia", market_specific_meta, market_specific_params, reference_context,
-            model_type="market_specific", approval=approval, governance_mode="exploratory", **IDENTITY,
+            spend_plan,
+            "Australia",
+            market_specific_meta,
+            market_specific_params,
+            reference_context,
+            model_type="market_specific",
+            approval=approval,
+            governance_mode="exploratory",
+            **IDENTITY,
         )
         # Different beta/K between markets -> different predicted GSAs for the same spend plan.
-        assert uk_result["predicted_outcome"].iloc[0] != pytest.approx(au_result["predicted_outcome"].iloc[0])
+        assert uk_result["predicted_outcome"].iloc[0] != pytest.approx(
+            au_result["predicted_outcome"].iloc[0]
+        )
 
     def test_market_specific_optimize_scenario_runs_end_to_end(
-        self, market_specific_meta, market_specific_params, approval, spend_plan, reference_context,
+        self,
+        market_specific_meta,
+        market_specific_params,
+        approval,
+        spend_plan,
+        reference_context,
     ):
         result = optimize_scenario(
-            spend_plan, ["2024-01"], ["TV_Brand"], "UK", market_specific_meta, market_specific_params,
-            reference_context, model_type="market_specific", objective="fh_gsa", approval=approval,
-            governance_mode="exploratory", **IDENTITY,
+            spend_plan,
+            ["2024-01"],
+            ["TV_Brand"],
+            "UK",
+            market_specific_meta,
+            market_specific_params,
+            reference_context,
+            model_type="market_specific",
+            objective="fh_gsa",
+            approval=approval,
+            governance_mode="exploratory",
+            **IDENTITY,
         )
         assert "spend_plan" in result and "predicted" in result
         assert not result["predicted"].empty
 
 
 class TestAverageCpa:
-    def test_avg_cpa_is_spend_over_incremental_gsa(self, meta, params, approval, spend_plan, reference_context):
-        result = evaluate_scenario(spend_plan, "UK", meta, params, reference_context, approval=approval, governance_mode="exploratory", **IDENTITY)
+    def test_avg_cpa_is_spend_over_incremental_gsa(
+        self, meta, params, approval, spend_plan, reference_context
+    ):
+        result = evaluate_scenario(
+            spend_plan,
+            "UK",
+            meta,
+            params,
+            reference_context,
+            approval=approval,
+            governance_mode="exploratory",
+            **IDENTITY,
+        )
         total_spend = result["total_spend"].iloc[0]
         incremental_gsa = result["incremental_outcome"].sum()
-        assert result["avg_cpa"].iloc[0] == pytest.approx(
-            total_spend / incremental_gsa
-        )
+        assert result["avg_cpa"].iloc[0] == pytest.approx(total_spend / incremental_gsa)
         assert np.allclose(
             result["predicted_total_outcome"]
             - result["predicted_counterfactual_outcome"],
@@ -271,38 +466,82 @@ class TestAverageCpa:
             PlanningObjective(estimand="incremental_value")
 
     def test_avg_cpa_is_repeated_across_every_segment_row_for_the_same_month(
-        self, market_specific_meta, market_specific_params, approval, reference_context,
+        self,
+        market_specific_meta,
+        market_specific_params,
+        approval,
+        reference_context,
     ):
         # A multi-segment month should carry one avg_cpa value (computed from the
         # month's *total* predicted GSA across segments), not a different one per segment row.
         meta_two_segments = FHModelMeta(
-            markets=["UK"], outcome_ids=["New", "Winback"], channels=["TV_Brand"], dna_channels=[],
-            dna_channel_idx=[], non_dna_idx=[0], dna_outcome_id="New", dna_lag_weeks=4,
-            unpooled_markets=[], control_names=[],
+            markets=["UK"],
+            outcome_ids=["New", "Winback"],
+            channels=["TV_Brand"],
+            dna_channels=[],
+            dna_channel_idx=[],
+            non_dna_idx=[0],
+            dna_outcome_id="New",
+            dna_lag_weeks=4,
+            unpooled_markets=[],
+            control_names=[],
         )
         params = FHPosteriorParams(
-            decay_rate={"TV_Brand": 0.5}, hill_K={"TV_Brand": 1000.0}, hill_S={"TV_Brand": 1.0},
+            decay_rate={"TV_Brand": 0.5},
+            hill_K={"TV_Brand": 1000.0},
+            hill_S={"TV_Brand": 1.0},
             beta={"New": {"TV_Brand": 0.1}, "Winback": {"TV_Brand": 0.05}},
-            pathway_strength={}, promo_coef={"New": 0.1, "Winback": 0.1},
-            market_offset={"UK": {"New": 0.0, "Winback": 0.0}}, intercept={"New": 3.0, "Winback": 2.0},
+            pathway_strength={},
+            promo_coef={"New": 0.1, "Winback": 0.1},
+            market_offset={"UK": {"New": 0.0, "Winback": 0.0}},
+            intercept={"New": 3.0, "Winback": 2.0},
             trend_coef={"New": 0.0, "Winback": 0.0},
             gamma_fourier={"New": np.zeros(6), "Winback": np.zeros(6)},
-            alpha={"New": 5.0, "Winback": 5.0}, control_coef={}, outcome_control_coef={},
+            alpha={"New": 5.0, "Winback": 5.0},
+            control_coef={},
+            outcome_control_coef={},
         )
-        ref = {"2024-01": {"trend": 1.0, "fourier": np.zeros(6), "promo": {"New": 0.0, "Winback": 0.0}, "controls": {}, "outcome_controls": {}}}
+        ref = {
+            "2024-01": {
+                "trend": 1.0,
+                "fourier": np.zeros(6),
+                "promo": {"New": 0.0, "Winback": 0.0},
+                "controls": {},
+                "outcome_controls": {},
+            }
+        }
         result = evaluate_scenario(
-            {"2024-01": {"TV_Brand": 1000.0}}, "UK", meta_two_segments, params, ref,
-            approval=approval, governance_mode="exploratory", **IDENTITY,
+            {"2024-01": {"TV_Brand": 1000.0}},
+            "UK",
+            meta_two_segments,
+            params,
+            ref,
+            approval=approval,
+            governance_mode="exploratory",
+            **IDENTITY,
         )
         assert len(result) == 2  # one row per segment
         assert result["avg_cpa"].nunique() == 1
 
-    def test_whole_plan_cost_per_fh_gsa_alias_matches_avg_cpa(self, meta, params, approval, spend_plan, reference_context):
+    def test_whole_plan_cost_per_fh_gsa_alias_matches_avg_cpa(
+        self, meta, params, approval, spend_plan, reference_context
+    ):
         # PR E.2 #8 - the explicit-spend-scope name must never silently
         # diverge from the bare avg_cpa/cost_per_fh_gsa numbers.
-        result = evaluate_scenario(spend_plan, "UK", meta, params, reference_context, approval=approval, governance_mode="exploratory", **IDENTITY)
+        result = evaluate_scenario(
+            spend_plan,
+            "UK",
+            meta,
+            params,
+            reference_context,
+            approval=approval,
+            governance_mode="exploratory",
+            **IDENTITY,
+        )
         assert np.array_equal(
-            result["whole_plan_cost_per_fh_gsa"].to_numpy(dtype=float), result["avg_cpa"].to_numpy(dtype=float), equal_nan=True,
+            result["whole_plan_cost_per_fh_gsa"].to_numpy(dtype=float),
+            result["avg_cpa"].to_numpy(dtype=float),
+            equal_nan=True,
         )
 
 
@@ -314,9 +553,16 @@ class TestProductAwareScenarioOutputs:
     @pytest.fixture
     def meta_with_kit_segment(self) -> FHModelMeta:
         return FHModelMeta(
-            markets=["UK"], outcome_ids=["New", "DNA_Kit"], channels=["TV_Brand", "DNA_Ad"],
-            dna_channels=["DNA_Ad"], dna_channel_idx=[1], non_dna_idx=[0],
-            dna_outcome_id="New", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+            markets=["UK"],
+            outcome_ids=["New", "DNA_Kit"],
+            channels=["TV_Brand", "DNA_Ad"],
+            dna_channels=["DNA_Ad"],
+            dna_channel_idx=[1],
+            non_dna_idx=[0],
+            dna_outcome_id="New",
+            dna_lag_weeks=4,
+            unpooled_markets=[],
+            control_names=[],
             direct_dna_outcome_ids=["New", "DNA_Kit"],
         )
 
@@ -326,23 +572,53 @@ class TestProductAwareScenarioOutputs:
             decay_rate={"TV_Brand": 0.5, "DNA_Ad": 0.5},
             hill_K={"TV_Brand": 1000.0, "DNA_Ad": 500.0},
             hill_S={"TV_Brand": 1.0, "DNA_Ad": 1.0},
-            beta={"New": {"TV_Brand": 0.1, "DNA_Ad": 0.05}, "DNA_Kit": {"TV_Brand": 0.0, "DNA_Ad": 0.2}},
-            pathway_strength=pathway_strength_from_flat({"New": 0.3, "DNA_Kit": 0.0}, "DNA_Ad"), promo_coef={"New": 0.1, "DNA_Kit": 0.1},
-            market_offset={"UK": {"New": 0.0, "DNA_Kit": 0.0}}, intercept={"New": 3.0, "DNA_Kit": 2.0},
+            beta={
+                "New": {"TV_Brand": 0.1, "DNA_Ad": 0.05},
+                "DNA_Kit": {"TV_Brand": 0.0, "DNA_Ad": 0.2},
+            },
+            pathway_strength=pathway_strength_from_flat(
+                {"New": 0.3, "DNA_Kit": 0.0}, "DNA_Ad"
+            ),
+            promo_coef={"New": 0.1, "DNA_Kit": 0.1},
+            market_offset={"UK": {"New": 0.0, "DNA_Kit": 0.0}},
+            intercept={"New": 3.0, "DNA_Kit": 2.0},
             trend_coef={"New": 0.0, "DNA_Kit": 0.0},
             gamma_fourier={"New": np.zeros(6), "DNA_Kit": np.zeros(6)},
-            alpha={"New": 5.0, "DNA_Kit": 5.0}, control_coef={}, outcome_control_coef={},
+            alpha={"New": 5.0, "DNA_Kit": 5.0},
+            control_coef={},
+            outcome_control_coef={},
         )
 
     @pytest.fixture
     def ref_with_kit_segment(self):
-        return {"2024-01": {"trend": 1.0, "fourier": np.zeros(6), "promo": {"New": 0.0, "DNA_Kit": 0.0}, "controls": {}, "outcome_controls": {}}}
+        return {
+            "2024-01": {
+                "trend": 1.0,
+                "fourier": np.zeros(6),
+                "promo": {"New": 0.0, "DNA_Kit": 0.0},
+                "controls": {},
+                "outcome_controls": {},
+            }
+        }
 
     def test_fh_gsa_excludes_kit_only_segments_dna_kits_includes_only_them(
-        self, meta_with_kit_segment, params_with_kit_segment, approval, ref_with_kit_segment,
+        self,
+        meta_with_kit_segment,
+        params_with_kit_segment,
+        approval,
+        ref_with_kit_segment,
     ):
         plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0}}
-        result = evaluate_scenario(plan, "UK", meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment, approval=approval, governance_mode="exploratory", **IDENTITY)
+        result = evaluate_scenario(
+            plan,
+            "UK",
+            meta_with_kit_segment,
+            params_with_kit_segment,
+            ref_with_kit_segment,
+            approval=approval,
+            governance_mode="exploratory",
+            **IDENTITY,
+        )
         new_row = result[result["outcome_id"] == "New"].iloc[0]
         kit_row = result[result["outcome_id"] == "DNA_Kit"].iloc[0]
         assert new_row["fh_gsa"] == pytest.approx(new_row["predicted_outcome"])
@@ -352,34 +628,84 @@ class TestProductAwareScenarioOutputs:
         assert kit_row["dna_kits"] == pytest.approx(new_row["dna_kits"])
 
     def test_avg_cpa_is_fh_scoped_not_mixed_with_dna_kits(
-        self, meta_with_kit_segment, params_with_kit_segment, approval, ref_with_kit_segment,
+        self,
+        meta_with_kit_segment,
+        params_with_kit_segment,
+        approval,
+        ref_with_kit_segment,
     ):
         plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0}}
-        result = evaluate_scenario(plan, "UK", meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment, approval=approval, governance_mode="exploratory", **IDENTITY)
+        result = evaluate_scenario(
+            plan,
+            "UK",
+            meta_with_kit_segment,
+            params_with_kit_segment,
+            ref_with_kit_segment,
+            approval=approval,
+            governance_mode="exploratory",
+            **IDENTITY,
+        )
         total_spend = result["total_spend"].iloc[0]
         fh_gsa = result["incremental_fh_gsa"].iloc[0]
         dna_kits = result["incremental_dna_kits"].iloc[0]
-        assert fh_gsa > 0 and dna_kits > 0  # both non-trivial - a genuinely mixed scenario
+        assert (
+            fh_gsa > 0 and dna_kits > 0
+        )  # both non-trivial - a genuinely mixed scenario
         assert result["avg_cpa"].iloc[0] == pytest.approx(total_spend / fh_gsa)
-        assert result["avg_cpa"].iloc[0] != pytest.approx(total_spend / (fh_gsa + dna_kits))
+        assert result["avg_cpa"].iloc[0] != pytest.approx(
+            total_spend / (fh_gsa + dna_kits)
+        )
         assert result["dna_avg_cpa"].iloc[0] == pytest.approx(total_spend / dna_kits)
-        assert result["whole_plan_cost_per_fh_gsa"].iloc[0] == pytest.approx(result["avg_cpa"].iloc[0])
-        assert result["whole_plan_cost_per_dna_kit"].iloc[0] == pytest.approx(result["dna_avg_cpa"].iloc[0])
+        assert result["whole_plan_cost_per_fh_gsa"].iloc[0] == pytest.approx(
+            result["avg_cpa"].iloc[0]
+        )
+        assert result["whole_plan_cost_per_dna_kit"].iloc[0] == pytest.approx(
+            result["dna_avg_cpa"].iloc[0]
+        )
 
-    def test_dna_avg_cpa_is_none_when_no_kit_only_segments(self, meta, params, approval, spend_plan, reference_context):
-        result = evaluate_scenario(spend_plan, "UK", meta, params, reference_context, approval=approval, governance_mode="exploratory", **IDENTITY)
+    def test_dna_avg_cpa_is_none_when_no_kit_only_segments(
+        self, meta, params, approval, spend_plan, reference_context
+    ):
+        result = evaluate_scenario(
+            spend_plan,
+            "UK",
+            meta,
+            params,
+            reference_context,
+            approval=approval,
+            governance_mode="exploratory",
+            **IDENTITY,
+        )
         assert result["dna_avg_cpa"].iloc[0] is None
 
     def test_total_value_sums_ltv_weighted_value_across_every_segment(
-        self, meta_with_kit_segment, params_with_kit_segment, approval, ref_with_kit_segment,
+        self,
+        meta_with_kit_segment,
+        params_with_kit_segment,
+        approval,
+        ref_with_kit_segment,
     ):
         plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0}}
         ltv = {"New": 2.0, "DNA_Kit": 50.0}
-        result = evaluate_scenario(plan, "UK", meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment, ltv, approval=approval, governance_mode="exploratory", **IDENTITY)
+        result = evaluate_scenario(
+            plan,
+            "UK",
+            meta_with_kit_segment,
+            params_with_kit_segment,
+            ref_with_kit_segment,
+            ltv,
+            approval=approval,
+            governance_mode="exploratory",
+            **IDENTITY,
+        )
         assert result["total_value"].iloc[0] == pytest.approx(result["value"].sum())
 
     def test_compare_scenarios_splits_fh_gsa_and_dna_kits_without_double_counting(
-        self, meta_with_kit_segment, params_with_kit_segment, approval, ref_with_kit_segment,
+        self,
+        meta_with_kit_segment,
+        params_with_kit_segment,
+        approval,
+        ref_with_kit_segment,
     ):
         # Two months, so a naive sum-without-dedup over the duplicated
         # per-row fh_gsa/dna_kits columns would double the true total.
@@ -387,8 +713,26 @@ class TestProductAwareScenarioOutputs:
             "2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0},
             "2024-02": {"TV_Brand": 1000.0, "DNA_Ad": 500.0},
         }
-        predicted = evaluate_scenario(plan, "UK", meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment, approval=approval, governance_mode="exploratory", **IDENTITY)
-        compare_df = compare_scenarios([{"name": "Plan A", "market": "UK", "spend_plan": plan, "predicted": predicted}])
+        predicted = evaluate_scenario(
+            plan,
+            "UK",
+            meta_with_kit_segment,
+            params_with_kit_segment,
+            ref_with_kit_segment,
+            approval=approval,
+            governance_mode="exploratory",
+            **IDENTITY,
+        )
+        compare_df = compare_scenarios(
+            [
+                {
+                    "name": "Plan A",
+                    "market": "UK",
+                    "spend_plan": plan,
+                    "predicted": predicted,
+                }
+            ]
+        )
         expected_fh_gsa = predicted.groupby("month")["fh_gsa"].first().sum()
         expected_dna_kits = predicted.groupby("month")["dna_kits"].first().sum()
         assert compare_df["total_fh_gsa"].iloc[0] == pytest.approx(expected_fh_gsa)
@@ -398,13 +742,35 @@ class TestProductAwareScenarioOutputs:
         assert pd.isna(compare_df["total_value"].iloc[0])
         assert predicted["value"].isna().all()
 
-    def test_compare_scenarios_falls_back_when_predicted_has_no_product_split(self, meta, params, approval, spend_plan, reference_context):
+    def test_compare_scenarios_falls_back_when_predicted_has_no_product_split(
+        self, meta, params, approval, spend_plan, reference_context
+    ):
         # Defensive against a hand-built/legacy `predicted` DataFrame that
         # predates the fh_gsa/dna_kits columns.
-        predicted = evaluate_scenario(spend_plan, "UK", meta, params, reference_context, approval=approval, governance_mode="exploratory", **IDENTITY)
+        predicted = evaluate_scenario(
+            spend_plan,
+            "UK",
+            meta,
+            params,
+            reference_context,
+            approval=approval,
+            governance_mode="exploratory",
+            **IDENTITY,
+        )
         legacy_predicted = predicted.drop(columns=["fh_gsa", "dna_kits"])
-        compare_df = compare_scenarios([{"name": "Legacy", "market": "UK", "spend_plan": spend_plan, "predicted": legacy_predicted}])
-        assert compare_df["total_fh_gsa"].iloc[0] == pytest.approx(legacy_predicted["predicted_outcome"].sum())
+        compare_df = compare_scenarios(
+            [
+                {
+                    "name": "Legacy",
+                    "market": "UK",
+                    "spend_plan": spend_plan,
+                    "predicted": legacy_predicted,
+                }
+            ]
+        )
+        assert compare_df["total_fh_gsa"].iloc[0] == pytest.approx(
+            legacy_predicted["predicted_outcome"].sum()
+        )
         assert compare_df["total_dna_kits"].iloc[0] == pytest.approx(0.0)
 
 
@@ -468,22 +834,37 @@ def test_saved_scenario_persists_governance_mode():
     # governance mode into the saved scenario, so it can never be displayed
     # or mistaken for an official one after the fact.
     saved = scenario_to_dict(
-        "Plan A", "UK", {"2024-01": {"TV": 100.0}}, "fh_gsa", [],
+        "Plan A",
+        "UK",
+        {"2024-01": {"TV": 100.0}},
+        "fh_gsa",
+        [],
         governance_mode="exploratory",
     )
     restored = scenario_from_dict(saved)
     assert restored["governance_mode"] == "exploratory"
 
-    compare_df = compare_scenarios([
-        {
-            "name": "Plan A", "market": "UK", "governance_mode": "exploratory",
-            "spend_plan": {"2024-01": {"TV": 100.0}},
-            "predicted": pd.DataFrame([{
-                "month": "2024-01", "outcome_id": "New", "predicted_outcome": 10.0,
-                "value": None, "total_value_is_complete": True,
-            }]),
-        },
-    ])
+    compare_df = compare_scenarios(
+        [
+            {
+                "name": "Plan A",
+                "market": "UK",
+                "governance_mode": "exploratory",
+                "spend_plan": {"2024-01": {"TV": 100.0}},
+                "predicted": pd.DataFrame(
+                    [
+                        {
+                            "month": "2024-01",
+                            "outcome_id": "New",
+                            "predicted_outcome": 10.0,
+                            "value": None,
+                            "total_value_is_complete": True,
+                        }
+                    ]
+                ),
+            },
+        ]
+    )
     assert compare_df["governance_mode"].iloc[0] == "exploratory"
 
 
@@ -494,21 +875,40 @@ def test_non_optimisable_activity_is_held_fixed(approval):
     # one - the point of the test is that the fixed channel doesn't move,
     # not that the whole optimisation is a no-op.
     meta = FHModelMeta(
-        markets=["UK"], outcome_ids=["New"], channels=["TV_Brand", "Search_Paid"],
-        dna_channels=[], dna_channel_idx=[], non_dna_idx=[0, 1],
-        dna_outcome_id="New", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+        markets=["UK"],
+        outcome_ids=["New"],
+        channels=["TV_Brand", "Search_Paid"],
+        dna_channels=[],
+        dna_channel_idx=[],
+        non_dna_idx=[0, 1],
+        dna_outcome_id="New",
+        dna_lag_weeks=4,
+        unpooled_markets=[],
+        control_names=[],
     )
     params = FHPosteriorParams(
         decay_rate={"TV_Brand": 0.5, "Search_Paid": 0.3},
         hill_K={"TV_Brand": 1000.0, "Search_Paid": 500.0},
         hill_S={"TV_Brand": 1.0, "Search_Paid": 1.0},
         beta={"New": {"TV_Brand": 0.1, "Search_Paid": 0.2}},
-        pathway_strength={}, promo_coef={"New": 0.1},
-        market_offset={"UK": {"New": 0.0}}, intercept={"New": 3.0}, trend_coef={"New": 0.0},
-        gamma_fourier={"New": np.zeros(6)}, alpha={"New": 5.0}, control_coef={}, outcome_control_coef={},
+        pathway_strength={},
+        promo_coef={"New": 0.1},
+        market_offset={"UK": {"New": 0.0}},
+        intercept={"New": 3.0},
+        trend_coef={"New": 0.0},
+        gamma_fourier={"New": np.zeros(6)},
+        alpha={"New": 5.0},
+        control_coef={},
+        outcome_control_coef={},
     )
     reference_context = {
-        "2024-01": {"trend": 1.0, "fourier": np.zeros(6), "promo": {"New": 0.0}, "controls": {}, "outcome_controls": {}}
+        "2024-01": {
+            "trend": 1.0,
+            "fourier": np.zeros(6),
+            "promo": {"New": 0.0},
+            "controls": {},
+            "outcome_controls": {},
+        }
     }
     fixed_activity = ActivityDefinition(
         activity_id="owned-tv",
@@ -518,19 +918,31 @@ def test_non_optimisable_activity_is_held_fixed(approval):
         economic_treatment="response_only",
         planning_eligibility="scenario_only",
         source="owned delivery plan",
-        approval_status="approved", approved_by="reviewer", approved_at="2026-01-01",
+        approval_status="approved",
+        approved_by="reviewer",
+        approved_at="2026-01-01",
     )
     optimisable_activity = _paid_activity("search-paid", "Search_Paid")
     spend_plan = {"2024-01": {"TV_Brand": 1000.0, "Search_Paid": 500.0}}
-    registry = CostMappingRegistry([
-        FixedCostPerUnitMapping(
-            mapping_id="uk-search-paid-map", market="UK", channel="Search_Paid", currency="GBP",
-            cost_context_id="default", source="finance rate card",
-            approval_status="approved", approved_by="finance-owner",
-            approved_at="2026-01-01T10:00:00Z", owner="media-finance",
-            approval_note="approved", last_reviewed_at="2026-01-01", cost_per_media_input=1.0,
-        ),
-    ])
+    registry = CostMappingRegistry(
+        [
+            FixedCostPerUnitMapping(
+                mapping_id="uk-search-paid-map",
+                market="UK",
+                channel="Search_Paid",
+                currency="GBP",
+                cost_context_id="default",
+                source="finance rate card",
+                approval_status="approved",
+                approved_by="finance-owner",
+                approved_at="2026-01-01T10:00:00Z",
+                owner="media-finance",
+                approval_note="approved",
+                last_reviewed_at="2026-01-01",
+                cost_per_media_input=1.0,
+            ),
+        ]
+    )
     result = optimize_scenario(
         spend_plan,
         ["2024-01"],
@@ -596,9 +1008,16 @@ class TestExplicitOptimisationObjectives:
     @pytest.fixture
     def meta_with_kit_segment(self) -> FHModelMeta:
         return FHModelMeta(
-            markets=["UK"], outcome_ids=["New", "DNA_Kit"], channels=["TV_Brand", "DNA_Ad"],
-            dna_channels=["DNA_Ad"], dna_channel_idx=[1], non_dna_idx=[0],
-            dna_outcome_id="New", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+            markets=["UK"],
+            outcome_ids=["New", "DNA_Kit"],
+            channels=["TV_Brand", "DNA_Ad"],
+            dna_channels=["DNA_Ad"],
+            dna_channel_idx=[1],
+            non_dna_idx=[0],
+            dna_outcome_id="New",
+            dna_lag_weeks=4,
+            unpooled_markets=[],
+            control_names=[],
             direct_dna_outcome_ids=["New", "DNA_Kit"],
         )
 
@@ -608,117 +1027,269 @@ class TestExplicitOptimisationObjectives:
             decay_rate={"TV_Brand": 0.5, "DNA_Ad": 0.5},
             hill_K={"TV_Brand": 1000.0, "DNA_Ad": 500.0},
             hill_S={"TV_Brand": 1.0, "DNA_Ad": 1.0},
-            beta={"New": {"TV_Brand": 0.1, "DNA_Ad": 0.05}, "DNA_Kit": {"TV_Brand": 0.0, "DNA_Ad": 0.2}},
-            pathway_strength=pathway_strength_from_flat({"New": 0.3, "DNA_Kit": 0.0}, "DNA_Ad"), promo_coef={"New": 0.1, "DNA_Kit": 0.1},
-            market_offset={"UK": {"New": 0.0, "DNA_Kit": 0.0}}, intercept={"New": 3.0, "DNA_Kit": 2.0},
+            beta={
+                "New": {"TV_Brand": 0.1, "DNA_Ad": 0.05},
+                "DNA_Kit": {"TV_Brand": 0.0, "DNA_Ad": 0.2},
+            },
+            pathway_strength=pathway_strength_from_flat(
+                {"New": 0.3, "DNA_Kit": 0.0}, "DNA_Ad"
+            ),
+            promo_coef={"New": 0.1, "DNA_Kit": 0.1},
+            market_offset={"UK": {"New": 0.0, "DNA_Kit": 0.0}},
+            intercept={"New": 3.0, "DNA_Kit": 2.0},
             trend_coef={"New": 0.0, "DNA_Kit": 0.0},
             gamma_fourier={"New": np.zeros(6), "DNA_Kit": np.zeros(6)},
-            alpha={"New": 5.0, "DNA_Kit": 5.0}, control_coef={}, outcome_control_coef={},
+            alpha={"New": 5.0, "DNA_Kit": 5.0},
+            control_coef={},
+            outcome_control_coef={},
         )
 
     @pytest.fixture
     def ref_with_kit_segment(self):
-        return {"2024-01": {"trend": 1.0, "fourier": np.zeros(6), "promo": {"New": 0.0, "DNA_Kit": 0.0}, "controls": {}, "outcome_controls": {}}}
+        return {
+            "2024-01": {
+                "trend": 1.0,
+                "fourier": np.zeros(6),
+                "promo": {"New": 0.0, "DNA_Kit": 0.0},
+                "controls": {},
+                "outcome_controls": {},
+            }
+        }
 
     @pytest.fixture
     def plan_with_kit_segment(self):
         return {"2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0}}
 
-    def test_invalid_objective_raises_before_optimising(self, meta, params, approval, spend_plan, reference_context, monkeypatch):
+    def test_invalid_objective_raises_before_optimising(
+        self, meta, params, approval, spend_plan, reference_context, monkeypatch
+    ):
         import ancestry_mmm.core.optimization as optimization_module
 
         def _fail_if_called(*args, **kwargs):
-            raise AssertionError("minimize() should not be called for an invalid objective")
+            raise AssertionError(
+                "minimize() should not be called for an invalid objective"
+            )
 
         monkeypatch.setattr(optimization_module, "minimize", _fail_if_called)
         with pytest.raises(ValueError, match="cannot migrate unknown legacy objective"):
             optimize_scenario(
-                spend_plan, ["2024-01"], ["TV_Brand"], "UK", meta, params, reference_context,
-                objective="volume", approval=approval, governance_mode="exploratory", **IDENTITY,
+                spend_plan,
+                ["2024-01"],
+                ["TV_Brand"],
+                "UK",
+                meta,
+                params,
+                reference_context,
+                objective="volume",
+                approval=approval,
+                governance_mode="exploratory",
+                **IDENTITY,
             )
 
     def test_default_objective_is_fh_gsa_and_excludes_kit_only_segments(
-        self, meta_with_kit_segment, params_with_kit_segment, approval, plan_with_kit_segment, ref_with_kit_segment,
+        self,
+        meta_with_kit_segment,
+        params_with_kit_segment,
+        approval,
+        plan_with_kit_segment,
+        ref_with_kit_segment,
     ):
         result = optimize_scenario(
-            plan_with_kit_segment, ["2024-01"], ["TV_Brand", "DNA_Ad"], "UK",
-            meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment,
-            objective="fh_gsa", approval=approval, governance_mode="exploratory", **IDENTITY,
+            plan_with_kit_segment,
+            ["2024-01"],
+            ["TV_Brand", "DNA_Ad"],
+            "UK",
+            meta_with_kit_segment,
+            params_with_kit_segment,
+            ref_with_kit_segment,
+            objective="fh_gsa",
+            approval=approval,
+            governance_mode="exploratory",
+            **IDENTITY,
         )
         current_predicted = result["current_predicted"]
-        expected = float(current_predicted[current_predicted["outcome_id"] == "New"]["incremental_outcome"].sum())
+        expected = float(
+            current_predicted[current_predicted["outcome_id"] == "New"][
+                "incremental_outcome"
+            ].sum()
+        )
         assert result["current_objective_value"] == pytest.approx(expected)
 
-    def test_dna_kits_objective_raises_when_model_has_no_kit_only_segments(self, meta, params, approval, spend_plan, reference_context):
+    def test_dna_kits_objective_raises_when_model_has_no_kit_only_segments(
+        self, meta, params, approval, spend_plan, reference_context
+    ):
         with pytest.raises(ValueError, match="no DNA-kit outcomes"):
             optimize_scenario(
-                spend_plan, ["2024-01"], ["TV_Brand"], "UK", meta, params, reference_context,
-                objective="dna_kits", approval=approval, governance_mode="exploratory", **IDENTITY,
+                spend_plan,
+                ["2024-01"],
+                ["TV_Brand"],
+                "UK",
+                meta,
+                params,
+                reference_context,
+                objective="dna_kits",
+                approval=approval,
+                governance_mode="exploratory",
+                **IDENTITY,
             )
 
     def test_dna_kits_objective_targets_only_kit_only_segments(
-        self, meta_with_kit_segment, params_with_kit_segment, approval, plan_with_kit_segment, ref_with_kit_segment,
+        self,
+        meta_with_kit_segment,
+        params_with_kit_segment,
+        approval,
+        plan_with_kit_segment,
+        ref_with_kit_segment,
     ):
         result = optimize_scenario(
-            plan_with_kit_segment, ["2024-01"], ["TV_Brand", "DNA_Ad"], "UK",
-            meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment,
-            objective="dna_kits", approval=approval, governance_mode="exploratory", **IDENTITY,
+            plan_with_kit_segment,
+            ["2024-01"],
+            ["TV_Brand", "DNA_Ad"],
+            "UK",
+            meta_with_kit_segment,
+            params_with_kit_segment,
+            ref_with_kit_segment,
+            objective="dna_kits",
+            approval=approval,
+            governance_mode="exploratory",
+            **IDENTITY,
         )
         current_predicted = result["current_predicted"]
-        expected = float(current_predicted[current_predicted["outcome_id"] == "DNA_Kit"]["incremental_outcome"].sum())
+        expected = float(
+            current_predicted[current_predicted["outcome_id"] == "DNA_Kit"][
+                "incremental_outcome"
+            ].sum()
+        )
         assert result["current_objective_value"] == pytest.approx(expected)
 
-    def test_weighted_mix_without_weights_raises(self, meta, params, approval, spend_plan, reference_context):
+    def test_weighted_mix_without_weights_raises(
+        self, meta, params, approval, spend_plan, reference_context
+    ):
         with pytest.raises(ValueError, match="weighted_mix.*requires"):
             optimize_scenario(
-                spend_plan, ["2024-01"], ["TV_Brand"], "UK", meta, params, reference_context,
-                objective="weighted_mix", approval=approval, governance_mode="exploratory", **IDENTITY,
+                spend_plan,
+                ["2024-01"],
+                ["TV_Brand"],
+                "UK",
+                meta,
+                params,
+                reference_context,
+                objective="weighted_mix",
+                approval=approval,
+                governance_mode="exploratory",
+                **IDENTITY,
             )
 
-    def test_expected_value_without_ltv_raises(self, meta, params, approval, spend_plan, reference_context):
+    def test_expected_value_without_ltv_raises(
+        self, meta, params, approval, spend_plan, reference_context
+    ):
         with pytest.raises(ValueError, match="expected_value.*requires"):
             optimize_scenario(
-                spend_plan, ["2024-01"], ["TV_Brand"], "UK", meta, params, reference_context,
-                objective="expected_value", approval=approval, governance_mode="exploratory", **IDENTITY,
+                spend_plan,
+                ["2024-01"],
+                ["TV_Brand"],
+                "UK",
+                meta,
+                params,
+                reference_context,
+                objective="expected_value",
+                approval=approval,
+                governance_mode="exploratory",
+                **IDENTITY,
             )
 
-    def test_expected_value_with_ltv_runs(self, meta, params, approval, spend_plan, reference_context):
+    def test_expected_value_with_ltv_runs(
+        self, meta, params, approval, spend_plan, reference_context
+    ):
         result = optimize_scenario(
-            spend_plan, ["2024-01"], ["TV_Brand"], "UK", meta, params, reference_context,
-            ltv={"New": 2.0}, objective="expected_value",
-            value_currency="GBP", approval=approval, governance_mode="exploratory", **IDENTITY,
+            spend_plan,
+            ["2024-01"],
+            ["TV_Brand"],
+            "UK",
+            meta,
+            params,
+            reference_context,
+            ltv={"New": 2.0},
+            objective="expected_value",
+            value_currency="GBP",
+            approval=approval,
+            governance_mode="exploratory",
+            **IDENTITY,
         )
         assert "spend_plan" in result
 
     def test_target_outcome_ids_narrows_fh_gsa_to_a_single_segment(
-        self, meta_with_kit_segment, params_with_kit_segment, approval, plan_with_kit_segment, ref_with_kit_segment,
+        self,
+        meta_with_kit_segment,
+        params_with_kit_segment,
+        approval,
+        plan_with_kit_segment,
+        ref_with_kit_segment,
     ):
         result = optimize_scenario(
-            plan_with_kit_segment, ["2024-01"], ["TV_Brand", "DNA_Ad"], "UK",
-            meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment,
-            objective="fh_gsa", target_outcome_ids=["New"], approval=approval, governance_mode="exploratory", **IDENTITY,
+            plan_with_kit_segment,
+            ["2024-01"],
+            ["TV_Brand", "DNA_Ad"],
+            "UK",
+            meta_with_kit_segment,
+            params_with_kit_segment,
+            ref_with_kit_segment,
+            objective="fh_gsa",
+            target_outcome_ids=["New"],
+            approval=approval,
+            governance_mode="exploratory",
+            **IDENTITY,
         )
         current_predicted = result["current_predicted"]
-        expected = float(current_predicted[current_predicted["outcome_id"] == "New"]["incremental_outcome"].sum())
+        expected = float(
+            current_predicted[current_predicted["outcome_id"] == "New"][
+                "incremental_outcome"
+            ].sum()
+        )
         assert result["current_objective_value"] == pytest.approx(expected)
 
     def test_a_segment_omitted_from_weighted_mix_contributes_nothing(
-        self, meta_with_kit_segment, params_with_kit_segment, approval, plan_with_kit_segment, ref_with_kit_segment,
+        self,
+        meta_with_kit_segment,
+        params_with_kit_segment,
+        approval,
+        plan_with_kit_segment,
+        ref_with_kit_segment,
     ):
         # Only "New" weighted - "DNA_Kit" must contribute 0, not an implicit 1.
         result = optimize_scenario(
-            plan_with_kit_segment, ["2024-01"], ["TV_Brand", "DNA_Ad"], "UK",
-            meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment,
-            objective="weighted_mix", weights={"New": 3.0}, approval=approval, governance_mode="exploratory", **IDENTITY,
+            plan_with_kit_segment,
+            ["2024-01"],
+            ["TV_Brand", "DNA_Ad"],
+            "UK",
+            meta_with_kit_segment,
+            params_with_kit_segment,
+            ref_with_kit_segment,
+            objective="weighted_mix",
+            weights={"New": 3.0},
+            approval=approval,
+            governance_mode="exploratory",
+            **IDENTITY,
         )
         current_predicted = result["current_predicted"]
-        expected = 3.0 * float(current_predicted[current_predicted["outcome_id"] == "New"]["incremental_outcome"].sum())
+        expected = 3.0 * float(
+            current_predicted[current_predicted["outcome_id"] == "New"][
+                "incremental_outcome"
+            ].sum()
+        )
         assert result["current_objective_value"] == pytest.approx(expected)
 
     def test_all_valid_objectives_are_exercised_above(self):
         # Documentation-level check that this test class covers every
         # VALID_OBJECTIVES value, so a future addition doesn't go untested.
-        assert set(VALID_OBJECTIVES) == {"fh_net_billthrough", "fh_gsa", "fh_signups", "dna_kits", "weighted_mix", "expected_value"}
+        assert set(VALID_OBJECTIVES) == {
+            "fh_net_billthrough",
+            "fh_gsa",
+            "fh_signups",
+            "dna_kits",
+            "weighted_mix",
+            "expected_value",
+        }
 
 
 class TestFhSignupVsGsaObjectives:
@@ -734,86 +1305,186 @@ class TestFhSignupVsGsaObjectives:
         from ancestry_mmm.core.outcomes import FAMILY_HISTORY, METRIC_GSA, METRIC_SIGNUP
 
         return FHModelMeta(
-            markets=["UK"], outcome_ids=["fh_new_gsa", "fh_new_signup"], channels=["TV_Brand"],
-            dna_channels=[], dna_channel_idx=[], non_dna_idx=[0], dna_outcome_id="fh_new_gsa",
-            dna_lag_weeks=4, unpooled_markets=[], control_names=[],
-            outcome_id_to_product={"fh_new_gsa": FAMILY_HISTORY, "fh_new_signup": FAMILY_HISTORY},
-            outcome_id_to_metric={"fh_new_gsa": METRIC_GSA, "fh_new_signup": METRIC_SIGNUP},
+            markets=["UK"],
+            outcome_ids=["fh_new_gsa", "fh_new_signup"],
+            channels=["TV_Brand"],
+            dna_channels=[],
+            dna_channel_idx=[],
+            non_dna_idx=[0],
+            dna_outcome_id="fh_new_gsa",
+            dna_lag_weeks=4,
+            unpooled_markets=[],
+            control_names=[],
+            outcome_id_to_product={
+                "fh_new_gsa": FAMILY_HISTORY,
+                "fh_new_signup": FAMILY_HISTORY,
+            },
+            outcome_id_to_metric={
+                "fh_new_gsa": METRIC_GSA,
+                "fh_new_signup": METRIC_SIGNUP,
+            },
             outcome_id_to_segment={"fh_new_gsa": "New", "fh_new_signup": "New"},
         )
 
     @pytest.fixture
     def params_with_signup_and_gsa(self) -> FHPosteriorParams:
         return FHPosteriorParams(
-            decay_rate={"TV_Brand": 0.5}, hill_K={"TV_Brand": 1000.0}, hill_S={"TV_Brand": 1.0},
+            decay_rate={"TV_Brand": 0.5},
+            hill_K={"TV_Brand": 1000.0},
+            hill_S={"TV_Brand": 1.0},
             beta={"fh_new_gsa": {"TV_Brand": 0.1}, "fh_new_signup": {"TV_Brand": 0.4}},
             pathway_strength={},
             promo_coef={"fh_new_gsa": 0.1, "fh_new_signup": 0.1},
             market_offset={"UK": {"fh_new_gsa": 0.0, "fh_new_signup": 0.0}},
-            intercept={"fh_new_gsa": 3.0, "fh_new_signup": 3.5}, trend_coef={"fh_new_gsa": 0.0, "fh_new_signup": 0.0},
+            intercept={"fh_new_gsa": 3.0, "fh_new_signup": 3.5},
+            trend_coef={"fh_new_gsa": 0.0, "fh_new_signup": 0.0},
             gamma_fourier={"fh_new_gsa": np.zeros(6), "fh_new_signup": np.zeros(6)},
-            alpha={"fh_new_gsa": 5.0, "fh_new_signup": 5.0}, control_coef={}, outcome_control_coef={},
+            alpha={"fh_new_gsa": 5.0, "fh_new_signup": 5.0},
+            control_coef={},
+            outcome_control_coef={},
         )
 
     @pytest.fixture
     def ref_with_signup_and_gsa(self):
-        return {"2024-01": {"trend": 1.0, "fourier": np.zeros(6), "promo": {"fh_new_gsa": 0.0, "fh_new_signup": 0.0}, "controls": {}, "outcome_controls": {}}}
+        return {
+            "2024-01": {
+                "trend": 1.0,
+                "fourier": np.zeros(6),
+                "promo": {"fh_new_gsa": 0.0, "fh_new_signup": 0.0},
+                "controls": {},
+                "outcome_controls": {},
+            }
+        }
 
     @pytest.fixture
     def plan(self):
         return {"2024-01": {"TV_Brand": 1000.0}}
 
     def test_evaluate_scenario_fh_gsa_excludes_signup(
-        self, meta_with_signup_and_gsa, params_with_signup_and_gsa, approval, ref_with_signup_and_gsa, plan,
+        self,
+        meta_with_signup_and_gsa,
+        params_with_signup_and_gsa,
+        approval,
+        ref_with_signup_and_gsa,
+        plan,
     ):
-        result = evaluate_scenario(plan, "UK", meta_with_signup_and_gsa, params_with_signup_and_gsa, ref_with_signup_and_gsa, approval=approval, governance_mode="exploratory", **IDENTITY)
+        result = evaluate_scenario(
+            plan,
+            "UK",
+            meta_with_signup_and_gsa,
+            params_with_signup_and_gsa,
+            ref_with_signup_and_gsa,
+            approval=approval,
+            governance_mode="exploratory",
+            **IDENTITY,
+        )
         gsa_row = result[result["outcome_id"] == "fh_new_gsa"].iloc[0]
         signup_row = result[result["outcome_id"] == "fh_new_signup"].iloc[0]
         assert gsa_row["fh_gsa"] == pytest.approx(gsa_row["predicted_outcome"])
         assert gsa_row["fh_signups"] == pytest.approx(signup_row["predicted_outcome"])
         # The confirmed defect this guards against: fh_gsa must not equal
         # the sum of both outcomes.
-        assert gsa_row["fh_gsa"] != pytest.approx(gsa_row["predicted_outcome"] + signup_row["predicted_outcome"])
+        assert gsa_row["fh_gsa"] != pytest.approx(
+            gsa_row["predicted_outcome"] + signup_row["predicted_outcome"]
+        )
 
     def test_gsa_objective_targets_only_gsa_outcome(
-        self, meta_with_signup_and_gsa, params_with_signup_and_gsa, approval, ref_with_signup_and_gsa, plan,
+        self,
+        meta_with_signup_and_gsa,
+        params_with_signup_and_gsa,
+        approval,
+        ref_with_signup_and_gsa,
+        plan,
     ):
         # This class tests metric-aware target selection (fh_gsa vs
         # fh_signups), not outcome governance - fixtures here have no
         # outcome catalogue, so official-mode outcome governance would
         # block unconditionally (REQ-OUT-002, G2A.7a.1).
         result = optimize_scenario(
-            plan, ["2024-01"], ["TV_Brand"], "UK", meta_with_signup_and_gsa, params_with_signup_and_gsa, ref_with_signup_and_gsa,
-            objective="fh_gsa", approval=approval, governance_mode="exploratory", **IDENTITY,
+            plan,
+            ["2024-01"],
+            ["TV_Brand"],
+            "UK",
+            meta_with_signup_and_gsa,
+            params_with_signup_and_gsa,
+            ref_with_signup_and_gsa,
+            objective="fh_gsa",
+            approval=approval,
+            governance_mode="exploratory",
+            **IDENTITY,
         )
         current_predicted = result["current_predicted"]
-        expected = float(current_predicted[current_predicted["outcome_id"] == "fh_new_gsa"]["incremental_outcome"].sum())
+        expected = float(
+            current_predicted[current_predicted["outcome_id"] == "fh_new_gsa"][
+                "incremental_outcome"
+            ].sum()
+        )
         assert result["current_objective_value"] == pytest.approx(expected)
 
     def test_signup_objective_targets_only_signup_outcome(
-        self, meta_with_signup_and_gsa, params_with_signup_and_gsa, approval, ref_with_signup_and_gsa, plan,
+        self,
+        meta_with_signup_and_gsa,
+        params_with_signup_and_gsa,
+        approval,
+        ref_with_signup_and_gsa,
+        plan,
     ):
         result = optimize_scenario(
-            plan, ["2024-01"], ["TV_Brand"], "UK", meta_with_signup_and_gsa, params_with_signup_and_gsa, ref_with_signup_and_gsa,
-            objective="fh_signups", approval=approval, governance_mode="exploratory", **IDENTITY,
+            plan,
+            ["2024-01"],
+            ["TV_Brand"],
+            "UK",
+            meta_with_signup_and_gsa,
+            params_with_signup_and_gsa,
+            ref_with_signup_and_gsa,
+            objective="fh_signups",
+            approval=approval,
+            governance_mode="exploratory",
+            **IDENTITY,
         )
         current_predicted = result["current_predicted"]
-        expected = float(current_predicted[current_predicted["outcome_id"] == "fh_new_signup"]["incremental_outcome"].sum())
+        expected = float(
+            current_predicted[current_predicted["outcome_id"] == "fh_new_signup"][
+                "incremental_outcome"
+            ].sum()
+        )
         assert result["current_objective_value"] == pytest.approx(expected)
         # And it must differ from the GSA objective's total - proof the two
         # objectives are actually scoped to different outcome_ids, not
         # coincidentally computing the same number.
         gsa_result = optimize_scenario(
-            plan, ["2024-01"], ["TV_Brand"], "UK", meta_with_signup_and_gsa, params_with_signup_and_gsa, ref_with_signup_and_gsa,
-            objective="fh_gsa", approval=approval, governance_mode="exploratory", **IDENTITY,
+            plan,
+            ["2024-01"],
+            ["TV_Brand"],
+            "UK",
+            meta_with_signup_and_gsa,
+            params_with_signup_and_gsa,
+            ref_with_signup_and_gsa,
+            objective="fh_gsa",
+            approval=approval,
+            governance_mode="exploratory",
+            **IDENTITY,
         )
-        assert result["current_objective_value"] != pytest.approx(gsa_result["current_objective_value"])
+        assert result["current_objective_value"] != pytest.approx(
+            gsa_result["current_objective_value"]
+        )
 
-    def test_signup_objective_raises_if_model_has_no_signup_outcome(self, meta, params, approval, spend_plan, reference_context):
+    def test_signup_objective_raises_if_model_has_no_signup_outcome(
+        self, meta, params, approval, spend_plan, reference_context
+    ):
         with pytest.raises(ValueError, match="fh_signups"):
             optimize_scenario(
-                spend_plan, ["2024-01"], ["TV_Brand"], "UK", meta, params, reference_context,
-                objective="fh_signups", approval=approval, governance_mode="exploratory", **IDENTITY,
+                spend_plan,
+                ["2024-01"],
+                ["TV_Brand"],
+                "UK",
+                meta,
+                params,
+                reference_context,
+                objective="fh_signups",
+                approval=approval,
+                governance_mode="exploratory",
+                **IDENTITY,
             )
 
 
@@ -827,38 +1498,75 @@ class TestOptimiserTargetValidation:
     @pytest.fixture
     def meta_with_diagnostic_outcome(self) -> FHModelMeta:
         return FHModelMeta(
-            markets=["UK"], outcome_ids=["fh_new_gsa", "fh_new_signup", "fh_diag"], channels=["TV_Brand"],
-            dna_channels=[], dna_channel_idx=[], non_dna_idx=[0], dna_outcome_id="fh_new_gsa",
-            dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+            markets=["UK"],
+            outcome_ids=["fh_new_gsa", "fh_new_signup", "fh_diag"],
+            channels=["TV_Brand"],
+            dna_channels=[],
+            dna_channel_idx=[],
+            non_dna_idx=[0],
+            dna_outcome_id="fh_new_gsa",
+            dna_lag_weeks=4,
+            unpooled_markets=[],
+            control_names=[],
             outcome_id_to_product={
-                "fh_new_gsa": FAMILY_HISTORY, "fh_new_signup": FAMILY_HISTORY, "fh_diag": FAMILY_HISTORY,
+                "fh_new_gsa": FAMILY_HISTORY,
+                "fh_new_signup": FAMILY_HISTORY,
+                "fh_diag": FAMILY_HISTORY,
             },
-            outcome_id_to_metric={"fh_new_gsa": METRIC_GSA, "fh_new_signup": "Sign-up", "fh_diag": METRIC_GSA},
-            outcome_id_to_unit={"fh_new_gsa": "GSA", "fh_new_signup": "sign-up", "fh_diag": "GSA"},
-            outcome_id_to_role={"fh_new_gsa": "primary", "fh_new_signup": "primary", "fh_diag": "diagnostic"},
+            outcome_id_to_metric={
+                "fh_new_gsa": METRIC_GSA,
+                "fh_new_signup": "Sign-up",
+                "fh_diag": METRIC_GSA,
+            },
+            outcome_id_to_unit={
+                "fh_new_gsa": "GSA",
+                "fh_new_signup": "sign-up",
+                "fh_diag": "GSA",
+            },
+            outcome_id_to_role={
+                "fh_new_gsa": "primary",
+                "fh_new_signup": "primary",
+                "fh_diag": "diagnostic",
+            },
         )
 
     @pytest.fixture
     def params_3(self) -> FHPosteriorParams:
         return FHPosteriorParams(
-            decay_rate={"TV_Brand": 0.5}, hill_K={"TV_Brand": 1000.0}, hill_S={"TV_Brand": 1.0},
-            beta={"fh_new_gsa": {"TV_Brand": 0.1}, "fh_new_signup": {"TV_Brand": 0.2}, "fh_diag": {"TV_Brand": 0.05}},
+            decay_rate={"TV_Brand": 0.5},
+            hill_K={"TV_Brand": 1000.0},
+            hill_S={"TV_Brand": 1.0},
+            beta={
+                "fh_new_gsa": {"TV_Brand": 0.1},
+                "fh_new_signup": {"TV_Brand": 0.2},
+                "fh_diag": {"TV_Brand": 0.05},
+            },
             pathway_strength={},
             promo_coef={"fh_new_gsa": 0.1, "fh_new_signup": 0.1, "fh_diag": 0.1},
-            market_offset={"UK": {"fh_new_gsa": 0.0, "fh_new_signup": 0.0, "fh_diag": 0.0}},
+            market_offset={
+                "UK": {"fh_new_gsa": 0.0, "fh_new_signup": 0.0, "fh_diag": 0.0}
+            },
             intercept={"fh_new_gsa": 3.0, "fh_new_signup": 3.0, "fh_diag": 3.0},
             trend_coef={"fh_new_gsa": 0.0, "fh_new_signup": 0.0, "fh_diag": 0.0},
-            gamma_fourier={"fh_new_gsa": np.zeros(6), "fh_new_signup": np.zeros(6), "fh_diag": np.zeros(6)},
-            alpha={"fh_new_gsa": 5.0, "fh_new_signup": 5.0, "fh_diag": 5.0}, control_coef={}, outcome_control_coef={},
+            gamma_fourier={
+                "fh_new_gsa": np.zeros(6),
+                "fh_new_signup": np.zeros(6),
+                "fh_diag": np.zeros(6),
+            },
+            alpha={"fh_new_gsa": 5.0, "fh_new_signup": 5.0, "fh_diag": 5.0},
+            control_coef={},
+            outcome_control_coef={},
         )
 
     @pytest.fixture
     def ref_3(self):
         return {
             "2024-01": {
-                "trend": 1.0, "fourier": np.zeros(6),
+                "trend": 1.0,
+                "fourier": np.zeros(6),
                 "promo": {"fh_new_gsa": 0.0, "fh_new_signup": 0.0, "fh_diag": 0.0},
-                "controls": {}, "outcome_controls": {},
+                "controls": {},
+                "outcome_controls": {},
             },
         }
 
@@ -871,84 +1579,189 @@ class TestOptimiserTargetValidation:
     # outcome catalogue, so official-mode outcome governance would block
     # unconditionally with an unrelated error (REQ-OUT-002, G2A.7a.1).
 
-    def test_unknown_target_outcome_id_is_rejected(self, meta_with_diagnostic_outcome, params_3, approval, ref_3, plan_3):
+    def test_unknown_target_outcome_id_is_rejected(
+        self, meta_with_diagnostic_outcome, params_3, approval, ref_3, plan_3
+    ):
         with pytest.raises(ValueError, match="not fitted in this model"):
             optimize_scenario(
-                plan_3, ["2024-01"], ["TV_Brand"], "UK", meta_with_diagnostic_outcome, params_3, ref_3,
-                objective="fh_gsa", target_outcome_ids=["does_not_exist"], approval=approval,
-                governance_mode="exploratory", **IDENTITY,
+                plan_3,
+                ["2024-01"],
+                ["TV_Brand"],
+                "UK",
+                meta_with_diagnostic_outcome,
+                params_3,
+                ref_3,
+                objective="fh_gsa",
+                target_outcome_ids=["does_not_exist"],
+                approval=approval,
+                governance_mode="exploratory",
+                **IDENTITY,
             )
 
     def test_metric_mismatched_target_outcome_id_is_rejected(
-        self, meta_with_diagnostic_outcome, params_3, approval, ref_3, plan_3,
+        self,
+        meta_with_diagnostic_outcome,
+        params_3,
+        approval,
+        ref_3,
+        plan_3,
     ):
         # Required test case 11 - a sign-up outcome must not be passed into
         # objective="fh_gsa" and bypass metric-aware selection.
         with pytest.raises(ValueError, match="do not match this objective's metric"):
             optimize_scenario(
-                plan_3, ["2024-01"], ["TV_Brand"], "UK", meta_with_diagnostic_outcome, params_3, ref_3,
-                objective="fh_gsa", target_outcome_ids=["fh_new_signup"], approval=approval,
-                governance_mode="exploratory", **IDENTITY,
+                plan_3,
+                ["2024-01"],
+                ["TV_Brand"],
+                "UK",
+                meta_with_diagnostic_outcome,
+                params_3,
+                ref_3,
+                objective="fh_gsa",
+                target_outcome_ids=["fh_new_signup"],
+                approval=approval,
+                governance_mode="exploratory",
+                **IDENTITY,
             )
 
-    def test_diagnostic_outcome_cannot_be_optimised(self, meta_with_diagnostic_outcome, params_3, approval, ref_3, plan_3):
+    def test_diagnostic_outcome_cannot_be_optimised(
+        self, meta_with_diagnostic_outcome, params_3, approval, ref_3, plan_3
+    ):
         # Required test case 12.
         with pytest.raises(ValueError, match="not eligible for optimisation"):
             optimize_scenario(
-                plan_3, ["2024-01"], ["TV_Brand"], "UK", meta_with_diagnostic_outcome, params_3, ref_3,
-                objective="fh_gsa", target_outcome_ids=["fh_diag"], approval=approval,
-                governance_mode="exploratory", **IDENTITY,
+                plan_3,
+                ["2024-01"],
+                ["TV_Brand"],
+                "UK",
+                meta_with_diagnostic_outcome,
+                params_3,
+                ref_3,
+                objective="fh_gsa",
+                target_outcome_ids=["fh_diag"],
+                approval=approval,
+                governance_mode="exploratory",
+                **IDENTITY,
             )
 
     def test_diagnostic_outcome_excluded_from_default_fh_gsa_total(
-        self, meta_with_diagnostic_outcome, params_3, approval, ref_3, plan_3,
+        self,
+        meta_with_diagnostic_outcome,
+        params_3,
+        approval,
+        ref_3,
+        plan_3,
     ):
         result = optimize_scenario(
-            plan_3, ["2024-01"], ["TV_Brand"], "UK", meta_with_diagnostic_outcome, params_3, ref_3,
-            objective="fh_gsa", approval=approval, governance_mode="exploratory", **IDENTITY,
+            plan_3,
+            ["2024-01"],
+            ["TV_Brand"],
+            "UK",
+            meta_with_diagnostic_outcome,
+            params_3,
+            ref_3,
+            objective="fh_gsa",
+            approval=approval,
+            governance_mode="exploratory",
+            **IDENTITY,
         )
         current_predicted = result["current_predicted"]
-        expected = float(current_predicted[current_predicted["outcome_id"] == "fh_new_gsa"]["incremental_outcome"].sum())
+        expected = float(
+            current_predicted[current_predicted["outcome_id"] == "fh_new_gsa"][
+                "incremental_outcome"
+            ].sum()
+        )
         assert result["current_objective_value"] == pytest.approx(expected)
 
     def test_weighted_mix_with_raw_unit_mismatch_is_rejected(
-        self, meta_with_diagnostic_outcome, params_3, approval, ref_3, plan_3,
+        self,
+        meta_with_diagnostic_outcome,
+        params_3,
+        approval,
+        ref_3,
+        plan_3,
     ):
         # Required test case 13 - GSA and sign-up are different units; a
         # naive uniform-weight mix must be blocked without an explicit
         # assertion that the weights already convert to a common scale.
         with pytest.raises(ValueError, match="different units"):
             optimize_scenario(
-                plan_3, ["2024-01"], ["TV_Brand"], "UK", meta_with_diagnostic_outcome, params_3, ref_3,
-                objective="weighted_mix", weights={"fh_new_gsa": 1.0, "fh_new_signup": 1.0},
-                approval=approval, governance_mode="exploratory", **IDENTITY,
+                plan_3,
+                ["2024-01"],
+                ["TV_Brand"],
+                "UK",
+                meta_with_diagnostic_outcome,
+                params_3,
+                ref_3,
+                objective="weighted_mix",
+                weights={"fh_new_gsa": 1.0, "fh_new_signup": 1.0},
+                approval=approval,
+                governance_mode="exploratory",
+                **IDENTITY,
             )
 
     def test_weighted_mix_with_raw_unit_mismatch_allowed_when_explicitly_value_scaled(
-        self, meta_with_diagnostic_outcome, params_3, approval, ref_3, plan_3,
+        self,
+        meta_with_diagnostic_outcome,
+        params_3,
+        approval,
+        ref_3,
+        plan_3,
     ):
         result = optimize_scenario(
-            plan_3, ["2024-01"], ["TV_Brand"], "UK", meta_with_diagnostic_outcome, params_3, ref_3,
-            objective="weighted_mix", weights={"fh_new_gsa": 2.0, "fh_new_signup": 0.5},
-            assume_value_scaled_weights=True, approval=approval, governance_mode="exploratory", **IDENTITY,
+            plan_3,
+            ["2024-01"],
+            ["TV_Brand"],
+            "UK",
+            meta_with_diagnostic_outcome,
+            params_3,
+            ref_3,
+            objective="weighted_mix",
+            weights={"fh_new_gsa": 2.0, "fh_new_signup": 0.5},
+            assume_value_scaled_weights=True,
+            approval=approval,
+            governance_mode="exploratory",
+            **IDENTITY,
         )
         assert "success" in result
         assert isinstance(result["objective_value"], float)
 
-    def test_weighted_mix_rejects_negative_weight(self, meta_with_diagnostic_outcome, params_3, approval, ref_3, plan_3):
+    def test_weighted_mix_rejects_negative_weight(
+        self, meta_with_diagnostic_outcome, params_3, approval, ref_3, plan_3
+    ):
         with pytest.raises(ValueError, match="non-negative"):
             optimize_scenario(
-                plan_3, ["2024-01"], ["TV_Brand"], "UK", meta_with_diagnostic_outcome, params_3, ref_3,
-                objective="weighted_mix", weights={"fh_new_gsa": -1.0}, approval=approval,
-                governance_mode="exploratory", **IDENTITY,
+                plan_3,
+                ["2024-01"],
+                ["TV_Brand"],
+                "UK",
+                meta_with_diagnostic_outcome,
+                params_3,
+                ref_3,
+                objective="weighted_mix",
+                weights={"fh_new_gsa": -1.0},
+                approval=approval,
+                governance_mode="exploratory",
+                **IDENTITY,
             )
 
-    def test_weighted_mix_rejects_unknown_outcome_id(self, meta_with_diagnostic_outcome, params_3, approval, ref_3, plan_3):
+    def test_weighted_mix_rejects_unknown_outcome_id(
+        self, meta_with_diagnostic_outcome, params_3, approval, ref_3, plan_3
+    ):
         with pytest.raises(ValueError, match="not fitted in this model"):
             optimize_scenario(
-                plan_3, ["2024-01"], ["TV_Brand"], "UK", meta_with_diagnostic_outcome, params_3, ref_3,
+                plan_3,
+                ["2024-01"],
+                ["TV_Brand"],
+                "UK",
+                meta_with_diagnostic_outcome,
+                params_3,
+                ref_3,
                 governance_mode="exploratory",
-                objective="weighted_mix", weights={"does_not_exist": 1.0}, approval=approval, **IDENTITY,
+                objective="weighted_mix",
+                weights={"does_not_exist": 1.0},
+                approval=approval,
+                **IDENTITY,
             )
 
 
@@ -957,106 +1770,237 @@ class TestValueWeightNeverSilentlyDefaultsToOne:
     priced, others not) must never treat the missing entries as weight 1.0."""
 
     def test_evaluate_scenario_value_is_none_not_predicted_outcome_for_missing_weight(
-        self, meta_with_kit_segment, params_with_kit_segment, approval, ref_with_kit_segment,
+        self,
+        meta_with_kit_segment,
+        params_with_kit_segment,
+        approval,
+        ref_with_kit_segment,
     ):
         plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0}}
         ltv = {"New": 2.0}  # DNA_Kit deliberately has no weight
-        result = evaluate_scenario(plan, "UK", meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment, ltv, approval=approval, governance_mode="exploratory", **IDENTITY)
+        result = evaluate_scenario(
+            plan,
+            "UK",
+            meta_with_kit_segment,
+            params_with_kit_segment,
+            ref_with_kit_segment,
+            ltv,
+            approval=approval,
+            governance_mode="exploratory",
+            **IDENTITY,
+        )
         kit_row = result[result["outcome_id"] == "DNA_Kit"].iloc[0]
         assert pd.isna(kit_row["value"])
-        assert kit_row["value"] != pytest.approx(kit_row["predicted_outcome"])  # would be true if weight silently defaulted to 1.0
+        assert kit_row["value"] != pytest.approx(
+            kit_row["predicted_outcome"]
+        )  # would be true if weight silently defaulted to 1.0
         assert not result["total_value_is_complete"].iloc[0]
 
     def test_evaluate_scenario_total_value_excludes_unpriced_outcomes(
-        self, meta_with_kit_segment, params_with_kit_segment, approval, ref_with_kit_segment,
+        self,
+        meta_with_kit_segment,
+        params_with_kit_segment,
+        approval,
+        ref_with_kit_segment,
     ):
         plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0}}
         ltv = {"New": 2.0}
-        result = evaluate_scenario(plan, "UK", meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment, ltv, approval=approval, governance_mode="exploratory", **IDENTITY)
+        result = evaluate_scenario(
+            plan,
+            "UK",
+            meta_with_kit_segment,
+            params_with_kit_segment,
+            ref_with_kit_segment,
+            ltv,
+            approval=approval,
+            governance_mode="exploratory",
+            **IDENTITY,
+        )
         new_row = result[result["outcome_id"] == "New"].iloc[0]
-        assert result["total_value"].iloc[0] == pytest.approx(new_row["predicted_outcome"] * 2.0)
+        assert result["total_value"].iloc[0] == pytest.approx(
+            new_row["predicted_outcome"] * 2.0
+        )
 
     def test_evaluate_scenario_partial_ltv_reports_value_status_and_unpriced_ids(
-        self, meta_with_kit_segment, params_with_kit_segment, approval, ref_with_kit_segment,
+        self,
+        meta_with_kit_segment,
+        params_with_kit_segment,
+        approval,
+        ref_with_kit_segment,
     ):
         # PR E.2 requirement #4: a priced subtotal, flagged incomplete, with
         # the exact unpriced outcome_ids named - not just a bare boolean.
         plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0}}
         ltv = {"New": 2.0}
-        result = evaluate_scenario(plan, "UK", meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment, ltv, approval=approval, governance_mode="exploratory", **IDENTITY)
+        result = evaluate_scenario(
+            plan,
+            "UK",
+            meta_with_kit_segment,
+            params_with_kit_segment,
+            ref_with_kit_segment,
+            ltv,
+            approval=approval,
+            governance_mode="exploratory",
+            **IDENTITY,
+        )
         assert (result["value_status"] == "partial").all()
         assert result["unpriced_outcome_ids"].iloc[0] == ["DNA_Kit"]
         assert not result["total_value_is_complete"].iloc[0]
 
     def test_evaluate_scenario_full_ltv_coverage_reports_complete_status(
-        self, meta_with_kit_segment, params_with_kit_segment, approval, ref_with_kit_segment,
+        self,
+        meta_with_kit_segment,
+        params_with_kit_segment,
+        approval,
+        ref_with_kit_segment,
     ):
         plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0}}
         ltv = {"New": 2.0, "DNA_Kit": 50.0}
-        result = evaluate_scenario(plan, "UK", meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment, ltv, approval=approval, governance_mode="exploratory", **IDENTITY)
+        result = evaluate_scenario(
+            plan,
+            "UK",
+            meta_with_kit_segment,
+            params_with_kit_segment,
+            ref_with_kit_segment,
+            ltv,
+            approval=approval,
+            governance_mode="exploratory",
+            **IDENTITY,
+        )
         assert (result["value_status"] == "complete").all()
         assert result["unpriced_outcome_ids"].iloc[0] == []
         assert result["total_value_is_complete"].iloc[0]
 
     def test_evaluate_scenario_rejects_mixed_currency_value_weights(
-        self, params_with_kit_segment, approval, ref_with_kit_segment,
+        self,
+        params_with_kit_segment,
+        approval,
+        ref_with_kit_segment,
     ):
         # Required test case 7 (PR E.2): value weights in different explicit
         # currencies must never be silently summed into one total_value.
         catalogue = [
             OutcomeDefinition(
-                outcome_id="New", product=FAMILY_HISTORY, segment="New", metric=METRIC_GSA,
-                source_column="c1", value_currency="USD",
+                outcome_id="New",
+                product=FAMILY_HISTORY,
+                segment="New",
+                metric=METRIC_GSA,
+                source_column="c1",
+                value_currency="USD",
             ),
             OutcomeDefinition(
-                outcome_id="DNA_Kit", product=DNA, segment="Combined", metric=METRIC_KIT_SALE,
-                source_column="c2", value_currency="GBP",
+                outcome_id="DNA_Kit",
+                product=DNA,
+                segment="Combined",
+                metric=METRIC_KIT_SALE,
+                source_column="c2",
+                value_currency="GBP",
             ),
         ]
         meta = FHModelMeta(
-            markets=["UK"], outcome_ids=["New", "DNA_Kit"], channels=["TV_Brand", "DNA_Ad"],
-            dna_channels=["DNA_Ad"], dna_channel_idx=[1], non_dna_idx=[0],
-            dna_outcome_id="New", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
-            direct_dna_outcome_ids=["New", "DNA_Kit"], outcome_catalogue_at_fit=catalogue,
+            markets=["UK"],
+            outcome_ids=["New", "DNA_Kit"],
+            channels=["TV_Brand", "DNA_Ad"],
+            dna_channels=["DNA_Ad"],
+            dna_channel_idx=[1],
+            non_dna_idx=[0],
+            dna_outcome_id="New",
+            dna_lag_weeks=4,
+            unpooled_markets=[],
+            control_names=[],
+            direct_dna_outcome_ids=["New", "DNA_Kit"],
+            outcome_catalogue_at_fit=catalogue,
         )
         plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0}}
         ltv = {"New": 2.0, "DNA_Kit": 50.0}
         with pytest.raises(ValueError, match="different currencies"):
-            evaluate_scenario(plan, "UK", meta, params_with_kit_segment, ref_with_kit_segment, ltv, approval=approval, governance_mode="exploratory", **IDENTITY)
+            evaluate_scenario(
+                plan,
+                "UK",
+                meta,
+                params_with_kit_segment,
+                ref_with_kit_segment,
+                ltv,
+                approval=approval,
+                governance_mode="exploratory",
+                **IDENTITY,
+            )
 
     def test_evaluate_scenario_allows_same_currency_value_weights(
-        self, params_with_kit_segment, approval, ref_with_kit_segment,
+        self,
+        params_with_kit_segment,
+        approval,
+        ref_with_kit_segment,
     ):
         catalogue = [
             OutcomeDefinition(
-                outcome_id="New", product=FAMILY_HISTORY, segment="New", metric=METRIC_GSA,
-                source_column="c1", value_currency="USD",
+                outcome_id="New",
+                product=FAMILY_HISTORY,
+                segment="New",
+                metric=METRIC_GSA,
+                source_column="c1",
+                value_currency="USD",
             ),
             OutcomeDefinition(
-                outcome_id="DNA_Kit", product=DNA, segment="Combined", metric=METRIC_KIT_SALE,
-                source_column="c2", value_currency="USD",
+                outcome_id="DNA_Kit",
+                product=DNA,
+                segment="Combined",
+                metric=METRIC_KIT_SALE,
+                source_column="c2",
+                value_currency="USD",
             ),
         ]
         meta = FHModelMeta(
-            markets=["UK"], outcome_ids=["New", "DNA_Kit"], channels=["TV_Brand", "DNA_Ad"],
-            dna_channels=["DNA_Ad"], dna_channel_idx=[1], non_dna_idx=[0],
-            dna_outcome_id="New", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
-            direct_dna_outcome_ids=["New", "DNA_Kit"], outcome_catalogue_at_fit=catalogue,
+            markets=["UK"],
+            outcome_ids=["New", "DNA_Kit"],
+            channels=["TV_Brand", "DNA_Ad"],
+            dna_channels=["DNA_Ad"],
+            dna_channel_idx=[1],
+            non_dna_idx=[0],
+            dna_outcome_id="New",
+            dna_lag_weeks=4,
+            unpooled_markets=[],
+            control_names=[],
+            direct_dna_outcome_ids=["New", "DNA_Kit"],
+            outcome_catalogue_at_fit=catalogue,
         )
         plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0}}
         ltv = {"New": 2.0, "DNA_Kit": 50.0}
-        result = evaluate_scenario(plan, "UK", meta, params_with_kit_segment, ref_with_kit_segment, ltv, approval=approval, governance_mode="exploratory", **IDENTITY)
+        result = evaluate_scenario(
+            plan,
+            "UK",
+            meta,
+            params_with_kit_segment,
+            ref_with_kit_segment,
+            ltv,
+            approval=approval,
+            governance_mode="exploratory",
+            **IDENTITY,
+        )
         assert (result["value_status"] == "complete").all()
 
     def test_evaluate_scenario_value_is_none_not_raw_units_when_ltv_entirely_omitted(
-        self, meta_with_kit_segment, params_with_kit_segment, approval, ref_with_kit_segment,
+        self,
+        meta_with_kit_segment,
+        params_with_kit_segment,
+        approval,
+        ref_with_kit_segment,
     ):
         # Required test case 6 (PR E.2) - reverses PR E.1's "entirely
         # omitted ltv falls back to raw units" behaviour: raw GSA/sign-up/kit
         # counts are not monetary value and must never be silently presented
         # as one, even when no ltv was supplied at all.
         plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0}}
-        result = evaluate_scenario(plan, "UK", meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment, approval=approval, governance_mode="exploratory", **IDENTITY)
+        result = evaluate_scenario(
+            plan,
+            "UK",
+            meta_with_kit_segment,
+            params_with_kit_segment,
+            ref_with_kit_segment,
+            approval=approval,
+            governance_mode="exploratory",
+            **IDENTITY,
+        )
         assert not result["total_value_is_complete"].iloc[0]
         assert (result["value_status"] == "not configured").all()
         assert pd.isna(result["total_value"].iloc[0])
@@ -1065,55 +2009,126 @@ class TestValueWeightNeverSilentlyDefaultsToOne:
             assert row["value"] != pytest.approx(row["predicted_outcome"])
 
     def test_expected_value_objective_fails_closed_on_incomplete_ltv_coverage(
-        self, meta_with_kit_segment, params_with_kit_segment, approval, plan_with_kit_segment, ref_with_kit_segment,
+        self,
+        meta_with_kit_segment,
+        params_with_kit_segment,
+        approval,
+        plan_with_kit_segment,
+        ref_with_kit_segment,
     ):
-        with pytest.raises(ValueError, match="requires a value weight for every eligible outcome_id"):
+        with pytest.raises(
+            ValueError, match="requires a value weight for every eligible outcome_id"
+        ):
             optimize_scenario(
-                plan_with_kit_segment, ["2024-01"], ["TV_Brand", "DNA_Ad"], "UK",
-                meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment,
-                objective="expected_value", ltv={"New": 2.0},
-                value_currency="GBP", approval=approval,
-                governance_mode="exploratory", **IDENTITY,
+                plan_with_kit_segment,
+                ["2024-01"],
+                ["TV_Brand", "DNA_Ad"],
+                "UK",
+                meta_with_kit_segment,
+                params_with_kit_segment,
+                ref_with_kit_segment,
+                objective="expected_value",
+                ltv={"New": 2.0},
+                value_currency="GBP",
+                approval=approval,
+                governance_mode="exploratory",
+                **IDENTITY,
             )
 
     def test_expected_value_objective_rejects_negative_weight(
-        self, meta_with_kit_segment, params_with_kit_segment, approval, plan_with_kit_segment, ref_with_kit_segment,
+        self,
+        meta_with_kit_segment,
+        params_with_kit_segment,
+        approval,
+        plan_with_kit_segment,
+        ref_with_kit_segment,
     ):
         with pytest.raises(ValueError, match="non-negative"):
             optimize_scenario(
-                plan_with_kit_segment, ["2024-01"], ["TV_Brand", "DNA_Ad"], "UK",
-                meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment,
-                objective="expected_value", ltv={"New": 2.0, "DNA_Kit": -5.0},
-                value_currency="GBP", approval=approval,
-                governance_mode="exploratory", **IDENTITY,
+                plan_with_kit_segment,
+                ["2024-01"],
+                ["TV_Brand", "DNA_Ad"],
+                "UK",
+                meta_with_kit_segment,
+                params_with_kit_segment,
+                ref_with_kit_segment,
+                objective="expected_value",
+                ltv={"New": 2.0, "DNA_Kit": -5.0},
+                value_currency="GBP",
+                approval=approval,
+                governance_mode="exploratory",
+                **IDENTITY,
             )
 
     def test_expected_value_objective_succeeds_with_complete_coverage(
-        self, meta_with_kit_segment, params_with_kit_segment, approval, plan_with_kit_segment, ref_with_kit_segment,
+        self,
+        meta_with_kit_segment,
+        params_with_kit_segment,
+        approval,
+        plan_with_kit_segment,
+        ref_with_kit_segment,
     ):
         result = optimize_scenario(
-            plan_with_kit_segment, ["2024-01"], ["TV_Brand", "DNA_Ad"], "UK",
-            meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment,
-            objective="expected_value", ltv={"New": 2.0, "DNA_Kit": 50.0},
-            value_currency="GBP", approval=approval,
-            governance_mode="exploratory", **IDENTITY,
+            plan_with_kit_segment,
+            ["2024-01"],
+            ["TV_Brand", "DNA_Ad"],
+            "UK",
+            meta_with_kit_segment,
+            params_with_kit_segment,
+            ref_with_kit_segment,
+            objective="expected_value",
+            ltv={"New": 2.0, "DNA_Kit": 50.0},
+            value_currency="GBP",
+            approval=approval,
+            governance_mode="exploratory",
+            **IDENTITY,
         )
         assert "spend_plan" in result
 
     def test_compare_scenarios_flags_incomplete_value_coverage(
-        self, meta_with_kit_segment, params_with_kit_segment, approval, ref_with_kit_segment,
+        self,
+        meta_with_kit_segment,
+        params_with_kit_segment,
+        approval,
+        ref_with_kit_segment,
     ):
         plan = {"2024-01": {"TV_Brand": 1000.0, "DNA_Ad": 500.0}}
-        predicted = evaluate_scenario(plan, "UK", meta_with_kit_segment, params_with_kit_segment, ref_with_kit_segment, {"New": 2.0}, approval=approval, governance_mode="exploratory", **IDENTITY)
-        compare_df = compare_scenarios([{"name": "Plan A", "market": "UK", "spend_plan": plan, "predicted": predicted}])
+        predicted = evaluate_scenario(
+            plan,
+            "UK",
+            meta_with_kit_segment,
+            params_with_kit_segment,
+            ref_with_kit_segment,
+            {"New": 2.0},
+            approval=approval,
+            governance_mode="exploratory",
+            **IDENTITY,
+        )
+        compare_df = compare_scenarios(
+            [
+                {
+                    "name": "Plan A",
+                    "market": "UK",
+                    "spend_plan": plan,
+                    "predicted": predicted,
+                }
+            ]
+        )
         assert not compare_df["total_value_is_complete"].iloc[0]
 
     @pytest.fixture
     def meta_with_kit_segment(self) -> FHModelMeta:
         return FHModelMeta(
-            markets=["UK"], outcome_ids=["New", "DNA_Kit"], channels=["TV_Brand", "DNA_Ad"],
-            dna_channels=["DNA_Ad"], dna_channel_idx=[1], non_dna_idx=[0],
-            dna_outcome_id="New", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+            markets=["UK"],
+            outcome_ids=["New", "DNA_Kit"],
+            channels=["TV_Brand", "DNA_Ad"],
+            dna_channels=["DNA_Ad"],
+            dna_channel_idx=[1],
+            non_dna_idx=[0],
+            dna_outcome_id="New",
+            dna_lag_weeks=4,
+            unpooled_markets=[],
+            control_names=[],
             direct_dna_outcome_ids=["New", "DNA_Kit"],
         )
 
@@ -1123,17 +2138,34 @@ class TestValueWeightNeverSilentlyDefaultsToOne:
             decay_rate={"TV_Brand": 0.5, "DNA_Ad": 0.5},
             hill_K={"TV_Brand": 1000.0, "DNA_Ad": 500.0},
             hill_S={"TV_Brand": 1.0, "DNA_Ad": 1.0},
-            beta={"New": {"TV_Brand": 0.1, "DNA_Ad": 0.05}, "DNA_Kit": {"TV_Brand": 0.0, "DNA_Ad": 0.2}},
-            pathway_strength=pathway_strength_from_flat({"New": 0.3, "DNA_Kit": 0.0}, "DNA_Ad"), promo_coef={"New": 0.1, "DNA_Kit": 0.1},
-            market_offset={"UK": {"New": 0.0, "DNA_Kit": 0.0}}, intercept={"New": 3.0, "DNA_Kit": 2.0},
+            beta={
+                "New": {"TV_Brand": 0.1, "DNA_Ad": 0.05},
+                "DNA_Kit": {"TV_Brand": 0.0, "DNA_Ad": 0.2},
+            },
+            pathway_strength=pathway_strength_from_flat(
+                {"New": 0.3, "DNA_Kit": 0.0}, "DNA_Ad"
+            ),
+            promo_coef={"New": 0.1, "DNA_Kit": 0.1},
+            market_offset={"UK": {"New": 0.0, "DNA_Kit": 0.0}},
+            intercept={"New": 3.0, "DNA_Kit": 2.0},
             trend_coef={"New": 0.0, "DNA_Kit": 0.0},
             gamma_fourier={"New": np.zeros(6), "DNA_Kit": np.zeros(6)},
-            alpha={"New": 5.0, "DNA_Kit": 5.0}, control_coef={}, outcome_control_coef={},
+            alpha={"New": 5.0, "DNA_Kit": 5.0},
+            control_coef={},
+            outcome_control_coef={},
         )
 
     @pytest.fixture
     def ref_with_kit_segment(self):
-        return {"2024-01": {"trend": 1.0, "fourier": np.zeros(6), "promo": {"New": 0.0, "DNA_Kit": 0.0}, "controls": {}, "outcome_controls": {}}}
+        return {
+            "2024-01": {
+                "trend": 1.0,
+                "fourier": np.zeros(6),
+                "promo": {"New": 0.0, "DNA_Kit": 0.0},
+                "controls": {},
+                "outcome_controls": {},
+            }
+        }
 
     @pytest.fixture
     def plan_with_kit_segment(self):
@@ -1147,15 +2179,22 @@ class TestValueWeightNeverSilentlyDefaultsToOne:
 # against impressions, CRM sends, or event indicators.
 # ---------------------------------------------------------------------------
 
+
 def _paid_activity(
-    activity_id: str, channel: str, *,
+    activity_id: str,
+    channel: str,
+    *,
     planning_eligibility: str = "optimisable",
     approval_status: str = "approved",
 ) -> ActivityDefinition:
     kwargs = dict(
-        activity_id=activity_id, channel=channel, activity_ownership="paid",
-        model_role="intervention", economic_treatment="paid_media_cost",
-        planning_eligibility=planning_eligibility, source="finance",
+        activity_id=activity_id,
+        channel=channel,
+        activity_ownership="paid",
+        model_role="intervention",
+        economic_treatment="paid_media_cost",
+        planning_eligibility=planning_eligibility,
+        source="finance",
         approval_status=approval_status,
     )
     if approval_status == "approved":
@@ -1165,14 +2204,20 @@ def _paid_activity(
 
 
 def _response_only_activity(
-    activity_id: str, channel: str, *,
+    activity_id: str,
+    channel: str,
+    *,
     planning_eligibility: str = "optimisable",
     approval_status: str = "approved",
 ) -> ActivityDefinition:
     kwargs = dict(
-        activity_id=activity_id, channel=channel, activity_ownership="owned",
-        model_role="intervention", economic_treatment="response_only",
-        planning_eligibility=planning_eligibility, source="social team",
+        activity_id=activity_id,
+        channel=channel,
+        activity_ownership="owned",
+        model_role="intervention",
+        economic_treatment="response_only",
+        planning_eligibility=planning_eligibility,
+        source="social team",
         approval_status=approval_status,
     )
     if approval_status == "approved":
@@ -1186,7 +2231,9 @@ class TestOptimizationResource:
         activities = [
             _paid_activity("tv-paid", "TV_Paid"),
             _response_only_activity("organic-social", "Organic_Social"),
-            _paid_activity("tv-committed", "TV_Committed", planning_eligibility="fixed"),
+            _paid_activity(
+                "tv-committed", "TV_Committed", planning_eligibility="fixed"
+            ),
         ]
         resource = monetary_optimization_resource(activities, "UK")
         assert resource.eligible_activity_ids == ("tv-paid",)
@@ -1194,29 +2241,47 @@ class TestOptimizationResource:
 
     def test_optimization_resource_round_trips_through_dict(self):
         resource = OptimizationResource(
-            resource_id="monetary_budget", unit="currency", currency="GBP",
-            eligible_activity_ids=("search-paid", "tv-paid"), total=10000.0,
+            resource_id="monetary_budget",
+            unit="currency",
+            currency="GBP",
+            eligible_activity_ids=("search-paid", "tv-paid"),
+            total=10000.0,
         )
         restored = OptimizationResource.from_dict(resource.to_dict())
         assert restored == resource
 
-    def _mapping(self, activity_id: str, channel: str, currency: str) -> FixedCostPerUnitMapping:
+    def _mapping(
+        self, activity_id: str, channel: str, currency: str
+    ) -> FixedCostPerUnitMapping:
         return FixedCostPerUnitMapping(
-            mapping_id=f"uk-{activity_id}-map", market="UK", channel=channel, currency=currency,
-            cost_context_id="default", source="finance rate card",
-            approval_status="approved", approved_by="finance-owner",
-            approved_at="2026-01-01T10:00:00Z", owner="media-finance",
-            approval_note="approved", last_reviewed_at="2026-01-01", cost_per_media_input=1.0,
+            mapping_id=f"uk-{activity_id}-map",
+            market="UK",
+            channel=channel,
+            currency=currency,
+            cost_context_id="default",
+            source="finance rate card",
+            approval_status="approved",
+            approved_by="finance-owner",
+            approved_at="2026-01-01T10:00:00Z",
+            owner="media-finance",
+            approval_note="approved",
+            last_reviewed_at="2026-01-01",
+            cost_per_media_input=1.0,
         )
 
-    def test_monetary_resource_excludes_activity_with_no_resolvable_mapping_when_registry_given(self):
+    def test_monetary_resource_excludes_activity_with_no_resolvable_mapping_when_registry_given(
+        self,
+    ):
         activities = [
             _paid_activity("tv-paid", "TV_Paid"),
             _paid_activity("search-paid", "Search_Paid"),
         ]
         registry = CostMappingRegistry([self._mapping("tv-paid", "TV_Paid", "GBP")])
         resource = monetary_optimization_resource(
-            activities, "UK", cost_mapping_registry=registry, cost_context_id="default",
+            activities,
+            "UK",
+            cost_mapping_registry=registry,
+            cost_context_id="default",
             cost_as_of_dates=["2026-06-01"],
         )
         # search-paid has no approved effective mapping, so it cannot be
@@ -1229,13 +2294,18 @@ class TestOptimizationResource:
             _paid_activity("tv-paid", "TV_Paid"),
             _paid_activity("search-paid", "Search_Paid"),
         ]
-        registry = CostMappingRegistry([
-            self._mapping("tv-paid", "TV_Paid", "GBP"),
-            self._mapping("search-paid", "Search_Paid", "USD"),
-        ])
+        registry = CostMappingRegistry(
+            [
+                self._mapping("tv-paid", "TV_Paid", "GBP"),
+                self._mapping("search-paid", "Search_Paid", "USD"),
+            ]
+        )
         with pytest.raises(ValueError, match="more than one currency"):
             monetary_optimization_resource(
-                activities, "UK", cost_mapping_registry=registry, cost_context_id="default",
+                activities,
+                "UK",
+                cost_mapping_registry=registry,
+                cost_context_id="default",
                 cost_as_of_dates=["2026-06-01"],
             )
 
@@ -1244,20 +2314,28 @@ class TestOptimizationResource:
             _paid_activity("tv-paid", "TV_Paid"),
             _paid_activity("search-paid", "Search_Paid"),
         ]
-        registry = CostMappingRegistry([
-            self._mapping("tv-paid", "TV_Paid", "GBP"),
-            self._mapping("search-paid", "Search_Paid", "USD"),
-        ])
+        registry = CostMappingRegistry(
+            [
+                self._mapping("tv-paid", "TV_Paid", "GBP"),
+                self._mapping("search-paid", "Search_Paid", "USD"),
+            ]
+        )
         resource = monetary_optimization_resource(
-            activities, "UK", currency="GBP", cost_mapping_registry=registry,
-            cost_context_id="default", cost_as_of_dates=["2026-06-01"],
+            activities,
+            "UK",
+            currency="GBP",
+            cost_mapping_registry=registry,
+            cost_context_id="default",
+            cost_as_of_dates=["2026-06-01"],
         )
         # A USD-denominated decision must never be pooled into a GBP resource,
         # even when explicitly excluded rather than raising.
         assert resource.eligible_activity_ids == ("tv-paid",)
         assert resource.currency == "GBP"
 
-    def test_monetary_resource_scopes_to_given_channels_not_the_whole_governance_registry(self):
+    def test_monetary_resource_scopes_to_given_channels_not_the_whole_governance_registry(
+        self,
+    ):
         activities = [
             _paid_activity("tv-paid", "TV_Paid"),
             # Registered for this market but not part of this optimisation's
@@ -1265,41 +2343,71 @@ class TestOptimizationResource:
             _paid_activity("other-market-channel", "Other_Channel"),
         ]
         resource = monetary_optimization_resource(
-            activities, "UK", channels=["TV_Paid"],
+            activities,
+            "UK",
+            channels=["TV_Paid"],
         )
         assert resource.eligible_activity_ids == ("tv-paid",)
 
-    def test_monetary_resource_excludes_activity_whose_currency_changes_across_plan_periods(self):
+    def test_monetary_resource_excludes_activity_whose_currency_changes_across_plan_periods(
+        self,
+    ):
         # A plan can cross a mapping's effective-date boundary - checking
         # only the first period's date would wrongly conclude this channel
         # is safely GBP for the whole plan.
         activity = _paid_activity("tv-paid", "TV_Paid")
-        registry = CostMappingRegistry([
-            FixedCostPerUnitMapping(
-                mapping_id="uk-tv-paid-jan", market="UK", channel="TV_Paid", currency="GBP",
-                cost_context_id="default", source="finance", approval_status="approved",
-                approved_by="finance-owner", approved_at="2026-01-01T10:00:00Z",
-                owner="media-finance", approval_note="approved", last_reviewed_at="2026-01-01",
-                cost_per_media_input=1.0,
-                effective_period_start="2026-01-01", effective_period_end="2026-02-28",
-            ),
-            FixedCostPerUnitMapping(
-                mapping_id="uk-tv-paid-mar", market="UK", channel="TV_Paid", currency="USD",
-                cost_context_id="default", source="finance", approval_status="approved",
-                approved_by="finance-owner", approved_at="2026-01-01T10:00:00Z",
-                owner="media-finance", approval_note="approved", last_reviewed_at="2026-01-01",
-                cost_per_media_input=1.0,
-                effective_period_start="2026-03-01", effective_period_end="2026-04-30",
-            ),
-        ])
+        registry = CostMappingRegistry(
+            [
+                FixedCostPerUnitMapping(
+                    mapping_id="uk-tv-paid-jan",
+                    market="UK",
+                    channel="TV_Paid",
+                    currency="GBP",
+                    cost_context_id="default",
+                    source="finance",
+                    approval_status="approved",
+                    approved_by="finance-owner",
+                    approved_at="2026-01-01T10:00:00Z",
+                    owner="media-finance",
+                    approval_note="approved",
+                    last_reviewed_at="2026-01-01",
+                    cost_per_media_input=1.0,
+                    effective_period_start="2026-01-01",
+                    effective_period_end="2026-02-28",
+                ),
+                FixedCostPerUnitMapping(
+                    mapping_id="uk-tv-paid-mar",
+                    market="UK",
+                    channel="TV_Paid",
+                    currency="USD",
+                    cost_context_id="default",
+                    source="finance",
+                    approval_status="approved",
+                    approved_by="finance-owner",
+                    approved_at="2026-01-01T10:00:00Z",
+                    owner="media-finance",
+                    approval_note="approved",
+                    last_reviewed_at="2026-01-01",
+                    cost_per_media_input=1.0,
+                    effective_period_start="2026-03-01",
+                    effective_period_end="2026-04-30",
+                ),
+            ]
+        )
         single_period = monetary_optimization_resource(
-            [activity], "UK", cost_mapping_registry=registry, cost_context_id="default",
+            [activity],
+            "UK",
+            cost_mapping_registry=registry,
+            cost_context_id="default",
             cost_as_of_dates=["2026-01-15"],
         )
         assert single_period.eligible_activity_ids == ("tv-paid",)
 
         multi_period = monetary_optimization_resource(
-            [activity], "UK", cost_mapping_registry=registry, cost_context_id="default",
+            [activity],
+            "UK",
+            cost_mapping_registry=registry,
+            cost_context_id="default",
             cost_as_of_dates=["2026-01-15", "2026-03-15"],
         )
         assert multi_period.eligible_activity_ids == ()
@@ -1310,6 +2418,7 @@ class TestOptimizationResource:
 # would reintroduce mixed units, unknown activities, or other invalid state
 # rather than trusting it to already be safe.
 # ---------------------------------------------------------------------------
+
 
 class TestValidateOptimizationResource:
     def _activities(self):
@@ -1325,159 +2434,247 @@ class TestValidateOptimizationResource:
 
     def test_valid_custom_resource_passes(self):
         resource = OptimizationResource(
-            resource_id="custom", unit="currency", currency="GBP",
+            resource_id="custom",
+            unit="currency",
+            currency="GBP",
             eligible_activity_ids=("tv-paid", "search-paid"),
         )
         validate_optimization_resource(
-            resource, self._activities(), "UK", self._channels(),
+            resource,
+            self._activities(),
+            "UK",
+            self._channels(),
         )  # no raise
 
     def test_rejects_unknown_activity_id(self):
         resource = OptimizationResource(
-            resource_id="custom", unit="currency",
+            resource_id="custom",
+            unit="currency",
             eligible_activity_ids=("does-not-exist",),
         )
         with pytest.raises(ValueError, match="unknown activity ID"):
             validate_optimization_resource(
-                resource, self._activities(), "UK", self._channels(),
+                resource,
+                self._activities(),
+                "UK",
+                self._channels(),
             )
 
     def test_rejects_duplicate_activity_ids(self):
         resource = OptimizationResource(
-            resource_id="custom", unit="currency",
+            resource_id="custom",
+            unit="currency",
             eligible_activity_ids=("tv-paid", "tv-paid"),
         )
         with pytest.raises(ValueError, match="duplicate"):
             validate_optimization_resource(
-                resource, self._activities(), "UK", self._channels(),
+                resource,
+                self._activities(),
+                "UK",
+                self._channels(),
             )
 
     def test_rejects_empty_resource(self):
         resource = OptimizationResource(
-            resource_id="custom", unit="currency", eligible_activity_ids=(),
+            resource_id="custom",
+            unit="currency",
+            eligible_activity_ids=(),
         )
         with pytest.raises(ValueError, match="no eligible activities"):
             validate_optimization_resource(
-                resource, self._activities(), "UK", self._channels(),
+                resource,
+                self._activities(),
+                "UK",
+                self._channels(),
             )
 
     def test_rejects_blank_unit(self):
         resource = OptimizationResource(
-            resource_id="custom", unit="", eligible_activity_ids=("tv-paid",),
+            resource_id="custom",
+            unit="",
+            eligible_activity_ids=("tv-paid",),
         )
         with pytest.raises(ValueError, match="blank unit"):
             validate_optimization_resource(
-                resource, self._activities(), "UK", self._channels(),
+                resource,
+                self._activities(),
+                "UK",
+                self._channels(),
             )
 
     def test_rejects_non_cost_bearing_activity_in_a_currency_resource(self):
         resource = OptimizationResource(
-            resource_id="custom", unit="currency",
+            resource_id="custom",
+            unit="currency",
             eligible_activity_ids=("organic-social",),
         )
         with pytest.raises(ValueError, match="non-cost-bearing"):
             validate_optimization_resource(
-                resource, self._activities(), "UK", self._channels(),
+                resource,
+                self._activities(),
+                "UK",
+                self._channels(),
             )
 
     def test_rejects_non_optimisable_activity(self):
         resource = OptimizationResource(
-            resource_id="custom", unit="currency",
+            resource_id="custom",
+            unit="currency",
             eligible_activity_ids=("tv-fixed",),
         )
         with pytest.raises(ValueError, match="not planning_eligibility"):
             validate_optimization_resource(
-                resource, self._activities(), "UK", self._channels(),
+                resource,
+                self._activities(),
+                "UK",
+                self._channels(),
             )
 
     def test_rejects_activity_not_among_this_optimisations_channels(self):
         activities = self._activities() + [_paid_activity("other", "Other_Channel")]
         resource = OptimizationResource(
-            resource_id="custom", unit="currency",
+            resource_id="custom",
+            unit="currency",
             eligible_activity_ids=("tv-paid", "other"),
         )
-        with pytest.raises(ValueError, match="not present among this optimisation's channels"):
+        with pytest.raises(
+            ValueError, match="not present among this optimisation's channels"
+        ):
             validate_optimization_resource(
-                resource, activities, "UK", self._channels(),
+                resource,
+                activities,
+                "UK",
+                self._channels(),
             )
 
     def test_rejects_activity_not_applicable_to_market(self):
         activities = self._activities() + [
             ActivityDefinition(
-                activity_id="au-only-tv", channel="TV_Paid", market="Australia",
-                activity_ownership="paid", model_role="intervention",
-                economic_treatment="paid_media_cost", planning_eligibility="optimisable",
+                activity_id="au-only-tv",
+                channel="TV_Paid",
+                market="Australia",
+                activity_ownership="paid",
+                model_role="intervention",
+                economic_treatment="paid_media_cost",
+                planning_eligibility="optimisable",
                 source="finance",
             )
         ]
         resource = OptimizationResource(
-            resource_id="custom", unit="currency",
+            resource_id="custom",
+            unit="currency",
             eligible_activity_ids=("au-only-tv",),
         )
         with pytest.raises(ValueError, match="not applicable to market"):
             validate_optimization_resource(
-                resource, activities, "UK", self._channels(),
+                resource,
+                activities,
+                "UK",
+                self._channels(),
             )
 
     def test_rejects_mixed_currency_when_registry_given(self):
         activities = self._activities()
-        registry = CostMappingRegistry([
-            FixedCostPerUnitMapping(
-                mapping_id="uk-tv-paid-map", market="UK", channel="TV_Paid", currency="GBP",
-                cost_context_id="default", source="finance", approval_status="approved",
-                approved_by="finance-owner", approved_at="2026-01-01T10:00:00Z",
-                owner="media-finance", approval_note="approved", last_reviewed_at="2026-01-01",
-                cost_per_media_input=1.0,
-            ),
-            FixedCostPerUnitMapping(
-                mapping_id="uk-search-paid-map", market="UK", channel="Search_Paid", currency="USD",
-                cost_context_id="default", source="finance", approval_status="approved",
-                approved_by="finance-owner", approved_at="2026-01-01T10:00:00Z",
-                owner="media-finance", approval_note="approved", last_reviewed_at="2026-01-01",
-                cost_per_media_input=1.0,
-            ),
-        ])
+        registry = CostMappingRegistry(
+            [
+                FixedCostPerUnitMapping(
+                    mapping_id="uk-tv-paid-map",
+                    market="UK",
+                    channel="TV_Paid",
+                    currency="GBP",
+                    cost_context_id="default",
+                    source="finance",
+                    approval_status="approved",
+                    approved_by="finance-owner",
+                    approved_at="2026-01-01T10:00:00Z",
+                    owner="media-finance",
+                    approval_note="approved",
+                    last_reviewed_at="2026-01-01",
+                    cost_per_media_input=1.0,
+                ),
+                FixedCostPerUnitMapping(
+                    mapping_id="uk-search-paid-map",
+                    market="UK",
+                    channel="Search_Paid",
+                    currency="USD",
+                    cost_context_id="default",
+                    source="finance",
+                    approval_status="approved",
+                    approved_by="finance-owner",
+                    approved_at="2026-01-01T10:00:00Z",
+                    owner="media-finance",
+                    approval_note="approved",
+                    last_reviewed_at="2026-01-01",
+                    cost_per_media_input=1.0,
+                ),
+            ]
+        )
         resource = OptimizationResource(
-            resource_id="custom", unit="currency",
+            resource_id="custom",
+            unit="currency",
             eligible_activity_ids=("tv-paid", "search-paid"),
         )
         with pytest.raises(ValueError, match="more than one currency"):
             validate_optimization_resource(
-                resource, activities, "UK", self._channels(),
-                cost_mapping_registry=registry, cost_context_id="default",
+                resource,
+                activities,
+                "UK",
+                self._channels(),
+                cost_mapping_registry=registry,
+                cost_context_id="default",
                 cost_as_of_dates=["2026-06-01"],
             )
 
     def test_rejects_activity_with_no_resolvable_mapping_when_registry_given(self):
         activities = self._activities()
-        registry = CostMappingRegistry([
-            FixedCostPerUnitMapping(
-                mapping_id="uk-tv-paid-map", market="UK", channel="TV_Paid", currency="GBP",
-                cost_context_id="default", source="finance", approval_status="approved",
-                approved_by="finance-owner", approved_at="2026-01-01T10:00:00Z",
-                owner="media-finance", approval_note="approved", last_reviewed_at="2026-01-01",
-                cost_per_media_input=1.0,
-            ),
-        ])
+        registry = CostMappingRegistry(
+            [
+                FixedCostPerUnitMapping(
+                    mapping_id="uk-tv-paid-map",
+                    market="UK",
+                    channel="TV_Paid",
+                    currency="GBP",
+                    cost_context_id="default",
+                    source="finance",
+                    approval_status="approved",
+                    approved_by="finance-owner",
+                    approved_at="2026-01-01T10:00:00Z",
+                    owner="media-finance",
+                    approval_note="approved",
+                    last_reviewed_at="2026-01-01",
+                    cost_per_media_input=1.0,
+                ),
+            ]
+        )
         resource = OptimizationResource(
-            resource_id="custom", unit="currency",
+            resource_id="custom",
+            unit="currency",
             eligible_activity_ids=("tv-paid", "search-paid"),
         )
         with pytest.raises(ValueError, match="no approved, effective cost mapping"):
             validate_optimization_resource(
-                resource, activities, "UK", self._channels(),
-                cost_mapping_registry=registry, cost_context_id="default",
+                resource,
+                activities,
+                "UK",
+                self._channels(),
+                cost_mapping_registry=registry,
+                cost_context_id="default",
                 cost_as_of_dates=["2026-06-01"],
             )
 
     def test_rejects_non_finite_or_negative_total(self):
         resource = OptimizationResource(
-            resource_id="custom", unit="currency",
-            eligible_activity_ids=("tv-paid",), total=-100.0,
+            resource_id="custom",
+            unit="currency",
+            eligible_activity_ids=("tv-paid",),
+            total=-100.0,
         )
         with pytest.raises(ValueError, match="finite and non-negative"):
             validate_optimization_resource(
-                resource, self._activities(), "UK", self._channels(),
+                resource,
+                self._activities(),
+                "UK",
+                self._channels(),
             )
 
     def test_rejects_cost_bearing_activity_in_a_non_currency_resource(self):
@@ -1486,22 +2683,30 @@ class TestValidateOptimizationResource:
         # declared unit - a unit="impressions" resource containing a
         # cost-bearing activity would mislabel and mis-conserve currency.
         resource = OptimizationResource(
-            resource_id="custom", unit="impressions",
+            resource_id="custom",
+            unit="impressions",
             eligible_activity_ids=("tv-paid",),
         )
         with pytest.raises(ValueError, match="optimize_scenario always resolves"):
             validate_optimization_resource(
-                resource, self._activities(), "UK", self._channels(),
+                resource,
+                self._activities(),
+                "UK",
+                self._channels(),
             )
 
     def test_rejects_invalid_governance_mode(self):
         resource = OptimizationResource(
-            resource_id="custom", unit="currency",
+            resource_id="custom",
+            unit="currency",
             eligible_activity_ids=("tv-paid",),
         )
         with pytest.raises(ValueError, match="governance_mode"):
             validate_optimization_resource(
-                resource, self._activities(), "UK", self._channels(),
+                resource,
+                self._activities(),
+                "UK",
+                self._channels(),
                 governance_mode="bogus",
             )
 
@@ -1510,12 +2715,16 @@ class TestValidateOptimizationResource:
             _paid_activity("tv-paid", "TV_Paid", approval_status="draft"),
         ]
         resource = OptimizationResource(
-            resource_id="custom", unit="currency",
+            resource_id="custom",
+            unit="currency",
             eligible_activity_ids=("tv-paid",),
         )
         with pytest.raises(ValueError, match="official mode"):
             validate_optimization_resource(
-                resource, draft_activities, "UK", ["TV_Paid"],
+                resource,
+                draft_activities,
+                "UK",
+                ["TV_Paid"],
             )
 
     def test_exploratory_mode_accepts_unapproved_activity(self):
@@ -1523,25 +2732,35 @@ class TestValidateOptimizationResource:
             _paid_activity("tv-paid", "TV_Paid", approval_status="draft"),
         ]
         resource = OptimizationResource(
-            resource_id="custom", unit="currency",
+            resource_id="custom",
+            unit="currency",
             eligible_activity_ids=("tv-paid",),
         )
         validate_optimization_resource(
-            resource, draft_activities, "UK", ["TV_Paid"],
+            resource,
+            draft_activities,
+            "UK",
+            ["TV_Paid"],
             governance_mode="exploratory",
         )  # no raise
 
     def test_official_mode_accepts_approved_activity(self):
         # self._activities() defaults every activity to approved.
         resource = OptimizationResource(
-            resource_id="custom", unit="currency",
+            resource_id="custom",
+            unit="currency",
             eligible_activity_ids=("tv-paid",),
         )
         validate_optimization_resource(
-            resource, self._activities(), "UK", self._channels(),
+            resource,
+            self._activities(),
+            "UK",
+            self._channels(),
         )  # no raise
 
-    def test_official_mode_rejects_unapproved_fixed_activity_even_though_not_in_resource(self):
+    def test_official_mode_rejects_unapproved_fixed_activity_even_though_not_in_resource(
+        self,
+    ):
         # A fixed activity is not a resource member (it never moves), but
         # it's still part of the plan optimize_scenario predicts against -
         # pinned to its current value, not removed. Its governance must be
@@ -1549,74 +2768,132 @@ class TestValidateOptimizationResource:
         activities = [
             _paid_activity("tv-paid", "TV_Paid"),
             _paid_activity(
-                "tv-fixed", "TV_Fixed", planning_eligibility="fixed",
+                "tv-fixed",
+                "TV_Fixed",
+                planning_eligibility="fixed",
                 approval_status="draft",
             ),
         ]
         resource = OptimizationResource(
-            resource_id="custom", unit="currency",
+            resource_id="custom",
+            unit="currency",
             eligible_activity_ids=("tv-paid",),
         )
         with pytest.raises(ValueError, match="official mode"):
             validate_optimization_resource(
-                resource, activities, "UK", ["TV_Paid", "TV_Fixed"],
+                resource,
+                activities,
+                "UK",
+                ["TV_Paid", "TV_Fixed"],
             )
         # Exploratory mode is still the deliberate escape hatch.
         validate_optimization_resource(
-            resource, activities, "UK", ["TV_Paid", "TV_Fixed"],
+            resource,
+            activities,
+            "UK",
+            ["TV_Paid", "TV_Fixed"],
             governance_mode="exploratory",
         )  # no raise
 
 
 class TestOptimizerDimensionalCorrectness:
-    def test_optimizer_never_trades_currency_against_a_response_only_quantity(self, approval):
+    def test_optimizer_never_trades_currency_against_a_response_only_quantity(
+        self, approval
+    ):
         meta = FHModelMeta(
-            markets=["UK"], outcome_ids=["New"],
+            markets=["UK"],
+            outcome_ids=["New"],
             channels=["TV_Paid", "Search_Paid", "Organic_Social"],
-            dna_channels=[], dna_channel_idx=[], non_dna_idx=[0, 1, 2],
-            dna_outcome_id="New", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+            dna_channels=[],
+            dna_channel_idx=[],
+            non_dna_idx=[0, 1, 2],
+            dna_outcome_id="New",
+            dna_lag_weeks=4,
+            unpooled_markets=[],
+            control_names=[],
         )
         params = FHPosteriorParams(
             decay_rate={"TV_Paid": 0.5, "Search_Paid": 0.3, "Organic_Social": 0.4},
             hill_K={"TV_Paid": 2000.0, "Search_Paid": 500.0, "Organic_Social": 400.0},
             hill_S={"TV_Paid": 1.0, "Search_Paid": 1.0, "Organic_Social": 1.0},
             beta={"New": {"TV_Paid": 0.1, "Search_Paid": 0.3, "Organic_Social": 0.2}},
-            pathway_strength={}, promo_coef={"New": 0.1},
-            market_offset={"UK": {"New": 0.0}}, intercept={"New": 3.0}, trend_coef={"New": 0.0},
-            gamma_fourier={"New": np.zeros(6)}, alpha={"New": 5.0}, control_coef={}, outcome_control_coef={},
+            pathway_strength={},
+            promo_coef={"New": 0.1},
+            market_offset={"UK": {"New": 0.0}},
+            intercept={"New": 3.0},
+            trend_coef={"New": 0.0},
+            gamma_fourier={"New": np.zeros(6)},
+            alpha={"New": 5.0},
+            control_coef={},
+            outcome_control_coef={},
         )
         reference_context = {
-            "2024-01": {"trend": 1.0, "fourier": np.zeros(6), "promo": {"New": 0.0}, "controls": {}, "outcome_controls": {}}
+            "2024-01": {
+                "trend": 1.0,
+                "fourier": np.zeros(6),
+                "promo": {"New": 0.0},
+                "controls": {},
+                "outcome_controls": {},
+            }
         }
         activities = [
             _paid_activity("tv-paid", "TV_Paid"),
             _paid_activity("search-paid", "Search_Paid"),
             _response_only_activity("organic-social", "Organic_Social"),
         ]
-        current_plan = {"2024-01": {"TV_Paid": 800.0, "Search_Paid": 200.0, "Organic_Social": 300.0}}
+        current_plan = {
+            "2024-01": {"TV_Paid": 800.0, "Search_Paid": 200.0, "Organic_Social": 300.0}
+        }
         # Cost-bearing activities require an approved, effective cost mapping
         # before `evaluate_scenario` will resolve their monetary decisions -
         # identity mappings here so spend and media input are numerically equal.
-        cost_registry = CostMappingRegistry([
-            FixedCostPerUnitMapping(
-                mapping_id="uk-tv-paid-map", market="UK", channel="TV_Paid", currency="GBP",
-                cost_context_id="default", source="finance rate card",
-                approval_status="approved", approved_by="finance-owner",
-                approved_at="2026-01-01T10:00:00Z", owner="media-finance",
-                approval_note="approved", last_reviewed_at="2026-01-01", cost_per_media_input=1.0,
-            ),
-            FixedCostPerUnitMapping(
-                mapping_id="uk-search-paid-map", market="UK", channel="Search_Paid", currency="GBP",
-                cost_context_id="default", source="finance rate card",
-                approval_status="approved", approved_by="finance-owner",
-                approved_at="2026-01-01T10:00:00Z", owner="media-finance",
-                approval_note="approved", last_reviewed_at="2026-01-01", cost_per_media_input=1.0,
-            ),
-        ])
+        cost_registry = CostMappingRegistry(
+            [
+                FixedCostPerUnitMapping(
+                    mapping_id="uk-tv-paid-map",
+                    market="UK",
+                    channel="TV_Paid",
+                    currency="GBP",
+                    cost_context_id="default",
+                    source="finance rate card",
+                    approval_status="approved",
+                    approved_by="finance-owner",
+                    approved_at="2026-01-01T10:00:00Z",
+                    owner="media-finance",
+                    approval_note="approved",
+                    last_reviewed_at="2026-01-01",
+                    cost_per_media_input=1.0,
+                ),
+                FixedCostPerUnitMapping(
+                    mapping_id="uk-search-paid-map",
+                    market="UK",
+                    channel="Search_Paid",
+                    currency="GBP",
+                    cost_context_id="default",
+                    source="finance rate card",
+                    approval_status="approved",
+                    approved_by="finance-owner",
+                    approved_at="2026-01-01T10:00:00Z",
+                    owner="media-finance",
+                    approval_note="approved",
+                    last_reviewed_at="2026-01-01",
+                    cost_per_media_input=1.0,
+                ),
+            ]
+        )
         result = optimize_scenario(
-            current_plan, ["2024-01"], meta.channels, "UK", meta, params, reference_context,
-            objective="fh_gsa", activity_definitions=activities, approval=approval,
-            cost_mapping_registry=cost_registry, cost_context_id="default",
+            current_plan,
+            ["2024-01"],
+            meta.channels,
+            "UK",
+            meta,
+            params,
+            reference_context,
+            objective="fh_gsa",
+            activity_definitions=activities,
+            approval=approval,
+            cost_mapping_registry=cost_registry,
+            cost_context_id="default",
             cost_as_of_by_month={"2024-01": "2024-01-01"},
             # This test exercises resource-eligibility dispatch (currency
             # vs. response-only), not outcome governance - `meta` has no
@@ -1632,7 +2909,8 @@ class TestOptimizerDimensionalCorrectness:
         # The monetary resource's own conserved total is unchanged.
         assert optimized["TV_Paid"] + optimized["Search_Paid"] == pytest.approx(1000.0)
         assert sorted(result["optimization_resource"]["eligible_activity_ids"]) == [
-            "search-paid", "tv-paid",
+            "search-paid",
+            "tv-paid",
         ]
 
     def test_month_total_constraint_defaults_to_every_channel_without_a_resource(self):
@@ -1641,7 +2919,10 @@ class TestOptimizerDimensionalCorrectness:
         current_spend = np.array([800.0, 300.0])
         constraint = SpendConstraint(kind="month_total", month="2024-01")
         _, linear_constraints = build_bounds_and_constraints(
-            months, channels, current_spend, [constraint],
+            months,
+            channels,
+            current_spend,
+            [constraint],
         )
         assert linear_constraints[0].lb == pytest.approx(1100.0)
         assert linear_constraints[0].ub == pytest.approx(1100.0)
@@ -1652,51 +2933,103 @@ class TestOptimizerDimensionalCorrectness:
         current_spend = np.array([800.0, 300.0])
         constraint = SpendConstraint(kind="month_total", month="2024-01")
         _, linear_constraints = build_bounds_and_constraints(
-            months, channels, current_spend, [constraint], resource_channels=["TV_Paid"],
+            months,
+            channels,
+            current_spend,
+            [constraint],
+            resource_channels=["TV_Paid"],
         )
         assert linear_constraints[0].lb == pytest.approx(800.0)
         assert linear_constraints[0].ub == pytest.approx(800.0)
 
-    def _single_channel_registry(self, channel: str, activity_id: str) -> CostMappingRegistry:
-        return CostMappingRegistry([
-            FixedCostPerUnitMapping(
-                mapping_id=f"uk-{activity_id}-map", market="UK", channel=channel, currency="GBP",
-                cost_context_id="default", source="finance rate card",
-                approval_status="approved", approved_by="finance-owner",
-                approved_at="2026-01-01T10:00:00Z", owner="media-finance",
-                approval_note="approved", last_reviewed_at="2026-01-01", cost_per_media_input=1.0,
-            ),
-        ])
+    def _single_channel_registry(
+        self, channel: str, activity_id: str
+    ) -> CostMappingRegistry:
+        return CostMappingRegistry(
+            [
+                FixedCostPerUnitMapping(
+                    mapping_id=f"uk-{activity_id}-map",
+                    market="UK",
+                    channel=channel,
+                    currency="GBP",
+                    cost_context_id="default",
+                    source="finance rate card",
+                    approval_status="approved",
+                    approved_by="finance-owner",
+                    approved_at="2026-01-01T10:00:00Z",
+                    owner="media-finance",
+                    approval_note="approved",
+                    last_reviewed_at="2026-01-01",
+                    cost_per_media_input=1.0,
+                ),
+            ]
+        )
 
-    def test_declared_resource_total_is_conserved_instead_of_the_current_plan_total(self, approval):
+    def test_declared_resource_total_is_conserved_instead_of_the_current_plan_total(
+        self, approval
+    ):
         # PR G2A.6b workstream 1: OptimizationResource.total, when given,
         # must be the conserved target - not silently ignored in favour of
         # the current plan's sum.
         meta = FHModelMeta(
-            markets=["UK"], outcome_ids=["New"], channels=["TV_Paid"],
-            dna_channels=[], dna_channel_idx=[], non_dna_idx=[0],
-            dna_outcome_id="New", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+            markets=["UK"],
+            outcome_ids=["New"],
+            channels=["TV_Paid"],
+            dna_channels=[],
+            dna_channel_idx=[],
+            non_dna_idx=[0],
+            dna_outcome_id="New",
+            dna_lag_weeks=4,
+            unpooled_markets=[],
+            control_names=[],
         )
         params = FHPosteriorParams(
-            decay_rate={"TV_Paid": 0.5}, hill_K={"TV_Paid": 5000.0}, hill_S={"TV_Paid": 1.0},
-            beta={"New": {"TV_Paid": 0.1}}, pathway_strength={}, promo_coef={"New": 0.1},
-            market_offset={"UK": {"New": 0.0}}, intercept={"New": 3.0}, trend_coef={"New": 0.0},
-            gamma_fourier={"New": np.zeros(6)}, alpha={"New": 5.0}, control_coef={}, outcome_control_coef={},
+            decay_rate={"TV_Paid": 0.5},
+            hill_K={"TV_Paid": 5000.0},
+            hill_S={"TV_Paid": 1.0},
+            beta={"New": {"TV_Paid": 0.1}},
+            pathway_strength={},
+            promo_coef={"New": 0.1},
+            market_offset={"UK": {"New": 0.0}},
+            intercept={"New": 3.0},
+            trend_coef={"New": 0.0},
+            gamma_fourier={"New": np.zeros(6)},
+            alpha={"New": 5.0},
+            control_coef={},
+            outcome_control_coef={},
         )
         reference_context = {
-            "2024-01": {"trend": 1.0, "fourier": np.zeros(6), "promo": {"New": 0.0}, "controls": {}, "outcome_controls": {}}
+            "2024-01": {
+                "trend": 1.0,
+                "fourier": np.zeros(6),
+                "promo": {"New": 0.0},
+                "controls": {},
+                "outcome_controls": {},
+            }
         }
         activity = _paid_activity("tv-paid", "TV_Paid")
         current_plan = {"2024-01": {"TV_Paid": 1000.0}}
         resource = OptimizationResource(
-            resource_id="declared_budget", unit="currency", currency="GBP",
-            eligible_activity_ids=("tv-paid",), total=2500.0,
+            resource_id="declared_budget",
+            unit="currency",
+            currency="GBP",
+            eligible_activity_ids=("tv-paid",),
+            total=2500.0,
         )
         result = optimize_scenario(
-            current_plan, ["2024-01"], meta.channels, "UK", meta, params, reference_context,
-            objective="fh_gsa", activity_definitions=[activity], approval=approval,
+            current_plan,
+            ["2024-01"],
+            meta.channels,
+            "UK",
+            meta,
+            params,
+            reference_context,
+            objective="fh_gsa",
+            activity_definitions=[activity],
+            approval=approval,
             cost_mapping_registry=self._single_channel_registry("TV_Paid", "tv-paid"),
-            cost_context_id="default", cost_as_of_by_month={"2024-01": "2024-01-01"},
+            cost_context_id="default",
+            cost_as_of_by_month={"2024-01": "2024-01-01"},
             optimization_resource=resource,
             governance_mode="exploratory",
             **IDENTITY,
@@ -1705,28 +3038,61 @@ class TestOptimizerDimensionalCorrectness:
         assert result["reference_resource_total"] == pytest.approx(1000.0)
         assert result["optimisation_resource_total"] == pytest.approx(2500.0)
 
-    def test_reference_and_target_totals_agree_when_no_declared_total_is_given(self, approval):
+    def test_reference_and_target_totals_agree_when_no_declared_total_is_given(
+        self, approval
+    ):
         meta = FHModelMeta(
-            markets=["UK"], outcome_ids=["New"], channels=["TV_Paid"],
-            dna_channels=[], dna_channel_idx=[], non_dna_idx=[0],
-            dna_outcome_id="New", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+            markets=["UK"],
+            outcome_ids=["New"],
+            channels=["TV_Paid"],
+            dna_channels=[],
+            dna_channel_idx=[],
+            non_dna_idx=[0],
+            dna_outcome_id="New",
+            dna_lag_weeks=4,
+            unpooled_markets=[],
+            control_names=[],
         )
         params = FHPosteriorParams(
-            decay_rate={"TV_Paid": 0.5}, hill_K={"TV_Paid": 5000.0}, hill_S={"TV_Paid": 1.0},
-            beta={"New": {"TV_Paid": 0.1}}, pathway_strength={}, promo_coef={"New": 0.1},
-            market_offset={"UK": {"New": 0.0}}, intercept={"New": 3.0}, trend_coef={"New": 0.0},
-            gamma_fourier={"New": np.zeros(6)}, alpha={"New": 5.0}, control_coef={}, outcome_control_coef={},
+            decay_rate={"TV_Paid": 0.5},
+            hill_K={"TV_Paid": 5000.0},
+            hill_S={"TV_Paid": 1.0},
+            beta={"New": {"TV_Paid": 0.1}},
+            pathway_strength={},
+            promo_coef={"New": 0.1},
+            market_offset={"UK": {"New": 0.0}},
+            intercept={"New": 3.0},
+            trend_coef={"New": 0.0},
+            gamma_fourier={"New": np.zeros(6)},
+            alpha={"New": 5.0},
+            control_coef={},
+            outcome_control_coef={},
         )
         reference_context = {
-            "2024-01": {"trend": 1.0, "fourier": np.zeros(6), "promo": {"New": 0.0}, "controls": {}, "outcome_controls": {}}
+            "2024-01": {
+                "trend": 1.0,
+                "fourier": np.zeros(6),
+                "promo": {"New": 0.0},
+                "controls": {},
+                "outcome_controls": {},
+            }
         }
         activity = _paid_activity("tv-paid", "TV_Paid")
         current_plan = {"2024-01": {"TV_Paid": 1000.0}}
         result = optimize_scenario(
-            current_plan, ["2024-01"], meta.channels, "UK", meta, params, reference_context,
-            objective="fh_gsa", activity_definitions=[activity], approval=approval,
+            current_plan,
+            ["2024-01"],
+            meta.channels,
+            "UK",
+            meta,
+            params,
+            reference_context,
+            objective="fh_gsa",
+            activity_definitions=[activity],
+            approval=approval,
             cost_mapping_registry=self._single_channel_registry("TV_Paid", "tv-paid"),
-            cost_context_id="default", cost_as_of_by_month={"2024-01": "2024-01-01"},
+            cost_context_id="default",
+            cost_as_of_by_month={"2024-01": "2024-01-01"},
             governance_mode="exploratory",
             **IDENTITY,
         )
@@ -1734,7 +3100,9 @@ class TestOptimizerDimensionalCorrectness:
         assert result["optimisation_resource_total"] == pytest.approx(1000.0)
         assert result["spend_plan"]["2024-01"]["TV_Paid"] == pytest.approx(1000.0)
 
-    def test_optimize_scenario_blocks_unapproved_activity_governance_in_official_mode(self, approval):
+    def test_optimize_scenario_blocks_unapproved_activity_governance_in_official_mode(
+        self, approval
+    ):
         # PR G2A.6c workstream F: a draft (default) activity must not drive
         # an official optimisation, on top of the pre-existing structural
         # checks (planning_eligibility, currency purity, etc).
@@ -1744,52 +3112,104 @@ class TestOptimizerDimensionalCorrectness:
         # official-mode OUTCOME governance (REQ-OUT-002) must pass cleanly,
         # leaving the draft ACTIVITY as the only thing that blocks.
         outcome_def = OutcomeDefinition(
-            outcome_id="New", product=FAMILY_HISTORY, segment="New", metric="GSA",
-            metric_key=METRIC_KEY_FH_GSA, source_column="GSA_New", unit="GSA",
-            aggregation_type="count", event_definition="A new subscriber",
-            date_basis="event_date", cohort_or_attribution_basis="signup_cohort",
+            outcome_id="New",
+            product=FAMILY_HISTORY,
+            segment="New",
+            metric="GSA",
+            metric_key=METRIC_KEY_FH_GSA,
+            source_column="GSA_New",
+            unit="GSA",
+            aggregation_type="count",
+            event_definition="A new subscriber",
+            date_basis="event_date",
+            cohort_or_attribution_basis="signup_cohort",
             completeness_or_maturity_policy="Mature after 12 weeks",
             exclusions="Excludes internal/test accounts",
-            reconciliation_source="Finance report", business_owner="Analytics",
+            reconciliation_source="Finance report",
+            business_owner="Analytics",
             definition_version="1.0",
         )
         outcome_approval = OutcomeApproval(
-            approval_id="apr-new-gsa", outcome_id="New",
+            approval_id="apr-new-gsa",
+            outcome_id="New",
             definition_fingerprint=fingerprint_outcome_definition(outcome_def),
-            status="approved", allowed_uses=("optimisation",),
-            approved_by="Jane Analyst", approved_at="2026-01-01",
+            status="approved",
+            allowed_uses=("optimisation",),
+            approved_by="Jane Analyst",
+            approved_at="2026-01-01",
         )
         meta = FHModelMeta(
-            markets=["UK"], outcome_ids=["New"], channels=["TV_Paid"],
-            dna_channels=[], dna_channel_idx=[], non_dna_idx=[0],
-            dna_outcome_id="New", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+            markets=["UK"],
+            outcome_ids=["New"],
+            channels=["TV_Paid"],
+            dna_channels=[],
+            dna_channel_idx=[],
+            non_dna_idx=[0],
+            dna_outcome_id="New",
+            dna_lag_weeks=4,
+            unpooled_markets=[],
+            control_names=[],
             outcome_catalogue_at_fit=[outcome_def],
         )
         params = FHPosteriorParams(
-            decay_rate={"TV_Paid": 0.5}, hill_K={"TV_Paid": 2000.0}, hill_S={"TV_Paid": 1.0},
-            beta={"New": {"TV_Paid": 0.1}}, pathway_strength={}, promo_coef={"New": 0.1},
-            market_offset={"UK": {"New": 0.0}}, intercept={"New": 3.0}, trend_coef={"New": 0.0},
-            gamma_fourier={"New": np.zeros(6)}, alpha={"New": 5.0}, control_coef={}, outcome_control_coef={},
+            decay_rate={"TV_Paid": 0.5},
+            hill_K={"TV_Paid": 2000.0},
+            hill_S={"TV_Paid": 1.0},
+            beta={"New": {"TV_Paid": 0.1}},
+            pathway_strength={},
+            promo_coef={"New": 0.1},
+            market_offset={"UK": {"New": 0.0}},
+            intercept={"New": 3.0},
+            trend_coef={"New": 0.0},
+            gamma_fourier={"New": np.zeros(6)},
+            alpha={"New": 5.0},
+            control_coef={},
+            outcome_control_coef={},
         )
         reference_context = {
-            "2024-01": {"trend": 1.0, "fourier": np.zeros(6), "promo": {"New": 0.0}, "controls": {}, "outcome_controls": {}}
+            "2024-01": {
+                "trend": 1.0,
+                "fourier": np.zeros(6),
+                "promo": {"New": 0.0},
+                "controls": {},
+                "outcome_controls": {},
+            }
         }
         draft_activity = _paid_activity("tv-paid", "TV_Paid", approval_status="draft")
-        registry = CostMappingRegistry([
-            FixedCostPerUnitMapping(
-                mapping_id="uk-tv-paid-gov-map", market="UK", channel="TV_Paid", currency="GBP",
-                cost_context_id="default", source="finance", approval_status="approved",
-                approved_by="finance-owner", approved_at="2026-01-01T10:00:00Z",
-                owner="media-finance", approval_note="approved", last_reviewed_at="2026-01-01",
-                cost_per_media_input=1.0,
-            ),
-        ])
+        registry = CostMappingRegistry(
+            [
+                FixedCostPerUnitMapping(
+                    mapping_id="uk-tv-paid-gov-map",
+                    market="UK",
+                    channel="TV_Paid",
+                    currency="GBP",
+                    cost_context_id="default",
+                    source="finance",
+                    approval_status="approved",
+                    approved_by="finance-owner",
+                    approved_at="2026-01-01T10:00:00Z",
+                    owner="media-finance",
+                    approval_note="approved",
+                    last_reviewed_at="2026-01-01",
+                    cost_per_media_input=1.0,
+                ),
+            ]
+        )
         plan = {"2024-01": {"TV_Paid": 800.0}}
         with pytest.raises(ValueError, match="official mode"):
             optimize_scenario(
-                plan, ["2024-01"], ["TV_Paid"], "UK", meta, params, reference_context,
-                objective="fh_gsa", activity_definitions=[draft_activity], approval=approval,
-                cost_mapping_registry=registry, cost_context_id="default",
+                plan,
+                ["2024-01"],
+                ["TV_Paid"],
+                "UK",
+                meta,
+                params,
+                reference_context,
+                objective="fh_gsa",
+                activity_definitions=[draft_activity],
+                approval=approval,
+                cost_mapping_registry=registry,
+                cost_context_id="default",
                 cost_as_of_by_month={"2024-01": "2024-01-01"},
                 outcome_approvals=[outcome_approval],
                 artefact_kind="unconstrained_benchmark",
@@ -1797,9 +3217,18 @@ class TestOptimizerDimensionalCorrectness:
             )
         # Exploratory mode is a deliberate, visibly-labelled escape hatch.
         result = optimize_scenario(
-            plan, ["2024-01"], ["TV_Paid"], "UK", meta, params, reference_context,
-            objective="fh_gsa", activity_definitions=[draft_activity], approval=approval,
-            cost_mapping_registry=registry, cost_context_id="default",
+            plan,
+            ["2024-01"],
+            ["TV_Paid"],
+            "UK",
+            meta,
+            params,
+            reference_context,
+            objective="fh_gsa",
+            activity_definitions=[draft_activity],
+            approval=approval,
+            cost_mapping_registry=registry,
+            cost_context_id="default",
             cost_as_of_by_month={"2024-01": "2024-01-01"},
             governance_mode="exploratory",
             **IDENTITY,
@@ -1814,13 +3243,21 @@ class TestOptimizerDimensionalCorrectness:
 # (`X_media`), then reinterpreted cost-bearing columns as currency.
 # ---------------------------------------------------------------------------
 
+
 def _approved_fixed_cost_mapping(**overrides) -> FixedCostPerUnitMapping:
     values = dict(
-        mapping_id="uk-tv-map", market="UK", channel="TV_Paid", currency="GBP",
-        cost_context_id="default", source="finance rate card",
-        approval_status="approved", approved_by="finance-owner",
-        approved_at="2026-01-01T10:00:00Z", owner="media-finance",
-        approval_note="approved net media rate", last_reviewed_at="2026-01-01",
+        mapping_id="uk-tv-map",
+        market="UK",
+        channel="TV_Paid",
+        currency="GBP",
+        cost_context_id="default",
+        source="finance rate card",
+        approval_status="approved",
+        approved_by="finance-owner",
+        approved_at="2026-01-01T10:00:00Z",
+        owner="media-finance",
+        approval_note="approved net media rate",
+        last_reviewed_at="2026-01-01",
         cost_per_media_input=2.0,
     )
     values.update(overrides)
@@ -1833,8 +3270,11 @@ class TestSeedMonetaryAndQuantityDefaults:
         registry = CostMappingRegistry([_approved_fixed_cost_mapping()])
         defaults, unmapped = seed_monetary_and_quantity_defaults(
             avg_weekly_media_input={"TV_Paid": 100.0},
-            activity_definitions=[activity], market="UK",
-            cost_mapping_registry=registry, cost_context_id="default", as_of="2026-06-01",
+            activity_definitions=[activity],
+            market="UK",
+            cost_mapping_registry=registry,
+            cost_context_id="default",
+            as_of="2026-06-01",
         )
         assert defaults["TV_Paid"] == pytest.approx(100.0 * 2.0 * WEEKS_PER_MONTH)
         assert unmapped == []
@@ -1843,8 +3283,11 @@ class TestSeedMonetaryAndQuantityDefaults:
         activity = _paid_activity("tv-paid", "TV_Paid")
         defaults, unmapped = seed_monetary_and_quantity_defaults(
             avg_weekly_media_input={"TV_Paid": 100.0},
-            activity_definitions=[activity], market="UK",
-            cost_mapping_registry=None, cost_context_id="default", as_of="2026-06-01",
+            activity_definitions=[activity],
+            market="UK",
+            cost_mapping_registry=None,
+            cost_context_id="default",
+            as_of="2026-06-01",
         )
         assert defaults["TV_Paid"] == 0.0
         assert unmapped == ["TV_Paid"]
@@ -1853,8 +3296,11 @@ class TestSeedMonetaryAndQuantityDefaults:
         activity = _response_only_activity("organic-social", "Organic_Social")
         defaults, unmapped = seed_monetary_and_quantity_defaults(
             avg_weekly_media_input={"Organic_Social": 40.0},
-            activity_definitions=[activity], market="UK",
-            cost_mapping_registry=None, cost_context_id="default", as_of="2026-06-01",
+            activity_definitions=[activity],
+            market="UK",
+            cost_mapping_registry=None,
+            cost_context_id="default",
+            as_of="2026-06-01",
         )
         assert defaults["Organic_Social"] == pytest.approx(40.0 * WEEKS_PER_MONTH)
         assert unmapped == []
@@ -1862,8 +3308,11 @@ class TestSeedMonetaryAndQuantityDefaults:
     def test_legacy_ungoverned_channel_seeds_raw_model_input(self):
         defaults, unmapped = seed_monetary_and_quantity_defaults(
             avg_weekly_media_input={"TV_Brand": 250.0},
-            activity_definitions=[], market="UK",
-            cost_mapping_registry=None, cost_context_id="default", as_of="2026-06-01",
+            activity_definitions=[],
+            market="UK",
+            cost_mapping_registry=None,
+            cost_context_id="default",
+            as_of="2026-06-01",
         )
         assert defaults["TV_Brand"] == pytest.approx(250.0 * WEEKS_PER_MONTH)
         assert unmapped == []
@@ -1874,49 +3323,69 @@ class TestSeedMonetaryAndQuantityDefaults:
         weekly_media_input = 100.0
         defaults, _ = seed_monetary_and_quantity_defaults(
             avg_weekly_media_input={"TV_Paid": weekly_media_input},
-            activity_definitions=[activity], market="UK",
-            cost_mapping_registry=registry, cost_context_id="default", as_of="2026-06-01",
+            activity_definitions=[activity],
+            market="UK",
+            cost_mapping_registry=registry,
+            cost_context_id="default",
+            as_of="2026-06-01",
         )
         model_input, _, _ = resolve_scenario_plan(
             ScenarioPlan(
-                monetary_decisions_by_period={"2026-06": {"tv-paid": defaults["TV_Paid"]}},
+                monetary_decisions_by_period={
+                    "2026-06": {"tv-paid": defaults["TV_Paid"]}
+                },
                 activity_quantity_assumptions_by_period={},
             ),
-            market="UK", activity_definitions=[activity],
-            cost_mapping_registry=registry, cost_context_id="default",
+            market="UK",
+            activity_definitions=[activity],
+            cost_mapping_registry=registry,
+            cost_context_id="default",
             cost_as_of_by_period={"2026-06": "2026-06-01"},
         )
         assert model_input["2026-06"]["TV_Paid"] == pytest.approx(
             weekly_media_input * WEEKS_PER_MONTH
         )
 
-    def test_seed_applies_a_nonlinear_mapping_to_the_monthly_quantity_not_the_weekly_one(self):
+    def test_seed_applies_a_nonlinear_mapping_to_the_monthly_quantity_not_the_weekly_one(
+        self,
+    ):
         # A linear mapping can't distinguish "convert weekly, then scale" from
         # "scale, then convert" - only a mapping with nonlinear marginal cost
         # (piecewise-linear knots) can catch scaling before vs. after conversion.
         activity = _paid_activity("tv-paid", "TV_Paid")
         mapping = PiecewiseLinearCostMapping(
-            mapping_id="uk-tv-piecewise", market="UK", channel="TV_Paid", currency="GBP",
-            cost_context_id="default", source="finance rate card",
-            approval_status="approved", approved_by="finance-owner",
-            approved_at="2026-01-01T10:00:00Z", owner="media-finance",
-            approval_note="approved", last_reviewed_at="2026-01-01",
-            spend_knots=(0.0, 150.0, 900.0), media_input_knots=(0.0, 100.0, 1000.0),
+            mapping_id="uk-tv-piecewise",
+            market="UK",
+            channel="TV_Paid",
+            currency="GBP",
+            cost_context_id="default",
+            source="finance rate card",
+            approval_status="approved",
+            approved_by="finance-owner",
+            approved_at="2026-01-01T10:00:00Z",
+            owner="media-finance",
+            approval_note="approved",
+            last_reviewed_at="2026-01-01",
+            spend_knots=(0.0, 150.0, 900.0),
+            media_input_knots=(0.0, 100.0, 1000.0),
             allow_extrapolation=True,
         )
         registry = CostMappingRegistry([mapping])
         weekly_media_input = 100.0
         defaults, _ = seed_monetary_and_quantity_defaults(
             avg_weekly_media_input={"TV_Paid": weekly_media_input},
-            activity_definitions=[activity], market="UK",
-            cost_mapping_registry=registry, cost_context_id="default", as_of="2026-06-01",
+            activity_definitions=[activity],
+            market="UK",
+            cost_mapping_registry=registry,
+            cost_context_id="default",
+            as_of="2026-06-01",
         )
         correct_spend = float(
             mapping.media_input_to_spend(weekly_media_input * WEEKS_PER_MONTH)
         )
-        scale_before_convert_bug = float(
-            mapping.media_input_to_spend(weekly_media_input)
-        ) * WEEKS_PER_MONTH
+        scale_before_convert_bug = (
+            float(mapping.media_input_to_spend(weekly_media_input)) * WEEKS_PER_MONTH
+        )
         assert defaults["TV_Paid"] == pytest.approx(correct_spend)
         assert abs(defaults["TV_Paid"] - scale_before_convert_bug) > 1.0
 
@@ -1931,19 +3400,38 @@ class TestSeedMonetaryAndQuantityDefaults:
 # they cannot reintroduce that defect.
 # ---------------------------------------------------------------------------
 
+
 class TestGovernedEconomicsSummary:
-    def test_monthly_economics_table_selects_only_governed_columns_and_dedupes_by_month(self):
+    def test_monthly_economics_table_selects_only_governed_columns_and_dedupes_by_month(
+        self,
+    ):
         row = {
-            "whole_plan_incremental_nbt_cpa": 5.0, "paid_media_incremental_nbt_cpa": 4.0,
-            "whole_plan_incremental_roi": 2.0, "paid_media_incremental_roi": 2.5,
-            "whole_plan_cost_per_fh_gsa": 6.0, "paid_media_incremental_cpa": 5.5,
-            "whole_plan_cost_per_dna_kit": None, "whole_plan_cost_per_fh_signup": None,
+            "whole_plan_incremental_nbt_cpa": 5.0,
+            "paid_media_incremental_nbt_cpa": 4.0,
+            "whole_plan_incremental_roi": 2.0,
+            "paid_media_incremental_roi": 2.5,
+            "whole_plan_cost_per_fh_gsa": 6.0,
+            "paid_media_incremental_cpa": 5.5,
+            "whole_plan_cost_per_dna_kit": None,
+            "whole_plan_cost_per_fh_signup": None,
             "economics_coverage": {"whole_plan_scope_compatible": True},
         }
-        predicted = pd.DataFrame([
-            {"month": "2024-01", "outcome_id": "New", "predicted_outcome": 100.0, **row},
-            {"month": "2024-01", "outcome_id": "DNA_Kit", "predicted_outcome": 10.0, **row},
-        ])
+        predicted = pd.DataFrame(
+            [
+                {
+                    "month": "2024-01",
+                    "outcome_id": "New",
+                    "predicted_outcome": 100.0,
+                    **row,
+                },
+                {
+                    "month": "2024-01",
+                    "outcome_id": "DNA_Kit",
+                    "predicted_outcome": 10.0,
+                    **row,
+                },
+            ]
+        )
         table = monthly_economics_table(predicted)
         assert list(table["month"]) == ["2024-01"]
         assert "predicted_outcome" not in table.columns
@@ -1951,19 +3439,37 @@ class TestGovernedEconomicsSummary:
         assert table["whole_plan_incremental_nbt_cpa"].iloc[0] == 5.0
 
     def test_whole_plan_scope_compatible_requires_every_month_compatible(self):
-        mixed = pd.DataFrame([
-            {"month": "2024-01", "economics_coverage": {"whole_plan_scope_compatible": True}},
-            {"month": "2024-02", "economics_coverage": {"whole_plan_scope_compatible": False}},
-        ])
+        mixed = pd.DataFrame(
+            [
+                {
+                    "month": "2024-01",
+                    "economics_coverage": {"whole_plan_scope_compatible": True},
+                },
+                {
+                    "month": "2024-02",
+                    "economics_coverage": {"whole_plan_scope_compatible": False},
+                },
+            ]
+        )
         assert whole_plan_scope_compatible(mixed) is False
 
-        all_compatible = pd.DataFrame([
-            {"month": "2024-01", "economics_coverage": {"whole_plan_scope_compatible": True}},
-            {"month": "2024-02", "economics_coverage": {"whole_plan_scope_compatible": True}},
-        ])
+        all_compatible = pd.DataFrame(
+            [
+                {
+                    "month": "2024-01",
+                    "economics_coverage": {"whole_plan_scope_compatible": True},
+                },
+                {
+                    "month": "2024-02",
+                    "economics_coverage": {"whole_plan_scope_compatible": True},
+                },
+            ]
+        )
         assert whole_plan_scope_compatible(all_compatible) is True
 
-    def test_mixed_plan_suppresses_whole_plan_but_not_paid_media_economics(self, approval):
+    def test_mixed_plan_suppresses_whole_plan_but_not_paid_media_economics(
+        self, approval
+    ):
         # Real evaluate_scenario integration: a response-only activity
         # contributing to the incremental outcome must suppress whole-plan
         # CPA/ROI (evaluate_scenario's own rule), while paid-media-only
@@ -1972,38 +3478,75 @@ class TestGovernedEconomicsSummary:
         # whole_plan_scope_compatible must reflect exactly this, since they
         # perform no arithmetic of their own.
         meta = FHModelMeta(
-            markets=["UK"], outcome_ids=["New"], channels=["TV_Paid", "Organic_Social"],
-            dna_channels=[], dna_channel_idx=[], non_dna_idx=[0, 1],
-            dna_outcome_id="New", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+            markets=["UK"],
+            outcome_ids=["New"],
+            channels=["TV_Paid", "Organic_Social"],
+            dna_channels=[],
+            dna_channel_idx=[],
+            non_dna_idx=[0, 1],
+            dna_outcome_id="New",
+            dna_lag_weeks=4,
+            unpooled_markets=[],
+            control_names=[],
         )
         params = FHPosteriorParams(
             decay_rate={"TV_Paid": 0.5, "Organic_Social": 0.4},
             hill_K={"TV_Paid": 2000.0, "Organic_Social": 400.0},
             hill_S={"TV_Paid": 1.0, "Organic_Social": 1.0},
             beta={"New": {"TV_Paid": 0.1, "Organic_Social": 0.2}},
-            pathway_strength={}, promo_coef={"New": 0.1},
-            market_offset={"UK": {"New": 0.0}}, intercept={"New": 3.0}, trend_coef={"New": 0.0},
-            gamma_fourier={"New": np.zeros(6)}, alpha={"New": 5.0}, control_coef={}, outcome_control_coef={},
+            pathway_strength={},
+            promo_coef={"New": 0.1},
+            market_offset={"UK": {"New": 0.0}},
+            intercept={"New": 3.0},
+            trend_coef={"New": 0.0},
+            gamma_fourier={"New": np.zeros(6)},
+            alpha={"New": 5.0},
+            control_coef={},
+            outcome_control_coef={},
         )
         reference_context = {
-            "2024-01": {"trend": 1.0, "fourier": np.zeros(6), "promo": {"New": 0.0}, "controls": {}, "outcome_controls": {}}
+            "2024-01": {
+                "trend": 1.0,
+                "fourier": np.zeros(6),
+                "promo": {"New": 0.0},
+                "controls": {},
+                "outcome_controls": {},
+            }
         }
         tv = _paid_activity("tv-paid", "TV_Paid")
         organic = _response_only_activity("organic-social", "Organic_Social")
-        registry = CostMappingRegistry([
-            FixedCostPerUnitMapping(
-                mapping_id="uk-tv-paid-econ-map", market="UK", channel="TV_Paid", currency="GBP",
-                cost_context_id="default", source="finance", approval_status="approved",
-                approved_by="finance-owner", approved_at="2026-01-01T10:00:00Z",
-                owner="media-finance", approval_note="approved", last_reviewed_at="2026-01-01",
-                cost_per_media_input=1.0,
-            ),
-        ])
+        registry = CostMappingRegistry(
+            [
+                FixedCostPerUnitMapping(
+                    mapping_id="uk-tv-paid-econ-map",
+                    market="UK",
+                    channel="TV_Paid",
+                    currency="GBP",
+                    cost_context_id="default",
+                    source="finance",
+                    approval_status="approved",
+                    approved_by="finance-owner",
+                    approved_at="2026-01-01T10:00:00Z",
+                    owner="media-finance",
+                    approval_note="approved",
+                    last_reviewed_at="2026-01-01",
+                    cost_per_media_input=1.0,
+                ),
+            ]
+        )
         plan = {"2024-01": {"TV_Paid": 800.0, "Organic_Social": 300.0}}
         predicted = evaluate_scenario(
-            plan, "UK", meta, params, reference_context, {"New": 2.0},
-            approval=approval, activity_definitions=[tv, organic], governance_mode="exploratory",
-            cost_mapping_registry=registry, cost_context_id="default",
+            plan,
+            "UK",
+            meta,
+            params,
+            reference_context,
+            {"New": 2.0},
+            approval=approval,
+            activity_definitions=[tv, organic],
+            governance_mode="exploratory",
+            cost_mapping_registry=registry,
+            cost_context_id="default",
             cost_as_of_by_month={"2024-01": "2024-01-01"},
             **IDENTITY,
         )
@@ -2019,34 +3562,73 @@ class TestGovernedEconomicsSummary:
 
     def test_fully_paid_plan_leaves_whole_plan_economics_available(self, approval):
         meta = FHModelMeta(
-            markets=["UK"], outcome_ids=["New"], channels=["TV_Paid"],
-            dna_channels=[], dna_channel_idx=[], non_dna_idx=[0],
-            dna_outcome_id="New", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+            markets=["UK"],
+            outcome_ids=["New"],
+            channels=["TV_Paid"],
+            dna_channels=[],
+            dna_channel_idx=[],
+            non_dna_idx=[0],
+            dna_outcome_id="New",
+            dna_lag_weeks=4,
+            unpooled_markets=[],
+            control_names=[],
         )
         params = FHPosteriorParams(
-            decay_rate={"TV_Paid": 0.5}, hill_K={"TV_Paid": 2000.0}, hill_S={"TV_Paid": 1.0},
-            beta={"New": {"TV_Paid": 0.1}}, pathway_strength={}, promo_coef={"New": 0.1},
-            market_offset={"UK": {"New": 0.0}}, intercept={"New": 3.0}, trend_coef={"New": 0.0},
-            gamma_fourier={"New": np.zeros(6)}, alpha={"New": 5.0}, control_coef={}, outcome_control_coef={},
+            decay_rate={"TV_Paid": 0.5},
+            hill_K={"TV_Paid": 2000.0},
+            hill_S={"TV_Paid": 1.0},
+            beta={"New": {"TV_Paid": 0.1}},
+            pathway_strength={},
+            promo_coef={"New": 0.1},
+            market_offset={"UK": {"New": 0.0}},
+            intercept={"New": 3.0},
+            trend_coef={"New": 0.0},
+            gamma_fourier={"New": np.zeros(6)},
+            alpha={"New": 5.0},
+            control_coef={},
+            outcome_control_coef={},
         )
         reference_context = {
-            "2024-01": {"trend": 1.0, "fourier": np.zeros(6), "promo": {"New": 0.0}, "controls": {}, "outcome_controls": {}}
+            "2024-01": {
+                "trend": 1.0,
+                "fourier": np.zeros(6),
+                "promo": {"New": 0.0},
+                "controls": {},
+                "outcome_controls": {},
+            }
         }
         tv = _paid_activity("tv-paid", "TV_Paid")
-        registry = CostMappingRegistry([
-            FixedCostPerUnitMapping(
-                mapping_id="uk-tv-paid-econ-map2", market="UK", channel="TV_Paid", currency="GBP",
-                cost_context_id="default", source="finance", approval_status="approved",
-                approved_by="finance-owner", approved_at="2026-01-01T10:00:00Z",
-                owner="media-finance", approval_note="approved", last_reviewed_at="2026-01-01",
-                cost_per_media_input=1.0,
-            ),
-        ])
+        registry = CostMappingRegistry(
+            [
+                FixedCostPerUnitMapping(
+                    mapping_id="uk-tv-paid-econ-map2",
+                    market="UK",
+                    channel="TV_Paid",
+                    currency="GBP",
+                    cost_context_id="default",
+                    source="finance",
+                    approval_status="approved",
+                    approved_by="finance-owner",
+                    approved_at="2026-01-01T10:00:00Z",
+                    owner="media-finance",
+                    approval_note="approved",
+                    last_reviewed_at="2026-01-01",
+                    cost_per_media_input=1.0,
+                ),
+            ]
+        )
         plan = {"2024-01": {"TV_Paid": 800.0}}
         predicted = evaluate_scenario(
-            plan, "UK", meta, params, reference_context, {"New": 2.0},
-            approval=approval, activity_definitions=[tv],
-            cost_mapping_registry=registry, cost_context_id="default",
+            plan,
+            "UK",
+            meta,
+            params,
+            reference_context,
+            {"New": 2.0},
+            approval=approval,
+            activity_definitions=[tv],
+            cost_mapping_registry=registry,
+            cost_context_id="default",
             cost_as_of_by_month={"2024-01": "2024-01-01"},
             governance_mode="exploratory",
             **IDENTITY,
@@ -2067,14 +3649,21 @@ def _nbt_outcome_for_planning(**overrides) -> OutcomeDefinition:
     from ancestry_mmm.core.outcomes import METRIC_KEY_FH_NET_BILLTHROUGH_COUNT
 
     values = dict(
-        outcome_id="fh_new_nbt", product=FAMILY_HISTORY, segment="New",
-        metric="Net bill-through count", metric_key=METRIC_KEY_FH_NET_BILLTHROUGH_COUNT,
-        source_column="fh_net_billthrough_count", unit="bill-through subscriber",
-        aggregation_type="count", event_definition="Net bill-through subscriber count",
-        date_basis="signup_date_attributed", cohort_or_attribution_basis="signup_cohort",
+        outcome_id="fh_new_nbt",
+        product=FAMILY_HISTORY,
+        segment="New",
+        metric="Net bill-through count",
+        metric_key=METRIC_KEY_FH_NET_BILLTHROUGH_COUNT,
+        source_column="fh_net_billthrough_count",
+        unit="bill-through subscriber",
+        aggregation_type="count",
+        event_definition="Net bill-through subscriber count",
+        date_basis="signup_date_attributed",
+        cohort_or_attribution_basis="signup_cohort",
         completeness_or_maturity_policy="Mature after 26 weeks",
         exclusions="Excludes cancelled within 30 days",
-        reconciliation_source="Finance NBT report", business_owner="Analytics",
+        reconciliation_source="Finance NBT report",
+        business_owner="Analytics",
         definition_version="1.0",
     )
     values.update(overrides)
@@ -2092,24 +3681,48 @@ class TestNBTCombinedPlanningGate:
     @pytest.fixture
     def nbt_meta(self, nbt_outcome) -> FHModelMeta:
         return FHModelMeta(
-            markets=["UK"], outcome_ids=["fh_new_nbt"], channels=["TV_Brand"],
-            dna_channels=[], dna_channel_idx=[], non_dna_idx=[0],
-            dna_outcome_id="fh_new_nbt", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+            markets=["UK"],
+            outcome_ids=["fh_new_nbt"],
+            channels=["TV_Brand"],
+            dna_channels=[],
+            dna_channel_idx=[],
+            non_dna_idx=[0],
+            dna_outcome_id="fh_new_nbt",
+            dna_lag_weeks=4,
+            unpooled_markets=[],
+            control_names=[],
             outcome_catalogue_at_fit=[nbt_outcome],
         )
 
     @pytest.fixture
     def nbt_params(self) -> FHPosteriorParams:
         return FHPosteriorParams(
-            decay_rate={"TV_Brand": 0.5}, hill_K={"TV_Brand": 1000.0}, hill_S={"TV_Brand": 1.0},
-            beta={"fh_new_nbt": {"TV_Brand": 0.1}}, pathway_strength={}, promo_coef={"fh_new_nbt": 0.1},
-            market_offset={"UK": {"fh_new_nbt": 0.0}}, intercept={"fh_new_nbt": 3.0}, trend_coef={"fh_new_nbt": 0.0},
-            gamma_fourier={"fh_new_nbt": np.zeros(6)}, alpha={"fh_new_nbt": 5.0}, control_coef={}, outcome_control_coef={},
+            decay_rate={"TV_Brand": 0.5},
+            hill_K={"TV_Brand": 1000.0},
+            hill_S={"TV_Brand": 1.0},
+            beta={"fh_new_nbt": {"TV_Brand": 0.1}},
+            pathway_strength={},
+            promo_coef={"fh_new_nbt": 0.1},
+            market_offset={"UK": {"fh_new_nbt": 0.0}},
+            intercept={"fh_new_nbt": 3.0},
+            trend_coef={"fh_new_nbt": 0.0},
+            gamma_fourier={"fh_new_nbt": np.zeros(6)},
+            alpha={"fh_new_nbt": 5.0},
+            control_coef={},
+            outcome_control_coef={},
         )
 
     @pytest.fixture
     def nbt_reference_context(self):
-        return {"2024-01": {"trend": 1.0, "fourier": np.zeros(6), "promo": {"fh_new_nbt": 0.0}, "controls": {}, "outcome_controls": {}}}
+        return {
+            "2024-01": {
+                "trend": 1.0,
+                "fourier": np.zeros(6),
+                "promo": {"fh_new_nbt": 0.0},
+                "controls": {},
+                "outcome_controls": {},
+            }
+        }
 
     @pytest.fixture
     def nbt_plan(self):
@@ -2118,10 +3731,13 @@ class TestNBTCombinedPlanningGate:
     @pytest.fixture
     def nbt_approval(self, nbt_outcome) -> OutcomeApproval:
         return OutcomeApproval(
-            approval_id="apr-nbt", outcome_id="fh_new_nbt",
+            approval_id="apr-nbt",
+            outcome_id="fh_new_nbt",
             definition_fingerprint=fingerprint_outcome_definition(nbt_outcome),
-            status="approved", allowed_uses=("planning", "optimisation"),
-            approved_by="Jane Analyst", approved_at="2026-01-01",
+            status="approved",
+            allowed_uses=("planning", "optimisation"),
+            approved_by="Jane Analyst",
+            approved_at="2026-01-01",
         )
 
     @staticmethod
@@ -2129,7 +3745,8 @@ class TestNBTCombinedPlanningGate:
         from ancestry_mmm.core.outcomes import METRIC_KEY_FH_NET_BILLTHROUGH_COUNT
 
         return PlanningObjective(
-            estimand="incremental_outcome", metric_key=METRIC_KEY_FH_NET_BILLTHROUGH_COUNT,
+            estimand="incremental_outcome",
+            metric_key=METRIC_KEY_FH_NET_BILLTHROUGH_COUNT,
             target_outcome_ids=("fh_new_nbt",),
         )
 
@@ -2148,71 +3765,134 @@ class TestNBTCombinedPlanningGate:
         }
 
     def test_approved_nbt_without_completeness_metadata_blocks(
-        self, nbt_meta, nbt_params, approval, nbt_reference_context, nbt_plan, nbt_approval,
+        self,
+        nbt_meta,
+        nbt_params,
+        approval,
+        nbt_reference_context,
+        nbt_plan,
+        nbt_approval,
     ):
         with pytest.raises(OutcomeApprovalBlockedError, match="Net Bill-Through"):
             evaluate_scenario(
-                nbt_plan, "UK", nbt_meta, nbt_params, nbt_reference_context,
+                nbt_plan,
+                "UK",
+                nbt_meta,
+                nbt_params,
+                nbt_reference_context,
                 planning_objective=self._nbt_planning_objective(),
                 outcome_approvals=[nbt_approval],
-                approval=approval, **IDENTITY,
+                approval=approval,
+                **IDENTITY,
             )
 
     def test_completeness_metadata_without_approval_blocks(
-        self, nbt_meta, nbt_params, approval, nbt_reference_context, nbt_plan, nbt_outcome,
+        self,
+        nbt_meta,
+        nbt_params,
+        approval,
+        nbt_reference_context,
+        nbt_plan,
+        nbt_outcome,
     ):
         with pytest.raises(OutcomeApprovalBlockedError):
             evaluate_scenario(
-                nbt_plan, "UK", nbt_meta, nbt_params, nbt_reference_context,
+                nbt_plan,
+                "UK",
+                nbt_meta,
+                nbt_params,
+                nbt_reference_context,
                 planning_objective=self._nbt_planning_objective(),
                 outcome_approvals=[],
                 nbt_completeness_metadata=self._complete_nbt_metadata(nbt_outcome),
-                approval=approval, **IDENTITY,
+                approval=approval,
+                **IDENTITY,
             )
 
     def test_metadata_for_a_different_outcome_blocks(
-        self, nbt_meta, nbt_params, approval, nbt_reference_context, nbt_plan, nbt_outcome, nbt_approval,
+        self,
+        nbt_meta,
+        nbt_params,
+        approval,
+        nbt_reference_context,
+        nbt_plan,
+        nbt_outcome,
+        nbt_approval,
     ):
         mismatched = self._complete_nbt_metadata(nbt_outcome)
         mismatched["outcome_id"] = "some_other_outcome"
         with pytest.raises(OutcomeApprovalBlockedError, match="Net Bill-Through"):
             evaluate_scenario(
-                nbt_plan, "UK", nbt_meta, nbt_params, nbt_reference_context,
+                nbt_plan,
+                "UK",
+                nbt_meta,
+                nbt_params,
+                nbt_reference_context,
                 planning_objective=self._nbt_planning_objective(),
                 outcome_approvals=[nbt_approval],
                 nbt_completeness_metadata=mismatched,
-                approval=approval, **IDENTITY,
+                approval=approval,
+                **IDENTITY,
             )
 
     def test_approval_plus_matching_completeness_metadata_permits_official_planning(
-        self, nbt_meta, nbt_params, approval, nbt_reference_context, nbt_plan, nbt_outcome, nbt_approval,
+        self,
+        nbt_meta,
+        nbt_params,
+        approval,
+        nbt_reference_context,
+        nbt_plan,
+        nbt_outcome,
+        nbt_approval,
     ):
         result = evaluate_scenario(
-            nbt_plan, "UK", nbt_meta, nbt_params, nbt_reference_context,
+            nbt_plan,
+            "UK",
+            nbt_meta,
+            nbt_params,
+            nbt_reference_context,
             planning_objective=self._nbt_planning_objective(),
             outcome_approvals=[nbt_approval],
             nbt_completeness_metadata=self._complete_nbt_metadata(nbt_outcome),
-            approval=approval, **IDENTITY,
+            approval=approval,
+            **IDENTITY,
         )
         assert not result.empty
 
     def test_optimisation_additionally_requires_optimisation_permission(
-        self, nbt_meta, nbt_params, approval, nbt_reference_context, nbt_plan, nbt_outcome,
+        self,
+        nbt_meta,
+        nbt_params,
+        approval,
+        nbt_reference_context,
+        nbt_plan,
+        nbt_outcome,
     ):
         # An approval covering only "planning" must not authorise "optimisation".
         planning_only_approval = OutcomeApproval(
-            approval_id="apr-nbt-planning-only", outcome_id="fh_new_nbt",
+            approval_id="apr-nbt-planning-only",
+            outcome_id="fh_new_nbt",
             definition_fingerprint=fingerprint_outcome_definition(nbt_outcome),
-            status="approved", allowed_uses=("planning",),
-            approved_by="Jane Analyst", approved_at="2026-01-01",
+            status="approved",
+            allowed_uses=("planning",),
+            approved_by="Jane Analyst",
+            approved_at="2026-01-01",
         )
         with pytest.raises(OutcomeApprovalBlockedError):
             optimize_scenario(
-                nbt_plan, ["2024-01"], ["TV_Brand"], "UK", nbt_meta, nbt_params, nbt_reference_context,
+                nbt_plan,
+                ["2024-01"],
+                ["TV_Brand"],
+                "UK",
+                nbt_meta,
+                nbt_params,
+                nbt_reference_context,
                 planning_objective=self._nbt_planning_objective(),
                 outcome_approvals=[planning_only_approval],
                 nbt_completeness_metadata=self._complete_nbt_metadata(nbt_outcome),
-                approval=approval, artefact_kind="unconstrained_benchmark", **IDENTITY,
+                approval=approval,
+                artefact_kind="unconstrained_benchmark",
+                **IDENTITY,
             )
 
 
@@ -2227,27 +3907,48 @@ class TestPlanningVsOptimisationPermissionPropagation:
     @pytest.fixture
     def gsa_outcome(self) -> OutcomeDefinition:
         return OutcomeDefinition(
-            outcome_id="New", product=FAMILY_HISTORY, segment="New", metric="GSA",
-            metric_key=METRIC_KEY_FH_GSA, source_column="GSA_New", unit="GSA",
-            aggregation_type="count", event_definition="A new subscriber",
-            date_basis="event_date", cohort_or_attribution_basis="signup_cohort",
+            outcome_id="New",
+            product=FAMILY_HISTORY,
+            segment="New",
+            metric="GSA",
+            metric_key=METRIC_KEY_FH_GSA,
+            source_column="GSA_New",
+            unit="GSA",
+            aggregation_type="count",
+            event_definition="A new subscriber",
+            date_basis="event_date",
+            cohort_or_attribution_basis="signup_cohort",
             completeness_or_maturity_policy="Mature after 12 weeks",
             exclusions="Excludes internal/test accounts",
-            reconciliation_source="Finance report", business_owner="Analytics",
+            reconciliation_source="Finance report",
+            business_owner="Analytics",
             definition_version="1.0",
         )
 
     @pytest.fixture
     def gsa_meta(self, gsa_outcome) -> FHModelMeta:
         return FHModelMeta(
-            markets=["UK"], outcome_ids=["New"], channels=["TV_Brand"],
-            dna_channels=[], dna_channel_idx=[], non_dna_idx=[0],
-            dna_outcome_id="New", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+            markets=["UK"],
+            outcome_ids=["New"],
+            channels=["TV_Brand"],
+            dna_channels=[],
+            dna_channel_idx=[],
+            non_dna_idx=[0],
+            dna_outcome_id="New",
+            dna_lag_weeks=4,
+            unpooled_markets=[],
+            control_names=[],
             outcome_catalogue_at_fit=[gsa_outcome],
         )
 
     def test_optimisation_only_approval_does_not_fail_on_nested_planning_check(
-        self, gsa_meta, gsa_outcome, params, approval, reference_context, spend_plan,
+        self,
+        gsa_meta,
+        gsa_outcome,
+        params,
+        approval,
+        reference_context,
+        spend_plan,
     ):
         # Approved for "optimisation" only - NOT "planning". Before the
         # G2A.7a.1 fix, optimize_scenario's nested evaluate_scenario calls
@@ -2255,61 +3956,106 @@ class TestPlanningVsOptimisationPermissionPropagation:
         # evaluate_scenario's hardcoded "planning" requested_use, which this
         # approval does not cover - the whole call would incorrectly raise.
         optimisation_only_approval = OutcomeApproval(
-            approval_id="apr-optimisation-only", outcome_id="New",
+            approval_id="apr-optimisation-only",
+            outcome_id="New",
             definition_fingerprint=fingerprint_outcome_definition(gsa_outcome),
-            status="approved", allowed_uses=("optimisation",),
-            approved_by="Jane Analyst", approved_at="2026-01-01",
+            status="approved",
+            allowed_uses=("optimisation",),
+            approved_by="Jane Analyst",
+            approved_at="2026-01-01",
         )
         planning_objective = PlanningObjective(
-            estimand="incremental_outcome", metric_key=METRIC_KEY_FH_GSA,
+            estimand="incremental_outcome",
+            metric_key=METRIC_KEY_FH_GSA,
             target_outcome_ids=("New",),
         )
         result = optimize_scenario(
-            spend_plan, ["2024-01"], ["TV_Brand"], "UK", gsa_meta, params, reference_context,
+            spend_plan,
+            ["2024-01"],
+            ["TV_Brand"],
+            "UK",
+            gsa_meta,
+            params,
+            reference_context,
             planning_objective=planning_objective,
             outcome_approvals=[optimisation_only_approval],
-            approval=approval, artefact_kind="unconstrained_benchmark", **IDENTITY,
+            approval=approval,
+            artefact_kind="unconstrained_benchmark",
+            **IDENTITY,
         )
         assert "predicted" in result and "current_predicted" in result
 
     def test_planning_only_approval_blocks_optimisation(
-        self, gsa_meta, gsa_outcome, params, approval, reference_context, spend_plan,
+        self,
+        gsa_meta,
+        gsa_outcome,
+        params,
+        approval,
+        reference_context,
+        spend_plan,
     ):
         planning_only_approval = OutcomeApproval(
-            approval_id="apr-planning-only", outcome_id="New",
+            approval_id="apr-planning-only",
+            outcome_id="New",
             definition_fingerprint=fingerprint_outcome_definition(gsa_outcome),
-            status="approved", allowed_uses=("planning",),
-            approved_by="Jane Analyst", approved_at="2026-01-01",
+            status="approved",
+            allowed_uses=("planning",),
+            approved_by="Jane Analyst",
+            approved_at="2026-01-01",
         )
         planning_objective = PlanningObjective(
-            estimand="incremental_outcome", metric_key=METRIC_KEY_FH_GSA,
+            estimand="incremental_outcome",
+            metric_key=METRIC_KEY_FH_GSA,
             target_outcome_ids=("New",),
         )
         with pytest.raises(OutcomeApprovalBlockedError):
             optimize_scenario(
-                spend_plan, ["2024-01"], ["TV_Brand"], "UK", gsa_meta, params, reference_context,
+                spend_plan,
+                ["2024-01"],
+                ["TV_Brand"],
+                "UK",
+                gsa_meta,
+                params,
+                reference_context,
                 planning_objective=planning_objective,
                 outcome_approvals=[planning_only_approval],
-                approval=approval, artefact_kind="unconstrained_benchmark", **IDENTITY,
+                approval=approval,
+                artefact_kind="unconstrained_benchmark",
+                **IDENTITY,
             )
 
     def test_planning_only_approval_permits_manual_evaluation(
-        self, gsa_meta, gsa_outcome, params, approval, reference_context, spend_plan,
+        self,
+        gsa_meta,
+        gsa_outcome,
+        params,
+        approval,
+        reference_context,
+        spend_plan,
     ):
         planning_only_approval = OutcomeApproval(
-            approval_id="apr-planning-only", outcome_id="New",
+            approval_id="apr-planning-only",
+            outcome_id="New",
             definition_fingerprint=fingerprint_outcome_definition(gsa_outcome),
-            status="approved", allowed_uses=("planning",),
-            approved_by="Jane Analyst", approved_at="2026-01-01",
+            status="approved",
+            allowed_uses=("planning",),
+            approved_by="Jane Analyst",
+            approved_at="2026-01-01",
         )
         planning_objective = PlanningObjective(
-            estimand="incremental_outcome", metric_key=METRIC_KEY_FH_GSA,
+            estimand="incremental_outcome",
+            metric_key=METRIC_KEY_FH_GSA,
             target_outcome_ids=("New",),
         )
         result = evaluate_scenario(
-            spend_plan, "UK", gsa_meta, params, reference_context,
+            spend_plan,
+            "UK",
+            gsa_meta,
+            params,
+            reference_context,
             planning_objective=planning_objective,
             outcome_approvals=[planning_only_approval],
-            approval=approval, **IDENTITY,
+            approval=approval,
+            **IDENTITY,
         )
         assert not result.empty

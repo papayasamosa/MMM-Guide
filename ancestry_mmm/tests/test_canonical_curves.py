@@ -54,50 +54,79 @@ def _broadcast(value, n_draw=4):
 def meta():
     pathways = [
         MediaOutcomePathway(
-            channel="TV", source_product="Family History",
-            target_outcome_id="fh_new", component_type="direct",
-            role="primary_direct", include_in_headline=True,
-            headline_approval_status="approved", approved_by="reviewer",
+            channel="TV",
+            source_product="Family History",
+            target_outcome_id="fh_new",
+            component_type="direct",
+            role="primary_direct",
+            include_in_headline=True,
+            headline_approval_status="approved",
+            approved_by="reviewer",
             approved_at="2026-01-01",
         ),
         MediaOutcomePathway(
-            channel="DNA", source_product="DNA",
-            target_outcome_id="fh_new", component_type="direct",
-            role="primary_direct", allow_cross_product_primary=True,
+            channel="DNA",
+            source_product="DNA",
+            target_outcome_id="fh_new",
+            component_type="direct",
+            role="primary_direct",
+            allow_cross_product_primary=True,
         ),
         MediaOutcomePathway(
-            channel="DNA", source_product="DNA",
-            target_outcome_id="fh_new", component_type="cross_product",
-            role="active_cross_product", lag_type="fixed_weeks", lag_weeks=2,
+            channel="DNA",
+            source_product="DNA",
+            target_outcome_id="fh_new",
+            component_type="cross_product",
+            role="active_cross_product",
+            lag_type="fixed_weeks",
+            lag_weeks=2,
             include_in_planning=True,
         ),
         MediaOutcomePathway(
-            channel="TV", source_product="Family History",
-            target_outcome_id="fh_returning", component_type="direct",
+            channel="TV",
+            source_product="Family History",
+            target_outcome_id="fh_returning",
+            component_type="direct",
             role="primary_direct",
         ),
         MediaOutcomePathway(
-            channel="DNA", source_product="DNA",
-            target_outcome_id="dna_kit", component_type="direct",
+            channel="DNA",
+            source_product="DNA",
+            target_outcome_id="dna_kit",
+            component_type="direct",
             role="primary_direct",
         ),
     ]
     masks = resolve_pathway_masks(
-        OUTCOMES, CHANNELS, pathways, dna_channel_idx=[1],
-        dna_outcome_id="fh_new", direct_dna_outcome_ids=["fh_new", "dna_kit"],
+        OUTCOMES,
+        CHANNELS,
+        pathways,
+        dna_channel_idx=[1],
+        dna_outcome_id="fh_new",
+        direct_dna_outcome_ids=["fh_new", "dna_kit"],
         dna_lag_weeks=2,
     )
     return FHModelMeta(
-        markets=MARKETS, outcome_ids=OUTCOMES, channels=CHANNELS,
-        dna_channels=["DNA"], dna_channel_idx=[1], non_dna_idx=[0],
-        dna_outcome_id="fh_new", dna_lag_weeks=2, unpooled_markets=[],
-        control_names=["macro"], pathway_masks=masks,
+        markets=MARKETS,
+        outcome_ids=OUTCOMES,
+        channels=CHANNELS,
+        dna_channels=["DNA"],
+        dna_channel_idx=[1],
+        non_dna_idx=[0],
+        dna_outcome_id="fh_new",
+        dna_lag_weeks=2,
+        unpooled_markets=[],
+        control_names=["macro"],
+        pathway_masks=masks,
         outcome_id_to_product={
-            "fh_new": "Family History", "fh_returning": "Family History",
+            "fh_new": "Family History",
+            "fh_returning": "Family History",
             "dna_kit": "DNA",
         },
         outcome_id_to_segment={
-            "fh_new": "New", "fh_returning": "Returning", "dna_kit": "New",
+            "fh_new": "New",
+            "fh_returning": "Returning",
+            "dna_kit": "New",
         },
         outcome_id_to_metric_key={
             "fh_new": "fh_net_billthrough_count",
@@ -120,16 +149,12 @@ def _trace(market_specific=False):
         "hill_K": _broadcast(hill_K),
         "hill_S": _broadcast([1.0, 1.2]),
         "beta": _broadcast(beta)
-        * np.array([1.0, 1.1, 0.9, 1.2]).reshape(
-            (1, 4) + (1,) * beta.ndim
-        ),
+        * np.array([1.0, 1.1, 0.9, 1.2]).reshape((1, 4) + (1,) * beta.ndim),
         "active_cross_product_strength": _broadcast(
             [[0.0, 0.4], [0.0, 0.0], [0.0, 0.0]]
         ),
         "promo_coef": _broadcast([0.25, 0.10, 0.05]),
-        "market_offset": _broadcast(
-            [[0.0, 0.0, 0.0], [0.3, -0.1, 0.2]]
-        ),
+        "market_offset": _broadcast([[0.0, 0.0, 0.0], [0.3, -0.1, 0.2]]),
         "intercept": _broadcast([3.0, 2.5, 2.0]),
         "trend_coef": _broadcast([0.2, 0.1, 0.05]),
         "gamma_fourier": _broadcast([[0.15, -0.05, 0.1]]),
@@ -137,8 +162,11 @@ def _trace(market_specific=False):
         "control_coef": _broadcast([0.12]),
     }
     coords = {
-        "outcome": OUTCOMES, "channel": CHANNELS, "market": MARKETS,
-        "fourier": [0], "control": ["macro"],
+        "outcome": OUTCOMES,
+        "channel": CHANNELS,
+        "market": MARKETS,
+        "fourier": [0],
+        "control": ["macro"],
     }
     dims = {
         "decay_rate": ["channel"],
@@ -146,19 +174,27 @@ def _trace(market_specific=False):
         "hill_S": ["channel"],
         "beta": (
             ["market", "outcome", "channel"]
-            if market_specific else ["outcome", "channel"]
+            if market_specific
+            else ["outcome", "channel"]
         ),
         "active_cross_product_strength": ["outcome", "channel"],
-        "promo_coef": ["outcome"], "market_offset": ["market", "outcome"],
-        "intercept": ["outcome"], "trend_coef": ["outcome"],
-        "gamma_fourier": ["fourier", "outcome"], "alpha": ["outcome"],
+        "promo_coef": ["outcome"],
+        "market_offset": ["market", "outcome"],
+        "intercept": ["outcome"],
+        "trend_coef": ["outcome"],
+        "gamma_fourier": ["fourier", "outcome"],
+        "alpha": ["outcome"],
         "control_coef": ["control"],
     }
     return az.from_dict(posterior=posterior, coords=coords, dims=dims)
 
 
 def _contexts(
-    *, trend=0.5, fourier=0.25, promo=0.0, other_tv=20.0,
+    *,
+    trend=0.5,
+    fourier=0.25,
+    promo=0.0,
+    other_tv=20.0,
     counterfactual_axis_type="model_input",
 ):
     return {
@@ -193,7 +229,8 @@ def _support():
             "current_spend_reference_period_start": "2026-06-01",
             "current_spend_reference_period_end": "2026-06-30",
         }
-        for market in MARKETS for channel in CHANNELS
+        for market in MARKETS
+        for channel in CHANNELS
     }
 
 
@@ -208,10 +245,12 @@ def _generate(meta, *, model_type="shared", contexts=None, **kwargs):
         )
     )
     return generate_canonical_curve_draws(
-        model_run_id="run-1", meta=meta,
+        model_run_id="run-1",
+        meta=meta,
         trace=_trace(model_type == "market_specific"),
         reference_contexts=selected_contexts,
-        model_type=model_type, n_draws=4,
+        model_type=model_type,
+        n_draws=4,
         spend_points=points,
         currency_by_market={"UK": "GBP", "AU": "AUD"},
         reporting_currency="GBP",
@@ -227,12 +266,19 @@ def _generate(meta, *, model_type="shared", contexts=None, **kwargs):
 def test_contract_uses_outcome_scale_counterfactuals(meta, model_type):
     draws = _generate(meta, model_type=model_type)
     required = {
-        "reference_context_id", "mu_with", "mu_without",
-        "incremental_response", "media_eta_contribution",
+        "reference_context_id",
+        "mu_with",
+        "mu_without",
+        "incremental_response",
+        "media_eta_contribution",
         "marginal_incremental_response_per_currency_unit",
-        "marginal_calculation_method", "marginal_delta_local_spend",
-        "local_spend", "reporting_currency_spend", "fx_rate",
-        "observed_support_status", "current_spend_method",
+        "marginal_calculation_method",
+        "marginal_delta_local_spend",
+        "local_spend",
+        "reporting_currency_spend",
+        "fx_rate",
+        "observed_support_status",
+        "current_spend_method",
         "counterfactual_prediction_reconciliation_error",
     }
     assert required <= set(draws)
@@ -262,11 +308,14 @@ def test_matches_normal_prediction_function_exactly(meta):
     without_plan = dict(context.other_channel_spend)
     with_plan["TV"] = 50
     without_plan["TV"] = 0
-    expected = steady_state_outcome_response(
-        "UK", with_plan, meta, params, context.prediction_context()
-    )["fh_new"] - steady_state_outcome_response(
-        "UK", without_plan, meta, params, context.prediction_context()
-    )["fh_new"]
+    expected = (
+        steady_state_outcome_response(
+            "UK", with_plan, meta, params, context.prediction_context()
+        )["fh_new"]
+        - steady_state_outcome_response(
+            "UK", without_plan, meta, params, context.prediction_context()
+        )["fh_new"]
+    )
     actual = draws.query(
         "market == 'UK' and channel == 'TV' and outcome_id == 'fh_new' "
         "and spend_point == 1 and posterior_draw == '0:0'"
@@ -293,12 +342,12 @@ def test_context_changes_outcome_scale_response(meta, changed, contexts):
 
 def test_market_offsets_change_shared_model_outcome_counts(meta):
     draws = _generate(meta, model_type="shared")
-    uk = draws.query(
-        "market == 'UK' and channel == 'TV' and spend_point == 1"
-    )["incremental_response"].sum()
-    au = draws.query(
-        "market == 'AU' and channel == 'TV' and spend_point == 1"
-    )["incremental_response"].sum()
+    uk = draws.query("market == 'UK' and channel == 'TV' and spend_point == 1")[
+        "incremental_response"
+    ].sum()
+    au = draws.query("market == 'AU' and channel == 'TV' and spend_point == 1")[
+        "incremental_response"
+    ].sum()
     assert uk != pytest.approx(au)
 
 
@@ -322,11 +371,12 @@ def test_explicit_component_cost_allocation_enables_component_economics(meta):
     grouped = {}
     for component in meta.pathway_masks.components:
         if component.included_in_fit and component.component_type in {
-            "direct", "cross_product"
+            "direct",
+            "cross_product",
         }:
-            grouped.setdefault(
-                (component.outcome_id, component.channel), []
-            ).append(component.component_type)
+            grouped.setdefault((component.outcome_id, component.channel), []).append(
+                component.component_type
+            )
     shares = {
         (outcome_id, channel, component_type): 1 / len(component_types)
         for (outcome_id, channel), component_types in grouped.items()
@@ -352,8 +402,13 @@ def test_channel_nbt_economics_count_spend_once(meta):
     channel = aggregate_curve_draws(
         draws,
         by=[
-            "model_run_id", "reference_context_id", "market", "channel",
-            "spend_point", "outcome_id", "metric_key",
+            "model_run_id",
+            "reference_context_id",
+            "market",
+            "channel",
+            "spend_point",
+            "outcome_id",
+            "metric_key",
         ],
         value_per_response=VALUES,
     )
@@ -373,8 +428,7 @@ def test_channel_nbt_economics_count_spend_once(meta):
         row["incremental_spend"] / row["incremental_response"]
     )
     assert row["average_roi"] == pytest.approx(
-        row["incremental_response"] * VALUES["fh_new"]
-        / row["incremental_spend"]
+        row["incremental_response"] * VALUES["fh_new"] / row["incremental_spend"]
     )
     assert row["marginal_cpa"] == pytest.approx(
         1 / row["marginal_incremental_response_per_currency_unit"]
@@ -393,9 +447,7 @@ def test_finite_difference_matches_log_link_analytic_derivative(meta):
     S = params.hill_S["TV"]
     hill_derivative = S * K**S * x ** (S - 1) / (x**S + K**S) ** 2
     expected = row["mu_with"] * params.beta["fh_new"]["TV"] * hill_derivative
-    assert row["channel_total_marginal_response"] == pytest.approx(
-        expected, rel=1e-5
-    )
+    assert row["channel_total_marginal_response"] == pytest.approx(expected, rel=1e-5)
 
 
 def test_zero_spend_and_missing_value_status(meta):
@@ -403,8 +455,12 @@ def test_zero_spend_and_missing_value_status(meta):
     channel = aggregate_curve_draws(
         draws,
         by=[
-            "model_run_id", "reference_context_id", "market", "channel",
-            "spend_point", "outcome_id",
+            "model_run_id",
+            "reference_context_id",
+            "market",
+            "channel",
+            "spend_point",
+            "outcome_id",
         ],
     )
     assert set(channel.query("spend_point == 0")["average_economics_status"]) == {
@@ -417,10 +473,15 @@ def test_zero_spend_and_missing_value_status(meta):
 
 def test_missing_support_is_unknown_and_blocks_planning(meta):
     draws = generate_canonical_curve_draws(
-        model_run_id="run", meta=meta, trace=_trace(), n_draws=1,
-        reference_contexts=_contexts(), spend_points=[10],
+        model_run_id="run",
+        meta=meta,
+        trace=_trace(),
+        n_draws=1,
+        reference_contexts=_contexts(),
+        spend_points=[10],
         currency_by_market={"UK": "GBP", "AU": "GBP"},
-        reporting_currency="GBP", fx_as_of_date="2026-07-01",
+        reporting_currency="GBP",
+        fx_as_of_date="2026-07-01",
     )
     assert set(draws["observed_support_status"]) == {SUPPORT_MISSING}
     assert draws["is_extrapolated"].isna().all()
@@ -428,10 +489,14 @@ def test_missing_support_is_unknown_and_blocks_planning(meta):
     assert not draws["include_in_planning"].any()
     with pytest.raises(ValueError, match="Observed support is missing"):
         generate_canonical_curve_draws(
-            model_run_id="run", meta=meta, trace=_trace(), n_draws=1,
+            model_run_id="run",
+            meta=meta,
+            trace=_trace(),
+            n_draws=1,
             reference_contexts=_contexts(),
             currency_by_market={"UK": "GBP", "AU": "GBP"},
-            reporting_currency="GBP", fx_as_of_date="2026-07-01",
+            reporting_currency="GBP",
+            fx_as_of_date="2026-07-01",
         )
 
 
@@ -487,7 +552,10 @@ def test_reference_context_builder_uses_prepared_business_context(meta):
         "outcome_control_names": {},
     }
     context = reference_context_from_model_frame(
-        frame, meta, market="UK", mode="recent_average",
+        frame,
+        meta,
+        market="UK",
+        mode="recent_average",
         reference_context_id="uk-recent",
     )
     assert context.reference_context_id == "uk-recent"
@@ -499,15 +567,24 @@ def test_reference_context_builder_uses_prepared_business_context(meta):
 def test_multi_market_currency_governance_and_conversion(meta):
     with pytest.raises(ValueError, match="explicit ISO currency"):
         generate_canonical_curve_draws(
-            model_run_id="run", meta=meta, trace=_trace(), n_draws=1,
-            reference_contexts=_contexts(), spend_points=[10],
+            model_run_id="run",
+            meta=meta,
+            trace=_trace(),
+            n_draws=1,
+            reference_contexts=_contexts(),
+            spend_points=[10],
         )
     with pytest.raises(ValueError, match="FX rate"):
         generate_canonical_curve_draws(
-            model_run_id="run", meta=meta, trace=_trace(), n_draws=1,
-            reference_contexts=_contexts(), spend_points=[10],
+            model_run_id="run",
+            meta=meta,
+            trace=_trace(),
+            n_draws=1,
+            reference_contexts=_contexts(),
+            spend_points=[10],
             currency_by_market={"UK": "GBP", "AU": "AUD"},
-            reporting_currency="GBP", fx_as_of_date="2026-07-01",
+            reporting_currency="GBP",
+            fx_as_of_date="2026-07-01",
         )
     draws = _generate(meta)
     au = draws.query("market == 'AU' and spend_point == 1")
@@ -530,8 +607,12 @@ def test_portfolio_marginal_requires_path_and_perturbation(meta):
     channel = aggregate_curve_draws(
         draws,
         by=[
-            "model_run_id", "reference_context_id", "market", "channel",
-            "spend_point", "metric_key",
+            "model_run_id",
+            "reference_context_id",
+            "market",
+            "channel",
+            "spend_point",
+            "metric_key",
         ],
     )
     perturbation = PortfolioPerturbation(
@@ -556,12 +637,16 @@ def test_portfolio_marginal_requires_path_and_perturbation(meta):
 
 
 def test_governance_views_are_channel_safe_and_labelled(meta):
-    views = canonical_governance_views(
-        _generate(meta), value_per_response=VALUES
-    )
+    views = canonical_governance_views(_generate(meta), value_per_response=VALUES)
     assert set(views) == {
-        "segment", "product", "market_channel_metric", "fh_nbt_total", "direct", "halo",
-        "headline", "planning",
+        "segment",
+        "product",
+        "market_channel_metric",
+        "fh_nbt_total",
+        "direct",
+        "halo",
+        "headline",
+        "planning",
     }
     for purpose, view in views.items():
         assert "channel" in view
@@ -576,8 +661,12 @@ def test_uncertainty_summary_aggregates_draws_before_summary(meta):
     channel = aggregate_curve_draws(
         _generate(meta),
         by=[
-            "model_run_id", "reference_context_id", "market", "channel",
-            "spend_point", "outcome_id",
+            "model_run_id",
+            "reference_context_id",
+            "market",
+            "channel",
+            "spend_point",
+            "outcome_id",
         ],
         value_per_response=VALUES,
     )
@@ -590,9 +679,7 @@ def test_uncertainty_summary_aggregates_draws_before_summary(meta):
         "market == 'UK' and channel == 'TV' and spend_point == 1 "
         "and outcome_id == 'fh_new'"
     ).iloc[0]
-    assert row["incremental_response_posterior_mean"] == pytest.approx(
-        source.mean()
-    )
+    assert row["incremental_response_posterior_mean"] == pytest.approx(source.mean())
     assert (
         row["incremental_response_lower_interval"]
         < row["incremental_response_upper_interval"]
@@ -707,14 +794,16 @@ def test_model_input_curve_is_available_without_cost_economics(meta):
     channel = aggregate_curve_draws(
         draws,
         by=[
-            "model_run_id", "reference_context_id", "market", "channel",
-            "spend_point", "outcome_id",
+            "model_run_id",
+            "reference_context_id",
+            "market",
+            "channel",
+            "spend_point",
+            "outcome_id",
         ],
     )
     assert channel["average_cpa"].isna().all()
-    assert channel["average_economics_status"].eq(
-        "cost_mapping_missing"
-    ).all()
+    assert channel["average_economics_status"].eq("cost_mapping_missing").all()
 
 
 def test_monetary_curve_maps_spend_and_stores_chain_rule_derivatives(meta):
@@ -730,9 +819,7 @@ def test_monetary_curve_maps_spend_and_stores_chain_rule_derivatives(meta):
     first = draws[(draws["market"] == "UK") & (draws["spend_point"] == 1)]
     assert first["media_input"].eq(25.0).all()
     assert first["local_spend"].eq(50.0).all()
-    assert first[
-        "marginal_media_input_per_local_currency_unit"
-    ].eq(0.5).all()
+    assert first["marginal_media_input_per_local_currency_unit"].eq(0.5).all()
     assert np.allclose(
         first["marginal_incremental_response_per_currency_unit"],
         first["marginal_incremental_response_per_media_input_unit"] * 0.5,
@@ -788,18 +875,14 @@ def test_monetary_derivative_perturbs_currency_at_piecewise_knot(meta):
     knot = draws[draws["spend_point"] == 1]
     boundary = draws[draws["spend_point"] == 0]
     upper_boundary = draws[draws["spend_point"] == 2]
-    assert np.isfinite(
-        knot["marginal_incremental_response_per_currency_unit"]
-    ).all()
-    assert knot["marginal_calculation_method"].eq(
-        "central_finite_difference"
-    ).all()
-    assert boundary["marginal_calculation_method"].eq(
-        "forward_finite_difference"
-    ).all()
-    assert upper_boundary["marginal_calculation_method"].eq(
-        "backward_finite_difference"
-    ).all()
+    assert np.isfinite(knot["marginal_incremental_response_per_currency_unit"]).all()
+    assert knot["marginal_calculation_method"].eq("central_finite_difference").all()
+    assert boundary["marginal_calculation_method"].eq("forward_finite_difference").all()
+    assert (
+        upper_boundary["marginal_calculation_method"]
+        .eq("backward_finite_difference")
+        .all()
+    )
     assert knot["marginal_delta_local_spend"].gt(0).all()
 
 
@@ -807,27 +890,35 @@ def test_direct_and_halo_governance_views_are_response_only(meta):
     views = canonical_governance_views(_generate(meta))
     for name in ("direct", "halo"):
         assert views[name]["average_cpa"].isna().all()
-        assert views[name]["economics_scope"].eq(
-            "decomposition_response_only"
-        ).all()
+        assert views[name]["economics_scope"].eq("decomposition_response_only").all()
 
 
 def test_owned_response_only_activity_never_receives_cpa_or_roi(meta):
     specs, costs = _governed_inputs_and_costs()
     activities = {
         "TV": ActivityDefinition(
-            activity_id="tv-paid", channel="TV",
-            activity_ownership="paid", model_role="intervention",
+            activity_id="tv-paid",
+            channel="TV",
+            activity_ownership="paid",
+            model_role="intervention",
             economic_treatment="paid_media_cost",
-            planning_eligibility="optimisable", source="media plan",
-            approval_status="approved", approved_by="reviewer", approved_at="2026-01-01",
+            planning_eligibility="optimisable",
+            source="media plan",
+            approval_status="approved",
+            approved_by="reviewer",
+            approved_at="2026-01-01",
         ),
         "DNA": ActivityDefinition(
-            activity_id="organic-social", channel="DNA",
-            activity_ownership="owned", model_role="intervention",
+            activity_id="organic-social",
+            channel="DNA",
+            activity_ownership="owned",
+            model_role="intervention",
             economic_treatment="response_only",
-            planning_eligibility="scenario_only", source="social analytics",
-            approval_status="approved", approved_by="reviewer", approved_at="2026-01-01",
+            planning_eligibility="scenario_only",
+            source="social analytics",
+            approval_status="approved",
+            approved_by="reviewer",
+            approved_at="2026-01-01",
         ),
     }
     draws = _generate(
@@ -842,8 +933,12 @@ def test_owned_response_only_activity_never_receives_cpa_or_roi(meta):
     owned = aggregate_curve_draws(
         draws[draws["channel"] == "DNA"],
         by=[
-            "model_run_id", "reference_context_id", "market", "channel",
-            "spend_point", "outcome_id",
+            "model_run_id",
+            "reference_context_id",
+            "market",
+            "channel",
+            "spend_point",
+            "outcome_id",
         ],
     )
     assert owned["average_cpa"].isna().all()
@@ -854,21 +949,29 @@ def test_owned_response_only_activity_never_receives_cpa_or_roi(meta):
 def _unapproved_activities():
     return {
         "TV": ActivityDefinition(
-            activity_id="tv-paid", channel="TV",
-            activity_ownership="paid", model_role="intervention",
+            activity_id="tv-paid",
+            channel="TV",
+            activity_ownership="paid",
+            model_role="intervention",
             economic_treatment="paid_media_cost",
-            planning_eligibility="optimisable", source="media plan",
+            planning_eligibility="optimisable",
+            source="media plan",
         ),
         "DNA": ActivityDefinition(
-            activity_id="dna-paid", channel="DNA",
-            activity_ownership="paid", model_role="intervention",
+            activity_id="dna-paid",
+            channel="DNA",
+            activity_ownership="paid",
+            model_role="intervention",
             economic_treatment="paid_media_cost",
-            planning_eligibility="optimisable", source="media plan",
+            planning_eligibility="optimisable",
+            source="media plan",
         ),
     }
 
 
-def test_monetary_curve_is_blocked_in_official_mode_without_approved_activity_governance(meta):
+def test_monetary_curve_is_blocked_in_official_mode_without_approved_activity_governance(
+    meta,
+):
     # PR G2A.6c workstream F: a draft (default approval_status) activity's
     # economic_treatment must not drive an official monetary curve, on top
     # of the pre-existing approved-cost-mapping requirement.
@@ -885,7 +988,9 @@ def test_monetary_curve_is_blocked_in_official_mode_without_approved_activity_go
         )
 
 
-def test_monetary_curve_succeeds_in_exploratory_mode_without_approved_activity_governance(meta):
+def test_monetary_curve_succeeds_in_exploratory_mode_without_approved_activity_governance(
+    meta,
+):
     specs, costs = _governed_inputs_and_costs()
     draws = _generate(
         meta,

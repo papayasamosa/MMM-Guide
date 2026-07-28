@@ -22,17 +22,19 @@ def create_time_series_chart(
     colors = list(CHART_COLORS.values())
 
     for i, col in enumerate(y_cols):
-        fig.add_trace(go.Scatter(
-            x=df[x_col],
-            y=df[col],
-            name=col,
-            line=dict(color=colors[i % len(colors)]),
-        ))
+        fig.add_trace(
+            go.Scatter(
+                x=df[x_col],
+                y=df[col],
+                name=col,
+                line=dict(color=colors[i % len(colors)]),
+            )
+        )
 
     fig.update_layout(
         template="plotly_dark",
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
         title=title,
         xaxis_title=x_col,
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
@@ -55,24 +57,28 @@ def create_bar_chart_with_ci(
 
     colors = list(CHART_COLORS.values())
 
-    for i, (cat, val, lower, upper) in enumerate(zip(categories, values, lower_ci, upper_ci)):
-        fig.add_trace(go.Bar(
-            name=cat,
-            x=[cat],
-            y=[val],
-            marker_color=colors[i % len(colors)],
-            error_y=dict(
-                type='data',
-                symmetric=False,
-                array=[upper - val],
-                arrayminus=[val - lower],
-            ),
-        ))
+    for i, (cat, val, lower, upper) in enumerate(
+        zip(categories, values, lower_ci, upper_ci)
+    ):
+        fig.add_trace(
+            go.Bar(
+                name=cat,
+                x=[cat],
+                y=[val],
+                marker_color=colors[i % len(colors)],
+                error_y=dict(
+                    type="data",
+                    symmetric=False,
+                    array=[upper - val],
+                    arrayminus=[val - lower],
+                ),
+            )
+        )
 
     fig.update_layout(
         template="plotly_dark",
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
         title=title,
         showlegend=False,
         height=height,
@@ -91,23 +97,27 @@ def create_stacked_area_chart(
     """Create a stacked area chart for decomposition."""
     fig = go.Figure()
 
-    colors = [THEME_COLORS['foreground_muted']] + list(CHART_COLORS.values())  # Baseline + channels
+    colors = [THEME_COLORS["foreground_muted"]] + list(
+        CHART_COLORS.values()
+    )  # Baseline + channels
 
     for i, col in enumerate(y_cols):
-        fig.add_trace(go.Scatter(
-            x=df[x_col],
-            y=df[col],
-            name=col,
-            mode='lines',
-            stackgroup='one',
-            fillcolor=colors[i % len(colors)],
-            line=dict(width=0),
-        ))
+        fig.add_trace(
+            go.Scatter(
+                x=df[x_col],
+                y=df[col],
+                name=col,
+                mode="lines",
+                stackgroup="one",
+                fillcolor=colors[i % len(colors)],
+                line=dict(width=0),
+            )
+        )
 
     fig.update_layout(
         template="plotly_dark",
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
         title=title,
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
         height=height,
@@ -126,16 +136,20 @@ def create_pie_chart(
     """Create a donut/pie chart."""
     colors = list(CHART_COLORS.values())
 
-    fig = go.Figure(data=[go.Pie(
-        labels=labels,
-        values=values,
-        hole=hole,
-        marker_colors=colors[:len(labels)],
-    )])
+    fig = go.Figure(
+        data=[
+            go.Pie(
+                labels=labels,
+                values=values,
+                hole=hole,
+                marker_colors=colors[: len(labels)],
+            )
+        ]
+    )
 
     fig.update_layout(
         template="plotly_dark",
-        paper_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor="rgba(0,0,0,0)",
         title=title,
         height=height,
         margin=dict(t=30, b=0, l=0, r=0),
@@ -152,16 +166,16 @@ def create_correlation_heatmap(
     """Create a correlation matrix heatmap."""
     fig = px.imshow(
         corr_matrix,
-        text_auto='.2f',
-        color_continuous_scale='RdBu_r',
+        text_auto=".2f",
+        color_continuous_scale="RdBu_r",
         zmin=-1,
         zmax=1,
     )
 
     fig.update_layout(
         template="plotly_dark",
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
         title=title,
         height=height,
     )
@@ -179,31 +193,35 @@ def create_response_curve(
     """Create a response curve visualization."""
     fig = go.Figure()
 
-    fig.add_trace(go.Scatter(
-        x=x_values,
-        y=y_values,
-        mode='lines',
-        line=dict(color=CHART_COLORS['primary'], width=2),
-        name='Response',
-    ))
+    fig.add_trace(
+        go.Scatter(
+            x=x_values,
+            y=y_values,
+            mode="lines",
+            line=dict(color=CHART_COLORS["primary"], width=2),
+            name="Response",
+        )
+    )
 
     if current_spend is not None:
         # Find y value at current spend
         idx = np.argmin(np.abs(x_values - current_spend))
         current_y = y_values[idx]
 
-        fig.add_trace(go.Scatter(
-            x=[current_spend],
-            y=[current_y],
-            mode='markers',
-            marker=dict(color=CHART_COLORS['warning'], size=10),
-            name='Current',
-        ))
+        fig.add_trace(
+            go.Scatter(
+                x=[current_spend],
+                y=[current_y],
+                mode="markers",
+                marker=dict(color=CHART_COLORS["warning"], size=10),
+                name="Current",
+            )
+        )
 
     fig.update_layout(
         template="plotly_dark",
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
         title=f"{channel_name} Response Curve",
         xaxis_title="Spend",
         yaxis_title="Response",
@@ -228,39 +246,45 @@ def create_response_curve_with_band(
     generate_market_channel_curve_with_uncertainty)."""
     fig = go.Figure()
 
-    fig.add_trace(go.Scatter(
-        x=np.concatenate([x_values, x_values[::-1]]),
-        y=np.concatenate([upper_values, lower_values[::-1]]),
-        fill='toself',
-        fillcolor='rgba(99, 179, 138, 0.2)',
-        line=dict(color='rgba(0,0,0,0)'),
-        hoverinfo='skip',
-        name='Credible interval',
-        showlegend=True,
-    ))
+    fig.add_trace(
+        go.Scatter(
+            x=np.concatenate([x_values, x_values[::-1]]),
+            y=np.concatenate([upper_values, lower_values[::-1]]),
+            fill="toself",
+            fillcolor="rgba(99, 179, 138, 0.2)",
+            line=dict(color="rgba(0,0,0,0)"),
+            hoverinfo="skip",
+            name="Credible interval",
+            showlegend=True,
+        )
+    )
 
-    fig.add_trace(go.Scatter(
-        x=x_values,
-        y=mean_values,
-        mode='lines',
-        line=dict(color=CHART_COLORS['primary'], width=2),
-        name='Mean response',
-    ))
+    fig.add_trace(
+        go.Scatter(
+            x=x_values,
+            y=mean_values,
+            mode="lines",
+            line=dict(color=CHART_COLORS["primary"], width=2),
+            name="Mean response",
+        )
+    )
 
     if current_spend is not None:
         idx = np.argmin(np.abs(x_values - current_spend))
-        fig.add_trace(go.Scatter(
-            x=[current_spend],
-            y=[mean_values[idx]],
-            mode='markers',
-            marker=dict(color=CHART_COLORS['warning'], size=10),
-            name='Current',
-        ))
+        fig.add_trace(
+            go.Scatter(
+                x=[current_spend],
+                y=[mean_values[idx]],
+                mode="markers",
+                marker=dict(color=CHART_COLORS["warning"], size=10),
+                name="Current",
+            )
+        )
 
     fig.update_layout(
         template="plotly_dark",
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
         title=f"{channel_name} Response Curve (with uncertainty)",
         xaxis_title="Spend",
         yaxis_title="Response",
@@ -278,24 +302,26 @@ def create_waterfall_chart(
 ) -> go.Figure:
     """Create a waterfall chart for contribution analysis."""
     # Determine measure type (relative vs total)
-    measure = ['relative'] * (len(categories) - 1) + ['total']
+    measure = ["relative"] * (len(categories) - 1) + ["total"]
 
-    fig = go.Figure(go.Waterfall(
-        name="Contribution",
-        orientation="v",
-        measure=measure,
-        x=categories,
-        y=values,
-        connector={"line": {"color": THEME_COLORS['border']}},
-        increasing={"marker": {"color": CHART_COLORS['success']}},
-        decreasing={"marker": {"color": CHART_COLORS['error']}},
-        totals={"marker": {"color": CHART_COLORS['primary']}},
-    ))
+    fig = go.Figure(
+        go.Waterfall(
+            name="Contribution",
+            orientation="v",
+            measure=measure,
+            x=categories,
+            y=values,
+            connector={"line": {"color": THEME_COLORS["border"]}},
+            increasing={"marker": {"color": CHART_COLORS["success"]}},
+            decreasing={"marker": {"color": CHART_COLORS["error"]}},
+            totals={"marker": {"color": CHART_COLORS["primary"]}},
+        )
+    )
 
     fig.update_layout(
         template="plotly_dark",
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
         title=title,
         height=height,
     )

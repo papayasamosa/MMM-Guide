@@ -47,7 +47,11 @@ DEFAULT_MAX_RELATIVE_UNCERTAINTY_FOR_LOCAL = 0.5
 
 
 def _relative_uncertainty(
-    trace: az.InferenceData, var: str, market: str, channel: str, outcome_id: Optional[str] = None,
+    trace: az.InferenceData,
+    var: str,
+    market: str,
+    channel: str,
+    outcome_id: Optional[str] = None,
 ) -> float:
     selector = {"market": market, "channel": channel}
     if outcome_id is not None:
@@ -82,9 +86,13 @@ def classify_market_evidence(
     estimate"; anything in between is "Partially pooled".
     """
     if market not in frame["markets"]:
-        raise ValueError(f"'{market}' is not one of this frame's markets: {frame['markets']}")
+        raise ValueError(
+            f"'{market}' is not one of this frame's markets: {frame['markets']}"
+        )
     if channel not in meta.channels:
-        raise ValueError(f"'{channel}' is not one of this model's channels: {meta.channels}")
+        raise ValueError(
+            f"'{channel}' is not one of this model's channels: {meta.channels}"
+        )
 
     m_idx = frame["markets"].index(market)
     start, end = frame["market_bounds"][m_idx]
@@ -94,11 +102,18 @@ def classify_market_evidence(
         return TRANSFERRED_ESTIMATE
 
     beta_rel_uncertainties = [
-        _relative_uncertainty(trace, "beta", market, channel, outcome_id=oid) for oid in meta.outcome_ids
+        _relative_uncertainty(trace, "beta", market, channel, outcome_id=oid)
+        for oid in meta.outcome_ids
     ]
-    rel_uncertainty = max([_relative_uncertainty(trace, "hill_K", market, channel)] + beta_rel_uncertainties)
+    rel_uncertainty = max(
+        [_relative_uncertainty(trace, "hill_K", market, channel)]
+        + beta_rel_uncertainties
+    )
 
-    if n_observations >= min_observations_for_local and rel_uncertainty <= max_relative_uncertainty_for_local:
+    if (
+        n_observations >= min_observations_for_local
+        and rel_uncertainty <= max_relative_uncertainty_for_local
+    ):
         return LOCALLY_ESTIMATED
     return PARTIALLY_POOLED
 
@@ -114,20 +129,26 @@ def classify_all_markets(
     populating a full curve bank save or a summary table in one pass."""
     return {
         market: {
-            channel: classify_market_evidence(trace, frame, meta, market, channel, **kwargs)
+            channel: classify_market_evidence(
+                trace, frame, meta, market, channel, **kwargs
+            )
             for channel in meta.channels
         }
         for market in frame["markets"]
     }
 
 
-def evidence_tiers_dataframe(trace: az.InferenceData, frame: Dict, meta: FHModelMeta, **kwargs) -> pd.DataFrame:
+def evidence_tiers_dataframe(
+    trace: az.InferenceData, frame: Dict, meta: FHModelMeta, **kwargs
+) -> pd.DataFrame:
     """Flat `market, channel, curve_status` table - `classify_all_markets`'s
     output reshaped for direct display or Excel export (used by
     pages/09_Project_Export.py's Model C summary, docs/curve_bank.md)."""
     tiers = classify_all_markets(trace, frame, meta, **kwargs)
-    return pd.DataFrame([
-        {"market": market, "channel": channel, "curve_status": tier}
-        for market, by_channel in tiers.items()
-        for channel, tier in by_channel.items()
-    ])
+    return pd.DataFrame(
+        [
+            {"market": market, "channel": channel, "curve_status": tier}
+            for market, by_channel in tiers.items()
+            for channel, tier in by_channel.items()
+        ]
+    )

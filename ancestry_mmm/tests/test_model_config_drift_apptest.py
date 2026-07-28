@@ -28,15 +28,29 @@ PAGE = ROOT / "pages" / "04_Model_Config.py"
 
 def _base_state():
     n = 12
-    df = pd.DataFrame({
-        "date": pd.date_range("2024-01-01", periods=n, freq="W"),
-        "market": ["UK"] * n,
-        "New": np.arange(n, dtype=float) + 10,
-        "tv_spend": np.arange(n, dtype=float) * 100 + 500,
-    })
-    spec = ModelSpec(date_col="date", market_col="market", markets=["UK"], channels=["tv_spend"], segment_outcomes={"New": "New"})
+    df = pd.DataFrame(
+        {
+            "date": pd.date_range("2024-01-01", periods=n, freq="W"),
+            "market": ["UK"] * n,
+            "New": np.arange(n, dtype=float) + 10,
+            "tv_spend": np.arange(n, dtype=float) * 100 + 500,
+        }
+    )
+    spec = ModelSpec(
+        date_col="date",
+        market_col="market",
+        markets=["UK"],
+        channels=["tv_spend"],
+        segment_outcomes={"New": "New"},
+    )
     outcome_defs = [
-        OutcomeDefinition(outcome_id="fh_new", product=FAMILY_HISTORY, segment="New", metric=METRIC_GSA, source_column="New").to_dict(),
+        OutcomeDefinition(
+            outcome_id="fh_new",
+            product=FAMILY_HISTORY,
+            segment="New",
+            metric=METRIC_GSA,
+            source_column="New",
+        ).to_dict(),
     ]
     return df, spec, outcome_defs
 
@@ -55,7 +69,12 @@ def test_no_model_meta_shows_no_drift_warning():
 def test_changed_catalogue_shows_drift_warning_with_exact_field():
     df, spec, outcome_defs = _base_state()
     fit_time_outcome = OutcomeDefinition(
-        outcome_id="fh_new", product=FAMILY_HISTORY, segment="New", metric=METRIC_GSA, source_column="New", unit="count",
+        outcome_id="fh_new",
+        product=FAMILY_HISTORY,
+        segment="New",
+        metric=METRIC_GSA,
+        source_column="New",
+        unit="count",
     )
     meta = SimpleNamespace(outcome_catalogue_at_fit=[fit_time_outcome])
 

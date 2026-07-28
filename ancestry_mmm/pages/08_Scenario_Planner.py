@@ -10,17 +10,34 @@ import pandas as pd
 import streamlit as st
 
 from ancestry_mmm.utils import (
-    init_session_state, get_state, set_state,
-    dataframe_column_config, readable_label, CONSTRAINT_KIND_LABELS, FIELD_HELP,
+    init_session_state,
+    get_state,
+    set_state,
+    dataframe_column_config,
+    readable_label,
+    CONSTRAINT_KIND_LABELS,
+    FIELD_HELP,
 )
-from ancestry_mmm.components import apply_theme, render_sidebar, render_page_header, render_next_step, render_empty_state, render_glossary, render_drift_status
+from ancestry_mmm.components import (
+    apply_theme,
+    render_sidebar,
+    render_page_header,
+    render_next_step,
+    render_empty_state,
+    render_glossary,
+    render_drift_status,
+)
 from ancestry_mmm.core.approval import ApprovalMismatchError, ModelApproval
 from ancestry_mmm.core.activities import (
     ActivityDefinition,
     activity_by_model_input,
     activity_fit_fingerprint,
 )
-from ancestry_mmm.core.fingerprint import fingerprint_dataframe, fingerprint_model_spec, fingerprint_posterior
+from ancestry_mmm.core.fingerprint import (
+    fingerprint_dataframe,
+    fingerprint_model_spec,
+    fingerprint_posterior,
+)
 from ancestry_mmm.core.outcomes import (
     dna_kit_sale_outcome_ids,
     eligible_outcome_ids,
@@ -54,7 +71,10 @@ from ancestry_mmm.core.optimization import (
 from ancestry_mmm.core.uncertainty import evaluate_scenario_with_uncertainty
 from ancestry_mmm.core.evidence_tiers import classify_market_evidence
 from ancestry_mmm.core.market_config import MarketSpecConfig
-from ancestry_mmm.core.media_units import extract_cost_per_unit_series, historical_cost_trend
+from ancestry_mmm.core.media_units import (
+    extract_cost_per_unit_series,
+    historical_cost_trend,
+)
 from ancestry_mmm.core.media_costs import CostMappingRegistry
 from ancestry_mmm.core.scenario_governance import (
     CounterfactualPolicy,
@@ -64,7 +84,9 @@ from ancestry_mmm.core.scenario_governance import (
 from ancestry_mmm.data.preprocessor import create_fourier_features_from_calendar
 
 
-st.set_page_config(page_title="Scenario Planner - Ancestry FH MMM", page_icon="🧬", layout="wide")
+st.set_page_config(
+    page_title="Scenario Planner - Ancestry FH MMM", page_icon="🧬", layout="wide"
+)
 init_session_state()
 apply_theme()
 render_sidebar("scenario_planner")
@@ -84,26 +106,22 @@ activity_definitions = [
     ActivityDefinition.from_dict(item)
     for item in (get_state("activity_definitions") or [])
 ]
-cost_mapping_registry = CostMappingRegistry.from_dict(
-    get_state("media_cost_mappings")
-)
+cost_mapping_registry = CostMappingRegistry.from_dict(get_state("media_cost_mappings"))
 governed_cost_registry = (
     cost_mapping_registry if cost_mapping_registry.to_dict()["mappings"] else None
 )
 # G2A.7a (DEFECT-7): load outcome approvals from session state
 outcome_approvals = [
-    OutcomeApproval.from_dict(item)
-    for item in (get_state("outcome_approvals") or [])
+    OutcomeApproval.from_dict(item) for item in (get_state("outcome_approvals") or [])
 ]
-outcome_definitions = [
-    outcome for outcome in (get_state("outcome_definitions") or [])
-]
+outcome_definitions = [outcome for outcome in (get_state("outcome_definitions") or [])]
 nbt_completeness_metadata = get_state("net_billthrough_metadata")
 if frame is None or meta is None or params is None:
     st.markdown("---")
     render_empty_state(
         "No trained model yet. Complete Model Training first.",
-        button_label="Go to Model Training", target_key="model_training",
+        button_label="Go to Model Training",
+        target_key="model_training",
     )
     st.stop()
 
@@ -118,14 +136,30 @@ if model_run_id and spec_dict is not None:
         "model_run_id": model_run_id,
         "data_fingerprint": fingerprint_dataframe(frame["df"]),
         "model_spec_fingerprint": fingerprint_model_spec(
-            spec_dict, prior_config, dna_lag_weeks, model_type=model_type,
-            pipeline_steps=get_state("pipeline_steps") or [], market_spec_config=get_state("market_spec_config"),
-            direct_dna_outcome_ids=meta.direct_dna_outcome_ids if meta is not None else None,
-            outcome_catalogue=outcome_catalogue_fingerprint_payload(meta.outcome_catalogue_at_fit) if meta is not None else None,
+            spec_dict,
+            prior_config,
+            dna_lag_weeks,
+            model_type=model_type,
+            pipeline_steps=get_state("pipeline_steps") or [],
+            market_spec_config=get_state("market_spec_config"),
+            direct_dna_outcome_ids=meta.direct_dna_outcome_ids
+            if meta is not None
+            else None,
+            outcome_catalogue=outcome_catalogue_fingerprint_payload(
+                meta.outcome_catalogue_at_fit
+            )
+            if meta is not None
+            else None,
             funnel_links=get_state("funnel_links"),
-            media_outcome_pathways=pathway_catalogue_fingerprint_payload(meta.pathway_catalogue_at_fit) if meta is not None else None,
+            media_outcome_pathways=pathway_catalogue_fingerprint_payload(
+                meta.pathway_catalogue_at_fit
+            )
+            if meta is not None
+            else None,
             activity_fit_fingerprint=(
-                activity_fit_fingerprint(activity_definitions) if activity_definitions else None
+                activity_fit_fingerprint(activity_definitions)
+                if activity_definitions
+                else None
             ),
         ),
         "posterior_fingerprint": fingerprint_posterior(params),
@@ -165,7 +199,9 @@ approval = ModelApproval.from_dict(approval_dict)
 # `governance_mode=` to the same call raises "got multiple values for
 # keyword argument 'governance_mode'" (the confirmed G2A.7a.1 P0 defect).
 identity_kwargs = dict(
-    model_type=model_type, approval=approval, **current_identity,
+    model_type=model_type,
+    approval=approval,
+    **current_identity,
 )
 
 spec = ModelSpec.from_dict(spec_dict)
@@ -178,8 +214,11 @@ ltv = spec.segment_ltv
 # object itself is unaffected. Informational-only drift (new/excluded-from-
 # next-fit) does not block - see core.outcomes.has_blocking_drift.
 if render_drift_status(
-    resolve_outcome_definitions(get_state("outcome_definitions"), spec.segment_outcomes, spec.segment_ltv),
-    meta, blocking=True,
+    resolve_outcome_definitions(
+        get_state("outcome_definitions"), spec.segment_outcomes, spec.segment_ltv
+    ),
+    meta,
+    blocking=True,
 ):
     st.stop()
 
@@ -188,7 +227,9 @@ render_glossary(["Scenario", "Constraint", "Response curve", "Incremental outcom
 st.markdown("### Plan setup")
 c1, c2, c3 = st.columns(3)
 market = c1.selectbox("Market *", meta.markets)
-start_month = c2.date_input("Plan start month *", value=pd.Timestamp.today().replace(day=1))
+start_month = c2.date_input(
+    "Plan start month *", value=pd.Timestamp.today().replace(day=1)
+)
 n_months = c3.number_input("Number of months *", min_value=1, max_value=24, value=12)
 
 if model_type == "market_specific":
@@ -205,7 +246,9 @@ if model_type == "market_specific":
                 tier = f"unavailable ({e})"
             tier_rows.append({"channel": ch, "curve_status": tier})
         tier_df = pd.DataFrame(tier_rows)
-        st.dataframe(tier_df, width="stretch", column_config=dataframe_column_config(tier_df))
+        st.dataframe(
+            tier_df, width="stretch", column_config=dataframe_column_config(tier_df)
+        )
         if (tier_df["curve_status"] == "Transferred estimate").any():
             st.caption(
                 "One or more channels above are a **transferred estimate** for this market - "
@@ -222,21 +265,37 @@ months = [d.strftime("%Y-%m") for d in month_dates]
 # future promo/control values.
 market_mask = np.array(frame["df"][spec.market_col] == market)
 last_trend = float(frame["trend"][market_mask][-1]) if market_mask.any() else 1.0
-mean_promo = {oid: float(frame["promo"][market_mask, i].mean()) if market_mask.any() else 0.0 for i, oid in enumerate(meta.outcome_ids)}
-mean_controls = {name: float(frame["X_controls"][market_mask, i].mean()) if (market_mask.any() and frame["X_controls"].shape[1]) else 0.0
-                  for i, name in enumerate(frame.get("control_names") or [])}
+mean_promo = {
+    oid: float(frame["promo"][market_mask, i].mean()) if market_mask.any() else 0.0
+    for i, oid in enumerate(meta.outcome_ids)
+}
+mean_controls = {
+    name: float(frame["X_controls"][market_mask, i].mean())
+    if (market_mask.any() and frame["X_controls"].shape[1])
+    else 0.0
+    for i, name in enumerate(frame.get("control_names") or [])
+}
 mean_outcome_controls = {
-    oid: {name: float(frame["outcome_controls"][oid][market_mask, i].mean()) if market_mask.any() else 0.0
-          for i, name in enumerate(frame.get("outcome_control_names", {}).get(oid, []))}
+    oid: {
+        name: float(frame["outcome_controls"][oid][market_mask, i].mean())
+        if market_mask.any()
+        else 0.0
+        for i, name in enumerate(frame.get("outcome_control_names", {}).get(oid, []))
+    }
     for oid in (frame.get("outcome_controls") or {})
 }
 
 reference_context_by_month = {}
 for d, m in zip(month_dates, months):
-    fourier_vec = create_fourier_features_from_calendar(pd.Series([d]), n_harmonics=spec.fourier_harmonics)[0]
+    fourier_vec = create_fourier_features_from_calendar(
+        pd.Series([d]), n_harmonics=spec.fourier_harmonics
+    )[0]
     reference_context_by_month[m] = {
-        "trend": last_trend, "fourier": fourier_vec, "promo": mean_promo,
-        "controls": mean_controls, "outcome_controls": mean_outcome_controls,
+        "trend": last_trend,
+        "fourier": fourier_vec,
+        "promo": mean_promo,
+        "controls": mean_controls,
+        "outcome_controls": mean_outcome_controls,
     }
 
 # --- Current/baseline plan: recent average weekly model input for this
@@ -255,7 +314,9 @@ for d, m in zip(month_dates, months):
 # fitted model input in this project's data model, so this reverse
 # conversion remains an estimated reference, not a record of actual spend.
 by_input_for_seeding = (
-    activity_by_model_input(activity_definitions, market) if activity_definitions else {}
+    activity_by_model_input(activity_definitions, market)
+    if activity_definitions
+    else {}
 )
 if market_mask.any():
     avg_weekly_media_input = frame["X_media"][market_mask].mean(axis=0)
@@ -318,47 +379,71 @@ for ch in meta.channels:
     if not (cfg and cfg.has_media_unit()):
         continue
     try:
-        cost_df = extract_cost_per_unit_series(frame["df"], spec.date_col, spec.market_col, market, cfg)
+        cost_df = extract_cost_per_unit_series(
+            frame["df"], spec.date_col, spec.market_col, market, cfg
+        )
         trend = historical_cost_trend(cost_df, spec.date_col)
     except ValueError:
         continue
     if trend["avg_cost_per_unit"]:
-        media_unit_channels[ch] = {"unit_type": cfg.unit_type or "units", "avg_cost_per_unit": trend["avg_cost_per_unit"]}
+        media_unit_channels[ch] = {
+            "unit_type": cfg.unit_type or "units",
+            "avg_cost_per_unit": trend["avg_cost_per_unit"],
+        }
 
 st.markdown("### Spend plan (monthly, by channel)")
 planning_mode = "Spend"
 if media_unit_channels:
     planning_mode = st.radio(
-        "Planning mode", ["Spend", "Media units"], horizontal=True,
+        "Planning mode",
+        ["Spend", "Media units"],
+        horizontal=True,
         help=(
             "Media units mode converts to/from spend using each channel's average historical "
-            "cost per unit - available for: " + ", ".join(sorted(media_unit_channels)) + ". "
+            "cost per unit - available for: "
+            + ", ".join(sorted(media_unit_channels))
+            + ". "
             "Other channels stay in spend terms either way."
         ),
     )
-st.caption("Edit values directly for manual mode - the same plan seeds the optimisation tabs below.")
+st.caption(
+    "Edit values directly for manual mode - the same plan seeds the optimisation tabs below."
+)
 
 plan_df = st.session_state[plan_key]
 if planning_mode == "Media units":
     display_df = plan_df.copy()
     for ch, info in media_unit_channels.items():
         display_df[ch] = plan_df[ch] / info["avg_cost_per_unit"]
-    label_overrides = {ch: f"{readable_label(ch)} ({info['unit_type']})" for ch, info in media_unit_channels.items()}
+    label_overrides = {
+        ch: f"{readable_label(ch)} ({info['unit_type']})"
+        for ch, info in media_unit_channels.items()
+    }
     edited_display = st.data_editor(
-        display_df, width="stretch", key=f"editor_{plan_key}_units",
-        column_config=dataframe_column_config(display_df, label_overrides=label_overrides),
+        display_df,
+        width="stretch",
+        key=f"editor_{plan_key}_units",
+        column_config=dataframe_column_config(
+            display_df, label_overrides=label_overrides
+        ),
     )
     edited = edited_display.copy()
     for ch, info in media_unit_channels.items():
         edited[ch] = edited_display[ch] * info["avg_cost_per_unit"]
     st.caption(
-        "Cost-per-unit assumptions in use: " + ", ".join(
+        "Cost-per-unit assumptions in use: "
+        + ", ".join(
             f"{readable_label(ch)} = {info['avg_cost_per_unit']:,.2f} / {info['unit_type']}"
             for ch, info in media_unit_channels.items()
         )
     )
 else:
-    edited = st.data_editor(plan_df, width="stretch", key=f"editor_{plan_key}", column_config=dataframe_column_config(plan_df))
+    edited = st.data_editor(
+        plan_df,
+        width="stretch",
+        key=f"editor_{plan_key}",
+        column_config=dataframe_column_config(plan_df),
+    )
 st.session_state[plan_key] = edited
 spend_plan = {m: {c: float(edited.loc[m, c]) for c in meta.channels} for m in months}
 activity_map = (
@@ -466,8 +551,8 @@ cost_as_of_by_month = {
 }
 
 # G2A.7a.7: build objective options from fitted outcome catalogue
-_fitted_outcome_ids = set(meta.outcome_ids) if hasattr(meta, 'outcome_ids') else set()
-_has_fh_gsa = bool(fh_gsa_outcome_ids(meta)) if hasattr(meta, 'outcome_ids') else False
+_fitted_outcome_ids = set(meta.outcome_ids) if hasattr(meta, "outcome_ids") else set()
+_has_fh_gsa = bool(fh_gsa_outcome_ids(meta)) if hasattr(meta, "outcome_ids") else False
 _has_dna_kit_segments = bool(dna_kit_sale_outcome_ids(meta))
 _has_fh_signups = bool(fh_signup_outcome_ids(meta))
 _has_fh_nbt = bool(fh_net_billthrough_outcome_ids(meta))
@@ -489,14 +574,17 @@ _objective_labels = {
     "expected_value": "Maximise LTV-weighted expected value",
 }
 objective = st.radio(
-    "Optimisation objective", _objective_options, horizontal=True,
-    format_func=lambda x: _objective_labels[x], help=FIELD_HELP["ltv"],
+    "Optimisation objective",
+    _objective_options,
+    horizontal=True,
+    format_func=lambda x: _objective_labels[x],
+    help=FIELD_HELP["ltv"],
 )
 # G2A.7a.5: build value weights from outcome catalogue
 value_weights_by_outcome_id: dict[str, float] = {}
-if hasattr(meta, 'outcome_catalogue_at_fit') and meta.outcome_catalogue_at_fit:
+if hasattr(meta, "outcome_catalogue_at_fit") and meta.outcome_catalogue_at_fit:
     for outcome in meta.outcome_catalogue_at_fit:
-        weight = getattr(outcome, 'value_weight', None)
+        weight = getattr(outcome, "value_weight", None)
         if weight is not None:
             value_weights_by_outcome_id[outcome.outcome_id] = weight
 
@@ -520,16 +608,18 @@ else:
     )
 
 value_currency = None
-if hasattr(meta, 'outcome_catalogue_at_fit') and meta.outcome_catalogue_at_fit:
+if hasattr(meta, "outcome_catalogue_at_fit") and meta.outcome_catalogue_at_fit:
     target_currencies = {
-        getattr(o, 'value_currency', None)
+        getattr(o, "value_currency", None)
         for o in meta.outcome_catalogue_at_fit
-        if o.outcome_id in _target_ids_for_value and getattr(o, 'value_currency', None)
+        if o.outcome_id in _target_ids_for_value and getattr(o, "value_currency", None)
     }
     if len(target_currencies) == 1:
         value_currency = target_currencies.pop()
     elif len(target_currencies) > 1:
-        value_currency = None  # Mixed currencies among targets need an explicit FX layer
+        value_currency = (
+            None  # Mixed currencies among targets need an explicit FX layer
+        )
 
 # G2A.7a.10 (brief section 9, 11): one canonical OutcomeValueMapping drives
 # manual evaluation, both optimiser modes, and posterior uncertainty alike -
@@ -547,7 +637,9 @@ if objective == "expected_value" and value_currency and _target_ids_for_value:
     if len(_catalogue_target_weights) == len(_target_ids_for_value):
         value_mapping = OutcomeValueMapping(
             value_by_outcome_id=_catalogue_target_weights,
-            currency_by_outcome_id={oid: value_currency for oid in _catalogue_target_weights},
+            currency_by_outcome_id={
+                oid: value_currency for oid in _catalogue_target_weights
+            },
             mapping_id="outcome-catalogue",
             source="outcome_catalogue",
         )
@@ -568,8 +660,11 @@ if objective == "expected_value" and value_currency and _target_ids_for_value:
             value_mapping = None
 
 currency_context = (
-    CurrencyContext(market_reporting_currency=value_currency, value_currency=value_currency)
-    if value_currency else None
+    CurrencyContext(
+        market_reporting_currency=value_currency, value_currency=value_currency
+    )
+    if value_currency
+    else None
 )
 
 # G2A.7a.7: protected objective resolution with error boundary
@@ -624,7 +719,9 @@ elif objective == "expected_value":
         )
 
 st.markdown("---")
-tab_manual, tab_constrained, tab_unconstrained = st.tabs(["Manual", "Constrained optimisation", "Unconstrained benchmark"])
+tab_manual, tab_constrained, tab_unconstrained = st.tabs(
+    ["Manual", "Constrained optimisation", "Unconstrained benchmark"]
+)
 
 with tab_manual:
     st.markdown("Predicted outcomes for the spend plan as edited above.")
@@ -654,17 +751,28 @@ with tab_manual:
     except (ApprovalMismatchError, ValueError, PlanningGovernanceError) as e:
         st.error(f"Cannot evaluate this scenario: {e}")
         st.stop()
-    st.dataframe(predicted, width="stretch", column_config=dataframe_column_config(predicted))
-    totals = predicted.groupby("outcome_id")[["predicted_outcome", "value"]].sum().reset_index()
+    st.dataframe(
+        predicted, width="stretch", column_config=dataframe_column_config(predicted)
+    )
+    totals = (
+        predicted.groupby("outcome_id")[["predicted_outcome", "value"]]
+        .sum()
+        .reset_index()
+    )
     st.markdown("**Totals by outcome**")
     st.dataframe(totals, width="stretch", column_config=dataframe_column_config(totals))
-    if "total_value_is_complete" in predicted.columns and not predicted["total_value_is_complete"].all():
+    if (
+        "total_value_is_complete" in predicted.columns
+        and not predicted["total_value_is_complete"].all()
+    ):
         st.caption(
             "Total predicted value excludes outcome_id(s) with no LTV weight configured (never "
             "silently treated as $1) - set a value weight for every outcome on the Structure page "
             "for a complete total."
         )
-    by_month_cols = ["fh_gsa", "fh_net_billthrough", "dna_kits"] + (["fh_signups"] if "fh_signups" in predicted.columns else [])
+    by_month_cols = ["fh_gsa", "fh_net_billthrough", "dna_kits"] + (
+        ["fh_signups"] if "fh_signups" in predicted.columns else []
+    )
     by_month_totals = predicted.groupby("month")[by_month_cols].first()
     _objective_totals = {
         "fh_gsa": ("Total predicted FH GSAs", float(by_month_totals["fh_gsa"].sum())),
@@ -672,11 +780,17 @@ with tab_manual:
             "Total predicted FH net bill-through",
             float(by_month_totals["fh_net_billthrough"].sum()),
         ),
-        "dna_kits": ("Total predicted DNA kits", float(by_month_totals["dna_kits"].sum())),
+        "dna_kits": (
+            "Total predicted DNA kits",
+            float(by_month_totals["dna_kits"].sum()),
+        ),
         "expected_value": ("Total predicted value", float(predicted["value"].sum())),
     }
     if "fh_signups" in by_month_cols:
-        _objective_totals["fh_signups"] = ("Total predicted FH sign-ups", float(by_month_totals["fh_signups"].sum()))
+        _objective_totals["fh_signups"] = (
+            "Total predicted FH sign-ups",
+            float(by_month_totals["fh_signups"].sum()),
+        )
     total_label, total_value = _objective_totals[objective]
     st.metric(total_label, f"{total_value:,.0f}")
 
@@ -689,14 +803,18 @@ with tab_manual:
         "are never suppressed this way."
     )
     econ_table = monthly_economics_table(predicted)
-    st.dataframe(econ_table, width="stretch", column_config=dataframe_column_config(econ_table))
+    st.dataframe(
+        econ_table, width="stretch", column_config=dataframe_column_config(econ_table)
+    )
     if not whole_plan_scope_compatible(predicted):
         st.caption(
             "Whole-plan CPA/ROI is unavailable for one or more months above - see paid-media-only "
             "CPA/ROI instead."
         )
 
-    scenario_name = st.text_input("Scenario name *", value=f"manual-{market}-{months[0]}", key="manual_name")
+    scenario_name = st.text_input(
+        "Scenario name *", value=f"manual-{market}-{months[0]}", key="manual_name"
+    )
     if st.button("Save this scenario"):
         scenarios = get_state("scenarios") or []
         # G2A.7a.5: use the exact governance dependencies from evaluate_manual_scenario
@@ -716,9 +834,7 @@ with tab_manual:
             ),
             scenario_plan=scenario_plan,
             counterfactual_policy=counterfactual_policy,
-            economics_coverage=predicted[
-                "economics_coverage"
-            ].iloc[0],
+            economics_coverage=predicted["economics_coverage"].iloc[0],
             governance_mode=governance_mode,
             artefact_kind=manual_result.artefact_kind,
             # Persist the exact governance dependencies from the service
@@ -731,15 +847,28 @@ with tab_manual:
 
     st.markdown("---")
     if trace is None:
-        st.caption("Posterior uncertainty needs a fitted trace, not just point-estimate posterior params - unavailable here.")
+        st.caption(
+            "Posterior uncertainty needs a fitted trace, not just point-estimate posterior params - unavailable here."
+        )
     else:
         show_scenario_uncertainty = st.checkbox(
             "Show posterior uncertainty for this plan (re-runs the scenario once per sampled draw - slower)",
-            value=False, key="manual_scenario_uncertainty",
+            value=False,
+            key="manual_scenario_uncertainty",
         )
         if show_scenario_uncertainty:
-            n_draws = st.slider("Posterior draws to sample", 20, 200, 50, step=10, key="manual_scenario_n_draws")
-            baseline_plan = {m: {c: float(v) for c, v in zip(meta.channels, default_monthly)} for m in months}
+            n_draws = st.slider(
+                "Posterior draws to sample",
+                20,
+                200,
+                50,
+                step=10,
+                key="manual_scenario_n_draws",
+            )
+            baseline_plan = {
+                m: {c: float(v) for c, v in zip(meta.channels, default_monthly)}
+                for m in months
+            }
             baseline_scenario_plan = (
                 classify_activity_plan(
                     baseline_plan,
@@ -749,10 +878,17 @@ with tab_manual:
                 if activity_definitions
                 else None
             )
-            with st.spinner(f"Computing scenario uncertainty from {n_draws} posterior draws..."):
+            with st.spinner(
+                f"Computing scenario uncertainty from {n_draws} posterior draws..."
+            ):
                 try:
                     uncertainty_result = evaluate_scenario_with_uncertainty(
-                        spend_plan, market, meta, trace, reference_context_by_month, ltv,
+                        spend_plan,
+                        market,
+                        meta,
+                        trace,
+                        reference_context_by_month,
+                        ltv,
                         n_draws=n_draws,
                         baseline_spend_plan=baseline_plan,
                         scenario_plan=scenario_plan,
@@ -767,13 +903,23 @@ with tab_manual:
                         **identity_kwargs,
                         **scenario_governance_kwargs,
                     )
-                except (ApprovalMismatchError, ValueError, PlanningGovernanceError) as e:
+                except (
+                    ApprovalMismatchError,
+                    ValueError,
+                    PlanningGovernanceError,
+                ) as e:
                     st.error(f"Cannot evaluate this scenario: {e}")
                     uncertainty_result = None
             if uncertainty_result is not None:
-                st.markdown("**Predicted outcomes with uncertainty (mean / median / 90% credible interval)**")
+                st.markdown(
+                    "**Predicted outcomes with uncertainty (mean / median / 90% credible interval)**"
+                )
                 summary_df = uncertainty_result["summary"]
-                st.dataframe(summary_df, width="stretch", column_config=dataframe_column_config(summary_df))
+                st.dataframe(
+                    summary_df,
+                    width="stretch",
+                    column_config=dataframe_column_config(summary_df),
+                )
                 prob = uncertainty_result["prob_outperforms_baseline"]
                 if prob is not None:
                     st.metric(
@@ -802,26 +948,48 @@ with tab_constrained:
 
     with st.expander("+ Add a constraint"):
         kind = st.selectbox(
-            "Constraint type", ["locked_cell", "channel_total", "month_total", "bounded_movement", "min_spend_floor"],
+            "Constraint type",
+            [
+                "locked_cell",
+                "channel_total",
+                "month_total",
+                "bounded_movement",
+                "min_spend_floor",
+            ],
             format_func=lambda k: CONSTRAINT_KIND_LABELS.get(k, k),
         )
-        st.caption({
-            "locked_cell": FIELD_HELP["locked_cells"],
-            "channel_total": "Fix the total spend for one channel across the whole plan.",
-            "month_total": "Fix the total spend across all channels for one month.",
-            "bounded_movement": FIELD_HELP["maximum_movement"],
-            "min_spend_floor": FIELD_HELP["minimum_spend"],
-        }.get(kind, ""))
-        ch = st.selectbox("Channel (if applicable)", ["(any)"] + meta.channels, key="c_channel", format_func=lambda c: c if c == "(any)" else readable_label(c))
+        st.caption(
+            {
+                "locked_cell": FIELD_HELP["locked_cells"],
+                "channel_total": "Fix the total spend for one channel across the whole plan.",
+                "month_total": "Fix the total spend across all channels for one month.",
+                "bounded_movement": FIELD_HELP["maximum_movement"],
+                "min_spend_floor": FIELD_HELP["minimum_spend"],
+            }.get(kind, "")
+        )
+        ch = st.selectbox(
+            "Channel (if applicable)",
+            ["(any)"] + meta.channels,
+            key="c_channel",
+            format_func=lambda c: c if c == "(any)" else readable_label(c),
+        )
         mo = st.selectbox("Month (if applicable)", ["(any)"] + months, key="c_month")
-        val = st.number_input("Value / target (if applicable)", min_value=0.0, value=0.0, key="c_value")
-        pct = st.slider("Max % movement (if applicable)", 0.0, 1.0, 0.2, 0.05, key="c_pct")
+        val = st.number_input(
+            "Value / target (if applicable)", min_value=0.0, value=0.0, key="c_value"
+        )
+        pct = st.slider(
+            "Max % movement (if applicable)", 0.0, 1.0, 0.2, 0.05, key="c_pct"
+        )
         if st.button("Add constraint"):
             constraint = SpendConstraint(
                 kind=kind,
                 channel=None if ch == "(any)" else ch,
                 month=None if mo == "(any)" else mo,
-                months=None if mo == "(any)" else [mo] if kind == "min_spend_floor" else None,
+                months=None
+                if mo == "(any)"
+                else [mo]
+                if kind == "min_spend_floor"
+                else None,
                 value=val if val > 0 else None,
                 max_pct_move=pct if kind == "bounded_movement" else None,
                 label=f"{kind} {ch} {mo}",
@@ -832,7 +1000,7 @@ with tab_constrained:
     for i, c in enumerate(st.session_state["scenario_constraints"]):
         c1, c2 = st.columns([5, 1])
         c1.markdown(
-            f"**{i+1}.** {CONSTRAINT_KIND_LABELS.get(c.kind, c.kind)} - "
+            f"**{i + 1}.** {CONSTRAINT_KIND_LABELS.get(c.kind, c.kind)} - "
             f"channel={readable_label(c.channel) or 'any'}, month={c.month or 'any'}, value={c.value}, max % movement={c.max_pct_move}"
         )
         if c2.button("Remove", key=f"rm_constraint_{i}"):
@@ -841,13 +1009,21 @@ with tab_constrained:
 
     if st.button("Run constrained optimisation", type="primary"):
         if objective == "expected_value" and value_mapping is None:
-            st.error("Cannot run optimisation: 'Maximise expected value' needs an outcome value mapping - a value weight for every target outcome and a single governed currency across them (set on the Structure page).")
+            st.error(
+                "Cannot run optimisation: 'Maximise expected value' needs an outcome value mapping - a value weight for every target outcome and a single governed currency across them (set on the Structure page)."
+            )
             result = None
         else:
             with st.spinner("Optimising..."):
                 try:
                     result = optimize_scenario(
-                        spend_plan, months, meta.channels, market, meta, params, reference_context_by_month,
+                        spend_plan,
+                        months,
+                        meta.channels,
+                        market,
+                        meta,
+                        params,
+                        reference_context_by_month,
                         ltv,
                         objective=objective if planning_objective is None else None,
                         planning_objective=optimisation_objective,
@@ -866,7 +1042,11 @@ with tab_constrained:
                         **identity_kwargs,
                         **scenario_governance_kwargs,
                     )
-                except (ApprovalMismatchError, ValueError, PlanningGovernanceError) as e:
+                except (
+                    ApprovalMismatchError,
+                    ValueError,
+                    PlanningGovernanceError,
+                ) as e:
                     st.error(f"Cannot run optimisation: {e}")
                     result = None
             if result is not None:
@@ -887,12 +1067,24 @@ with tab_constrained:
             "optimisation to refresh it."
         )
     if result:
-        governance_badge = "⚠️ Exploratory" if result["governance_mode"] == "exploratory" else "Official"
-        st.caption(f"**Governance mode: {governance_badge}** (persisted with this result)")
+        governance_badge = (
+            "⚠️ Exploratory"
+            if result["governance_mode"] == "exploratory"
+            else "Official"
+        )
+        st.caption(
+            f"**Governance mode: {governance_badge}** (persisted with this result)"
+        )
         c1, c2 = st.columns(2)
-        c1.metric(f"Current total ({_objective_labels[objective]})", f"{result['current_objective_value']:,.0f}")
-        c2.metric("Optimised total", f"{result['objective_value']:,.0f}",
-                   delta=f"{result['objective_value'] - result['current_objective_value']:,.0f}")
+        c1.metric(
+            f"Current total ({_objective_labels[objective]})",
+            f"{result['current_objective_value']:,.0f}",
+        )
+        c2.metric(
+            "Optimised total",
+            f"{result['objective_value']:,.0f}",
+            delta=f"{result['objective_value'] - result['current_objective_value']:,.0f}",
+        )
 
         st.markdown("**Governed economics by month: current vs optimised**")
         st.caption(
@@ -906,7 +1098,11 @@ with tab_constrained:
         optimised_econ = monthly_economics_table(result["predicted"])
         optimised_econ.insert(0, "plan", "optimised")
         combined_econ = pd.concat([current_econ, optimised_econ], ignore_index=True)
-        st.dataframe(combined_econ, width="stretch", column_config=dataframe_column_config(combined_econ))
+        st.dataframe(
+            combined_econ,
+            width="stretch",
+            column_config=dataframe_column_config(combined_econ),
+        )
         if not (
             whole_plan_scope_compatible(result["current_predicted"])
             and whole_plan_scope_compatible(result["predicted"])
@@ -917,10 +1113,22 @@ with tab_constrained:
             )
 
         plan_result_df = pd.DataFrame(result["spend_plan"]).T
-        st.dataframe(plan_result_df, width="stretch", column_config=dataframe_column_config(plan_result_df))
-        st.dataframe(result["predicted"], width="stretch", column_config=dataframe_column_config(result["predicted"]))
+        st.dataframe(
+            plan_result_df,
+            width="stretch",
+            column_config=dataframe_column_config(plan_result_df),
+        )
+        st.dataframe(
+            result["predicted"],
+            width="stretch",
+            column_config=dataframe_column_config(result["predicted"]),
+        )
 
-        name = st.text_input("Scenario name *", value=f"constrained-{market}-{months[0]}", key="constrained_name")
+        name = st.text_input(
+            "Scenario name *",
+            value=f"constrained-{market}-{months[0]}",
+            key="constrained_name",
+        )
         if st.button("Save this scenario", key="save_constrained"):
             scenarios = get_state("scenarios") or []
             # G2A.7a.4: build structured governance dependencies from result
@@ -937,13 +1145,9 @@ with tab_constrained:
                 activity_definitions_fingerprint=result[
                     "activity_definitions_fingerprint"
                 ],
-                scenario_plan=ScenarioPlan.from_dict(
-                    result["scenario_plan"]
-                ),
+                scenario_plan=ScenarioPlan.from_dict(result["scenario_plan"]),
                 counterfactual_policy=result["counterfactual_policy"],
-                economics_coverage=result["predicted"][
-                    "economics_coverage"
-                ].iloc[0],
+                economics_coverage=result["predicted"]["economics_coverage"].iloc[0],
                 governance_mode=result["governance_mode"],
                 artefact_kind="constrained_optimisation",
                 governance_dependencies=gov_deps,
@@ -961,13 +1165,21 @@ with tab_unconstrained:
     )
     if st.button("Run unconstrained benchmark", type="primary"):
         if objective == "expected_value" and value_mapping is None:
-            st.error("Cannot run optimisation: 'Maximise expected value' needs an outcome value mapping - a value weight for every target outcome and a single governed currency across them (set on the Structure page).")
+            st.error(
+                "Cannot run optimisation: 'Maximise expected value' needs an outcome value mapping - a value weight for every target outcome and a single governed currency across them (set on the Structure page)."
+            )
             result = None
         else:
             with st.spinner("Optimising..."):
                 try:
                     result = optimize_scenario(
-                        spend_plan, months, meta.channels, market, meta, params, reference_context_by_month,
+                        spend_plan,
+                        months,
+                        meta.channels,
+                        market,
+                        meta,
+                        params,
+                        reference_context_by_month,
                         ltv,
                         objective=objective if planning_objective is None else None,
                         planning_objective=optimisation_objective,
@@ -986,7 +1198,11 @@ with tab_unconstrained:
                         **identity_kwargs,
                         **scenario_governance_kwargs,
                     )
-                except (ApprovalMismatchError, ValueError, PlanningGovernanceError) as e:
+                except (
+                    ApprovalMismatchError,
+                    ValueError,
+                    PlanningGovernanceError,
+                ) as e:
                     st.error(f"Cannot run optimisation: {e}")
                     result = None
             if result is not None:
@@ -1001,12 +1217,22 @@ with tab_unconstrained:
             "optimisation to refresh it."
         )
     if result:
-        governance_badge = "⚠️ Exploratory" if result["governance_mode"] == "exploratory" else "Official"
+        governance_badge = (
+            "⚠️ Exploratory"
+            if result["governance_mode"] == "exploratory"
+            else "Official"
+        )
         st.caption(f"**Governance mode: {governance_badge}**")
         c1, c2 = st.columns(2)
-        c1.metric(f"Current total ({_objective_labels[objective]})", f"{result['current_objective_value']:,.0f}")
-        c2.metric("Theoretical optimum", f"{result['objective_value']:,.0f}",
-                   delta=f"{result['objective_value'] - result['current_objective_value']:,.0f}")
+        c1.metric(
+            f"Current total ({_objective_labels[objective]})",
+            f"{result['current_objective_value']:,.0f}",
+        )
+        c2.metric(
+            "Theoretical optimum",
+            f"{result['objective_value']:,.0f}",
+            delta=f"{result['objective_value'] - result['current_objective_value']:,.0f}",
+        )
 
         st.markdown("**Governed economics by month: current vs theoretical optimum**")
         st.caption(
@@ -1020,7 +1246,11 @@ with tab_unconstrained:
         optimised_econ = monthly_economics_table(result["predicted"])
         optimised_econ.insert(0, "plan", "theoretical optimum")
         combined_econ = pd.concat([current_econ, optimised_econ], ignore_index=True)
-        st.dataframe(combined_econ, width="stretch", column_config=dataframe_column_config(combined_econ))
+        st.dataframe(
+            combined_econ,
+            width="stretch",
+            column_config=dataframe_column_config(combined_econ),
+        )
         if not (
             whole_plan_scope_compatible(result["current_predicted"])
             and whole_plan_scope_compatible(result["predicted"])
@@ -1031,14 +1261,20 @@ with tab_unconstrained:
             )
 
         unconstrained_plan_df = pd.DataFrame(result["spend_plan"]).T
-        st.dataframe(unconstrained_plan_df, width="stretch", column_config=dataframe_column_config(unconstrained_plan_df))
+        st.dataframe(
+            unconstrained_plan_df,
+            width="stretch",
+            column_config=dataframe_column_config(unconstrained_plan_df),
+        )
 
 st.markdown("---")
 st.markdown("### Saved scenarios")
 scenarios = get_state("scenarios") or []
 if scenarios:
     compare_df = compare_scenarios(scenarios)
-    st.dataframe(compare_df, width="stretch", column_config=dataframe_column_config(compare_df))
+    st.dataframe(
+        compare_df, width="stretch", column_config=dataframe_column_config(compare_df)
+    )
 else:
     st.info("No scenarios saved yet.")
 

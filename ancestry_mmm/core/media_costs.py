@@ -83,9 +83,7 @@ class MediaCostMapping(Protocol):
 
     def spend_to_media_input(self, spend: float | np.ndarray) -> np.ndarray: ...
 
-    def media_input_to_spend(
-        self, media_input: float | np.ndarray
-    ) -> np.ndarray: ...
+    def media_input_to_spend(self, media_input: float | np.ndarray) -> np.ndarray: ...
 
     def marginal_cost_per_media_input(
         self, media_input: float | np.ndarray
@@ -162,9 +160,8 @@ class GovernedCostMapping:
         if as_of is None:
             return True
         when = date.fromisoformat(as_of)
-        if (
+        if self.effective_period_start and when < date.fromisoformat(
             self.effective_period_start
-            and when < date.fromisoformat(self.effective_period_start)
         ):
             return False
         return not (
@@ -187,9 +184,7 @@ class IdentitySpendMapping(GovernedCostMapping):
     def spend_to_media_input(self, spend: float | np.ndarray) -> np.ndarray:
         return _nonnegative_array(spend, "spend")
 
-    def media_input_to_spend(
-        self, media_input: float | np.ndarray
-    ) -> np.ndarray:
+    def media_input_to_spend(self, media_input: float | np.ndarray) -> np.ndarray:
         return _nonnegative_array(media_input, "media_input")
 
     def marginal_cost_per_media_input(
@@ -215,21 +210,15 @@ class FixedCostPerUnitMapping(GovernedCostMapping):
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        if (
-            not np.isfinite(self.cost_per_media_input)
-            or self.cost_per_media_input <= 0
-        ):
+        if not np.isfinite(self.cost_per_media_input) or self.cost_per_media_input <= 0:
             raise ValueError("cost_per_media_input must be finite and positive")
 
     def spend_to_media_input(self, spend: float | np.ndarray) -> np.ndarray:
         return _nonnegative_array(spend, "spend") / self.cost_per_media_input
 
-    def media_input_to_spend(
-        self, media_input: float | np.ndarray
-    ) -> np.ndarray:
+    def media_input_to_spend(self, media_input: float | np.ndarray) -> np.ndarray:
         return (
-            _nonnegative_array(media_input, "media_input")
-            * self.cost_per_media_input
+            _nonnegative_array(media_input, "media_input") * self.cost_per_media_input
         )
 
     def marginal_cost_per_media_input(
@@ -284,9 +273,7 @@ class PiecewiseLinearCostMapping(GovernedCostMapping):
             self.allow_extrapolation,
         )
 
-    def media_input_to_spend(
-        self, media_input: float | np.ndarray
-    ) -> np.ndarray:
+    def media_input_to_spend(self, media_input: float | np.ndarray) -> np.ndarray:
         values = _nonnegative_array(media_input, "media_input")
         return _piecewise(
             values,
@@ -377,9 +364,7 @@ class CostMappingRegistry:
     """Exact market/channel/context lookup with JSON-safe persistence."""
 
     def __init__(self, mappings: Iterable[MediaCostMapping] = ()) -> None:
-        self._mappings: Dict[
-            Tuple[str, str, str], list[MediaCostMapping]
-        ] = {}
+        self._mappings: Dict[Tuple[str, str, str], list[MediaCostMapping]] = {}
         self._mapping_ids: set[str] = set()
         for mapping in mappings:
             self.add(mapping)
@@ -404,9 +389,7 @@ class CostMappingRegistry:
     ) -> Optional[MediaCostMapping]:
         candidates = [
             mapping
-            for mapping in self._mappings.get(
-                (market, channel, cost_context_id), []
-            )
+            for mapping in self._mappings.get((market, channel, cost_context_id), [])
             if mapping.is_valid_for(as_of=as_of)
         ]
         if not candidates:
@@ -545,9 +528,7 @@ class MonetarySpendSupport:
         if self.approval_status == APPROVED and not all(
             (self.approved_by, self.approved_at, self.owner, self.approval_note)
         ):
-            raise ValueError(
-                "approved monetary support requires approval governance"
-            )
+            raise ValueError("approved monetary support requires approval governance")
 
     @property
     def current_reporting(self) -> float:
@@ -632,9 +613,7 @@ def monetary_governance_fingerprint(
         "planning_support": planning_support,
     }
     return hashlib.sha256(
-        json.dumps(
-            payload, sort_keys=True, separators=(",", ":"), default=str
-        ).encode()
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode()
     ).hexdigest()
 
 
@@ -642,12 +621,12 @@ def _validate_period(start: Optional[str], end: Optional[str]) -> None:
     start_date = date.fromisoformat(start) if start else None
     end_date = date.fromisoformat(end) if end else None
     if start_date and end_date and start_date > end_date:
-        raise ValueError("effective_period_start must not be after effective_period_end")
+        raise ValueError(
+            "effective_period_start must not be after effective_period_end"
+        )
 
 
-def _periods_overlap(
-    left: MediaCostMapping, right: MediaCostMapping
-) -> bool:
+def _periods_overlap(left: MediaCostMapping, right: MediaCostMapping) -> bool:
     left_start = (
         date.fromisoformat(left.effective_period_start)
         if left.effective_period_start
@@ -679,9 +658,7 @@ def _nonnegative_array(value: float | np.ndarray, name: str) -> np.ndarray:
 
 
 def _check_domain(values: np.ndarray, knots: np.ndarray, extrapolate: bool) -> None:
-    if not extrapolate and (
-        np.any(values < knots[0]) or np.any(values > knots[-1])
-    ):
+    if not extrapolate and (np.any(values < knots[0]) or np.any(values > knots[-1])):
         raise ValueError("value is outside the governed mapping support")
 
 

@@ -8,8 +8,24 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 import streamlit as st
 import pandas as pd
 
-from ancestry_mmm.utils import init_session_state, get_state, set_state, format_date, format_number, dataframe_column_config, FIELD_HELP
-from ancestry_mmm.components import apply_theme, render_sidebar, render_page_header, render_next_step, render_empty_state, render_glossary, render_drift_status
+from ancestry_mmm.utils import (
+    init_session_state,
+    get_state,
+    set_state,
+    format_date,
+    format_number,
+    dataframe_column_config,
+    FIELD_HELP,
+)
+from ancestry_mmm.components import (
+    apply_theme,
+    render_sidebar,
+    render_page_header,
+    render_next_step,
+    render_empty_state,
+    render_glossary,
+    render_drift_status,
+)
 from ancestry_mmm.core.approval import ModelApproval
 from ancestry_mmm.core.activities import (
     ActivityDefinition,
@@ -17,7 +33,11 @@ from ancestry_mmm.core.activities import (
     activity_fit_fingerprint,
 )
 from ancestry_mmm.core.diagnostics import compute_scorecard, expanding_window_backtest
-from ancestry_mmm.core.fingerprint import fingerprint_dataframe, fingerprint_model_spec, fingerprint_posterior
+from ancestry_mmm.core.fingerprint import (
+    fingerprint_dataframe,
+    fingerprint_model_spec,
+    fingerprint_posterior,
+)
 from ancestry_mmm.core.funnel import FunnelLink, funnel_coherence_diagnostics
 from ancestry_mmm.core.identification_diagnostics import (
     channel_spend_correlation_matrix,
@@ -25,25 +45,44 @@ from ancestry_mmm.core.identification_diagnostics import (
     identification_report,
     posterior_coefficient_stability,
 )
-from ancestry_mmm.core.outcomes import outcome_catalogue_fingerprint_payload, resolve_outcome_definitions
-from ancestry_mmm.core.pathways import MediaOutcomePathway, pathway_catalogue_fingerprint_payload, pathways_drift_dataframe
+from ancestry_mmm.core.outcomes import (
+    outcome_catalogue_fingerprint_payload,
+    resolve_outcome_definitions,
+)
+from ancestry_mmm.core.pathways import (
+    MediaOutcomePathway,
+    pathway_catalogue_fingerprint_payload,
+    pathways_drift_dataframe,
+)
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
 from ancestry_mmm.core.market_specific_model import build_fh_market_specific_model
 from ancestry_mmm.core.models import fit_model
 from ancestry_mmm.core.predict import extract_posterior_params, predict_mu
-from ancestry_mmm.core.market_specific_predict import extract_market_specific_posterior_params, predict_mu_market_specific
-from ancestry_mmm.core.market_specific_diagnostics import compute_scorecard_market_specific
+from ancestry_mmm.core.market_specific_predict import (
+    extract_market_specific_posterior_params,
+    predict_mu_market_specific,
+)
+from ancestry_mmm.core.market_specific_diagnostics import (
+    compute_scorecard_market_specific,
+)
 from ancestry_mmm.data import prepare_fh_modeling_frame
 
-MODEL_TYPE_LABEL = {"shared": "Model A - shared curve", "market_specific": "Model C - market-specific, partially pooled"}
+MODEL_TYPE_LABEL = {
+    "shared": "Model A - shared curve",
+    "market_specific": "Model C - market-specific, partially pooled",
+}
 
-st.set_page_config(page_title="Diagnostics - Ancestry FH MMM", page_icon="🧬", layout="wide")
+st.set_page_config(
+    page_title="Diagnostics - Ancestry FH MMM", page_icon="🧬", layout="wide"
+)
 init_session_state()
 apply_theme()
 render_sidebar("diagnostics")
 render_page_header("diagnostics")
-st.caption("A scorecard, not a single headline R-squared - convergence, fit, posterior predictive coverage and plausibility flags together.")
+st.caption(
+    "A scorecard, not a single headline R-squared - convergence, fit, posterior predictive coverage and plausibility flags together."
+)
 
 trace = get_state("trace")
 frame = get_state("frame")
@@ -52,7 +91,8 @@ if trace is None or frame is None or meta is None:
     st.markdown("---")
     render_empty_state(
         "No trained model yet. Complete Model Training first.",
-        button_label="Go to Model Training", target_key="model_training",
+        button_label="Go to Model Training",
+        target_key="model_training",
     )
     st.stop()
 
@@ -62,13 +102,22 @@ spec_dict = get_state("model_spec")
 if spec_dict:
     _spec_for_drift = ModelSpec.from_dict(spec_dict)
     render_drift_status(
-        resolve_outcome_definitions(get_state("outcome_definitions"), _spec_for_drift.segment_outcomes, _spec_for_drift.segment_ltv),
+        resolve_outcome_definitions(
+            get_state("outcome_definitions"),
+            _spec_for_drift.segment_outcomes,
+            _spec_for_drift.segment_ltv,
+        ),
         meta,
     )
-    _current_pathways = [MediaOutcomePathway.from_dict(p) for p in (get_state("media_outcome_pathways") or [])]
+    _current_pathways = [
+        MediaOutcomePathway.from_dict(p)
+        for p in (get_state("media_outcome_pathways") or [])
+    ]
     _pathway_drift_df = pathways_drift_dataframe(_current_pathways, meta)
     if not _pathway_drift_df.empty:
-        _changed_pathways = _pathway_drift_df[_pathway_drift_df["drift_status"] != "Fitted and current"]
+        _changed_pathways = _pathway_drift_df[
+            _pathway_drift_df["drift_status"] != "Fitted and current"
+        ]
         if not _changed_pathways.empty:
             st.warning(
                 f"{len(_changed_pathways)} media-outcome pathway(s) differ from this fit's captured "
@@ -81,7 +130,8 @@ st.markdown("---")
 if st.button("Compute scorecard", type="primary"):
     with st.spinner("Computing diagnostics..."):
         scorecard = (
-            compute_scorecard_market_specific(trace, frame, meta) if model_type == "market_specific"
+            compute_scorecard_market_specific(trace, frame, meta)
+            if model_type == "market_specific"
             else compute_scorecard(trace, frame, meta)
         )
     set_state("scorecard", scorecard)
@@ -92,7 +142,11 @@ if scorecard:
     conv = scorecard["convergence"]
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Max R-hat", f"{conv['rhat_max']:.3f}", help="Should be < 1.01")
-    c2.metric("Min ESS", format_number(round(conv["ess_min"])), help="Effective sample size; higher is better")
+    c2.metric(
+        "Min ESS",
+        format_number(round(conv["ess_min"])),
+        help="Effective sample size; higher is better",
+    )
     c3.metric("Divergences", format_number(conv["divergences"]))
     c4.metric("Converged", "Yes" if conv["converged"] else "No")
     if not conv["converged"]:
@@ -108,7 +162,9 @@ if scorecard:
 
     st.markdown("---")
     st.markdown("### Posterior predictive coverage")
-    st.caption("% of actual observations falling inside the posterior predictive credible interval - should be close to the target %.")
+    st.caption(
+        "% of actual observations falling inside the posterior predictive credible interval - should be close to the target %."
+    )
     ppc_df = pd.DataFrame(scorecard["ppc_coverage"])
     st.dataframe(ppc_df, width="stretch", column_config=dataframe_column_config(ppc_df))
 
@@ -119,7 +175,9 @@ if scorecard:
         st.info("No plausibility flags raised.")
     else:
         for f in flags:
-            (st.warning if f["level"] == "warning" else st.error)(f"**{f.get('channel', '')}**: {f['message']}")
+            (st.warning if f["level"] == "warning" else st.error)(
+                f"**{f.get('channel', '')}**: {f['message']}"
+            )
 
     st.markdown("---")
     st.markdown("### Multicollinearity & weak-identification diagnostics")
@@ -136,20 +194,31 @@ if scorecard:
         st.info("No multicollinearity or weak-identification flags raised.")
     else:
         for f in id_flags:
-            (st.error if f["level"] == "error" else st.warning)(f"**{f['channel']}**: {f['message']}")
+            (st.error if f["level"] == "error" else st.warning)(
+                f"**{f['channel']}**: {f['message']}"
+            )
 
     with st.expander("Channel spend correlation matrix"):
         corr_df = channel_spend_correlation_matrix(frame, meta)
-        st.dataframe(corr_df, width="stretch", column_config=dataframe_column_config(corr_df))
+        st.dataframe(
+            corr_df, width="stretch", column_config=dataframe_column_config(corr_df)
+        )
 
-    with st.expander("Design matrix condition number & posterior coefficient stability"):
+    with st.expander(
+        "Design matrix condition number & posterior coefficient stability"
+    ):
         cond = design_matrix_condition_number(frame)
         st.metric(
-            "Condition number", f"{cond:,.1f}" if cond != float("inf") else "inf",
+            "Condition number",
+            f"{cond:,.1f}" if cond != float("inf") else "inf",
             help="Elevated above ~30, severe above ~100 - the standard econometric rule-of-thumb thresholds.",
         )
         stability_df = posterior_coefficient_stability(trace, meta)
-        st.dataframe(stability_df, width="stretch", column_config=dataframe_column_config(stability_df))
+        st.dataframe(
+            stability_df,
+            width="stretch",
+            column_config=dataframe_column_config(stability_df),
+        )
 
 st.markdown("---")
 st.markdown("### Model approval")
@@ -162,9 +231,7 @@ prior_config = get_state("prior_config") or {}
 dna_lag_weeks = get_state("dna_lag_weeks", 4)
 model_run_id = get_state("model_run_id")
 activity_items = get_state("activity_definitions") or []
-activity_definitions = [
-    ActivityDefinition.from_dict(item) for item in activity_items
-]
+activity_definitions = [ActivityDefinition.from_dict(item) for item in activity_items]
 activity_governance_errors = []
 if not activity_definitions:
     activity_governance_errors.append("No activity definitions are saved.")
@@ -186,8 +253,7 @@ elif meta is not None:
         unapproved = sorted(
             definition.activity_id
             for column, definition in resolved_activities.items()
-            if column in meta.channels
-            and definition.approval_status != "approved"
+            if column in meta.channels and definition.approval_status != "approved"
         )
         if unapproved:
             activity_governance_errors.append(
@@ -201,14 +267,30 @@ if model_run_id and posterior_params is not None and model_spec_dict is not None
         "model_run_id": model_run_id,
         "data_fingerprint": fingerprint_dataframe(frame["df"]),
         "model_spec_fingerprint": fingerprint_model_spec(
-            model_spec_dict, prior_config, dna_lag_weeks, model_type=model_type,
-            pipeline_steps=get_state("pipeline_steps") or [], market_spec_config=get_state("market_spec_config"),
-            direct_dna_outcome_ids=meta.direct_dna_outcome_ids if meta is not None else None,
-            outcome_catalogue=outcome_catalogue_fingerprint_payload(meta.outcome_catalogue_at_fit) if meta is not None else None,
+            model_spec_dict,
+            prior_config,
+            dna_lag_weeks,
+            model_type=model_type,
+            pipeline_steps=get_state("pipeline_steps") or [],
+            market_spec_config=get_state("market_spec_config"),
+            direct_dna_outcome_ids=meta.direct_dna_outcome_ids
+            if meta is not None
+            else None,
+            outcome_catalogue=outcome_catalogue_fingerprint_payload(
+                meta.outcome_catalogue_at_fit
+            )
+            if meta is not None
+            else None,
             funnel_links=get_state("funnel_links"),
-            media_outcome_pathways=pathway_catalogue_fingerprint_payload(meta.pathway_catalogue_at_fit) if meta is not None else None,
+            media_outcome_pathways=pathway_catalogue_fingerprint_payload(
+                meta.pathway_catalogue_at_fit
+            )
+            if meta is not None
+            else None,
             activity_fit_fingerprint=(
-                activity_fit_fingerprint(activity_definitions) if activity_definitions else None
+                activity_fit_fingerprint(activity_definitions)
+                if activity_definitions
+                else None
             ),
         ),
         "posterior_fingerprint": fingerprint_posterior(posterior_params),
@@ -239,15 +321,27 @@ if approval_dict and not approval_matches_current:
 
 if approval_dict:
     approved_at = pd.Timestamp.fromtimestamp(approval_dict["approved_at"])
-    st.success(f"Approved by **{approval_dict['approved_by']}** on {format_date(approved_at)}.")
+    st.success(
+        f"Approved by **{approval_dict['approved_by']}** on {format_date(approved_at)}."
+    )
     with st.expander("Approval details"):
         st.write(f"**Model run:** `{approval_dict.get('model_run_id', '')[:8]}`")
-        st.write(f"**Data fingerprint:** `{approval_dict.get('data_fingerprint', '')[:12]}`")
-        st.write(f"**Spec fingerprint:** `{approval_dict.get('model_spec_fingerprint', '')[:12]}`")
-        st.write(f"**Posterior fingerprint:** `{approval_dict.get('posterior_fingerprint', '')[:12]}`")
+        st.write(
+            f"**Data fingerprint:** `{approval_dict.get('data_fingerprint', '')[:12]}`"
+        )
+        st.write(
+            f"**Spec fingerprint:** `{approval_dict.get('model_spec_fingerprint', '')[:12]}`"
+        )
+        st.write(
+            f"**Posterior fingerprint:** `{approval_dict.get('posterior_fingerprint', '')[:12]}`"
+        )
         st.write(f"**Notes:** {approval_dict.get('notes') or '(none)'}")
-        st.write(f"**Known limitations:** {approval_dict.get('known_limitations') or '(none)'}")
-        st.write(f"**Diagnostics reviewed:** {', '.join(approval_dict.get('diagnostics_accepted', [])) or '(none recorded)'}")
+        st.write(
+            f"**Known limitations:** {approval_dict.get('known_limitations') or '(none)'}"
+        )
+        st.write(
+            f"**Diagnostics reviewed:** {', '.join(approval_dict.get('diagnostics_accepted', [])) or '(none recorded)'}"
+        )
     if st.button("Revoke approval"):
         set_state("model_approval", None)
         st.rerun()
@@ -270,8 +364,19 @@ else:
         approved_by = st.text_input("Approved by (name) *")
         diagnostics_accepted = st.multiselect(
             "Diagnostics reviewed before approving",
-            ["convergence", "in_sample_fit", "ppc_coverage", "plausibility_flags", "backtest"],
-            default=["convergence", "in_sample_fit", "ppc_coverage", "plausibility_flags"],
+            [
+                "convergence",
+                "in_sample_fit",
+                "ppc_coverage",
+                "plausibility_flags",
+                "backtest",
+            ],
+            default=[
+                "convergence",
+                "in_sample_fit",
+                "ppc_coverage",
+                "plausibility_flags",
+            ],
         )
         notes = st.text_area("Notes")
         known_limitations = st.text_area("Known limitations")
@@ -282,10 +387,14 @@ else:
             f"posterior `{current_identity['posterior_fingerprint'][:8]}`) - identifiers are "
             "captured automatically, not entered by hand."
         )
-        submitted = st.form_submit_button("Approve this model for planning", type="primary")
+        submitted = st.form_submit_button(
+            "Approve this model for planning", type="primary"
+        )
         if submitted:
             if not approved_by.strip():
-                st.error("Enter a name before approving - approval must be attributed to a reviewer.")
+                st.error(
+                    "Enter a name before approving - approval must be attributed to a reviewer."
+                )
             else:
                 approval = ModelApproval(
                     approved_by=approved_by.strip(),
@@ -310,7 +419,13 @@ st.caption(
 c1, c2, c3 = st.columns(3)
 n_folds = c1.number_input("Folds", min_value=1, max_value=5, value=1)
 min_train_frac = c2.slider("Min training fraction", 0.4, 0.9, 0.7, 0.05)
-fold_draws = c3.number_input("Draws per fold (reduced for speed)", min_value=200, max_value=3000, value=500, step=100)
+fold_draws = c3.number_input(
+    "Draws per fold (reduced for speed)",
+    min_value=200,
+    max_value=3000,
+    value=500,
+    step=100,
+)
 
 if st.button("Run backtest"):
     spec = ModelSpec.from_dict(get_state("model_spec"))
@@ -322,19 +437,34 @@ if st.button("Run backtest"):
         train_frame = prepare_fh_modeling_frame(train_df, spec)
         if model_type == "market_specific" and len(train_frame["markets"]) >= 2:
             fold_model, fold_meta = build_fh_market_specific_model(
-                train_frame, spec, dna_lag_weeks=dna_lag_weeks, prior_config=prior_config,
+                train_frame,
+                spec,
+                dna_lag_weeks=dna_lag_weeks,
+                prior_config=prior_config,
                 dna_outcome_id=spec.fh_dna_cross_sell_outcome_id,
             )
         else:
             fold_model, fold_meta = build_fh_hierarchical_model(
-                train_frame, spec, dna_lag_weeks=dna_lag_weeks, prior_config=prior_config,
+                train_frame,
+                spec,
+                dna_lag_weeks=dna_lag_weeks,
+                prior_config=prior_config,
                 dna_outcome_id=spec.fh_dna_cross_sell_outcome_id,
             )
-        fold_trace = fit_model(fold_model, draws=int(fold_draws), tune=int(fold_draws), chains=2, cores=1, target_accept=0.9)
+        fold_trace = fit_model(
+            fold_model,
+            draws=int(fold_draws),
+            tune=int(fold_draws),
+            chains=2,
+            cores=1,
+            target_accept=0.9,
+        )
 
         test_frame = prepare_fh_modeling_frame(test_df, spec)
         if model_type == "market_specific" and len(train_frame["markets"]) >= 2:
-            fold_params = extract_market_specific_posterior_params(fold_trace, fold_meta)
+            fold_params = extract_market_specific_posterior_params(
+                fold_trace, fold_meta
+            )
             mu_test = predict_mu_market_specific(test_frame, fold_meta, fold_params)
         else:
             fold_params = extract_posterior_params(fold_trace, fold_meta)
@@ -347,17 +477,29 @@ if st.button("Run backtest"):
             ss_tot = ((actual - actual.mean()) ** 2).sum()
             r2_by_seg[oid] = float(1 - ss_res / ss_tot) if ss_tot > 0 else float("nan")
             mask = actual != 0
-            mape_by_seg[oid] = float((abs((actual[mask] - pred[mask]) / actual[mask])).mean() * 100) if mask.any() else float("nan")
+            mape_by_seg[oid] = (
+                float((abs((actual[mask] - pred[mask]) / actual[mask])).mean() * 100)
+                if mask.any()
+                else float("nan")
+            )
         return r2_by_seg, mape_by_seg
 
-    with st.spinner(f"Running {n_folds}-fold backtest (this refits the model per fold)..."):
-        results = expanding_window_backtest(df, spec, fit_fold, n_folds=int(n_folds), min_train_frac=min_train_frac)
+    with st.spinner(
+        f"Running {n_folds}-fold backtest (this refits the model per fold)..."
+    ):
+        results = expanding_window_backtest(
+            df, spec, fit_fold, n_folds=int(n_folds), min_train_frac=min_train_frac
+        )
     set_state("backtest_results", results)
     st.success("Backtest complete.")
 
 backtest_results = get_state("backtest_results")
 if backtest_results is not None and not backtest_results.empty:
-    st.dataframe(backtest_results, width="stretch", column_config=dataframe_column_config(backtest_results))
+    st.dataframe(
+        backtest_results,
+        width="stretch",
+        column_config=dataframe_column_config(backtest_results),
+    )
 
 st.markdown("---")
 st.markdown("### Funnel-coherence diagnostics")
@@ -370,10 +512,15 @@ st.caption(
     "training or planning."
 )
 if not _funnel_links:
-    st.info("No funnel links configured. Define upstream/downstream outcome pairs on the Structure page.")
+    st.info(
+        "No funnel links configured. Define upstream/downstream outcome pairs on the Structure page."
+    )
 else:
     for link in _funnel_links:
-        if link.upstream_outcome_id not in frame["outcome_ids"] or link.downstream_outcome_id not in frame["outcome_ids"]:
+        if (
+            link.upstream_outcome_id not in frame["outcome_ids"]
+            or link.downstream_outcome_id not in frame["outcome_ids"]
+        ):
             st.warning(
                 f"Funnel link {link.upstream_outcome_id} -> {link.downstream_outcome_id} references an "
                 "outcome_id not in this fit - skipped."
@@ -382,21 +529,34 @@ else:
         up_idx = frame["outcome_ids"].index(link.upstream_outcome_id)
         down_idx = frame["outcome_ids"].index(link.downstream_outcome_id)
         result = funnel_coherence_diagnostics(
-            link, frame["Y"][:, up_idx], frame["Y"][:, down_idx],
+            link,
+            frame["Y"][:, up_idx],
+            frame["Y"][:, down_idx],
             period_labels=list(frame["dates"]) if "dates" in frame else None,
         )
         icon = "⚠️" if result["has_any_warning"] else "✅"
-        st.markdown(f"**{icon} {link.upstream_outcome_id} -> {link.downstream_outcome_id}**")
+        st.markdown(
+            f"**{icon} {link.upstream_outcome_id} -> {link.downstream_outcome_id}**"
+        )
         c1, c2, c3 = st.columns(3)
-        c1.metric("Coherence violations", f"{result['n_violations']} / {result['n_periods']}")
+        c1.metric(
+            "Coherence violations", f"{result['n_violations']} / {result['n_periods']}"
+        )
         c2.metric(
             "Mean conversion rate",
-            f"{result['conversion_rate_mean']:.1%}" if result["conversion_rate_mean"] is not None else "n/a",
+            f"{result['conversion_rate_mean']:.1%}"
+            if result["conversion_rate_mean"] is not None
+            else "n/a",
         )
         c3.metric("Out-of-range periods", result["conversion_rate_out_of_range_count"])
         if result["conversion_rate_unstable"]:
-            st.caption(f"Conversion rate is unstable across periods (CV={result['conversion_rate_cv']:.2f}).")
+            st.caption(
+                f"Conversion rate is unstable across periods (CV={result['conversion_rate_cv']:.2f})."
+            )
         if result["violation_periods"]:
-            st.caption(f"Violations at: {', '.join(format_date(d) for d in result['violation_periods'][:10])}" + (" ..." if len(result["violation_periods"]) > 10 else ""))
+            st.caption(
+                f"Violations at: {', '.join(format_date(d) for d in result['violation_periods'][:10])}"
+                + (" ..." if len(result["violation_periods"]) > 10 else "")
+            )
 
 render_next_step("diagnostics")

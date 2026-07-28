@@ -126,7 +126,13 @@ AGGREGATION_TYPES = ("count", "rate", "currency", "index")
 # billing event happened later (see docs/media_outcome_pathways.md) - this
 # field is what lets that distinction be recorded explicitly rather than
 # assumed from the outcome's metric alone.
-DATE_BASIS_VALUES = ("event_date", "signup_date_attributed", "billing_date", "purchase_date", "activation_date")
+DATE_BASIS_VALUES = (
+    "event_date",
+    "signup_date_attributed",
+    "billing_date",
+    "purchase_date",
+    "activation_date",
+)
 
 
 @dataclass(frozen=True)
@@ -155,44 +161,74 @@ class MetricDefinition:
 
 METRIC_REGISTRY: Dict[str, MetricDefinition] = {
     METRIC_KEY_FH_GSA: MetricDefinition(
-        metric_key=METRIC_KEY_FH_GSA, display_name=METRIC_GSA, default_unit="GSA", product=FAMILY_HISTORY,
+        metric_key=METRIC_KEY_FH_GSA,
+        display_name=METRIC_GSA,
+        default_unit="GSA",
+        product=FAMILY_HISTORY,
     ),
     METRIC_KEY_FH_SIGNUP: MetricDefinition(
-        metric_key=METRIC_KEY_FH_SIGNUP, display_name=METRIC_SIGNUP, default_unit="sign-up",
+        metric_key=METRIC_KEY_FH_SIGNUP,
+        display_name=METRIC_SIGNUP,
+        default_unit="sign-up",
         product=FAMILY_HISTORY,
     ),
     METRIC_KEY_DNA_KIT_SALE: MetricDefinition(
-        metric_key=METRIC_KEY_DNA_KIT_SALE, display_name=METRIC_KIT_SALE, default_unit="kit", product=DNA,
+        metric_key=METRIC_KEY_DNA_KIT_SALE,
+        display_name=METRIC_KIT_SALE,
+        default_unit="kit",
+        product=DNA,
     ),
     # --- Planned (PR F) - no computation pipeline exists for these yet ---
     METRIC_KEY_FH_NET_BILLTHROUGH_COUNT: MetricDefinition(
-        metric_key=METRIC_KEY_FH_NET_BILLTHROUGH_COUNT, display_name="Net bill-through count",
-        default_unit="bill-through subscriber", product=FAMILY_HISTORY, aggregation_type="count",
+        metric_key=METRIC_KEY_FH_NET_BILLTHROUGH_COUNT,
+        display_name="Net bill-through count",
+        default_unit="bill-through subscriber",
+        product=FAMILY_HISTORY,
+        aggregation_type="count",
     ),
     METRIC_KEY_FH_NET_BILLTHROUGH_RATE: MetricDefinition(
-        metric_key=METRIC_KEY_FH_NET_BILLTHROUGH_RATE, display_name="Net bill-through rate",
-        default_unit="proportion", product=FAMILY_HISTORY, aggregation_type="rate",
-        allowed_in_optimiser=False, allowed_in_cpa=False,
+        metric_key=METRIC_KEY_FH_NET_BILLTHROUGH_RATE,
+        display_name="Net bill-through rate",
+        default_unit="proportion",
+        product=FAMILY_HISTORY,
+        aggregation_type="rate",
+        allowed_in_optimiser=False,
+        allowed_in_cpa=False,
     ),
     METRIC_KEY_FH_GSA_FINANCE_DATE: MetricDefinition(
-        metric_key=METRIC_KEY_FH_GSA_FINANCE_DATE, display_name="GSA (finance date)",
-        default_unit="GSA", product=FAMILY_HISTORY, aggregation_type="count",
+        metric_key=METRIC_KEY_FH_GSA_FINANCE_DATE,
+        display_name="GSA (finance date)",
+        default_unit="GSA",
+        product=FAMILY_HISTORY,
+        aggregation_type="count",
     ),
     METRIC_KEY_DNA_KIT_SALE_SELF_ACTIVATED: MetricDefinition(
-        metric_key=METRIC_KEY_DNA_KIT_SALE_SELF_ACTIVATED, display_name="Kit sale (self-activated)",
-        default_unit="kit", product=DNA, aggregation_type="count",
+        metric_key=METRIC_KEY_DNA_KIT_SALE_SELF_ACTIVATED,
+        display_name="Kit sale (self-activated)",
+        default_unit="kit",
+        product=DNA,
+        aggregation_type="count",
     ),
     METRIC_KEY_DNA_KIT_SALE_GIFTED_ACTIVATED: MetricDefinition(
-        metric_key=METRIC_KEY_DNA_KIT_SALE_GIFTED_ACTIVATED, display_name="Kit sale (gifted-activated)",
-        default_unit="kit", product=DNA, aggregation_type="count",
+        metric_key=METRIC_KEY_DNA_KIT_SALE_GIFTED_ACTIVATED,
+        display_name="Kit sale (gifted-activated)",
+        default_unit="kit",
+        product=DNA,
+        aggregation_type="count",
     ),
     METRIC_KEY_DNA_KIT_SALE_UNACTIVATED: MetricDefinition(
-        metric_key=METRIC_KEY_DNA_KIT_SALE_UNACTIVATED, display_name="Kit sale (unactivated)",
-        default_unit="kit", product=DNA, aggregation_type="count",
+        metric_key=METRIC_KEY_DNA_KIT_SALE_UNACTIVATED,
+        display_name="Kit sale (unactivated)",
+        default_unit="kit",
+        product=DNA,
+        aggregation_type="count",
     ),
     METRIC_KEY_DNA_KIT_SALE_TOTAL: MetricDefinition(
-        metric_key=METRIC_KEY_DNA_KIT_SALE_TOTAL, display_name="Kit sale (total)",
-        default_unit="kit", product=DNA, aggregation_type="count",
+        metric_key=METRIC_KEY_DNA_KIT_SALE_TOTAL,
+        display_name="Kit sale (total)",
+        default_unit="kit",
+        product=DNA,
+        aggregation_type="count",
     ),
 }
 
@@ -382,7 +418,9 @@ class OutcomeDefinition:
             # than guessed; validate_outcome_definitions's "no unit set"
             # check requires the analyst to set it explicitly.
         if not self.aggregation_type:
-            self.aggregation_type = definition.aggregation_type if definition is not None else "count"
+            self.aggregation_type = (
+                definition.aggregation_type if definition is not None else "count"
+            )
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -461,9 +499,15 @@ def outcome_eligibility(outcome: OutcomeDefinition) -> Dict[str, bool]:
     "primary" row (matches `OutcomeDefinition.role`'s own "primary"
     default) rather than raising - `validate_outcome_definitions` is where
     an invalid role is actually rejected."""
-    defaults = _ROLE_ELIGIBILITY_DEFAULTS.get(outcome.role, _ROLE_ELIGIBILITY_DEFAULTS["primary"])
+    defaults = _ROLE_ELIGIBILITY_DEFAULTS.get(
+        outcome.role, _ROLE_ELIGIBILITY_DEFAULTS["primary"]
+    )
     return {
-        flag: (getattr(outcome, flag) if getattr(outcome, flag) is not None else defaults[flag])
+        flag: (
+            getattr(outcome, flag)
+            if getattr(outcome, flag) is not None
+            else defaults[flag]
+        )
         for flag in ELIGIBILITY_FLAGS
     }
 
@@ -479,7 +523,9 @@ def outcome_requires_opt_in(outcome: OutcomeDefinition) -> bool:
     return outcome.product != FAMILY_HISTORY
 
 
-def outcome_was_modelled(outcome: OutcomeDefinition, model_meta: Optional[object]) -> bool:
+def outcome_was_modelled(
+    outcome: OutcomeDefinition, model_meta: Optional[object]
+) -> bool:
     """True if `outcome`'s `outcome_id` is actually present in a *specific
     fitted* model's outcome-id set - the run-aware counterpart to
     `outcome_requires_opt_in`. Pass the `FHModelMeta` of the trace actually
@@ -507,6 +553,7 @@ def outcome_was_modelled(outcome: OutcomeDefinition, model_meta: Optional[object
 # now on, always from explicit fit-time metadata (product/metric/unit/role),
 # never inferred from "not a DNA-kit outcome".
 # ---------------------------------------------------------------------------
+
 
 def select_outcome_ids(
     model_meta: object,
@@ -564,7 +611,9 @@ def select_outcome_ids(
         # (a fit from before outcome_catalogue_at_fit was captured) - matching
         # OutcomeDefinition.role's own default, so a legacy fit's outcomes are
         # still selectable by role="primary" rather than silently excluded.
-        ids = [o for o in ids if model_meta.outcome_id_to_role.get(o, "primary") == role]
+        ids = [
+            o for o in ids if model_meta.outcome_id_to_role.get(o, "primary") == role
+        ]
     return ids
 
 
@@ -587,7 +636,9 @@ def eligible_outcome_ids(model_meta: object, ids: List[str], flag: str) -> List[
             include = resolved.get(flag, True)
         else:
             role = role_map.get(o, "primary")
-            include = _ROLE_ELIGIBILITY_DEFAULTS.get(role, _ROLE_ELIGIBILITY_DEFAULTS["primary"])[flag]
+            include = _ROLE_ELIGIBILITY_DEFAULTS.get(
+                role, _ROLE_ELIGIBILITY_DEFAULTS["primary"]
+            )[flag]
         if include:
             out.append(o)
     return out
@@ -670,7 +721,9 @@ def dna_kit_sale_outcome_ids(model_meta: object) -> List[str]:
     return eligible_outcome_ids(model_meta, ids, "include_in_default_reporting")
 
 
-def official_total_outcome_ids(model_meta: object, *, metric_key: Optional[str] = None) -> List[str]:
+def official_total_outcome_ids(
+    model_meta: object, *, metric_key: Optional[str] = None
+) -> List[str]:
     """Outcome_ids eligible for a cross-reporting *official* total (PR E.2) -
     gated by `include_in_official_total`, a stricter flag than the per-metric
     named totals above (which gate on `include_in_default_reporting`). A
@@ -737,12 +790,23 @@ def outcome_status(
     `FHModelMeta`, which `outcome_catalogue_at_fit` now does capture, but
     this function doesn't yet cross-check against it.
     """
-    was_fit = model_meta_outcome_ids is not None and outcome.outcome_id in model_meta_outcome_ids
-    was_prepared = frame_outcome_ids is not None and outcome.outcome_id in frame_outcome_ids
-    column_missing = available_columns is not None and outcome.source_column not in available_columns
+    was_fit = (
+        model_meta_outcome_ids is not None
+        and outcome.outcome_id in model_meta_outcome_ids
+    )
+    was_prepared = (
+        frame_outcome_ids is not None and outcome.outcome_id in frame_outcome_ids
+    )
+    column_missing = (
+        available_columns is not None and outcome.source_column not in available_columns
+    )
 
     if column_missing:
-        return "Stale after configuration changes" if (was_fit or was_prepared) else "Missing source column"
+        return (
+            "Stale after configuration changes"
+            if (was_fit or was_prepared)
+            else "Missing source column"
+        )
     if not outcome.included_in_fit:
         return "Excluded"
     if was_fit:
@@ -771,7 +835,9 @@ def _implies_conflicting_metric_label(outcome: OutcomeDefinition) -> bool:
 
 
 def validate_outcome_definitions(
-    outcomes: List[OutcomeDefinition], *, available_columns: Optional[set] = None,
+    outcomes: List[OutcomeDefinition],
+    *,
+    available_columns: Optional[set] = None,
 ) -> List[str]:
     """
     Rejects (returns non-empty error list, never raises):
@@ -836,7 +902,11 @@ def validate_outcome_definitions(
                 f"Outcome '{o.outcome_id}' has unknown role '{o.role}' "
                 f"(expected one of {', '.join(OUTCOME_ROLES)})."
             )
-        if available_columns is not None and o.included_in_fit and o.source_column not in available_columns:
+        if (
+            available_columns is not None
+            and o.included_in_fit
+            and o.source_column not in available_columns
+        ):
             errors.append(
                 f"Outcome '{o.outcome_id}' is included in the fit but its source column "
                 f"'{o.source_column}' is not in the current data."
@@ -875,7 +945,9 @@ def validate_outcome_definitions(
     by_definition: Dict[tuple, set] = {}
     by_column: Dict[str, set] = {}
     for o in outcomes:
-        by_definition.setdefault((o.product, o.segment, o.metric), set()).add(o.source_column)
+        by_definition.setdefault((o.product, o.segment, o.metric), set()).add(
+            o.source_column
+        )
         by_column.setdefault(o.source_column, set()).add((o.product, o.metric))
     for (product, segment, metric), columns in by_definition.items():
         if len(columns) > 1:
@@ -913,8 +985,10 @@ def validate_outcome_definitions(
 # never as a silent runtime fallback inside the model builders.
 # ---------------------------------------------------------------------------
 
+
 def validate_fh_dna_cross_sell_outcome_id(
-    outcome_id: Optional[str], outcomes: List[OutcomeDefinition],
+    outcome_id: Optional[str],
+    outcomes: List[OutcomeDefinition],
 ) -> List[str]:
     """
     Validate a candidate `fh_dna_cross_sell_outcome_id` (`ModelSpec` field)
@@ -932,11 +1006,15 @@ def validate_fh_dna_cross_sell_outcome_id(
         return []
     by_id = {o.outcome_id: o for o in outcomes}
     if outcome_id not in by_id:
-        return [f"fh_dna_cross_sell_outcome_id '{outcome_id}' is not one of this project's outcomes."]
+        return [
+            f"fh_dna_cross_sell_outcome_id '{outcome_id}' is not one of this project's outcomes."
+        ]
     o = by_id[outcome_id]
     errors = []
     if not o.included_in_fit:
-        errors.append(f"fh_dna_cross_sell_outcome_id '{outcome_id}' is excluded from the fit.")
+        errors.append(
+            f"fh_dna_cross_sell_outcome_id '{outcome_id}' is excluded from the fit."
+        )
     if o.product != FAMILY_HISTORY:
         errors.append(
             f"fh_dna_cross_sell_outcome_id '{outcome_id}' has product '{o.product}', expected "
@@ -966,7 +1044,8 @@ def infer_legacy_fh_dna_cross_sell_outcome_id(
     ambiguous, explicit configuration is required, no guess is offered.
     """
     candidates = [
-        o.outcome_id for o in outcomes
+        o.outcome_id
+        for o in outcomes
         if o.product == FAMILY_HISTORY and "dna" in o.outcome_id.lower()
     ]
     if not candidates:
@@ -989,21 +1068,40 @@ def infer_legacy_fh_dna_cross_sell_outcome_id(
 # ---------------------------------------------------------------------------
 
 _FINGERPRINT_FIELDS = (
-    "outcome_id", "product", "segment", "metric", "metric_key", "unit", "source_column",
-    "role", "included_in_fit", "value_weight", "value_currency",
-    "include_in_default_reporting", "include_in_official_total",
-    "include_in_value", "include_in_optimisation",
+    "outcome_id",
+    "product",
+    "segment",
+    "metric",
+    "metric_key",
+    "unit",
+    "source_column",
+    "role",
+    "included_in_fit",
+    "value_weight",
+    "value_currency",
+    "include_in_default_reporting",
+    "include_in_official_total",
+    "include_in_value",
+    "include_in_optimisation",
     # G2A.7 (REQ-STALE-001): business-definition fields that affect
     # what the outcome *is* — changing any of these must stale the
     # model-spec fingerprint and thus the model approval.
-    "definition_version", "event_definition", "date_basis",
-    "cohort_or_attribution_basis", "completeness_or_maturity_policy",
-    "exclusions", "reconciliation_source", "business_owner",
-    "effective_from", "effective_to",
+    "definition_version",
+    "event_definition",
+    "date_basis",
+    "cohort_or_attribution_basis",
+    "completeness_or_maturity_policy",
+    "exclusions",
+    "reconciliation_source",
+    "business_owner",
+    "effective_from",
+    "effective_to",
 )
 
 
-def outcome_catalogue_fingerprint_payload(outcomes: List[OutcomeDefinition]) -> List[dict]:
+def outcome_catalogue_fingerprint_payload(
+    outcomes: List[OutcomeDefinition],
+) -> List[dict]:
     """
     The calculation-relevant subset of an outcome catalogue, sorted by
     `outcome_id`, for `core.fingerprint.fingerprint_model_spec`. Every field
@@ -1042,13 +1140,25 @@ DRIFT_STATUSES = (
 )
 
 _DRIFT_TRACKED_FIELDS = (
-    "source_column", "product", "segment", "metric", "metric_key", "unit", "role", "included_in_fit",
-    "value_weight", "include_in_default_reporting", "include_in_official_total",
-    "include_in_value", "include_in_optimisation",
+    "source_column",
+    "product",
+    "segment",
+    "metric",
+    "metric_key",
+    "unit",
+    "role",
+    "included_in_fit",
+    "value_weight",
+    "include_in_default_reporting",
+    "include_in_official_total",
+    "include_in_value",
+    "include_in_optimisation",
 )
 
 
-def outcome_catalogue_at_fit_by_id(model_meta: Optional[object]) -> Dict[str, OutcomeDefinition]:
+def outcome_catalogue_at_fit_by_id(
+    model_meta: Optional[object],
+) -> Dict[str, OutcomeDefinition]:
     """`{outcome_id: OutcomeDefinition}` from `model_meta.outcome_catalogue_at_fit` -
     `{}` if there is no fitted model this session, or the fit predates that
     field (an old fit has nothing to compare drift against)."""
@@ -1088,7 +1198,10 @@ def outcome_drift_status(
         return "Missing source column"
     if not outcome.included_in_fit:
         return "Excluded from next fit"
-    changed = any(getattr(outcome, f) != getattr(fit_time_outcome, f) for f in _DRIFT_TRACKED_FIELDS)
+    changed = any(
+        getattr(outcome, f) != getattr(fit_time_outcome, f)
+        for f in _DRIFT_TRACKED_FIELDS
+    )
     if changed:
         return "Changed since fit"
     return "Fitted and current"
@@ -1116,7 +1229,9 @@ def outcomes_drift_dataframe(
     for oid in all_ids:
         current = current_by_id.get(oid)
         fit_time = fit_by_id.get(oid)
-        status = outcome_drift_status(current, fit_time, available_columns=available_columns)
+        status = outcome_drift_status(
+            current, fit_time, available_columns=available_columns
+        )
         row = (current or fit_time).to_dict()
         row["outcome_id"] = oid
         row["drift_status"] = status
@@ -1161,14 +1276,17 @@ def has_blocking_drift(
     """
     if model_meta is None:
         return False
-    drift_df = outcomes_drift_dataframe(outcomes, model_meta, available_columns=available_columns)
+    drift_df = outcomes_drift_dataframe(
+        outcomes, model_meta, available_columns=available_columns
+    )
     if drift_df.empty:
         return False
     return bool(drift_df["drift_status"].isin(BLOCKING_DRIFT_STATUSES).any())
 
 
 def fh_outcomes_from_spec(
-    segment_outcomes: Dict[str, str], segment_ltv: Optional[Dict[str, float]] = None,
+    segment_outcomes: Dict[str, str],
+    segment_ltv: Optional[Dict[str, float]] = None,
 ) -> List[OutcomeDefinition]:
     """Derive the Family History OutcomeDefinitions implied by a ModelSpec's
     `segment_outcomes`/`segment_ltv` - the migration path for any project
@@ -1215,22 +1333,40 @@ def dna_outcomes_from_columns(
     should treat this as "either/or" in their own UI too.
     """
     if combined_column:
-        return [OutcomeDefinition(
-            outcome_id="dna_combined_kit", product=DNA, segment=DNA_SEGMENT_COMBINED,
-            metric=METRIC_KIT_SALE, source_column=combined_column, value_weight=value_weight_combined,
-        )]
+        return [
+            OutcomeDefinition(
+                outcome_id="dna_combined_kit",
+                product=DNA,
+                segment=DNA_SEGMENT_COMBINED,
+                metric=METRIC_KIT_SALE,
+                source_column=combined_column,
+                value_weight=value_weight_combined,
+            )
+        ]
 
     outcomes = []
     if new_customer_column:
-        outcomes.append(OutcomeDefinition(
-            outcome_id="dna_new_kit", product=DNA, segment=DNA_SEGMENT_NEW,
-            metric=METRIC_KIT_SALE, source_column=new_customer_column, value_weight=value_weight_new,
-        ))
+        outcomes.append(
+            OutcomeDefinition(
+                outcome_id="dna_new_kit",
+                product=DNA,
+                segment=DNA_SEGMENT_NEW,
+                metric=METRIC_KIT_SALE,
+                source_column=new_customer_column,
+                value_weight=value_weight_new,
+            )
+        )
     if existing_fh_column:
-        outcomes.append(OutcomeDefinition(
-            outcome_id="dna_existing_fh_kit", product=DNA, segment=DNA_SEGMENT_EXISTING_FH,
-            metric=METRIC_KIT_SALE, source_column=existing_fh_column, value_weight=value_weight_existing,
-        ))
+        outcomes.append(
+            OutcomeDefinition(
+                outcome_id="dna_existing_fh_kit",
+                product=DNA,
+                segment=DNA_SEGMENT_EXISTING_FH,
+                metric=METRIC_KIT_SALE,
+                source_column=existing_fh_column,
+                value_weight=value_weight_existing,
+            )
+        )
     return outcomes
 
 
@@ -1290,17 +1426,32 @@ def outcomes_to_dataframe(
     or "Excluded" per `outcome.included_in_fit`), just without the
     frame/fit/column context to distinguish the other four."""
     if not outcomes:
-        return pd.DataFrame(columns=[
-            "outcome_id", "product", "segment", "metric", "source_column", "unit",
-            "value_weight", "role", "included_in_fit", "exclusion_reason", "status",
-        ])
-    return pd.DataFrame([
-        {
-            **o.to_dict(),
-            "status": outcome_status(
-                o, available_columns=available_columns,
-                frame_outcome_ids=frame_outcome_ids, model_meta_outcome_ids=model_meta_outcome_ids,
-            ),
-        }
-        for o in outcomes
-    ])
+        return pd.DataFrame(
+            columns=[
+                "outcome_id",
+                "product",
+                "segment",
+                "metric",
+                "source_column",
+                "unit",
+                "value_weight",
+                "role",
+                "included_in_fit",
+                "exclusion_reason",
+                "status",
+            ]
+        )
+    return pd.DataFrame(
+        [
+            {
+                **o.to_dict(),
+                "status": outcome_status(
+                    o,
+                    available_columns=available_columns,
+                    frame_outcome_ids=frame_outcome_ids,
+                    model_meta_outcome_ids=model_meta_outcome_ids,
+                ),
+            }
+            for o in outcomes
+        ]
+    )

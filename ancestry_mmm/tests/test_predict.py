@@ -46,9 +46,16 @@ CHANNELS = ["TV_Brand", "DNA_Media"]
 @pytest.fixture
 def meta() -> FHModelMeta:
     return FHModelMeta(
-        markets=["UK"], outcome_ids=OUTCOME_IDS, channels=CHANNELS,
-        dna_channels=["DNA_Media"], dna_channel_idx=[1], non_dna_idx=[0],
-        dna_outcome_id="DNA_CrossSell", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+        markets=["UK"],
+        outcome_ids=OUTCOME_IDS,
+        channels=CHANNELS,
+        dna_channels=["DNA_Media"],
+        dna_channel_idx=[1],
+        non_dna_idx=[0],
+        dna_outcome_id="DNA_CrossSell",
+        dna_lag_weeks=4,
+        unpooled_markets=[],
+        control_names=[],
     )
 
 
@@ -58,15 +65,21 @@ def params() -> FHPosteriorParams:
         decay_rate={"TV_Brand": 0.7, "DNA_Media": 0.5},
         hill_K={"TV_Brand": 1000.0, "DNA_Media": 500.0},
         hill_S={"TV_Brand": 1.2, "DNA_Media": 1.0},
-        beta={"New": {"TV_Brand": 0.10, "DNA_Media": 0.05}, "DNA_CrossSell": {"TV_Brand": 0.02, "DNA_Media": 0.20}},
-        pathway_strength=pathway_strength_from_flat({"New": 0.15, "DNA_CrossSell": 1.0}, "DNA_Media"),
+        beta={
+            "New": {"TV_Brand": 0.10, "DNA_Media": 0.05},
+            "DNA_CrossSell": {"TV_Brand": 0.02, "DNA_Media": 0.20},
+        },
+        pathway_strength=pathway_strength_from_flat(
+            {"New": 0.15, "DNA_CrossSell": 1.0}, "DNA_Media"
+        ),
         promo_coef={"New": 0.2, "DNA_CrossSell": 0.3},
         market_offset={"UK": {"New": 0.0, "DNA_CrossSell": 0.0}},
         intercept={"New": 3.0, "DNA_CrossSell": 2.0},
         trend_coef={"New": 0.1, "DNA_CrossSell": 0.05},
         gamma_fourier={"New": np.zeros(6), "DNA_CrossSell": np.zeros(6)},
         alpha={"New": 5.0, "DNA_CrossSell": 5.0},
-        control_coef={}, outcome_control_coef={},
+        control_coef={},
+        outcome_control_coef={},
     )
 
 
@@ -76,29 +89,43 @@ class TestGenerateChannelCurve:
             generate_channel_curve("Radio", meta, params)
 
     def test_zero_spend_gives_zero_response(self, meta, params):
-        df = generate_channel_curve("TV_Brand", meta, params, spend_range=np.array([0.0, 100.0, 500.0]))
+        df = generate_channel_curve(
+            "TV_Brand", meta, params, spend_range=np.array([0.0, 100.0, 500.0])
+        )
         assert df.iloc[0]["overall_response"] == pytest.approx(0.0)
         assert df.iloc[0]["saturation"] == pytest.approx(0.0)
 
     def test_overall_response_is_sum_of_outcome_responses(self, meta, params):
-        df = generate_channel_curve("DNA_Media", meta, params, spend_range=np.array([0.0, 250.0, 1000.0]))
+        df = generate_channel_curve(
+            "DNA_Media", meta, params, spend_range=np.array([0.0, 250.0, 1000.0])
+        )
         outcome_cols = [f"{s}_response" for s in OUTCOME_IDS]
         np.testing.assert_allclose(df["overall_response"], df[outcome_cols].sum(axis=1))
 
     def test_dna_channel_halo_scales_non_dna_outcome_response(self, meta, params):
-        df = generate_channel_curve("DNA_Media", meta, params, spend_range=np.array([500.0]))
+        df = generate_channel_curve(
+            "DNA_Media", meta, params, spend_range=np.array([500.0])
+        )
         row = df.iloc[0]
         raw_new = params.beta["New"]["DNA_Media"] * row["saturation"]
-        assert row["New_response"] == pytest.approx(raw_new * params.pathway_strength["New"]["DNA_Media"])
+        assert row["New_response"] == pytest.approx(
+            raw_new * params.pathway_strength["New"]["DNA_Media"]
+        )
 
     def test_response_increases_with_spend(self, meta, params):
-        df = generate_channel_curve("TV_Brand", meta, params, spend_range=np.array([0.0, 500.0, 5000.0]))
+        df = generate_channel_curve(
+            "TV_Brand", meta, params, spend_range=np.array([0.0, 500.0, 5000.0])
+        )
         assert df["overall_response"].is_monotonic_increasing
 
-    def test_column_shape_matches_market_specific_curve_for_downstream_compatibility(self, meta, params):
+    def test_column_shape_matches_market_specific_curve_for_downstream_compatibility(
+        self, meta, params
+    ):
         # core.media_units's functions rely on this shape being identical to
         # generate_market_channel_curve's output (minus the "market" column).
-        df = generate_channel_curve("TV_Brand", meta, params, spend_range=np.array([0.0, 100.0]))
+        df = generate_channel_curve(
+            "TV_Brand", meta, params, spend_range=np.array([0.0, 100.0])
+        )
         assert {"channel", "spend", "saturation", "overall_response"} <= set(df.columns)
         assert all(f"{s}_response" in df.columns for s in OUTCOME_IDS)
 
@@ -108,7 +135,9 @@ class TestGenerateChannelCurve:
         assert df["spend"].max() == pytest.approx(params.hill_K["TV_Brand"] * 3)
 
     def test_max_spend_overrides_the_default_cap(self, meta, params):
-        df = generate_channel_curve("TV_Brand", meta, params, n_points=5, max_spend=50.0)
+        df = generate_channel_curve(
+            "TV_Brand", meta, params, n_points=5, max_spend=50.0
+        )
         assert df["spend"].max() == pytest.approx(50.0)
 
 
@@ -121,32 +150,64 @@ class TestGenerateChannelCurveDirectDnaOutcomes:
     @pytest.fixture
     def meta_with_dna_kit_outcome(self) -> FHModelMeta:
         return FHModelMeta(
-            markets=["UK"], outcome_ids=OUTCOME_IDS + ["New Customer"], channels=CHANNELS,
-            dna_channels=["DNA_Media"], dna_channel_idx=[1], non_dna_idx=[0],
-            dna_outcome_id="DNA_CrossSell", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+            markets=["UK"],
+            outcome_ids=OUTCOME_IDS + ["New Customer"],
+            channels=CHANNELS,
+            dna_channels=["DNA_Media"],
+            dna_channel_idx=[1],
+            non_dna_idx=[0],
+            dna_outcome_id="DNA_CrossSell",
+            dna_lag_weeks=4,
+            unpooled_markets=[],
+            control_names=[],
             direct_dna_outcome_ids=["DNA_CrossSell", "New Customer"],
         )
 
     @pytest.fixture
     def params_with_dna_kit_outcome(self, params) -> FHPosteriorParams:
         params.beta["New Customer"] = {"TV_Brand": 0.03, "DNA_Media": 0.5}
-        params.pathway_strength["New Customer"] = {"DNA_Media": 0.2}  # would apply if wrongly treated as a halo recipient
+        params.pathway_strength["New Customer"] = {
+            "DNA_Media": 0.2
+        }  # would apply if wrongly treated as a halo recipient
         return params
 
-    def test_dna_kit_outcome_gets_full_response_not_halo_shrunk(self, meta_with_dna_kit_outcome, params_with_dna_kit_outcome):
-        df = generate_channel_curve("DNA_Media", meta_with_dna_kit_outcome, params_with_dna_kit_outcome, spend_range=np.array([500.0]))
+    def test_dna_kit_outcome_gets_full_response_not_halo_shrunk(
+        self, meta_with_dna_kit_outcome, params_with_dna_kit_outcome
+    ):
+        df = generate_channel_curve(
+            "DNA_Media",
+            meta_with_dna_kit_outcome,
+            params_with_dna_kit_outcome,
+            spend_range=np.array([500.0]),
+        )
         row = df.iloc[0]
-        raw = params_with_dna_kit_outcome.beta["New Customer"]["DNA_Media"] * row["saturation"]
-        assert row["New Customer_response"] == pytest.approx(raw)  # NOT raw * pathway_strength
+        raw = (
+            params_with_dna_kit_outcome.beta["New Customer"]["DNA_Media"]
+            * row["saturation"]
+        )
+        assert row["New Customer_response"] == pytest.approx(
+            raw
+        )  # NOT raw * pathway_strength
 
-    def test_ordinary_non_direct_outcome_is_still_halo_shrunk(self, meta_with_dna_kit_outcome, params_with_dna_kit_outcome):
+    def test_ordinary_non_direct_outcome_is_still_halo_shrunk(
+        self, meta_with_dna_kit_outcome, params_with_dna_kit_outcome
+    ):
         # Regression guard: adding a direct DNA-kit outcome must not
         # accidentally exempt an unrelated FH outcome (New) from the halo
         # shrinkage it's still supposed to get.
-        df = generate_channel_curve("DNA_Media", meta_with_dna_kit_outcome, params_with_dna_kit_outcome, spend_range=np.array([500.0]))
+        df = generate_channel_curve(
+            "DNA_Media",
+            meta_with_dna_kit_outcome,
+            params_with_dna_kit_outcome,
+            spend_range=np.array([500.0]),
+        )
         row = df.iloc[0]
-        raw_new = params_with_dna_kit_outcome.beta["New"]["DNA_Media"] * row["saturation"]
-        assert row["New_response"] == pytest.approx(raw_new * params_with_dna_kit_outcome.pathway_strength["New"]["DNA_Media"])
+        raw_new = (
+            params_with_dna_kit_outcome.beta["New"]["DNA_Media"] * row["saturation"]
+        )
+        assert row["New_response"] == pytest.approx(
+            raw_new * params_with_dna_kit_outcome.pathway_strength["New"]["DNA_Media"]
+        )
 
 
 class TestSteadyStateSegmentResponseDirectDnaOutcomes:
@@ -157,9 +218,16 @@ class TestSteadyStateSegmentResponseDirectDnaOutcomes:
     @pytest.fixture
     def meta_with_dna_kit_outcome(self) -> FHModelMeta:
         return FHModelMeta(
-            markets=["UK"], outcome_ids=OUTCOME_IDS + ["New Customer"], channels=CHANNELS,
-            dna_channels=["DNA_Media"], dna_channel_idx=[1], non_dna_idx=[0],
-            dna_outcome_id="DNA_CrossSell", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+            markets=["UK"],
+            outcome_ids=OUTCOME_IDS + ["New Customer"],
+            channels=CHANNELS,
+            dna_channels=["DNA_Media"],
+            dna_channel_idx=[1],
+            non_dna_idx=[0],
+            dna_outcome_id="DNA_CrossSell",
+            dna_lag_weeks=4,
+            unpooled_markets=[],
+            control_names=[],
             direct_dna_outcome_ids=["DNA_CrossSell", "New Customer"],
         )
 
@@ -173,17 +241,30 @@ class TestSteadyStateSegmentResponseDirectDnaOutcomes:
         params.gamma_fourier["New Customer"] = np.zeros(6)
         return params
 
-    def test_dna_kit_outcome_response_uses_full_beta_not_halo_shrunk(self, meta_with_dna_kit_outcome, params_with_dna_kit_outcome):
+    def test_dna_kit_outcome_response_uses_full_beta_not_halo_shrunk(
+        self, meta_with_dna_kit_outcome, params_with_dna_kit_outcome
+    ):
         spend = {"TV_Brand": 0.0, "DNA_Media": 500.0}
-        direct = steady_state_segment_response("UK", spend, meta_with_dna_kit_outcome, params_with_dna_kit_outcome)
+        direct = steady_state_segment_response(
+            "UK", spend, meta_with_dna_kit_outcome, params_with_dna_kit_outcome
+        )
 
         halo_meta = FHModelMeta(
-            markets=["UK"], outcome_ids=OUTCOME_IDS + ["New Customer"], channels=CHANNELS,
-            dna_channels=["DNA_Media"], dna_channel_idx=[1], non_dna_idx=[0],
-            dna_outcome_id="DNA_CrossSell", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+            markets=["UK"],
+            outcome_ids=OUTCOME_IDS + ["New Customer"],
+            channels=CHANNELS,
+            dna_channels=["DNA_Media"],
+            dna_channel_idx=[1],
+            non_dna_idx=[0],
+            dna_outcome_id="DNA_CrossSell",
+            dna_lag_weeks=4,
+            unpooled_markets=[],
+            control_names=[],
             direct_dna_outcome_ids=["DNA_CrossSell"],  # New Customer NOT direct here
         )
-        shrunk = steady_state_segment_response("UK", spend, halo_meta, params_with_dna_kit_outcome)
+        shrunk = steady_state_segment_response(
+            "UK", spend, halo_meta, params_with_dna_kit_outcome
+        )
 
         # Full-weight response must exceed the halo-shrunk response for the
         # same inputs (halo_strength < 1 for "New Customer").
@@ -200,7 +281,12 @@ class TestExtractPosteriorParamsAt:
     @pytest.fixture
     def trace(self) -> az.InferenceData:
         n_chain, n_draw = 2, 5
-        coords = {"outcome": OUTCOME_IDS, "channel": CHANNELS, "market": ["UK"], "fourier": list(range(6))}
+        coords = {
+            "outcome": OUTCOME_IDS,
+            "channel": CHANNELS,
+            "market": ["UK"],
+            "fourier": list(range(6)),
+        }
         rng = np.random.default_rng(1)
 
         def const(value):
@@ -208,7 +294,8 @@ class TestExtractPosteriorParamsAt:
             return np.broadcast_to(arr, (n_chain, n_draw) + arr.shape).copy()
 
         posterior = {
-            "decay_rate": const([0.7, 0.5]) + rng.normal(0, 1e-6, size=(n_chain, n_draw, 2)),
+            "decay_rate": const([0.7, 0.5])
+            + rng.normal(0, 1e-6, size=(n_chain, n_draw, 2)),
             "hill_K": const([1000.0, 500.0]),
             "hill_S": const([1.2, 1.0]),
             "beta": const([[0.10, 0.05], [0.02, 0.20]]),
@@ -220,22 +307,31 @@ class TestExtractPosteriorParamsAt:
             "alpha": const([5.0, 5.0]),
         }
         dims = {
-            "decay_rate": ["channel"], "hill_K": ["channel"], "hill_S": ["channel"],
+            "decay_rate": ["channel"],
+            "hill_K": ["channel"],
+            "hill_S": ["channel"],
             "beta": ["outcome", "channel"],
-            "promo_coef": ["outcome"], "market_offset": ["market", "outcome"],
-            "intercept": ["outcome"], "trend_coef": ["outcome"],
-            "gamma_fourier": ["fourier", "outcome"], "alpha": ["outcome"],
+            "promo_coef": ["outcome"],
+            "market_offset": ["market", "outcome"],
+            "intercept": ["outcome"],
+            "trend_coef": ["outcome"],
+            "gamma_fourier": ["fourier", "outcome"],
+            "alpha": ["outcome"],
         }
         return az.from_dict(posterior=posterior, coords=coords, dims=dims)
 
-    def test_at_selects_one_draw_instead_of_averaging_over_the_posterior(self, trace, meta):
+    def test_at_selects_one_draw_instead_of_averaging_over_the_posterior(
+        self, trace, meta
+    ):
         mean_params = extract_posterior_params(trace, meta)
         draw_a = extract_posterior_params(trace, meta, at=(0, 0))
         draw_b = extract_posterior_params(trace, meta, at=(1, 3))
         assert draw_a.decay_rate["TV_Brand"] != draw_b.decay_rate["TV_Brand"]
         assert draw_a.decay_rate["TV_Brand"] != mean_params.decay_rate["TV_Brand"]
 
-    def test_at_still_selects_correctly_for_outcome_and_channel_indexed_fields(self, trace, meta):
+    def test_at_still_selects_correctly_for_outcome_and_channel_indexed_fields(
+        self, trace, meta
+    ):
         draw = extract_posterior_params(trace, meta, at=(1, 2))
         assert draw.beta["New"]["TV_Brand"] == pytest.approx(0.10)
         assert draw.beta["DNA_CrossSell"]["DNA_Media"] == pytest.approx(0.20)
@@ -266,10 +362,16 @@ class TestPredictMuDirectHaloSeparation:
 
     def _meta(self, dna_lag_weeks: int) -> FHModelMeta:
         return FHModelMeta(
-            markets=["UK"], outcome_ids=self.OUTCOME_IDS, channels=self.CHANNELS,
-            dna_channels=["DNA_Media"], dna_channel_idx=[1], non_dna_idx=[0],
-            dna_outcome_id="DNA_CrossSell", dna_lag_weeks=dna_lag_weeks,
-            unpooled_markets=[], control_names=[],
+            markets=["UK"],
+            outcome_ids=self.OUTCOME_IDS,
+            channels=self.CHANNELS,
+            dna_channels=["DNA_Media"],
+            dna_channel_idx=[1],
+            non_dna_idx=[0],
+            dna_outcome_id="DNA_CrossSell",
+            dna_lag_weeks=dna_lag_weeks,
+            unpooled_markets=[],
+            control_names=[],
             direct_dna_outcome_ids=["DNA_CrossSell", "New Customer"],
         )
 
@@ -286,14 +388,17 @@ class TestPredictMuDirectHaloSeparation:
             # "New"/"DNA_CrossSell" share the same pathway_strength deliberately
             # (see test_dna_cross_sell_direct_and_halo_components_add_without_double_counting) -
             # "New Customer" (kit-only) has none, since it has no halo pathway.
-            pathway_strength=pathway_strength_from_flat({"New": 0.5, "DNA_CrossSell": 0.5, "New Customer": 0.0}, "DNA_Media"),
+            pathway_strength=pathway_strength_from_flat(
+                {"New": 0.5, "DNA_CrossSell": 0.5, "New Customer": 0.0}, "DNA_Media"
+            ),
             promo_coef={s: 0.0 for s in self.OUTCOME_IDS},
             market_offset={"UK": {s: 0.0 for s in self.OUTCOME_IDS}},
             intercept={s: 0.0 for s in self.OUTCOME_IDS},
             trend_coef={s: 0.0 for s in self.OUTCOME_IDS},
             gamma_fourier={s: np.zeros(4) for s in self.OUTCOME_IDS},
             alpha={s: 5.0 for s in self.OUTCOME_IDS},
-            control_coef={}, outcome_control_coef={},
+            control_coef={},
+            outcome_control_coef={},
         )
 
     def _frame(self):
@@ -301,11 +406,17 @@ class TestPredictMuDirectHaloSeparation:
         X_media = np.zeros((n, 2))
         X_media[self.SPIKE_WEEK, 1] = 500.0  # DNA_Media spend in exactly one week
         return {
-            "markets": ["UK"], "market_idx": np.zeros(n, dtype=int), "market_bounds": [(0, n)],
-            "X_media": X_media, "promo": np.zeros((n, len(self.OUTCOME_IDS))),
-            "trend": np.zeros(n), "fourier": np.zeros((n, 4)),
-            "control_names": [], "X_controls": np.zeros((n, 0)),
-            "outcome_controls": {}, "outcome_control_names": {},
+            "markets": ["UK"],
+            "market_idx": np.zeros(n, dtype=int),
+            "market_bounds": [(0, n)],
+            "X_media": X_media,
+            "promo": np.zeros((n, len(self.OUTCOME_IDS))),
+            "trend": np.zeros(n),
+            "fourier": np.zeros((n, 4)),
+            "control_names": [],
+            "X_controls": np.zeros((n, 0)),
+            "outcome_controls": {},
+            "outcome_control_names": {},
         }
 
     def test_kit_only_outcome_does_not_inherit_the_extra_halo_lag(self):
@@ -314,8 +425,12 @@ class TestPredictMuDirectHaloSeparation:
         mu = predict_mu(self._frame(), meta, self._params())
         idx = meta.outcome_ids.index("New Customer")
         baseline = mu[0, idx]
-        assert mu[self.SPIKE_WEEK, idx] > baseline  # direct response, same week as the spend
-        assert mu[self.SPIKE_WEEK + lag, idx] == pytest.approx(baseline)  # no lagged response at all
+        assert (
+            mu[self.SPIKE_WEEK, idx] > baseline
+        )  # direct response, same week as the spend
+        assert mu[self.SPIKE_WEEK + lag, idx] == pytest.approx(
+            baseline
+        )  # no lagged response at all
 
     def test_fh_halo_outcome_does_inherit_the_extra_lag(self):
         lag = 2
@@ -323,8 +438,12 @@ class TestPredictMuDirectHaloSeparation:
         mu = predict_mu(self._frame(), meta, self._params())
         idx = meta.outcome_ids.index("New")
         baseline = mu[0, idx]
-        assert mu[self.SPIKE_WEEK, idx] == pytest.approx(baseline)  # no premature direct-week response
-        assert mu[self.SPIKE_WEEK + lag, idx] > baseline  # response lands on the lagged week
+        assert mu[self.SPIKE_WEEK, idx] == pytest.approx(
+            baseline
+        )  # no premature direct-week response
+        assert (
+            mu[self.SPIKE_WEEK + lag, idx] > baseline
+        )  # response lands on the lagged week
 
     def test_changing_halo_lag_does_not_alter_the_direct_kit_response(self):
         params = self._params()
@@ -334,14 +453,20 @@ class TestPredictMuDirectHaloSeparation:
         mu_lag5 = predict_mu(frame, self._meta(dna_lag_weeks=5), params)
         np.testing.assert_allclose(mu_lag2[:, idx], mu_lag5[:, idx])
 
-    def test_dna_cross_sell_direct_and_halo_components_add_without_double_counting(self):
+    def test_dna_cross_sell_direct_and_halo_components_add_without_double_counting(
+        self,
+    ):
         lag = 2
         meta = self._meta(dna_lag_weeks=lag)
         mu = predict_mu(self._frame(), meta, self._params())
 
         cross_idx = meta.outcome_ids.index("DNA_CrossSell")
-        kit_idx = meta.outcome_ids.index("New Customer")  # direct-only, same beta as DNA_CrossSell
-        halo_idx = meta.outcome_ids.index("New")           # halo-only, same beta AND halo_strength as DNA_CrossSell
+        kit_idx = meta.outcome_ids.index(
+            "New Customer"
+        )  # direct-only, same beta as DNA_CrossSell
+        halo_idx = meta.outcome_ids.index(
+            "New"
+        )  # halo-only, same beta AND halo_strength as DNA_CrossSell
 
         # At the direct week, dna_halo_media is still zero (the lag hasn't
         # caught up yet), so DNA_CrossSell's response there is *exactly* its
@@ -349,11 +474,15 @@ class TestPredictMuDirectHaloSeparation:
         # beta, same weight=1.0). If the direct term were being double
         # counted (e.g. added twice, or the halo term leaking in early),
         # this would no longer match.
-        assert mu[self.SPIKE_WEEK, cross_idx] == pytest.approx(mu[self.SPIKE_WEEK, kit_idx])
+        assert mu[self.SPIKE_WEEK, cross_idx] == pytest.approx(
+            mu[self.SPIKE_WEEK, kit_idx]
+        )
 
         # At the lagged week, the direct term is back to zero (the spike
         # already passed) so DNA_CrossSell's response is *exactly* its halo
         # term alone - identical to the halo-only outcome's (same beta, same
         # halo_strength). The kit-only outcome shows nothing at all there.
-        assert mu[self.SPIKE_WEEK + lag, cross_idx] == pytest.approx(mu[self.SPIKE_WEEK + lag, halo_idx])
+        assert mu[self.SPIKE_WEEK + lag, cross_idx] == pytest.approx(
+            mu[self.SPIKE_WEEK + lag, halo_idx]
+        )
         assert mu[self.SPIKE_WEEK + lag, kit_idx] == pytest.approx(mu[0, kit_idx])

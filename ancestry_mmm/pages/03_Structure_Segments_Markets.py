@@ -793,9 +793,9 @@ for _pathway_index, _pathway_row in pathway_catalogue_df.iterrows():
     if _component_type in {"mediated", "excluded"}:
         pathway_catalogue_df.at[_pathway_index, "include_in_planning"] = False
         pathway_catalogue_df.at[_pathway_index, "include_in_headline"] = False
-        pathway_catalogue_df.at[
-            _pathway_index, "headline_approval_status"
-        ] = "not_applicable"
+        pathway_catalogue_df.at[_pathway_index, "headline_approval_status"] = (
+            "not_applicable"
+        )
     if _component_type == "excluded":
         pathway_catalogue_df.at[_pathway_index, "include_in_attribution"] = False
 

@@ -42,4 +42,7 @@ class TestDnaKitOutcomeColumns:
         # kit sales are the larger of the two channels) - a loose sanity
         # check on the synthetic data's shape, not a precise value.
         df, _ = load_sample_data("outcomes")
-        assert df["DNA_Kit_New_Customer"].mean() > df["DNA_Kit_Existing_FH_Customer"].mean()
+        assert (
+            df["DNA_Kit_New_Customer"].mean()
+            > df["DNA_Kit_Existing_FH_Customer"].mean()
+        )

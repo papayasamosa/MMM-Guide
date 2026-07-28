@@ -102,9 +102,7 @@ class ActivityDefinition:
         if self.approval_status == "approved" and (
             not self.approved_by or not self.approved_at
         ):
-            raise ValueError(
-                "approved activities require approved_by and approved_at"
-            )
+            raise ValueError("approved activities require approved_by and approved_at")
 
     @property
     def activity_key(self) -> tuple[str, str]:
@@ -156,9 +154,7 @@ class ActivityDefinition:
         ):
             payload["approval_status"] = "approved"
         known = set(cls.__dataclass_fields__)
-        return cls(
-            **{key: value for key, value in payload.items() if key in known}
-        )
+        return cls(**{key: value for key, value in payload.items() if key in known})
 
 
 def activity_definitions_fingerprint(

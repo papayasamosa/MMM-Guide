@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Mapping, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -21,11 +21,13 @@ import pandas as pd
 # Shared constants
 # ---------------------------------------------------------------------------
 
-PLANNING_ESTIMANDS = frozenset({
-    "total_outcome",
-    "incremental_outcome",
-    "incremental_value",
-})
+PLANNING_ESTIMANDS = frozenset(
+    {
+        "total_outcome",
+        "incremental_outcome",
+        "incremental_value",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -44,6 +46,7 @@ class ResolvedOutcomeAuthorisation:
     definition fingerprint. Explicit scope values (market, product,
     segment) are persisted instead, so the authorisation's scope is
     auditable without re-deriving it from the definition."""
+
     outcome_id: str
     requested_use: str  # "planning" or "optimisation"
     approval_id: str
@@ -69,6 +72,7 @@ class ResolvedPlanningGovernance:
 
     G2A.7a.6: includes ``model_approval_fingerprint`` so the proof carries
     the exact approval-record identity the resolver confirmed."""
+
     governance_mode: str  # "official" or "exploratory"
     operation: str  # "planning" or "optimisation"
     objective_fingerprint: str
@@ -145,11 +149,11 @@ class ResolvedPlanningGovernance:
         from ..outcome_approval import OutcomeApprovalBlockedError
 
         if self.governance_mode != "official":
-            raise OutcomeApprovalBlockedError(
-                "Resolved governance is not official."
-            )
+            raise OutcomeApprovalBlockedError("Resolved governance is not official.")
         # Use expected_operation when provided — not self.operation
-        check_operation = expected_operation if expected_operation is not None else operation
+        check_operation = (
+            expected_operation if expected_operation is not None else operation
+        )
         if self.operation != check_operation:
             raise OutcomeApprovalBlockedError(
                 f"Resolved governance operation is '{self.operation}' "
@@ -274,6 +278,7 @@ class ScenarioGovernanceDependencies:
 
     Every field must be populated for an official save. Missing mandatory
     fields must block the save, not silently default to None."""
+
     model_run_id: str
     model_approval_fingerprint: str
     data_fingerprint: str
@@ -334,12 +339,16 @@ class ScenarioGovernanceDependencies:
             value_mapping_fingerprint=d.get("value_mapping_fingerprint"),
             currency_context_fingerprint=d.get("currency_context_fingerprint"),
             historical_fx_rate_set_id=d.get("historical_fx_rate_set_id"),
-            historical_fx_rate_set_fingerprint=d.get("historical_fx_rate_set_fingerprint"),
+            historical_fx_rate_set_fingerprint=d.get(
+                "historical_fx_rate_set_fingerprint"
+            ),
             future_fx_assumption_id=d.get("future_fx_assumption_id"),
             future_fx_assumption_fingerprint=d.get("future_fx_assumption_fingerprint"),
             activity_definitions_fingerprint=d.get("activity_definitions_fingerprint"),
             cost_mapping_fingerprint=d.get("cost_mapping_fingerprint"),
-            counterfactual_policy_fingerprint=d.get("counterfactual_policy_fingerprint", ""),
+            counterfactual_policy_fingerprint=d.get(
+                "counterfactual_policy_fingerprint", ""
+            ),
             nbt_completeness_fingerprint=d.get("nbt_completeness_fingerprint"),
         )
 
@@ -354,6 +363,7 @@ class ScenarioEvaluationResult:
     """Structured manual evaluation result with full governance provenance.
 
     G2A.7a.6: includes ``governance_dependencies`` for persistence."""
+
     predicted: pd.DataFrame
     planning_objective: "PlanningObjective | None"
     governance_mode: str
@@ -368,11 +378,17 @@ class ScenarioEvaluationResult:
     def to_dict(self) -> dict:
         return {
             "predicted": self.predicted,
-            "planning_objective": self.planning_objective.to_dict() if self.planning_objective else None,
+            "planning_objective": self.planning_objective.to_dict()
+            if self.planning_objective
+            else None,
             "governance_mode": self.governance_mode,
             "artefact_kind": self.artefact_kind,
-            "resolved_governance": self.resolved_governance.to_dict() if self.resolved_governance else None,
-            "governance_dependencies": self.governance_dependencies.to_dict() if self.governance_dependencies else None,
+            "resolved_governance": self.resolved_governance.to_dict()
+            if self.resolved_governance
+            else None,
+            "governance_dependencies": self.governance_dependencies.to_dict()
+            if self.governance_dependencies
+            else None,
             "activity_definitions_fingerprint": self.activity_definitions_fingerprint,
             "cost_mapping_fingerprint": self.cost_mapping_fingerprint,
             "counterfactual_policy_fingerprint": self.counterfactual_policy_fingerprint,
@@ -397,6 +413,7 @@ class OutcomeValueMapping:
     may disagree with the calculated fingerprint — in that case the
     calculated fingerprint is authoritative and a ``ValueError`` is raised.
     """
+
     value_by_outcome_id: Mapping[str, float]
     currency_by_outcome_id: Mapping[str, str]
     mapping_id: str = "default"
@@ -421,7 +438,12 @@ class OutcomeValueMapping:
                     "semantics."
                 )
         for oid, curr in self.currency_by_outcome_id.items():
-            if not curr or not isinstance(curr, str) or len(curr) != 3 or not curr.isupper():
+            if (
+                not curr
+                or not isinstance(curr, str)
+                or len(curr) != 3
+                or not curr.isupper()
+            ):
                 raise ValueError(
                     f"OutcomeValueMapping: outcome '{oid}' has an invalid currency "
                     f"'{curr}'. Must be a three-letter uppercase ISO code."
@@ -450,7 +472,9 @@ class OutcomeValueMapping:
                 k: v for k, v in sorted(self.currency_by_outcome_id.items())
             },
         }
-        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+        encoded = json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), default=str
+        ).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()
 
     @property
@@ -554,9 +578,13 @@ class CurrencyContext:
     future_fx_assumption_fingerprint: str | None = None
 
     def __post_init__(self) -> None:
-        _ISO_CODE_RE = __import__('re').compile(r'^[A-Z]{3}$')
-        for field_name in ('market_reporting_currency', 'value_currency',
-                           'group_reporting_currency', 'model_currency'):
+        _ISO_CODE_RE = __import__("re").compile(r"^[A-Z]{3}$")
+        for field_name in (
+            "market_reporting_currency",
+            "value_currency",
+            "group_reporting_currency",
+            "model_currency",
+        ):
             value = getattr(self, field_name)
             if value and (not isinstance(value, str) or not _ISO_CODE_RE.match(value)):
                 raise ValueError(
@@ -577,7 +605,9 @@ class CurrencyContext:
             "future_fx_assumption_id": self.future_fx_assumption_id,
             "future_fx_assumption_fingerprint": self.future_fx_assumption_fingerprint,
         }
-        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+        encoded = json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), default=str
+        ).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()
 
     def to_dict(self) -> dict:
@@ -637,26 +667,48 @@ class ScenarioValidationContext:
         determine which fields are mandatory, not the context alone."""
         if not self.model_run_id or not self.model_run_id.strip():
             raise ValueError("ScenarioValidationContext.model_run_id must be non-blank")
-        if not self.model_approval_fingerprint or not self.model_approval_fingerprint.strip():
-            raise ValueError("ScenarioValidationContext.model_approval_fingerprint must be non-blank")
+        if (
+            not self.model_approval_fingerprint
+            or not self.model_approval_fingerprint.strip()
+        ):
+            raise ValueError(
+                "ScenarioValidationContext.model_approval_fingerprint must be non-blank"
+            )
         if not self.data_fingerprint or not self.data_fingerprint.strip():
-            raise ValueError("ScenarioValidationContext.data_fingerprint must be non-blank")
+            raise ValueError(
+                "ScenarioValidationContext.data_fingerprint must be non-blank"
+            )
         if not self.model_spec_fingerprint or not self.model_spec_fingerprint.strip():
-            raise ValueError("ScenarioValidationContext.model_spec_fingerprint must be non-blank")
+            raise ValueError(
+                "ScenarioValidationContext.model_spec_fingerprint must be non-blank"
+            )
         if not self.posterior_fingerprint or not self.posterior_fingerprint.strip():
-            raise ValueError("ScenarioValidationContext.posterior_fingerprint must be non-blank")
+            raise ValueError(
+                "ScenarioValidationContext.posterior_fingerprint must be non-blank"
+            )
         if self.planning_objective is None:
-            raise ValueError("ScenarioValidationContext.planning_objective must not be None")
+            raise ValueError(
+                "ScenarioValidationContext.planning_objective must not be None"
+            )
         if not self.planning_objective.is_valid_for_official_planning:
             raise ValueError(
                 "ScenarioValidationContext.planning_objective must be valid for official planning"
             )
         if not self.outcome_definitions:
-            raise ValueError("ScenarioValidationContext.outcome_definitions must not be empty")
+            raise ValueError(
+                "ScenarioValidationContext.outcome_definitions must not be empty"
+            )
         if not self.outcome_approvals:
-            raise ValueError("ScenarioValidationContext.outcome_approvals must not be empty")
-        if not self.counterfactual_fingerprint or not self.counterfactual_fingerprint.strip():
-            raise ValueError("ScenarioValidationContext.counterfactual_fingerprint must be non-blank")
+            raise ValueError(
+                "ScenarioValidationContext.outcome_approvals must not be empty"
+            )
+        if (
+            not self.counterfactual_fingerprint
+            or not self.counterfactual_fingerprint.strip()
+        ):
+            raise ValueError(
+                "ScenarioValidationContext.counterfactual_fingerprint must be non-blank"
+            )
 
 
 def validation_context_from_legacy_args(
@@ -686,21 +738,31 @@ def validation_context_from_legacy_args(
     if not model_run_id:
         raise ValueError("model_run_id is required for ScenarioValidationContext")
     if not model_approval_fingerprint:
-        raise ValueError("model_approval_fingerprint is required for ScenarioValidationContext")
+        raise ValueError(
+            "model_approval_fingerprint is required for ScenarioValidationContext"
+        )
     if not data_fingerprint:
         raise ValueError("data_fingerprint is required for ScenarioValidationContext")
     if not model_spec_fingerprint:
-        raise ValueError("model_spec_fingerprint is required for ScenarioValidationContext")
+        raise ValueError(
+            "model_spec_fingerprint is required for ScenarioValidationContext"
+        )
     if not posterior_fingerprint:
-        raise ValueError("posterior_fingerprint is required for ScenarioValidationContext")
+        raise ValueError(
+            "posterior_fingerprint is required for ScenarioValidationContext"
+        )
     if planning_objective is None:
         raise ValueError("planning_objective is required for ScenarioValidationContext")
     if not outcome_definitions:
-        raise ValueError("outcome_definitions are required for ScenarioValidationContext")
+        raise ValueError(
+            "outcome_definitions are required for ScenarioValidationContext"
+        )
     if not outcome_approvals:
         raise ValueError("outcome_approvals are required for ScenarioValidationContext")
     if not counterfactual_fingerprint:
-        raise ValueError("counterfactual_fingerprint is required for ScenarioValidationContext")
+        raise ValueError(
+            "counterfactual_fingerprint is required for ScenarioValidationContext"
+        )
 
     return ScenarioValidationContext(
         model_run_id=model_run_id,
@@ -751,7 +813,8 @@ class PlanningObjective:
         # G2A.7a.7: reject duplicate target_outcome_ids
         if len(self.target_outcome_ids) != len(set(self.target_outcome_ids)):
             dupes = [
-                oid for oid in self.target_outcome_ids
+                oid
+                for oid in self.target_outcome_ids
                 if list(self.target_outcome_ids).count(oid) > 1
             ]
             raise ValueError(
@@ -776,7 +839,9 @@ class PlanningObjective:
     def from_dict(cls, d: dict) -> "PlanningObjective":
         known = set(cls.__dataclass_fields__)
         payload = {k: v for k, v in d.items() if k in known}
-        if "target_outcome_ids" in payload and isinstance(payload["target_outcome_ids"], list):
+        if "target_outcome_ids" in payload and isinstance(
+            payload["target_outcome_ids"], list
+        ):
             payload["target_outcome_ids"] = tuple(payload["target_outcome_ids"])
         return cls(**payload)
 
@@ -793,8 +858,10 @@ def planning_objective_from_legacy(
     """
     # Lazy import to avoid circular dependency on .outcomes at module level
     from ..outcomes import (
-        METRIC_KEY_FH_GSA, METRIC_KEY_FH_SIGNUP,
-        METRIC_KEY_FH_NET_BILLTHROUGH_COUNT, METRIC_KEY_DNA_KIT_SALE,
+        METRIC_KEY_FH_GSA,
+        METRIC_KEY_FH_SIGNUP,
+        METRIC_KEY_FH_NET_BILLTHROUGH_COUNT,
+        METRIC_KEY_DNA_KIT_SALE,
     )
 
     metric_keys = {
@@ -834,6 +901,7 @@ def planning_objective_from_legacy(
 class ScenarioDependencyIssue:
     """One detected staleness or invalidity issue in a saved scenario's
     governance dependencies."""
+
     artefact_id: str
     issue_type: str  # "stale", "legacy_unverified", "invalid", "missing"
     detail: str

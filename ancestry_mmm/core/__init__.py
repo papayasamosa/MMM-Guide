@@ -1,7 +1,11 @@
 """Core modeling modules for the Ancestry FH MMM."""
 
 from .approval import ModelApproval, ApprovalMismatchError, require_matching_approval
-from .fingerprint import fingerprint_dataframe, fingerprint_model_spec, fingerprint_posterior
+from .fingerprint import (
+    fingerprint_dataframe,
+    fingerprint_model_spec,
+    fingerprint_posterior,
+)
 from .schema import ModelSpec, DEFAULT_SEGMENTS
 from .transformations import (
     geometric_adstock,

@@ -403,8 +403,7 @@ def test_shared_and_market_specific_curves_emit_nbt_response_and_cpa():
         control_names=[],
         pathway_masks=masks,
         outcome_id_to_metric_key={
-            outcome_id: "fh_net_billthrough_count"
-            for outcome_id in outcome_ids
+            outcome_id: "fh_net_billthrough_count" for outcome_id in outcome_ids
         },
         outcome_id_to_eligibility={
             outcome_id: {"include_in_default_reporting": True}
@@ -424,18 +423,12 @@ def test_shared_and_market_specific_curves_emit_nbt_response_and_cpa():
     common = {
         "decay_rate": {"TV": 0.0},
         "hill_S": {"TV": 1.0},
-        "pathway_strength": {
-            outcome_id: {"TV": 0.0} for outcome_id in outcome_ids
-        },
+        "pathway_strength": {outcome_id: {"TV": 0.0} for outcome_id in outcome_ids},
         "promo_coef": {outcome_id: 0.0 for outcome_id in outcome_ids},
-        "market_offset": {
-            "UK": {outcome_id: 0.0 for outcome_id in outcome_ids}
-        },
+        "market_offset": {"UK": {outcome_id: 0.0 for outcome_id in outcome_ids}},
         "intercept": {outcome_id: 0.0 for outcome_id in outcome_ids},
         "trend_coef": {outcome_id: 0.0 for outcome_id in outcome_ids},
-        "gamma_fourier": {
-            outcome_id: np.zeros(2) for outcome_id in outcome_ids
-        },
+        "gamma_fourier": {outcome_id: np.zeros(2) for outcome_id in outcome_ids},
         "alpha": {outcome_id: 5.0 for outcome_id in outcome_ids},
         "control_coef": {},
         "outcome_control_coef": {},

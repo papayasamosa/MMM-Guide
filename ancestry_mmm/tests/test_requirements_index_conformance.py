@@ -44,11 +44,7 @@ def test_every_indexed_test_node_is_collectable():
     pytest cannot resolve from the repository root."""
     data = _load_index()
     all_nodes = sorted(
-        {
-            node
-            for req in data["requirements"]
-            for node in req.get("required_tests", [])
-        }
+        {node for req in data["requirements"] for node in req.get("required_tests", [])}
     )
     assert all_nodes, "index.json lists no required_tests at all"
 
@@ -56,8 +52,14 @@ def test_every_indexed_test_node_is_collectable():
     # root - reject the old shortened "test_file.py::test_name" form (no
     # ancestry_mmm/tests/ prefix) up front with a clear message, rather than
     # letting it silently fail collection alongside genuine typos.
-    malformed = [n for n in all_nodes if "::" not in n or not n.split("::")[0].startswith("ancestry_mmm/")]
-    assert not malformed, f"Non-fully-qualified test node id(s) in index.json: {malformed}"
+    malformed = [
+        n
+        for n in all_nodes
+        if "::" not in n or not n.split("::")[0].startswith("ancestry_mmm/")
+    ]
+    assert not malformed, (
+        f"Non-fully-qualified test node id(s) in index.json: {malformed}"
+    )
 
     result = subprocess.run(
         [sys.executable, "-m", "pytest", "--collect-only", "-q", *all_nodes],

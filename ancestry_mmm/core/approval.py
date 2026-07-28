@@ -38,7 +38,10 @@ import hashlib
 import json
 import time
 from dataclasses import asdict, dataclass, field
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
+
+if TYPE_CHECKING:
+    from .validation_policy import ApprovalReadiness
 
 
 class ApprovalMismatchError(RuntimeError):
@@ -91,8 +94,10 @@ class ModelApproval:
 
     def is_model_bound(self) -> bool:
         return bool(
-            self.model_run_id and self.data_fingerprint
-            and self.model_spec_fingerprint and self.posterior_fingerprint
+            self.model_run_id
+            and self.data_fingerprint
+            and self.model_spec_fingerprint
+            and self.posterior_fingerprint
         )
 
     def matches_current_model(
@@ -112,7 +117,12 @@ class ModelApproval:
         """
         if not self.is_model_bound():
             return False
-        if not (model_run_id and data_fingerprint and model_spec_fingerprint and posterior_fingerprint):
+        if not (
+            model_run_id
+            and data_fingerprint
+            and model_spec_fingerprint
+            and posterior_fingerprint
+        ):
             return False
         return (
             self.model_run_id == model_run_id
@@ -193,7 +203,10 @@ def require_matching_approval(
                 f"but readiness was evaluated against "
                 f"'{approval_readiness.policy_id}'."
             )
-        if approval.validation_policy_version and approval_readiness.policy_version != approval.validation_policy_version:
+        if (
+            approval.validation_policy_version
+            and approval_readiness.policy_version != approval.validation_policy_version
+        ):
             raise ValidationPolicyBlockedError(
                 f"Approval references policy version "
                 f"'{approval.validation_policy_version}' but readiness "
@@ -235,6 +248,9 @@ def fingerprint_model_approval(approval: ModelApproval) -> str:
     """
     payload = approval.to_dict()
     encoded = json.dumps(
-        payload, sort_keys=True, separators=(",", ":"), default=str,
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()

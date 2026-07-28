@@ -57,24 +57,32 @@ class TestArtefactKind:
         """Artefact kind must not be inferred from name, notes, or constraint count."""
         # scenario_to_dict with explicit artefact_kind overrides any inference
         s = scenario_to_dict(
-            "test", "UK", {"2026-07": {"TV": 100.0}},
-            "fh_gsa", [],
+            "test",
+            "UK",
+            {"2026-07": {"TV": 100.0}},
+            "fh_gsa",
+            [],
             artefact_kind="manual_scenario",
         )
         assert s["artefact_kind"] == "manual_scenario"
 
     def test_all_kinds_are_recognised(self):
-        assert ARTEFACT_KINDS == frozenset({
-            "manual_scenario",
-            "constrained_optimisation",
-            "unconstrained_benchmark",
-        })
+        assert ARTEFACT_KINDS == frozenset(
+            {
+                "manual_scenario",
+                "constrained_optimisation",
+                "unconstrained_benchmark",
+            }
+        )
 
     def test_unknown_kind_raises(self):
         with pytest.raises(ValueError, match="Unknown artefact kind"):
             scenario_to_dict(
-                "test", "UK", {"2026-07": {"TV": 100.0}},
-                "fh_gsa", [],
+                "test",
+                "UK",
+                {"2026-07": {"TV": 100.0}},
+                "fh_gsa",
+                [],
                 artefact_kind="invalid_kind",
             )
 
@@ -183,7 +191,9 @@ class TestResolvedGovernanceTargetValidation:
             ),
             target_outcome_ids=("fh_gsa_new",),
         )
-        with pytest.raises(OutcomeApprovalBlockedError, match="counts must match|extra authorisation"):
+        with pytest.raises(
+            OutcomeApprovalBlockedError, match="counts must match|extra authorisation"
+        ):
             governance.validate_against(
                 operation="planning",
                 objective_fingerprint="abc",
@@ -217,7 +227,9 @@ class TestResolvedGovernanceTargetValidation:
             ),
             target_outcome_ids=("fh_gsa_new",),
         )
-        with pytest.raises(OutcomeApprovalBlockedError, match="expected operation.*planning"):
+        with pytest.raises(
+            OutcomeApprovalBlockedError, match="expected operation.*planning"
+        ):
             governance.validate_against(
                 operation="optimisation",
                 objective_fingerprint="abc",
@@ -375,8 +387,11 @@ class TestScenarioSaveAndDependencies:
             target_outcome_ids=("fh_gsa_new",),
         )
         s = scenario_to_dict(
-            "test-manual", "UK", {"2026-07": {"TV": 100.0}},
-            "fh_gsa", [],
+            "test-manual",
+            "UK",
+            {"2026-07": {"TV": 100.0}},
+            "fh_gsa",
+            [],
             planning_objective=planning_obj,
             governance_mode="official",
             artefact_kind="manual_scenario",
@@ -386,7 +401,9 @@ class TestScenarioSaveAndDependencies:
                 data_fingerprint="d1",
                 model_spec_fingerprint="s1",
                 posterior_fingerprint="p1",
-                planning_objective_fingerprint=fingerprint_planning_objective(planning_obj),
+                planning_objective_fingerprint=fingerprint_planning_objective(
+                    planning_obj
+                ),
                 outcome_authorisations=(
                     ResolvedOutcomeAuthorisation(
                         outcome_id="fh_gsa_new",
@@ -467,8 +484,11 @@ class TestScenarioSaveAndDependencies:
             target_outcome_ids=("fh_gsa_new",),
         )
         s = scenario_to_dict(
-            "test", "UK", {"2026-07": {"TV": 100.0}},
-            "fh_gsa", [],
+            "test",
+            "UK",
+            {"2026-07": {"TV": 100.0}},
+            "fh_gsa",
+            [],
             planning_objective=planning_obj,
             governance_mode="official",
             artefact_kind="manual_scenario",
@@ -478,7 +498,9 @@ class TestScenarioSaveAndDependencies:
                 data_fingerprint="d1",
                 model_spec_fingerprint="s1",
                 posterior_fingerprint="p1",
-                planning_objective_fingerprint=fingerprint_planning_objective(planning_obj),
+                planning_objective_fingerprint=fingerprint_planning_objective(
+                    planning_obj
+                ),
                 outcome_authorisations=(),
                 counterfactual_policy_fingerprint="cfp1",
             ),
@@ -495,8 +517,11 @@ class TestScenarioSaveAndDependencies:
         )
         obj_fp = fingerprint_planning_objective(planning_obj)
         s = scenario_to_dict(
-            "test", "UK", {"2026-07": {"TV": 100.0}},
-            "fh_gsa", [],
+            "test",
+            "UK",
+            {"2026-07": {"TV": 100.0}},
+            "fh_gsa",
+            [],
             planning_objective=planning_obj,
             governance_mode="official",
             artefact_kind="manual_scenario",
@@ -625,8 +650,11 @@ class TestDependencyValidation:
 
     def test_missing_model_run_id_is_invalid(self):
         s = scenario_to_dict(
-            "test", "UK", {"2026-07": {"TV": 100.0}},
-            "fh_gsa", [],
+            "test",
+            "UK",
+            {"2026-07": {"TV": 100.0}},
+            "fh_gsa",
+            [],
             governance_mode="official",
             artefact_kind="manual_scenario",
         )
@@ -639,8 +667,11 @@ class TestDependencyValidation:
             target_outcome_ids=("fh_gsa_new",),
         )
         s = scenario_to_dict(
-            "test", "UK", {"2026-07": {"TV": 100.0}},
-            "fh_gsa", [],
+            "test",
+            "UK",
+            {"2026-07": {"TV": 100.0}},
+            "fh_gsa",
+            [],
             planning_objective=planning_obj,
             governance_mode="official",
             artefact_kind="manual_scenario",
@@ -650,7 +681,9 @@ class TestDependencyValidation:
                 data_fingerprint="d1",
                 model_spec_fingerprint="s1",
                 posterior_fingerprint="p1",
-                planning_objective_fingerprint=fingerprint_planning_objective(planning_obj),
+                planning_objective_fingerprint=fingerprint_planning_objective(
+                    planning_obj
+                ),
                 outcome_authorisations=(),
                 counterfactual_policy_fingerprint="cfp1",
             ),
@@ -665,8 +698,11 @@ class TestDependencyValidation:
             target_outcome_ids=("fh_gsa_new",),
         )
         s = scenario_to_dict(
-            "test", "UK", {"2026-07": {"TV": 100.0}},
-            "fh_gsa", [],
+            "test",
+            "UK",
+            {"2026-07": {"TV": 100.0}},
+            "fh_gsa",
+            [],
             planning_objective=planning_obj,
             governance_mode="official",
             artefact_kind="manual_scenario",
@@ -676,7 +712,9 @@ class TestDependencyValidation:
                 data_fingerprint="d1",
                 model_spec_fingerprint="s1",
                 posterior_fingerprint="p1",
-                planning_objective_fingerprint=fingerprint_planning_objective(planning_obj),
+                planning_objective_fingerprint=fingerprint_planning_objective(
+                    planning_obj
+                ),
                 outcome_authorisations=(
                     ResolvedOutcomeAuthorisation(
                         outcome_id="fh_gsa_new",
@@ -775,8 +813,11 @@ class TestGovernanceRoundTrip:
             counterfactual_policy_fingerprint="cfp1",
         )
         s = scenario_to_dict(
-            "test-roundtrip", "UK", {"2026-07": {"TV": 100.0}},
-            "fh_gsa", [],
+            "test-roundtrip",
+            "UK",
+            {"2026-07": {"TV": 100.0}},
+            "fh_gsa",
+            [],
             planning_objective=planning_obj,
             governance_mode="official",
             artefact_kind="manual_scenario",
@@ -839,6 +880,7 @@ class TestNBTCompletenessFingerprint:
     def test_malformed_dict_does_not_block(self):
         """Malformed NBT metadata should not crash the resolver but return None."""
         from ancestry_mmm.core.optimization import _resolve_nbt_completeness_fingerprint
+
         result = _resolve_nbt_completeness_fingerprint(None)
         assert result is None
 
@@ -867,6 +909,7 @@ class TestPlanningGovernanceError:
 
     def test_objective_missing_is_planning_governance_error(self):
         from ancestry_mmm.core.optimization import ObjectiveMissingError
+
         try:
             raise ObjectiveMissingError("missing objective")
         except PlanningGovernanceError as e:
@@ -875,8 +918,11 @@ class TestPlanningGovernanceError:
     def test_exploratory_mode_skips_governance(self):
         """Exploratory scenarios have status 'exploratory' and don't validate."""
         s = scenario_to_dict(
-            "exploratory", "UK", {"2026-07": {"TV": 100.0}},
-            "fh_gsa", [],
+            "exploratory",
+            "UK",
+            {"2026-07": {"TV": 100.0}},
+            "fh_gsa",
+            [],
             governance_mode="exploratory",
             artefact_kind="manual_scenario",
         )
@@ -895,6 +941,7 @@ class TestExpectedValueObjective:
     def test_value_only_secondary_outcomes_excluded_from_optimisation(self):
         """Test that value-only outcomes without explicit eligibility are excluded."""
         from ancestry_mmm.core.hierarchical_model import FHModelMeta
+
         meta = FHModelMeta(
             markets=["UK"],
             outcome_ids=["fh_gsa_new", "fh_gsa_existing"],
@@ -919,6 +966,7 @@ class TestExpectedValueObjective:
 
     def test_missing_weights_block_expected_value(self):
         from ancestry_mmm.core.hierarchical_model import FHModelMeta
+
         meta = FHModelMeta(
             markets=["UK"],
             outcome_ids=["fh_gsa_new"],
@@ -941,6 +989,7 @@ class TestExpectedValueObjective:
 
     def test_unknown_objective_kind_raises(self):
         from ancestry_mmm.core.hierarchical_model import FHModelMeta
+
         meta = FHModelMeta(
             markets=["UK"],
             outcome_ids=["fh_gsa_new"],
@@ -971,7 +1020,9 @@ class TestScenarioEvaluationResult:
 
     def test_result_can_be_constructed(self):
         result = ScenarioEvaluationResult(
-            predicted=pd.DataFrame({"month": ["2026-07"], "predicted_outcome": [100.0]}),
+            predicted=pd.DataFrame(
+                {"month": ["2026-07"], "predicted_outcome": [100.0]}
+            ),
             planning_objective=None,
             governance_mode="exploratory",
             artefact_kind="manual_scenario",
@@ -985,7 +1036,9 @@ class TestScenarioEvaluationResult:
             target_outcome_ids=("fh_gsa_new",),
         )
         result = ScenarioEvaluationResult(
-            predicted=pd.DataFrame({"month": ["2026-07"], "predicted_outcome": [100.0]}),
+            predicted=pd.DataFrame(
+                {"month": ["2026-07"], "predicted_outcome": [100.0]}
+            ),
             planning_objective=planning_obj,
             governance_mode="official",
             artefact_kind="manual_scenario",

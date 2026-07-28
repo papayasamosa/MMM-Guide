@@ -59,7 +59,9 @@ DEFAULT_N_DRAWS = 100
 DEFAULT_CRED_MASS = 0.9
 
 
-def sample_draw_indices(trace: az.InferenceData, n_draws: int = DEFAULT_N_DRAWS, seed: int = 42) -> List[tuple]:
+def sample_draw_indices(
+    trace: az.InferenceData, n_draws: int = DEFAULT_N_DRAWS, seed: int = 42
+) -> List[tuple]:
     """
     `n_draws` distinct `(chain, draw)` index pairs sampled without
     replacement from `trace.posterior` - every draw, if the posterior has
@@ -78,7 +80,9 @@ def sample_draw_indices(trace: az.InferenceData, n_draws: int = DEFAULT_N_DRAWS,
     return [all_pairs[i] for i in idx]
 
 
-def summarize_distribution(values: np.ndarray, cred_mass: float = DEFAULT_CRED_MASS) -> Dict[str, float]:
+def summarize_distribution(
+    values: np.ndarray, cred_mass: float = DEFAULT_CRED_MASS
+) -> Dict[str, float]:
     """
     Mean, median, and a `cred_mass` central credible interval (default 90%:
     5th/95th percentile) from an array of per-draw values. NaNs (e.g. CPA
@@ -88,7 +92,13 @@ def summarize_distribution(values: np.ndarray, cred_mass: float = DEFAULT_CRED_M
     values = np.asarray(values, dtype=float)
     valid = values[~np.isnan(values)]
     if len(valid) == 0:
-        return {"mean": float("nan"), "median": float("nan"), "lower": float("nan"), "upper": float("nan"), "n_draws": 0}
+        return {
+            "mean": float("nan"),
+            "median": float("nan"),
+            "lower": float("nan"),
+            "upper": float("nan"),
+            "n_draws": 0,
+        }
     tail = (1.0 - cred_mass) / 2.0
     return {
         "mean": float(np.mean(valid)),
@@ -99,7 +109,9 @@ def summarize_distribution(values: np.ndarray, cred_mass: float = DEFAULT_CRED_M
     }
 
 
-def _summarize_curve_draws(draw_dfs: List[pd.DataFrame], cred_mass: float, identity_cols: List[str]) -> pd.DataFrame:
+def _summarize_curve_draws(
+    draw_dfs: List[pd.DataFrame], cred_mass: float, identity_cols: List[str]
+) -> pd.DataFrame:
     """Every draw's curve DataFrame shares the same `identity_cols` (spend
     axis, channel/market labels - identical across draws by construction,
     see the callers below) and the same row order/length. Every other
@@ -118,7 +130,9 @@ def _summarize_curve_draws(draw_dfs: List[pd.DataFrame], cred_mass: float, ident
         warnings.filterwarnings("ignore", message="Mean of empty slice")
         warnings.filterwarnings("ignore", message="All-NaN slice encountered")
         for col in value_cols:
-            stacked = np.array([df[col].to_numpy(dtype=float) for df in draw_dfs])  # (n_draws, n_points)
+            stacked = np.array(
+                [df[col].to_numpy(dtype=float) for df in draw_dfs]
+            )  # (n_draws, n_points)
             out[f"{col}_mean"] = np.nanmean(stacked, axis=0)
             out[f"{col}_median"] = np.nanmedian(stacked, axis=0)
             out[f"{col}_lower"] = np.nanquantile(stacked, tail, axis=0)
@@ -151,7 +165,11 @@ def generate_channel_curve_with_uncertainty(
     """
     if spend_range is None:
         mean_params = extract_posterior_params(trace, meta)
-        cap = max_spend if max_spend is not None else max(mean_params.hill_K[channel] * 3, 1.0)
+        cap = (
+            max_spend
+            if max_spend is not None
+            else max(mean_params.hill_K[channel] * 3, 1.0)
+        )
         spend_range = np.linspace(0.0, cap, n_points)
 
     draw_dfs = []
@@ -160,7 +178,9 @@ def generate_channel_curve_with_uncertainty(
         curve = generate_channel_curve(channel, meta, params, spend_range=spend_range)
         draw_dfs.append(compute_cpa_by_product(curve))
 
-    return _summarize_curve_draws(draw_dfs, cred_mass, identity_cols=["channel", "spend"])
+    return _summarize_curve_draws(
+        draw_dfs, cred_mass, identity_cols=["channel", "spend"]
+    )
 
 
 def generate_market_channel_curve_with_uncertainty(
@@ -180,19 +200,29 @@ def generate_market_channel_curve_with_uncertainty(
     per-draw `hill_K`/`beta`."""
     if spend_range is None:
         mean_params = extract_market_specific_posterior_params(trace, meta)
-        cap = max_spend if max_spend is not None else max(mean_params.hill_K[market][channel] * 3, 1.0)
+        cap = (
+            max_spend
+            if max_spend is not None
+            else max(mean_params.hill_K[market][channel] * 3, 1.0)
+        )
         spend_range = np.linspace(0.0, cap, n_points)
 
     draw_dfs = []
     for at in sample_draw_indices(trace, n_draws, seed):
         params = extract_market_specific_posterior_params(trace, meta, at=at)
-        curve = generate_market_channel_curve(market, channel, meta, params, spend_range=spend_range)
+        curve = generate_market_channel_curve(
+            market, channel, meta, params, spend_range=spend_range
+        )
         draw_dfs.append(compute_cpa_by_product(curve))
 
-    return _summarize_curve_draws(draw_dfs, cred_mass, identity_cols=["market", "channel", "spend"])
+    return _summarize_curve_draws(
+        draw_dfs, cred_mass, identity_cols=["market", "channel", "spend"]
+    )
 
 
-def _summarize_scenario_draws(draws: List[pd.DataFrame], cred_mass: float) -> pd.DataFrame:
+def _summarize_scenario_draws(
+    draws: List[pd.DataFrame], cred_mass: float
+) -> pd.DataFrame:
     """Per (month, outcome_id) draw summary. `avg_cpa`/`fh_signup_avg_cpa`/
     `dna_avg_cpa` are metric-aware (see core.optimization.evaluate_scenario's
     docstring, PR E.1) - each summarized independently across draws, never
@@ -349,14 +379,15 @@ def evaluate_scenario_with_uncertainty(
         )
         if planning_objective is None:
             from .outcome_approval import OutcomeApprovalBlockedError
+
             raise OutcomeApprovalBlockedError(
                 "Official posterior evaluation requires a PlanningObjective."
             )
         if not outcome_approvals:
             from .outcome_approval import OutcomeApprovalBlockedError
+
             raise OutcomeApprovalBlockedError(
-                "Official posterior evaluation requires at least one "
-                "OutcomeApproval."
+                "Official posterior evaluation requires at least one OutcomeApproval."
             )
         from .planning_governance import resolve_planning_governance
 
@@ -374,13 +405,19 @@ def evaluate_scenario_with_uncertainty(
             nbt_completeness_metadata=nbt_completeness_metadata,
         )
 
-    extract_fn = extract_market_specific_posterior_params if model_type == "market_specific" else extract_posterior_params
+    extract_fn = (
+        extract_market_specific_posterior_params
+        if model_type == "market_specific"
+        else extract_posterior_params
+    )
 
     # G2A.7a.10: value_mapping, when given, is the single authoritative
     # value source for every draw - the same mapping the trusted caller
     # (manual service or optimiser) already used for its own point
     # calculation, not a second, independently-supplied ltv.
-    effective_ltv = dict(value_mapping.value_by_outcome_id) if value_mapping is not None else ltv
+    effective_ltv = (
+        dict(value_mapping.value_by_outcome_id) if value_mapping is not None else ltv
+    )
 
     def _evaluate(
         plan: Dict[str, Dict[str, float]],
@@ -392,7 +429,12 @@ def evaluate_scenario_with_uncertainty(
         # optimiser or manual service) — the posterior evaluation does
         # not re-resolve approvals on every draw.
         return _calculate_scenario(
-            plan, market, meta, params, reference_context_by_month, effective_ltv,
+            plan,
+            market,
+            meta,
+            params,
+            reference_context_by_month,
+            effective_ltv,
             model_type=model_type,
             scenario_plan=typed_plan,
             activity_definitions=activity_definitions,
@@ -437,9 +479,7 @@ def evaluate_scenario_with_uncertainty(
         metric_columns = {
             METRIC_KEY_FH_GSA: "incremental_fh_gsa",
             METRIC_KEY_FH_SIGNUP: "incremental_fh_signups",
-            METRIC_KEY_FH_NET_BILLTHROUGH_COUNT: (
-                "incremental_fh_net_billthrough"
-            ),
+            METRIC_KEY_FH_NET_BILLTHROUGH_COUNT: ("incremental_fh_net_billthrough"),
             METRIC_KEY_DNA_KIT_SALE: "incremental_dna_kits",
         }
         if (
@@ -453,9 +493,7 @@ def evaluate_scenario_with_uncertainty(
                 )
             comparison_column = "incremental_total_value"
         elif planning_objective is not None:
-            comparison_column = metric_columns.get(
-                planning_objective.metric_key
-            )
+            comparison_column = metric_columns.get(planning_objective.metric_key)
             if comparison_column is None:
                 raise ValueError(
                     "candidate-versus-current probability does not support "

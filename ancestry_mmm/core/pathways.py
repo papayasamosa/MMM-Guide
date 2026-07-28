@@ -549,8 +549,7 @@ class _ReadOnlyDict(dict):
 
     def __deepcopy__(self, memo):
         copied = type(self)(
-            (deepcopy(key, memo), deepcopy(value, memo))
-            for key, value in self.items()
+            (deepcopy(key, memo), deepcopy(value, memo)) for key, value in self.items()
         )
         memo[id(self)] = copied
         return copied
@@ -655,9 +654,8 @@ class ResolvedPathwayMasks:
     }
 
     def __setattr__(self, name, value) -> None:
-        if (
-            name in self._IMMUTABLE_FIELDS
-            and getattr(self, "_compatibility_views_frozen", False)
+        if name in self._IMMUTABLE_FIELDS and getattr(
+            self, "_compatibility_views_frozen", False
         ):
             raise AttributeError(
                 "Resolved pathway components and compatibility views are "
@@ -700,9 +698,7 @@ class ResolvedPathwayMasks:
         )
         outcomes = list(
             dict.fromkeys(
-                outcome_id
-                for mask, _, _ in mask_groups
-                for outcome_id in mask
+                outcome_id for mask, _, _ in mask_groups for outcome_id in mask
             )
         )
         channels = list(
@@ -875,12 +871,8 @@ class ResolvedPathwayMasks:
                 prior_by_cell[key] = float(item.prior_scale)
             planning_by_cell[key] = bool(item.include_in_planning)
         object.__setattr__(self, "lag_weeks_by_cell", _ReadOnlyDict(lag_by_cell))
-        object.__setattr__(
-            self, "prior_scale_by_cell", _ReadOnlyDict(prior_by_cell)
-        )
-        object.__setattr__(
-            self, "planning_by_cell", _ReadOnlyDict(planning_by_cell)
-        )
+        object.__setattr__(self, "prior_scale_by_cell", _ReadOnlyDict(prior_by_cell))
+        object.__setattr__(self, "planning_by_cell", _ReadOnlyDict(planning_by_cell))
 
     def to_dict(self) -> dict:
         return {
@@ -930,9 +922,7 @@ class ResolvedPathwayMasks:
         prior_by_cell = {}
         planning_by_cell = {}
         for item in components:
-            if not (
-                item.included_in_fit and item.component_type == "cross_product"
-            ):
+            if not (item.included_in_fit and item.component_type == "cross_product"):
                 continue
             key = cls.cell_key(
                 (outcome_pos[item.outcome_id], channel_pos[item.channel])
@@ -1342,12 +1332,9 @@ def validate_legacy_governance_review(
         pair = (original.target_outcome_id, original.channel)
         replacements = reviewed_by_pair.get(pair, [])
         equation_count = sum(
-            item.component_type in {"direct", "cross_product"}
-            for item in replacements
+            item.component_type in {"direct", "cross_product"} for item in replacements
         )
-        excluded_count = sum(
-            item.component_type == "excluded" for item in replacements
-        )
+        excluded_count = sum(item.component_type == "excluded" for item in replacements)
         if replacements and not (
             (equation_count == 1 and excluded_count == 0)
             or (equation_count == 0 and excluded_count == 1)
@@ -1358,8 +1345,7 @@ def validate_legacy_governance_review(
             "Each migrated outcome/channel relationship must resolve to exactly "
             "one reviewed equation component or one explicit exclusion: "
             + ", ".join(
-                f"{item.target_outcome_id} <- {item.channel}"
-                for item in ambiguous
+                f"{item.target_outcome_id} <- {item.channel}" for item in ambiguous
             )
             + "."
         )
@@ -1406,9 +1392,7 @@ def legacy_governance_change_summary(
     for original in draft:
         pair = (original.target_outcome_id, original.channel)
         replacements = reviewed_by_pair.get(pair, [])
-        excluded = [
-            item for item in replacements if item.component_type == "excluded"
-        ]
+        excluded = [item for item in replacements if item.component_type == "excluded"]
         equation = [
             item
             for item in replacements
@@ -1422,7 +1406,9 @@ def legacy_governance_change_summary(
                     "before_component_type": original.component_type,
                 }
             )
-        elif len(equation) == 1 and equation[0].component_type != original.component_type:
+        elif (
+            len(equation) == 1 and equation[0].component_type != original.component_type
+        ):
             changes.append(
                 {
                     "channel": original.channel,

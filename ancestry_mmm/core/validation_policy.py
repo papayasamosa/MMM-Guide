@@ -12,7 +12,10 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from .model_identity import ModelIdentity
 
 
 # ---------------------------------------------------------------------------
@@ -30,6 +33,7 @@ class ValidationWaiverReference:
     PR 51C: ``expiry`` is validated during readiness evaluation.
     An expired, revoked, or mismatched waiver does not unblock a gate.
     """
+
     waiver_id: str
     approved_by: str
     approved_at: datetime
@@ -96,6 +100,7 @@ class ValidationGate:
         If True, a result for this gate *must* be present. A missing
         required gate blocks official approval.
     """
+
     name: str
     description: str
     evaluator_id: str = ""
@@ -142,7 +147,9 @@ class ValidationGate:
             "waivable": self.waivable,
             "required": self.required,
         }
-        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+        encoded = json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), default=str
+        ).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()
 
 
@@ -179,6 +186,7 @@ class ThresholdPolicy:
     superseded_by : str | None
         Optional reference to a newer policy that replaces this one.
     """
+
     policy_id: str
     version: str
     scope: str
@@ -202,7 +210,9 @@ class ThresholdPolicy:
         names = [g.name for g in self.gates]
         if len(names) != len(set(names)):
             dupes = [n for n in names if names.count(n) > 1]
-            raise ValueError(f"ThresholdPolicy gates contain duplicate names: {sorted(set(dupes))}")
+            raise ValueError(
+                f"ThresholdPolicy gates contain duplicate names: {sorted(set(dupes))}"
+            )
 
     def is_expired(self, as_of: Optional[datetime] = None) -> bool:
         """Check whether this policy has expired."""
@@ -225,11 +235,15 @@ class ThresholdPolicy:
             "version": self.version,
             "scope": self.scope,
             "owner": self.owner,
-            "approval_date": self.approval_date.isoformat() if self.approval_date else None,
+            "approval_date": self.approval_date.isoformat()
+            if self.approval_date
+            else None,
             "expiry": self.expiry.isoformat() if self.expiry else None,
             "gates": [g.fingerprint() for g in self.gates],
         }
-        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+        encoded = json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), default=str
+        ).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()
 
 
@@ -279,6 +293,7 @@ class ValidationResult:
     gate_fingerprint : str
         Fingerprint of the gate definition at evaluation time.
     """
+
     gate_name: str
     status: str = "fail"  # "pass", "review", or "fail"
     value: Optional[float] = None
@@ -295,7 +310,9 @@ class ValidationResult:
 
     def __post_init__(self) -> None:
         if self.status not in VALIDATION_STATUS_VALUES:
-            raise ValueError(f"Invalid status: {self.status!r}. Must be one of {VALIDATION_STATUS_VALUES}")
+            raise ValueError(
+                f"Invalid status: {self.status!r}. Must be one of {VALIDATION_STATUS_VALUES}"
+            )
 
     @property
     def passed(self) -> bool:
@@ -339,11 +356,27 @@ class ValidationResult:
         model/policy. An empty-string identity field on either side
         causes a staleness result (incomplete binding is stale).
         """
-        if not all([model_run_id, data_fingerprint, model_spec_fingerprint,
-                     posterior_fingerprint, policy_id, policy_version]):
+        if not all(
+            [
+                model_run_id,
+                data_fingerprint,
+                model_spec_fingerprint,
+                posterior_fingerprint,
+                policy_id,
+                policy_version,
+            ]
+        ):
             return True  # Missing identity = stale
-        if not all([self.model_run_id, self.data_fingerprint, self.model_spec_fingerprint,
-                     self.posterior_fingerprint, self.policy_id, self.policy_version]):
+        if not all(
+            [
+                self.model_run_id,
+                self.data_fingerprint,
+                self.model_spec_fingerprint,
+                self.posterior_fingerprint,
+                self.policy_id,
+                self.policy_version,
+            ]
+        ):
             return True  # Result not fully bound = stale
         return not self.matches_identity(
             model_run_id=model_run_id,
@@ -379,6 +412,7 @@ class ApprovalReadiness:
         True if no blocking failures, no missing required gates, no
         non-waivable failures, and policy is not expired.
     """
+
     policy_id: str
     policy_version: str
     blocking_failures: List[ValidationResult] = field(default_factory=list)
@@ -432,13 +466,14 @@ def evaluate_approval_readiness(
     ApprovalReadiness
         Aggregate readiness with blockers, review items, and passes.
     """
-    from .model_identity import ModelIdentity
 
     as_of = as_of or datetime.now(timezone.utc)
     waivers = waivers or []
 
     result_by_gate: Dict[str, ValidationResult] = {r.gate_name: r for r in results}
-    waiver_by_gate: Dict[str, ValidationWaiverReference] = {w.gate_name: w for w in waivers}
+    waiver_by_gate: Dict[str, ValidationWaiverReference] = {
+        w.gate_name: w for w in waivers
+    }
 
     blocking_failures: List[ValidationResult] = []
     review_items: List[ValidationResult] = []
@@ -487,11 +522,16 @@ def evaluate_approval_readiness(
         else:
             # Without current identity, a result is stale if any identity
             # field is empty (incomplete binding)
-            is_stale = not all([
-                result.model_run_id, result.data_fingerprint,
-                result.model_spec_fingerprint, result.posterior_fingerprint,
-                result.policy_id, result.policy_version,
-            ])
+            is_stale = not all(
+                [
+                    result.model_run_id,
+                    result.data_fingerprint,
+                    result.model_spec_fingerprint,
+                    result.posterior_fingerprint,
+                    result.policy_id,
+                    result.policy_version,
+                ]
+            )
 
         if is_stale:
             # Stale result: treat as missing if required

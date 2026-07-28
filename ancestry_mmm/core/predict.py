@@ -31,7 +31,9 @@ import arviz as az
 from .transformations import geometric_adstock_matrix, hill_function
 from .hierarchical_model import FHModelMeta
 from .outcomes import (
-    dna_kit_sale_outcome_ids, fh_gsa_outcome_ids, fh_net_billthrough_outcome_ids,
+    dna_kit_sale_outcome_ids,
+    fh_gsa_outcome_ids,
+    fh_net_billthrough_outcome_ids,
     fh_signup_outcome_ids,
 )
 
@@ -39,11 +41,14 @@ from .outcomes import (
 @dataclass
 class FHPosteriorParams:
     """Posterior point estimates (defaults to the mean) needed to replay the model."""
+
     decay_rate: Dict[str, float]
     hill_K: Dict[str, float]
     hill_S: Dict[str, float]
-    beta: Dict[str, Dict[str, float]]          # beta[outcome_id][channel]
-    pathway_strength: Dict[str, Dict[str, float]]  # pathway_strength[outcome_id][channel] - PR G1,
+    beta: Dict[str, Dict[str, float]]  # beta[outcome_id][channel]
+    pathway_strength: Dict[
+        str, Dict[str, float]
+    ]  # pathway_strength[outcome_id][channel] - PR G1,
     # generalises the old per-outcome-only `halo_strength` to per-(outcome,
     # channel): the fitted active_cross_product/exploratory_cross_product
     # multiplier for that cell, 0.0 for a primary_direct/excluded cell (see
@@ -51,18 +56,20 @@ class FHPosteriorParams:
     # cell actually has, its strength value lives here uniformly - callers
     # don't need to know which sub-role produced it, only which cells
     # (meta.pathway_masks.active_cells()/.exploratory_cells()) to apply it to.
-    promo_coef: Dict[str, float]                # promo_coef[outcome_id]
+    promo_coef: Dict[str, float]  # promo_coef[outcome_id]
     market_offset: Dict[str, Dict[str, float]]  # market_offset[market][outcome_id]
     intercept: Dict[str, float]
     trend_coef: Dict[str, float]
-    gamma_fourier: Dict[str, np.ndarray]        # gamma_fourier[outcome_id] -> (n_fourier,)
+    gamma_fourier: Dict[str, np.ndarray]  # gamma_fourier[outcome_id] -> (n_fourier,)
     alpha: Dict[str, float]
     control_coef: Dict[str, float]
     outcome_control_coef: Dict[str, Dict[str, float]]  # [outcome_id][control_name]
 
 
 def extract_pathway_strength(
-    trace: az.InferenceData, meta: FHModelMeta, at: Optional[tuple[int, int]] = None,
+    trace: az.InferenceData,
+    meta: FHModelMeta,
+    at: Optional[tuple[int, int]] = None,
 ) -> Dict[str, Dict[str, float]]:
     """`pathway_strength[outcome_id][channel]` (PR G1) - shared by both
     `extract_posterior_params` (Model A) and `core.market_specific_predict.
@@ -91,20 +98,27 @@ def extract_pathway_strength(
             return {s: {c: 0.0 for c in meta.channels} for s in meta.outcome_ids}
         reduced = _reduce(post[var_name])
         return {
-            s: {c: float(reduced.sel(outcome=s, channel=c).values) for c in meta.channels}
+            s: {
+                c: float(reduced.sel(outcome=s, channel=c).values)
+                for c in meta.channels
+            }
             for s in meta.outcome_ids
         }
 
     active_strength = _pathway_strength_var("active_cross_product_strength")
     exploratory_strength = _pathway_strength_var("exploratory_cross_product_strength")
     return {
-        s: {c: active_strength[s][c] + exploratory_strength[s][c] for c in meta.channels}
+        s: {
+            c: active_strength[s][c] + exploratory_strength[s][c] for c in meta.channels
+        }
         for s in meta.outcome_ids
     }
 
 
 def extract_posterior_params(
-    trace: az.InferenceData, meta: FHModelMeta, at: Optional[tuple[int, int]] = None,
+    trace: az.InferenceData,
+    meta: FHModelMeta,
+    at: Optional[tuple[int, int]] = None,
 ) -> FHPosteriorParams:
     """
     Pull posterior values into plain dicts keyed by name - the posterior
@@ -125,7 +139,11 @@ def extract_posterior_params(
 
     def by_coord(var: str, coord: str, labels: List[str]) -> Dict[str, float]:
         da = post[var]
-        vals = da.isel(chain=at[0], draw=at[1]) if at is not None else da.mean(dim=[d for d in da.dims if d not in (coord,)])
+        vals = (
+            da.isel(chain=at[0], draw=at[1])
+            if at is not None
+            else da.mean(dim=[d for d in da.dims if d not in (coord,)])
+        )
         return {label: float(vals.sel({coord: label}).values) for label in labels}
 
     decay_rate = by_coord("decay_rate", "channel", meta.channels)
@@ -140,13 +158,19 @@ def extract_posterior_params(
 
     beta_reduced = _reduce(post["beta"])
     beta = {
-        s: {c: float(beta_reduced.sel(outcome=s, channel=c).values) for c in meta.channels}
+        s: {
+            c: float(beta_reduced.sel(outcome=s, channel=c).values)
+            for c in meta.channels
+        }
         for s in meta.outcome_ids
     }
 
     market_offset_reduced = _reduce(post["market_offset"])
     market_offset = {
-        m: {s: float(market_offset_reduced.sel(market=m, outcome=s).values) for s in meta.outcome_ids}
+        m: {
+            s: float(market_offset_reduced.sel(market=m, outcome=s).values)
+            for s in meta.outcome_ids
+        }
         for m in meta.markets
     }
 
@@ -158,7 +182,9 @@ def extract_posterior_params(
     control_coef = {}
     if meta.control_names and "control_coef" in post:
         cc_reduced = _reduce(post["control_coef"])
-        control_coef = {c: float(cc_reduced.sel(control=c).values) for c in meta.control_names}
+        control_coef = {
+            c: float(cc_reduced.sel(control=c).values) for c in meta.control_names
+        }
 
     outcome_control_coef: Dict[str, Dict[str, float]] = {}
     for oid, names in meta.outcome_control_names.items():
@@ -166,13 +192,24 @@ def extract_posterior_params(
         if var_name in post:
             coord_name = f"{oid}_control"
             v_reduced = _reduce(post[var_name])
-            outcome_control_coef[oid] = {n: float(v_reduced.sel({coord_name: n}).values) for n in names}
+            outcome_control_coef[oid] = {
+                n: float(v_reduced.sel({coord_name: n}).values) for n in names
+            }
 
     return FHPosteriorParams(
-        decay_rate=decay_rate, hill_K=hill_K, hill_S=hill_S, beta=beta,
-        pathway_strength=pathway_strength, promo_coef=promo_coef, market_offset=market_offset,
-        intercept=intercept, trend_coef=trend_coef, gamma_fourier=gamma_fourier, alpha=alpha,
-        control_coef=control_coef, outcome_control_coef=outcome_control_coef,
+        decay_rate=decay_rate,
+        hill_K=hill_K,
+        hill_S=hill_S,
+        beta=beta,
+        pathway_strength=pathway_strength,
+        promo_coef=promo_coef,
+        market_offset=market_offset,
+        intercept=intercept,
+        trend_coef=trend_coef,
+        gamma_fourier=gamma_fourier,
+        alpha=alpha,
+        control_coef=control_coef,
+        outcome_control_coef=outcome_control_coef,
     )
 
 
@@ -203,7 +240,7 @@ def lag_frame(X: np.ndarray, market_bounds: List[tuple], lag_weeks: int) -> np.n
         elif lag_weeks >= n:
             continue  # stays zero
         else:
-            out[start + lag_weeks:end] = X[start:end - lag_weeks]
+            out[start + lag_weeks : end] = X[start : end - lag_weeks]
     return out
 
 
@@ -214,10 +251,13 @@ class _HasPathwayStrength(Protocol):
     they work for either model's posterior params without predict.py having
     to import market_specific_predict (which itself imports FROM predict.py -
     a real import cycle, not just a style preference)."""
+
     pathway_strength: Dict[str, Dict[str, float]]
 
 
-def _cross_product_strength_matrix(meta: FHModelMeta, params: _HasPathwayStrength) -> np.ndarray:
+def _cross_product_strength_matrix(
+    meta: FHModelMeta, params: _HasPathwayStrength
+) -> np.ndarray:
     """`(n_outcome, n_channel)` array: `params.pathway_strength[outcome_id][channel]`
     at every `active_cross_product`/`exploratory_cross_product` cell
     (`core.pathways.resolve_pathway_masks`), `0.0` everywhere else -
@@ -227,12 +267,23 @@ def _cross_product_strength_matrix(meta: FHModelMeta, params: _HasPathwayStrengt
     below (via `_pathway_weight`, which adds the `primary_direct` `1.0`)."""
     outcome_ids, channels = meta.outcome_ids, meta.channels
     mat = np.zeros((len(outcome_ids), len(channels)), dtype=float)
-    for oi, ci in meta.pathway_masks.active_cells(outcome_ids, channels) + meta.pathway_masks.exploratory_cells(outcome_ids, channels):
-        mat[oi, ci] = params.pathway_strength.get(outcome_ids[oi], {}).get(channels[ci], 0.0)
+    for oi, ci in meta.pathway_masks.active_cells(
+        outcome_ids, channels
+    ) + meta.pathway_masks.exploratory_cells(outcome_ids, channels):
+        mat[oi, ci] = params.pathway_strength.get(outcome_ids[oi], {}).get(
+            channels[ci], 0.0
+        )
     return mat
 
 
-def _pathway_weight(meta: FHModelMeta, params: _HasPathwayStrength, outcome_id: str, channel: str, *, planning_only: bool = False) -> float:
+def _pathway_weight(
+    meta: FHModelMeta,
+    params: _HasPathwayStrength,
+    outcome_id: str,
+    channel: str,
+    *,
+    planning_only: bool = False,
+) -> float:
     """Total multiplier for one `(outcome_id, channel)` cell's channel
     contribution at STEADY STATE - constant spend converges lagged and
     unlagged media to the identical value, so the `primary_direct` and
@@ -243,15 +294,23 @@ def _pathway_weight(meta: FHModelMeta, params: _HasPathwayStrength, outcome_id: 
     `active_cross_product`/`exploratory_cross_product`, `0.0` for an
     excluded cell (in neither)."""
     weight = 0.0
-    is_direct = channel in meta.pathway_masks.primary_channels_by_outcome.get(outcome_id, [])
+    is_direct = channel in meta.pathway_masks.primary_channels_by_outcome.get(
+        outcome_id, []
+    )
     direct_eligible = not planning_only or meta.pathway_masks.component_eligible(
         outcome_id, channel, "direct", "planning"
     )
     if is_direct and direct_eligible:
         weight = 1.0
-    is_active = channel in meta.pathway_masks.active_channels_by_outcome.get(outcome_id, [])
-    is_exploratory = channel in meta.pathway_masks.exploratory_channels_by_outcome.get(outcome_id, [])
-    cross_eligible = not planning_only or meta.pathway_masks.component_eligible(outcome_id, channel, "cross_product", "planning")
+    is_active = channel in meta.pathway_masks.active_channels_by_outcome.get(
+        outcome_id, []
+    )
+    is_exploratory = channel in meta.pathway_masks.exploratory_channels_by_outcome.get(
+        outcome_id, []
+    )
+    cross_eligible = not planning_only or meta.pathway_masks.component_eligible(
+        outcome_id, channel, "cross_product", "planning"
+    )
     if cross_eligible and (is_active or is_exploratory):
         weight += params.pathway_strength.get(outcome_id, {}).get(channel, 0.0)
     return weight
@@ -273,18 +332,26 @@ def predict_mu(
     n_obs = frame["X_media"].shape[0]
     n_out = len(outcome_ids)
 
-    sat_media = adstock_saturate_frame(frame["X_media"], frame["market_bounds"], meta, params)
+    sat_media = adstock_saturate_frame(
+        frame["X_media"], frame["market_bounds"], meta, params
+    )
 
-    beta_matrix = np.array([[params.beta[s][c] for c in meta.channels] for s in outcome_ids])  # (O, C)
+    beta_matrix = np.array(
+        [[params.beta[s][c] for c in meta.channels] for s in outcome_ids]
+    )  # (O, C)
 
     # Pathway-masked replay (PR G1) - mirrors core.hierarchical_model.
     # build_fh_hierarchical_model's eta_primary/eta_active/eta_exploratory
     # construction exactly (same masks, same media, same beta multiplication)
     # so this NumPy replay can never silently diverge from what was fit.
-    primary_mask = meta.pathway_masks.primary_matrix(outcome_ids, meta.channels)  # (O, C)
+    primary_mask = meta.pathway_masks.primary_matrix(
+        outcome_ids, meta.channels
+    )  # (O, C)
     eta_primary = sat_media @ (beta_matrix * primary_mask).T
 
-    cross_cells = meta.pathway_masks.active_cells(outcome_ids, meta.channels) + meta.pathway_masks.exploratory_cells(outcome_ids, meta.channels)
+    cross_cells = meta.pathway_masks.active_cells(
+        outcome_ids, meta.channels
+    ) + meta.pathway_masks.exploratory_cells(outcome_ids, meta.channels)
     eta_cross = np.zeros((n_obs, n_out))
     if cross_cells:
         strength_matrix = _cross_product_strength_matrix(meta, params)
@@ -313,17 +380,28 @@ def predict_mu(
     eta_promo = frame["promo"] * promo_coef[None, :]
 
     market_idx = frame["market_idx"]
-    market_offset_matrix = np.array([[params.market_offset[m][s] for s in outcome_ids] for m in meta.markets])
+    market_offset_matrix = np.array(
+        [[params.market_offset[m][s] for s in outcome_ids] for m in meta.markets]
+    )
     eta_market = market_offset_matrix[market_idx]
 
     intercept = np.array([params.intercept[s] for s in outcome_ids])
     trend_coef = np.array([params.trend_coef[s] for s in outcome_ids])
     eta_trend = frame["trend"][:, None] * trend_coef[None, :]
 
-    gamma_fourier_matrix = np.column_stack([params.gamma_fourier[s] for s in outcome_ids])  # (F, O)
+    gamma_fourier_matrix = np.column_stack(
+        [params.gamma_fourier[s] for s in outcome_ids]
+    )  # (F, O)
     eta_season = frame["fourier"] @ gamma_fourier_matrix
 
-    eta = intercept[None, :] + eta_market + eta_trend + eta_season + eta_channels + eta_promo
+    eta = (
+        intercept[None, :]
+        + eta_market
+        + eta_trend
+        + eta_season
+        + eta_channels
+        + eta_promo
+    )
 
     outcome_controls = frame.get("outcome_controls") or {}
     outcome_control_names = frame.get("outcome_control_names") or {}
@@ -350,7 +428,8 @@ def steady_state_outcome_response(
     meta: FHModelMeta,
     params: FHPosteriorParams,
     reference_context: Optional[Dict] = None,
-    *, planning_only: bool = False,
+    *,
+    planning_only: bool = False,
 ) -> Dict[str, float]:
     """
     Expected weekly outcome per outcome_id for spend held constant at
@@ -385,13 +464,19 @@ def steady_state_outcome_response(
             # `sat[c]` term directly instead of needing two separate media
             # series - see predict_mu for the general, non-steady-state
             # replay where they must stay separate.
-            val += params.beta[s][c] * sat[c] * _pathway_weight(meta, params, s, c, planning_only=planning_only)
+            val += (
+                params.beta[s][c]
+                * sat[c]
+                * _pathway_weight(meta, params, s, c, planning_only=planning_only)
+            )
 
         for name, coef in params.control_coef.items():
             val += coef * reference_context.get("controls", {}).get(name, 0.0)
         if s in params.outcome_control_coef:
             for name, coef in params.outcome_control_coef[s].items():
-                val += coef * reference_context.get("outcome_controls", {}).get(s, {}).get(name, 0.0)
+                val += coef * reference_context.get("outcome_controls", {}).get(
+                    s, {}
+                ).get(name, 0.0)
 
         eta[s] = val
 
@@ -454,7 +539,9 @@ def generate_channel_curve(
     means), same convention as steady_state_outcome_response.
     """
     if channel not in meta.channels:
-        raise ValueError(f"'{channel}' is not one of this model's channels: {meta.channels}")
+        raise ValueError(
+            f"'{channel}' is not one of this model's channels: {meta.channels}"
+        )
 
     K = params.hill_K[channel]
     S = params.hill_S[channel]
@@ -480,7 +567,9 @@ def generate_channel_curve(
             # constant spend converges the primary and cross-product media to
             # the same `sat` value, so `_pathway_weight`'s combined weight
             # applies to this single curve point directly.
-            beta_val = params.beta[oid][channel] * _pathway_weight(meta, params, oid, channel)
+            beta_val = params.beta[oid][channel] * _pathway_weight(
+                meta, params, oid, channel
+            )
             value = beta_val * sat
             row[f"{oid}_response"] = value
             overall += value

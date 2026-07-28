@@ -72,14 +72,16 @@ def channel_spend_correlation_matrix(frame: Dict, meta: FHModelMeta) -> pd.DataF
     return pd.DataFrame(corr, index=meta.channels, columns=meta.channels)
 
 
-def high_correlation_pairs(corr: pd.DataFrame, threshold: float = CORRELATION_WARNING_THRESHOLD) -> List[Tuple[str, str, float]]:
+def high_correlation_pairs(
+    corr: pd.DataFrame, threshold: float = CORRELATION_WARNING_THRESHOLD
+) -> List[Tuple[str, str, float]]:
     """`(channel_a, channel_b, correlation)` triples with `abs(correlation)
     >= threshold`, upper triangle only - each pair reported once, never a
     channel against itself."""
     pairs = []
     channels = list(corr.columns)
     for i, a in enumerate(channels):
-        for b in channels[i + 1:]:
+        for b in channels[i + 1 :]:
             r = corr.loc[a, b]
             if abs(r) >= threshold:
                 pairs.append((a, b, float(r)))
@@ -106,7 +108,9 @@ def design_matrix_condition_number(frame: Dict) -> float:
     return largest / smallest
 
 
-def posterior_coefficient_stability(trace: az.InferenceData, meta: FHModelMeta) -> pd.DataFrame:
+def posterior_coefficient_stability(
+    trace: az.InferenceData, meta: FHModelMeta
+) -> pd.DataFrame:
     """Per-`(outcome, channel)` `beta`'s posterior mean/std/coefficient-of-
     variation (`std/mean`) - a Bayesian weak-identification signal that
     needs no refit: a channel whose data can't pin down its own effect
@@ -120,7 +124,9 @@ def posterior_coefficient_stability(trace: az.InferenceData, meta: FHModelMeta) 
     first, since this diagnostic is about whether a channel's effect is
     identifiable at all, not about per-market detail."""
     beta = trace.posterior["beta"]
-    extra_dims = [d for d in beta.dims if d not in ("chain", "draw", "outcome", "channel")]
+    extra_dims = [
+        d for d in beta.dims if d not in ("chain", "draw", "outcome", "channel")
+    ]
     mean = beta.mean(dim=["chain", "draw"] + extra_dims)
     std = beta.std(dim=["chain", "draw"] + extra_dims)
     rows = []
@@ -129,10 +135,15 @@ def posterior_coefficient_stability(trace: az.InferenceData, meta: FHModelMeta) 
             m = float(mean.sel(outcome=oid, channel=ch).values)
             s = float(std.sel(outcome=oid, channel=ch).values)
             cv = (s / m) if m > 0 else float("nan")
-            rows.append({
-                "outcome_id": oid, "channel": ch,
-                "beta_mean": m, "beta_std": s, "coefficient_of_variation": cv,
-            })
+            rows.append(
+                {
+                    "outcome_id": oid,
+                    "channel": ch,
+                    "beta_mean": m,
+                    "beta_std": s,
+                    "coefficient_of_variation": cv,
+                }
+            )
     return pd.DataFrame(rows)
 
 
@@ -175,10 +186,15 @@ def leave_one_channel_out_sensitivity(
                 pct_change = float("nan")
             else:
                 pct_change = (new_beta - old_beta) / abs(old_beta) * 100.0
-            rows.append({
-                "dropped_channel": dropped, "remaining_channel": remaining,
-                "baseline_beta": old_beta, "refit_beta": new_beta, "pct_change": pct_change,
-            })
+            rows.append(
+                {
+                    "dropped_channel": dropped,
+                    "remaining_channel": remaining,
+                    "baseline_beta": old_beta,
+                    "refit_beta": new_beta,
+                    "pct_change": pct_change,
+                }
+            )
     return pd.DataFrame(rows)
 
 
@@ -204,25 +220,34 @@ def identification_report(
     corr = channel_spend_correlation_matrix(frame, meta)
     for a, b, r in high_correlation_pairs(corr, threshold=correlation_threshold):
         level = "error" if abs(r) >= CORRELATION_SEVERE_THRESHOLD else "warning"
-        flags.append({
-            "level": level, "channel": f"{a} / {b}",
-            "message": f"'{a}' and '{b}' spend are highly correlated (r={r:.2f}) - their individual "
-                       "effects may not be cleanly separable from the data alone.",
-        })
+        flags.append(
+            {
+                "level": level,
+                "channel": f"{a} / {b}",
+                "message": f"'{a}' and '{b}' spend are highly correlated (r={r:.2f}) - their individual "
+                "effects may not be cleanly separable from the data alone.",
+            }
+        )
 
     cond = design_matrix_condition_number(frame)
     if cond >= CONDITION_NUMBER_SEVERE_THRESHOLD:
-        flags.append({
-            "level": "error", "channel": "(all channels)",
-            "message": f"Media design matrix condition number is severe ({cond:,.0f}) - channel effects "
-                       "across this fit are jointly weakly identified.",
-        })
+        flags.append(
+            {
+                "level": "error",
+                "channel": "(all channels)",
+                "message": f"Media design matrix condition number is severe ({cond:,.0f}) - channel effects "
+                "across this fit are jointly weakly identified.",
+            }
+        )
     elif cond >= CONDITION_NUMBER_WARNING_THRESHOLD:
-        flags.append({
-            "level": "warning", "channel": "(all channels)",
-            "message": f"Media design matrix condition number is elevated ({cond:,.0f}) - some channel "
-                       "effects may be only weakly identified jointly.",
-        })
+        flags.append(
+            {
+                "level": "warning",
+                "channel": "(all channels)",
+                "message": f"Media design matrix condition number is elevated ({cond:,.0f}) - some channel "
+                "effects may be only weakly identified jointly.",
+            }
+        )
 
     stability = posterior_coefficient_stability(trace, meta)
     for _, row in stability.iterrows():
@@ -230,17 +255,23 @@ def identification_report(
         if pd.isna(cv):
             continue
         if cv >= CV_SEVERE_THRESHOLD:
-            flags.append({
-                "level": "error", "channel": row["channel"],
-                "message": f"'{row['channel']}' effect on outcome '{row['outcome_id']}' has a very high "
-                           f"posterior coefficient of variation ({cv:.2f}) - treat this coefficient as unreliable.",
-            })
+            flags.append(
+                {
+                    "level": "error",
+                    "channel": row["channel"],
+                    "message": f"'{row['channel']}' effect on outcome '{row['outcome_id']}' has a very high "
+                    f"posterior coefficient of variation ({cv:.2f}) - treat this coefficient as unreliable.",
+                }
+            )
         elif cv >= CV_WARNING_THRESHOLD:
-            flags.append({
-                "level": "warning", "channel": row["channel"],
-                "message": f"'{row['channel']}' effect on outcome '{row['outcome_id']}' has an elevated "
-                           f"posterior coefficient of variation ({cv:.2f}).",
-            })
+            flags.append(
+                {
+                    "level": "warning",
+                    "channel": row["channel"],
+                    "message": f"'{row['channel']}' effect on outcome '{row['outcome_id']}' has an elevated "
+                    f"posterior coefficient of variation ({cv:.2f}).",
+                }
+            )
 
     if sensitivity_df is not None:
         for _, row in sensitivity_df.iterrows():
@@ -248,30 +279,40 @@ def identification_report(
             if pd.isna(pct):
                 continue
             if abs(pct) >= SENSITIVITY_SEVERE_PCT:
-                flags.append({
-                    "level": "error", "channel": row["remaining_channel"],
-                    "message": f"Dropping '{row['dropped_channel']}' shifts '{row['remaining_channel']}'s "
-                               f"coefficient by {pct:+.0f}% - these two channels are competing for the same "
-                               "credit and are not reliably distinguishable.",
-                })
+                flags.append(
+                    {
+                        "level": "error",
+                        "channel": row["remaining_channel"],
+                        "message": f"Dropping '{row['dropped_channel']}' shifts '{row['remaining_channel']}'s "
+                        f"coefficient by {pct:+.0f}% - these two channels are competing for the same "
+                        "credit and are not reliably distinguishable.",
+                    }
+                )
             elif abs(pct) >= SENSITIVITY_WARNING_PCT:
-                flags.append({
-                    "level": "warning", "channel": row["remaining_channel"],
-                    "message": f"Dropping '{row['dropped_channel']}' shifts '{row['remaining_channel']}'s "
-                               f"coefficient by {pct:+.0f}%.",
-                })
+                flags.append(
+                    {
+                        "level": "warning",
+                        "channel": row["remaining_channel"],
+                        "message": f"Dropping '{row['dropped_channel']}' shifts '{row['remaining_channel']}'s "
+                        f"coefficient by {pct:+.0f}%.",
+                    }
+                )
 
     return flags
 
 
-def transformed_media_correlation_matrix(transformed_media, channels=None) -> pd.DataFrame:
+def transformed_media_correlation_matrix(
+    transformed_media, channels=None
+) -> pd.DataFrame:
     """Correlation after the fitted adstock and saturation transformations."""
     values = np.asarray(transformed_media, dtype=float)
     labels = list(channels or range(values.shape[1]))
     return pd.DataFrame(np.corrcoef(values, rowvar=False), index=labels, columns=labels)
 
 
-def posterior_variable_correlation(trace: az.InferenceData, variable: str = "beta") -> pd.DataFrame:
+def posterior_variable_correlation(
+    trace: az.InferenceData, variable: str = "beta"
+) -> pd.DataFrame:
     """Posterior correlation across the flattened non-sampling coordinates."""
     values = trace.posterior[variable].stack(sample=("chain", "draw"))
     other = [d for d in values.dims if d != "sample"]
@@ -290,31 +331,61 @@ def posterior_contribution_correlation(contribution_draws, labels=None) -> pd.Da
 
 def contribution_rank_stability(contribution_draws, labels=None) -> pd.DataFrame:
     """Probability each channel occupies its modal contribution rank."""
-    values = np.asarray(contribution_draws, dtype=float).reshape(-1, np.asarray(contribution_draws).shape[-1])
+    values = np.asarray(contribution_draws, dtype=float).reshape(
+        -1, np.asarray(contribution_draws).shape[-1]
+    )
     ranks = np.argsort(np.argsort(-values, axis=1), axis=1) + 1
     names = list(labels or range(values.shape[1]))
     rows = []
     for i, name in enumerate(names):
         counts = np.bincount(ranks[:, i], minlength=values.shape[1] + 1)[1:]
         modal = int(np.argmax(counts) + 1)
-        rows.append({"channel": name, "modal_rank": modal, "rank_stability": float(counts.max() / len(ranks))})
+        rows.append(
+            {
+                "channel": name,
+                "modal_rank": modal,
+                "rank_stability": float(counts.max() / len(ranks)),
+            }
+        )
     return pd.DataFrame(rows)
 
 
-def probability_contribution_exceeds(contribution_draws, threshold: float, labels=None) -> pd.DataFrame:
-    values = np.asarray(contribution_draws, dtype=float).reshape(-1, np.asarray(contribution_draws).shape[-1])
+def probability_contribution_exceeds(
+    contribution_draws, threshold: float, labels=None
+) -> pd.DataFrame:
+    values = np.asarray(contribution_draws, dtype=float).reshape(
+        -1, np.asarray(contribution_draws).shape[-1]
+    )
     names = list(labels or range(values.shape[1]))
-    return pd.DataFrame({"channel": names, "practical_threshold": threshold,
-                         "probability_exceeds_threshold": (values > threshold).mean(axis=0)})
+    return pd.DataFrame(
+        {
+            "channel": names,
+            "practical_threshold": threshold,
+            "probability_exceeds_threshold": (values > threshold).mean(axis=0),
+        }
+    )
 
 
-def stakeholder_identification_label(*, max_abs_correlation: float, rank_stability: float,
-                                     probability_exceeds_threshold: float, exploratory: bool = False) -> str:
+def stakeholder_identification_label(
+    *,
+    max_abs_correlation: float,
+    rank_stability: float,
+    probability_exceeds_threshold: float,
+    exploratory: bool = False,
+) -> str:
     """Multi-signal stakeholder label; no CV division near zero is used."""
     if exploratory:
         return "Exploratory"
-    if max_abs_correlation < .7 and rank_stability >= .8 and probability_exceeds_threshold >= .9:
+    if (
+        max_abs_correlation < 0.7
+        and rank_stability >= 0.8
+        and probability_exceeds_threshold >= 0.9
+    ):
         return "Strongly identified"
-    if max_abs_correlation < .9 and rank_stability >= .6 and probability_exceeds_threshold >= .7:
+    if (
+        max_abs_correlation < 0.9
+        and rank_stability >= 0.6
+        and probability_exceeds_threshold >= 0.7
+    ):
         return "Moderately identified"
     return "Weakly identified"

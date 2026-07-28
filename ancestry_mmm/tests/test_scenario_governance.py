@@ -154,9 +154,7 @@ def test_response_only_activity_needs_no_artificial_cost_mapping():
     )
     plan = ScenarioPlan(
         monetary_decisions_by_period={},
-        activity_quantity_assumptions_by_period={
-            "2026-03": {"organic-social": 42.0}
-        },
+        activity_quantity_assumptions_by_period={"2026-03": {"organic-social": 42.0}},
     )
     model_input, costs, coverage = resolve_scenario_plan(
         plan,
@@ -187,9 +185,7 @@ def test_flat_optimizer_plan_is_classified_before_economics():
         activity_definitions=activities,
     )
 
-    assert plan.monetary_decisions_by_period == {
-        "2026-03": {"tv": 100.0}
-    }
+    assert plan.monetary_decisions_by_period == {"2026-03": {"tv": 100.0}}
     assert plan.activity_quantity_assumptions_by_period == {
         "2026-03": {"organic": 42.0}
     }
@@ -206,9 +202,7 @@ def test_only_unmapped_monetary_activity_is_blocked():
     )
     plan = ScenarioPlan(
         monetary_decisions_by_period={"2026-03": {"paid-tv": 100.0}},
-        activity_quantity_assumptions_by_period={
-            "2026-03": {"organic-social": 10.0}
-        },
+        activity_quantity_assumptions_by_period={"2026-03": {"organic-social": 10.0}},
     )
     with pytest.raises(ValueError, match=r"\['paid-tv'\]"):
         resolve_scenario_plan(
@@ -232,9 +226,7 @@ def test_mixed_plan_preserves_paid_media_economics():
     ]
     plan = ScenarioPlan(
         monetary_decisions_by_period={"2026-03": {"paid-tv": 100.0}},
-        activity_quantity_assumptions_by_period={
-            "2026-03": {"organic-social": 20.0}
-        },
+        activity_quantity_assumptions_by_period={"2026-03": {"organic-social": 20.0}},
     )
     meta = FHModelMeta(
         markets=["UK"],
@@ -281,9 +273,7 @@ def test_mixed_plan_preserves_paid_media_economics():
         scenario_plan=plan,
         activity_definitions=activities,
         counterfactual_policy=CounterfactualPolicy(),
-        cost_mapping_registry=CostMappingRegistry(
-            [_identity_mapping("TV")]
-        ),
+        cost_mapping_registry=CostMappingRegistry([_identity_mapping("TV")]),
         cost_context_id="base-plan",
         cost_as_of_by_month={"2026-03": "2026-03-01"},
         governance_mode="exploratory",
@@ -292,14 +282,10 @@ def test_mixed_plan_preserves_paid_media_economics():
     )
 
     row = result.iloc[0]
-    assert row["economics_availability_status"] == (
-        "mixed_cost_and_response_only"
-    )
+    assert row["economics_availability_status"] == ("mixed_cost_and_response_only")
     assert row["paid_spend"] == 100.0
     assert row["non_costed_activity_present"]
-    assert row["incremental_outcome_response_only_activities"] == pytest.approx(
-        0.0
-    )
+    assert row["incremental_outcome_response_only_activities"] == pytest.approx(0.0)
     assert row["paid_media_incremental_cpa"] is not None
 
 

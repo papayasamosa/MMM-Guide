@@ -5,11 +5,10 @@ approval-readiness foundation (REQ-VAL-001).
 
 from __future__ import annotations
 
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 import pytest
 
 from ancestry_mmm.core.validation_policy import (
-    ApprovalReadiness,
     ThresholdPolicy,
     ValidationGate,
     ValidationResult,
@@ -144,7 +143,9 @@ def expired_policy(
 
 class TestThresholdPolicyStructure:
     def test_policy_has_required_fields(self):
-        policy = ThresholdPolicy(policy_id="p1", version="1.0", scope="test", owner="Test Owner")
+        policy = ThresholdPolicy(
+            policy_id="p1", version="1.0", scope="test", owner="Test Owner"
+        )
         assert policy.policy_id == "p1"
         assert policy.version == "1.0"
         assert policy.scope == "test"
@@ -152,18 +153,26 @@ class TestThresholdPolicyStructure:
         assert policy.owner == "Test Owner"
 
     def test_version_is_string(self):
-        policy = ThresholdPolicy(policy_id="p1", version="1.0.0", scope="test", owner="Test Owner")
+        policy = ThresholdPolicy(
+            policy_id="p1", version="1.0.0", scope="test", owner="Test Owner"
+        )
         assert isinstance(policy.version, str)
 
     def test_is_expired_with_no_expiry(self):
-        policy = ThresholdPolicy(policy_id="p1", version="1.0", scope="test", owner="Test Owner")
+        policy = ThresholdPolicy(
+            policy_id="p1", version="1.0", scope="test", owner="Test Owner"
+        )
         assert not policy.is_expired()
 
     def test_is_expired_when_past_expiry(self, expired_policy):
-        assert expired_policy.is_expired(as_of=datetime(2026, 7, 1, tzinfo=timezone.utc))
+        assert expired_policy.is_expired(
+            as_of=datetime(2026, 7, 1, tzinfo=timezone.utc)
+        )
 
     def test_is_expired_when_before_expiry(self, expired_policy):
-        assert not expired_policy.is_expired(as_of=datetime(2026, 5, 1, tzinfo=timezone.utc))
+        assert not expired_policy.is_expired(
+            as_of=datetime(2026, 5, 1, tzinfo=timezone.utc)
+        )
 
     def test_get_gate_returns_valid_gate(self, sample_policy, convergence_gate):
         gate = sample_policy.get_gate("convergence_rhat")
@@ -182,8 +191,11 @@ class TestThresholdPolicyStructure:
 class TestValidationGate:
     def test_gate_has_scope_and_blocking_flag(self):
         gate = ValidationGate(
-            name="test_gate", description="A test gate", scope="all_models",
-            blocking=True, required=True,
+            name="test_gate",
+            description="A test gate",
+            scope="all_models",
+            blocking=True,
+            required=True,
         )
         assert gate.scope == "all_models"
         assert gate.blocking is True
@@ -191,8 +203,11 @@ class TestValidationGate:
 
     def test_gate_with_waiver_creates_reference(self):
         gate = ValidationGate(
-            name="waivable_gate", description="A waivable gate",
-            blocking=True, waivable=True, required=True,
+            name="waivable_gate",
+            description="A waivable gate",
+            blocking=True,
+            waivable=True,
+            required=True,
         )
         assert gate.waivable is True
 
@@ -206,8 +221,11 @@ class TestValidationGate:
 
     def test_gate_with_numeric_range(self):
         gate = ValidationGate(
-            name="rhat", description="R-hat check",
-            acceptable_range=(0.0, 1.05), blocking=True, required=True,
+            name="rhat",
+            description="R-hat check",
+            acceptable_range=(0.0, 1.05),
+            blocking=True,
+            required=True,
         )
         assert gate.acceptable_range == (0.0, 1.05)
 
@@ -226,7 +244,9 @@ class TestValidationResult:
 
     def test_failing_result_with_value(self):
         r = ValidationResult(
-            gate_name="rhat", status="fail", value=1.2,
+            gate_name="rhat",
+            status="fail",
+            value=1.2,
             message="Max R-hat is 1.2, exceeds 1.05",
         )
         assert r.passed is False
@@ -234,7 +254,9 @@ class TestValidationResult:
         assert r.status == "fail"
 
     def test_review_status(self):
-        r = ValidationResult(gate_name="test", status="review", value=1.1, message="Borderline")
+        r = ValidationResult(
+            gate_name="test", status="review", value=1.1, message="Borderline"
+        )
         assert r.passed is False
         assert r.status == "review"
 
@@ -244,28 +266,42 @@ class TestValidationResult:
 
     def test_is_stale_for_when_identity_mismatch(self):
         r = ValidationResult(
-            gate_name="test", status="pass",
-            model_run_id="old-run", data_fingerprint="old-data",
-            model_spec_fingerprint="old-spec", posterior_fingerprint="old-post",
-            policy_id="pol-1", policy_version="1.0",
+            gate_name="test",
+            status="pass",
+            model_run_id="old-run",
+            data_fingerprint="old-data",
+            model_spec_fingerprint="old-spec",
+            posterior_fingerprint="old-post",
+            policy_id="pol-1",
+            policy_version="1.0",
         )
         assert r.is_stale_for(
-            model_run_id="new-run", data_fingerprint="new-data",
-            model_spec_fingerprint="new-spec", posterior_fingerprint="new-post",
-            policy_id="pol-1", policy_version="1.0",
+            model_run_id="new-run",
+            data_fingerprint="new-data",
+            model_spec_fingerprint="new-spec",
+            posterior_fingerprint="new-post",
+            policy_id="pol-1",
+            policy_version="1.0",
         )
 
     def test_is_not_stale_for_when_identity_matches(self):
         r = ValidationResult(
-            gate_name="test", status="pass",
-            model_run_id="run-1", data_fingerprint="data-1",
-            model_spec_fingerprint="spec-1", posterior_fingerprint="post-1",
-            policy_id="pol-1", policy_version="1.0",
+            gate_name="test",
+            status="pass",
+            model_run_id="run-1",
+            data_fingerprint="data-1",
+            model_spec_fingerprint="spec-1",
+            posterior_fingerprint="post-1",
+            policy_id="pol-1",
+            policy_version="1.0",
         )
         assert not r.is_stale_for(
-            model_run_id="run-1", data_fingerprint="data-1",
-            model_spec_fingerprint="spec-1", posterior_fingerprint="post-1",
-            policy_id="pol-1", policy_version="1.0",
+            model_run_id="run-1",
+            data_fingerprint="data-1",
+            model_spec_fingerprint="spec-1",
+            posterior_fingerprint="post-1",
+            policy_id="pol-1",
+            policy_version="1.0",
         )
 
 
@@ -344,10 +380,15 @@ class TestApprovalReadinessEvaluation:
         """A stale result (identity mismatch) blocks approval."""
         # Create a result with empty identity fields — incomplete binding is stale
         stale = ValidationResult(
-            gate_name="convergence_rhat", status="pass", value=1.02,
-            model_run_id="", data_fingerprint="",
-            model_spec_fingerprint="", posterior_fingerprint="",
-            policy_id="val-pol-001", policy_version="1.0.0",
+            gate_name="convergence_rhat",
+            status="pass",
+            value=1.02,
+            model_run_id="",
+            data_fingerprint="",
+            model_spec_fingerprint="",
+            posterior_fingerprint="",
+            policy_id="val-pol-001",
+            policy_version="1.0.0",
         )
         results = [
             stale,
@@ -420,7 +461,9 @@ class TestApprovalReadinessEvaluation:
         """With no results, all required gates are missing."""
         readiness = evaluate_approval_readiness([], sample_policy)
         assert readiness.overall_ready is False
-        assert len(readiness.missing_required_gates) == 3  # convergence, ppc, divergences (backtest not required)
+        assert (
+            len(readiness.missing_required_gates) == 3
+        )  # convergence, ppc, divergences (backtest not required)
         assert "backtest_mape" not in readiness.missing_required_gates
 
     def test_expired_waiver_does_not_unblock(self, sample_policy):
@@ -442,7 +485,9 @@ class TestApprovalReadinessEvaluation:
             ),
         ]
         as_of = datetime(2026, 7, 1, tzinfo=timezone.utc)
-        readiness = evaluate_approval_readiness(results, sample_policy, waivers=waivers, as_of=as_of)
+        readiness = evaluate_approval_readiness(
+            results, sample_policy, waivers=waivers, as_of=as_of
+        )
         assert readiness.overall_ready is False
         assert len(readiness.waivers_applied) == 0  # expired waiver not applied
 
@@ -452,21 +497,33 @@ class TestApprovalReadinessEvaluation:
         inherit the policy scope. The evaluator does not skip gates based
         on scope mismatch; instead, scope is validated at policy creation."""
         gate = ValidationGate(
-            name="market_specific_gate", description="Market specific",
-            scope="market_specific_only", evaluator_id="rhat",
-            acceptable_range=(0.0, 1.05), direction="lower_is_better",
-            blocking=True, required=True,
+            name="market_specific_gate",
+            description="Market specific",
+            scope="market_specific_only",
+            evaluator_id="rhat",
+            acceptable_range=(0.0, 1.05),
+            direction="lower_is_better",
+            blocking=True,
+            required=True,
         )
         policy = ThresholdPolicy(
-            policy_id="pol-scope", version="1.0", scope="shared_model_only",
-            gates=[gate], owner="Test", approval_date=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            policy_id="pol-scope",
+            version="1.0",
+            scope="shared_model_only",
+            gates=[gate],
+            owner="Test",
+            approval_date=datetime(2026, 1, 1, tzinfo=timezone.utc),
         )
         results = [
             ValidationResult(
-                gate_name="market_specific_gate", status="pass",
-                model_run_id="r", data_fingerprint="d",
-                model_spec_fingerprint="s", posterior_fingerprint="p",
-                policy_id="pol-scope", policy_version="1.0",
+                gate_name="market_specific_gate",
+                status="pass",
+                model_run_id="r",
+                data_fingerprint="d",
+                model_spec_fingerprint="s",
+                posterior_fingerprint="p",
+                policy_id="pol-scope",
+                policy_version="1.0",
             ),
         ]
         readiness = evaluate_approval_readiness(results, policy)
@@ -479,24 +536,35 @@ class TestApprovalReadinessEvaluation:
         """A review-band result on a blocking gate should be reported
         but not block (review is not fail)."""
         gate = ValidationGate(
-            name="rhat", description="R-hat check",
+            name="rhat",
+            description="R-hat check",
             evaluator_id="rhat",
-            acceptable_range=(0.0, 1.05), review_range=(0.0, 1.1),
+            acceptable_range=(0.0, 1.05),
+            review_range=(0.0, 1.1),
             direction="lower_is_better",
-            blocking=True, required=True,
+            blocking=True,
+            required=True,
         )
         policy = ThresholdPolicy(
-            policy_id="pol-review", version="1.0", scope="all",
-            gates=[gate], owner="Test",
+            policy_id="pol-review",
+            version="1.0",
+            scope="all",
+            gates=[gate],
+            owner="Test",
             approval_date=datetime(2026, 1, 1, tzinfo=timezone.utc),
         )
         results = [
             ValidationResult(
-                gate_name="rhat", status="review", value=1.08,
+                gate_name="rhat",
+                status="review",
+                value=1.08,
                 message="Borderline R-hat",
-                model_run_id="r", data_fingerprint="d",
-                model_spec_fingerprint="s", posterior_fingerprint="p",
-                policy_id="pol-review", policy_version="1.0",
+                model_run_id="r",
+                data_fingerprint="d",
+                model_spec_fingerprint="s",
+                posterior_fingerprint="p",
+                policy_id="pol-review",
+                policy_version="1.0",
             ),
         ]
         readiness = evaluate_approval_readiness(results, policy)
@@ -547,9 +615,11 @@ class TestReadinessToDict:
         ]
         waivers = [
             ValidationWaiverReference(
-                waiver_id="wv-001", approved_by="A",
+                waiver_id="wv-001",
+                approved_by="A",
                 approved_at=datetime(2026, 7, 15, tzinfo=timezone.utc),
-                reason="OK", gate_name="ppc_coverage",
+                reason="OK",
+                gate_name="ppc_coverage",
             ),
         ]
         readiness = evaluate_approval_readiness(results, sample_policy, waivers=waivers)

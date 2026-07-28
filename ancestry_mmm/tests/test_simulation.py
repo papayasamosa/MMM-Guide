@@ -44,9 +44,15 @@ class TestPanelShape:
 class TestMarketSizesDiffer:
     def test_default_markets_have_different_sizes(self):
         result = simulate_market_specific_panel(seed=0)
-        spend_by_market = result.panel.groupby("market")[f"{result.channels[0].name}_spend"].mean()
+        spend_by_market = result.panel.groupby("market")[
+            f"{result.channels[0].name}_spend"
+        ].mean()
         # UK is the largest market by construction (size_multiplier=1.0 vs. smaller others)
-        assert spend_by_market["UK"] > spend_by_market["Australia"] > spend_by_market["NewMarket"]
+        assert (
+            spend_by_market["UK"]
+            > spend_by_market["Australia"]
+            > spend_by_market["NewMarket"]
+        )
 
     def test_weak_market_has_fewer_observations(self):
         result = simulate_market_specific_panel(seed=0)
@@ -58,7 +64,10 @@ class TestMarketSizesDiffer:
 class TestGroundTruthStructure:
     def test_saturation_point_is_market_specific(self):
         result = simulate_market_specific_panel(seed=0)
-        k_by_market = {m: ks[result.channels[0].name] for m, ks in result.ground_truth.market_K.items()}
+        k_by_market = {
+            m: ks[result.channels[0].name]
+            for m, ks in result.ground_truth.market_K.items()
+        }
         # With 3 differently-scaled markets, at least two K values should differ meaningfully.
         values = list(k_by_market.values())
         assert max(values) - min(values) > 1e-6

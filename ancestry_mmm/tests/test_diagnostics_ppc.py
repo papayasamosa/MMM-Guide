@@ -26,6 +26,7 @@ from ancestry_mmm.core.hierarchical_model import FHModelMeta
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_trace_and_frame(
     n_obs: int = 20,
     n_outcomes: int = 2,
@@ -61,42 +62,54 @@ def _make_trace_and_frame(
     mu_draws = np.zeros((n_chain, n_draw, n_obs, n_out))
     alpha_draws = np.zeros((n_chain, n_draw, n_out))
     for i in range(n_out):
-        mu_noise = rng.normal(0, true_mu.mean(axis=0)[i] * 0.05, size=(n_chain, n_draw, n_obs))
+        mu_noise = rng.normal(
+            0, true_mu.mean(axis=0)[i] * 0.05, size=(n_chain, n_draw, n_obs)
+        )
         mu_draws[:, :, :, i] = np.maximum(true_mu[:, i] + mu_noise, 0.1)
-        alpha_draws[:, :, i] = np.maximum(true_alpha[i] + rng.normal(0, 0.3, size=(n_chain, n_draw)), 0.5)
+        alpha_draws[:, :, i] = np.maximum(
+            true_alpha[i] + rng.normal(0, 0.3, size=(n_chain, n_draw)), 0.5
+        )
 
-    coords = {
-        "chain": list(range(n_chain)),
-        "draw": list(range(n_draw)),
-        "obs": list(range(n_obs)),
-        "outcome": oids,
-        "channel": chs,
-    }
     trace = az.from_dict(
         posterior={
             "mu": xr.DataArray(
                 mu_draws,
                 dims=["chain", "draw", "obs", "outcome"],
-                coords={"chain": list(range(n_chain)), "draw": list(range(n_draw)),
-                        "obs": list(range(n_obs)), "outcome": oids},
+                coords={
+                    "chain": list(range(n_chain)),
+                    "draw": list(range(n_draw)),
+                    "obs": list(range(n_obs)),
+                    "outcome": oids,
+                },
             ),
             "alpha": xr.DataArray(
                 alpha_draws,
                 dims=["chain", "draw", "outcome"],
-                coords={"chain": list(range(n_chain)), "draw": list(range(n_draw)),
-                        "outcome": oids},
+                coords={
+                    "chain": list(range(n_chain)),
+                    "draw": list(range(n_draw)),
+                    "outcome": oids,
+                },
             ),
             # Minimal extra variables to avoid KeyError in coords
             "hill_K": xr.DataArray(
                 np.ones((n_chain, n_draw, len(chs))),
                 dims=["chain", "draw", "channel"],
-                coords={"chain": list(range(n_chain)), "draw": list(range(n_draw)), "channel": chs},
+                coords={
+                    "chain": list(range(n_chain)),
+                    "draw": list(range(n_draw)),
+                    "channel": chs,
+                },
             ),
             "beta": xr.DataArray(
                 np.ones((n_chain, n_draw, n_out, len(chs))),
                 dims=["chain", "draw", "outcome", "channel"],
-                coords={"chain": list(range(n_chain)), "draw": list(range(n_draw)),
-                        "outcome": oids, "channel": chs},
+                coords={
+                    "chain": list(range(n_chain)),
+                    "draw": list(range(n_draw)),
+                    "outcome": oids,
+                    "channel": chs,
+                },
             ),
         },
     )
@@ -150,12 +163,14 @@ def _old_incorrect_ppc(
         lo_mean, hi_mean = lo.mean(axis=1), hi.mean(axis=1)
 
         covered = (Y[:, i] >= lo_mean) & (Y[:, i] <= hi_mean)
-        rows.append({
-            "outcome_id": oid,
-            "credible_mass": credible_mass,
-            "coverage_pct": float(covered.mean() * 100),
-            "target_pct": credible_mass * 100,
-        })
+        rows.append(
+            {
+                "outcome_id": oid,
+                "credible_mass": credible_mass,
+                "coverage_pct": float(covered.mean() * 100),
+                "target_pct": credible_mass * 100,
+            }
+        )
     return pd.DataFrame(rows)
 
 
@@ -175,11 +190,19 @@ class TestPosteriorPredictiveCoverageStructure:
     def test_has_expected_columns(self):
         trace, frame, meta = _make_trace_and_frame()
         result = posterior_predictive_coverage(trace, frame, meta)
-        expected = {"outcome_id", "credible_mass", "coverage_pct", "target_pct", "n_predictive_samples"}
+        expected = {
+            "outcome_id",
+            "credible_mass",
+            "coverage_pct",
+            "target_pct",
+            "n_predictive_samples",
+        }
         assert expected.issubset(set(result.columns))
 
     def test_one_row_per_outcome(self):
-        trace, frame, meta = _make_trace_and_frame(outcome_ids=["New", "DNA_CrossSell", "Winback"])
+        trace, frame, meta = _make_trace_and_frame(
+            outcome_ids=["New", "DNA_CrossSell", "Winback"]
+        )
         result = posterior_predictive_coverage(trace, frame, meta)
         assert len(result) == 3
         assert list(result["outcome_id"]) == ["New", "DNA_CrossSell", "Winback"]
@@ -224,9 +247,16 @@ class TestPosteriorPredictiveCoverageValidity:
     def test_coverage_near_target_when_model_is_correct(self):
         """When posterior draws are centred on the true data-generating
         parameters, nominal coverage should be close to the target."""
-        trace, frame, meta = _make_trace_and_frame(n_obs=100, n_chain=2, n_draw=50, seed=42)
+        trace, frame, meta = _make_trace_and_frame(
+            n_obs=100, n_chain=2, n_draw=50, seed=42
+        )
         result = posterior_predictive_coverage(
-            trace, frame, meta, credible_mass=0.9, predictive_replications=3, random_seed=99,
+            trace,
+            frame,
+            meta,
+            credible_mass=0.9,
+            predictive_replications=3,
+            random_seed=99,
         )
         # With a well-specified posterior, coverage should be within ~10pp of target
         for _, row in result.iterrows():
@@ -242,9 +272,15 @@ class TestPosteriorPredictiveCoverageValidity:
         The two methods will diverge, especially with few posterior draws
         where the quantile-averaging bias is most visible.
         """
-        trace, frame, meta = _make_trace_and_frame(n_obs=10, n_chain=2, n_draw=5, seed=7)
+        trace, frame, meta = _make_trace_and_frame(
+            n_obs=10, n_chain=2, n_draw=5, seed=7
+        )
         new_result = posterior_predictive_coverage(
-            trace, frame, meta, predictive_replications=10, random_seed=42,
+            trace,
+            frame,
+            meta,
+            predictive_replications=10,
+            random_seed=42,
         )
         old_result = _old_incorrect_ppc(trace, frame, meta)
 
@@ -261,9 +297,15 @@ class TestPosteriorPredictiveCoverageValidity:
     def test_increasing_predictive_replications_stabilises_coverage(self):
         """More predictive replications per draw should reduce Monte Carlo
         noise, not systematically change the expected value."""
-        trace, frame, meta = _make_trace_and_frame(n_obs=30, n_chain=2, n_draw=20, seed=1)
-        r1 = posterior_predictive_coverage(trace, frame, meta, predictive_replications=1, random_seed=42)
-        r10 = posterior_predictive_coverage(trace, frame, meta, predictive_replications=10, random_seed=42)
+        trace, frame, meta = _make_trace_and_frame(
+            n_obs=30, n_chain=2, n_draw=20, seed=1
+        )
+        r1 = posterior_predictive_coverage(
+            trace, frame, meta, predictive_replications=1, random_seed=42
+        )
+        r10 = posterior_predictive_coverage(
+            trace, frame, meta, predictive_replications=10, random_seed=42
+        )
 
         # Coverage should be similar (same seed, same draws)
         for oid in meta.outcome_ids:
@@ -317,6 +359,7 @@ class TestPPCReferencesInScorecard:
     def test_scorecard_contains_ppc(self):
         trace, frame, meta = _make_trace_and_frame()
         from ancestry_mmm.core.diagnostics import compute_scorecard
+
         scorecard = compute_scorecard(trace, frame, meta)
         assert "ppc_coverage" in scorecard
         assert len(scorecard["ppc_coverage"]) == len(meta.outcome_ids)
@@ -324,6 +367,7 @@ class TestPPCReferencesInScorecard:
     def test_scorecard_ppc_has_correct_fields(self):
         trace, frame, meta = _make_trace_and_frame()
         from ancestry_mmm.core.diagnostics import compute_scorecard
+
         scorecard = compute_scorecard(trace, frame, meta)
         for record in scorecard["ppc_coverage"]:
             assert "outcome_id" in record

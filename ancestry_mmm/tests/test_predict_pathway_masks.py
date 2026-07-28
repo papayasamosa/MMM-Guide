@@ -13,7 +13,12 @@ import pytest
 
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
 from ancestry_mmm.core.pathways import ResolvedPathwayMasks
-from ancestry_mmm.core.predict import FHPosteriorParams, generate_channel_curve, predict_mu, steady_state_outcome_response
+from ancestry_mmm.core.predict import (
+    FHPosteriorParams,
+    generate_channel_curve,
+    predict_mu,
+    steady_state_outcome_response,
+)
 
 OUTCOME_IDS = ["A", "B"]
 CHANNELS = ["TV", "Radio"]
@@ -21,24 +26,35 @@ CHANNELS = ["TV", "Radio"]
 
 def _meta(pathway_masks: ResolvedPathwayMasks) -> FHModelMeta:
     return FHModelMeta(
-        markets=["UK"], outcome_ids=OUTCOME_IDS, channels=CHANNELS,
-        dna_channels=[], dna_channel_idx=[], non_dna_idx=[0, 1],
-        dna_outcome_id="A", dna_lag_weeks=0, unpooled_markets=[], control_names=[],
+        markets=["UK"],
+        outcome_ids=OUTCOME_IDS,
+        channels=CHANNELS,
+        dna_channels=[],
+        dna_channel_idx=[],
+        non_dna_idx=[0, 1],
+        dna_outcome_id="A",
+        dna_lag_weeks=0,
+        unpooled_markets=[],
+        control_names=[],
         pathway_masks=pathway_masks,
     )
 
 
 def _params() -> FHPosteriorParams:
     return FHPosteriorParams(
-        decay_rate={"TV": 0.0, "Radio": 0.0}, hill_K={"TV": 1000.0, "Radio": 1000.0},
+        decay_rate={"TV": 0.0, "Radio": 0.0},
+        hill_K={"TV": 1000.0, "Radio": 1000.0},
         hill_S={"TV": 1.0, "Radio": 1.0},
         beta={"A": {"TV": 1.0, "Radio": 1.0}, "B": {"TV": 1.0, "Radio": 1.0}},
         pathway_strength={"A": {"Radio": 0.4}, "B": {"Radio": 0.4}},
         promo_coef={"A": 0.0, "B": 0.0},
         market_offset={"UK": {"A": 0.0, "B": 0.0}},
-        intercept={"A": 0.0, "B": 0.0}, trend_coef={"A": 0.0, "B": 0.0},
-        gamma_fourier={"A": np.zeros(4), "B": np.zeros(4)}, alpha={"A": 5.0, "B": 5.0},
-        control_coef={}, outcome_control_coef={},
+        intercept={"A": 0.0, "B": 0.0},
+        trend_coef={"A": 0.0, "B": 0.0},
+        gamma_fourier={"A": np.zeros(4), "B": np.zeros(4)},
+        alpha={"A": 5.0, "B": 5.0},
+        control_coef={},
+        outcome_control_coef={},
     )
 
 
@@ -47,11 +63,17 @@ def _frame():
     X_media = np.zeros((n, 2))
     X_media[2] = [500.0, 500.0]
     return {
-        "markets": ["UK"], "market_idx": np.zeros(n, dtype=int), "market_bounds": [(0, n)],
-        "X_media": X_media, "promo": np.zeros((n, len(OUTCOME_IDS))),
-        "trend": np.zeros(n), "fourier": np.zeros((n, 4)),
-        "control_names": [], "X_controls": np.zeros((n, 0)),
-        "outcome_controls": {}, "outcome_control_names": {},
+        "markets": ["UK"],
+        "market_idx": np.zeros(n, dtype=int),
+        "market_bounds": [(0, n)],
+        "X_media": X_media,
+        "promo": np.zeros((n, len(OUTCOME_IDS))),
+        "trend": np.zeros(n),
+        "fourier": np.zeros((n, 4)),
+        "control_names": [],
+        "X_controls": np.zeros((n, 0)),
+        "outcome_controls": {},
+        "outcome_control_names": {},
     }
 
 
@@ -63,7 +85,8 @@ class TestExcludedPathwayGivesZeroContribution:
     def _masks(self) -> ResolvedPathwayMasks:
         return ResolvedPathwayMasks(
             primary_channels_by_outcome={"A": ["TV", "Radio"], "B": ["TV"]},
-            active_channels_by_outcome={}, exploratory_channels_by_outcome={},
+            active_channels_by_outcome={},
+            exploratory_channels_by_outcome={},
         )
 
     def test_predict_mu_excluded_channel_never_contributes(self):
@@ -93,15 +116,21 @@ class TestExcludedPathwayGivesZeroContribution:
     def test_steady_state_response_excluded_channel_has_zero_weight(self):
         meta = _meta(self._masks())
         params = _params()
-        result = steady_state_outcome_response("UK", {"TV": 0.0, "Radio": 500.0}, meta, params)
-        result_no_radio = steady_state_outcome_response("UK", {"TV": 0.0, "Radio": 0.0}, meta, params)
+        result = steady_state_outcome_response(
+            "UK", {"TV": 0.0, "Radio": 500.0}, meta, params
+        )
+        result_no_radio = steady_state_outcome_response(
+            "UK", {"TV": 0.0, "Radio": 0.0}, meta, params
+        )
         assert result["B"] == pytest.approx(result_no_radio["B"])
         assert result["A"] != pytest.approx(result_no_radio["A"])
 
     def test_generate_channel_curve_excluded_outcome_is_flat_at_zero(self):
         meta = _meta(self._masks())
         params = _params()
-        df = generate_channel_curve("Radio", meta, params, spend_range=np.array([0.0, 500.0, 1000.0]))
+        df = generate_channel_curve(
+            "Radio", meta, params, spend_range=np.array([0.0, 500.0, 1000.0])
+        )
         assert (df["B_response"] == 0.0).all()
         assert (df["A_response"].iloc[1:] > 0.0).all()
 
@@ -126,7 +155,9 @@ class TestExploratoryCellReplaysIdenticallyToActive:
 
     def test_active_and_exploratory_cells_with_equal_strength_replay_identically(self):
         meta = _meta(self._masks())
-        params = _params()  # pathway_strength["A"]["Radio"] == pathway_strength["B"]["Radio"] == 0.4
+        params = (
+            _params()
+        )  # pathway_strength["A"]["Radio"] == pathway_strength["B"]["Radio"] == 0.4
         mu = predict_mu(_frame(), meta, params)
         a_idx, b_idx = meta.outcome_ids.index("A"), meta.outcome_ids.index("B")
         # Identical beta/primary/strength for A (active) and B (exploratory) -
@@ -145,9 +176,16 @@ class TestFHModelMetaAutoResolvesLegacyDefaultForPredict:
 
     def test_meta_without_pathway_masks_still_produces_responsive_predictions(self):
         meta = FHModelMeta(
-            markets=["UK"], outcome_ids=OUTCOME_IDS, channels=CHANNELS,
-            dna_channels=[], dna_channel_idx=[], non_dna_idx=[0, 1],
-            dna_outcome_id="A", dna_lag_weeks=0, unpooled_markets=[], control_names=[],
+            markets=["UK"],
+            outcome_ids=OUTCOME_IDS,
+            channels=CHANNELS,
+            dna_channels=[],
+            dna_channel_idx=[],
+            non_dna_idx=[0, 1],
+            dna_outcome_id="A",
+            dna_lag_weeks=0,
+            unpooled_markets=[],
+            control_names=[],
         )  # pathway_masks intentionally omitted
         params = _params()
         mu = predict_mu(_frame(), meta, params)

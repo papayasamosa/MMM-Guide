@@ -249,7 +249,9 @@ def build_lift_model(
         # y = baseline * prod((1 + lift_i * x_i)) * exp(seasonality + trend)
         channel_effects = 1.0
         for i in range(n_channels):
-            channel_effects = channel_effects * (1 + lift_factors[i] * X_media_adstocked[:, i] / X_media[:, i].mean())
+            channel_effects = channel_effects * (
+                1 + lift_factors[i] * X_media_adstocked[:, i] / X_media[:, i].mean()
+            )
 
         seasonality = pm.math.dot(X_fourier, gamma_fourier)
         mu = baseline * channel_effects * pm.math.exp(seasonality + gamma_trend * trend)
@@ -334,47 +336,48 @@ def compute_model_diagnostics(trace: az.InferenceData) -> Dict[str, Any]:
 
     # R-hat (should be < 1.01 for convergence)
     rhat = az.rhat(trace)
-    diagnostics['rhat'] = {
-        var: float(rhat[var].values) if rhat[var].ndim == 0
+    diagnostics["rhat"] = {
+        var: float(rhat[var].values)
+        if rhat[var].ndim == 0
         else rhat[var].values.tolist()
         for var in rhat.data_vars
     }
-    diagnostics['rhat_max'] = max(
+    diagnostics["rhat_max"] = max(
         np.max(v) if isinstance(v, (list, np.ndarray)) else v
-        for v in diagnostics['rhat'].values()
+        for v in diagnostics["rhat"].values()
     )
 
     # Effective sample size
     ess = az.ess(trace)
-    diagnostics['ess'] = {
-        var: float(ess[var].values) if ess[var].ndim == 0
-        else ess[var].values.tolist()
+    diagnostics["ess"] = {
+        var: float(ess[var].values) if ess[var].ndim == 0 else ess[var].values.tolist()
         for var in ess.data_vars
     }
-    diagnostics['ess_min'] = min(
+    diagnostics["ess_min"] = min(
         np.min(v) if isinstance(v, (list, np.ndarray)) else v
-        for v in diagnostics['ess'].values()
+        for v in diagnostics["ess"].values()
     )
 
     # MCSE (Monte Carlo Standard Error)
     mcse = az.mcse(trace)
-    diagnostics['mcse'] = {
-        var: float(mcse[var].values) if mcse[var].ndim == 0
+    diagnostics["mcse"] = {
+        var: float(mcse[var].values)
+        if mcse[var].ndim == 0
         else mcse[var].values.tolist()
         for var in mcse.data_vars
     }
 
     # Divergences
-    if hasattr(trace, 'sample_stats') and 'diverging' in trace.sample_stats:
-        diagnostics['divergences'] = int(trace.sample_stats.diverging.sum())
+    if hasattr(trace, "sample_stats") and "diverging" in trace.sample_stats:
+        diagnostics["divergences"] = int(trace.sample_stats.diverging.sum())
     else:
-        diagnostics['divergences'] = 0
+        diagnostics["divergences"] = 0
 
     # Summary of convergence
-    diagnostics['converged'] = (
-        diagnostics['rhat_max'] < 1.05 and
-        diagnostics['ess_min'] > 100 and
-        diagnostics['divergences'] == 0
+    diagnostics["converged"] = (
+        diagnostics["rhat_max"] < 1.05
+        and diagnostics["ess_min"] > 100
+        and diagnostics["divergences"] == 0
     )
 
     return diagnostics

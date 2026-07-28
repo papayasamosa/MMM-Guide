@@ -67,13 +67,21 @@ def main():
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        render_status_card("Data", "Loaded" if get_state("data_loaded") else "Not loaded", bool(get_state("data_loaded")))
+        render_status_card(
+            "Data",
+            "Loaded" if get_state("data_loaded") else "Not loaded",
+            bool(get_state("data_loaded")),
+        )
     with c2:
         spec = get_state("model_spec")
-        render_status_card("Structure", "Defined" if spec else "Not defined", bool(spec))
+        render_status_card(
+            "Structure", "Defined" if spec else "Not defined", bool(spec)
+        )
     with c3:
         trained = get_state("model_trained")
-        render_status_card("Model", "Trained" if trained else "Not trained", bool(trained))
+        render_status_card(
+            "Model", "Trained" if trained else "Not trained", bool(trained)
+        )
     with c4:
         scenarios = get_state("scenarios") or []
         render_status_card("Scenarios", str(len(scenarios)), bool(scenarios))

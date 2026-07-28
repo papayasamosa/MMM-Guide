@@ -10,16 +10,34 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 import pandas as pd
 import streamlit as st
 
-from ancestry_mmm.utils import init_session_state, get_state, set_state, dataframe_column_config
-from ancestry_mmm.components import apply_theme, render_sidebar, render_page_header, render_next_step, render_glossary
-from ancestry_mmm.core.model_comparison import ModelComparisonCandidate, candidates_to_dataframe
+from ancestry_mmm.utils import (
+    init_session_state,
+    get_state,
+    set_state,
+    dataframe_column_config,
+)
+from ancestry_mmm.components import (
+    apply_theme,
+    render_sidebar,
+    render_page_header,
+    render_next_step,
+    render_glossary,
+)
+from ancestry_mmm.core.model_comparison import (
+    ModelComparisonCandidate,
+    candidates_to_dataframe,
+)
 
-st.set_page_config(page_title="Compare Models - Ancestry FH MMM", page_icon="🧬", layout="wide")
+st.set_page_config(
+    page_title="Compare Models - Ancestry FH MMM", page_icon="🧬", layout="wide"
+)
 init_session_state()
 apply_theme()
 render_sidebar("compare_models")
 render_page_header("compare_models")
-render_glossary(["Model comparison", "Market-specific curve", "Shrinkage", "Partial pooling"])
+render_glossary(
+    ["Model comparison", "Market-specific curve", "Shrinkage", "Partial pooling"]
+)
 
 st.markdown("---")
 st.markdown(
@@ -39,7 +57,7 @@ candidate_dicts = get_state("model_comparison_candidates") or []
 if not candidate_dicts:
     st.info(
         "No comparison candidates saved yet. Fit a model on Model Training, then use "
-        "\"Save this fit as a comparison candidate\" to add it here."
+        '"Save this fit as a comparison candidate" to add it here.'
     )
 else:
     candidates = [ModelComparisonCandidate.from_dict(d) for d in candidate_dicts]
@@ -54,8 +72,18 @@ else:
     chosen = next(c for c in candidates if c.label == chosen_label)
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Max R-hat", f"{chosen.convergence.get('rhat_max', float('nan')):.3f}" if chosen.convergence.get("rhat_max") is not None else "n/a")
-    c2.metric("Min ESS", f"{chosen.convergence.get('ess_min', 0):.0f}" if chosen.convergence.get("ess_min") is not None else "n/a")
+    c1.metric(
+        "Max R-hat",
+        f"{chosen.convergence.get('rhat_max', float('nan')):.3f}"
+        if chosen.convergence.get("rhat_max") is not None
+        else "n/a",
+    )
+    c2.metric(
+        "Min ESS",
+        f"{chosen.convergence.get('ess_min', 0):.0f}"
+        if chosen.convergence.get("ess_min") is not None
+        else "n/a",
+    )
     c3.metric("Divergences", chosen.convergence.get("divergences", "n/a"))
     c4.metric("Converged", "Yes" if chosen.convergence.get("converged") else "No")
 
@@ -65,7 +93,9 @@ else:
     if chosen.ppc_coverage:
         st.markdown("**Posterior predictive coverage**")
         st.dataframe(pd.DataFrame(chosen.ppc_coverage), width="stretch")
-    st.caption(f"Model run: `{chosen.model_run_id[:8]}` - {chosen.n_plausibility_flags} plausibility flag(s).")
+    st.caption(
+        f"Model run: `{chosen.model_run_id[:8]}` - {chosen.n_plausibility_flags} plausibility flag(s)."
+    )
 
     if st.button(f"Remove '{chosen_label}'"):
         candidate_dicts = [d for d in candidate_dicts if d.get("label") != chosen_label]

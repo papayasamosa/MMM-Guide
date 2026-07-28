@@ -17,7 +17,9 @@ from ancestry_mmm.core.funnel import (
 
 class TestFunnelLinkRoundTrip:
     def test_to_dict_from_dict_round_trips(self):
-        link = FunnelLink(upstream_outcome_id="fh_new_signup", downstream_outcome_id="fh_new_gsa")
+        link = FunnelLink(
+            upstream_outcome_id="fh_new_signup", downstream_outcome_id="fh_new_gsa"
+        )
         restored = FunnelLink.from_dict(link.to_dict())
         assert restored == link
 
@@ -43,7 +45,10 @@ class TestValidateFunnelLinks:
         assert any("same outcome_id" in e.lower() for e in errors)
 
     def test_duplicate_link_is_an_error(self):
-        links = [FunnelLink("fh_new_signup", "fh_new_gsa"), FunnelLink("fh_new_signup", "fh_new_gsa")]
+        links = [
+            FunnelLink("fh_new_signup", "fh_new_gsa"),
+            FunnelLink("fh_new_signup", "fh_new_gsa"),
+        ]
         errors = validate_funnel_links(links, ["fh_new_signup", "fh_new_gsa"])
         assert any("duplicate" in e.lower() for e in errors)
 
@@ -86,7 +91,9 @@ class TestFunnelCoherenceDiagnostics:
         upstream = np.array([100.0, 50.0, 80.0])
         downstream = np.array([40.0, 60.0, 30.0])
         labels = ["2024-W01", "2024-W02", "2024-W03"]
-        result = funnel_coherence_diagnostics(link, upstream, downstream, period_labels=labels)
+        result = funnel_coherence_diagnostics(
+            link, upstream, downstream, period_labels=labels
+        )
         assert result["violation_periods"] == ["2024-W02"]
 
     def test_conversion_rate_out_of_range_flagged(self):
@@ -110,7 +117,9 @@ class TestFunnelCoherenceDiagnostics:
         link = FunnelLink("signup", "gsa")
         upstream = np.array([100.0, 100.0, 100.0, 100.0])
         downstream = np.array([5.0, 80.0, 10.0, 70.0])  # wildly swinging conversion
-        result = funnel_coherence_diagnostics(link, upstream, downstream, conversion_cv_threshold=0.3)
+        result = funnel_coherence_diagnostics(
+            link, upstream, downstream, conversion_cv_threshold=0.3
+        )
         assert result["conversion_rate_unstable"]
         assert result["has_any_warning"]
 
@@ -123,12 +132,18 @@ class TestFunnelCoherenceDiagnostics:
 class TestFunnelChannelAttributionConsistency:
     def test_sign_mismatch_channel_is_flagged(self):
         link = FunnelLink("signup", "gsa")
-        df = pd.DataFrame([
-            {"channel": "TV", "outcome_id": "signup", "volume_contribution": 50.0},
-            {"channel": "TV", "outcome_id": "gsa", "volume_contribution": -10.0},
-            {"channel": "Search", "outcome_id": "signup", "volume_contribution": 20.0},
-            {"channel": "Search", "outcome_id": "gsa", "volume_contribution": 15.0},
-        ])
+        df = pd.DataFrame(
+            [
+                {"channel": "TV", "outcome_id": "signup", "volume_contribution": 50.0},
+                {"channel": "TV", "outcome_id": "gsa", "volume_contribution": -10.0},
+                {
+                    "channel": "Search",
+                    "outcome_id": "signup",
+                    "volume_contribution": 20.0,
+                },
+                {"channel": "Search", "outcome_id": "gsa", "volume_contribution": 15.0},
+            ]
+        )
         result = funnel_channel_attribution_consistency(link, df)
         flagged = {c["channel"] for c in result["inconsistent_channels"]}
         assert flagged == {"TV"}
@@ -136,10 +151,12 @@ class TestFunnelChannelAttributionConsistency:
 
     def test_no_inconsistency_when_signs_agree(self):
         link = FunnelLink("signup", "gsa")
-        df = pd.DataFrame([
-            {"channel": "TV", "outcome_id": "signup", "volume_contribution": 50.0},
-            {"channel": "TV", "outcome_id": "gsa", "volume_contribution": 10.0},
-        ])
+        df = pd.DataFrame(
+            [
+                {"channel": "TV", "outcome_id": "signup", "volume_contribution": 50.0},
+                {"channel": "TV", "outcome_id": "gsa", "volume_contribution": 10.0},
+            ]
+        )
         result = funnel_channel_attribution_consistency(link, df)
         assert result["inconsistent_channels"] == []
         assert not result["has_any_warning"]
