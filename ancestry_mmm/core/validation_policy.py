@@ -397,18 +397,17 @@ class ApprovalReadiness:
 def evaluate_approval_readiness(
     results: List[ValidationResult],
     policy: ThresholdPolicy,
+    current_model_identity: Optional["ModelIdentity"] = None,
     *,
     waivers: Optional[List[ValidationWaiverReference]] = None,
     as_of: Optional[datetime] = None,
 ) -> ApprovalReadiness:
     """Evaluate validation results against a policy.
 
-    PR 51C:
-    - Uses ``status`` field (pass/review/fail) from ``ValidationResult``.
-    - Checks identity-based staleness: a stale passing result does *not*
-      pass readiness.
-    - Validates waiver expiry and activation.
-    - Applies pass/review/fail bands from ``ValidationGate``.
+    PR 53B: Accepts an optional ``current_model_identity``. When provided,
+    staleness is checked by comparing each result's identity bindings
+    against the current identity. Without it, results with empty identity
+    bindings are treated as stale.
 
     This is a pure function: it does not choose thresholds, mutate approvals,
     or access any external state.
@@ -419,6 +418,10 @@ def evaluate_approval_readiness(
         Results from evaluating diagnostics against the fitted model.
     policy : ThresholdPolicy
         The policy to evaluate against.
+    current_model_identity : ModelIdentity | None
+        The current model's identity. When provided, results whose identity
+        does not match are stale. When ``None``, results with empty identity
+        fields are stale.
     waivers : list[ValidationWaiverReference] | None
         Any approved waivers for failing gates.
     as_of : datetime | None
@@ -429,6 +432,8 @@ def evaluate_approval_readiness(
     ApprovalReadiness
         Aggregate readiness with blockers, review items, and passes.
     """
+    from .model_identity import ModelIdentity
+
     as_of = as_of or datetime.now(timezone.utc)
     waivers = waivers or []
 
@@ -466,17 +471,29 @@ def evaluate_approval_readiness(
                 missing_required_gates.append(gate.name)
             continue
 
-        # Staleness check: if the result's identity bindings don't match
-        # the current policy, it's stale regardless of pass/review/fail status.
-        # Use the policy's own identity fields to check.
-        if result.is_stale_for(
-            model_run_id=result.model_run_id,
-            data_fingerprint=result.data_fingerprint,
-            model_spec_fingerprint=result.model_spec_fingerprint,
-            posterior_fingerprint=result.posterior_fingerprint,
-            policy_id=policy.policy_id,
-            policy_version=policy.version,
-        ):
+        # Staleness check: compare each result's identity bindings against
+        # the current model identity (supplied independently, never compared
+        # with itself). When current_model_identity is None, results with
+        # empty identity fields are stale (incomplete binding).
+        if current_model_identity is not None:
+            is_stale = not result.matches_identity(
+                model_run_id=current_model_identity.model_run_id,
+                data_fingerprint=current_model_identity.data_fingerprint,
+                model_spec_fingerprint=current_model_identity.model_spec_fingerprint,
+                posterior_fingerprint=current_model_identity.posterior_fingerprint,
+                policy_id=policy.policy_id,
+                policy_version=policy.version,
+            )
+        else:
+            # Without current identity, a result is stale if any identity
+            # field is empty (incomplete binding)
+            is_stale = not all([
+                result.model_run_id, result.data_fingerprint,
+                result.model_spec_fingerprint, result.posterior_fingerprint,
+                result.policy_id, result.policy_version,
+            ])
+
+        if is_stale:
             # Stale result: treat as missing if required
             if gate.required:
                 missing_required_gates.append(gate.name)
