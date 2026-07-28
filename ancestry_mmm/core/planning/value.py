@@ -1,8 +1,9 @@
 """
 Pure value objects and dataclasses for planning and optimisation.
 
-Extracted from ``core/optimization.py`` as part of PR 5 (planning package
-refactor). No numerical behaviour is changed.
+PR 51A: Canonical source of planning value objects. These implementations
+match the active ``core.optimization`` classes exactly. ``core.optimization``
+imports from this module and re-exports for backward compatibility.
 """
 
 from __future__ import annotations
@@ -17,15 +18,14 @@ import pandas as pd
 
 
 # ---------------------------------------------------------------------------
-# G2A.7a.3 exception model
+# Shared constants
 # ---------------------------------------------------------------------------
 
-
-class ObjectiveMissingError(RuntimeError):
-    """Official planning/optimisation requires an explicit objective."""
-    # Imported from .outcome_approval.PlanningGovernanceError hierarchy.
-    # Defined here so the value layer has its own importable exception
-    # without requiring a circular dependency.
+PLANNING_ESTIMANDS = frozenset({
+    "total_outcome",
+    "incremental_outcome",
+    "incremental_value",
+})
 
 
 # ---------------------------------------------------------------------------
@@ -395,8 +395,8 @@ class OutcomeValueMapping:
     G2A.7a.9: ``mapping_fingerprint`` is a deterministic fingerprint of the
     mapping's identity and content. A caller-supplied ``mapping_fingerprint``
     may disagree with the calculated fingerprint — in that case the
-    calculated fingerprint is authoritative (``mapping_fingerprint`` property
-    recalculates it)."""
+    calculated fingerprint is authoritative and a ``ValueError`` is raised.
+    """
     value_by_outcome_id: Mapping[str, float]
     currency_by_outcome_id: Mapping[str, str]
     mapping_id: str = "default"
@@ -407,31 +407,63 @@ class OutcomeValueMapping:
         """Validate that every value and currency field is populated,
         and that the fingerprint is consistent with the content."""
         for oid, val in self.value_by_outcome_id.items():
-            if val is None or (isinstance(val, float) and np.isnan(val)):
-                raise ValueError(f"OutcomeValueMapping.value_by_outcome_id[{oid!r}] is None or NaN")
-        for oid, cur in self.currency_by_outcome_id.items():
-            if not cur:
-                raise ValueError(f"OutcomeValueMapping.currency_by_outcome_id[{oid!r}] is empty")
-        # Recalculate the authoritative fingerprint
-        computed = self._compute_fingerprint()
-        object.__setattr__(self, "mapping_fingerprint", computed)
+            if val is None or (isinstance(val, float) and not np.isfinite(val)):
+                raise ValueError(
+                    f"OutcomeValueMapping: outcome '{oid}' has a non-finite or "
+                    f"None value ({val}). Every target must have a finite value."
+                )
+            # Until Finance approves negative value semantics, reject negative values.
+            if val < 0:
+                raise ValueError(
+                    f"OutcomeValueMapping: outcome '{oid}' has a negative value "
+                    f"({val}). Negative outcome values are not a governed "
+                    "policy - Finance has not approved negative value "
+                    "semantics."
+                )
+        for oid, curr in self.currency_by_outcome_id.items():
+            if not curr or not isinstance(curr, str) or len(curr) != 3 or not curr.isupper():
+                raise ValueError(
+                    f"OutcomeValueMapping: outcome '{oid}' has an invalid currency "
+                    f"'{curr}'. Must be a three-letter uppercase ISO code."
+                )
+        calculated = self._calculate_fingerprint()
+        # G2A.7a.10: a caller-supplied fingerprint that disagrees with the
+        # calculated one must raise, not silently overwrite.
+        if self.mapping_fingerprint and self.mapping_fingerprint != calculated:
+            raise ValueError(
+                f"OutcomeValueMapping.mapping_fingerprint "
+                f"({self.mapping_fingerprint[:16]}...) disagrees with the "
+                f"calculated fingerprint ({calculated[:16]}...) of the "
+                "supplied content. A caller-supplied fingerprint must match "
+                "the content exactly, or be omitted."
+            )
 
-    def _compute_fingerprint(self) -> str:
+    def _calculate_fingerprint(self) -> str:
+        """Deterministic SHA-256 fingerprint of the mapping content."""
         payload = {
             "mapping_id": self.mapping_id,
-            "value_by_outcome_id": dict(sorted(self.value_by_outcome_id.items())),
-            "currency_by_outcome_id": dict(sorted(self.currency_by_outcome_id.items())),
             "source": self.source,
+            "value_by_outcome_id": {
+                k: v for k, v in sorted(self.value_by_outcome_id.items())
+            },
+            "currency_by_outcome_id": {
+                k: v for k, v in sorted(self.currency_by_outcome_id.items())
+            },
         }
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()
 
+    @property
+    def fingerprint(self) -> str:
+        """The authoritative mapping fingerprint, always recalculated."""
+        return self._calculate_fingerprint()
+
     def to_dict(self) -> dict:
         return {
-            "mapping_id": self.mapping_id,
-            "mapping_fingerprint": self.mapping_fingerprint,
             "value_by_outcome_id": dict(self.value_by_outcome_id),
             "currency_by_outcome_id": dict(self.currency_by_outcome_id),
+            "mapping_id": self.mapping_id,
+            "mapping_fingerprint": self.fingerprint,
             "source": self.source,
         }
 
@@ -441,35 +473,58 @@ class OutcomeValueMapping:
         payload = {k: v for k, v in d.items() if k in known}
         return cls(**payload)
 
+    @classmethod
+    def from_legacy_segment_ltv(
+        cls,
+        segment_by_outcome_id: Mapping[str, str],
+        segment_ltv: Mapping[str, float],
+        currency: str,
+        *,
+        outcome_ids: tuple[str, ...],
+    ) -> "OutcomeValueMapping":
+        """Strict adapter: convert legacy segment-level LTV to outcome-ID
+        value mapping. Every target outcome must map to one existing segment
+        value. Missing values block rather than defaulting to 0.0.
 
-def legacy_segment_ltv_to_value_mapping(
-    segment_ltv: dict[str, float],
-    currency: str = "GBP",
-) -> OutcomeValueMapping:
-    """Convert a legacy ``{segment_name: LTV}`` dict to an
-    ``OutcomeValueMapping`` keyed by outcome ID.
+        G2A.7a.9: requires explicit ``segment_by_outcome_id`` mapping and
+        ``currency``. No hard-coded GBP. Missing segment-value entries raise.
+        """
+        if not currency or len(currency) != 3 or not currency.isupper():
+            raise ValueError(
+                f"from_legacy_segment_ltv requires a valid three-letter "
+                f"uppercase ISO currency, got {currency!r}."
+            )
+        value_by_outcome_id: dict[str, float] = {}
+        currency_by_outcome_id: dict[str, str] = {}
+        for oid in outcome_ids:
+            segment = segment_by_outcome_id.get(oid)
+            if segment is None:
+                raise ValueError(
+                    f"Outcome '{oid}' has no segment mapping in "
+                    "segment_by_outcome_id. Every target outcome must "
+                    "map to exactly one segment."
+                )
+            if segment not in segment_ltv:
+                raise ValueError(
+                    f"Segment '{segment}' (for outcome '{oid}') has no "
+                    "value in segment_ltv. Missing values block; they "
+                    "do not become zero."
+                )
+            value = segment_ltv[segment]
+            if value is None or not np.isfinite(value):
+                raise ValueError(
+                    f"Segment '{segment}' (for outcome '{oid}') has a "
+                    f"non-finite value ({value})."
+                )
+            value_by_outcome_id[oid] = float(value)
+            currency_by_outcome_id[oid] = currency
 
-    The mapping is:
-    - ``New`` → ``segment_ltv["New"]``
-    - ``DNA_CrossSell`` → ``segment_ltv.get("DNA_CrossSell", segment_ltv.get("FH DNA", 0.0))``
-    - ``Winback`` → ``segment_ltv.get("Winback", segment_ltv.get("Winback", 0.0))``
-
-    If the legacy dict uses "FH DNA" as the key (common in old project
-    exports), it is mapped to DNA_CrossSell. Unrecognised keys are ignored.
-    """
-    legacy_map = {
-        "New": segment_ltv.get("New", 0.0),
-        "DNA_CrossSell": segment_ltv.get("DNA_CrossSell", segment_ltv.get("FH DNA", 0.0)),
-        "Winback": segment_ltv.get("Winback", 0.0),
-    }
-    value_by_outcome_id = {k: float(v) for k, v in legacy_map.items()}
-    currency_by_outcome_id = {k: currency for k in value_by_outcome_id}
-    return OutcomeValueMapping(
-        value_by_outcome_id=value_by_outcome_id,
-        currency_by_outcome_id=currency_by_outcome_id,
-        mapping_id="legacy_segment_ltv_migration",
-        source="legacy_segment_ltv_migration",
-    )
+        return cls(
+            value_by_outcome_id=value_by_outcome_id,
+            currency_by_outcome_id=currency_by_outcome_id,
+            mapping_id="legacy_segment_ltv_migration",
+            source="legacy_segment_ltv_migration",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -682,44 +737,92 @@ class PlanningObjective:
     estimand: str = "incremental_outcome"
     metric_key: str = ""
     target_outcome_ids: Tuple[str, ...] = ()
-    weight_by_outcome_id: Optional[Mapping[str, float]] = None
+    value_currency: Optional[str] = None
+    spend_scope: str = "cost_bearing_decisions"
+    activity_scope: str = "optimisable_interventions"
+    counterfactual_policy_fingerprint: Optional[str] = None
+    schema_version: int = 3
 
     def __post_init__(self) -> None:
-        valid_estimands = {"total_outcome", "incremental_outcome", "incremental_value", "weighted_mix"}
-        if self.estimand not in valid_estimands:
-            raise ValueError(f"Unknown estimand: {self.estimand!r}; must be one of {valid_estimands}")
+        if self.estimand not in PLANNING_ESTIMANDS:
+            raise ValueError(f"Unsupported planning estimand: {self.estimand}")
+        if self.estimand == "incremental_value" and not self.value_currency:
+            raise ValueError("value objectives require value_currency")
+        # G2A.7a.7: reject duplicate target_outcome_ids
+        if len(self.target_outcome_ids) != len(set(self.target_outcome_ids)):
+            dupes = [
+                oid for oid in self.target_outcome_ids
+                if list(self.target_outcome_ids).count(oid) > 1
+            ]
+            raise ValueError(
+                f"PlanningObjective target_outcome_ids contains duplicates: "
+                f"{sorted(set(dupes))}."
+            )
 
     @property
     def is_valid_for_official_planning(self) -> bool:
+        """True if this objective has enough explicit information to be
+        validated against outcome approvals. Does not check whether approvals
+        actually exist — that's the caller's responsibility via
+        outcome_approval.require_outcome_approval."""
         return bool(self.metric_key and self.target_outcome_ids)
 
-    def fingerprint(self) -> str:
-        payload = {
-            "estimand": self.estimand,
-            "metric_key": self.metric_key,
-            "target_outcome_ids": sorted(self.target_outcome_ids) if self.target_outcome_ids else [],
-            "weight_by_outcome_id": dict(sorted(self.weight_by_outcome_id.items())) if self.weight_by_outcome_id else {},
-        }
-        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
-        return hashlib.sha256(encoded).hexdigest()
-
     def to_dict(self) -> dict:
-        return {
-            "estimand": self.estimand,
-            "metric_key": self.metric_key,
-            "target_outcome_ids": list(self.target_outcome_ids),
-            "weight_by_outcome_id": dict(self.weight_by_outcome_id) if self.weight_by_outcome_id else None,
-        }
+        values = asdict(self)
+        values["target_outcome_ids"] = list(self.target_outcome_ids)
+        return values
 
     @classmethod
     def from_dict(cls, d: dict) -> "PlanningObjective":
         known = set(cls.__dataclass_fields__)
         payload = {k: v for k, v in d.items() if k in known}
-        weights = payload.get("weight_by_outcome_id")
-        if weights is not None and not isinstance(weights, dict):
-            weights = dict(weights)
-            payload = {**payload, "weight_by_outcome_id": weights}
+        if "target_outcome_ids" in payload and isinstance(payload["target_outcome_ids"], list):
+            payload["target_outcome_ids"] = tuple(payload["target_outcome_ids"])
         return cls(**payload)
+
+
+def planning_objective_from_legacy(
+    objective: str,
+    *,
+    value_currency: str | None = None,
+    counterfactual_policy_fingerprint: str | None = None,
+) -> PlanningObjective:
+    """Migrate a saved legacy objective string to the typed contract.
+
+    The mapping only identifies intent. It does NOT grant outcome approval.
+    """
+    # Lazy import to avoid circular dependency on .outcomes at module level
+    from ..outcomes import (
+        METRIC_KEY_FH_GSA, METRIC_KEY_FH_SIGNUP,
+        METRIC_KEY_FH_NET_BILLTHROUGH_COUNT, METRIC_KEY_DNA_KIT_SALE,
+    )
+
+    metric_keys = {
+        "fh_gsa": METRIC_KEY_FH_GSA,
+        "fh_signups": METRIC_KEY_FH_SIGNUP,
+        "fh_net_billthrough": METRIC_KEY_FH_NET_BILLTHROUGH_COUNT,
+        "dna_kits": METRIC_KEY_DNA_KIT_SALE,
+        "weighted_mix": "weighted_mix",
+    }
+    if objective in {"expected_value", "value"}:
+        if not value_currency:
+            raise ValueError(
+                "Legacy 'expected_value' objective migration requires an "
+                "explicit value_currency."
+            )
+        return PlanningObjective(
+            estimand="incremental_value",
+            metric_key="expected_value",
+            value_currency=value_currency,
+            counterfactual_policy_fingerprint=counterfactual_policy_fingerprint,
+        )
+    if objective not in metric_keys:
+        raise ValueError(f"cannot migrate unknown legacy objective {objective!r}")
+    return PlanningObjective(
+        estimand="incremental_outcome",
+        metric_key=metric_keys[objective],
+        counterfactual_policy_fingerprint=counterfactual_policy_fingerprint,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -729,9 +832,10 @@ class PlanningObjective:
 
 @dataclass(frozen=True)
 class ScenarioDependencyIssue:
-    """Describes a single dependency mismatch found during scenario
-    validation."""
-    category: str
-    field: str
-    message: str
-    severity: str = "error"  # "error" or "warning"
+    """One detected staleness or invalidity issue in a saved scenario's
+    governance dependencies."""
+    artefact_id: str
+    issue_type: str  # "stale", "legacy_unverified", "invalid", "missing"
+    detail: str
+    dependency_type: str = "unknown"
+    reason_code: str = ""
