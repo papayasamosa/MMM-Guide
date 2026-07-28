@@ -4,6 +4,10 @@ Validation-policy and approval-readiness foundation (REQ-VAL-001).
 PR 51C: Improved semantics with pass/review/fail bands, model-identity
 binding on ValidationResult, waiver expiry validation, and staleness
 based on dependency mismatch (not just age).
+
+PR 62B: ValidationEvidenceContext, matches_evidence(), strict waiver
+binding, canonical waiver payload, policy-config rejection, operational
+scope matcher, and readiness schema v2.
 """
 
 from __future__ import annotations
@@ -23,6 +27,96 @@ if TYPE_CHECKING:
 
 
 # ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+VALID_INTENDED_USES: tuple[str, ...] = (
+    "model_approval",
+    "exploratory_review",
+    "planning",
+    "optimisation",
+    "curve_bank",
+    "backtest",
+)
+
+VALID_MODEL_TYPES: tuple[str, ...] = (
+    "shared",
+    "market_specific",
+    "all_models",
+)
+
+
+# ---------------------------------------------------------------------------
+# ValidationEvidenceContext — PR 62B
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ValidationEvidenceContext:
+    """Typed context that every validation result must match.
+
+    PR 62B: Introduced to replace loose string comparisons. Every evidence
+    binding (model identity, policy identity, gate fingerprint, diagnostics
+    identity) is verified against this context before a result is accepted
+    as current.
+
+    Parameters
+    ----------
+    model_identity : ModelIdentity
+        The model run's canonical identity.
+    policy : ThresholdPolicy
+        The policy being evaluated.
+    diagnostic_artefact_id : str
+        Identifier of the diagnostic artefact.
+    diagnostic_artefact_fingerprint : str
+        Fingerprint of the diagnostic artefact.
+    model_type : str
+        Model type, e.g. ``"shared"`` or ``"market_specific"``.
+    market : str | None
+        Optional market scope.
+    intended_use : str
+        Intended use for this evaluation. Must be one of
+        ``VALID_INTENDED_USES``.
+    """
+
+    model_identity: ModelIdentity
+    policy: ThresholdPolicy
+    diagnostic_artefact_id: str
+    diagnostic_artefact_fingerprint: str
+    model_type: str = "all_models"
+    market: Optional[str] = None
+    intended_use: str = "model_approval"
+
+    def __post_init__(self) -> None:
+        if not self.diagnostic_artefact_id or not self.diagnostic_artefact_id.strip():
+            raise ValueError(
+                "ValidationEvidenceContext.diagnostic_artefact_id must be non-blank"
+            )
+        if (
+            not self.diagnostic_artefact_fingerprint
+            or not self.diagnostic_artefact_fingerprint.strip()
+        ):
+            raise ValueError(
+                "ValidationEvidenceContext.diagnostic_artefact_fingerprint "
+                "must be non-blank"
+            )
+        if self.intended_use not in VALID_INTENDED_USES:
+            raise ValueError(
+                f"Invalid intended_use: {self.intended_use!r}. "
+                f"Must be one of {VALID_INTENDED_USES}"
+            )
+        if self.model_type not in VALID_MODEL_TYPES:
+            raise ValueError(
+                f"Invalid model_type: {self.model_type!r}. "
+                f"Must be one of {VALID_MODEL_TYPES}"
+            )
+
+    def is_official(self) -> bool:
+        """True when this context is for an official (non-exploratory) use."""
+        return self.intended_use != "exploratory_review"
+
+
+# ---------------------------------------------------------------------------
 # Domain objects
 # ---------------------------------------------------------------------------
 
@@ -36,6 +130,11 @@ class ValidationWaiverReference:
 
     PR 51C: ``expiry`` is validated during readiness evaluation.
     An expired, revoked, or mismatched waiver does not unblock a gate.
+
+    PR 62B: Evidence bindings (model_identity_fingerprint,
+    policy_fingerprint, gate_fingerprint, diagnostic_artefact_fingerprint,
+    original_result_status) are enforced for official waivers. An unbound
+    legacy waiver cannot unblock official readiness.
     """
 
     waiver_id: str
@@ -66,6 +165,88 @@ class ValidationWaiverReference:
             if as_of >= self.expiry:
                 return False
         return True
+
+    def is_officially_bound(self) -> bool:
+        """True if all evidence-binding fields are present.
+
+        An unbound legacy waiver cannot unblock official readiness."""
+        return bool(
+            self.model_identity_fingerprint
+            and self.model_identity_fingerprint.strip()
+            and self.policy_fingerprint
+            and self.policy_fingerprint.strip()
+            and self.gate_fingerprint
+            and self.gate_fingerprint.strip()
+            and self.diagnostic_artefact_fingerprint
+            and self.diagnostic_artefact_fingerprint.strip()
+            and self.original_result_status
+            and self.original_result_status.strip()
+        )
+
+    def matches_evidence(self, context: ValidationEvidenceContext) -> bool:
+        """True if this waiver's bindings match the given evidence context.
+
+        An unbound waiver always returns False."""
+        if not self.is_officially_bound():
+            return False
+        # Check model identity fingerprint
+        if self.model_identity_fingerprint != context.model_identity.fingerprint():
+            return False
+        # Check policy fingerprint
+        if self.policy_fingerprint != context.policy.fingerprint():
+            return False
+        # Check gate fingerprint (gate must exist in policy)
+        policy_gate = context.policy.get_gate(self.gate_name)
+        if policy_gate is None:
+            return False
+        if self.gate_fingerprint != policy_gate.fingerprint():
+            return False
+        # Check diagnostics fingerprint
+        if (
+            self.diagnostic_artefact_fingerprint
+            != context.diagnostic_artefact_fingerprint
+        ):
+            return False
+        return True
+
+    def to_waiver_payload(self) -> dict:
+        """Canonical waiver payload used by fingerprinting, serialisation
+        and deserialisation. PR 62B: includes every evidence-binding field
+        plus approval time."""
+        return {
+            "waiver_id": self.waiver_id,
+            "gate_name": self.gate_name,
+            "approved_by": self.approved_by,
+            "approved_at": self.approved_at.isoformat(),
+            "reason": self.reason,
+            "expiry": self.expiry.isoformat() if self.expiry else None,
+            "superseded_by": self.superseded_by,
+            "model_identity_fingerprint": self.model_identity_fingerprint,
+            "policy_fingerprint": self.policy_fingerprint,
+            "gate_fingerprint": self.gate_fingerprint,
+            "diagnostic_artefact_fingerprint": self.diagnostic_artefact_fingerprint,
+            "original_result_status": self.original_result_status,
+        }
+
+    @classmethod
+    def from_waiver_payload(cls, d: dict) -> "ValidationWaiverReference":
+        """Restore a waiver from a canonical payload dict."""
+        return cls(
+            waiver_id=d["waiver_id"],
+            approved_by=d["approved_by"],
+            approved_at=datetime.fromisoformat(d["approved_at"]),
+            reason=d["reason"],
+            gate_name=d["gate_name"],
+            expiry=datetime.fromisoformat(d["expiry"]) if d.get("expiry") else None,
+            superseded_by=d.get("superseded_by"),
+            model_identity_fingerprint=d.get("model_identity_fingerprint", ""),
+            policy_fingerprint=d.get("policy_fingerprint", ""),
+            gate_fingerprint=d.get("gate_fingerprint", ""),
+            diagnostic_artefact_fingerprint=d.get(
+                "diagnostic_artefact_fingerprint", ""
+            ),
+            original_result_status=d.get("original_result_status", ""),
+        )
 
 
 @dataclass(frozen=True)
@@ -405,6 +586,56 @@ class ValidationResult:
             policy_version=policy_version,
         )
 
+    def matches_evidence(
+        self,
+        *,
+        evidence_context: "ValidationEvidenceContext",
+        gate: "ValidationGate",
+    ) -> bool:
+        """PR 62B: Verify every evidence binding matches the given context.
+
+        Checks: model run ID, data fingerprint, model spec fingerprint,
+        posterior fingerprint, model identity fingerprint, policy ID,
+        policy version, gate fingerprint, diagnostics artefact ID and
+        diagnostics fingerprint.
+
+        A blank mandatory field on either side causes mismatch."""
+        if not evidence_context.model_identity.is_complete():
+            return False
+        ctx = evidence_context
+
+        # Check model identity bindings
+        if self.model_run_id != ctx.model_identity.model_run_id:
+            return False
+        if self.data_fingerprint != ctx.model_identity.data_fingerprint:
+            return False
+        if self.model_spec_fingerprint != ctx.model_identity.model_spec_fingerprint:
+            return False
+        if self.posterior_fingerprint != ctx.model_identity.posterior_fingerprint:
+            return False
+        if self.model_identity_fingerprint != ctx.model_identity.fingerprint():
+            return False
+
+        # Check policy bindings
+        if self.policy_id != ctx.policy.policy_id:
+            return False
+        if self.policy_version != ctx.policy.version:
+            return False
+
+        # Check gate fingerprint
+        if self.gate_fingerprint != gate.fingerprint():
+            return False
+
+        # Check diagnostics bindings
+        if self.diagnostic_artefact_fingerprint != ctx.diagnostic_artefact_fingerprint:
+            return False
+
+        # artefact_id on result should match the context's diagnostic_artefact_id
+        if self.artefact_id != ctx.diagnostic_artefact_id:
+            return False
+
+        return True
+
 
 @dataclass(frozen=True)
 class ApprovalReadiness:
@@ -415,6 +646,9 @@ class ApprovalReadiness:
     PR 56B: Extended to include artefacts IDs and fingerprints for every
     evidence component, plus deterministic ``fingerprint()``,
     ``to_dict()``, and ``from_dict()``.
+
+    PR 62B: Schema v2 — added ``config_errors``, canonical waiver payload
+    in fingerprint/serialisation, and strict evidence enforcement.
 
     Parameters
     ----------
@@ -448,9 +682,12 @@ class ApprovalReadiness:
         When the evaluation was performed.
     overall_ready : bool
         True if no blocking failures, no missing required gates, no
-        non-waivable failures, and policy is not expired.
+        non-waivable failures, policy is not expired, and no config errors.
     schema_version : int
         Version of the readiness artefact schema.
+    config_errors : tuple[str, ...]
+        PR 62B: Policy configuration errors found before evaluation.
+        When non-empty, no gates were evaluated and overall_ready is False.
     """
 
     readiness_artefact_id: str = ""
@@ -470,13 +707,13 @@ class ApprovalReadiness:
     )
     evaluated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     overall_ready: bool = False
-    schema_version: int = 1
+    schema_version: int = 2
+    config_errors: tuple[str, ...] = field(default_factory=tuple)
 
     def fingerprint(self) -> str:
         """Deterministic SHA-256 fingerprint of this readiness artefact.
 
-        Includes all fields. Two artefacts with identical content produce
-        identical fingerprints regardless of when they were created.
+        PR 62B: Uses canonical ``to_waiver_payload()`` for waivers.
         """
         payload = {
             "readiness_artefact_id": self.readiness_artefact_id,
@@ -492,19 +729,13 @@ class ApprovalReadiness:
             "passes": [_result_to_dict(r) for r in self.passes],
             "missing_required_gates": sorted(self.missing_required_gates),
             "waivers_applied": [
-                {
-                    "waiver_id": w.waiver_id,
-                    "gate_name": w.gate_name,
-                    "approved_by": w.approved_by,
-                    "reason": w.reason,
-                    "expiry": w.expiry.isoformat() if w.expiry else None,
-                    "superseded_by": w.superseded_by,
-                }
+                w.to_waiver_payload()
                 for w in sorted(self.waivers_applied, key=lambda x: x.waiver_id)
             ],
             "evaluated_at": self.evaluated_at.isoformat(),
             "overall_ready": self.overall_ready,
             "schema_version": self.schema_version,
+            "config_errors": sorted(self.config_errors),
         }
         encoded = json.dumps(
             payload, sort_keys=True, separators=(",", ":"), default=str
@@ -512,7 +743,11 @@ class ApprovalReadiness:
         return hashlib.sha256(encoded).hexdigest()
 
     def to_dict(self) -> dict:
-        """JSON-serialisable dict with all fields."""
+        """JSON-serialisable dict with all fields.
+
+        PR 62B: Uses canonical ``to_waiver_payload()`` for waivers,
+        includes config_errors.
+        """
         return {
             "readiness_artefact_id": self.readiness_artefact_id,
             "policy_id": self.policy_id,
@@ -526,26 +761,20 @@ class ApprovalReadiness:
             "review_items": [_result_to_dict(r) for r in self.review_items],
             "passes": [_result_to_dict(r) for r in self.passes],
             "missing_required_gates": list(self.missing_required_gates),
-            "waivers_applied": [
-                {
-                    "waiver_id": w.waiver_id,
-                    "gate_name": w.gate_name,
-                    "approved_by": w.approved_by,
-                    "approved_at": w.approved_at.isoformat(),
-                    "reason": w.reason,
-                    "expiry": w.expiry.isoformat() if w.expiry else None,
-                    "superseded_by": w.superseded_by,
-                }
-                for w in self.waivers_applied
-            ],
+            "waivers_applied": [w.to_waiver_payload() for w in self.waivers_applied],
             "evaluated_at": self.evaluated_at.isoformat(),
             "overall_ready": self.overall_ready,
             "schema_version": self.schema_version,
+            "config_errors": list(self.config_errors),
         }
 
     @classmethod
     def from_dict(cls, d: dict) -> ApprovalReadiness:
-        """Restore from a dict produced by ``to_dict()``."""
+        """Restore from a dict produced by ``to_dict()``.
+
+        PR 62B: Uses canonical ``from_waiver_payload()``, handles
+        legacy schema v1 (waivers without bindings).
+        """
         known_fields = {
             "readiness_artefact_id",
             "policy_id",
@@ -579,23 +808,37 @@ class ApprovalReadiness:
             kwargs["passes"] = tuple(_result_from_dict(r) for r in d["passes"])
         if "missing_required_gates" in d:
             kwargs["missing_required_gates"] = tuple(d["missing_required_gates"])
+        if "config_errors" in d:
+            kwargs["config_errors"] = tuple(d["config_errors"])
         if "waivers_applied" in d and isinstance(d.get("waivers_applied"), list):
-            kwargs["waivers_applied"] = tuple(
-                ValidationWaiverReference(
-                    waiver_id=w["waiver_id"],
-                    approved_by=w["approved_by"],
-                    approved_at=datetime.fromisoformat(w["approved_at"]),
-                    reason=w["reason"],
-                    gate_name=w["gate_name"],
-                    expiry=datetime.fromisoformat(w["expiry"])
-                    if w.get("expiry")
-                    else None,
-                    superseded_by=w.get("superseded_by"),
+            schema_ver = d.get("schema_version", 1)
+            if schema_ver >= 2:
+                # Canonical waiver payload with bindings
+                kwargs["waivers_applied"] = tuple(
+                    ValidationWaiverReference.from_waiver_payload(w)
+                    for w in d["waivers_applied"]
                 )
-                for w in d["waivers_applied"]
-            )
+            else:
+                # Legacy v1: waivers without evidence bindings
+                kwargs["waivers_applied"] = tuple(
+                    ValidationWaiverReference(
+                        waiver_id=w["waiver_id"],
+                        approved_by=w["approved_by"],
+                        approved_at=datetime.fromisoformat(w["approved_at"]),
+                        reason=w["reason"],
+                        gate_name=w["gate_name"],
+                        expiry=datetime.fromisoformat(w["expiry"])
+                        if w.get("expiry")
+                        else None,
+                        superseded_by=w.get("superseded_by"),
+                    )
+                    for w in d["waivers_applied"]
+                )
         if "evaluated_at" in d and isinstance(d["evaluated_at"], str):
             kwargs["evaluated_at"] = datetime.fromisoformat(d["evaluated_at"])
+        # Default schema_version to 2 for new objects
+        if "schema_version" not in kwargs:
+            kwargs["schema_version"] = 2
         return cls(**kwargs)
 
 
@@ -664,6 +907,7 @@ def evaluate_approval_readiness(
     diagnostic_artefact_fingerprint: str = "",
     waivers: Optional[List[ValidationWaiverReference]] = None,
     as_of: Optional[datetime] = None,
+    evidence_context: Optional["ValidationEvidenceContext"] = None,
 ) -> ApprovalReadiness:
     """Evaluate validation results against a policy.
 
@@ -671,6 +915,16 @@ def evaluate_approval_readiness(
     PR 56B: ``current_model_identity`` is now mandatory for official
     readiness. Results whose identity bindings do not match the current
     identity are stale.
+
+    PR 62B:
+    - Calls ``validate_policy_config()`` before evaluating any gate.
+      When config errors exist, returns readiness with ``config_errors``
+      set and ``overall_ready=False``, no gate results, no waivers.
+    - Rejects duplicate result gate names, duplicate waiver gate names,
+      results for gates absent from policy, waivers for gates absent from
+      policy, and more than one active waiver per gate.
+    - Uses ``matches_evidence()`` for staleness (checks all bindings).
+    - Enforces waiver evidence binding for official readiness.
 
     This is a pure function: it does not choose thresholds, mutate approvals,
     or access any external state.
@@ -692,6 +946,9 @@ def evaluate_approval_readiness(
         Any approved waivers for failing gates.
     as_of : datetime | None
         Evaluation time (defaults to now). Used for expiry checking.
+    evidence_context : ValidationEvidenceContext | None
+        PR 62B: When provided, used for full ``matches_evidence()``
+        staleness checking and waiver evidence binding.
 
     Returns
     -------
@@ -700,6 +957,77 @@ def evaluate_approval_readiness(
     """
     as_of = as_of or datetime.now(timezone.utc)
     waivers = waivers or []
+
+    # --- PR 62B: Validate policy configuration before any gate evaluation ---
+    config_errors = validate_policy_config(policy)
+    if config_errors:
+        return ApprovalReadiness(
+            readiness_artefact_id=uuid.uuid4().hex,
+            policy_id=policy.policy_id,
+            policy_version=policy.version,
+            policy_fingerprint=policy.fingerprint(),
+            model_identity_fingerprint=current_model_identity.fingerprint(),
+            diagnostic_artefact_id=diagnostic_artefact_id,
+            diagnostic_artefact_fingerprint=diagnostic_artefact_fingerprint,
+            gate_results=(),
+            blocking_failures=(),
+            review_items=(),
+            passes=(),
+            missing_required_gates=(),
+            waivers_applied=(),
+            evaluated_at=as_of,
+            overall_ready=False,
+            schema_version=2,
+            config_errors=tuple(config_errors),
+        )
+
+    # --- PR 62B: Reject ambiguous input ---
+    # Check duplicate result gate names
+    result_names = [r.gate_name for r in results]
+    if len(result_names) != len(set(result_names)):
+        dupes = [n for n in result_names if result_names.count(n) > 1]
+        raise ValueError(
+            f"Duplicate result gate names are not permitted: {sorted(set(dupes))}"
+        )
+
+    # Check duplicate waiver gate names
+    waiver_names = [w.gate_name for w in waivers]
+    if len(waiver_names) != len(set(waiver_names)):
+        dupes = [n for n in waiver_names if waiver_names.count(n) > 1]
+        raise ValueError(
+            f"Duplicate waiver gate names are not permitted: {sorted(set(dupes))}"
+        )
+
+    # Check results for gates absent from policy
+    policy_gate_names = {g.name for g in policy.gates}
+    for r in results:
+        if r.gate_name not in policy_gate_names:
+            raise ValueError(
+                f"Result gate '{r.gate_name}' is not present in policy "
+                f"'{policy.policy_id}'."
+            )
+
+    # Check waivers for gates absent from policy
+    for w in waivers:
+        if w.gate_name not in policy_gate_names:
+            raise ValueError(
+                f"Waiver gate '{w.gate_name}' is not present in policy "
+                f"'{policy.policy_id}'."
+            )
+
+    # Check more than one active waiver for a gate
+    active_waiver_counts: Dict[str, int] = {}
+    for w in waivers:
+        if w.is_active(as_of=as_of):
+            active_waiver_counts[w.gate_name] = (
+                active_waiver_counts.get(w.gate_name, 0) + 1
+            )
+    for gate_name, count in active_waiver_counts.items():
+        if count > 1:
+            raise ValueError(
+                f"Gate '{gate_name}' has {count} active waivers. "
+                "Only one active waiver per gate is permitted."
+            )
 
     result_by_gate: Dict[str, ValidationResult] = {r.gate_name: r for r in results}
     waiver_by_gate: Dict[str, ValidationWaiverReference] = {
@@ -730,12 +1058,12 @@ def evaluate_approval_readiness(
             diagnostic_artefact_fingerprint=diagnostic_artefact_fingerprint,
             gate_results=tuple(results),
             blocking_failures=tuple(result_by_gate.values()),
-            passes=tuple(),
+            passes=(),
             missing_required_gates=tuple(missing_required_gates),
             waivers_applied=tuple(waivers),
             evaluated_at=as_of,
             overall_ready=False,
-            schema_version=1,
+            schema_version=2,
         )
 
     # --- Evaluate each gate ---
@@ -747,17 +1075,22 @@ def evaluate_approval_readiness(
                 missing_required_gates.append(gate.name)
             continue
 
-        # Staleness check: compare each result's identity bindings against
-        # the current model identity (supplied independently, never compared
-        # with itself).
-        is_stale = not result.matches_identity(
-            model_run_id=current_model_identity.model_run_id,
-            data_fingerprint=current_model_identity.data_fingerprint,
-            model_spec_fingerprint=current_model_identity.model_spec_fingerprint,
-            posterior_fingerprint=current_model_identity.posterior_fingerprint,
-            policy_id=policy.policy_id,
-            policy_version=policy.version,
-        )
+        # PR 62B: Use matches_evidence() for full staleness check when
+        # evidence_context is provided; fall back to matches_identity()
+        # for backward compatibility.
+        if evidence_context is not None:
+            is_stale = not result.matches_evidence(
+                evidence_context=evidence_context, gate=gate
+            )
+        else:
+            is_stale = not result.matches_identity(
+                model_run_id=current_model_identity.model_run_id,
+                data_fingerprint=current_model_identity.data_fingerprint,
+                model_spec_fingerprint=current_model_identity.model_spec_fingerprint,
+                posterior_fingerprint=current_model_identity.posterior_fingerprint,
+                policy_id=policy.policy_id,
+                policy_version=policy.version,
+            )
 
         if is_stale:
             # Stale result: treat as missing if required
@@ -773,6 +1106,15 @@ def evaluate_approval_readiness(
         # result.status is "review" or "fail"
         waiver = waiver_by_gate.get(gate.name)
         if waiver is not None and gate.waivable:
+            # PR 62B: For official readiness, waiver must be evidence-bound
+            if evidence_context is not None and evidence_context.is_official():
+                if not waiver.matches_evidence(evidence_context):
+                    # Unbound waiver cannot unblock official readiness
+                    if result.status == "fail" and gate.blocking:
+                        blocking_failures.append(result)
+                    else:
+                        review_items.append(result)
+                    continue
             # Only accept active waivers
             if waiver.is_active(as_of=as_of):
                 passes.append(result)
@@ -791,9 +1133,10 @@ def evaluate_approval_readiness(
     # Build the list of *actually applied* waivers (only those that unblocked a gate)
     applied_waivers: List[ValidationWaiverReference] = []
     for result in passes:
-        w = waiver_by_gate.get(result.gate_name)
-        if w is not None and w.is_active(as_of=as_of):
-            applied_waivers.append(w)
+        if result.gate_name in waiver_by_gate:
+            w_active = waiver_by_gate[result.gate_name]
+            if w_active.is_active(as_of=as_of):
+                applied_waivers.append(w_active)
 
     overall_ready = (
         len(blocking_failures) == 0
@@ -817,7 +1160,7 @@ def evaluate_approval_readiness(
         waivers_applied=tuple(applied_waivers),
         evaluated_at=as_of,
         overall_ready=overall_ready,
-        schema_version=1,
+        schema_version=2,
     )
 
 
@@ -965,6 +1308,85 @@ def validate_policy_config(policy: ThresholdPolicy) -> list[str]:
     for gate in policy.gates:
         errors.extend(validate_gate_config(gate))
     return errors
+
+
+# ---------------------------------------------------------------------------
+# Operational scope matcher — PR 62B
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ValidationScopeContext:
+    """Typed scope for matching gates against operational context.
+
+    PR 62B: Every gate must be:
+    - applicable and evaluated, or
+    - inapplicable with an explicit reason, or
+    - invalid for the current scope.
+
+    Parameters
+    ----------
+    model_type : str
+        The model type being evaluated, e.g. ``"shared"`` or
+        ``"market_specific"``.
+    market : str | None
+        Optional market scope.
+    intended_use : str
+        Intended use, e.g. ``"model_approval"``.
+    """
+
+    model_type: str = "all_models"
+    market: Optional[str] = None
+    intended_use: str = "model_approval"
+
+    def gate_is_applicable(self, gate: ValidationGate) -> tuple[bool, Optional[str]]:
+        """Check whether a gate is applicable in this scope.
+
+        Returns
+        -------
+        (True, None) if applicable.
+        (False, reason) if inapplicable.
+        """
+        # Gate scope matching
+        gate_scope = gate.scope or "all_models"
+
+        if gate_scope == "all_models":
+            return True, None
+
+        if gate_scope == "shared" and self.model_type not in (
+            "shared",
+            "all_models",
+        ):
+            return False, (
+                f"Gate '{gate.name}' is scoped to 'shared' models but "
+                f"current model_type is '{self.model_type}'."
+            )
+
+        if gate_scope == "market_specific" and self.model_type not in (
+            "market_specific",
+            "all_models",
+        ):
+            return False, (
+                f"Gate '{gate.name}' is scoped to 'market_specific' "
+                f"models but current model_type is '{self.model_type}'."
+            )
+
+        return True, None
+
+
+def filter_applicable_gates(
+    policy: ThresholdPolicy,
+    scope: ValidationScopeContext,
+) -> list[tuple[ValidationGate, bool, Optional[str]]]:
+    """Filter policy gates by scope applicability.
+
+    Returns a list of ``(gate, applicable, reason)`` tuples.
+    """
+    result: list[tuple[ValidationGate, bool, Optional[str]]] = []
+    for gate in policy.gates:
+        applicable, reason = scope.gate_is_applicable(gate)
+        result.append((gate, applicable, reason))
+    return result
 
 
 # ---------------------------------------------------------------------------

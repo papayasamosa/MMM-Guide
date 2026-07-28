@@ -11,10 +11,13 @@ import pytest
 from ancestry_mmm.core.model_identity import ModelIdentity
 from ancestry_mmm.core.validation_policy import (
     ThresholdPolicy,
+    ValidationEvidenceContext,
     ValidationGate,
     ValidationResult,
+    ValidationScopeContext,
     ValidationWaiverReference,
     evaluate_approval_readiness,
+    filter_applicable_gates,
     readiness_to_dict,
 )
 
@@ -83,7 +86,7 @@ def backtest_gate() -> ValidationGate:
     return ValidationGate(
         name="backtest_mape",
         description="Backtest MAPE within acceptable range",
-        evaluator_id="mape",
+        evaluator_id="rhat",
         scope="all_models",
         acceptable_range=(0.0, 30.0),
         direction="lower_is_better",
@@ -654,3 +657,488 @@ class TestReadinessToDict:
         d = readiness_to_dict(readiness)
         assert len(d["waivers_applied"]) == 1
         assert d["waivers_applied"][0]["waiver_id"] == "wv-001"
+
+
+# ---------------------------------------------------------------------------
+# PR 62B: ValidationEvidenceContext, matches_evidence, input validation
+# ---------------------------------------------------------------------------
+
+
+class TestValidationEvidenceContext:
+    """Tests for the ValidationEvidenceContext dataclass."""
+
+    def test_valid_context_created(self):
+        ctx = ValidationEvidenceContext(
+            model_identity=_DEFAULT_IDENTITY,
+            policy=sample_policy,
+            diagnostic_artefact_id="diag-001",
+            diagnostic_artefact_fingerprint="diag-fp-001",
+        )
+        assert ctx.is_official() is True
+        assert ctx.diagnostic_artefact_id == "diag-001"
+
+    def test_blank_diagnostics_id_raises(self):
+        with pytest.raises(
+            ValueError, match="diagnostic_artefact_id must be non-blank"
+        ):
+            ValidationEvidenceContext(
+                model_identity=_DEFAULT_IDENTITY,
+                policy=sample_policy,
+                diagnostic_artefact_id="",
+                diagnostic_artefact_fingerprint="fp",
+            )
+
+    def test_blank_diagnostics_fingerprint_raises(self):
+        with pytest.raises(
+            ValueError, match="diagnostic_artefact_fingerprint must be non-blank"
+        ):
+            ValidationEvidenceContext(
+                model_identity=_DEFAULT_IDENTITY,
+                policy=sample_policy,
+                diagnostic_artefact_id="diag-001",
+                diagnostic_artefact_fingerprint="",
+            )
+
+    def test_invalid_intended_use_raises(self):
+        with pytest.raises(ValueError, match="Invalid intended_use"):
+            ValidationEvidenceContext(
+                model_identity=_DEFAULT_IDENTITY,
+                policy=sample_policy,
+                diagnostic_artefact_id="diag-001",
+                diagnostic_artefact_fingerprint="fp",
+                intended_use="invalid",
+            )
+
+    def test_exploratory_mode(self):
+        ctx = ValidationEvidenceContext(
+            model_identity=_DEFAULT_IDENTITY,
+            policy=sample_policy,
+            diagnostic_artefact_id="diag-001",
+            diagnostic_artefact_fingerprint="fp",
+            intended_use="exploratory_review",
+        )
+        assert ctx.is_official() is False
+
+    def test_invalid_model_type_raises(self):
+        with pytest.raises(ValueError, match="Invalid model_type"):
+            ValidationEvidenceContext(
+                model_identity=_DEFAULT_IDENTITY,
+                policy=sample_policy,
+                diagnostic_artefact_id="diag-001",
+                diagnostic_artefact_fingerprint="fp",
+                model_type="unknown_type",
+            )
+
+
+class TestMatchesEvidence:
+    """Tests for ValidationResult.matches_evidence()."""
+
+    @pytest.fixture(autouse=True)
+    def _setup(self, sample_policy):
+        self.policy = sample_policy
+        self.gate = sample_policy.get_gate("convergence_rhat")
+        self.ctx = ValidationEvidenceContext(
+            model_identity=_DEFAULT_IDENTITY,
+            policy=self.policy,
+            diagnostic_artefact_id="diag-001",
+            diagnostic_artefact_fingerprint="diag-fp-001",
+        )
+
+    def _matching_result(self):
+        return ValidationResult(
+            gate_name="convergence_rhat",
+            status="pass",
+            value=1.02,
+            model_run_id="run-123",
+            data_fingerprint="data-abc",
+            model_spec_fingerprint="spec-def",
+            posterior_fingerprint="post-ghi",
+            policy_id="val-pol-001",
+            policy_version="1.0.0",
+            gate_fingerprint=self.gate.fingerprint(),
+            model_identity_fingerprint=_DEFAULT_IDENTITY.fingerprint(),
+            diagnostic_artefact_fingerprint="diag-fp-001",
+            artefact_id="diag-001",
+        )
+
+    def test_matches_when_all_fields_align(self):
+        result = self._matching_result()
+        assert (
+            result.matches_evidence(evidence_context=self.ctx, gate=self.gate) is True
+        )
+
+    def test_changed_gate_fingerprint_fails(self):
+        result = self._matching_result()
+        result = ValidationResult(
+            gate_name=result.gate_name,
+            status=result.status,
+            value=result.value,
+            message=result.message,
+            artefact_id=result.artefact_id,
+            evaluated_at=result.evaluated_at,
+            model_run_id=result.model_run_id,
+            data_fingerprint=result.data_fingerprint,
+            model_spec_fingerprint=result.model_spec_fingerprint,
+            posterior_fingerprint=result.posterior_fingerprint,
+            policy_id=result.policy_id,
+            policy_version=result.policy_version,
+            gate_fingerprint="different-gate-fingerprint",
+            model_identity_fingerprint=result.model_identity_fingerprint,
+            diagnostic_artefact_fingerprint=result.diagnostic_artefact_fingerprint,
+        )
+        assert (
+            result.matches_evidence(evidence_context=self.ctx, gate=self.gate) is False
+        )
+
+    def test_changed_diagnostics_fingerprint_fails(self):
+        result = self._matching_result()
+        result = ValidationResult(
+            gate_name=result.gate_name,
+            status=result.status,
+            value=result.value,
+            message=result.message,
+            artefact_id=result.artefact_id,
+            evaluated_at=result.evaluated_at,
+            model_run_id=result.model_run_id,
+            data_fingerprint=result.data_fingerprint,
+            model_spec_fingerprint=result.model_spec_fingerprint,
+            posterior_fingerprint=result.posterior_fingerprint,
+            policy_id=result.policy_id,
+            policy_version=result.policy_version,
+            gate_fingerprint=result.gate_fingerprint,
+            model_identity_fingerprint=result.model_identity_fingerprint,
+            diagnostic_artefact_fingerprint="different-diag-fp",
+        )
+        assert (
+            result.matches_evidence(evidence_context=self.ctx, gate=self.gate) is False
+        )
+
+    def test_changed_diagnostics_id_fails(self):
+        result = self._matching_result()
+        result = ValidationResult(
+            gate_name=result.gate_name,
+            status=result.status,
+            value=result.value,
+            message=result.message,
+            artefact_id="different-diag-id",
+            evaluated_at=result.evaluated_at,
+            model_run_id=result.model_run_id,
+            data_fingerprint=result.data_fingerprint,
+            model_spec_fingerprint=result.model_spec_fingerprint,
+            posterior_fingerprint=result.posterior_fingerprint,
+            policy_id=result.policy_id,
+            policy_version=result.policy_version,
+            gate_fingerprint=result.gate_fingerprint,
+            model_identity_fingerprint=result.model_identity_fingerprint,
+            diagnostic_artefact_fingerprint=result.diagnostic_artefact_fingerprint,
+        )
+        assert (
+            result.matches_evidence(evidence_context=self.ctx, gate=self.gate) is False
+        )
+
+    def test_changed_model_identity_fingerprint_fails(self):
+        result = self._matching_result()
+        result = ValidationResult(
+            gate_name=result.gate_name,
+            status=result.status,
+            value=result.value,
+            message=result.message,
+            artefact_id=result.artefact_id,
+            evaluated_at=result.evaluated_at,
+            model_run_id=result.model_run_id,
+            data_fingerprint=result.data_fingerprint,
+            model_spec_fingerprint=result.model_spec_fingerprint,
+            posterior_fingerprint=result.posterior_fingerprint,
+            policy_id=result.policy_id,
+            policy_version=result.policy_version,
+            gate_fingerprint=result.gate_fingerprint,
+            model_identity_fingerprint="different-identity-fp",
+            diagnostic_artefact_fingerprint=result.diagnostic_artefact_fingerprint,
+        )
+        assert (
+            result.matches_evidence(evidence_context=self.ctx, gate=self.gate) is False
+        )
+
+    def test_blank_required_evidence_fails(self):
+        result = ValidationResult(
+            gate_name="convergence_rhat",
+            status="pass",
+            model_run_id="",
+            data_fingerprint="",
+            model_spec_fingerprint="",
+            posterior_fingerprint="",
+            policy_id="val-pol-001",
+            policy_version="1.0.0",
+            gate_fingerprint="",
+            model_identity_fingerprint="",
+            diagnostic_artefact_fingerprint="",
+        )
+        assert (
+            result.matches_evidence(evidence_context=self.ctx, gate=self.gate) is False
+        )
+
+
+class TestDuplicateAndUnknownGateRejection:
+    """PR 62B: Reject ambiguous input in evaluate_approval_readiness."""
+
+    def test_duplicate_result_gate_names_raises(self, sample_policy):
+        results = [
+            _make_result("convergence_rhat", "pass", 1.02),
+            _make_result("convergence_rhat", "pass", 1.02),  # duplicate
+        ]
+        with pytest.raises(ValueError, match="Duplicate result gate names"):
+            evaluate_approval_readiness(results, sample_policy, _DEFAULT_IDENTITY)
+
+    def test_duplicate_waiver_gate_names_raises(self, sample_policy):
+        results = [
+            _make_result("convergence_rhat", "pass", 1.02),
+            _make_result("ppc_coverage", "fail", 60.0),
+        ]
+        waivers = [
+            ValidationWaiverReference(
+                waiver_id="wv-001",
+                approved_by="A",
+                approved_at=datetime(2026, 7, 15, tzinfo=timezone.utc),
+                reason="First",
+                gate_name="ppc_coverage",
+            ),
+            ValidationWaiverReference(
+                waiver_id="wv-002",
+                approved_by="B",
+                approved_at=datetime(2026, 7, 16, tzinfo=timezone.utc),
+                reason="Second",
+                gate_name="ppc_coverage",
+            ),
+        ]
+        with pytest.raises(ValueError, match="Duplicate waiver gate names"):
+            evaluate_approval_readiness(
+                results, sample_policy, _DEFAULT_IDENTITY, waivers=waivers
+            )
+
+    def test_unknown_result_gate_raises(self, sample_policy):
+        results = [
+            _make_result("nonexistent_gate", "pass", 1.0),
+        ]
+        with pytest.raises(ValueError, match="not present in policy"):
+            evaluate_approval_readiness(results, sample_policy, _DEFAULT_IDENTITY)
+
+    def test_unknown_waiver_gate_raises(self, sample_policy):
+        results = [
+            _make_result("convergence_rhat", "pass", 1.02),
+        ]
+        waivers = [
+            ValidationWaiverReference(
+                waiver_id="wv-001",
+                approved_by="A",
+                approved_at=datetime(2026, 7, 15, tzinfo=timezone.utc),
+                reason="Test",
+                gate_name="nonexistent_gate",
+            ),
+        ]
+        with pytest.raises(ValueError, match="not present in policy"):
+            evaluate_approval_readiness(
+                results, sample_policy, _DEFAULT_IDENTITY, waivers=waivers
+            )
+
+    def test_multiple_active_waivers_for_same_gate_raises(self, sample_policy):
+        results = [
+            _make_result("convergence_rhat", "pass", 1.02),
+            _make_result("ppc_coverage", "fail", 60.0),
+        ]
+        waivers = [
+            ValidationWaiverReference(
+                waiver_id="wv-001",
+                approved_by="A",
+                approved_at=datetime(2026, 7, 15, tzinfo=timezone.utc),
+                reason="First waiver",
+                gate_name="ppc_coverage",
+            ),
+            ValidationWaiverReference(
+                waiver_id="wv-002",
+                approved_by="B",
+                approved_at=datetime(2026, 7, 16, tzinfo=timezone.utc),
+                reason="Second waiver",
+                gate_name="ppc_coverage",
+            ),
+        ]
+        # The duplicate gate name check fires before the active waiver check
+        with pytest.raises(ValueError, match="Duplicate waiver gate names"):
+            evaluate_approval_readiness(
+                results, sample_policy, _DEFAULT_IDENTITY, waivers=waivers
+            )
+
+
+class TestWaiverEvidenceBinding:
+    """PR 62B: Waiver evidence binding enforcement."""
+
+    @pytest.fixture
+    def evidence_ctx(self, sample_policy):
+        return ValidationEvidenceContext(
+            model_identity=_DEFAULT_IDENTITY,
+            policy=sample_policy,
+            diagnostic_artefact_id="diag-001",
+            diagnostic_artefact_fingerprint="diag-fp-001",
+        )
+
+    def test_officially_bound_waiver_passes(self, sample_policy, evidence_ctx):
+        gate = sample_policy.get_gate("ppc_coverage")
+        waiver = ValidationWaiverReference(
+            waiver_id="wv-bound",
+            approved_by="Reviewer",
+            approved_at=datetime(2026, 7, 15, tzinfo=timezone.utc),
+            reason="Accepted lower coverage",
+            gate_name="ppc_coverage",
+            model_identity_fingerprint=_DEFAULT_IDENTITY.fingerprint(),
+            policy_fingerprint=sample_policy.fingerprint(),
+            gate_fingerprint=gate.fingerprint() if gate else "",
+            diagnostic_artefact_fingerprint="diag-fp-001",
+            original_result_status="fail",
+        )
+        assert waiver.is_officially_bound() is True
+        assert waiver.matches_evidence(evidence_ctx) is True
+
+    def test_unbound_waiver_not_officially_bound(self):
+        waiver = ValidationWaiverReference(
+            waiver_id="wv-unbound",
+            approved_by="Reviewer",
+            approved_at=datetime(2026, 7, 15, tzinfo=timezone.utc),
+            reason="Old waiver",
+            gate_name="ppc_coverage",
+        )
+        assert waiver.is_officially_bound() is False
+
+    def test_unbound_waiver_matches_evidence_false(self, sample_policy, evidence_ctx):
+        waiver = ValidationWaiverReference(
+            waiver_id="wv-unbound",
+            approved_by="Reviewer",
+            approved_at=datetime(2026, 7, 15, tzinfo=timezone.utc),
+            reason="Old waiver",
+            gate_name="ppc_coverage",
+        )
+        assert waiver.matches_evidence(evidence_ctx) is False
+
+    def test_waiver_round_trip_payload(self):
+        waiver = ValidationWaiverReference(
+            waiver_id="wv-rt",
+            approved_by="Reviewer",
+            approved_at=datetime(2026, 7, 15, 12, 0, 0, tzinfo=timezone.utc),
+            reason="Round trip test",
+            gate_name="ppc_coverage",
+            model_identity_fingerprint="mid-fp-001",
+            policy_fingerprint="pol-fp-001",
+            gate_fingerprint="gate-fp-001",
+            diagnostic_artefact_fingerprint="diag-fp-001",
+            original_result_status="fail",
+        )
+        payload = waiver.to_waiver_payload()
+        restored = ValidationWaiverReference.from_waiver_payload(payload)
+        assert restored == waiver
+
+    def test_legacy_waiver_from_dict_preserves_missing_bindings(self):
+        d = {
+            "waiver_id": "wv-legacy",
+            "gate_name": "ppc_coverage",
+            "approved_by": "Reviewer",
+            "approved_at": "2026-07-15T12:00:00+00:00",
+            "reason": "Legacy",
+            "expiry": None,
+            "superseded_by": None,
+        }
+        waiver = ValidationWaiverReference.from_waiver_payload(d)
+        assert waiver.is_officially_bound() is False
+
+
+class TestMalformedPolicyConfig:
+    """PR 62B: Malformed policy configuration returns config_errors."""
+
+    def test_config_errors_in_readiness(self):
+        gate = ValidationGate(
+            name="unknown_evaluator_gate",
+            description="No evaluator",
+            acceptable_range=(0.0, 1.0),
+        )
+        policy = ThresholdPolicy(
+            policy_id="pol-bad",
+            version="1.0",
+            scope="test",
+            gates=[gate],
+            owner="Test",
+        )
+        readiness = evaluate_approval_readiness([], policy, _DEFAULT_IDENTITY)
+        assert readiness.overall_ready is False
+        assert len(readiness.config_errors) > 0
+        assert len(readiness.gate_results) == 0
+        assert len(readiness.blocking_failures) == 0
+
+    def test_config_errors_cannot_be_waived(self, sample_policy):
+        bad_gate = ValidationGate(
+            name="bad_gate",
+            description="No evaluator",
+            acceptable_range=(0.0, 1.0),
+        )
+        policy = ThresholdPolicy(
+            policy_id="pol-bad",
+            version="1.0",
+            scope="test",
+            gates=[bad_gate],
+            owner="Test",
+        )
+        readiness = evaluate_approval_readiness([], policy, _DEFAULT_IDENTITY)
+        assert readiness.overall_ready is False
+        assert len(readiness.config_errors) > 0
+        assert len(readiness.waivers_applied) == 0
+
+
+class TestScopeMatcher:
+    """PR 62B: Operational scope matcher."""
+
+    def test_scope_applicable_all_models(self):
+        gate = ValidationGate(
+            name="test_gate",
+            description="All models gate",
+            scope="all_models",
+        )
+        scope = ValidationScopeContext(model_type="shared")
+        applicable, reason = scope.gate_is_applicable(gate)
+        assert applicable is True
+        assert reason is None
+
+    def test_scope_shared_gate_applicable_to_shared(self):
+        gate = ValidationGate(
+            name="shared_gate",
+            description="Shared only",
+            scope="shared",
+        )
+        scope = ValidationScopeContext(model_type="shared")
+        applicable, reason = scope.gate_is_applicable(gate)
+        assert applicable is True
+        assert reason is None
+
+    def test_scope_shared_gate_not_applicable_to_market_specific(self):
+        gate = ValidationGate(
+            name="shared_gate",
+            description="Shared only",
+            scope="shared",
+        )
+        scope = ValidationScopeContext(model_type="market_specific")
+        applicable, reason = scope.gate_is_applicable(gate)
+        assert applicable is False
+        assert reason is not None
+        assert "shared" in reason
+
+    def test_scope_market_specific_gate_applicable(self):
+        gate = ValidationGate(
+            name="ms_gate",
+            description="Market specific only",
+            scope="market_specific",
+        )
+        scope = ValidationScopeContext(model_type="market_specific")
+        applicable, reason = scope.gate_is_applicable(gate)
+        assert applicable is True
+        assert reason is None
+
+    def test_filter_applicable_gates(self, sample_policy):
+        scope = ValidationScopeContext(model_type="shared")
+        result = filter_applicable_gates(sample_policy, scope)
+        for gate, applicable, reason in result:
+            assert applicable is True

@@ -16,6 +16,7 @@ import arviz as az
 from ancestry_mmm.core.validation_policy import (
     ApprovalReadiness,
     ThresholdPolicy,
+    ValidationEvidenceContext,
     ValidationGate,
     ValidationResult,
     ValidationWaiverReference,
@@ -23,6 +24,7 @@ from ancestry_mmm.core.validation_policy import (
     get_evaluator,
     readiness_to_dict,
     validate_gate_config,
+    validate_policy_config,
 )
 from ancestry_mmm.core.diagnostics import posterior_predictive_coverage  # noqa: F401
 from ancestry_mmm.core.model_identity import ModelIdentity
@@ -35,6 +37,9 @@ class ValidationInput:
     PR 53B: ``model_identity`` and ``policy`` are required for producing
     identity-bound validation results. Without them, results will have
     empty identity fields and be treated as stale by the readiness evaluator.
+
+    PR 62B: Added ``model_type``, ``market``, ``intended_use`` for
+    ``ValidationEvidenceContext`` construction.
     """
 
     trace: Optional[az.InferenceData] = None
@@ -47,6 +52,9 @@ class ValidationInput:
     credible_mass: float = 0.9
     diagnostic_artefact_id: Optional[str] = None
     diagnostic_artefact_fingerprint: Optional[str] = None
+    model_type: str = "all_models"
+    market: Optional[str] = None
+    intended_use: str = "model_approval"
 
 
 @dataclass
@@ -83,6 +91,12 @@ class ValidationService:
         and aggregates them into an ``ApprovalReadiness`` using the current
         model identity for staleness checking.
 
+        PR 62B:
+        - Calls ``validate_policy_config()`` before any gate evaluation.
+          When config errors exist, the readiness artefact is returned with
+          ``config_errors`` set and ``overall_ready=False``.
+        - Constructs a ``ValidationEvidenceContext`` for full evidence binding.
+
         Does not mutate approvals, access Streamlit state, or render UI.
         """
         errors: List[str] = []
@@ -97,6 +111,40 @@ class ValidationService:
         if v_input.trace is None:
             errors.append("No posterior trace provided for validation.")
             return ValidationServiceResult(errors=errors)
+
+        # --- PR 62B: Check policy config before any evaluation ---
+        policy_config_errors = validate_policy_config(policy)
+        if policy_config_errors:
+            errors.extend(policy_config_errors)
+            # We can still return a readiness with config errors if we have identity
+            if v_input.model_identity is not None:
+                try:
+                    readiness = evaluate_approval_readiness(
+                        [],
+                        policy,
+                        v_input.model_identity,
+                        diagnostic_artefact_id=v_input.diagnostic_artefact_id or "",
+                        diagnostic_artefact_fingerprint=v_input.diagnostic_artefact_fingerprint
+                        or "",
+                        waivers=v_input.waivers,
+                        as_of=v_input.as_of,
+                    )
+                    readiness_dict = readiness_to_dict(readiness)
+                except Exception as exc:
+                    errors.append(f"Readiness evaluation failed: {exc}")
+                    readiness = None
+                    readiness_dict = None
+            else:
+                readiness = None
+                readiness_dict = None
+
+            return ValidationServiceResult(
+                readiness=readiness,
+                readiness_dict=readiness_dict,
+                results=results,
+                errors=errors,
+                warnings=warnings,
+            )
 
         # --- Compute identity-dependent fingerprints once ---
         identity_fp = (
@@ -139,6 +187,16 @@ class ValidationService:
             readiness_dict = None
         else:
             try:
+                # PR 62B: Build evidence context for full binding
+                evidence_ctx = ValidationEvidenceContext(
+                    model_identity=v_input.model_identity,
+                    policy=policy,
+                    diagnostic_artefact_id=v_input.diagnostic_artefact_id or "",
+                    diagnostic_artefact_fingerprint=diag_fp,
+                    model_type=v_input.model_type,
+                    market=v_input.market,
+                    intended_use=v_input.intended_use,
+                )
                 readiness = evaluate_approval_readiness(
                     results,
                     policy,
@@ -147,6 +205,7 @@ class ValidationService:
                     diagnostic_artefact_fingerprint=diag_fp,
                     waivers=v_input.waivers,
                     as_of=v_input.as_of,
+                    evidence_context=evidence_ctx,
                 )
                 readiness_dict = readiness_to_dict(readiness)
             except Exception as exc:
