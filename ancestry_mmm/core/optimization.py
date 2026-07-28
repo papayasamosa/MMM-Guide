@@ -224,65 +224,6 @@ def classify_artefact_kind(
 
 
 # CurrencyContext imported from .planning.value
-# (defined in ancestry_mmm/core/planning/value.py)
-    """Currency context for scenario planning and reporting.
-
-    For single-market planning: local monetary decisions remain in the
-    market reporting currency. No conversion is performed without a
-    governed rate set or assumption.
-
-    G2A.7a.9: validates ISO-style three-letter uppercase codes for
-    populated currency fields. No hard-coded defaults for GBP, USD, or
-    group reporting currency. ``fingerprint`` is deterministic."""
-
-    market_reporting_currency: str = ""
-    value_currency: str | None = None
-    group_reporting_currency: str | None = None
-    model_currency: str | None = None
-    historical_fx_rate_set_id: str | None = None
-    historical_fx_rate_set_fingerprint: str | None = None
-    future_fx_assumption_id: str | None = None
-    future_fx_assumption_fingerprint: str | None = None
-
-    def __post_init__(self) -> None:
-        _ISO_CODE_RE = __import__('re').compile(r'^[A-Z]{3}$')
-        for field_name in ('market_reporting_currency', 'value_currency',
-                           'group_reporting_currency', 'model_currency'):
-            value = getattr(self, field_name)
-            if value and (not isinstance(value, str) or not _ISO_CODE_RE.match(value)):
-                raise ValueError(
-                    f"CurrencyContext.{field_name} must be a three-letter "
-                    f"uppercase ISO code, got {value!r}."
-                )
-
-    def fingerprint(self) -> str:
-        """Deterministic SHA-256 fingerprint of the currency context's
-        identity-relevant fields."""
-        payload = {
-            "market_reporting_currency": self.market_reporting_currency,
-            "value_currency": self.value_currency,
-            "group_reporting_currency": self.group_reporting_currency,
-            "model_currency": self.model_currency,
-            "historical_fx_rate_set_id": self.historical_fx_rate_set_id,
-            "historical_fx_rate_set_fingerprint": self.historical_fx_rate_set_fingerprint,
-            "future_fx_assumption_id": self.future_fx_assumption_id,
-            "future_fx_assumption_fingerprint": self.future_fx_assumption_fingerprint,
-        }
-        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
-        return hashlib.sha256(encoded).hexdigest()
-
-    def to_dict(self) -> dict:
-        from dataclasses import asdict
-        result = asdict(self)
-        result["fingerprint"] = self.fingerprint()
-        return result
-
-    @classmethod
-    def from_dict(cls, d: dict) -> "CurrencyContext":
-        known = set(cls.__dataclass_fields__)
-        payload = {k: v for k, v in d.items() if k in known}
-        return cls(**payload)
-
 
 # ScenarioValidationContext imported from .planning.value
 
