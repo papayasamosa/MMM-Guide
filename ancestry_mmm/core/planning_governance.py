@@ -75,6 +75,7 @@ def resolve_planning_governance(
     meta: FHModelMeta,
     outcome_approvals: Sequence[OutcomeApproval],
     nbt_completeness_metadata: dict | NetBillthroughCompletenessMetadata | None = None,
+    approval_readiness: Optional["ApprovalReadiness"] = None,
 ) -> ResolvedPlanningGovernance:
     """Resolve planning governance exactly once for a given operation.
 
@@ -97,12 +98,23 @@ def resolve_planning_governance(
     Returns an immutable, serialisable ``ResolvedPlanningGovernance`` proof.
     """
     from .outcomes import outcome_catalogue_at_fit_by_id as get_catalogue
+    from .approval import require_matching_approval
 
     if not planning_objective.is_valid_for_official_planning:
         raise ObjectiveMissingError(
             "Official planning/optimisation requires a complete PlanningObjective "
             "with metric_key and target_outcome_ids."
         )
+
+    # PR 53D: Verify model identity and policy readiness
+    require_matching_approval(
+        model_approval,
+        model_run_id=model_run_id,
+        data_fingerprint=data_fingerprint,
+        model_spec_fingerprint=model_spec_fingerprint,
+        posterior_fingerprint=posterior_fingerprint,
+        approval_readiness=approval_readiness,
+    )
 
     catalogue_by_id = get_catalogue(meta)
     target_ids = planning_objective.target_outcome_ids

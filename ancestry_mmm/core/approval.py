@@ -77,10 +77,17 @@ class ModelApproval:
     model_spec_fingerprint: str = ""
     posterior_fingerprint: str = ""
 
-    # REQ-VAL-001: Optional reference to a validation policy.
-    # When set, require_matching_approval also checks that the policy's
-    # gates have been evaluated with overall_ready=True.
+    # REQ-VAL-001 / PR 53D: Optional reference to a validation policy
+    # and its readiness artefact. When validation_policy_id is set,
+    # require_matching_approval also checks that the policy's gates have
+    # been evaluated with overall_ready=True, that the policy version
+    # and fingerprint match, and that the readiness artefact identity
+    # is present.
     validation_policy_id: str = ""
+    validation_policy_version: str = ""
+    validation_policy_fingerprint: str = ""
+    readiness_artefact_id: str = ""
+    readiness_fingerprint: str = ""
 
     def is_model_bound(self) -> bool:
         return bool(
@@ -168,7 +175,7 @@ def require_matching_approval(
             "Re-approve after review."
         )
 
-    # REQ-VAL-001: Validation policy check
+    # REQ-VAL-001 / PR 53D: Validation policy and readiness check
     if approval.validation_policy_id:
         if approval_readiness is None:
             raise ValidationPolicyBlockedError(
@@ -186,12 +193,26 @@ def require_matching_approval(
                 f"but readiness was evaluated against "
                 f"'{approval_readiness.policy_id}'."
             )
+        if approval.validation_policy_version and approval_readiness.policy_version != approval.validation_policy_version:
+            raise ValidationPolicyBlockedError(
+                f"Approval references policy version "
+                f"'{approval.validation_policy_version}' but readiness "
+                f"was evaluated against version "
+                f"'{approval_readiness.policy_version}'."
+            )
         if not approval_readiness.overall_ready:
             raise ValidationPolicyBlockedError(
                 "Validation policy gates are not satisfied. "
                 f"Blocking failures: {len(approval_readiness.blocking_failures)}, "
                 f"Missing required gates: {len(approval_readiness.missing_required_gates)}. "
                 "Resolve issues or use exploratory mode."
+            )
+        # PR 53D: verify readiness artefact identity is present when expected
+        if approval.readiness_artefact_id and not approval_readiness.passes:
+            # Readiness artefact was expected but no passing results exist
+            raise ValidationPolicyBlockedError(
+                "Approval references a readiness artefact but no passing "
+                "validation results were found."
             )
 
     return approval
@@ -204,6 +225,8 @@ def fingerprint_model_approval(approval: ModelApproval) -> str:
     - approved_by, approved_at, run_label, notes, known_limitations
     - diagnostics_accepted
     - model_run_id, data_fingerprint, model_spec_fingerprint, posterior_fingerprint
+    - validation_policy_id, validation_policy_version, validation_policy_fingerprint
+    - readiness_artefact_id, readiness_fingerprint
 
     A material change to any of these fields produces a different fingerprint
     and therefore stales scenarios saved against the previous approval record.
