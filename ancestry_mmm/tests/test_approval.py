@@ -1,4 +1,5 @@
 import time
+from datetime import datetime, timezone
 
 import pytest
 
@@ -7,6 +8,64 @@ from ancestry_mmm.core.approval import (
     ModelApproval,
     require_matching_approval,
 )
+
+
+def _make_context(policy=None, identity=None):
+    """Helper to build a default ValidationEvidenceContext for tests."""
+    from ancestry_mmm.core.validation_policy import (
+        ValidationEvidenceContext,
+        ThresholdPolicy,
+    )
+    from ancestry_mmm.core.model_identity import ModelIdentity
+
+    if identity is None:
+        identity = ModelIdentity("run-123", "data-abc", "spec-def", "post-ghi")
+    if policy is None:
+        policy = ThresholdPolicy(
+            policy_id="val-pol-001",
+            version="1.0",
+            scope="test",
+            owner="Test Owner",
+            approval_date=datetime(2026, 7, 1, tzinfo=timezone.utc),
+        )
+    return ValidationEvidenceContext(
+        model_identity=identity,
+        policy=policy,
+        diagnostic_artefact_id="diag-001",
+        diagnostic_artefact_fingerprint="diag-fp-001",
+        model_type="shared",
+        intended_use="model_approval",
+    )
+
+
+def _eval_readiness(
+    results,
+    policy,
+    identity,
+    *,
+    diagnostic_artefact_id="",
+    diagnostic_artefact_fingerprint="",
+    waivers=None,
+    as_of=None,
+    ctx=None,
+    evidence_context=None,
+):
+    """Wrapper that adds a default evidence_context if none provided."""
+    from ancestry_mmm.core.validation_policy import evaluate_approval_readiness
+
+    ec = ctx or evidence_context
+    if ec is None:
+        ec = _make_context(policy=policy, identity=identity)
+    return evaluate_approval_readiness(
+        results,
+        policy,
+        identity,
+        diagnostic_artefact_id=diagnostic_artefact_id,
+        diagnostic_artefact_fingerprint=diagnostic_artefact_fingerprint,
+        waivers=waivers,
+        as_of=as_of,
+        evidence_context=ec,
+    )
 
 
 def test_approved_at_defaults_to_now():
@@ -189,7 +248,6 @@ class TestValidationPolicyIntegration:
     ):
         from ancestry_mmm.core.validation_policy import (
             ValidationResult,
-            evaluate_approval_readiness,
         )
         from ancestry_mmm.core.model_identity import ModelIdentity as _MI
 
@@ -208,7 +266,7 @@ class TestValidationPolicyIntegration:
                 policy_version=version,
             )
         ]
-        return evaluate_approval_readiness(
+        return _eval_readiness(
             results,
             policy,
             _MI("run-123", "data-abc", "spec-def", "post-ghi"),
