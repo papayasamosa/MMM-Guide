@@ -2458,6 +2458,7 @@ def evaluate_manual_scenario(
             meta=meta,
             outcome_approvals=outcome_approvals or [],
             nbt_completeness_metadata=nbt_completeness_metadata,
+            approval_readiness=approval_readiness,
         )
         # Build governance dependencies from resolved proof
         governance_deps = ScenarioGovernanceDependencies(
@@ -2503,6 +2504,28 @@ def evaluate_manual_scenario(
                     )
                 ),
             ),
+            # PR 56D: readiness artefact binding
+            validation_policy_id=approval_readiness.policy_id
+            if approval_readiness is not None
+            else "",
+            validation_policy_version=approval_readiness.policy_version
+            if approval_readiness is not None
+            else "",
+            validation_policy_fingerprint=approval_readiness.policy_fingerprint
+            if approval_readiness is not None
+            else "",
+            readiness_artefact_id=approval_readiness.readiness_artefact_id
+            if approval_readiness is not None
+            else "",
+            readiness_fingerprint=approval_readiness.fingerprint()
+            if approval_readiness is not None
+            else "",
+            diagnostic_artefact_fingerprint=approval_readiness.diagnostic_artefact_fingerprint
+            if approval_readiness is not None
+            else "",
+            model_identity_fingerprint=approval_readiness.model_identity_fingerprint
+            if approval_readiness is not None
+            else "",
         )
 
     # Call the private numerical function directly.
@@ -3105,6 +3128,7 @@ def optimize_scenario(
     value_currency: Optional[str] = None,
     value_mapping: Optional["OutcomeValueMapping"] = None,
     currency_context: Optional["CurrencyContext"] = None,
+    approval_readiness: Optional["ApprovalReadiness"] = None,
 ) -> Dict:
     """
     Optimise a spend plan. `constraints=None` (or empty) + conserve_total_budget=True
@@ -3137,6 +3161,7 @@ def optimize_scenario(
         data_fingerprint=data_fingerprint,
         model_spec_fingerprint=model_spec_fingerprint,
         posterior_fingerprint=posterior_fingerprint,
+        approval_readiness=approval_readiness,
     )
     # G2A.7a.10: when value_mapping is given, it is the single authoritative
     # value source - used for objective resolution, the SLSQP objective
@@ -3282,6 +3307,7 @@ def optimize_scenario(
             meta=meta,
             outcome_approvals=outcome_approvals or [],
             nbt_completeness_metadata=nbt_completeness_metadata,
+            approval_readiness=approval_readiness,
         )
 
     current_spend = _flatten(current_spend_plan, months, channels)
