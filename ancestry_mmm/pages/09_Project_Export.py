@@ -65,7 +65,7 @@ render_page_header("export")
 st.caption(
     "Streamlit session state is never the system of record - it only drives in-session "
     "interactivity. This bundle (Parquet + JSON + NetCDF, all open formats) is what an analyst "
-    "actually keeps: pause here, resume later, hand it off, or replay the same pipeline on "
+    "actually keeps: pause here, resume later, share with another analyst, or replay the same pipeline on "
     "refreshed weekly data."
 )
 

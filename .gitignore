@@ -48,6 +48,18 @@ Thumbs.db
 
 # Project specific
 *.log
+
+# Test coverage artefacts
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Cache directories
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.bandit/
 .env
 .env.local
 

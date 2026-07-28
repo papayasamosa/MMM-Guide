@@ -7,7 +7,16 @@ a governed, policy-driven validation gate — not a manual acknowledgement.
 
 ## Capability status
 
-Not yet implemented.
+Foundation implemented. Domain objects (ThresholdPolicy, ValidationGate,
+ValidationResult, ApprovalReadiness, ValidationWaiverReference) exist in
+``core/validation_policy.py``. The evaluator (``evaluate_approval_readiness``)
+applies pass/fail logic but does not yet implement explicit pass/review/fail
+bands. The evaluator registry uses an if-chain rather than a pluggable pattern.
+R-hat (1.05), ESS (200) and PPC coverage (70%) fallback thresholds exist in
+``application/validation_service.py`` — these must be removed in favour of
+policy-supplied thresholds. ``require_matching_approval`` checks readiness
+only when ``validation_policy_id`` is populated, which the current approval UI
+does not set. The Diagnostics page does not display readiness.
 
 ## Requirement
 
