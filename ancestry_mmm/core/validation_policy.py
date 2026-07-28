@@ -10,10 +10,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+
+import arviz as az
 
 if TYPE_CHECKING:
     from .model_identity import ModelIdentity
@@ -42,6 +45,12 @@ class ValidationWaiverReference:
     gate_name: str
     expiry: Optional[datetime] = None
     superseded_by: Optional[str] = None
+    # PR 56E: waiver binding fields
+    model_identity_fingerprint: str = ""
+    policy_fingerprint: str = ""
+    gate_fingerprint: str = ""
+    diagnostic_artefact_fingerprint: str = ""
+    original_result_status: str = ""
 
     def is_active(self, as_of: Optional[datetime] = None) -> bool:
         """Check whether this waiver is currently active.
@@ -113,6 +122,7 @@ class ValidationGate:
     blocking: bool = True
     waivable: bool = False
     required: bool = True
+    expected_state: Optional[bool] = None
 
     def __post_init__(self) -> None:
         if self.direction not in ("lower_is_better", "higher_is_better"):
@@ -147,6 +157,7 @@ class ValidationGate:
             "blocking": self.blocking,
             "waivable": self.waivable,
             "required": self.required,
+            "expected_state": self.expected_state,
         }
         encoded = json.dumps(
             payload, sort_keys=True, separators=(",", ":"), default=str
@@ -803,6 +814,396 @@ def evaluate_approval_readiness(
         overall_ready=overall_ready,
         schema_version=1,
     )
+
+
+# ---------------------------------------------------------------------------
+# Integration helpers
+# ---------------------------------------------------------------------------
+# Evaluator registry
+# ---------------------------------------------------------------------------
+# PR 56E: Typed evaluator registry replacing the hard-coded if-chain in
+# ValidationService._evaluate_gate. Each evaluator declares its metadata
+# and a callable, enabling discovery, validation, and documentation.
+
+
+@dataclass(frozen=True)
+class EvaluatorMeta:
+    """Metadata for a registered validation evaluator.
+
+    Parameters
+    ----------
+    evaluator_id : str
+        Unique identifier used in ``ValidationGate.evaluator_id``.
+    output_type : str
+        ``"numeric"`` for gates with acceptable_range thresholds,
+        ``"boolean"`` for gates with an explicit expected state.
+    units : str
+        Human-readable units for the output value.
+    requires_threshold : bool
+        Whether the gate must have ``acceptable_range`` set.
+    supported_model_types : tuple[str, ...]
+        Model types this evaluator supports, e.g. ``("shared", "market_specific")``.
+    required_inputs : tuple[str, ...]
+        ValidationInput fields required, e.g. ``("trace",)``, ``("trace", "frame", "meta")``.
+    is_deterministic : bool
+        Whether the evaluator produces the same output for the same inputs.
+    description : str
+        Human-readable description of what this evaluator checks.
+    """
+
+    evaluator_id: str
+    output_type: str = "numeric"
+    units: str = ""
+    requires_threshold: bool = True
+    supported_model_types: tuple[str, ...] = ("shared", "market_specific")
+    required_inputs: tuple[str, ...] = ("trace",)
+    is_deterministic: bool = True
+    description: str = ""
+
+
+# Type alias for evaluator callables
+EvaluatorFn = Callable[..., ValidationResult]
+
+
+# Internal registry: evaluator_id -> (meta, fn)
+_EVALUATOR_REGISTRY: dict[str, tuple[EvaluatorMeta, EvaluatorFn]] = {}
+
+
+def register_evaluator(
+    evaluator_id: str,
+    meta: EvaluatorMeta,
+) -> Callable[[EvaluatorFn], EvaluatorFn]:
+    """Decorator to register an evaluator function.
+
+    Usage::
+
+        @register_evaluator("rhat", EvaluatorMeta(...))
+        def evaluate_rhat(gate, trace, frame, meta, credible_mass):
+            ...
+    """
+
+    def decorator(fn: EvaluatorFn) -> EvaluatorFn:
+        _EVALUATOR_REGISTRY[evaluator_id] = (meta, fn)
+        return fn
+
+    return decorator
+
+
+def get_evaluator(
+    evaluator_id: str,
+) -> tuple[EvaluatorMeta, EvaluatorFn] | None:
+    """Look up an evaluator by ID. Returns None if not found."""
+    return _EVALUATOR_REGISTRY.get(evaluator_id)
+
+
+def list_evaluators() -> list[tuple[str, EvaluatorMeta]]:
+    """List all registered evaluators with their metadata."""
+    return [(eid, meta) for eid, (meta, _) in _EVALUATOR_REGISTRY.items()]
+
+
+def validate_gate_config(gate: ValidationGate) -> list[str]:
+    """Validate a gate's configuration against its evaluator's requirements.
+
+    Returns a list of configuration error messages. An empty list means the
+    gate configuration is valid.
+
+    This catches malformed policy configurations before they reach evaluation,
+    rather than returning a misleading ``fail`` result.
+    """
+    errors: list[str] = []
+    entry = _EVALUATOR_REGISTRY.get(gate.evaluator_id or gate.name)
+    if entry is None:
+        errors.append(f"No evaluator registered for '{gate.evaluator_id or gate.name}'.")
+        return errors
+
+    meta, _ = entry
+
+    if meta.requires_threshold and gate.acceptable_range is None:
+        errors.append(
+            f"Gate '{gate.name}' uses evaluator '{meta.evaluator_id}' which "
+            f"requires acceptable_range but none was configured."
+        )
+    elif meta.requires_threshold and gate.acceptable_range is not None:
+        lo, hi = gate.acceptable_range
+        if not (math.isfinite(lo) and math.isfinite(hi)):
+            errors.append(
+                f"Gate '{gate.name}' has non-finite acceptable_range ({lo}, {hi})."
+            )
+        if lo > hi:
+            errors.append(
+                f"Gate '{gate.name}' has acceptable_range lower bound {lo} > upper bound {hi}."
+            )
+
+    if not meta.requires_threshold and gate.acceptable_range is not None:
+        errors.append(
+            f"Gate '{gate.name}' uses boolean evaluator '{meta.evaluator_id}' "
+            f"but has acceptable_range configured (expected None)."
+        )
+
+    if meta.output_type == "boolean" and gate.acceptable_range is not None:
+        errors.append(
+            f"Gate '{gate.name}' is boolean but has acceptable_range configured. "
+            f"Use expected_state instead."
+        )
+
+    return errors
+
+
+def validate_policy_config(policy: ThresholdPolicy) -> list[str]:
+    """Validate all gates in a policy against the evaluator registry.
+
+    Returns a list of configuration errors across all gates.
+    """
+    errors: list[str] = []
+    for gate in policy.gates:
+        errors.extend(validate_gate_config(gate))
+    return errors
+
+
+# ---------------------------------------------------------------------------
+# Concrete evaluator implementations
+# ---------------------------------------------------------------------------
+
+
+def _evaluate_rhat(
+    gate: ValidationGate,
+    trace: Any,
+    frame: Any | None,
+    meta: Any | None,
+    credible_mass: float,
+) -> ValidationResult:
+    """Evaluate R-hat convergence diagnostic."""
+    rhat = az.rhat(trace, var_names=["mu", "beta", "hill_K", "alpha"])
+    max_val = float("-inf")
+    for var_data in rhat.values():
+        if hasattr(var_data, "values"):
+            max_val = max(max_val, float(var_data.values.max()))
+    status = _classify_numeric_gate(max_val, gate)
+    return ValidationResult(
+        gate_name=gate.name,
+        status=status,
+        value=max_val,
+        message=f"Max R-hat = {max_val:.4f}",
+    )
+
+
+def _evaluate_ess(
+    gate: ValidationGate,
+    trace: Any,
+    frame: Any | None,
+    meta: Any | None,
+    credible_mass: float,
+) -> ValidationResult:
+    """Evaluate effective sample size."""
+    ess = az.ess(trace, var_names=["mu", "beta", "hill_K", "alpha"])
+    min_val = float("inf")
+    for var_data in ess.values():
+        if hasattr(var_data, "values"):
+            min_val = min(min_val, float(var_data.values.min()))
+    status = _classify_numeric_gate(min_val, gate)
+    return ValidationResult(
+        gate_name=gate.name,
+        status=status,
+        value=min_val,
+        message=f"Min ESS = {min_val:.1f}",
+    )
+
+
+def _evaluate_divergences(
+    gate: ValidationGate,
+    trace: Any,
+    frame: Any | None,
+    meta: Any | None,
+    credible_mass: float,
+) -> ValidationResult:
+    """Check for divergent transitions."""
+    has_div = False
+    if hasattr(trace, "sample_stats") and "diverging" in trace.sample_stats:
+        has_div = bool(trace.sample_stats["diverging"].values.any())
+    # Boolean gate: use expected_state if set, else pass when no divergences
+    expected = getattr(gate, "expected_state", None)
+    if expected is not None:
+        status = "pass" if has_div == expected else "fail"
+    else:
+        status = "pass" if not has_div else "fail"
+    return ValidationResult(
+        gate_name=gate.name,
+        status=status,
+        value=float(has_div),
+        message="No divergences" if not has_div else "Divergences detected",
+    )
+
+
+def _evaluate_ppc(
+    gate: ValidationGate,
+    trace: Any,
+    frame: Any | None,
+    meta: Any | None,
+    credible_mass: float,
+) -> ValidationResult:
+    """Evaluate posterior predictive coverage."""
+    # Local import to avoid circular dependency
+    from ancestry_mmm.core.diagnostics import posterior_predictive_coverage as _ppc
+
+    if frame is None or meta is None:
+        return ValidationResult(
+            gate_name=gate.name,
+            status="fail",
+            message="Missing frame or meta for PPC evaluation",
+        )
+    ppc = _ppc(
+        trace,
+        frame,
+        meta,
+        credible_mass=credible_mass,
+        random_seed=42,
+    )
+    mean_cov = float(ppc["coverage_pct"].mean())
+    status = _classify_numeric_gate(mean_cov, gate)
+    return ValidationResult(
+        gate_name=gate.name,
+        status=status,
+        value=mean_cov,
+        message=f"Mean PPC coverage = {mean_cov:.1f}%",
+    )
+
+
+# Register evaluators
+register_evaluator(
+    "rhat",
+    EvaluatorMeta(
+        evaluator_id="rhat",
+        output_type="numeric",
+        units="R-hat",
+        requires_threshold=True,
+        required_inputs=("trace",),
+        description="Gelman-Rubin convergence diagnostic (R-hat). Lower is better.",
+    ),
+)(_evaluate_rhat)
+
+register_evaluator(
+    "convergence_rhat",
+    EvaluatorMeta(
+        evaluator_id="convergence_rhat",
+        output_type="numeric",
+        units="R-hat",
+        requires_threshold=True,
+        required_inputs=("trace",),
+        description="Gelman-Rubin convergence diagnostic (R-hat). Lower is better.",
+    ),
+)(_evaluate_rhat)
+
+register_evaluator(
+    "ess",
+    EvaluatorMeta(
+        evaluator_id="ess",
+        output_type="numeric",
+        units="n_eff",
+        requires_threshold=True,
+        required_inputs=("trace",),
+        description="Effective sample size. Higher is better.",
+    ),
+)(_evaluate_ess)
+
+register_evaluator(
+    "min_ess",
+    EvaluatorMeta(
+        evaluator_id="min_ess",
+        output_type="numeric",
+        units="n_eff",
+        requires_threshold=True,
+        required_inputs=("trace",),
+        description="Minimum effective sample size across parameters. Higher is better.",
+    ),
+)(_evaluate_ess)
+
+register_evaluator(
+    "divergences",
+    EvaluatorMeta(
+        evaluator_id="divergences",
+        output_type="boolean",
+        units="",
+        requires_threshold=False,
+        required_inputs=("trace",),
+        description="Checks for divergent transitions in HMC sampling.",
+    ),
+)(_evaluate_divergences)
+
+register_evaluator(
+    "ppc",
+    EvaluatorMeta(
+        evaluator_id="ppc",
+        output_type="numeric",
+        units="%",
+        requires_threshold=True,
+        required_inputs=("trace", "frame", "meta"),
+        description="Posterior predictive coverage percentage. Higher is better.",
+    ),
+)(_evaluate_ppc)
+
+register_evaluator(
+    "ppc_coverage",
+    EvaluatorMeta(
+        evaluator_id="ppc_coverage",
+        output_type="numeric",
+        units="%",
+        requires_threshold=True,
+        required_inputs=("trace", "frame", "meta"),
+        description="Posterior predictive coverage percentage. Higher is better.",
+    ),
+)(_evaluate_ppc)
+
+
+# ---------------------------------------------------------------------------
+# Numeric gate classification (shared by evaluators and validation service)
+# ---------------------------------------------------------------------------
+
+
+def _classify_numeric_gate(value: float, gate: ValidationGate) -> str:
+    """Classify a numeric value against a gate's pass/review/fail bands.
+
+    Returns ``"pass"``, ``"review"``, or ``"fail"``.
+
+    Validates threshold finiteness and ordering. Missing thresholds on a
+    numeric gate is a configuration error (raises ValueError) rather than
+    a silent fail.
+    """
+    if gate.acceptable_range is None:
+        raise ValueError(
+            f"Gate '{gate.name}' is numeric but has no acceptable_range configured. "
+            "This is a policy configuration error."
+        )
+
+    lo, hi = gate.acceptable_range
+    if not (math.isfinite(lo) and math.isfinite(hi)):
+        raise ValueError(
+            f"Gate '{gate.name}' has non-finite acceptable_range ({lo}, {hi})."
+        )
+    if lo > hi:
+        raise ValueError(
+            f"Gate '{gate.name}' has acceptable_range lower bound {lo} > upper bound {hi}."
+        )
+
+    if not math.isfinite(value):
+        return "fail"
+
+    direction = gate.direction
+    if direction == "lower_is_better":
+        if value <= hi:
+            return "pass"
+        if gate.review_range is not None:
+            _rlo, rhi = gate.review_range
+            if value <= rhi:
+                return "review"
+        return "fail"
+    else:  # higher_is_better
+        if value >= lo:
+            return "pass"
+        if gate.review_range is not None:
+            rlo, _rhi = gate.review_range
+            if value >= rlo:
+                return "review"
+        return "fail"
 
 
 # ---------------------------------------------------------------------------
