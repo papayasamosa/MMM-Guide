@@ -216,7 +216,8 @@ def require_matching_approval(
         # PR 56C: Verify policy fingerprint matches
         if (
             approval.validation_policy_fingerprint
-            and approval_readiness.policy_fingerprint != approval.validation_policy_fingerprint
+            and approval_readiness.policy_fingerprint
+            != approval.validation_policy_fingerprint
         ):
             raise ValidationPolicyBlockedError(
                 f"Approval references policy fingerprint "

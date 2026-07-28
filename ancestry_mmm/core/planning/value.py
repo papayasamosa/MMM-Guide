@@ -370,7 +370,9 @@ class ScenarioGovernanceDependencies:
             validation_policy_fingerprint=d.get("validation_policy_fingerprint", ""),
             readiness_artefact_id=d.get("readiness_artefact_id", ""),
             readiness_fingerprint=d.get("readiness_fingerprint", ""),
-            diagnostic_artefact_fingerprint=d.get("diagnostic_artefact_fingerprint", ""),
+            diagnostic_artefact_fingerprint=d.get(
+                "diagnostic_artefact_fingerprint", ""
+            ),
             model_identity_fingerprint=d.get("model_identity_fingerprint", ""),
         )
 

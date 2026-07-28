@@ -100,9 +100,7 @@ class ValidationService:
 
         # --- Compute identity-dependent fingerprints once ---
         identity_fp = (
-            v_input.model_identity.fingerprint()
-            if v_input.model_identity
-            else ""
+            v_input.model_identity.fingerprint() if v_input.model_identity else ""
         )
         diag_fp = v_input.diagnostic_artefact_fingerprint or ""
 

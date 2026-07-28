@@ -57,7 +57,7 @@ jobs:
           EXPECTED_PYMC_MARKETING: "0.19.2"
         run: |
           uv run python -c "import os, pymc_marketing; assert pymc_marketing.__version__ == os.environ['EXPECTED_PYMC_MARKETING'], (pymc_marketing.__version__, os.environ['EXPECTED_PYMC_MARKETING'])" &&
-          uv run pytest ancestry_mmm/tests/test_transformations.py -k pymc_marketing -v
+          uv run pytest ancestry_mmm/tests/test_transformations.py -k pymc_marketing -v --no-cov
       - name: Run tests with coverage
         run: uv run pytest ancestry_mmm/tests/ -q --ignore=ancestry_mmm/tests/test_persistence.py --cov --cov-report=term-missing:skip-covered --cov-fail-under=30
 
@@ -78,7 +78,7 @@ jobs:
           EXPECTED_PYMC_MARKETING: "0.19.4"
         run: |
           uv run python -c "import os, pymc_marketing; assert pymc_marketing.__version__ == os.environ['EXPECTED_PYMC_MARKETING'], (pymc_marketing.__version__, os.environ['EXPECTED_PYMC_MARKETING'])" &&
-          uv run pytest ancestry_mmm/tests/test_transformations.py -k pymc_marketing -v
+          uv run pytest ancestry_mmm/tests/test_transformations.py -k pymc_marketing -v --no-cov
       - name: Run tests with coverage
         run: uv run pytest ancestry_mmm/tests/ -q --ignore=ancestry_mmm/tests/test_persistence.py --cov --cov-report=term-missing:skip-covered --cov-fail-under=30
 
@@ -164,7 +164,7 @@ jobs:
           cache-dependency-glob: "uv.lock"
       - run: uv sync --locked
       - name: Run requirement-index conformance tests
-        run: uv run pytest ancestry_mmm/tests/test_requirements_index_conformance.py -v
+        run: uv run pytest ancestry_mmm/tests/test_requirements_index_conformance.py -v --no-cov
 
   # ── Streamlit AppTest ──────────────────────────────────────────────
   streamlit:

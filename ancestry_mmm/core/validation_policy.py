@@ -465,7 +465,9 @@ class ApprovalReadiness:
     review_items: tuple[ValidationResult, ...] = field(default_factory=tuple)
     passes: tuple[ValidationResult, ...] = field(default_factory=tuple)
     missing_required_gates: tuple[str, ...] = field(default_factory=tuple)
-    waivers_applied: tuple[ValidationWaiverReference, ...] = field(default_factory=tuple)
+    waivers_applied: tuple[ValidationWaiverReference, ...] = field(
+        default_factory=tuple
+    )
     evaluated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     overall_ready: bool = False
     schema_version: int = 1
@@ -484,15 +486,9 @@ class ApprovalReadiness:
             "model_identity_fingerprint": self.model_identity_fingerprint,
             "diagnostic_artefact_id": self.diagnostic_artefact_id,
             "diagnostic_artefact_fingerprint": self.diagnostic_artefact_fingerprint,
-            "gate_results": [
-                _result_to_dict(r) for r in self.gate_results
-            ],
-            "blocking_failures": [
-                _result_to_dict(r) for r in self.blocking_failures
-            ],
-            "review_items": [
-                _result_to_dict(r) for r in self.review_items
-            ],
+            "gate_results": [_result_to_dict(r) for r in self.gate_results],
+            "blocking_failures": [_result_to_dict(r) for r in self.blocking_failures],
+            "review_items": [_result_to_dict(r) for r in self.review_items],
             "passes": [_result_to_dict(r) for r in self.passes],
             "missing_required_gates": sorted(self.missing_required_gates),
             "waivers_applied": [
@@ -580,9 +576,7 @@ class ApprovalReadiness:
                 _result_from_dict(r) for r in d["review_items"]
             )
         if "passes" in d:
-            kwargs["passes"] = tuple(
-                _result_from_dict(r) for r in d["passes"]
-            )
+            kwargs["passes"] = tuple(_result_from_dict(r) for r in d["passes"])
         if "missing_required_gates" in d:
             kwargs["missing_required_gates"] = tuple(d["missing_required_gates"])
         if "waivers_applied" in d and isinstance(d.get("waivers_applied"), list):
@@ -593,7 +587,9 @@ class ApprovalReadiness:
                     approved_at=datetime.fromisoformat(w["approved_at"]),
                     reason=w["reason"],
                     gate_name=w["gate_name"],
-                    expiry=datetime.fromisoformat(w["expiry"]) if w.get("expiry") else None,
+                    expiry=datetime.fromisoformat(w["expiry"])
+                    if w.get("expiry")
+                    else None,
                     superseded_by=w.get("superseded_by"),
                 )
                 for w in d["waivers_applied"]
@@ -628,10 +624,19 @@ def _result_from_dict(d: dict) -> ValidationResult:
     """Restore a ValidationResult from a dict."""
     kwargs: dict[str, Any] = {}
     known = {
-        "gate_name", "status", "value", "message", "artefact_id",
-        "model_run_id", "data_fingerprint", "model_spec_fingerprint",
-        "posterior_fingerprint", "policy_id", "policy_version",
-        "gate_fingerprint", "model_identity_fingerprint",
+        "gate_name",
+        "status",
+        "value",
+        "message",
+        "artefact_id",
+        "model_run_id",
+        "data_fingerprint",
+        "model_spec_fingerprint",
+        "posterior_fingerprint",
+        "policy_id",
+        "policy_version",
+        "gate_fingerprint",
+        "model_identity_fingerprint",
         "diagnostic_artefact_fingerprint",
     }
     for k in known:
@@ -913,7 +918,9 @@ def validate_gate_config(gate: ValidationGate) -> list[str]:
     errors: list[str] = []
     entry = _EVALUATOR_REGISTRY.get(gate.evaluator_id or gate.name)
     if entry is None:
-        errors.append(f"No evaluator registered for '{gate.evaluator_id or gate.name}'.")
+        errors.append(
+            f"No evaluator registered for '{gate.evaluator_id or gate.name}'."
+        )
         return errors
 
     meta, _ = entry
