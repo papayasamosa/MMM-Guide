@@ -2074,6 +2074,7 @@ def evaluate_scenario(
     outcome_approvals: Optional[List[OutcomeApproval]] = None,
     governance_mode: str = "official",
     nbt_completeness_metadata: Optional[dict] = None,
+    approval_readiness: Optional["ApprovalReadiness"] = None,
 ) -> pd.DataFrame:
     """Evaluate total and incremental outcomes under governed activity scopes.
 
@@ -2106,6 +2107,7 @@ def evaluate_scenario(
         data_fingerprint=data_fingerprint,
         model_spec_fingerprint=model_spec_fingerprint,
         posterior_fingerprint=posterior_fingerprint,
+        approval_readiness=approval_readiness,
     )
     # --- Outcome-approval gate ---
     if governance_mode == "official":
@@ -2203,6 +2205,7 @@ def evaluate_manual_scenario(
     artefact_kind: str = "manual_scenario",
     value_mapping: Optional["OutcomeValueMapping"] = None,
     currency_context: Optional["CurrencyContext"] = None,
+    approval_readiness: Optional["ApprovalReadiness"] = None,
 ) -> ScenarioEvaluationResult:
     """Trusted manual scenario evaluation service (G2A.7a.5).
 
