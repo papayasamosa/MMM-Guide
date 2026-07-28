@@ -24,6 +24,12 @@ interface: core.curve_bank.make_entries and core.optimization.evaluate_scenario
 /optimize_scenario call require_matching_approval() themselves, so calling
 them directly - bypassing whatever a Streamlit page's own checks do - still
 requires a valid, matching approval.
+
+REQ-VAL-001: ModelApproval may optionally reference a ``validation_policy_id``
+to bind the approval to a governed validation policy. When set, the approval
+also requires that the policy's gates have been evaluated (via
+``evaluate_approval_readiness``) before the approval is considered valid for
+official use.
 """
 
 from __future__ import annotations
@@ -39,6 +45,14 @@ class ApprovalMismatchError(RuntimeError):
     """
     Raised when an approval is missing, legacy (predates model-binding), or
     does not match the model run it is being used to authorise.
+    """
+
+
+class ValidationPolicyBlockedError(RuntimeError):
+    """
+    Raised when official approval is attempted but the validation policy
+    gates have not been satisfied (missing required gates, blocking failures,
+    or expired policy).
     """
 
 
@@ -62,6 +76,11 @@ class ModelApproval:
     data_fingerprint: str = ""
     model_spec_fingerprint: str = ""
     posterior_fingerprint: str = ""
+
+    # REQ-VAL-001: Optional reference to a validation policy.
+    # When set, require_matching_approval also checks that the policy's
+    # gates have been evaluated with overall_ready=True.
+    validation_policy_id: str = ""
 
     def is_model_bound(self) -> bool:
         return bool(
@@ -111,6 +130,7 @@ def require_matching_approval(
     data_fingerprint: str,
     model_spec_fingerprint: str,
     posterior_fingerprint: str,
+    approval_readiness: Optional["ApprovalReadiness"] = None,
 ) -> ModelApproval:
     """
     Raise ApprovalMismatchError unless `approval` is a ModelApproval that is
@@ -119,7 +139,16 @@ def require_matching_approval(
     core.optimization.evaluate_scenario/optimize_scenario so the check can't
     be skipped by calling those functions directly instead of going through
     a Streamlit page's own (weaker, UI-only) checks.
+
+    REQ-VAL-001: If the approval references a ``validation_policy_id``,
+    ``approval_readiness`` must be provided and must have
+    ``overall_ready=True``, otherwise ``ValidationPolicyBlockedError`` is
+    raised. When ``approval_readiness`` is provided but the approval does
+    not reference a policy, the readiness is ignored (backward compatible).
     """
+    # Lazy import to avoid circular dependency at module level
+    from .validation_policy import ApprovalReadiness as _ApprovalReadiness
+
     if not isinstance(approval, ModelApproval):
         raise ApprovalMismatchError("No approval was provided for this model.")
     if not approval.is_model_bound():
@@ -138,6 +167,33 @@ def require_matching_approval(
             "specification, posterior, or model run have changed since it was approved. "
             "Re-approve after review."
         )
+
+    # REQ-VAL-001: Validation policy check
+    if approval.validation_policy_id:
+        if approval_readiness is None:
+            raise ValidationPolicyBlockedError(
+                f"Approval references validation policy "
+                f"'{approval.validation_policy_id}' but no readiness "
+                f"assessment was provided."
+            )
+        if not isinstance(approval_readiness, _ApprovalReadiness):
+            raise ValidationPolicyBlockedError(
+                "Approval readiness must be a valid ApprovalReadiness object."
+            )
+        if approval_readiness.policy_id != approval.validation_policy_id:
+            raise ValidationPolicyBlockedError(
+                f"Approval references policy '{approval.validation_policy_id}' "
+                f"but readiness was evaluated against "
+                f"'{approval_readiness.policy_id}'."
+            )
+        if not approval_readiness.overall_ready:
+            raise ValidationPolicyBlockedError(
+                "Validation policy gates are not satisfied. "
+                f"Blocking failures: {len(approval_readiness.blocking_failures)}, "
+                f"Missing required gates: {len(approval_readiness.missing_required_gates)}. "
+                "Resolve issues or use exploratory mode."
+            )
+
     return approval
 
 

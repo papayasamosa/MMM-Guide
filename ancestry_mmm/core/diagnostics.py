@@ -52,36 +52,94 @@ def posterior_predictive_coverage(
     frame: Dict,
     meta: FHModelMeta,
     credible_mass: float = 0.9,
+    *,
+    predictive_replications: int = 1,
+    random_seed: Optional[int] = None,
 ) -> pd.DataFrame:
     """
     % of actual observations falling inside the posterior predictive credible
-    interval, per outcome_id - computed analytically from the NegativeBinomial
-    quantile function using posterior mu/alpha draws (no extra sampling pass).
+    interval, per outcome_id.
+
+    Correctly computes the posterior predictive interval by:
+    1. Drawing ``predictive_replications`` Negative Binomial samples from
+       *each* posterior draw's ``(mu, alpha)`` parameter pair.
+    2. Pooling all predictive samples across draws.
+    3. Taking empirical quantiles of the pooled mixture.
+
+    This replaces the previous (incorrect) average-of-conditional-quantiles
+    approach. The average of conditional quantiles is **not** the quantile of
+    the posterior predictive mixture; the reported interval was therefore not
+    a correct Bayesian posterior predictive interval.
+
+    Parameters
+    ----------
+    trace : az.InferenceData
+        Fitted posterior with ``mu`` (obs, outcome, chain, draw) and
+        ``alpha`` (outcome, chain, draw).
+    frame : dict
+        Must contain ``Y`` with shape ``(n_obs, n_outcomes)``.
+    meta : FHModelMeta
+        Model metadata providing ``outcome_ids``.
+    credible_mass : float, default 0.9
+        Width of the credible interval, e.g. 0.9 = 90% interval.
+    predictive_replications : int, default 1
+        Number of predictive samples to draw *per posterior draw*. The total
+        predictive sample size is ``n_chains * n_draws * predictive_replications``.
+        A value of 1 (the default) is adequate when the posterior has many
+        draws; increase for more precise interval estimates.
+    random_seed : int or None, default None
+        Seed for reproducible predictive sampling.
+
+    Returns
+    -------
+    pd.DataFrame
+        Columns: ``outcome_id``, ``credible_mass``, ``coverage_pct``,
+        ``target_pct``, ``n_predictive_samples``.
     """
     Y = frame["Y"]
-    mu_draws = trace.posterior["mu"].stack(sample=("chain", "draw")).values  # (obs, outcome, sample)
-    alpha_draws = trace.posterior["alpha"].stack(sample=("chain", "draw")).values  # (outcome, sample)
+    n_obs, n_outcomes = Y.shape
 
+    # Stack posterior draws into a single sample dimension
+    mu_draws = trace.posterior["mu"].stack(sample=("chain", "draw")).values      # (obs, outcome, sample)
+    alpha_draws = trace.posterior["alpha"].stack(sample=("chain", "draw")).values  # (outcome, sample)
+    n_samples = mu_draws.shape[2]
+
+    rng = np.random.default_rng(random_seed)
     lower_q, upper_q = (1 - credible_mass) / 2, 1 - (1 - credible_mass) / 2
     rows = []
+
     for i, oid in enumerate(meta.outcome_ids):
-        mu_i = mu_draws[:, i, :]        # (obs, sample)
-        alpha_i = alpha_draws[i, :]     # (sample,)
-        n_param = alpha_i[None, :]
-        p_param = alpha_i[None, :] / (alpha_i[None, :] + mu_i)
+        mu_i = mu_draws[:, i, :]           # (obs, sample)
+        alpha_i = alpha_draws[i, :]        # (sample,)
+
+        # NegativeBinomial parameterisation: n = alpha, p = alpha / (alpha + mu)
+        n_param = alpha_i[None, :]          # (1, sample) broadcast over obs
+        p_param = alpha_i[None, :] / (alpha_i[None, :] + mu_i)  # (obs, sample)
         p_param = np.clip(p_param, 1e-9, 1 - 1e-9)
 
-        lo = stats.nbinom.ppf(lower_q, n_param, p_param)
-        hi = stats.nbinom.ppf(upper_q, n_param, p_param)
-        lo_mean, hi_mean = lo.mean(axis=1), hi.mean(axis=1)
+        # Generate posterior predictive samples
+        # Shape after loop: (obs, sample * predictive_replications)
+        pred_samples = np.concatenate(
+            [
+                rng.negative_binomial(n_param, p_param, size=(n_obs, n_samples))
+                for _ in range(predictive_replications)
+            ],
+            axis=1,
+        )
 
-        covered = (Y[:, i] >= lo_mean) & (Y[:, i] <= hi_mean)
+        # Empirical quantiles across the pooled predictive mixture
+        lo = np.quantile(pred_samples, lower_q, axis=1)
+        hi = np.quantile(pred_samples, upper_q, axis=1)
+
+        covered = (Y[:, i] >= lo) & (Y[:, i] <= hi)
         rows.append({
             "outcome_id": oid,
             "credible_mass": credible_mass,
             "coverage_pct": float(covered.mean() * 100),
             "target_pct": credible_mass * 100,
+            "n_predictive_samples": int(n_samples * predictive_replications),
         })
+
     return pd.DataFrame(rows)
 
 

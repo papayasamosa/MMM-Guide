@@ -5,6 +5,15 @@ on:
     branches: [main]
   push:
     branches: [main]
+  schedule:
+    # Weekly Monday morning MCMC recovery run
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Reason for manual run"
+        required: false
+        default: "Manual trigger"
 
 jobs:
   # ── Python 3.11 unit/integration ──────────────────────────────────
@@ -23,10 +32,10 @@ jobs:
         env:
           EXPECTED_PYMC_MARKETING: "0.19.2"
         run: |
-          uv run python -c "import os, pymc_marketing; assert pymc_marketing.__version__ == os.environ['EXPECTED_PYMC_MARKETING'], (pymc_marketing.__version__, os.environ['EXPECTED_PYMC_MARKETING'])"
+          uv run python -c "import os, pymc_marketing; assert pymc_marketing.__version__ == os.environ['EXPECTED_PYMC_MARKETING'], (pymc_marketing.__version__, os.environ['EXPECTED_PYMC_MARKETING'])" &&
           uv run pytest ancestry_mmm/tests/test_transformations.py -k pymc_marketing -v
-      - name: Run tests
-        run: uv run pytest ancestry_mmm/tests/ -q --ignore=ancestry_mmm/tests/test_persistence.py
+      - name: Run tests with coverage
+        run: uv run pytest ancestry_mmm/tests/ -q --ignore=ancestry_mmm/tests/test_persistence.py --cov --cov-report=term-missing:skip-covered --cov-fail-under=30
 
   # ── Python 3.12 unit/integration ──────────────────────────────────
   py312-tests:
@@ -44,12 +53,12 @@ jobs:
         env:
           EXPECTED_PYMC_MARKETING: "0.19.4"
         run: |
-          uv run python -c "import os, pymc_marketing; assert pymc_marketing.__version__ == os.environ['EXPECTED_PYMC_MARKETING'], (pymc_marketing.__version__, os.environ['EXPECTED_PYMC_MARKETING'])"
+          uv run python -c "import os, pymc_marketing; assert pymc_marketing.__version__ == os.environ['EXPECTED_PYMC_MARKETING'], (pymc_marketing.__version__, os.environ['EXPECTED_PYMC_MARKETING'])" &&
           uv run pytest ancestry_mmm/tests/test_transformations.py -k pymc_marketing -v
-      - name: Run tests
-        run: uv run pytest ancestry_mmm/tests/ -q --ignore=ancestry_mmm/tests/test_persistence.py
+      - name: Run tests with coverage
+        run: uv run pytest ancestry_mmm/tests/ -q --ignore=ancestry_mmm/tests/test_persistence.py --cov --cov-report=term-missing:skip-covered --cov-fail-under=30
 
-  # ── Ruff lint ──────────────────────────────────────────────────────
+  # ── Ruff lint and format check ─────────────────────────────────────
   ruff:
     name: Ruff
     runs-on: ubuntu-latest
@@ -61,8 +70,75 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
       - run: uv sync --locked
-      - name: Run ruff
+      - name: Run ruff check
         run: uv run ruff check ancestry_mmm
+      - name: Run ruff format check
+        run: uv run ruff format --check ancestry_mmm
+
+  # ── Mypy type checking ─────────────────────────────────────────────
+  mypy:
+    name: Mypy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - run: uv sync --locked
+      - name: Run mypy
+        run: uv run mypy ancestry_mmm/core --ignore-missing-imports || true
+        # Currently non-blocking — set to `|| exit 1` once baseline is clean
+
+  # ── Bandit security scan ───────────────────────────────────────────
+  bandit:
+    name: Bandit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - run: uv sync --locked
+      - name: Run bandit
+        run: uv run bandit -r ancestry_mmm/core -c pyproject.toml
+        continue-on-error: true  # Non-blocking — inform only
+
+  # ── pip-audit dependency scan ──────────────────────────────────────
+  pip-audit:
+    name: pip-audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - run: uv sync --locked
+      - name: Export requirements and audit
+        run: |
+          uv pip compile pyproject.toml > /tmp/requirements.txt
+          uv run pip-audit -r /tmp/requirements.txt
+        continue-on-error: true  # Non-blocking — dependabot handles version bumps
+
+  # ── Requirement-index conformance ──────────────────────────────────
+  req-index:
+    name: Requirements index
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - run: uv sync --locked
+      - name: Run requirement-index conformance tests
+        run: uv run pytest ancestry_mmm/tests/test_requirements_index_conformance.py -v
 
   # ── Streamlit AppTest ──────────────────────────────────────────────
   streamlit:
@@ -93,3 +169,20 @@ jobs:
       - run: uv sync --locked
       - name: Run bundle round-trip tests
         run: uv run pytest ancestry_mmm/tests/test_persistence.py -v
+
+  # ── Scheduled MCMC recovery (slow, runs on schedule/manual only) ──
+  mcmc-recovery:
+    name: MCMC recovery
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - run: uv sync --locked
+      - name: Run MCMC recovery tests
+        run: uv run pytest ancestry_mmm/tests/test_simulation_recovery.py -v --tb=short
+        timeout-minutes: 60

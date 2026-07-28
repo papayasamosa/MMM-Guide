@@ -153,6 +153,31 @@
         "ancestry_mmm/tests/test_outcome_approval.py::TestDefinitionFingerprint::test_review_notes_do_not_change_definition_fingerprint",
         "ancestry_mmm/tests/test_outcome_approval.py::TestOutcomeApprovalMatching::test_stale_fingerprint_blocks_use"
       ]
+    },
+    {
+      "requirement_id": "REQ-VAL-001",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-VAL-001.md",
+      "affected_modules": [
+        "ancestry_mmm/core/validation_policy.py",
+        "ancestry_mmm/core/approval.py",
+        "ancestry_mmm/core/diagnostics.py",
+        "ancestry_mmm/core/optimization.py"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_validation_policy.py::TestThresholdPolicyStructure::test_policy_has_required_fields",
+        "ancestry_mmm/tests/test_validation_policy.py::TestThresholdPolicyStructure::test_version_is_string",
+        "ancestry_mmm/tests/test_validation_policy.py::TestValidationGate::test_gate_has_scope_and_blocking_flag",
+        "ancestry_mmm/tests/test_validation_policy.py::TestValidationGate::test_gate_with_waiver_creates_reference",
+        "ancestry_mmm/tests/test_validation_policy.py::TestApprovalReadinessEvaluation::test_missing_required_gate_blocks",
+        "ancestry_mmm/tests/test_validation_policy.py::TestApprovalReadinessEvaluation::test_failed_blocking_gate_blocks",
+        "ancestry_mmm/tests/test_validation_policy.py::TestApprovalReadinessEvaluation::test_review_only_gate_does_not_block",
+        "ancestry_mmm/tests/test_validation_policy.py::TestApprovalReadinessEvaluation::test_expired_policy_blocks",
+        "ancestry_mmm/tests/test_validation_policy.py::TestApprovalReadinessEvaluation::test_stale_validation_artefact_blocks",
+        "ancestry_mmm/tests/test_validation_policy.py::TestApprovalReadinessEvaluation::test_approved_waiver_unblocks",
+        "ancestry_mmm/tests/test_validation_policy.py::TestApprovalReadinessEvaluation::test_non_waivable_failure_still_blocks",
+        "ancestry_mmm/tests/test_validation_policy.py::TestApprovalReadinessEvaluation::test_matching_successful_readiness_passes"
+      ]
     }
   ]
 }

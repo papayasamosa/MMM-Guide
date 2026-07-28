@@ -80,6 +80,24 @@ from .scenario_governance import (
     resolve_scenario_plan,
 )
 
+# PR 5: Pure value objects moved to core/planning/value.py
+# Re-exported here for backward compatibility.
+# Note: ObjectiveMissingError is defined locally in this file for
+# backward compatibility (it references PlanningGovernanceError).
+from .planning import (
+    CurrencyContext,
+    OutcomeValueMapping,
+    PlanningObjective,
+    ResolvedOutcomeAuthorisation,
+    ResolvedPlanningGovernance,
+    ScenarioDependencyIssue,
+    ScenarioEvaluationResult,
+    ScenarioGovernanceDependencies,
+    ScenarioValidationContext,
+    legacy_segment_ltv_to_value_mapping,
+    validation_context_from_legacy_args,
+)
+
 WEEKS_PER_MONTH = 365.25 / 12 / 7  # ~4.348
 
 AnyPosteriorParams = Union[FHPosteriorParams, FHMarketSpecificPosteriorParams]
@@ -142,11 +160,9 @@ PLANNING_ESTIMANDS = {
 
 
 # ---------------------------------------------------------------------------
-# G2A.7a.3 exception model: one boundary exception family.
-# OutcomeApprovalBlockedError (from core.outcome_approval) is the primary
-# gate exception. ObjectiveMissingError is the only additional governance
-# exception that is actually raised — all other specific classes defined in
-# PR #39 were never raised and have been removed.
+# ---------------------------------------------------------------------------
+# PR 5: Pure value objects moved to core/planning/value.py.
+# Re-exported at module top. Backward-compatible stub kept here.
 # ---------------------------------------------------------------------------
 
 
@@ -155,245 +171,6 @@ class ObjectiveMissingError(PlanningGovernanceError):
     # Not a subclass of OutcomeApprovalBlockedError because it is raised
     # before any approval check runs — the objective is missing regardless
     # of whether approvals exist.
-
-
-# ---------------------------------------------------------------------------
-# G2A.7a.2 resolved governance (see brief section 5.1)
-# ---------------------------------------------------------------------------
-
-@dataclass(frozen=True)
-class ResolvedOutcomeAuthorisation:
-    """Proof that one outcome has been authorised for a specific use.
-
-    Carried through the optimiser into nested calculations so they never
-    need to re-validate or downgrade to exploratory.
-
-    G2A.7a.3: ``scope_fingerprint`` was removed — it duplicated the
-    definition fingerprint. Explicit scope values (market, product,
-    segment) are persisted instead, so the authorisation's scope is
-    auditable without re-deriving it from the definition."""
-    outcome_id: str
-    requested_use: str  # "planning" or "optimisation"
-    approval_id: str
-    definition_fingerprint: str
-    market: Optional[str] = None
-    product: Optional[str] = None
-    segment: Optional[str] = None
-    nbt_completeness_fingerprint: Optional[str] = None
-
-    def to_dict(self) -> dict:
-        return asdict(self)
-
-    @classmethod
-    def from_dict(cls, d: dict) -> "ResolvedOutcomeAuthorisation":
-        known = set(cls.__dataclass_fields__)
-        return cls(**{k: v for k, v in d.items() if k in known})
-
-
-@dataclass(frozen=True)
-class ResolvedPlanningGovernance:
-    """Immutable governance proof created once by the resolver, then passed
-    into the solver, point evaluation, and posterior evaluation.
-
-    G2A.7a.6: includes ``model_approval_fingerprint`` so the proof carries
-    the exact approval-record identity the resolver confirmed."""
-    governance_mode: str  # "official" or "exploratory"
-    operation: str  # "planning" or "optimisation"
-    objective_fingerprint: str
-    model_run_id: str
-    data_fingerprint: str
-    model_spec_fingerprint: str
-    posterior_fingerprint: str
-    market: str
-    authorisations: Tuple[ResolvedOutcomeAuthorisation, ...]
-    model_approval_fingerprint: str = ""
-    target_outcome_ids: Tuple[str, ...] = ()
-
-    @property
-    def is_official(self) -> bool:
-        return self.governance_mode == "official"
-
-    def to_dict(self) -> dict:
-        return {
-            "governance_mode": self.governance_mode,
-            "operation": self.operation,
-            "objective_fingerprint": self.objective_fingerprint,
-            "model_run_id": self.model_run_id,
-            "model_approval_fingerprint": self.model_approval_fingerprint,
-            "data_fingerprint": self.data_fingerprint,
-            "model_spec_fingerprint": self.model_spec_fingerprint,
-            "posterior_fingerprint": self.posterior_fingerprint,
-            "market": self.market,
-            "authorisations": [a.to_dict() for a in self.authorisations],
-            "target_outcome_ids": list(self.target_outcome_ids),
-        }
-
-    @classmethod
-    def from_dict(cls, d: dict) -> "ResolvedPlanningGovernance":
-        raw_targets = d.get("target_outcome_ids", ())
-        return cls(
-            governance_mode=d.get("governance_mode", "exploratory"),
-            operation=d.get("operation", "planning"),
-            objective_fingerprint=d.get("objective_fingerprint", ""),
-            model_run_id=d.get("model_run_id", ""),
-            data_fingerprint=d.get("data_fingerprint", ""),
-            model_spec_fingerprint=d.get("model_spec_fingerprint", ""),
-            posterior_fingerprint=d.get("posterior_fingerprint", ""),
-            market=d.get("market", ""),
-            authorisations=tuple(
-                ResolvedOutcomeAuthorisation.from_dict(a)
-                for a in d.get("authorisations", [])
-            ),
-            model_approval_fingerprint=d.get("model_approval_fingerprint", ""),
-            target_outcome_ids=(
-                tuple(raw_targets) if isinstance(raw_targets, list) else raw_targets
-            ),
-        )
-
-    def validate_against(
-        self,
-        *,
-        operation: str,
-        objective_fingerprint: str,
-        model_run_id: str,
-        model_approval_fingerprint: str = "",
-        data_fingerprint: str,
-        model_spec_fingerprint: str,
-        posterior_fingerprint: str,
-        market: str,
-        expected_operation: str | None = None,
-    ) -> None:
-        """Raises ``OutcomeApprovalBlockedError`` if any field does not
-        match the current calculation context.
-
-        When ``expected_operation`` is provided (preferred), validates
-        against that value — do not call with ``operation=resolved.operation``
-        as that compares the field with itself."""
-        if self.governance_mode != "official":
-            raise OutcomeApprovalBlockedError(
-                "Resolved governance is not official."
-            )
-        # Use expected_operation when provided — not self.operation
-        check_operation = expected_operation if expected_operation is not None else operation
-        if self.operation != check_operation:
-            raise OutcomeApprovalBlockedError(
-                f"Resolved governance operation is '{self.operation}' "
-                f"but the expected operation is '{check_operation}'."
-            )
-        if not self.objective_fingerprint:
-            raise OutcomeApprovalBlockedError(
-                "Resolved governance has an empty objective fingerprint."
-            )
-        if self.objective_fingerprint != objective_fingerprint:
-            raise OutcomeApprovalBlockedError(
-                "Resolved governance objective fingerprint does not match "
-                "the current objective."
-            )
-        if not self.model_run_id:
-            raise OutcomeApprovalBlockedError(
-                "Resolved governance has an empty model_run_id."
-            )
-        if self.model_run_id != model_run_id:
-            raise OutcomeApprovalBlockedError(
-                "Resolved governance model_run_id does not match."
-            )
-        # G2A.7a.8: fail-closed model-approval fingerprint check
-        if not self.model_approval_fingerprint:
-            raise OutcomeApprovalBlockedError(
-                "Resolved governance has a blank model_approval_fingerprint — "
-                "cannot authorise an official calculation."
-            )
-        if not model_approval_fingerprint:
-            raise OutcomeApprovalBlockedError(
-                "Current model approval fingerprint is absent — "
-                "cannot verify resolved governance."
-            )
-        if self.model_approval_fingerprint != model_approval_fingerprint:
-            raise OutcomeApprovalBlockedError(
-                "Resolved governance model_approval_fingerprint does not match "
-                "the current model approval."
-            )
-        if self.data_fingerprint != data_fingerprint:
-            raise OutcomeApprovalBlockedError(
-                "Resolved governance data_fingerprint does not match."
-            )
-        if self.model_spec_fingerprint != model_spec_fingerprint:
-            raise OutcomeApprovalBlockedError(
-                "Resolved governance model_spec_fingerprint does not match."
-            )
-        if self.posterior_fingerprint != posterior_fingerprint:
-            raise OutcomeApprovalBlockedError(
-                "Resolved governance posterior_fingerprint does not match."
-            )
-        if self.market != market:
-            raise OutcomeApprovalBlockedError(
-                f"Resolved governance market is '{self.market}' but the "
-                f"current market is '{market}'."
-            )
-        if not self.authorisations:
-            raise OutcomeApprovalBlockedError(
-                "Resolved governance has zero authorisations — cannot "
-                "authorise an official calculation."
-            )
-        # G2A.7a.7: enforce exact cardinality using explicit counts
-        target_list = list(self.target_outcome_ids)
-        if not target_list:
-            raise OutcomeApprovalBlockedError(
-                "Resolved governance has no target outcome IDs — cannot "
-                "authorise an official calculation."
-            )
-        # Reject duplicate target IDs
-        if len(target_list) != len(set(target_list)):
-            duplicates = [oid for oid in target_list if target_list.count(oid) > 1]
-            raise OutcomeApprovalBlockedError(
-                f"Resolved governance has duplicate target outcome IDs: "
-                f"{sorted(set(duplicates))}."
-            )
-        # Reject duplicate authorisations for the same outcome
-        auth_id_list = [a.outcome_id for a in self.authorisations]
-        if len(auth_id_list) != len(set(auth_id_list)):
-            duplicates = [oid for oid in auth_id_list if auth_id_list.count(oid) > 1]
-            raise OutcomeApprovalBlockedError(
-                f"Resolved governance has duplicate authorisations for: "
-                f"{sorted(set(duplicates))}."
-            )
-        # Reject duplicate approval IDs
-        approval_ids = [a.approval_id for a in self.authorisations]
-        if len(approval_ids) != len(set(approval_ids)):
-            duplicates = [aid for aid in approval_ids if approval_ids.count(aid) > 1]
-            raise OutcomeApprovalBlockedError(
-                f"Resolved governance has duplicate approval IDs: "
-                f"{sorted(set(duplicates))}."
-            )
-        # Exact count match
-        if len(self.authorisations) != len(target_list):
-            raise OutcomeApprovalBlockedError(
-                f"Resolved governance has {len(self.authorisations)} "
-                f"authorisations for {len(target_list)} targets — "
-                "counts must match."
-            )
-        # Exact set match
-        authorised_ids = {a.outcome_id for a in self.authorisations}
-        target_set = set(target_list)
-        if authorised_ids != target_set:
-            missing = target_set - authorised_ids
-            extra = authorised_ids - target_set
-            parts = []
-            if missing:
-                parts.append(f"missing authorisations for: {sorted(missing)}")
-            if extra:
-                parts.append(f"extra authorisations for: {sorted(extra)}")
-            raise OutcomeApprovalBlockedError(
-                "Resolved governance target mismatch: " + "; ".join(parts)
-            )
-        # Validate each authorisation's requested_use matches the operation
-        for auth in self.authorisations:
-            if auth.requested_use != check_operation:
-                raise OutcomeApprovalBlockedError(
-                    f"Authorisation for outcome '{auth.outcome_id}' has "
-                    f"requested_use='{auth.requested_use}' but expected "
-                    f"'{check_operation}'."
-                )
 
 
 # ---------------------------------------------------------------------------

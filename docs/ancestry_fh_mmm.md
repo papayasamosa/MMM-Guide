@@ -1,11 +1,16 @@
 # Ancestry In-House MMM & Scenario Planning Tool
 
-**Product & Technical Requirements Brief** - Prepared for: Claude Code build handoff | Version 1.0
+**Historical implementation context** — This document is the original requirements brief
+`ancestry_mmm/` was initially built against (Version 1.0, prepared for Claude Code build handoff).
+It is reproduced here so the reasoning behind the app's initial structure stays with the code.
 
-This is the requirements brief `ancestry_mmm/` was built against. It is reproduced here (from the
-original document) so the reasoning behind the app's structure - why segments are modelled jointly,
-why the DNA halo pathway is explicit, why the scenario planner defaults to constrained rather than
-unconstrained optimisation - stays with the code rather than living only in a chat history.
+> **Status: Historical** — This document records the original requirements brief. It is not
+> current specification authority. The current PRD suite is v1.4. All implementation should
+> follow approved requirement records in `docs/approved_requirements/` and the specification
+> authority hierarchy documented in `docs/specification_authority.md`. See
+> `docs/specification_authority.md` for details.
+
+**Product & Technical Requirements Brief** - Prepared for: Claude Code build handoff | Version 1.0
 
 ## 1. Purpose of this document
 

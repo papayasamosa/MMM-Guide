@@ -51,6 +51,10 @@ dev = [
     "black>=23.0.0",
     "ruff>=0.1.0",
     "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "mypy>=1.7.0",
+    "pip-audit>=2.7.0",
+    "bandit>=1.7.5",
 ]
 
 [tool.uv]
@@ -58,15 +62,80 @@ dev-dependencies = [
     "black>=23.0.0",
     "ruff>=0.1.0",
     "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "mypy>=1.7.0",
+    "pip-audit>=2.7.0",
+    "bandit>=1.7.5",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["ancestry_mmm/tests"]
+addopts = [
+    "--tb=short",
+    "--strict-markers",
+    "--cov=ancestry_mmm",
+    "--cov-report=term-missing:skip-covered",
+    "--cov-fail-under=30",
+]
+
+[tool.coverage.run]
+source = ["ancestry_mmm"]
+omit = [
+    "ancestry_mmm/tests/*",
+    "ancestry_mmm/sample_data/*",
+    "ancestry_mmm/pages/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "return None  # pragma: no cover",
+    "def __repr__",
+    "if __name__ == .__main__.:",
+]
 
 [tool.ruff.lint]
 # Keep CI on Ruff's established correctness-focused default rules even as
 # newer Ruff releases expand their global defaults.
 select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.format]
+# Enable formatting verification in addition to lint checks
+preview = false
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+warn_unused_ignores = true
+ignore_missing_imports = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = false
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_await = true
+# Modules excluded from type-checking (tolerance zone)
+exclude = [
+    "ancestry_mmm/tests/",
+    "ancestry_mmm/sample_data/",
+    "ancestry_mmm/pages/",
+    "archive/",
+]
+
+[tool.bandit]
+exclude_dirs = [
+    "ancestry_mmm/tests",
+    "ancestry_mmm/sample_data",
+    "archive",
+]
+skips = [
+    "B101",  # assert statements are acceptable in tests and internal code
+    "B301",  # pickle usage is acceptable for known internal formats
+    "B403",  # pickle permissions
+]
 
 [tool.setuptools.packages.find]
 include = ["ancestry_mmm*"]
