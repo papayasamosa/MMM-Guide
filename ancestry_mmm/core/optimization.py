@@ -94,7 +94,7 @@ from .planning import (
     ScenarioEvaluationResult,
     ScenarioGovernanceDependencies,
     ScenarioValidationContext,
-    legacy_segment_ltv_to_value_mapping,
+    planning_objective_from_legacy,
     validation_context_from_legacy_args,
 )
 
@@ -152,17 +152,13 @@ def _resolve_nbt_completeness_fingerprint(
             )
         return None
 
-PLANNING_ESTIMANDS = {
-    "total_outcome",
-    "incremental_outcome",
-    "incremental_value",
-}
+# Import PLANNING_ESTIMANDS from the canonical planning package.
+from .planning.value import PLANNING_ESTIMANDS
 
 
 # ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# PR 5: Pure value objects moved to core/planning/value.py.
-# Re-exported at module top. Backward-compatible stub kept here.
+# ObjectiveMissingError — kept locally because it references
+# PlanningGovernanceError, which would create a circular import if moved.
 # ---------------------------------------------------------------------------
 
 
@@ -216,262 +212,19 @@ def classify_artefact_kind(
     raise ValueError("artefact_kind must be explicitly provided; cannot infer.")
 
 
-@dataclass(frozen=True)
-class ScenarioGovernanceDependencies:
-    """Typed governance dependency contract for scenario persistence.
-
-    Every field must be populated for an official save. Missing mandatory
-    fields must block the save, not silently default to None."""
-    model_run_id: str
-    model_approval_fingerprint: str
-    data_fingerprint: str
-    model_spec_fingerprint: str
-    posterior_fingerprint: str
-    planning_objective_fingerprint: str
-    outcome_authorisations: tuple[ResolvedOutcomeAuthorisation, ...]
-    value_mapping_id: str | None = None
-    value_mapping_fingerprint: str | None = None
-    currency_context_fingerprint: str | None = None
-    historical_fx_rate_set_id: str | None = None
-    historical_fx_rate_set_fingerprint: str | None = None
-    future_fx_assumption_id: str | None = None
-    future_fx_assumption_fingerprint: str | None = None
-    activity_definitions_fingerprint: str | None = None
-    cost_mapping_fingerprint: str | None = None
-    counterfactual_policy_fingerprint: str = ""
-    nbt_completeness_fingerprint: str | None = None
-
-    def to_dict(self) -> dict:
-        return {
-            "model_run_id": self.model_run_id,
-            "model_approval_fingerprint": self.model_approval_fingerprint,
-            "data_fingerprint": self.data_fingerprint,
-            "model_spec_fingerprint": self.model_spec_fingerprint,
-            "posterior_fingerprint": self.posterior_fingerprint,
-            "planning_objective_fingerprint": self.planning_objective_fingerprint,
-            "outcome_authorisations": [
-                a.to_dict() for a in self.outcome_authorisations
-            ],
-            "value_mapping_id": self.value_mapping_id,
-            "value_mapping_fingerprint": self.value_mapping_fingerprint,
-            "currency_context_fingerprint": self.currency_context_fingerprint,
-            "historical_fx_rate_set_id": self.historical_fx_rate_set_id,
-            "historical_fx_rate_set_fingerprint": self.historical_fx_rate_set_fingerprint,
-            "future_fx_assumption_id": self.future_fx_assumption_id,
-            "future_fx_assumption_fingerprint": self.future_fx_assumption_fingerprint,
-            "activity_definitions_fingerprint": self.activity_definitions_fingerprint,
-            "cost_mapping_fingerprint": self.cost_mapping_fingerprint,
-            "counterfactual_policy_fingerprint": self.counterfactual_policy_fingerprint,
-            "nbt_completeness_fingerprint": self.nbt_completeness_fingerprint,
-        }
-
-    @classmethod
-    def from_dict(cls, d: dict) -> "ScenarioGovernanceDependencies":
-        return cls(
-            model_run_id=d.get("model_run_id", ""),
-            model_approval_fingerprint=d.get("model_approval_fingerprint", ""),
-            data_fingerprint=d.get("data_fingerprint", ""),
-            model_spec_fingerprint=d.get("model_spec_fingerprint", ""),
-            posterior_fingerprint=d.get("posterior_fingerprint", ""),
-            planning_objective_fingerprint=d.get("planning_objective_fingerprint", ""),
-            outcome_authorisations=tuple(
-                ResolvedOutcomeAuthorisation.from_dict(a)
-                for a in d.get("outcome_authorisations", [])
-            ),
-            value_mapping_id=d.get("value_mapping_id"),
-            value_mapping_fingerprint=d.get("value_mapping_fingerprint"),
-            currency_context_fingerprint=d.get("currency_context_fingerprint"),
-            historical_fx_rate_set_id=d.get("historical_fx_rate_set_id"),
-            historical_fx_rate_set_fingerprint=d.get("historical_fx_rate_set_fingerprint"),
-            future_fx_assumption_id=d.get("future_fx_assumption_id"),
-            future_fx_assumption_fingerprint=d.get("future_fx_assumption_fingerprint"),
-            activity_definitions_fingerprint=d.get("activity_definitions_fingerprint"),
-            cost_mapping_fingerprint=d.get("cost_mapping_fingerprint"),
-            counterfactual_policy_fingerprint=d.get("counterfactual_policy_fingerprint", ""),
-            nbt_completeness_fingerprint=d.get("nbt_completeness_fingerprint"),
-        )
+# ScenarioGovernanceDependencies imported from .planning.value
+# (defined in ancestry_mmm/core/planning/value.py)
 
 
-@dataclass(frozen=True)
-class ScenarioEvaluationResult:
-    """Structured manual evaluation result with full governance provenance.
-
-    G2A.7a.6: includes ``governance_dependencies`` for persistence."""
-    predicted: pd.DataFrame
-    planning_objective: PlanningObjective | None
-    governance_mode: str
-    artefact_kind: str
-    resolved_governance: ResolvedPlanningGovernance | None = None
-    governance_dependencies: ScenarioGovernanceDependencies | None = None
-    activity_definitions_fingerprint: str | None = None
-    cost_mapping_fingerprint: str | None = None
-    counterfactual_policy_fingerprint: str = ""
-    economics_coverage: dict | None = None
-
-    def to_dict(self) -> dict:
-        return {
-            "predicted": self.predicted,
-            "planning_objective": self.planning_objective.to_dict() if self.planning_objective else None,
-            "governance_mode": self.governance_mode,
-            "artefact_kind": self.artefact_kind,
-            "resolved_governance": self.resolved_governance.to_dict() if self.resolved_governance else None,
-            "governance_dependencies": self.governance_dependencies.to_dict() if self.governance_dependencies else None,
-            "activity_definitions_fingerprint": self.activity_definitions_fingerprint,
-            "cost_mapping_fingerprint": self.cost_mapping_fingerprint,
-            "counterfactual_policy_fingerprint": self.counterfactual_policy_fingerprint,
-            "economics_coverage": self.economics_coverage,
-        }
+# ScenarioEvaluationResult imported from .planning.value
 
 
-@dataclass(frozen=True)
-class OutcomeValueMapping:
-    """Canonical outcome-level value mapping for expected-value calculations.
-
-    Outcome-ID weights are authoritative. Legacy segment LTV is converted
-    through an explicit migration adapter before reaching this type.
-
-    G2A.7a.9: ``mapping_fingerprint`` is a deterministic fingerprint of the
-    mapping's identity and content. A caller-supplied ``mapping_fingerprint``
-    may disagree with the calculated fingerprint — in that case the
-    calculated fingerprint is authoritative (``mapping_fingerprint`` property
-    recalculates it)."""
-    value_by_outcome_id: Mapping[str, float]
-    currency_by_outcome_id: Mapping[str, str]
-    mapping_id: str = "default"
-    mapping_fingerprint: str = ""
-    source: str = "outcome_catalogue"
-
-    def __post_init__(self) -> None:
-        """Validate that every value and currency field is populated,
-        and that the fingerprint is consistent with the content."""
-        for oid, val in self.value_by_outcome_id.items():
-            if val is None or (isinstance(val, float) and not np.isfinite(val)):
-                raise ValueError(
-                    f"OutcomeValueMapping: outcome '{oid}' has a non-finite or "
-                    f"None value ({val}). Every target must have a finite value."
-                )
-            # G2A.7a.10 (brief section 9.4): until Finance approves negative
-            # value semantics, official marketing value/LTV mappings reject
-            # negative values rather than silently accepting a business
-            # meaning ("this outcome destroys value") no one has signed off.
-            if val < 0:
-                raise ValueError(
-                    f"OutcomeValueMapping: outcome '{oid}' has a negative value "
-                    f"({val}). Negative outcome values are not a governed "
-                    "policy - Finance has not approved negative value "
-                    "semantics."
-                )
-        for oid, curr in self.currency_by_outcome_id.items():
-            if not curr or not isinstance(curr, str) or len(curr) != 3 or not curr.isupper():
-                raise ValueError(
-                    f"OutcomeValueMapping: outcome '{oid}' has an invalid currency "
-                    f"'{curr}'. Must be a three-letter uppercase ISO code."
-                )
-        calculated = self._calculate_fingerprint()
-        # G2A.7a.10 (brief section 9.3): a caller-supplied mapping_fingerprint
-        # that disagrees with the calculated one must not survive silently -
-        # raise, don't only warn (the fingerprint is meant to be the
-        # authoritative proof a saved mapping is exactly what was approved).
-        if self.mapping_fingerprint and self.mapping_fingerprint != calculated:
-            raise ValueError(
-                f"OutcomeValueMapping.mapping_fingerprint "
-                f"({self.mapping_fingerprint[:16]}...) disagrees with the "
-                f"calculated fingerprint ({calculated[:16]}...) of the "
-                "supplied content. A caller-supplied fingerprint must match "
-                "the content exactly, or be omitted."
-            )
-
-    def _calculate_fingerprint(self) -> str:
-        """Deterministic SHA-256 fingerprint of the mapping content."""
-        payload = {
-            "mapping_id": self.mapping_id,
-            "source": self.source,
-            "value_by_outcome_id": {
-                k: v for k, v in sorted(self.value_by_outcome_id.items())
-            },
-            "currency_by_outcome_id": {
-                k: v for k, v in sorted(self.currency_by_outcome_id.items())
-            },
-        }
-        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
-        return hashlib.sha256(encoded).hexdigest()
-
-    @property
-    def fingerprint(self) -> str:
-        """The authoritative mapping fingerprint, always recalculated."""
-        return self._calculate_fingerprint()
-
-    def to_dict(self) -> dict:
-        return {
-            "value_by_outcome_id": dict(self.value_by_outcome_id),
-            "currency_by_outcome_id": dict(self.currency_by_outcome_id),
-            "mapping_id": self.mapping_id,
-            "mapping_fingerprint": self.fingerprint,
-            "source": self.source,
-        }
-
-    @classmethod
-    def from_legacy_segment_ltv(
-        cls,
-        segment_by_outcome_id: Mapping[str, str],
-        segment_ltv: Mapping[str, float],
-        currency: str,
-        *,
-        outcome_ids: tuple[str, ...],
-    ) -> "OutcomeValueMapping":
-        """Strict adapter: convert legacy segment-level LTV to outcome-ID
-        value mapping. Every target outcome must map to one existing segment
-        value. Missing values block rather than defaulting to 0.0.
-
-        G2A.7a.9: requires explicit ``segment_by_outcome_id`` mapping and
-        ``currency``. No hard-coded GBP. Missing segment-value entries raise.
-
-        Args:
-            segment_by_outcome_id: Maps outcome_id to segment name.
-            segment_ltv: Maps segment name to LTV value.
-            currency: ISO currency code for all values.
-            outcome_ids: The outcome IDs to include in the mapping.
-        """
-        if not currency or len(currency) != 3 or not currency.isupper():
-            raise ValueError(
-                f"from_legacy_segment_ltv requires a valid three-letter "
-                f"uppercase ISO currency, got {currency!r}."
-            )
-        value_by_outcome_id: dict[str, float] = {}
-        currency_by_outcome_id: dict[str, str] = {}
-        for oid in outcome_ids:
-            segment = segment_by_outcome_id.get(oid)
-            if segment is None:
-                raise ValueError(
-                    f"Outcome '{oid}' has no segment mapping in "
-                    "segment_by_outcome_id. Every target outcome must "
-                    "map to exactly one segment."
-                )
-            if segment not in segment_ltv:
-                raise ValueError(
-                    f"Segment '{segment}' (for outcome '{oid}') has no "
-                    "value in segment_ltv. Missing values block; they "
-                    "do not become zero."
-                )
-            value = segment_ltv[segment]
-            if value is None or not np.isfinite(value):
-                raise ValueError(
-                    f"Segment '{segment}' (for outcome '{oid}') has a "
-                    f"non-finite value ({value})."
-                )
-            value_by_outcome_id[oid] = float(value)
-            currency_by_outcome_id[oid] = currency
-
-        return cls(
-            value_by_outcome_id=value_by_outcome_id,
-            currency_by_outcome_id=currency_by_outcome_id,
-            mapping_id="legacy_segment_ltv_migration",
-            source="legacy_segment_ltv_migration",
-        )
+# OutcomeValueMapping imported from .planning.value
+# (defined in ancestry_mmm/core/planning/value.py)
 
 
-@dataclass(frozen=True)
-class CurrencyContext:
+# CurrencyContext imported from .planning.value
+# (defined in ancestry_mmm/core/planning/value.py)
     """Currency context for scenario planning and reporting.
 
     For single-market planning: local monetary decisions remain in the
@@ -531,177 +284,11 @@ class CurrencyContext:
         return cls(**payload)
 
 
-@dataclass(frozen=True)
-class ScenarioValidationContext:
-    """Complete current project state for scenario dependency validation.
-
-    A scenario may be ``current`` only when every required saved dependency
-    was compared with this context. Omitted fields prevent ``current``
-    status.
-
-    Required (non-optional) fields are mandatory for every official check.
-    Optional fields are use-specific (activity, cost, NBT).
-
-    G2A.7a.9: ``__post_init__`` rejects blank required fields and empty
-    collections. Use ``validation_context_from_legacy_args()`` for the
-    compatibility adapter path."""
-
-    model_run_id: str
-    model_approval_fingerprint: str
-    data_fingerprint: str
-    model_spec_fingerprint: str
-    posterior_fingerprint: str
-    planning_objective: PlanningObjective
-    outcome_definitions: tuple
-    outcome_approvals: tuple
-    counterfactual_fingerprint: str
-    value_mapping_fingerprint: str | None = None
-    currency_context_fingerprint: str | None = None
-    activity_fingerprint: Optional[str] = None
-    cost_fingerprint: Optional[str] = None
-    nbt_completeness_metadata: Optional[dict] = None
-
-    def __post_init__(self) -> None:
-        """Reject blank required fields and empty collections.
-
-        Use-specific fields (value_mapping_fingerprint,
-        currency_context_fingerprint, activity_fingerprint, cost_fingerprint,
-        nbt_completeness_metadata) may remain None when the saved scenario
-        does not depend on them - only the scenario's own saved dependencies
-        determine which fields are mandatory, not the context alone."""
-        if not self.model_run_id or not self.model_run_id.strip():
-            raise ValueError("ScenarioValidationContext.model_run_id must be non-blank")
-        if not self.model_approval_fingerprint or not self.model_approval_fingerprint.strip():
-            raise ValueError("ScenarioValidationContext.model_approval_fingerprint must be non-blank")
-        if not self.data_fingerprint or not self.data_fingerprint.strip():
-            raise ValueError("ScenarioValidationContext.data_fingerprint must be non-blank")
-        if not self.model_spec_fingerprint or not self.model_spec_fingerprint.strip():
-            raise ValueError("ScenarioValidationContext.model_spec_fingerprint must be non-blank")
-        if not self.posterior_fingerprint or not self.posterior_fingerprint.strip():
-            raise ValueError("ScenarioValidationContext.posterior_fingerprint must be non-blank")
-        if self.planning_objective is None:
-            raise ValueError("ScenarioValidationContext.planning_objective must not be None")
-        if not self.planning_objective.is_valid_for_official_planning:
-            raise ValueError(
-                "ScenarioValidationContext.planning_objective must be valid for official planning"
-            )
-        if not self.outcome_definitions:
-            raise ValueError("ScenarioValidationContext.outcome_definitions must not be empty")
-        if not self.outcome_approvals:
-            raise ValueError("ScenarioValidationContext.outcome_approvals must not be empty")
-        if not self.counterfactual_fingerprint or not self.counterfactual_fingerprint.strip():
-            raise ValueError("ScenarioValidationContext.counterfactual_fingerprint must be non-blank")
+# ScenarioValidationContext imported from .planning.value
 
 
-@dataclass(frozen=True)
-class PlanningObjective:
-    """Typed objective and estimand stored with every scenario.
-
-    G2A.7 (REQ-PLAN-001): no business metric may be the dataclass default.
-    `metric_key` and `target_outcome_ids` must be set explicitly by the
-    caller. An empty or missing `metric_key` fails official planning
-    validation; it does not silently default to NBT, GSA, or any other KPI."""
-
-    estimand: str = "incremental_outcome"
-    metric_key: str = ""
-    target_outcome_ids: Tuple[str, ...] = ()
-    value_currency: Optional[str] = None
-    spend_scope: str = "cost_bearing_decisions"
-    activity_scope: str = "optimisable_interventions"
-    counterfactual_policy_fingerprint: Optional[str] = None
-    schema_version: int = 3
-
-    def __post_init__(self) -> None:
-        if self.estimand not in PLANNING_ESTIMANDS:
-            raise ValueError(f"Unsupported planning estimand: {self.estimand}")
-        if self.estimand == "incremental_value" and not self.value_currency:
-            raise ValueError("value objectives require value_currency")
-        # G2A.7a.7: reject duplicate target_outcome_ids
-        if len(self.target_outcome_ids) != len(set(self.target_outcome_ids)):
-            dupes = [
-                oid for oid in self.target_outcome_ids
-                if list(self.target_outcome_ids).count(oid) > 1
-            ]
-            raise ValueError(
-                f"PlanningObjective target_outcome_ids contains duplicates: "
-                f"{sorted(set(dupes))}."
-            )
-
-    @property
-    def is_valid_for_official_planning(self) -> bool:
-        """True if this objective has enough explicit information to be
-        validated against outcome approvals. Does not check whether approvals
-        actually exist — that's the caller's responsibility via
-        outcome_approval.require_outcome_approval."""
-        return bool(self.metric_key and self.target_outcome_ids)
-
-    def to_dict(self) -> dict:
-        values = asdict(self)
-        values["target_outcome_ids"] = list(self.target_outcome_ids)
-        return values
-
-    @classmethod
-    def from_dict(cls, d: dict) -> "PlanningObjective":
-        known = set(cls.__dataclass_fields__)
-        payload = {k: v for k, v in d.items() if k in known}
-        if "target_outcome_ids" in payload and isinstance(payload["target_outcome_ids"], list):
-            payload["target_outcome_ids"] = tuple(payload["target_outcome_ids"])
-        # Migration: old schema versions with NBT default — accept the
-        # explicit value if present, but leave empty otherwise (don't backfill)
-        if "schema_version" not in payload or payload.get("schema_version", 0) < 3:
-            if not payload.get("metric_key"):
-                # Old default was NBT — strip it, don't silently carry it forward
-                pass
-        return cls(**payload)
-
-
-def planning_objective_from_legacy(
-    objective: str,
-    *,
-    value_currency: str | None = None,
-    counterfactual_policy_fingerprint: str | None = None,
-) -> PlanningObjective:
-    """Migrate a saved legacy objective string to the typed G2A.5 contract.
-
-    The mapping only identifies intent. It does NOT grant outcome approval.
-    An explicit legacy NBT objective may load, but official use remains
-    blocked until the linked NBT outcome definition is approved for planning
-    or optimisation (REQ-PLAN-001, G2A.7)."""
-
-    metric_keys = {
-        "fh_gsa": METRIC_KEY_FH_GSA,
-        "fh_signups": METRIC_KEY_FH_SIGNUP,
-        "fh_net_billthrough": METRIC_KEY_FH_NET_BILLTHROUGH_COUNT,
-        "dna_kits": METRIC_KEY_DNA_KIT_SALE,
-        "weighted_mix": "weighted_mix",
-    }
-    if objective in {"expected_value", "value"}:
-        if not value_currency:
-            raise ValueError(
-                "Legacy 'expected_value' objective migration requires an "
-                "explicit value_currency. Expected-value scenarios must "
-                "specify a governed currency. Pass value_currency= to "
-                "planning_objective_from_legacy() or use the typed "
-                "PlanningObjective constructor directly."
-            )
-        return PlanningObjective(
-            estimand="incremental_value",
-            metric_key="expected_value",
-            value_currency=value_currency,
-            counterfactual_policy_fingerprint=(
-                counterfactual_policy_fingerprint
-            ),
-        )
-    if objective not in metric_keys:
-        raise ValueError(f"cannot migrate unknown legacy objective {objective!r}")
-    return PlanningObjective(
-        estimand="incremental_outcome",
-        metric_key=metric_keys[objective],
-        counterfactual_policy_fingerprint=counterfactual_policy_fingerprint,
-        # Legacy objectives have empty target_outcome_ids — official
-        # planning validation will require them to be filled in explicitly
-        # or will block with a clear message (REQ-PLAN-001).
-    )
+# PlanningObjective imported from .planning.value
+# planning_objective_from_legacy imported from .planning.value
 
 
 def fingerprint_planning_objective(objective: PlanningObjective) -> str:
@@ -830,64 +417,10 @@ def resolve_planning_objective(
 
 
 # ---------------------------------------------------------------------------
-# Scenario dependency validation (G2A.7a.3)
-# ---------------------------------------------------------------------------
-
-def validation_context_from_legacy_args(
-    *,
-    model_run_id: str,
-    model_approval_fingerprint: str,
-    data_fingerprint: str,
-    model_spec_fingerprint: str,
-    posterior_fingerprint: str,
-    planning_objective: PlanningObjective,
-    outcome_definitions: tuple,
-    outcome_approvals: tuple,
-    counterfactual_fingerprint: str,
-    value_mapping_fingerprint: str | None = None,
-    currency_context_fingerprint: str | None = None,
-    activity_fingerprint: Optional[str] = None,
-    cost_fingerprint: Optional[str] = None,
-    nbt_completeness_metadata: Optional[dict] = None,
-) -> ScenarioValidationContext:
-    """Compatibility adapter that builds a complete ``ScenarioValidationContext``
-    from the legacy individual-argument path.
-
-    Fails with ``ValueError`` when a required field is blank or missing -
-    no silent defaulting or partial construction. This replaces the old
-    pattern of passing individual ``current_*`` arguments and silently
-    skipping comparison when a dependency is absent.
-
-    G2A.7a.9: every official validation call must go through this factory
-    or construct a complete context directly. The context's own
-    ``__post_init__`` enforces the same rules."""
-    return ScenarioValidationContext(
-        model_run_id=model_run_id,
-        model_approval_fingerprint=model_approval_fingerprint,
-        data_fingerprint=data_fingerprint,
-        model_spec_fingerprint=model_spec_fingerprint,
-        posterior_fingerprint=posterior_fingerprint,
-        planning_objective=planning_objective,
-        outcome_definitions=outcome_definitions,
-        outcome_approvals=outcome_approvals,
-        counterfactual_fingerprint=counterfactual_fingerprint,
-        value_mapping_fingerprint=value_mapping_fingerprint,
-        currency_context_fingerprint=currency_context_fingerprint,
-        activity_fingerprint=activity_fingerprint,
-        cost_fingerprint=cost_fingerprint,
-        nbt_completeness_metadata=nbt_completeness_metadata,
-    )
+# validation_context_from_legacy_args imported from .planning.value
 
 
-@dataclass(frozen=True)
-class ScenarioDependencyIssue:
-    """One detected staleness or invalidity issue in a saved scenario's
-    governance dependencies."""
-    artefact_id: str
-    issue_type: str  # "stale", "legacy_unverified", "invalid", "missing"
-    detail: str
-    dependency_type: str = "unknown"
-    reason_code: str = ""
+# ScenarioDependencyIssue imported from .planning.value
 
 
 def validate_scenario_dependencies(
