@@ -297,6 +297,14 @@ class ScenarioGovernanceDependencies:
     cost_mapping_fingerprint: str | None = None
     counterfactual_policy_fingerprint: str = ""
     nbt_completeness_fingerprint: str | None = None
+    # PR 56D: validation-policy and readiness artefact binding
+    validation_policy_id: str = ""
+    validation_policy_version: str = ""
+    validation_policy_fingerprint: str = ""
+    readiness_artefact_id: str = ""
+    readiness_fingerprint: str = ""
+    diagnostic_artefact_fingerprint: str = ""
+    model_identity_fingerprint: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -320,6 +328,13 @@ class ScenarioGovernanceDependencies:
             "cost_mapping_fingerprint": self.cost_mapping_fingerprint,
             "counterfactual_policy_fingerprint": self.counterfactual_policy_fingerprint,
             "nbt_completeness_fingerprint": self.nbt_completeness_fingerprint,
+            "validation_policy_id": self.validation_policy_id,
+            "validation_policy_version": self.validation_policy_version,
+            "validation_policy_fingerprint": self.validation_policy_fingerprint,
+            "readiness_artefact_id": self.readiness_artefact_id,
+            "readiness_fingerprint": self.readiness_fingerprint,
+            "diagnostic_artefact_fingerprint": self.diagnostic_artefact_fingerprint,
+            "model_identity_fingerprint": self.model_identity_fingerprint,
         }
 
     @classmethod
@@ -350,6 +365,13 @@ class ScenarioGovernanceDependencies:
                 "counterfactual_policy_fingerprint", ""
             ),
             nbt_completeness_fingerprint=d.get("nbt_completeness_fingerprint"),
+            validation_policy_id=d.get("validation_policy_id", ""),
+            validation_policy_version=d.get("validation_policy_version", ""),
+            validation_policy_fingerprint=d.get("validation_policy_fingerprint", ""),
+            readiness_artefact_id=d.get("readiness_artefact_id", ""),
+            readiness_fingerprint=d.get("readiness_fingerprint", ""),
+            diagnostic_artefact_fingerprint=d.get("diagnostic_artefact_fingerprint", ""),
+            model_identity_fingerprint=d.get("model_identity_fingerprint", ""),
         )
 
 

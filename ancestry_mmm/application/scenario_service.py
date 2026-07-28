@@ -192,6 +192,7 @@ class ScenarioService:
                 artefact_kind=sc_input.artefact_kind,
                 value_mapping=sc_input.value_mapping,
                 currency_context=sc_input.currency_context,
+                approval_readiness=sc_input.approval_readiness,
             )
         except Exception as exc:
             errors.append(f"Manual scenario evaluation failed: {exc}")
@@ -262,6 +263,7 @@ class ScenarioService:
                 value_currency=opt_input.value_currency,
                 value_mapping=opt_input.value_mapping,
                 currency_context=opt_input.currency_context,
+                approval_readiness=opt_input.approval_readiness,
             )
         except Exception as exc:
             errors.append(f"Optimisation failed: {exc}")
