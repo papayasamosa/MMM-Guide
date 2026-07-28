@@ -58,17 +58,59 @@ def default_markets() -> List[MarketSimSpec]:
     short-history - a weak-data market that should be shrunk hard toward the
     shared distribution in Phase 2's partial pooling."""
     return [
-        MarketSimSpec(name="UK", n_weeks=104, size_multiplier=1.0, k_multiplier=1.0, beta_multiplier=1.0),
-        MarketSimSpec(name="Australia", n_weeks=104, size_multiplier=0.4, k_multiplier=0.6, beta_multiplier=0.8),
-        MarketSimSpec(name="NewMarket", n_weeks=26, size_multiplier=0.12, k_multiplier=0.3, beta_multiplier=0.5),
+        MarketSimSpec(
+            name="UK",
+            n_weeks=104,
+            size_multiplier=1.0,
+            k_multiplier=1.0,
+            beta_multiplier=1.0,
+        ),
+        MarketSimSpec(
+            name="Australia",
+            n_weeks=104,
+            size_multiplier=0.4,
+            k_multiplier=0.6,
+            beta_multiplier=0.8,
+        ),
+        MarketSimSpec(
+            name="NewMarket",
+            n_weeks=26,
+            size_multiplier=0.12,
+            k_multiplier=0.3,
+            beta_multiplier=0.5,
+        ),
     ]
 
 
 def default_channels() -> List[ChannelSimSpec]:
     return [
-        ChannelSimSpec(name="TV", decay=0.6, K=500.0, S=1.8, beta=1.4, base_cost_per_unit=8.0, annual_inflation=0.06),
-        ChannelSimSpec(name="Search", decay=0.2, K=200.0, S=1.2, beta=0.9, base_cost_per_unit=2.0, annual_inflation=0.08),
-        ChannelSimSpec(name="Social", decay=0.35, K=300.0, S=1.5, beta=0.7, base_cost_per_unit=5.0, annual_inflation=0.10),
+        ChannelSimSpec(
+            name="TV",
+            decay=0.6,
+            K=500.0,
+            S=1.8,
+            beta=1.4,
+            base_cost_per_unit=8.0,
+            annual_inflation=0.06,
+        ),
+        ChannelSimSpec(
+            name="Search",
+            decay=0.2,
+            K=200.0,
+            S=1.2,
+            beta=0.9,
+            base_cost_per_unit=2.0,
+            annual_inflation=0.08,
+        ),
+        ChannelSimSpec(
+            name="Social",
+            decay=0.35,
+            K=300.0,
+            S=1.5,
+            beta=0.7,
+            base_cost_per_unit=5.0,
+            annual_inflation=0.10,
+        ),
     ]
 
 
@@ -81,7 +123,9 @@ class SimulationGroundTruth:
     market_beta: Dict[str, Dict[str, Dict[str, float]]] = field(default_factory=dict)
     channel_decay: Dict[str, float] = field(default_factory=dict)
     channel_S: Dict[str, float] = field(default_factory=dict)
-    cost_per_unit: Dict[str, Dict[str, np.ndarray]] = field(default_factory=dict)  # market -> channel -> weekly array
+    cost_per_unit: Dict[str, Dict[str, np.ndarray]] = field(
+        default_factory=dict
+    )  # market -> channel -> weekly array
 
 
 @dataclass
@@ -142,16 +186,25 @@ def simulate_market_specific_panel(
     for market in markets:
         n = market.n_weeks
         dates = pd.date_range("2022-01-05", periods=n, freq="W")
-        rows: Dict[str, np.ndarray] = {"date": dates.values, "market": np.array([market.name] * n)}
+        rows: Dict[str, np.ndarray] = {
+            "date": dates.values,
+            "market": np.array([market.name] * n),
+        }
 
         ground_truth.market_K[market.name] = {}
         ground_truth.market_beta[market.name] = {seg: {} for seg in segments}
         ground_truth.cost_per_unit[market.name] = {}
 
-        segment_contribution: Dict[str, np.ndarray] = {seg: np.zeros(n) for seg in segments}
+        segment_contribution: Dict[str, np.ndarray] = {
+            seg: np.zeros(n) for seg in segments
+        }
 
         for channel in channels:
-            market_K = channel.K * market.k_multiplier * float(np.exp(rng.normal(0, market_k_sigma)))
+            market_K = (
+                channel.K
+                * market.k_multiplier
+                * float(np.exp(rng.normal(0, market_k_sigma)))
+            )
             ground_truth.market_K[market.name][channel.name] = market_K
 
             weeks = np.arange(n)
@@ -161,13 +214,17 @@ def simulate_market_specific_panel(
                 * (1 + channel.annual_inflation) ** years
                 * (1 + rng.normal(0, 0.02, size=n))
             )
-            cost_per_unit = np.clip(cost_per_unit, a_min=channel.base_cost_per_unit * 0.5, a_max=None)
+            cost_per_unit = np.clip(
+                cost_per_unit, a_min=channel.base_cost_per_unit * 0.5, a_max=None
+            )
             ground_truth.cost_per_unit[market.name][channel.name] = cost_per_unit
 
             base_units = market_K * market.size_multiplier * 1.5
             seasonal = 1 + 0.25 * np.sin(2 * np.pi * weeks / 52.0)
             media_units = np.clip(
-                base_units * seasonal * (1 + rng.normal(0, 0.15, size=n)), a_min=0.0, a_max=None
+                base_units * seasonal * (1 + rng.normal(0, 0.15, size=n)),
+                a_min=0.0,
+                a_max=None,
             )
             spend = media_units * cost_per_unit
 
@@ -185,7 +242,9 @@ def simulate_market_specific_panel(
                     * float(np.exp(rng.normal(0, market_beta_sigma)))
                 )
                 ground_truth.market_beta[market.name][seg][channel.name] = seg_beta
-                segment_contribution[seg] = segment_contribution[seg] + seg_beta * saturated
+                segment_contribution[seg] = (
+                    segment_contribution[seg] + seg_beta * saturated
+                )
 
         trend = np.linspace(1.0, 1.1, n)
         for seg in segments:
@@ -198,4 +257,10 @@ def simulate_market_specific_panel(
         frames.append(pd.DataFrame(rows))
 
     panel = pd.concat(frames, ignore_index=True)
-    return SimulationResult(panel=panel, ground_truth=ground_truth, markets=markets, channels=channels, segments=segments)
+    return SimulationResult(
+        panel=panel,
+        ground_truth=ground_truth,
+        markets=markets,
+        channels=channels,
+        segments=segments,
+    )

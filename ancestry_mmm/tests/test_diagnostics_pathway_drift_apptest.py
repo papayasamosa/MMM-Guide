@@ -21,17 +21,26 @@ def _frame():
     return {
         "outcome_ids": ["fh_new_gsa"],
         "Y": np.column_stack([np.full(n, 10.0)]),
-        "dates": np.array([f"2024-01-{i + 1:02d}" for i in range(n)], dtype="datetime64[D]"),
+        "dates": np.array(
+            [f"2024-01-{i + 1:02d}" for i in range(n)], dtype="datetime64[D]"
+        ),
         "df": None,
     }
 
 
 def _pathway_dict(**overrides):
     d = {
-        "pathway_id": "p1", "channel": "TV", "source_product": "Family History",
-        "target_outcome_id": "fh_new_gsa", "role": "primary_direct", "lag_type": "none",
-        "lag_weeks": None, "prior_scale": 1.0, "include_in_attribution": True,
-        "include_in_planning": True, "evidence_status": "untested",
+        "pathway_id": "p1",
+        "channel": "TV",
+        "source_product": "Family History",
+        "target_outcome_id": "fh_new_gsa",
+        "role": "primary_direct",
+        "lag_type": "none",
+        "lag_weeks": None,
+        "prior_scale": 1.0,
+        "include_in_attribution": True,
+        "include_in_planning": True,
+        "evidence_status": "untested",
     }
     d.update(overrides)
     return d
@@ -39,15 +48,20 @@ def _pathway_dict(**overrides):
 
 def _meta(outcome_ids, pathway_catalogue_at_fit=None):
     return SimpleNamespace(
-        outcome_ids=outcome_ids, direct_dna_outcome_ids=[], outcome_catalogue_at_fit=[],
+        outcome_ids=outcome_ids,
+        direct_dna_outcome_ids=[],
+        outcome_catalogue_at_fit=[],
         pathway_catalogue_at_fit=pathway_catalogue_at_fit or [],
     )
 
 
 def _spec_dict():
     return ModelSpec(
-        date_col="date", market_col="market", markets=["UK"],
-        segment_outcomes={"New": "fh_new_gsa"}, channels=["TV"],
+        date_col="date",
+        market_col="market",
+        markets=["UK"],
+        segment_outcomes={"New": "fh_new_gsa"},
+        channels=["TV"],
     ).to_dict()
 
 
@@ -71,7 +85,9 @@ def test_unchanged_pathway_shows_no_drift_info():
     fit_time_pathway = MediaOutcomePathway.from_dict(_pathway_dict())
     at.session_state["trace"] = object()
     at.session_state["frame"] = frame
-    at.session_state["model_meta"] = _meta(frame["outcome_ids"], pathway_catalogue_at_fit=[fit_time_pathway])
+    at.session_state["model_meta"] = _meta(
+        frame["outcome_ids"], pathway_catalogue_at_fit=[fit_time_pathway]
+    )
     at.session_state["media_outcome_pathways"] = [_pathway_dict()]
     at.session_state["model_spec"] = _spec_dict()
     at.run()
@@ -84,12 +100,18 @@ def test_changed_pathway_role_shows_drift_info():
 
     at = AppTest.from_file(str(PAGE), default_timeout=60)
     frame = _frame()
-    fit_time_pathway = MediaOutcomePathway.from_dict(_pathway_dict(role="primary_direct"))
+    fit_time_pathway = MediaOutcomePathway.from_dict(
+        _pathway_dict(role="primary_direct")
+    )
     at.session_state["trace"] = object()
     at.session_state["frame"] = frame
-    at.session_state["model_meta"] = _meta(frame["outcome_ids"], pathway_catalogue_at_fit=[fit_time_pathway])
+    at.session_state["model_meta"] = _meta(
+        frame["outcome_ids"], pathway_catalogue_at_fit=[fit_time_pathway]
+    )
     at.session_state["media_outcome_pathways"] = [_pathway_dict(role="excluded")]
     at.session_state["model_spec"] = _spec_dict()
     at.run()
     assert not at.exception, f"page raised: {at.exception}"
-    assert any("2 media-outcome pathway(s) differ" in (w.value or "") for w in at.warning)
+    assert any(
+        "2 media-outcome pathway(s) differ" in (w.value or "") for w in at.warning
+    )

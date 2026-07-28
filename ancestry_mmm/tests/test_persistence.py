@@ -7,7 +7,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from ancestry_mmm.core.approval import ApprovalMismatchError, ModelApproval, fingerprint_model_approval
+from ancestry_mmm.core.approval import (
+    ApprovalMismatchError,
+    ModelApproval,
+    fingerprint_model_approval,
+)
 from ancestry_mmm.core.fingerprint import (
     fingerprint_dataframe,
     fingerprint_model_spec,
@@ -317,10 +321,7 @@ def test_media_input_and_cost_governance_round_trip(tmp_path, sample_project):
     assert imported["media_input_specs"] == project["media_input_specs"]
     assert imported["media_cost_mappings"] == project["media_cost_mappings"]
     assert imported["media_input_support"] == project["media_input_support"]
-    assert (
-        imported["monetary_spend_support"]
-        == project["monetary_spend_support"]
-    )
+    assert imported["monetary_spend_support"] == project["monetary_spend_support"]
     from ancestry_mmm.core.activities import ActivityDefinition
 
     assert imported["activity_definitions"] == [
@@ -349,9 +350,7 @@ def test_export_then_import_reproduces_scenarios_and_constraints(
     assert restored_scenario["planning_objective"] is None
     assert restored_scenario["_legacy_unverified_reason"] == "missing_value_currency"
     assert restored_scenario["scenario_plan"] == {
-        "monetary_decisions_by_period": {
-            "2024-01": {"TV_Brand": 100.0}
-        },
+        "monetary_decisions_by_period": {"2024-01": {"TV_Brand": 100.0}},
         "activity_quantity_assumptions_by_period": {},
         "activity_units": None,
         "schema_version": 1,
@@ -375,7 +374,8 @@ def test_export_then_import_reproduces_scenarios_and_constraints(
 
 
 def test_legacy_value_scenario_without_currency_stays_loadable_and_blocked(
-    tmp_path, sample_project,
+    tmp_path,
+    sample_project,
 ):
     """G2A.7a.10 (brief section 14.2): a legacy objective="value" scenario
     with no governed currency on record must remain technically loadable
@@ -399,9 +399,16 @@ def test_legacy_value_scenario_without_currency_stays_loadable_and_blocked(
         resolve_planning_objective(
             objective_kind="expected_value",
             meta=FHModelMeta(
-                markets=["UK"], outcome_ids=["New"], channels=["TV_Brand"],
-                dna_channels=[], dna_channel_idx=[], non_dna_idx=[0],
-                dna_outcome_id=None, dna_lag_weeks=1, unpooled_markets=[], control_names=[],
+                markets=["UK"],
+                outcome_ids=["New"],
+                channels=["TV_Brand"],
+                dna_channels=[],
+                dna_channel_idx=[],
+                non_dna_idx=[0],
+                dna_outcome_id=None,
+                dna_lag_weeks=1,
+                unpooled_markets=[],
+                control_names=[],
             ),
             operation="planning",
             ltv={"New": 5.0},
@@ -412,16 +419,11 @@ def test_legacy_value_scenario_without_currency_stays_loadable_and_blocked(
     # still loadable, not a fresh crash surface).
     reexport_project = dict(sample_project)
     reexport_project["scenarios"] = imported["scenarios"]
-    second_output_path = export_project(
-        tmp_path / "bundle2.zip", **reexport_project
-    )
+    second_output_path = export_project(tmp_path / "bundle2.zip", **reexport_project)
     reimported = import_project(second_output_path)
     assert reimported["scenarios"][0]["objective"] == "value"
     assert reimported["scenarios"][0]["planning_objective"] is None
-    assert (
-        scenario_dependency_status(reimported["scenarios"][0])
-        == "legacy_unverified"
-    )
+    assert scenario_dependency_status(reimported["scenarios"][0]) == "legacy_unverified"
 
 
 def test_export_then_import_reproduces_trace(tmp_path, sample_project):
@@ -532,12 +534,18 @@ def test_resolve_imported_outcome_approvals_legacy_bundle_with_persisted_outcome
         "model_spec": None,
         "outcome_definitions": [
             {
-                "outcome_id": "fh_new_gsa", "product": FAMILY_HISTORY, "segment": "New",
-                "metric": "GSA", "source_column": "GSA_New",
+                "outcome_id": "fh_new_gsa",
+                "product": FAMILY_HISTORY,
+                "segment": "New",
+                "metric": "GSA",
+                "source_column": "GSA_New",
             },
             {
-                "outcome_id": "fh_new_signup", "product": FAMILY_HISTORY, "segment": "New",
-                "metric": "Sign-up", "source_column": "Signup_New",
+                "outcome_id": "fh_new_signup",
+                "product": FAMILY_HISTORY,
+                "segment": "New",
+                "metric": "Sign-up",
+                "source_column": "Signup_New",
             },
         ],
         "outcome_approvals": None,
@@ -553,11 +561,17 @@ def test_resolve_imported_outcome_approvals_legacy_bundle_with_derived_outcomes_
     # derived live from model_spec.segment_outcomes, same as every other
     # consumer of resolve_outcome_definitions.
     model_spec = ModelSpec(
-        date_col="date", market_col="market", markets=["UK"],
+        date_col="date",
+        market_col="market",
+        markets=["UK"],
         segment_outcomes={"New": "fh_new_gsa", "Winback": "fh_winback_gsa"},
         channels=["TV_Brand"],
     ).to_dict()
-    imported = {"model_spec": model_spec, "outcome_definitions": None, "outcome_approvals": None}
+    imported = {
+        "model_spec": model_spec,
+        "outcome_definitions": None,
+        "outcome_approvals": None,
+    }
     approvals, warnings = resolve_imported_outcome_approvals(imported)
     assert warnings == []
     # fh_outcomes_from_spec derives outcome_id as f"fh_{segment.lower()}".
@@ -567,12 +581,17 @@ def test_resolve_imported_outcome_approvals_legacy_bundle_with_derived_outcomes_
 
 def test_resolve_imported_outcome_approvals_no_legacy_migration_when_approvals_file_present():
     imported = {
-        "model_spec": None, "outcome_definitions": [],
+        "model_spec": None,
+        "outcome_definitions": [],
         "outcome_approvals": [
             {
-                "approval_id": "apr-1", "outcome_id": "fh_new_gsa",
-                "definition_fingerprint": "fp1", "status": "approved",
-                "allowed_uses": ["planning"], "approved_by": "Jane", "approved_at": "2026-01-01",
+                "approval_id": "apr-1",
+                "outcome_id": "fh_new_gsa",
+                "definition_fingerprint": "fp1",
+                "status": "approved",
+                "allowed_uses": ["planning"],
+                "approved_by": "Jane",
+                "approved_at": "2026-01-01",
             },
         ],
     }
@@ -584,11 +603,14 @@ def test_resolve_imported_outcome_approvals_no_legacy_migration_when_approvals_f
 
 def test_resolve_imported_outcome_approvals_reports_malformed_records_by_index():
     imported = {
-        "model_spec": None, "outcome_definitions": [],
+        "model_spec": None,
+        "outcome_definitions": [],
         "outcome_approvals": [
             {
-                "approval_id": "apr-1", "outcome_id": "fh_new_gsa",
-                "definition_fingerprint": "fp1", "status": "not_a_real_status",
+                "approval_id": "apr-1",
+                "outcome_id": "fh_new_gsa",
+                "definition_fingerprint": "fp1",
+                "status": "not_a_real_status",
             },
         ],
     }
@@ -603,8 +625,11 @@ def test_audit_resumability_officially_resumable_false_without_approvals():
         "raw_sources": {"source": pd.DataFrame({"x": [1]})},
         "transformed_data": pd.DataFrame({"x": [1]}),
         "model_spec": ModelSpec(
-            date_col="date", market_col="market", markets=["UK"],
-            segment_outcomes={"New": "fh_new_gsa"}, channels=["TV_Brand"],
+            date_col="date",
+            market_col="market",
+            markets=["UK"],
+            segment_outcomes={"New": "fh_new_gsa"},
+            channels=["TV_Brand"],
         ).to_dict(),
         "trace": object(),
         "model_meta": {},
@@ -624,8 +649,11 @@ def test_audit_resumability_officially_resumable_true_with_active_approval():
         "raw_sources": {"source": pd.DataFrame({"x": [1]})},
         "transformed_data": pd.DataFrame({"x": [1]}),
         "model_spec": ModelSpec(
-            date_col="date", market_col="market", markets=["UK"],
-            segment_outcomes={"New": "fh_new_gsa"}, channels=["TV_Brand"],
+            date_col="date",
+            market_col="market",
+            markets=["UK"],
+            segment_outcomes={"New": "fh_new_gsa"},
+            channels=["TV_Brand"],
         ).to_dict(),
         "trace": object(),
         "model_meta": {},
@@ -633,9 +661,13 @@ def test_audit_resumability_officially_resumable_true_with_active_approval():
         "outcome_definitions": None,
         "outcome_approvals": [
             {
-                "approval_id": "apr-1", "outcome_id": "fh_new_gsa",
-                "definition_fingerprint": "fp1", "status": "approved",
-                "allowed_uses": ["planning"], "approved_by": "Jane", "approved_at": "2026-01-01",
+                "approval_id": "apr-1",
+                "outcome_id": "fh_new_gsa",
+                "definition_fingerprint": "fp1",
+                "status": "approved",
+                "allowed_uses": ["planning"],
+                "approved_by": "Jane",
+                "approved_at": "2026-01-01",
             },
         ],
         "manifest": {"workflow_checkpoint": "approved"},
@@ -653,8 +685,11 @@ def test_audit_resumability_officially_resumable_not_gated_before_fitted_checkpo
         "raw_sources": {"source": pd.DataFrame({"x": [1]})},
         "transformed_data": pd.DataFrame({"x": [1]}),
         "model_spec": ModelSpec(
-            date_col="date", market_col="market", markets=["UK"],
-            segment_outcomes={"New": "fh_new_gsa"}, channels=["TV_Brand"],
+            date_col="date",
+            market_col="market",
+            markets=["UK"],
+            segment_outcomes={"New": "fh_new_gsa"},
+            channels=["TV_Brand"],
         ).to_dict(),
         "manifest": {"workflow_checkpoint": "pre_fit"},
     }
@@ -870,11 +905,7 @@ def test_public_bundle_round_trip_preserves_canonical_curve_artifacts(
     } <= set(imported["curve_bank_binary_files"])
     assert "canonical_curve_schema.json" in imported["curve_bank_files"]
     restored_draws = pd.read_parquet(
-        io.BytesIO(
-            imported["curve_bank_binary_files"][
-                "canonical_curve_draws.parquet"
-            ]
-        )
+        io.BytesIO(imported["curve_bank_binary_files"]["canonical_curve_draws.parquet"])
     )
     pd.testing.assert_frame_equal(restored_draws, draws)
 
@@ -906,9 +937,7 @@ def test_post_migration_refit_approval_curves_scenario_restore_public_api(
     )
     project = dict(consistent_project)
     project.update(
-        raw_sources={
-            "joined": consistent_project["transformed_data"].copy()
-        },
+        raw_sources={"joined": consistent_project["transformed_data"].copy()},
         migration_review={
             "migration_review_status": "refit_completed",
             "migration_reviewed_by": "Migration Reviewer",
@@ -949,8 +978,9 @@ def test_post_migration_refit_approval_curves_scenario_restore_public_api(
     assert imported["migration_review"]["migration_review_status"] == (
         "refit_completed"
     )
-    assert imported["migration_review"]["replacement_model_run_id"] == (
-        imported["model_run_id"]
+    assert (
+        imported["migration_review"]["replacement_model_run_id"]
+        == (imported["model_run_id"])
     )
     assert imported["curve_bank_binary_files"]
     assert imported["scenarios"][0]["name"] == "reviewed-plan"
@@ -1281,9 +1311,7 @@ def test_reordered_component_bundle_restores_identical_id_keyed_semantics(
         project = dict(consistent_project)
         project["model_meta"] = replace(
             consistent_project["model_meta"],
-            pathway_masks=ResolvedPathwayMasks(
-                components=ordered_components
-            ),
+            pathway_masks=ResolvedPathwayMasks(components=ordered_components),
         )
         imported = import_project(
             export_project(tmp_path / f"component-order-{index}.zip", **project)
@@ -1294,10 +1322,7 @@ def test_reordered_component_bundle_restores_identical_id_keyed_semantics(
 
     for masks in restored_masks:
         assert masks.lag_for_component("New", "TV_Brand") == 3
-        assert (
-            masks.prior_for_component("New", "TV_Brand", default=1.0)
-            == 0.2
-        )
+        assert masks.prior_for_component("New", "TV_Brand", default=1.0) == 0.2
         assert masks.active_cells(["New"], ["TV_Brand"]) == [(0, 0)]
     assert (
         restored_masks[0].primary_channels_by_outcome
@@ -1319,13 +1344,9 @@ def test_reordered_component_bundle_restores_identical_id_keyed_semantics(
         "scenarios",
     ],
 )
-def test_end_to_end_resume_at_each_checkpoint(
-    tmp_path, consistent_project, checkpoint
-):
+def test_end_to_end_resume_at_each_checkpoint(tmp_path, consistent_project, checkpoint):
     project = dict(consistent_project)
-    project["raw_sources"] = {
-        "joined": consistent_project["transformed_data"].copy()
-    }
+    project["raw_sources"] = {"joined": consistent_project["transformed_data"].copy()}
     project["workflow_state"] = {"checkpoint": checkpoint, "current_page": 9}
     project["media_outcome_pathways"] = [
         {
@@ -1380,9 +1401,7 @@ def test_end_to_end_resume_at_each_checkpoint(
             }
         ]
 
-    imported = import_project(
-        export_project(tmp_path / f"{checkpoint}.zip", **project)
-    )
+    imported = import_project(export_project(tmp_path / f"{checkpoint}.zip", **project))
     audit = audit_project_resumability(imported)
     assert audit["resumable"], audit
     assert audit["checkpoint"] == checkpoint
@@ -1408,9 +1427,7 @@ def test_end_to_end_resume_at_each_checkpoint(
         return
 
     assert reconstructed["posterior_params"] is not None
-    expected_params = extract_posterior_params(
-        project["trace"], project["model_meta"]
-    )
+    expected_params = extract_posterior_params(project["trace"], project["model_meta"])
     assert fingerprint_posterior(reconstructed["posterior_params"]) == (
         fingerprint_posterior(expected_params)
     )
@@ -1418,9 +1435,7 @@ def test_end_to_end_resume_at_each_checkpoint(
         verified, message = verify_imported_approval(imported, reconstructed)
         assert verified is not None, message
     if checkpoint == "curves":
-        assert imported["curve_bank_files"] == {
-            "curve.json": '{"channel": "TV_Brand"}'
-        }
+        assert imported["curve_bank_files"] == {"curve.json": '{"channel": "TV_Brand"}'}
     if checkpoint == "scenarios":
         assert imported["scenarios"][0]["name"] == "resume-plan"
         pd.testing.assert_frame_equal(
@@ -1704,9 +1719,7 @@ class TestLegacyBundleMigratesSafely:
             consistent_project["model_meta"], pathway_masks=legacy_masks
         )
 
-        first = import_project(
-            export_project(tmp_path / "legacy-first.zip", **project)
-        )
+        first = import_project(export_project(tmp_path / "legacy-first.zip", **project))
         first_state = reconstruct_model_state(first)
         first_masks = first_state["model_meta"].pathway_masks
         assert first_masks.legacy_governance_mode
@@ -1947,7 +1960,9 @@ class TestScenariosCheckpointOfficialResumability:
     scenario with a generic "incomplete_validation_context" message,
     regardless of whether it was actually current or stale."""
 
-    def _official_scenario(self, *, model_run_id, model_approval_fingerprint, counterfactual_fp="cf-fp-1"):
+    def _official_scenario(
+        self, *, model_run_id, model_approval_fingerprint, counterfactual_fp="cf-fp-1"
+    ):
         return {
             "name": "manual-uk",
             "market": "UK",
@@ -1962,8 +1977,10 @@ class TestScenariosCheckpointOfficialResumability:
                 "schema_version": 1,
             },
             "planning_objective": {
-                "estimand": "incremental_outcome", "metric_key": "fh_gsa",
-                "target_outcome_ids": ["New"], "value_currency": None,
+                "estimand": "incremental_outcome",
+                "metric_key": "fh_gsa",
+                "target_outcome_ids": ["New"],
+                "value_currency": None,
                 "spend_scope": "cost_bearing_decisions",
                 "activity_scope": "optimisable_interventions",
                 "counterfactual_policy_fingerprint": counterfactual_fp,
@@ -1981,10 +1998,13 @@ class TestScenariosCheckpointOfficialResumability:
                 "planning_objective_fingerprint": "will-be-filled",
                 "outcome_authorisations": [
                     {
-                        "outcome_id": "New", "requested_use": "planning",
+                        "outcome_id": "New",
+                        "requested_use": "planning",
                         "approval_id": "apr-gsa",
                         "definition_fingerprint": "will-be-filled",
-                        "market": "UK", "product": None, "segment": "New",
+                        "market": "UK",
+                        "product": None,
+                        "segment": "New",
                     }
                 ],
                 "activity_definitions_fingerprint": None,
@@ -1994,26 +2014,50 @@ class TestScenariosCheckpointOfficialResumability:
             },
         }
 
-    def _project_with_official_scenario(self, consistent_project, consistent_meta, *, scenario):
-        from ancestry_mmm.core.outcome_approval import OutcomeApproval, fingerprint_outcome_definition
-        from ancestry_mmm.core.outcomes import FAMILY_HISTORY, METRIC_KEY_FH_GSA, OutcomeDefinition
-        from ancestry_mmm.core.optimization import PlanningObjective, fingerprint_planning_objective
+    def _project_with_official_scenario(
+        self, consistent_project, consistent_meta, *, scenario
+    ):
+        from ancestry_mmm.core.outcome_approval import (
+            OutcomeApproval,
+            fingerprint_outcome_definition,
+        )
+        from ancestry_mmm.core.outcomes import (
+            FAMILY_HISTORY,
+            METRIC_KEY_FH_GSA,
+            OutcomeDefinition,
+        )
+        from ancestry_mmm.core.optimization import (
+            PlanningObjective,
+            fingerprint_planning_objective,
+        )
 
         outcome_def = OutcomeDefinition(
-            outcome_id="New", product=FAMILY_HISTORY, segment="New", metric="GSA",
-            metric_key=METRIC_KEY_FH_GSA, source_column="fh_new_gsa", unit="GSA",
-            aggregation_type="count", event_definition="A new subscriber",
-            date_basis="event_date", cohort_or_attribution_basis="signup_cohort",
+            outcome_id="New",
+            product=FAMILY_HISTORY,
+            segment="New",
+            metric="GSA",
+            metric_key=METRIC_KEY_FH_GSA,
+            source_column="fh_new_gsa",
+            unit="GSA",
+            aggregation_type="count",
+            event_definition="A new subscriber",
+            date_basis="event_date",
+            cohort_or_attribution_basis="signup_cohort",
             completeness_or_maturity_policy="Mature after 12 weeks",
             exclusions="Excludes internal/test accounts",
-            reconciliation_source="Finance report", business_owner="Analytics",
+            reconciliation_source="Finance report",
+            business_owner="Analytics",
             definition_version="1.0",
         )
         def_fp = fingerprint_outcome_definition(outcome_def)
         approval_record = OutcomeApproval(
-            approval_id="apr-gsa", outcome_id="New", definition_fingerprint=def_fp,
-            status="approved", allowed_uses=("planning",),
-            approved_by="Jane Analyst", approved_at="2026-01-01",
+            approval_id="apr-gsa",
+            outcome_id="New",
+            definition_fingerprint=def_fp,
+            status="approved",
+            allowed_uses=("planning",),
+            approved_by="Jane Analyst",
+            approved_at="2026-01-01",
         )
         # Deliberately does NOT add outcome_catalogue_at_fit to model_meta -
         # validate_scenario_dependencies matches saved authorisations against
@@ -2042,7 +2086,10 @@ class TestScenariosCheckpointOfficialResumability:
         return project
 
     def test_current_scenario_reports_officially_resumable_with_canonical_fingerprint(
-        self, tmp_path, consistent_project, consistent_meta,
+        self,
+        tmp_path,
+        consistent_project,
+        consistent_meta,
     ):
         approval = ModelApproval.from_dict(consistent_project["model_approval"])
         canonical_fp = fingerprint_model_approval(approval)
@@ -2052,13 +2099,21 @@ class TestScenariosCheckpointOfficialResumability:
             counterfactual_fp="",  # this scenario never declared a counterfactual dependency
         )
         project = self._project_with_official_scenario(
-            consistent_project, consistent_meta, scenario=scenario,
+            consistent_project,
+            consistent_meta,
+            scenario=scenario,
         )
         # Fill in the real current data/spec/posterior fingerprints the same
         # way scenario_to_dict would have when this scenario was saved.
-        scenario["governance_dependencies"]["data_fingerprint"] = approval.data_fingerprint
-        scenario["governance_dependencies"]["model_spec_fingerprint"] = approval.model_spec_fingerprint
-        scenario["governance_dependencies"]["posterior_fingerprint"] = approval.posterior_fingerprint
+        scenario["governance_dependencies"]["data_fingerprint"] = (
+            approval.data_fingerprint
+        )
+        scenario["governance_dependencies"]["model_spec_fingerprint"] = (
+            approval.model_spec_fingerprint
+        )
+        scenario["governance_dependencies"]["posterior_fingerprint"] = (
+            approval.posterior_fingerprint
+        )
 
         output_path = export_project(tmp_path / "bundle.zip", **project)
         imported = import_project(output_path)
@@ -2068,7 +2123,10 @@ class TestScenariosCheckpointOfficialResumability:
         assert audit["officially_resumable"] is True, audit["official_blocking_reasons"]
 
     def test_mismatched_model_approval_blocks_with_explicit_reason(
-        self, tmp_path, consistent_project, consistent_meta,
+        self,
+        tmp_path,
+        consistent_project,
+        consistent_meta,
     ):
         # Corrupt the bundle's *actual* model approval identity (not just
         # the scenario's saved fingerprint) so require_matching_approval
@@ -2077,7 +2135,9 @@ class TestScenariosCheckpointOfficialResumability:
         # per-field staleness comparison.
         consistent_project = dict(consistent_project)
         stale_approval = ModelApproval.from_dict(consistent_project["model_approval"])
-        stale_approval = replace(stale_approval, data_fingerprint="a-different-data-fingerprint")
+        stale_approval = replace(
+            stale_approval, data_fingerprint="a-different-data-fingerprint"
+        )
         consistent_project["model_approval"] = stale_approval.to_dict()
 
         scenario = self._official_scenario(
@@ -2086,7 +2146,9 @@ class TestScenariosCheckpointOfficialResumability:
             counterfactual_fp="",
         )
         project = self._project_with_official_scenario(
-            consistent_project, consistent_meta, scenario=scenario,
+            consistent_project,
+            consistent_meta,
+            scenario=scenario,
         )
         output_path = export_project(tmp_path / "bundle.zip", **project)
         imported = import_project(output_path)
@@ -2099,7 +2161,10 @@ class TestScenariosCheckpointOfficialResumability:
         assert "model_approval_mismatch" in reasons
 
     def test_scenario_with_counterfactual_dependency_reports_unverifiable(
-        self, tmp_path, consistent_project, consistent_meta,
+        self,
+        tmp_path,
+        consistent_project,
+        consistent_meta,
     ):
         approval = ModelApproval.from_dict(consistent_project["model_approval"])
         canonical_fp = fingerprint_model_approval(approval)
@@ -2108,11 +2173,19 @@ class TestScenariosCheckpointOfficialResumability:
             model_approval_fingerprint=canonical_fp,
             counterfactual_fp="cf-fp-real",
         )
-        scenario["governance_dependencies"]["data_fingerprint"] = approval.data_fingerprint
-        scenario["governance_dependencies"]["model_spec_fingerprint"] = approval.model_spec_fingerprint
-        scenario["governance_dependencies"]["posterior_fingerprint"] = approval.posterior_fingerprint
+        scenario["governance_dependencies"]["data_fingerprint"] = (
+            approval.data_fingerprint
+        )
+        scenario["governance_dependencies"]["model_spec_fingerprint"] = (
+            approval.model_spec_fingerprint
+        )
+        scenario["governance_dependencies"]["posterior_fingerprint"] = (
+            approval.posterior_fingerprint
+        )
         project = self._project_with_official_scenario(
-            consistent_project, consistent_meta, scenario=scenario,
+            consistent_project,
+            consistent_meta,
+            scenario=scenario,
         )
         output_path = export_project(tmp_path / "bundle.zip", **project)
         imported = import_project(output_path)

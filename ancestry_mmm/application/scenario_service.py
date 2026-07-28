@@ -30,7 +30,6 @@ from ancestry_mmm.core.planning.value import (
     OutcomeValueMapping,
     PlanningObjective,
     ScenarioEvaluationResult,
-    ScenarioValidationContext,
 )
 from ancestry_mmm.core.validation_policy import ApprovalReadiness
 from ancestry_mmm.core.outcome_approval import OutcomeApproval
@@ -44,6 +43,7 @@ class ManualScenarioInput:
 
     All identity fields are explicit. Never read from FHModelMeta.
     """
+
     market: str
     spend_plan: Dict[str, Dict[str, float]]
     meta: FHModelMeta
@@ -76,6 +76,7 @@ class ManualScenarioInput:
 @dataclass
 class OptimisationInput:
     """Typed input for scenario optimisation."""
+
     current_spend_plan: Dict[str, Dict[str, float]]
     months: List[str]
     channels: List[str]
@@ -120,6 +121,7 @@ class OptimisationInput:
 @dataclass
 class ScenarioServiceResult:
     """Structured scenario evaluation output."""
+
     evaluation: Optional[ScenarioEvaluationResult] = None
     evaluation_df: Optional[pd.DataFrame] = None
     optimisation_result: Optional[dict] = None

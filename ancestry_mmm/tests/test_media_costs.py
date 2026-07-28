@@ -81,14 +81,10 @@ def test_uploaded_plan_and_registry_round_trip_preserve_governance():
     )
     registry = CostMappingRegistry([mapping])
     restored = CostMappingRegistry.from_dict(registry.to_dict())
-    selected = restored.resolve(
-        "UK", "TV", "base-plan", as_of="2026-07-01"
-    )
+    selected = restored.resolve("UK", "TV", "base-plan", as_of="2026-07-01")
     assert isinstance(selected, UploadedPlanCostMapping)
     assert selected.plan_id == "plan-42"
-    assert restored.resolve(
-        "UK", "TV", "base-plan", as_of="2027-01-01"
-    ) is None
+    assert restored.resolve("UK", "TV", "base-plan", as_of="2027-01-01") is None
 
 
 def test_registry_selects_different_costs_by_effective_period():
@@ -109,12 +105,12 @@ def test_registry_selects_different_costs_by_effective_period():
         cost_per_media_input=3.0,
     )
     registry = CostMappingRegistry([first, second])
-    assert registry.resolve(
-        "UK", "TV", "base-plan", as_of="2026-03-01"
-    ).mapping_id == "h1"
-    assert registry.resolve(
-        "UK", "TV", "base-plan", as_of="2026-09-01"
-    ).mapping_id == "h2"
+    assert (
+        registry.resolve("UK", "TV", "base-plan", as_of="2026-03-01").mapping_id == "h1"
+    )
+    assert (
+        registry.resolve("UK", "TV", "base-plan", as_of="2026-09-01").mapping_id == "h2"
+    )
     with pytest.raises(ValueError, match="ambiguous"):
         registry.resolve("UK", "TV", "base-plan")
 
@@ -214,13 +210,18 @@ def test_mapping_fingerprint_invalidates_stale_artifact():
 
 
 def test_derived_monetary_support_round_trips():
-    mapping = FixedCostPerUnitMapping(
-        **_governance(), cost_per_media_input=2.0
-    )
+    mapping = FixedCostPerUnitMapping(**_governance(), cost_per_media_input=2.0)
     media = MediaInputSupport(
-        market="UK", channel="TV", unit="TVR", current=50,
-        observed_min=0, observed_max=100, planning_min=0,
-        planning_max=120, current_method="current", source="frame",
+        market="UK",
+        channel="TV",
+        unit="TVR",
+        current=50,
+        observed_min=0,
+        observed_max=100,
+        planning_min=0,
+        planning_max=120,
+        current_method="current",
+        source="frame",
         provenance="X_media",
     )
     monetary = derive_monetary_support(

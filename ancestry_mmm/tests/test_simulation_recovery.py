@@ -17,7 +17,11 @@ import pandas as pd
 import pytest
 
 from ancestry_mmm.core.attribution import compute_shapley_contributions
-from ancestry_mmm.core.brand_search import BrandSearchConfig, MODE_DEMAND_CAPTURE_MEDIATOR, mediator_reallocation
+from ancestry_mmm.core.brand_search import (
+    BrandSearchConfig,
+    MODE_DEMAND_CAPTURE_MEDIATOR,
+    mediator_reallocation,
+)
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
 from ancestry_mmm.core.predict import FHPosteriorParams
 
@@ -27,9 +31,16 @@ CHANNELS = ["TV", "Radio"]
 
 def _meta() -> FHModelMeta:
     return FHModelMeta(
-        markets=["UK"], outcome_ids=OUTCOME_IDS, channels=CHANNELS,
-        dna_channels=[], dna_channel_idx=[], non_dna_idx=[0, 1],
-        dna_outcome_id="New", dna_lag_weeks=0, unpooled_markets=[], control_names=[],
+        markets=["UK"],
+        outcome_ids=OUTCOME_IDS,
+        channels=CHANNELS,
+        dna_channels=[],
+        dna_channel_idx=[],
+        non_dna_idx=[0, 1],
+        dna_outcome_id="New",
+        dna_lag_weeks=0,
+        unpooled_markets=[],
+        control_names=[],
     )
 
 
@@ -46,7 +57,8 @@ def _params(beta_tv: float, beta_radio: float) -> FHPosteriorParams:
         trend_coef={"New": 0.0},
         gamma_fourier={"New": np.zeros(4)},
         alpha={"New": 5.0},
-        control_coef={}, outcome_control_coef={},
+        control_coef={},
+        outcome_control_coef={},
     )
 
 
@@ -62,11 +74,17 @@ def _correlated_frame(n: int = 60, correlation: float = 0.95, seed: int = 0) -> 
     radio = correlation * tv + (1 - correlation) * independent
     X_media = np.column_stack([tv, radio])
     return {
-        "markets": ["UK"], "market_idx": np.zeros(n, dtype=int), "market_bounds": [(0, n)],
-        "X_media": X_media, "promo": np.zeros((n, 1)),
-        "trend": np.zeros(n), "fourier": np.zeros((n, 4)),
-        "control_names": [], "X_controls": np.zeros((n, 0)),
-        "outcome_controls": {}, "outcome_control_names": {},
+        "markets": ["UK"],
+        "market_idx": np.zeros(n, dtype=int),
+        "market_bounds": [(0, n)],
+        "X_media": X_media,
+        "promo": np.zeros((n, 1)),
+        "trend": np.zeros(n),
+        "fourier": np.zeros((n, 4)),
+        "control_names": [],
+        "X_controls": np.zeros((n, 0)),
+        "outcome_controls": {},
+        "outcome_control_names": {},
     }
 
 
@@ -85,12 +103,20 @@ class TestCorrelatedMediaCreditDisplacementRecovery:
         frame = _correlated_frame(correlation=0.98)
         meta = _meta()
         params = _params(beta_tv=0.10, beta_radio=0.02)
-        contributions = compute_shapley_contributions(frame, meta, params, n_permutations=100)
-        total_channel_contrib = sum(contributions["channel_contributions"][ch] for ch in CHANNELS)
+        contributions = compute_shapley_contributions(
+            frame, meta, params, n_permutations=100
+        )
+        total_channel_contrib = sum(
+            contributions["channel_contributions"][ch] for ch in CHANNELS
+        )
         reconstructed = contributions["baseline"] + total_channel_contrib
-        np.testing.assert_allclose(reconstructed, contributions["mu_total"], rtol=1e-5, atol=1e-6)
+        np.testing.assert_allclose(
+            reconstructed, contributions["mu_total"], rtol=1e-5, atol=1e-6
+        )
 
-    def test_the_true_stronger_driver_recovers_more_credit_despite_correlated_spend(self):
+    def test_the_true_stronger_driver_recovers_more_credit_despite_correlated_spend(
+        self,
+    ):
         # TV has 5x Radio's true beta; their spend is 98% correlated. A
         # naive spend-share split would give them comparable credit (their
         # spend levels are nearly identical by construction) - Shapley must
@@ -98,7 +124,9 @@ class TestCorrelatedMediaCreditDisplacementRecovery:
         frame = _correlated_frame(correlation=0.98)
         meta = _meta()
         params = _params(beta_tv=0.10, beta_radio=0.02)
-        contributions = compute_shapley_contributions(frame, meta, params, n_permutations=200)
+        contributions = compute_shapley_contributions(
+            frame, meta, params, n_permutations=200
+        )
         tv_total = contributions["channel_contributions"]["TV"].sum()
         radio_total = contributions["channel_contributions"]["Radio"].sum()
         assert tv_total > radio_total
@@ -108,7 +136,9 @@ class TestCorrelatedMediaCreditDisplacementRecovery:
         tv_spend_share = frame["X_media"][:, 0].sum() / frame["X_media"].sum()
         assert 0.45 < tv_spend_share < 0.55
 
-    def test_swapping_which_channel_has_the_larger_true_beta_swaps_the_recovered_credit_ordering(self):
+    def test_swapping_which_channel_has_the_larger_true_beta_swaps_the_recovered_credit_ordering(
+        self,
+    ):
         # Same correlated spend pattern, betas reversed - the recovered
         # credit ordering must flip too, proving the displacement tracks
         # the true beta, not an artifact of column order or the specific
@@ -116,11 +146,21 @@ class TestCorrelatedMediaCreditDisplacementRecovery:
         frame = _correlated_frame(correlation=0.98, seed=1)
         meta = _meta()
 
-        tv_favoured = compute_shapley_contributions(frame, meta, _params(beta_tv=0.10, beta_radio=0.02), n_permutations=150)
-        radio_favoured = compute_shapley_contributions(frame, meta, _params(beta_tv=0.02, beta_radio=0.10), n_permutations=150)
+        tv_favoured = compute_shapley_contributions(
+            frame, meta, _params(beta_tv=0.10, beta_radio=0.02), n_permutations=150
+        )
+        radio_favoured = compute_shapley_contributions(
+            frame, meta, _params(beta_tv=0.02, beta_radio=0.10), n_permutations=150
+        )
 
-        assert tv_favoured["channel_contributions"]["TV"].sum() > tv_favoured["channel_contributions"]["Radio"].sum()
-        assert radio_favoured["channel_contributions"]["Radio"].sum() > radio_favoured["channel_contributions"]["TV"].sum()
+        assert (
+            tv_favoured["channel_contributions"]["TV"].sum()
+            > tv_favoured["channel_contributions"]["Radio"].sum()
+        )
+        assert (
+            radio_favoured["channel_contributions"]["Radio"].sum()
+            > radio_favoured["channel_contributions"]["TV"].sum()
+        )
 
     def test_equal_true_betas_under_correlation_recover_a_near_equal_split(self):
         # Sanity check the other direction: when the true betas ARE equal,
@@ -130,7 +170,9 @@ class TestCorrelatedMediaCreditDisplacementRecovery:
         frame = _correlated_frame(correlation=0.98, seed=2)
         meta = _meta()
         params = _params(beta_tv=0.06, beta_radio=0.06)
-        contributions = compute_shapley_contributions(frame, meta, params, n_permutations=300)
+        contributions = compute_shapley_contributions(
+            frame, meta, params, n_permutations=300
+        )
         tv_total = contributions["channel_contributions"]["TV"].sum()
         radio_total = contributions["channel_contributions"]["Radio"].sum()
         ratio = tv_total / radio_total
@@ -148,8 +190,10 @@ class TestMediatorCreditAllocationRecovery:
 
     def test_recovers_the_known_upstream_contribution_ratio(self):
         config = BrandSearchConfig(
-            channel="Brand_Search", mode=MODE_DEMAND_CAPTURE_MEDIATOR,
-            mediator_of=["TV", "YouTube"], mediation_share=0.5,
+            channel="Brand_Search",
+            mode=MODE_DEMAND_CAPTURE_MEDIATOR,
+            mediator_of=["TV", "YouTube"],
+            mediation_share=0.5,
         )
         brand_search_contribution = pd.Series([1000.0] * 4)
         # TV consistently drives 70% of upstream activity, YouTube 30%.
@@ -158,13 +202,17 @@ class TestMediatorCreditAllocationRecovery:
             "YouTube": pd.Series([300.0, 150.0, 600.0, 30.0]),
         }
         result = mediator_reallocation(config, brand_search_contribution, upstream)
-        tv_share = result["mediated_by_TV"] / (result["mediated_by_TV"] + result["mediated_by_YouTube"])
+        tv_share = result["mediated_by_TV"] / (
+            result["mediated_by_TV"] + result["mediated_by_YouTube"]
+        )
         np.testing.assert_allclose(tv_share.to_numpy(), 0.7, atol=1e-9)
 
     def test_recovers_a_shifting_upstream_ratio_period_by_period(self):
         config = BrandSearchConfig(
-            channel="Brand_Search", mode=MODE_DEMAND_CAPTURE_MEDIATOR,
-            mediator_of=["TV", "YouTube"], mediation_share=1.0,
+            channel="Brand_Search",
+            mode=MODE_DEMAND_CAPTURE_MEDIATOR,
+            mediator_of=["TV", "YouTube"],
+            mediation_share=1.0,
         )
         brand_search_contribution = pd.Series([100.0, 100.0])
         # Period 1: TV dominates (90/10). Period 2: YouTube dominates (10/90).

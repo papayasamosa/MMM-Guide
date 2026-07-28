@@ -41,7 +41,9 @@ def _nbt_outcome(**overrides) -> OutcomeDefinition:
     return OutcomeDefinition(**values)
 
 
-def _complete_metadata(outcome: OutcomeDefinition, **overrides) -> NetBillthroughCompletenessMetadata:
+def _complete_metadata(
+    outcome: OutcomeDefinition, **overrides
+) -> NetBillthroughCompletenessMetadata:
     values = dict(
         data_as_of_date="2026-07-20",
         model_start_week="2026-01-05",
@@ -74,7 +76,9 @@ class TestNBTCompletenessGate:
     def test_complete_metadata_accepted_as_dict(self):
         outcome = _nbt_outcome()
         metadata = _complete_metadata(outcome)
-        issues = validate_nbt_completeness_metadata_for_outcome(outcome, metadata.to_dict())
+        issues = validate_nbt_completeness_metadata_for_outcome(
+            outcome, metadata.to_dict()
+        )
         assert issues == []
 
     def test_metadata_for_a_different_outcome_id_blocks(self):
@@ -85,7 +89,9 @@ class TestNBTCompletenessGate:
 
     def test_stale_definition_fingerprint_blocks(self):
         outcome = _nbt_outcome()
-        metadata = _complete_metadata(outcome, definition_fingerprint="stale-fingerprint")
+        metadata = _complete_metadata(
+            outcome, definition_fingerprint="stale-fingerprint"
+        )
         issues = validate_nbt_completeness_metadata_for_outcome(outcome, metadata)
         assert any("stale" in i for i in issues)
         # Changing the definition (e.g. reconciliation_source) after
@@ -93,14 +99,16 @@ class TestNBTCompletenessGate:
         changed = _nbt_outcome(reconciliation_source="A different source")
         metadata_for_original = _complete_metadata(outcome)
         issues_after_change = validate_nbt_completeness_metadata_for_outcome(
-            changed, metadata_for_original,
+            changed,
+            metadata_for_original,
         )
         assert any("stale" in i for i in issues_after_change)
 
     def test_latest_complete_week_before_model_end_blocks(self):
         outcome = _nbt_outcome()
         metadata = _complete_metadata(
-            outcome, latest_complete_net_billthrough_week="2026-06-01",
+            outcome,
+            latest_complete_net_billthrough_week="2026-06-01",
         )
         issues = validate_nbt_completeness_metadata_for_outcome(outcome, metadata)
         assert any("earlier than model end week" in i for i in issues)
@@ -108,14 +116,17 @@ class TestNBTCompletenessGate:
     def test_latest_complete_week_after_as_of_blocks(self):
         outcome = _nbt_outcome()
         metadata = _complete_metadata(
-            outcome, latest_complete_net_billthrough_week="2026-08-01",
+            outcome,
+            latest_complete_net_billthrough_week="2026-08-01",
         )
         issues = validate_nbt_completeness_metadata_for_outcome(outcome, metadata)
         assert any("cannot be after data_as_of_date" in i for i in issues)
 
     def test_missing_maturity_rule_or_owner_blocks(self):
         outcome = _nbt_outcome()
-        metadata = _complete_metadata(outcome, maturity_rule_description="", source_owner="")
+        metadata = _complete_metadata(
+            outcome, maturity_rule_description="", source_owner=""
+        )
         issues = validate_nbt_completeness_metadata_for_outcome(outcome, metadata)
         assert any("maturity rule and source owner" in i for i in issues)
 

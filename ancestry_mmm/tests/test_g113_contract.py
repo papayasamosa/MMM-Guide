@@ -130,9 +130,12 @@ def test_old_mask_only_bundle_is_migrated_to_read_only_compatibility_views():
     )
     review_draft = legacy_governance_review_catalogue(review_meta)
     assert len(review_draft) == 1
-    assert validate_legacy_governance_review(
-        review_meta, review_draft, review_confirmed=True
-    ) == []
+    assert (
+        validate_legacy_governance_review(
+            review_meta, review_draft, review_confirmed=True
+        )
+        == []
+    )
     assert any(
         "missing reconstructed components" in error
         for error in validate_legacy_governance_review(
@@ -200,10 +203,7 @@ def test_id_keyed_lag_and_prior_are_independent_of_component_order():
     model_outcomes = ["first", "unused", "second"]
     model_channels = ["Radio", "unused", "TV"]
     assert masks.lag_for_cell((2, 0), model_outcomes, model_channels) == 5
-    assert (
-        masks.prior_for_cell((0, 2), 1.0, model_outcomes, model_channels)
-        == 0.07
-    )
+    assert masks.prior_for_cell((0, 2), 1.0, model_outcomes, model_channels) == 0.07
     assert masks.active_cells(model_outcomes, model_channels) == [(2, 0)]
     assert masks.exploratory_cells(model_outcomes, model_channels) == [(0, 2)]
     for cache_name in (
@@ -302,9 +302,7 @@ def test_reordered_and_governance_filtered_components_preserve_all_calculations(
         "markets": ["UK"],
         "market_idx": np.zeros(4, dtype=int),
         "market_bounds": [(0, 4)],
-        "X_media": np.array(
-            [[20.0, 50.0], [30.0, 0.0], [0.0, 0.0], [10.0, 0.0]]
-        ),
+        "X_media": np.array([[20.0, 50.0], [30.0, 0.0], [0.0, 0.0], [10.0, 0.0]]),
         "promo": np.zeros((4, 2)),
         "trend": np.zeros(4),
         "fourier": np.zeros((4, 2)),

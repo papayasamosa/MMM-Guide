@@ -27,11 +27,18 @@ import pandas as pd
 
 from .hierarchical_model import FHModelMeta
 from .market_config import ChannelMediaUnitConfig
-from .market_specific_predict import FHMarketSpecificPosteriorParams, generate_market_channel_curve
+from .market_specific_predict import (
+    FHMarketSpecificPosteriorParams,
+    generate_market_channel_curve,
+)
 
 
 def compute_cpa(
-    curve_df: pd.DataFrame, response_col: str = "overall_response", *, allow_mixed: bool = False, column_prefix: str = "",
+    curve_df: pd.DataFrame,
+    response_col: str = "overall_response",
+    *,
+    allow_mixed: bool = False,
+    column_prefix: str = "",
 ) -> pd.DataFrame:
     """
     Add `avg_cpa` and `marginal_cpa` columns to a spend -> response curve
@@ -65,8 +72,12 @@ def compute_cpa(
     curve (see `compute_cpa_by_product`) doesn't collide column names.
     """
     if response_col == "overall_response" and not allow_mixed:
-        has_fh = "fh_response" in curve_df.columns and (curve_df["fh_response"] > 0).any()
-        has_dna = "dna_response" in curve_df.columns and (curve_df["dna_response"] > 0).any()
+        has_fh = (
+            "fh_response" in curve_df.columns and (curve_df["fh_response"] > 0).any()
+        )
+        has_dna = (
+            "dna_response" in curve_df.columns and (curve_df["dna_response"] > 0).any()
+        )
         if has_fh and has_dna:
             raise ValueError(
                 "This curve mixes Family History GSAs and DNA kit sales - computing CPA against "
@@ -79,7 +90,9 @@ def compute_cpa(
     spend = out["spend"].to_numpy()
     response = out[response_col].to_numpy()
 
-    avg_cpa = np.where(response > 0, spend / np.where(response > 0, response, np.nan), np.nan)
+    avg_cpa = np.where(
+        response > 0, spend / np.where(response > 0, response, np.nan), np.nan
+    )
 
     marginal_cpa = np.full(len(out), np.nan)
     if len(out) > 1:
@@ -149,7 +162,9 @@ def cpa_scope_metadata(
       observed="observed"` is reserved for when it is.
     """
     if spend_scope not in CPA_SPEND_SCOPES:
-        raise ValueError(f"spend_scope must be one of {CPA_SPEND_SCOPES}, got {spend_scope!r}.")
+        raise ValueError(
+            f"spend_scope must be one of {CPA_SPEND_SCOPES}, got {spend_scope!r}."
+        )
     if incremental_vs_observed not in CPA_INCREMENTAL_VS_OBSERVED:
         raise ValueError(
             f"incremental_vs_observed must be one of {CPA_INCREMENTAL_VS_OBSERVED}, got "
@@ -159,7 +174,9 @@ def cpa_scope_metadata(
         "denominator_metric": denominator_metric,
         "included_outcome_ids": list(included_outcome_ids),
         "spend_scope": spend_scope,
-        "included_channels": list(included_channels) if included_channels is not None else None,
+        "included_channels": list(included_channels)
+        if included_channels is not None
+        else None,
         "market": market,
         "time_window": time_window,
         "incremental_vs_observed": incremental_vs_observed,
@@ -211,32 +228,53 @@ def compute_cpa_by_product(curve_df: pd.DataFrame) -> pd.DataFrame:
         and (curve_df["fh_net_billthrough_response"] > 0).any()
     ):
         nbt = compute_cpa(
-            curve_df, "fh_net_billthrough_response", allow_mixed=True,
+            curve_df,
+            "fh_net_billthrough_response",
+            allow_mixed=True,
             column_prefix="fh_net_billthrough_",
         )
-        out["channel_incremental_cost_per_fh_net_billthrough"] = nbt["fh_net_billthrough_avg_cpa"]
-        out["channel_incremental_marginal_cost_per_fh_net_billthrough"] = nbt["fh_net_billthrough_marginal_cpa"]
-    has_dna = "dna_response" in curve_df.columns and (curve_df["dna_response"] > 0).any()
+        out["channel_incremental_cost_per_fh_net_billthrough"] = nbt[
+            "fh_net_billthrough_avg_cpa"
+        ]
+        out["channel_incremental_marginal_cost_per_fh_net_billthrough"] = nbt[
+            "fh_net_billthrough_marginal_cpa"
+        ]
+    has_dna = (
+        "dna_response" in curve_df.columns and (curve_df["dna_response"] > 0).any()
+    )
     if has_dna:
-        dna_cpa = compute_cpa(curve_df, "dna_response", allow_mixed=True, column_prefix="dna_")
+        dna_cpa = compute_cpa(
+            curve_df, "dna_response", allow_mixed=True, column_prefix="dna_"
+        )
         out["dna_avg_cpa"] = dna_cpa["dna_avg_cpa"]
         out["dna_marginal_cpa"] = dna_cpa["dna_marginal_cpa"]
         out["cost_per_dna_kit"] = dna_cpa["dna_avg_cpa"]
         out["channel_incremental_cost_per_dna_kit"] = dna_cpa["dna_avg_cpa"]
-        out["channel_incremental_marginal_cost_per_dna_kit"] = dna_cpa["dna_marginal_cpa"]
-    has_signup = "fh_signup_response" in curve_df.columns and (curve_df["fh_signup_response"] > 0).any()
+        out["channel_incremental_marginal_cost_per_dna_kit"] = dna_cpa[
+            "dna_marginal_cpa"
+        ]
+    has_signup = (
+        "fh_signup_response" in curve_df.columns
+        and (curve_df["fh_signup_response"] > 0).any()
+    )
     if has_signup:
-        signup_cpa = compute_cpa(curve_df, "fh_signup_response", allow_mixed=True, column_prefix="fh_signup_")
+        signup_cpa = compute_cpa(
+            curve_df, "fh_signup_response", allow_mixed=True, column_prefix="fh_signup_"
+        )
         out["fh_signup_avg_cpa"] = signup_cpa["fh_signup_avg_cpa"]
         out["fh_signup_marginal_cpa"] = signup_cpa["fh_signup_marginal_cpa"]
         out["cost_per_fh_signup"] = signup_cpa["fh_signup_avg_cpa"]
         out["channel_incremental_cost_per_fh_signup"] = signup_cpa["fh_signup_avg_cpa"]
-        out["channel_incremental_marginal_cost_per_fh_signup"] = signup_cpa["fh_signup_marginal_cpa"]
+        out["channel_incremental_marginal_cost_per_fh_signup"] = signup_cpa[
+            "fh_signup_marginal_cpa"
+        ]
     return out
 
 
 def cpa_stability_flags(
-    curve_df: pd.DataFrame, response_col: str = "overall_response", relative_threshold: float = 0.02,
+    curve_df: pd.DataFrame,
+    response_col: str = "overall_response",
+    relative_threshold: float = 0.02,
 ) -> List[Dict[str, object]]:
     """
     Flag curve points where the response is so flat (near-saturated, or
@@ -265,15 +303,17 @@ def cpa_stability_flags(
     flags = []
     for i, dr in enumerate(d_response, start=1):
         if abs(dr) < relative_threshold * max_d:
-            flags.append({
-                "index": i,
-                "spend": float(curve_df["spend"].iloc[i]),
-                "message": (
-                    f"Marginal response near spend={curve_df['spend'].iloc[i]:,.0f} is very flat "
-                    "relative to the rest of this curve - marginal CPA here is highly sensitive to "
-                    "small changes in the fitted curve; treat with caution."
-                ),
-            })
+            flags.append(
+                {
+                    "index": i,
+                    "spend": float(curve_df["spend"].iloc[i]),
+                    "message": (
+                        f"Marginal response near spend={curve_df['spend'].iloc[i]:,.0f} is very flat "
+                        "relative to the rest of this curve - marginal CPA here is highly sensitive to "
+                        "small changes in the fitted curve; treat with caution."
+                    ),
+                }
+            )
     return flags
 
 
@@ -296,21 +336,36 @@ def extract_cost_per_unit_series(
             f"No response-unit column mapped for {config.market}/{config.channel} - "
             "this channel is spend-only, there's no cost-per-unit relationship to extract."
         )
-    missing = [c for c in (config.spend_column, config.response_unit_column) if c not in df.columns]
+    missing = [
+        c
+        for c in (config.spend_column, config.response_unit_column)
+        if c not in df.columns
+    ]
     if missing:
         raise ValueError(f"Column(s) missing from data: {missing}")
 
     mask = df[market_col] == market
-    sub = df.loc[mask, [date_col, config.spend_column, config.response_unit_column]].copy()
-    sub = sub.rename(columns={config.spend_column: "spend", config.response_unit_column: "media_units"})
+    sub = df.loc[
+        mask, [date_col, config.spend_column, config.response_unit_column]
+    ].copy()
+    sub = sub.rename(
+        columns={
+            config.spend_column: "spend",
+            config.response_unit_column: "media_units",
+        }
+    )
     sub["cost_per_unit"] = np.where(
-        sub["media_units"] > 0, sub["spend"] / sub["media_units"], np.nan,
+        sub["media_units"] > 0,
+        sub["spend"] / sub["media_units"],
+        np.nan,
     )
     return sub.sort_values(date_col).reset_index(drop=True)
 
 
 def historical_cost_trend(
-    cost_series_df: pd.DataFrame, date_col: str, cost_col: str = "cost_per_unit",
+    cost_series_df: pd.DataFrame,
+    date_col: str,
+    cost_col: str = "cost_per_unit",
 ) -> Dict[str, object]:
     """
     Year-on-year inflation rate and an indexed cost trend (base = 100 at the
@@ -322,7 +377,11 @@ def historical_cost_trend(
     """
     valid = cost_series_df.dropna(subset=[cost_col]).copy()
     if valid.empty:
-        return {"yoy_inflation_pct": None, "indexed_trend": pd.DataFrame(columns=["year", cost_col, "indexed"]), "avg_cost_per_unit": None}
+        return {
+            "yoy_inflation_pct": None,
+            "indexed_trend": pd.DataFrame(columns=["year", cost_col, "indexed"]),
+            "avg_cost_per_unit": None,
+        }
 
     valid["year"] = pd.to_datetime(valid[date_col]).dt.year
     annual = valid.groupby("year", as_index=False)[cost_col].mean().sort_values("year")
@@ -343,7 +402,9 @@ def historical_cost_trend(
     }
 
 
-def response_unit_curve(curve_df: pd.DataFrame, avg_cost_per_unit: float) -> pd.DataFrame:
+def response_unit_curve(
+    curve_df: pd.DataFrame, avg_cost_per_unit: float
+) -> pd.DataFrame:
     """
     Convert a spend -> response curve into a media-units -> response curve
     by dividing the spend axis by `avg_cost_per_unit` (typically
@@ -364,7 +425,9 @@ def response_unit_curve(curve_df: pd.DataFrame, avg_cost_per_unit: float) -> pd.
     return out
 
 
-def equivalent_delivery(target_media_units: float, expected_future_cost_per_unit: float) -> float:
+def equivalent_delivery(
+    target_media_units: float, expected_future_cost_per_unit: float
+) -> float:
     """
     "How much would I need to spend to buy this many media units, at an
     assumed future cost per unit?" - `required_spend = target_media_units x
@@ -373,7 +436,9 @@ def equivalent_delivery(target_media_units: float, expected_future_cost_per_unit
     "a future inflation assumption is never applied silently" rule.
     """
     if target_media_units < 0 or expected_future_cost_per_unit < 0:
-        raise ValueError("target_media_units and expected_future_cost_per_unit must be non-negative")
+        raise ValueError(
+            "target_media_units and expected_future_cost_per_unit must be non-negative"
+        )
     return target_media_units * expected_future_cost_per_unit
 
 
@@ -404,8 +469,12 @@ def equivalent_response(
     if target_media_units < 0 or cost_per_unit < 0:
         raise ValueError("target_media_units and cost_per_unit must be non-negative")
     if response_col == "overall_response" and not allow_mixed:
-        has_fh = "fh_response" in curve_df.columns and (curve_df["fh_response"] > 0).any()
-        has_dna = "dna_response" in curve_df.columns and (curve_df["dna_response"] > 0).any()
+        has_fh = (
+            "fh_response" in curve_df.columns and (curve_df["fh_response"] > 0).any()
+        )
+        has_dna = (
+            "dna_response" in curve_df.columns and (curve_df["dna_response"] > 0).any()
+        )
         if has_fh and has_dna:
             raise ValueError(
                 "This curve mixes Family History GSAs and DNA kit sales - 'overall_response' "
@@ -444,18 +513,38 @@ def market_specific_cpa_table(
     rows = []
     for market in markets:
         for channel in channels:
-            curve_df = generate_market_channel_curve(market, channel, meta, params, n_points=n_points)
+            curve_df = generate_market_channel_curve(
+                market, channel, meta, params, n_points=n_points
+            )
             cpa_df = compute_cpa_by_product(curve_df)
             rows.append(cpa_df)
     if not rows:
-        return pd.DataFrame(columns=[
-            "market", "channel", "spend", "saturation", "overall_response", "fh_response",
-            "fh_signup_response", "dna_response",
-            "avg_cpa", "marginal_cpa", "cost_per_fh_gsa", "fh_gsa_marginal_cpa",
-            "channel_incremental_cost_per_fh_gsa", "channel_incremental_marginal_cost_per_fh_gsa",
-            "dna_avg_cpa", "dna_marginal_cpa", "cost_per_dna_kit",
-            "channel_incremental_cost_per_dna_kit", "channel_incremental_marginal_cost_per_dna_kit",
-            "fh_signup_avg_cpa", "fh_signup_marginal_cpa", "cost_per_fh_signup",
-            "channel_incremental_cost_per_fh_signup", "channel_incremental_marginal_cost_per_fh_signup",
-        ])
+        return pd.DataFrame(
+            columns=[
+                "market",
+                "channel",
+                "spend",
+                "saturation",
+                "overall_response",
+                "fh_response",
+                "fh_signup_response",
+                "dna_response",
+                "avg_cpa",
+                "marginal_cpa",
+                "cost_per_fh_gsa",
+                "fh_gsa_marginal_cpa",
+                "channel_incremental_cost_per_fh_gsa",
+                "channel_incremental_marginal_cost_per_fh_gsa",
+                "dna_avg_cpa",
+                "dna_marginal_cpa",
+                "cost_per_dna_kit",
+                "channel_incremental_cost_per_dna_kit",
+                "channel_incremental_marginal_cost_per_dna_kit",
+                "fh_signup_avg_cpa",
+                "fh_signup_marginal_cpa",
+                "cost_per_fh_signup",
+                "channel_incremental_cost_per_fh_signup",
+                "channel_incremental_marginal_cost_per_fh_signup",
+            ]
+        )
     return pd.concat(rows, ignore_index=True)

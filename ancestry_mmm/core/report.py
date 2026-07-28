@@ -63,7 +63,9 @@ def _objective_section(spec: Optional[ModelSpec], model_type: str) -> ReportSect
     if spec is None:
         return ReportSection(
             title="Objective",
-            paragraphs=["No model specification is available yet - this report was generated before Structure: Segments & Markets was completed."],
+            paragraphs=[
+                "No model specification is available yet - this report was generated before Structure: Segments & Markets was completed."
+            ],
         )
     segments = list(spec.segment_outcomes.keys())
     return ReportSection(
@@ -79,11 +81,15 @@ def _objective_section(spec: Optional[ModelSpec], model_type: str) -> ReportSect
 
 
 def _data_section(
-    spec: Optional[ModelSpec], pipeline_steps: List[Dict], data_window: Optional[Tuple[str, str]],
+    spec: Optional[ModelSpec],
+    pipeline_steps: List[Dict],
+    data_window: Optional[Tuple[str, str]],
 ) -> ReportSection:
     bullets = []
     if spec is not None:
-        bullets.append(f"Channels ({len(spec.channels)}): {', '.join(spec.channels) or '(none)'}")
+        bullets.append(
+            f"Channels ({len(spec.channels)}): {', '.join(spec.channels) or '(none)'}"
+        )
         if spec.dna_channels:
             bullets.append(f"DNA-targeted channels: {', '.join(spec.dna_channels)}")
             bullets.append(
@@ -94,25 +100,37 @@ def _data_section(
         bullets.append(f"Data window: {data_window[0]} to {data_window[1]}")
     return ReportSection(
         title="Data",
-        paragraphs=["Summary of the data that produced this project's fitted model, if any."],
+        paragraphs=[
+            "Summary of the data that produced this project's fitted model, if any."
+        ],
         bullets=bullets,
     )
 
 
-def _model_section(spec: Optional[ModelSpec], model_type: str, dna_lag_weeks: Optional[int]) -> ReportSection:
+def _model_section(
+    spec: Optional[ModelSpec], model_type: str, dna_lag_weeks: Optional[int]
+) -> ReportSection:
     if spec is None:
-        return ReportSection(title="Model", paragraphs=["No model has been configured yet."])
+        return ReportSection(
+            title="Model", paragraphs=["No model has been configured yet."]
+        )
     bullets = [
         f"Structure: {MODEL_TYPE_LABELS.get(model_type, model_type)}",
         f"Segments: {', '.join(spec.segment_outcomes.keys()) or '(none)'}",
         f"Markets: {', '.join(spec.markets) or '(none)'}"
-        + (f" (unpooled: {', '.join(spec.unpooled_markets)})" if spec.unpooled_markets else ""),
+        + (
+            f" (unpooled: {', '.join(spec.unpooled_markets)})"
+            if spec.unpooled_markets
+            else ""
+        ),
     ]
     if dna_lag_weeks is not None:
         bullets.append(f"DNA halo decision-time lag: {dna_lag_weeks} week(s)")
     return ReportSection(
         title="Model",
-        paragraphs=["See docs/modelling_methodology.md for the full structural specification."],
+        paragraphs=[
+            "See docs/modelling_methodology.md for the full structural specification."
+        ],
         bullets=bullets,
     )
 
@@ -126,8 +144,12 @@ def _outcomes_section(
     excluded_outcome_ids: Optional[List[str]] = None,
 ) -> ReportSection:
     if spec is None:
-        return ReportSection(title="Outcomes", paragraphs=["No model specification is available yet."])
-    outcomes = resolve_outcome_definitions(outcome_definitions, spec.segment_outcomes, spec.segment_ltv)
+        return ReportSection(
+            title="Outcomes", paragraphs=["No model specification is available yet."]
+        )
+    outcomes = resolve_outcome_definitions(
+        outcome_definitions, spec.segment_outcomes, spec.segment_ltv
+    )
     if excluded_outcome_ids:
         # Session-only override (pre-PR-E callers) applied on top of each
         # outcome's own persisted `included_in_fit` - never mutates the
@@ -137,12 +159,18 @@ def _outcomes_section(
             replace(o, included_in_fit=False) if o.outcome_id in excluded else o
             for o in outcomes
         ]
-    available_columns = set(frame["df"].columns) if frame and frame.get("df") is not None else None
+    available_columns = (
+        set(frame["df"].columns) if frame and frame.get("df") is not None else None
+    )
     frame_outcome_ids = frame.get("outcome_ids") if frame else None
-    model_meta_outcome_ids = getattr(model_meta, "outcome_ids", None) if model_meta is not None else None
+    model_meta_outcome_ids = (
+        getattr(model_meta, "outcome_ids", None) if model_meta is not None else None
+    )
     table = outcomes_to_dataframe(
-        outcomes, available_columns=available_columns,
-        frame_outcome_ids=frame_outcome_ids, model_meta_outcome_ids=model_meta_outcome_ids,
+        outcomes,
+        available_columns=available_columns,
+        frame_outcome_ids=frame_outcome_ids,
+        model_meta_outcome_ids=model_meta_outcome_ids,
     )
     n_dna = sum(1 for o in outcomes if o.product == DNA)
     paragraphs = [
@@ -158,8 +186,10 @@ def _outcomes_section(
             "docs/dna_fh_causal_structure.md."
         )
     return ReportSection(
-        title="Outcomes", paragraphs=paragraphs,
-        table=table, table_caption="Outcome catalogue (status: Configured / Included in prepared frame / "
+        title="Outcomes",
+        paragraphs=paragraphs,
+        table=table,
+        table_caption="Outcome catalogue (status: Configured / Included in prepared frame / "
         "Included in fitted run / Missing source column / Excluded / Stale after configuration changes)",
     )
 
@@ -168,7 +198,9 @@ def _diagnostics_section(scorecard: Optional[Dict[str, Any]]) -> ReportSection:
     if not scorecard:
         return ReportSection(
             title="Diagnostics",
-            paragraphs=["No scorecard has been computed yet - see Diagnostics to compute one before approving this model."],
+            paragraphs=[
+                "No scorecard has been computed yet - see Diagnostics to compute one before approving this model."
+            ],
         )
     conv = scorecard.get("convergence", {})
     paragraphs = [
@@ -180,14 +212,18 @@ def _diagnostics_section(scorecard: Optional[Dict[str, Any]]) -> ReportSection:
     paragraphs.append(f"Curve/ROI plausibility flags raised: {len(flags)}.")
     table = pd.DataFrame(scorecard.get("in_sample_fit") or [])
     return ReportSection(
-        title="Diagnostics", paragraphs=paragraphs,
-        table=table if not table.empty else None, table_caption="In-sample fit by segment",
+        title="Diagnostics",
+        paragraphs=paragraphs,
+        table=table if not table.empty else None,
+        table_caption="In-sample fit by segment",
     )
 
 
 def _approval_section(approval: Optional[ModelApproval]) -> ReportSection:
     if approval is None:
-        return ReportSection(title="Approval", paragraphs=["This model has not been approved yet."])
+        return ReportSection(
+            title="Approval", paragraphs=["This model has not been approved yet."]
+        )
     approved_at = time.strftime("%Y-%m-%d", time.localtime(approval.approved_at))
     return ReportSection(
         title="Approval",
@@ -202,32 +238,44 @@ def _approval_section(approval: Optional[ModelApproval]) -> ReportSection:
 
 def _curve_bank_section(entries: List[CurveBankEntry]) -> ReportSection:
     if not entries:
-        return ReportSection(title="Curve bank", paragraphs=["No curves have been saved to the curve bank yet."])
+        return ReportSection(
+            title="Curve bank",
+            paragraphs=["No curves have been saved to the curve bank yet."],
+        )
     df = entries_to_dataframe(entries)
     summary = (
         df.groupby(["market", "curve_status"], dropna=False)
-        .size().reset_index(name="curves")
+        .size()
+        .reset_index(name="curves")
         .sort_values(["market", "curve_status"])
     )
     return ReportSection(
         title="Curve bank",
-        paragraphs=[f"{len(entries)} curve(s) saved across {df['market'].nunique()} market grouping(s)."],
-        table=summary, table_caption="Curves saved by market and curve status",
+        paragraphs=[
+            f"{len(entries)} curve(s) saved across {df['market'].nunique()} market grouping(s)."
+        ],
+        table=summary,
+        table_caption="Curves saved by market and curve status",
     )
 
 
 def _scenarios_section(scenarios: List[Dict]) -> ReportSection:
     if not scenarios:
-        return ReportSection(title="Scenarios", paragraphs=["No scenarios have been saved yet."])
+        return ReportSection(
+            title="Scenarios", paragraphs=["No scenarios have been saved yet."]
+        )
     table = compare_scenarios(scenarios)
     return ReportSection(
         title="Scenarios",
         paragraphs=[f"{len(scenarios)} scenario(s) saved."],
-        table=table, table_caption="Saved scenario comparison",
+        table=table,
+        table_caption="Saved scenario comparison",
     )
 
 
-def _limitations_section(model_type: str, market_spec_config: Optional[MarketSpecConfig]) -> ReportSection:
+def _limitations_section(
+    model_type: str, market_spec_config: Optional[MarketSpecConfig]
+) -> ReportSection:
     bullets = [
         "Partial pooling shares statistical strength across markets; it cannot manufacture variation "
         "that isn't in the data (docs/limitations.md).",
@@ -259,7 +307,9 @@ def _limitations_section(model_type: str, market_spec_config: Optional[MarketSpe
         )
     return ReportSection(
         title="Known limitations & assumptions",
-        paragraphs=["See docs/limitations.md for the full, current list. Highlights relevant to this project's configuration:"],
+        paragraphs=[
+            "See docs/limitations.md for the full, current list. Highlights relevant to this project's configuration:"
+        ],
         bullets=bullets,
     )
 
@@ -312,7 +362,13 @@ def build_report_sections(
         _objective_section(spec, model_type),
         _data_section(spec, pipeline_steps, data_window),
         _model_section(spec, model_type, dna_lag_weeks),
-        _outcomes_section(spec, outcome_definitions, model_meta=model_meta, frame=frame, excluded_outcome_ids=excluded_outcome_ids),
+        _outcomes_section(
+            spec,
+            outcome_definitions,
+            model_meta=model_meta,
+            frame=frame,
+            excluded_outcome_ids=excluded_outcome_ids,
+        ),
         _diagnostics_section(scorecard),
         _approval_section(approval),
         _curve_bank_section(curve_bank_entries),
@@ -333,7 +389,11 @@ def _df_to_markdown_table(df: pd.DataFrame) -> str:
     return "\n".join(lines)
 
 
-def render_markdown(project_name: str, sections: List[ReportSection], generated_at: Optional[float] = None) -> str:
+def render_markdown(
+    project_name: str,
+    sections: List[ReportSection],
+    generated_at: Optional[float] = None,
+) -> str:
     """Render `sections` as a single Markdown document."""
     generated_at = generated_at if generated_at is not None else time.time()
     lines = [
@@ -361,7 +421,11 @@ def render_markdown(project_name: str, sections: List[ReportSection], generated_
     return "\n".join(lines)
 
 
-def render_html(project_name: str, sections: List[ReportSection], generated_at: Optional[float] = None) -> str:
+def render_html(
+    project_name: str,
+    sections: List[ReportSection],
+    generated_at: Optional[float] = None,
+) -> str:
     """Render `sections` as a single, self-contained HTML document (inline
     CSS, no external assets or network requests)."""
     generated_at = generated_at if generated_at is not None else time.time()

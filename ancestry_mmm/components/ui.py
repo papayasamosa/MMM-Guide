@@ -11,7 +11,13 @@ import streamlit as st
 from ancestry_mmm.utils.config import THEME_COLORS
 from ancestry_mmm.utils.display import GLOSSARY
 from ancestry_mmm.utils.session_state import get_workflow_progress
-from ancestry_mmm.utils.workflow import TOTAL_STEPS, get_step, next_step_key, sidebar_entries, step_number
+from ancestry_mmm.utils.workflow import (
+    TOTAL_STEPS,
+    get_step,
+    next_step_key,
+    sidebar_entries,
+    step_number,
+)
 from ancestry_mmm.core.outcomes import BLOCKING_DRIFT_STATUSES, outcomes_drift_dataframe
 
 
@@ -24,7 +30,7 @@ def apply_theme() -> None:
     st.markdown(
         f"""
         <style>
-        .muted {{ color: {THEME_COLORS['foreground_muted']}; }}
+        .muted {{ color: {THEME_COLORS["foreground_muted"]}; }}
         #MainMenu {{ visibility: hidden; }}
         footer {{ visibility: hidden; }}
         /* st.info() defaults to Streamlit's fixed blue, which reads as "strong
@@ -33,7 +39,7 @@ def apply_theme() -> None:
         [data-testid="stAlertContainer"]:has([data-testid="stAlertContentInfo"]) {{
             background-color: rgba(107, 139, 122, 0.18) !important;
         }}
-        [data-testid="stAlertContentInfo"] {{ color: {THEME_COLORS['foreground_muted']} !important; }}
+        [data-testid="stAlertContentInfo"] {{ color: {THEME_COLORS["foreground_muted"]} !important; }}
         </style>
         """,
         unsafe_allow_html=True,
@@ -70,7 +76,9 @@ def render_page_header(key: str) -> None:
     if step.get("purpose"):
         st.markdown(step["purpose"])
     if step.get("steps"):
-        st.markdown("\n".join(f"{i}. {s}" for i, s in enumerate(step["steps"], start=1)))
+        st.markdown(
+            "\n".join(f"{i}. {s}" for i, s in enumerate(step["steps"], start=1))
+        )
 
 
 def render_next_step(key: str, *, key_suffix: str = "") -> None:
@@ -83,7 +91,11 @@ def render_next_step(key: str, *, key_suffix: str = "") -> None:
     nxt_key = next_step_key(key)
     if nxt_key is not None:
         nxt = get_step(nxt_key)
-        if st.button(f"Continue to {nxt['label']} →", type="primary", key=f"next_{key}{key_suffix}"):
+        if st.button(
+            f"Continue to {nxt['label']} →",
+            type="primary",
+            key=f"next_{key}{key_suffix}",
+        ):
             st.switch_page(nxt["path"])
 
 
@@ -99,7 +111,9 @@ def render_empty_state(
     st.info(message)
     if button_label and target_key:
         target = get_step(target_key)
-        if target and st.button(button_label, key=f"empty_state_{target_key}{key_suffix}"):
+        if target and st.button(
+            button_label, key=f"empty_state_{target_key}{key_suffix}"
+        ):
             st.switch_page(target["path"])
 
 
@@ -113,14 +127,20 @@ def render_status_card(label: str, value: str, ready: bool) -> None:
 def render_glossary(terms: Optional[Iterable[str]] = None) -> None:
     """Compact glossary expander. Pass `terms` to show a subset relevant to
     the current page; omit it to show the full glossary."""
-    entries: Dict[str, Any] = {t: GLOSSARY[t] for t in terms if t in GLOSSARY} if terms else GLOSSARY
+    entries: Dict[str, Any] = (
+        {t: GLOSSARY[t] for t in terms if t in GLOSSARY} if terms else GLOSSARY
+    )
     with st.expander("Glossary"):
         for term, definition in entries.items():
             st.markdown(f"**{term}** - {definition}")
 
 
 def render_drift_status(
-    outcome_definitions: list, model_meta: object, *, available_columns: Optional[set] = None, blocking: bool = False,
+    outcome_definitions: list,
+    model_meta: object,
+    *,
+    available_columns: Optional[set] = None,
+    blocking: bool = False,
 ) -> bool:
     """
     Shared drift-status panel (PR E.2 requirement #10 - "make drift status
@@ -140,7 +160,9 @@ def render_drift_status(
     """
     if model_meta is None:
         return False
-    drift_df = outcomes_drift_dataframe(outcome_definitions, model_meta, available_columns=available_columns)
+    drift_df = outcomes_drift_dataframe(
+        outcome_definitions, model_meta, available_columns=available_columns
+    )
     if drift_df.empty:
         return False
     drifted = drift_df[drift_df["drift_status"] != "Fitted and current"]
@@ -152,9 +174,15 @@ def render_drift_status(
         f"{', '.join(f'{row.outcome_id} ({row.drift_status})' for row in drifted.itertuples())}."
     )
     if has_blocking and blocking:
-        st.error(message + " Calculation-relevant drift - this must be resolved (re-fit, or revert the catalogue change) before continuing.")
+        st.error(
+            message
+            + " Calculation-relevant drift - this must be resolved (re-fit, or revert the catalogue change) before continuing."
+        )
     elif has_blocking:
-        st.warning(message + " Calculation-relevant - numbers shown may no longer reflect the live catalogue.")
+        st.warning(
+            message
+            + " Calculation-relevant - numbers shown may no longer reflect the live catalogue."
+        )
     else:
         st.info(message)
     with st.expander("Drift detail"):

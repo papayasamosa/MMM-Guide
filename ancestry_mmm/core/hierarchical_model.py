@@ -563,9 +563,7 @@ def build_fh_hierarchical_model(
                     strength_matrix[oi, ci], strength_est[idx]
                 )
                 lagged = lagged_media_by_weeks[
-                    pathway_masks.lag_for_component(
-                        outcome_ids[oi], channels[ci]
-                    )
+                    pathway_masks.lag_for_component(outcome_ids[oi], channels[ci])
                 ]
                 cell_matrix = pt.zeros((n_outcomes, n_channels))
                 cell_matrix = pt.set_subtensor(cell_matrix[oi, ci], strength_est[idx])

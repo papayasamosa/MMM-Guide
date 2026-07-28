@@ -19,7 +19,12 @@ import pandas as pd
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
-from ancestry_mmm.core.outcomes import FAMILY_HISTORY, METRIC_GSA, METRIC_SIGNUP, OutcomeDefinition
+from ancestry_mmm.core.outcomes import (
+    FAMILY_HISTORY,
+    METRIC_GSA,
+    METRIC_SIGNUP,
+    OutcomeDefinition,
+)
 from ancestry_mmm.core.pathways import ResolvedPathwayMasks
 
 st.page_link = lambda *a, **k: None
@@ -31,15 +36,17 @@ PAGE = ROOT / "pages" / "03_Structure_Segments_Markets.py"
 def _transformed_data() -> pd.DataFrame:
     n = 20
     rng = np.random.default_rng(0)
-    return pd.DataFrame({
-        "date": pd.date_range("2024-01-01", periods=n, freq="W"),
-        "market": ["UK"] * n,
-        "New": rng.poisson(50, n).astype(float),
-        "New_Signup": rng.poisson(80, n).astype(float),
-        "DNA_CrossSell": rng.poisson(30, n).astype(float),
-        "Winback": rng.poisson(20, n).astype(float),
-        "tv_spend": rng.uniform(1000, 5000, n),
-    })
+    return pd.DataFrame(
+        {
+            "date": pd.date_range("2024-01-01", periods=n, freq="W"),
+            "market": ["UK"] * n,
+            "New": rng.poisson(50, n).astype(float),
+            "New_Signup": rng.poisson(80, n).astype(float),
+            "DNA_CrossSell": rng.poisson(30, n).astype(float),
+            "Winback": rng.poisson(20, n).astype(float),
+            "tv_spend": rng.uniform(1000, 5000, n),
+        }
+    )
 
 
 def test_page_loads_with_two_kpis_already_configured_on_one_segment():
@@ -57,7 +64,7 @@ def test_page_loads_with_two_kpis_already_configured_on_one_segment():
     assert "(none)" in cross_sell[0].options
 
 
-def test_quick_start_wizard_seeds_the_catalogue_without_requiring_it(): # noqa: E501
+def test_quick_start_wizard_seeds_the_catalogue_without_requiring_it():  # noqa: E501
     # Required test case 19 / PR E.2 item 5 - the legacy per-segment wizard
     # is optional and lives in an expander, not a required blocking section;
     # clicking its button merges rows into the canonical catalogue's
@@ -74,14 +81,23 @@ def test_quick_start_wizard_seeds_the_catalogue_without_requiring_it(): # noqa: 
     # Page loads fine with a completely empty catalogue - no wizard used yet.
     assert at.session_state["structure_outcome_rows"] == []
 
-    wizard_button = [b for b in at.button if b.label == "Create standard FH GSA outcomes"][0]
+    wizard_button = [
+        b for b in at.button if b.label == "Create standard FH GSA outcomes"
+    ][0]
     wizard_button.click().run()
     assert not at.exception, f"wizard click raised: {at.exception}"
 
     seeded = at.session_state["structure_outcome_rows"]
     assert len(seeded) == 3
-    assert {row["outcome_id"] for row in seeded} == {"fh_new", "fh_dna_crosssell", "fh_winback"}
-    assert all(row["product"] == FAMILY_HISTORY and row["metric"] == METRIC_GSA for row in seeded)
+    assert {row["outcome_id"] for row in seeded} == {
+        "fh_new",
+        "fh_dna_crosssell",
+        "fh_winback",
+    }
+    assert all(
+        row["product"] == FAMILY_HISTORY and row["metric"] == METRIC_GSA
+        for row in seeded
+    )
 
 
 def test_bulk_apply_segment_mapping_to_every_outcome_in_it():
@@ -96,16 +112,36 @@ def test_bulk_apply_segment_mapping_to_every_outcome_in_it():
     at.session_state["date_col"] = "date"
     at.session_state["market_col"] = "market"
     at.session_state["outcome_definitions"] = [
-        {"outcome_id": "fh_new_gsa", "product": FAMILY_HISTORY, "segment": "New", "metric": METRIC_GSA, "source_column": "New", "unit": "GSA"},
-        {"outcome_id": "fh_new_signup", "product": FAMILY_HISTORY, "segment": "New", "metric": METRIC_SIGNUP, "source_column": "New_Signup", "unit": "sign-up"},
+        {
+            "outcome_id": "fh_new_gsa",
+            "product": FAMILY_HISTORY,
+            "segment": "New",
+            "metric": METRIC_GSA,
+            "source_column": "New",
+            "unit": "GSA",
+        },
+        {
+            "outcome_id": "fh_new_signup",
+            "product": FAMILY_HISTORY,
+            "segment": "New",
+            "metric": METRIC_SIGNUP,
+            "source_column": "New_Signup",
+            "unit": "sign-up",
+        },
     ]
     at.run()
     assert not at.exception
 
-    override_expander = [e for e in at.expander if "Outcome overrides for segment 'New'" in e.label]
-    assert override_expander, "outcome-level override expander not found for a segment with 2 outcomes"
+    override_expander = [
+        e for e in at.expander if "Outcome overrides for segment 'New'" in e.label
+    ]
+    assert override_expander, (
+        "outcome-level override expander not found for a segment with 2 outcomes"
+    )
 
-    promo_sb = [sb for sb in at.selectbox if sb.label == "Promo column for 'New' (or None)"][0]
+    promo_sb = [
+        sb for sb in at.selectbox if sb.label == "Promo column for 'New' (or None)"
+    ][0]
     promo_sb.select("Promo_New").run()
     assert not at.exception
 
@@ -114,10 +150,17 @@ def test_bulk_apply_segment_mapping_to_every_outcome_in_it():
     assert not at.exception, f"bulk apply raised: {at.exception}"
 
     outcome_promo_selects = {
-        sb.label: sb.value for sb in at.selectbox if sb.label.startswith("Promo column for 'fh_new")
+        sb.label: sb.value
+        for sb in at.selectbox
+        if sb.label.startswith("Promo column for 'fh_new")
     }
-    assert outcome_promo_selects["Promo column for 'fh_new_gsa' (or None)"] == "Promo_New"
-    assert outcome_promo_selects["Promo column for 'fh_new_signup' (or None)"] == "Promo_New"
+    assert (
+        outcome_promo_selects["Promo column for 'fh_new_gsa' (or None)"] == "Promo_New"
+    )
+    assert (
+        outcome_promo_selects["Promo column for 'fh_new_signup' (or None)"]
+        == "Promo_New"
+    )
 
 
 def test_media_outcome_pathway_catalogue_saves_and_validates():
@@ -132,18 +175,40 @@ def test_media_outcome_pathway_catalogue_saves_and_validates():
     at.session_state["date_col"] = "date"
     at.session_state["market_col"] = "market"
     at.session_state["outcome_definitions"] = [
-        {"outcome_id": "fh_new_gsa", "product": FAMILY_HISTORY, "segment": "New", "metric": METRIC_GSA, "source_column": "New"},
-        {"outcome_id": "dna_new_kit", "product": "DNA", "segment": "New Customer", "metric": "Kit sale", "source_column": "DNA_CrossSell"},
+        {
+            "outcome_id": "fh_new_gsa",
+            "product": FAMILY_HISTORY,
+            "segment": "New",
+            "metric": METRIC_GSA,
+            "source_column": "New",
+        },
+        {
+            "outcome_id": "dna_new_kit",
+            "product": "DNA",
+            "segment": "New Customer",
+            "metric": "Kit sale",
+            "source_column": "DNA_CrossSell",
+        },
     ]
     at.session_state["media_outcome_pathways"] = [
         {
-            "pathway_id": "p1", "channel": "tv_spend", "source_product": "DNA", "target_outcome_id": "dna_new_kit",
-            "role": "primary_direct", "lag_type": "none", "lag_weeks": None, "prior_scale": 1.0,
-            "include_in_attribution": True, "include_in_planning": True, "evidence_status": "untested",
+            "pathway_id": "p1",
+            "channel": "tv_spend",
+            "source_product": "DNA",
+            "target_outcome_id": "dna_new_kit",
+            "role": "primary_direct",
+            "lag_type": "none",
+            "lag_weeks": None,
+            "prior_scale": 1.0,
+            "include_in_attribution": True,
+            "include_in_planning": True,
+            "evidence_status": "untested",
         },
     ]
     at.run()
-    assert not at.exception, f"initial load with a pre-populated pathway raised: {at.exception}"
+    assert not at.exception, (
+        f"initial load with a pre-populated pathway raised: {at.exception}"
+    )
 
     save_button = [b for b in at.button if b.label == "Save structure and validate"][0]
     save_button.click().run()
@@ -161,18 +226,33 @@ def test_media_outcome_pathway_catalogue_saves_and_validates():
     at2.session_state["date_col"] = "date"
     at2.session_state["market_col"] = "market"
     at2.session_state["outcome_definitions"] = [
-        {"outcome_id": "fh_new_gsa", "product": FAMILY_HISTORY, "segment": "New", "metric": METRIC_GSA, "source_column": "New"},
+        {
+            "outcome_id": "fh_new_gsa",
+            "product": FAMILY_HISTORY,
+            "segment": "New",
+            "metric": METRIC_GSA,
+            "source_column": "New",
+        },
     ]
     at2.session_state["media_outcome_pathways"] = [
         {
-            "pathway_id": "p2", "channel": "tv_spend", "source_product": FAMILY_HISTORY,
-            "target_outcome_id": "does_not_exist", "role": "primary_direct", "lag_type": "none",
-            "lag_weeks": None, "prior_scale": 1.0, "include_in_attribution": True,
-            "include_in_planning": True, "evidence_status": "untested",
+            "pathway_id": "p2",
+            "channel": "tv_spend",
+            "source_product": FAMILY_HISTORY,
+            "target_outcome_id": "does_not_exist",
+            "role": "primary_direct",
+            "lag_type": "none",
+            "lag_weeks": None,
+            "prior_scale": 1.0,
+            "include_in_attribution": True,
+            "include_in_planning": True,
+            "evidence_status": "untested",
         },
     ]
     at2.run()
-    save_button_2 = [b for b in at2.button if b.label == "Save structure and validate"][0]
+    save_button_2 = [b for b in at2.button if b.label == "Save structure and validate"][
+        0
+    ]
     save_button_2.click().run()
     assert not at2.exception, f"save raised: {at2.exception}"
     assert any("unknown target_outcome_id" in e.value for e in at2.error)
@@ -343,8 +423,7 @@ def test_legacy_pathway_review_loads_catalogue_and_requires_refit():
     source_confirmation = [
         checkbox
         for checkbox in at.checkbox
-        if checkbox.label
-        == "I confirmed or corrected every inferred source product"
+        if checkbox.label == "I confirmed or corrected every inferred source product"
     ][0]
     source_confirmation.check().run()
     type_confirmation = [
@@ -365,9 +444,12 @@ def test_legacy_pathway_review_loads_catalogue_and_requires_refit():
         "Migration Reviewer"
     )
     assert at.session_state["migration_review"]["model_invalidated"] is True
-    assert at.session_state["migration_review"]["migration_change_summary"][
-        "component_type_changes"
-    ][0]["after_component_type"] == "cross_product"
+    assert (
+        at.session_state["migration_review"]["migration_change_summary"][
+            "component_type_changes"
+        ][0]["after_component_type"]
+        == "cross_product"
+    )
     assert any(
         "old fit and approval were invalidated" in success.value
         for success in at.success
@@ -383,11 +465,26 @@ def test_save_succeeds_with_a_genuine_signup_and_gsa_on_the_same_segment():
     # seeds/accepts this shape) was run offline against a live AppTest
     # session (not committed - matches this codebase's convention for
     # anything that would otherwise need slow, brittle widget automation).
-    from ancestry_mmm.core.outcomes import validate_outcome_definitions, validate_fh_dna_cross_sell_outcome_id
+    from ancestry_mmm.core.outcomes import (
+        validate_outcome_definitions,
+        validate_fh_dna_cross_sell_outcome_id,
+    )
 
     outcomes = [
-        OutcomeDefinition(outcome_id="fh_new_gsa", product=FAMILY_HISTORY, segment="New", metric=METRIC_GSA, source_column="New"),
-        OutcomeDefinition(outcome_id="fh_new_signup", product=FAMILY_HISTORY, segment="New", metric=METRIC_SIGNUP, source_column="New_Signup"),
+        OutcomeDefinition(
+            outcome_id="fh_new_gsa",
+            product=FAMILY_HISTORY,
+            segment="New",
+            metric=METRIC_GSA,
+            source_column="New",
+        ),
+        OutcomeDefinition(
+            outcome_id="fh_new_signup",
+            product=FAMILY_HISTORY,
+            segment="New",
+            metric=METRIC_SIGNUP,
+            source_column="New_Signup",
+        ),
     ]
     df = _transformed_data()
     errors = validate_outcome_definitions(outcomes, available_columns=set(df.columns))

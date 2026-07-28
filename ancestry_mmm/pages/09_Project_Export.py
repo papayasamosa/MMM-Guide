@@ -212,7 +212,9 @@ if uploaded_zip is not None and st.button("Import bundle"):
         # gets the same legacy_unapproved migration a UI-driven import does,
         # and a malformed record is reported by index/id, not silently
         # dropped via a bare `except Exception`.
-        resolved_approvals, approval_warnings = resolve_imported_outcome_approvals(imported)
+        resolved_approvals, approval_warnings = resolve_imported_outcome_approvals(
+            imported
+        )
         set_state("outcome_approvals", resolved_approvals)
         for approval_warning in approval_warnings:
             st.warning(approval_warning)
@@ -240,9 +242,7 @@ if uploaded_zip is not None and st.button("Import bundle"):
         imported_diagnostics = imported.get("diagnostics") or {}
         set_state("scorecard", imported_diagnostics.get("scorecard"))
         set_state("backtest_results", imported_diagnostics.get("backtest_results"))
-        if imported.get("curve_bank_files") or imported.get(
-            "curve_bank_binary_files"
-        ):
+        if imported.get("curve_bank_files") or imported.get("curve_bank_binary_files"):
             restored_curve_dir = curve_bank_dir()
             restored_curve_dir.mkdir(parents=True, exist_ok=True)
             for filename, contents in imported["curve_bank_files"].items():
@@ -304,7 +304,9 @@ if uploaded_zip is not None and st.button("Import bundle"):
         # loadable while official use of its checkpoint remains blocked by
         # outcome governance - reported separately so "resumable" is never
         # read as "officially usable".
-        if resume_audit["resumable"] and not resume_audit.get("officially_resumable", True):
+        if resume_audit["resumable"] and not resume_audit.get(
+            "officially_resumable", True
+        ):
             st.warning(
                 "This bundle loaded successfully, but is not **officially** "
                 "resumable at its checkpoint - see the outcome-governance "
@@ -312,7 +314,9 @@ if uploaded_zip is not None and st.button("Import bundle"):
             )
         for audit_warning in resume_audit["warnings"]:
             st.caption(audit_warning)
-        for outcome_governance_warning in resume_audit.get("outcome_governance_warnings", []):
+        for outcome_governance_warning in resume_audit.get(
+            "outcome_governance_warnings", []
+        ):
             st.caption(outcome_governance_warning)
 
         verified_approval, message = verify_imported_approval(imported, reconstructed)

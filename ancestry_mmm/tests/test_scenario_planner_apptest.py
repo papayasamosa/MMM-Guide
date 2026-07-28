@@ -27,7 +27,10 @@ from ancestry_mmm.core.fingerprint import (
     fingerprint_posterior,
 )
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
-from ancestry_mmm.core.outcome_approval import OutcomeApproval, fingerprint_outcome_definition
+from ancestry_mmm.core.outcome_approval import (
+    OutcomeApproval,
+    fingerprint_outcome_definition,
+)
 from ancestry_mmm.core.outcomes import (
     FAMILY_HISTORY,
     METRIC_KEY_FH_GSA,
@@ -49,9 +52,16 @@ PAGE = ROOT / "pages" / "08_Scenario_Planner.py"
 def _meta(outcome_catalogue) -> FHModelMeta:
     outcome_ids = [o.outcome_id for o in outcome_catalogue]
     return FHModelMeta(
-        markets=["UK"], outcome_ids=outcome_ids, channels=["TV_Brand"],
-        dna_channels=[], dna_channel_idx=[], non_dna_idx=[0],
-        dna_outcome_id=outcome_ids[0], dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+        markets=["UK"],
+        outcome_ids=outcome_ids,
+        channels=["TV_Brand"],
+        dna_channels=[],
+        dna_channel_idx=[],
+        non_dna_idx=[0],
+        dna_outcome_id=outcome_ids[0],
+        dna_lag_weeks=4,
+        unpooled_markets=[],
+        control_names=[],
         outcome_catalogue_at_fit=outcome_catalogue,
         # eligible_outcome_ids() (core.outcomes) reads this map, not the
         # OutcomeDefinition's own include_in_value/include_in_optimisation
@@ -63,7 +73,13 @@ def _meta(outcome_catalogue) -> FHModelMeta:
     )
 
 
-def _trace(meta: FHModelMeta, n_fourier: int = 6, chains: int = 2, draws: int = 10, seed: int = 0) -> az.InferenceData:
+def _trace(
+    meta: FHModelMeta,
+    n_fourier: int = 6,
+    chains: int = 2,
+    draws: int = 10,
+    seed: int = 0,
+) -> az.InferenceData:
     rng = np.random.default_rng(seed)
     n_ch, n_seg, n_mkt = len(meta.channels), len(meta.outcome_ids), len(meta.markets)
     posterior = {
@@ -78,18 +94,32 @@ def _trace(meta: FHModelMeta, n_fourier: int = 6, chains: int = 2, draws: int = 
         "market_offset": rng.normal(size=(chains, draws, n_mkt, n_seg)),
         "gamma_fourier": rng.normal(size=(chains, draws, n_fourier, n_seg)),
     }
-    coords = {"channel": meta.channels, "outcome": meta.outcome_ids, "market": meta.markets, "fourier": list(range(n_fourier))}
+    coords = {
+        "channel": meta.channels,
+        "outcome": meta.outcome_ids,
+        "market": meta.markets,
+        "fourier": list(range(n_fourier)),
+    }
     dims = {
-        "decay_rate": ["channel"], "hill_K": ["channel"], "hill_S": ["channel"],
-        "intercept": ["outcome"], "trend_coef": ["outcome"], "promo_coef": ["outcome"],
-        "alpha": ["outcome"], "beta": ["outcome", "channel"],
-        "market_offset": ["market", "outcome"], "gamma_fourier": ["fourier", "outcome"],
+        "decay_rate": ["channel"],
+        "hill_K": ["channel"],
+        "hill_S": ["channel"],
+        "intercept": ["outcome"],
+        "trend_coef": ["outcome"],
+        "promo_coef": ["outcome"],
+        "alpha": ["outcome"],
+        "beta": ["outcome", "channel"],
+        "market_offset": ["market", "outcome"],
+        "gamma_fourier": ["fourier", "outcome"],
     }
     return az.from_dict(posterior=posterior, coords=coords, dims=dims)
 
 
 def _seed_consistent_session_state(
-    at: AppTest, *, value_currency: str, non_target_outcome_currency: str | None = None,
+    at: AppTest,
+    *,
+    value_currency: str,
+    non_target_outcome_currency: str | None = None,
 ) -> None:
     """Populate session state with a real, internally consistent fitted
     model - the approval's identity fingerprints are computed the exact
@@ -103,32 +133,52 @@ def _seed_consistent_session_state(
     14.6/10.1: a non-target outcome in another currency must never block an
     otherwise single-currency objective."""
     outcome_def = OutcomeDefinition(
-        outcome_id="New", product=FAMILY_HISTORY, segment="New", metric="GSA",
-        metric_key=METRIC_KEY_FH_GSA, source_column="fh_new_gsa", unit="GSA",
-        aggregation_type="count", event_definition="A new subscriber",
-        date_basis="event_date", cohort_or_attribution_basis="signup_cohort",
+        outcome_id="New",
+        product=FAMILY_HISTORY,
+        segment="New",
+        metric="GSA",
+        metric_key=METRIC_KEY_FH_GSA,
+        source_column="fh_new_gsa",
+        unit="GSA",
+        aggregation_type="count",
+        event_definition="A new subscriber",
+        date_basis="event_date",
+        cohort_or_attribution_basis="signup_cohort",
         completeness_or_maturity_policy="Mature after 12 weeks",
         exclusions="Excludes internal test accounts",
-        reconciliation_source="Finance report", business_owner="Analytics",
+        reconciliation_source="Finance report",
+        business_owner="Analytics",
         definition_version="1.0",
-        value_weight=5.0, value_currency=value_currency,
-        include_in_value=True, include_in_optimisation=True,
+        value_weight=5.0,
+        value_currency=value_currency,
+        include_in_value=True,
+        include_in_optimisation=True,
     )
     outcome_defs = [outcome_def]
     segment_outcomes = {"New": "fh_new_gsa"}
     source_columns = {"fh_new_gsa": np.linspace(10.0, 16.0, 16)}
     if non_target_outcome_currency is not None:
         non_target_def = OutcomeDefinition(
-            outcome_id="Winback", product=FAMILY_HISTORY, segment="Winback", metric="GSA",
-            metric_key=METRIC_KEY_FH_GSA, source_column="fh_winback_gsa", unit="GSA",
-            aggregation_type="count", event_definition="A winback subscriber",
-            date_basis="event_date", cohort_or_attribution_basis="signup_cohort",
+            outcome_id="Winback",
+            product=FAMILY_HISTORY,
+            segment="Winback",
+            metric="GSA",
+            metric_key=METRIC_KEY_FH_GSA,
+            source_column="fh_winback_gsa",
+            unit="GSA",
+            aggregation_type="count",
+            event_definition="A winback subscriber",
+            date_basis="event_date",
+            cohort_or_attribution_basis="signup_cohort",
             completeness_or_maturity_policy="Mature after 12 weeks",
             exclusions="Excludes internal test accounts",
-            reconciliation_source="Finance report", business_owner="Analytics",
+            reconciliation_source="Finance report",
+            business_owner="Analytics",
             definition_version="1.0",
-            value_weight=3.0, value_currency=non_target_outcome_currency,
-            include_in_value=False, include_in_optimisation=False,
+            value_weight=3.0,
+            value_currency=non_target_outcome_currency,
+            include_in_value=False,
+            include_in_optimisation=False,
         )
         outcome_defs.append(non_target_def)
         segment_outcomes["Winback"] = "fh_winback_gsa"
@@ -136,15 +186,20 @@ def _seed_consistent_session_state(
 
     meta = _meta(outcome_defs)
     trace = _trace(meta)
-    transformed_data = pd.DataFrame({
-        "date": pd.date_range("2024-01-01", periods=16, freq="W"),
-        "market": ["UK"] * 16,
-        "TV_Brand": np.linspace(100.0, 250.0, 16),
-        **source_columns,
-    })
+    transformed_data = pd.DataFrame(
+        {
+            "date": pd.date_range("2024-01-01", periods=16, freq="W"),
+            "market": ["UK"] * 16,
+            "TV_Brand": np.linspace(100.0, 250.0, 16),
+            **source_columns,
+        }
+    )
     model_spec_dict = ModelSpec(
-        date_col="date", market_col="market", markets=["UK"],
-        segment_outcomes=segment_outcomes, channels=["TV_Brand"],
+        date_col="date",
+        market_col="market",
+        markets=["UK"],
+        segment_outcomes=segment_outcomes,
+        channels=["TV_Brand"],
     ).to_dict()
     prior_config = {"decay_mu": 0.5}
     dna_lag_weeks = 4
@@ -162,12 +217,20 @@ def _seed_consistent_session_state(
         model_run_id=model_run_id,
         data_fingerprint=fingerprint_dataframe(frame["df"]),
         model_spec_fingerprint=fingerprint_model_spec(
-            model_spec_dict, prior_config, dna_lag_weeks, model_type="shared",
-            pipeline_steps=[], market_spec_config=None,
+            model_spec_dict,
+            prior_config,
+            dna_lag_weeks,
+            model_type="shared",
+            pipeline_steps=[],
+            market_spec_config=None,
             direct_dna_outcome_ids=meta.direct_dna_outcome_ids,
-            outcome_catalogue=outcome_catalogue_fingerprint_payload(meta.outcome_catalogue_at_fit),
+            outcome_catalogue=outcome_catalogue_fingerprint_payload(
+                meta.outcome_catalogue_at_fit
+            ),
             funnel_links=None,
-            media_outcome_pathways=pathway_catalogue_fingerprint_payload(meta.pathway_catalogue_at_fit),
+            media_outcome_pathways=pathway_catalogue_fingerprint_payload(
+                meta.pathway_catalogue_at_fit
+            ),
             activity_fit_fingerprint=None,
         ),
         posterior_fingerprint=fingerprint_posterior(posterior_params),
@@ -186,10 +249,13 @@ def _seed_consistent_session_state(
     at.session_state["outcome_definitions"] = [o.to_dict() for o in outcome_defs]
     outcome_approvals = [
         OutcomeApproval(
-            approval_id=f"apr-{o.outcome_id}", outcome_id=o.outcome_id,
+            approval_id=f"apr-{o.outcome_id}",
+            outcome_id=o.outcome_id,
             definition_fingerprint=fingerprint_outcome_definition(o),
-            status="approved", allowed_uses=("planning", "optimisation"),
-            approved_by="Jane Analyst", approved_at="2026-01-01",
+            status="approved",
+            allowed_uses=("planning", "optimisation"),
+            approved_by="Jane Analyst",
+            approved_at="2026-01-01",
         )
         for o in outcome_defs
     ]
@@ -251,7 +317,9 @@ def test_non_target_outcome_in_another_currency_does_not_block():
     logic would have seen {"GBP", "USD"} and given up with None."""
     at = AppTest.from_file(str(PAGE), default_timeout=60)
     _seed_consistent_session_state(
-        at, value_currency="GBP", non_target_outcome_currency="USD",
+        at,
+        value_currency="GBP",
+        non_target_outcome_currency="USD",
     )
     at.run()
     assert not at.exception, f"initial load raised: {at.exception}"

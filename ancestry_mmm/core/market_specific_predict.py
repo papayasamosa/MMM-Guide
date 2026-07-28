@@ -21,10 +21,17 @@ import pandas as pd
 
 from .hierarchical_model import FHModelMeta
 from .outcomes import (
-    dna_kit_sale_outcome_ids, fh_gsa_outcome_ids, fh_net_billthrough_outcome_ids,
+    dna_kit_sale_outcome_ids,
+    fh_gsa_outcome_ids,
+    fh_net_billthrough_outcome_ids,
     fh_signup_outcome_ids,
 )
-from .predict import _cross_product_strength_matrix, _pathway_weight, extract_pathway_strength, lag_frame
+from .predict import (
+    _cross_product_strength_matrix,
+    _pathway_weight,
+    extract_pathway_strength,
+    lag_frame,
+)
 from .transformations import geometric_adstock_matrix, hill_function
 
 
@@ -33,11 +40,14 @@ class FHMarketSpecificPosteriorParams:
     """Posterior point estimates (posterior means) needed to replay Model C.
     Same shape as core.predict.FHPosteriorParams except `hill_K` and `beta`
     carry an extra market key."""
-    decay_rate: Dict[str, float]                          # decay_rate[channel] - shared
-    hill_K: Dict[str, Dict[str, float]]                    # hill_K[market][channel]
-    hill_S: Dict[str, float]                               # hill_S[channel] - shared
-    beta: Dict[str, Dict[str, Dict[str, float]]]           # beta[market][outcome_id][channel]
-    pathway_strength: Dict[str, Dict[str, float]]          # pathway_strength[outcome_id][channel] - PR G1,
+
+    decay_rate: Dict[str, float]  # decay_rate[channel] - shared
+    hill_K: Dict[str, Dict[str, float]]  # hill_K[market][channel]
+    hill_S: Dict[str, float]  # hill_S[channel] - shared
+    beta: Dict[str, Dict[str, Dict[str, float]]]  # beta[market][outcome_id][channel]
+    pathway_strength: Dict[
+        str, Dict[str, float]
+    ]  # pathway_strength[outcome_id][channel] - PR G1,
     # not market-specific - active_cross_product_strength/exploratory_cross_product_strength
     # are fit with dims=("outcome", "channel") in build_fh_market_specific_model,
     # same as Model A (see core.predict.FHPosteriorParams.pathway_strength).
@@ -52,7 +62,9 @@ class FHMarketSpecificPosteriorParams:
 
 
 def extract_market_specific_posterior_params(
-    trace: az.InferenceData, meta: FHModelMeta, at: Optional[tuple[int, int]] = None,
+    trace: az.InferenceData,
+    meta: FHModelMeta,
+    at: Optional[tuple[int, int]] = None,
 ) -> FHMarketSpecificPosteriorParams:
     """
     Pull posterior values into plain dicts keyed by name - the posterior
@@ -70,7 +82,11 @@ def extract_market_specific_posterior_params(
 
     def by_coord(var: str, coord: str, labels: List[str]) -> Dict[str, float]:
         da = post[var]
-        vals = da.isel(chain=at[0], draw=at[1]) if at is not None else da.mean(dim=[d for d in da.dims if d not in (coord,)])
+        vals = (
+            da.isel(chain=at[0], draw=at[1])
+            if at is not None
+            else da.mean(dim=[d for d in da.dims if d not in (coord,)])
+        )
         return {label: float(vals.sel({coord: label}).values) for label in labels}
 
     decay_rate = by_coord("decay_rate", "channel", meta.channels)
@@ -83,14 +99,20 @@ def extract_market_specific_posterior_params(
 
     hill_K_reduced = _reduce(post["hill_K"])
     hill_K = {
-        m: {c: float(hill_K_reduced.sel(market=m, channel=c).values) for c in meta.channels}
+        m: {
+            c: float(hill_K_reduced.sel(market=m, channel=c).values)
+            for c in meta.channels
+        }
         for m in meta.markets
     }
 
     beta_reduced = _reduce(post["beta"])
     beta = {
         m: {
-            s: {c: float(beta_reduced.sel(market=m, outcome=s, channel=c).values) for c in meta.channels}
+            s: {
+                c: float(beta_reduced.sel(market=m, outcome=s, channel=c).values)
+                for c in meta.channels
+            }
             for s in meta.outcome_ids
         }
         for m in meta.markets
@@ -98,17 +120,24 @@ def extract_market_specific_posterior_params(
 
     market_offset_reduced = _reduce(post["market_offset"])
     market_offset = {
-        m: {s: float(market_offset_reduced.sel(market=m, outcome=s).values) for s in meta.outcome_ids}
+        m: {
+            s: float(market_offset_reduced.sel(market=m, outcome=s).values)
+            for s in meta.outcome_ids
+        }
         for m in meta.markets
     }
 
     gamma_fourier_reduced = _reduce(post["gamma_fourier"])
-    gamma_fourier = {s: gamma_fourier_reduced.sel(outcome=s).values for s in meta.outcome_ids}
+    gamma_fourier = {
+        s: gamma_fourier_reduced.sel(outcome=s).values for s in meta.outcome_ids
+    }
 
     control_coef = {}
     if meta.control_names and "control_coef" in post:
         cc_reduced = _reduce(post["control_coef"])
-        control_coef = {c: float(cc_reduced.sel(control=c).values) for c in meta.control_names}
+        control_coef = {
+            c: float(cc_reduced.sel(control=c).values) for c in meta.control_names
+        }
 
     outcome_control_coef: Dict[str, Dict[str, float]] = {}
     for oid, names in meta.outcome_control_names.items():
@@ -116,13 +145,24 @@ def extract_market_specific_posterior_params(
         if var_name in post:
             coord_name = f"{oid}_control"
             v_reduced = _reduce(post[var_name])
-            outcome_control_coef[oid] = {n: float(v_reduced.sel({coord_name: n}).values) for n in names}
+            outcome_control_coef[oid] = {
+                n: float(v_reduced.sel({coord_name: n}).values) for n in names
+            }
 
     return FHMarketSpecificPosteriorParams(
-        decay_rate=decay_rate, hill_K=hill_K, hill_S=hill_S, beta=beta,
-        pathway_strength=pathway_strength, promo_coef=promo_coef, market_offset=market_offset,
-        intercept=intercept, trend_coef=trend_coef, gamma_fourier=gamma_fourier, alpha=alpha,
-        control_coef=control_coef, outcome_control_coef=outcome_control_coef,
+        decay_rate=decay_rate,
+        hill_K=hill_K,
+        hill_S=hill_S,
+        beta=beta,
+        pathway_strength=pathway_strength,
+        promo_coef=promo_coef,
+        market_offset=market_offset,
+        intercept=intercept,
+        trend_coef=trend_coef,
+        gamma_fourier=gamma_fourier,
+        alpha=alpha,
+        control_coef=control_coef,
+        outcome_control_coef=outcome_control_coef,
     )
 
 
@@ -164,9 +204,12 @@ def predict_mu_market_specific(
 
     market_idx = frame["market_idx"]
     # beta_by_row[obs, outcome, channel] - this row's own market's beta.
-    beta_stack = np.array([
-        [[params.beta[m][s][c] for c in meta.channels] for s in outcome_ids] for m in markets
-    ])  # (n_market, n_outcome, n_channel)
+    beta_stack = np.array(
+        [
+            [[params.beta[m][s][c] for c in meta.channels] for s in outcome_ids]
+            for m in markets
+        ]
+    )  # (n_market, n_outcome, n_channel)
     beta_by_row = beta_stack[market_idx]  # (n_obs, n_outcome, n_channel)
 
     # Pathway-masked replay (PR G1) - mirrors core.market_specific_model.
@@ -174,10 +217,16 @@ def predict_mu_market_specific(
     # construction exactly (same masks, same media, same beta multiplication,
     # same einsum contraction pattern) - see core.predict.predict_mu's
     # matching comment.
-    primary_mask = meta.pathway_masks.primary_matrix(outcome_ids, meta.channels)  # (O, C)
-    eta_primary = np.einsum("oc,osc->os", sat_media, beta_by_row * primary_mask[None, :, :])
+    primary_mask = meta.pathway_masks.primary_matrix(
+        outcome_ids, meta.channels
+    )  # (O, C)
+    eta_primary = np.einsum(
+        "oc,osc->os", sat_media, beta_by_row * primary_mask[None, :, :]
+    )
 
-    cross_cells = meta.pathway_masks.active_cells(outcome_ids, meta.channels) + meta.pathway_masks.exploratory_cells(outcome_ids, meta.channels)
+    cross_cells = meta.pathway_masks.active_cells(
+        outcome_ids, meta.channels
+    ) + meta.pathway_masks.exploratory_cells(outcome_ids, meta.channels)
     eta_cross = np.zeros((n_obs, n_out))
     if cross_cells:
         strength_matrix = _cross_product_strength_matrix(meta, params)
@@ -205,17 +254,28 @@ def predict_mu_market_specific(
     promo_coef = np.array([params.promo_coef[s] for s in outcome_ids])
     eta_promo = frame["promo"] * promo_coef[None, :]
 
-    market_offset_matrix = np.array([[params.market_offset[m][s] for s in outcome_ids] for m in markets])
+    market_offset_matrix = np.array(
+        [[params.market_offset[m][s] for s in outcome_ids] for m in markets]
+    )
     eta_market = market_offset_matrix[market_idx]
 
     intercept = np.array([params.intercept[s] for s in outcome_ids])
     trend_coef = np.array([params.trend_coef[s] for s in outcome_ids])
     eta_trend = frame["trend"][:, None] * trend_coef[None, :]
 
-    gamma_fourier_matrix = np.column_stack([params.gamma_fourier[s] for s in outcome_ids])
+    gamma_fourier_matrix = np.column_stack(
+        [params.gamma_fourier[s] for s in outcome_ids]
+    )
     eta_season = frame["fourier"] @ gamma_fourier_matrix
 
-    eta = intercept[None, :] + eta_market + eta_trend + eta_season + eta_channels + eta_promo
+    eta = (
+        intercept[None, :]
+        + eta_market
+        + eta_trend
+        + eta_season
+        + eta_channels
+        + eta_promo
+    )
 
     outcome_controls = frame.get("outcome_controls") or {}
     outcome_control_names = frame.get("outcome_control_names") or {}
@@ -242,7 +302,8 @@ def steady_state_outcome_response_market_specific(
     meta: FHModelMeta,
     params: FHMarketSpecificPosteriorParams,
     reference_context: Optional[Dict] = None,
-    *, planning_only: bool = False,
+    *,
+    planning_only: bool = False,
 ) -> Dict[str, float]:
     """Market-specific-model equivalent of core.predict.steady_state_outcome_response -
     same steady-state approximation, using `market`'s own K and beta."""
@@ -252,7 +313,9 @@ def steady_state_outcome_response_market_specific(
     sat = {}
     for c in meta.channels:
         x = spend_by_channel.get(c, 0.0)
-        sat[c] = hill_function(np.array([x]), params.hill_K[market][c], params.hill_S[c])[0]
+        sat[c] = hill_function(
+            np.array([x]), params.hill_K[market][c], params.hill_S[c]
+        )[0]
 
     eta = {}
     for s in outcome_ids:
@@ -267,13 +330,19 @@ def steady_state_outcome_response_market_specific(
         for c in meta.channels:
             # Steady-state collapse (primary and cross-product media converge
             # at constant spend) - see core.predict.steady_state_outcome_response.
-            val += params.beta[market][s][c] * sat[c] * _pathway_weight(meta, params, s, c, planning_only=planning_only)
+            val += (
+                params.beta[market][s][c]
+                * sat[c]
+                * _pathway_weight(meta, params, s, c, planning_only=planning_only)
+            )
 
         for name, coef in params.control_coef.items():
             val += coef * reference_context.get("controls", {}).get(name, 0.0)
         if s in params.outcome_control_coef:
             for name, coef in params.outcome_control_coef[s].items():
-                val += coef * reference_context.get("outcome_controls", {}).get(s, {}).get(name, 0.0)
+                val += coef * reference_context.get("outcome_controls", {}).get(
+                    s, {}
+                ).get(name, 0.0)
 
         eta[s] = val
 
@@ -282,7 +351,9 @@ def steady_state_outcome_response_market_specific(
 
 # Deprecated alias (PR E.1 segment-era rename) - see core.predict's identical
 # alias for steady_state_outcome_response.
-steady_state_segment_response_market_specific = steady_state_outcome_response_market_specific
+steady_state_segment_response_market_specific = (
+    steady_state_outcome_response_market_specific
+)
 
 
 def generate_market_channel_curve(
@@ -319,9 +390,13 @@ def generate_market_channel_curve(
     Credible intervals are explicitly Phase 3 scope (docs/media_units_and_inflation.md).
     """
     if market not in params.hill_K:
-        raise ValueError(f"'{market}' is not one of this model's markets: {list(params.hill_K)}")
+        raise ValueError(
+            f"'{market}' is not one of this model's markets: {list(params.hill_K)}"
+        )
     if channel not in meta.channels:
-        raise ValueError(f"'{channel}' is not one of this model's channels: {meta.channels}")
+        raise ValueError(
+            f"'{channel}' is not one of this model's channels: {meta.channels}"
+        )
 
     K = params.hill_K[market][channel]
     S = params.hill_S[channel]
@@ -336,7 +411,12 @@ def generate_market_channel_curve(
     rows = []
     for spend in spend_range:
         sat = float(hill_function(np.array([float(spend)]), K, S)[0])
-        row = {"market": market, "channel": channel, "spend": float(spend), "saturation": sat}
+        row = {
+            "market": market,
+            "channel": channel,
+            "spend": float(spend),
+            "saturation": sat,
+        }
         overall = 0.0
         dna_total = 0.0
         fh_gsa_total = 0.0
@@ -344,7 +424,9 @@ def generate_market_channel_curve(
         fh_signup_total = 0.0
         for oid in meta.outcome_ids:
             # Steady-state collapse - see steady_state_outcome_response_market_specific.
-            beta_val = params.beta[market][oid][channel] * _pathway_weight(meta, params, oid, channel)
+            beta_val = params.beta[market][oid][channel] * _pathway_weight(
+                meta, params, oid, channel
+            )
             value = beta_val * sat
             row[f"{oid}_response"] = value
             overall += value

@@ -8,7 +8,7 @@ PR 6: Separates validation orchestration from Streamlit page rendering.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import arviz as az
@@ -24,7 +24,6 @@ from ancestry_mmm.core.validation_policy import (
 )
 from ancestry_mmm.core.diagnostics import (
     posterior_predictive_coverage,
-    compute_scorecard,
 )
 from ancestry_mmm.core.model_identity import ModelIdentity
 
@@ -37,6 +36,7 @@ class ValidationInput:
     identity-bound validation results. Without them, results will have
     empty identity fields and be treated as stale by the readiness evaluator.
     """
+
     trace: Optional[az.InferenceData] = None
     frame: Optional[Dict[str, Any]] = None
     meta: Optional[Any] = None
@@ -52,6 +52,7 @@ class ValidationInput:
 @dataclass
 class ValidationServiceResult:
     """Structured validation output."""
+
     readiness: Optional[ApprovalReadiness] = None
     readiness_dict: Optional[Dict[str, Any]] = None
     results: List[ValidationResult] = field(default_factory=list)
@@ -108,7 +109,8 @@ class ValidationService:
                         status=result.status,
                         value=result.value,
                         message=result.message,
-                        artefact_id=v_input.diagnostic_artefact_id or result.artefact_id,
+                        artefact_id=v_input.diagnostic_artefact_id
+                        or result.artefact_id,
                         evaluated_at=result.evaluated_at,
                         model_run_id=v_input.model_identity.model_run_id,
                         data_fingerprint=v_input.model_identity.data_fingerprint,
@@ -206,11 +208,14 @@ class ValidationService:
         elif evaluator_id in ("ppc_coverage", "ppc"):
             if frame is None or meta is None:
                 return ValidationResult(
-                    gate_name=gate.name, status="fail",
+                    gate_name=gate.name,
+                    status="fail",
                     message="Missing frame or meta for PPC evaluation",
                 )
             ppc = posterior_predictive_coverage(
-                trace, frame, meta,
+                trace,
+                frame,
+                meta,
                 credible_mass=v_input.credible_mass,
                 random_seed=42,
             )
@@ -240,6 +245,16 @@ class ValidationService:
         if gate.acceptable_range is None:
             # PR 53C: Missing thresholds on a numeric gate is a configuration
             # error, not a pass. The gate must define acceptable_range.
+            return "fail"
+
+        lo, hi = gate.acceptable_range
+
+        # Validate threshold values are finite
+        import math
+
+        if not (math.isfinite(lo) and math.isfinite(hi)):
+            return "fail"
+        if lo > hi:
             return "fail"
 
         if gate.direction == "lower_is_better":

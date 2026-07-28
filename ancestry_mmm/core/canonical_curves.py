@@ -178,12 +178,15 @@ class CurveReferenceContext:
             raise ValueError("reference trend must be finite")
         if self.counterfactual_axis_type not in {"model_input", "monetary"}:
             raise ValueError("counterfactual_axis_type must be model_input or monetary")
-        if self.counterfactual_value < 0 or not np.isfinite(
-            self.counterfactual_value
-        ):
+        if self.counterfactual_value < 0 or not np.isfinite(self.counterfactual_value):
             raise ValueError("counterfactual_spend must be finite and non-negative")
-        if any(value < 0 or not np.isfinite(value) for value in self.other_channel_media_input.values()):
-            raise ValueError("other-channel reference spend must be finite and non-negative")
+        if any(
+            value < 0 or not np.isfinite(value)
+            for value in self.other_channel_media_input.values()
+        ):
+            raise ValueError(
+                "other-channel reference spend must be finite and non-negative"
+            )
 
     def prediction_context(self) -> dict:
         return {
@@ -206,12 +209,9 @@ class CurveReferenceContext:
             "promo": dict(self.promo),
             "controls": dict(self.controls),
             "outcome_controls": {
-                key: dict(value)
-                for key, value in self.outcome_controls.items()
+                key: dict(value) for key, value in self.outcome_controls.items()
             },
-            "other_channel_media_input": dict(
-                self.other_channel_media_input
-            ),
+            "other_channel_media_input": dict(self.other_channel_media_input),
             "counterfactual_value": self.counterfactual_value,
             "counterfactual_axis_type": self.counterfactual_axis_type,
             "reference_period_start": self.reference_period_start,
@@ -227,13 +227,9 @@ class CurveReferenceContext:
         payload = dict(values)
         payload.pop("schema_version", None)
         if "other_channel_media_input" not in payload:
-            payload["other_channel_spend"] = payload.pop(
-                "other_channel_spend"
-            )
+            payload["other_channel_spend"] = payload.pop("other_channel_spend")
         if "counterfactual_value" not in payload:
-            payload["counterfactual_spend"] = payload.pop(
-                "counterfactual_spend", 0.0
-            )
+            payload["counterfactual_spend"] = payload.pop("counterfactual_spend", 0.0)
         payload.setdefault("counterfactual_axis_type", "model_input")
         if "fourier" in payload:
             payload["fourier"] = tuple(payload["fourier"])
@@ -259,10 +255,7 @@ class CurveReferenceContext:
             "reference_promotions": json.dumps(dict(self.promo), sort_keys=True),
             "reference_controls": json.dumps(dict(self.controls), sort_keys=True),
             "reference_outcome_controls": json.dumps(
-                {
-                    key: dict(values)
-                    for key, values in self.outcome_controls.items()
-                },
+                {key: dict(values) for key, values in self.outcome_controls.items()},
                 sort_keys=True,
             ),
         }
@@ -282,7 +275,9 @@ class PortfolioPerturbation:
             raise ValueError("perturbation_id is required")
         values = np.asarray(list(self.allocation_direction.values()), dtype=float)
         if not len(values) or np.any(~np.isfinite(values)) or np.any(values < 0):
-            raise ValueError("allocation_direction must contain finite non-negative shares")
+            raise ValueError(
+                "allocation_direction must contain finite non-negative shares"
+            )
         if not np.isclose(values.sum(), 1.0):
             raise ValueError("allocation_direction shares must sum to 1")
 
@@ -351,9 +346,7 @@ def _normalise_support(
                 }
             elif isinstance(supplied_value, MonetarySpendSupport):
                 if curve_type != "monetary":
-                    raise ValueError(
-                        "Model-input curves require MediaInputSupport"
-                    )
+                    raise ValueError("Model-input curves require MediaInputSupport")
                 values = {
                     "current_spend": supplied_value.current_local,
                     "observed_spend_min": supplied_value.observed_local_min,
@@ -479,16 +472,10 @@ def support_from_model_frame(
 ) -> Dict[Tuple[str, str], MediaInputSupport]:
     """Derive support from ``X_media`` in fitted model-input units only."""
     if current_spend_method not in CURRENT_SPEND_METHODS:
-        raise ValueError(
-            f"Unsupported current-spend method '{current_spend_method}'"
-        )
+        raise ValueError(f"Unsupported current-spend method '{current_spend_method}'")
     media = np.asarray(frame["X_media"], dtype=float)
-    market_idx = np.asarray(
-        frame.get("market_idx", np.zeros(len(media))), dtype=int
-    )
-    dates = pd.to_datetime(
-        frame.get("dates", np.arange(len(media))), errors="coerce"
-    )
+    market_idx = np.asarray(frame.get("market_idx", np.zeros(len(media))), dtype=int)
+    dates = pd.to_datetime(frame.get("dates", np.arange(len(media))), errors="coerce")
     result = {}
     for market_pos, market in enumerate(meta.markets):
         mask = market_idx == market_pos
@@ -517,9 +504,8 @@ def support_from_model_frame(
                         "selected_period_average requires start and end dates"
                     )
                 reference_mask = (
-                    (market_dates >= pd.Timestamp(selected_period_start))
-                    & (market_dates <= pd.Timestamp(selected_period_end))
-                )
+                    market_dates >= pd.Timestamp(selected_period_start)
+                ) & (market_dates <= pd.Timestamp(selected_period_end))
                 if not reference_mask.any():
                     raise ValueError(
                         f"Selected period has no observations for {market}"
@@ -630,9 +616,7 @@ def reference_context_from_model_frame(
     controls = {}
     control_names = list(frame.get("control_names") or [])
     if control_names:
-        control_values = np.asarray(frame["X_controls"], dtype=float)[mask].mean(
-            axis=0
-        )
+        control_values = np.asarray(frame["X_controls"], dtype=float)[mask].mean(axis=0)
         controls = {
             name: float(control_values[index])
             for index, name in enumerate(control_names)
@@ -718,9 +702,7 @@ def _economic_values(
         and marginal_response > near_zero
     )
     marginal_cpa = 1.0 / marginal_response if marginal_ok else np.nan
-    marginal_status = (
-        ECONOMICS_OK if marginal_ok else ECONOMICS_NEAR_ZERO_MARGINAL
-    )
+    marginal_status = ECONOMICS_OK if marginal_ok else ECONOMICS_NEAR_ZERO_MARGINAL
     if not units_valid:
         marginal_status = ECONOMICS_UNIT_ERROR
     elif not currency_valid:
@@ -743,11 +725,7 @@ def _economic_values(
         "marginal_roi": marginal_roi,
         "average_economics_status": status,
         "marginal_economics_status": marginal_status,
-        "roi_status": (
-            ECONOMICS_MISSING_VALUE
-            if not value_ok
-            else status
-        ),
+        "roi_status": (ECONOMICS_MISSING_VALUE if not value_ok else status),
     }
 
 
@@ -784,9 +762,7 @@ def _currency_metadata(
         rate = 1.0 if local == reporting else rates.get((local, reporting))
         valid = rate is not None and np.isfinite(rate) and rate > 0
         if multi_market and not valid:
-            raise ValueError(
-                f"Missing valid FX rate for {local}->{reporting}"
-            )
+            raise ValueError(f"Missing valid FX rate for {local}->{reporting}")
         result[market] = {
             "local_currency": local,
             "reporting_currency": reporting,
@@ -888,12 +864,8 @@ def generate_canonical_curve_draws(
     attribution_reference: Optional[Mapping[Tuple[str, str, str], float]] = None,
     component_cost_allocation: Optional[ComponentCostAllocation] = None,
     curve_type: Optional[str] = None,
-    media_input_specs: Optional[
-        Mapping[Tuple[str, str], MediaInputSpec]
-    ] = None,
-    cost_mappings: Optional[
-        Mapping[Tuple[str, str], MediaCostMapping]
-    ] = None,
+    media_input_specs: Optional[Mapping[Tuple[str, str], MediaInputSpec]] = None,
+    cost_mappings: Optional[Mapping[Tuple[str, str], MediaCostMapping]] = None,
     cost_mapping_registry: Optional[CostMappingRegistry] = None,
     cost_context_id: str = "default",
     cost_as_of_date: Optional[str] = None,
@@ -939,9 +911,7 @@ def generate_canonical_curve_draws(
     )
     governed_costs = dict(cost_mappings or {})
     if governed_costs and cost_mapping_registry is not None:
-        raise ValueError(
-            "Supply cost_mappings or cost_mapping_registry, not both"
-        )
+        raise ValueError("Supply cost_mappings or cost_mapping_registry, not both")
     if legacy_monetary:
         warnings.warn(
             "curve_type=None is deprecated and ungoverned; migrate to an "
@@ -969,8 +939,7 @@ def generate_canonical_curve_draws(
         }
         if missing_specs:
             raise ValueError(
-                "Explicit media-input metadata is required for "
-                f"{sorted(missing_specs)}"
+                f"Explicit media-input metadata is required for {sorted(missing_specs)}"
             )
     if effective_curve_type == "monetary" and not legacy_monetary:
         missing_costs = []
@@ -1099,12 +1068,8 @@ def generate_canonical_curve_draws(
                 )
                 monetary_fingerprint = (
                     monetary_governance_fingerprint(
-                        cost_mappings=(
-                            cost_mapping.to_dict() if cost_mapping else {}
-                        ),
-                        activity_definitions=(
-                            activity.to_dict() if activity else {}
-                        ),
+                        cost_mappings=(cost_mapping.to_dict() if cost_mapping else {}),
+                        activity_definitions=(activity.to_dict() if activity else {}),
                         fx_metadata=currency,
                         planning_support=channel_support,
                     )
@@ -1175,31 +1140,18 @@ def generate_canonical_curve_draws(
                         context=context,
                     )
                     derivative_axis_value = (
-                        raw_spend
-                        if effective_curve_type == "monetary"
-                        else media_input
+                        raw_spend if effective_curve_type == "monetary" else media_input
                     )
                     delta = _finite_difference_delta(
                         derivative_axis_value, channel_support, marginal_delta
                     )
                     lower_bound = 0.0
                     upper_bound = np.inf
-                    if (
-                        channel_support["observed_support_status"]
-                        == SUPPORT_AVAILABLE
-                    ):
-                        lower_bound = float(
-                            channel_support["planning_spend_min"]
-                        )
-                        upper_bound = float(
-                            channel_support["planning_spend_max"]
-                        )
-                    lower_axis = max(
-                        lower_bound, derivative_axis_value - delta
-                    )
-                    upper_axis = min(
-                        upper_bound, derivative_axis_value + delta
-                    )
+                    if channel_support["observed_support_status"] == SUPPORT_AVAILABLE:
+                        lower_bound = float(channel_support["planning_spend_min"])
+                        upper_bound = float(channel_support["planning_spend_max"])
+                    lower_axis = max(lower_bound, derivative_axis_value - delta)
+                    upper_axis = min(upper_bound, derivative_axis_value + delta)
                     if lower_axis == upper_axis:
                         raise ValueError(
                             "Cannot calculate a marginal derivative at a "
@@ -1253,8 +1205,7 @@ def generate_canonical_curve_draws(
                         outcome_components = [
                             item
                             for item in components
-                            if item.channel == channel
-                            and item.outcome_id == outcome_id
+                            if item.channel == channel and item.outcome_id == outcome_id
                         ]
                         if not outcome_components:
                             continue
@@ -1264,7 +1215,10 @@ def generate_canonical_curve_draws(
                         marginal_media_input = (
                             mu_upper[outcome_id] - mu_lower[outcome_id]
                         ) / (upper_spend - lower_spend)
-                        if not legacy_monetary and effective_curve_type == "model_input":
+                        if (
+                            not legacy_monetary
+                            and effective_curve_type == "model_input"
+                        ):
                             marginal_mapping = np.nan
                             marginal_reporting = np.nan
                         elif not legacy_monetary and cost_mapping is not None:
@@ -1286,8 +1240,7 @@ def generate_canonical_curve_draws(
                         else:
                             marginal_mapping = 1.0 / spend_unit_scale
                             marginal_reporting = (
-                                marginal_media_input
-                                / (spend_unit_scale * fx_rate)
+                                marginal_media_input / (spend_unit_scale * fx_rate)
                                 if units_valid and currency["currency_valid"]
                                 else np.nan
                             )
@@ -1300,9 +1253,7 @@ def generate_canonical_curve_draws(
                                 else params.pathway_strength[outcome_id][channel]
                             )
                             coefficient = beta_by_outcome[outcome_id][channel]
-                            component_eta.append(
-                                coefficient * strength * saturation
-                            )
+                            component_eta.append(coefficient * strength * saturation)
                             component_eta_delta.append(
                                 coefficient
                                 * strength
@@ -1317,9 +1268,7 @@ def generate_canonical_curve_draws(
                         elif legacy_monetary:
                             local_spend = raw_spend * spend_unit_scale
                             reporting_spend = local_spend * fx_rate
-                            local_counterfactual = (
-                                counterfactual * spend_unit_scale
-                            )
+                            local_counterfactual = counterfactual * spend_unit_scale
                             incremental_spend = (
                                 (raw_spend - counterfactual)
                                 * spend_unit_scale
@@ -1332,9 +1281,7 @@ def generate_canonical_curve_draws(
                             incremental_spend = (
                                 raw_spend - counterfactual_axis
                             ) * fx_rate
-                        observed_status = channel_support[
-                            "observed_support_status"
-                        ]
+                        observed_status = channel_support["observed_support_status"]
                         if observed_status == SUPPORT_AVAILABLE:
                             is_extrapolated: Optional[bool] = not (
                                 channel_support["observed_spend_min"]
@@ -1445,9 +1392,7 @@ def generate_canonical_curve_draws(
                                     "spend_point": spend_point,
                                     "posterior_draw": posterior_draw,
                                     "curve_type": effective_curve_type,
-                                    "counterfactual_axis_type": (
-                                        effective_curve_type
-                                    ),
+                                    "counterfactual_axis_type": (effective_curve_type),
                                     "curve_method": "steady_state",
                                     "reference_interpretation": (
                                         "representative_context_not_historical_attribution"
@@ -1458,9 +1403,7 @@ def generate_canonical_curve_draws(
                                         input_spec.column if input_spec else None
                                     ),
                                     "media_input_unit": (
-                                        input_spec.unit
-                                        if input_spec
-                                        else spend_unit
+                                        input_spec.unit if input_spec else spend_unit
                                     ),
                                     "media_input_unit_scale": (
                                         input_spec.unit_scale
@@ -1511,9 +1454,7 @@ def generate_canonical_curve_draws(
                                         economics_availability
                                     ),
                                     "activity_definitions_fingerprint": (
-                                        activity_definitions_fingerprint(
-                                            activity_rows
-                                        )
+                                        activity_definitions_fingerprint(activity_rows)
                                         if activity_rows
                                         else None
                                     ),
@@ -1577,8 +1518,7 @@ def generate_canonical_curve_draws(
                                         if lower_axis == derivative_axis_value
                                         else (
                                             "backward_finite_difference"
-                                            if upper_axis
-                                            == derivative_axis_value
+                                            if upper_axis == derivative_axis_value
                                             else "central_finite_difference"
                                         )
                                     ),
@@ -1619,11 +1559,7 @@ def generate_canonical_curve_draws(
                                     ),
                                     "current_spend": (
                                         channel_support["current_spend"]
-                                        * (
-                                            spend_unit_scale
-                                            if legacy_monetary
-                                            else 1.0
-                                        )
+                                        * (spend_unit_scale if legacy_monetary else 1.0)
                                         * fx_rate
                                         if observed_status == SUPPORT_AVAILABLE
                                         and effective_curve_type == "monetary"
@@ -1656,9 +1592,7 @@ def generate_canonical_curve_draws(
                                     "support_axis_type": channel_support.get(
                                         "support_axis_type"
                                     ),
-                                    "support_unit": channel_support.get(
-                                        "support_unit"
-                                    ),
+                                    "support_unit": channel_support.get("support_unit"),
                                     "support_provenance": channel_support.get(
                                         "support_provenance"
                                     ),
@@ -1700,11 +1634,7 @@ def generate_canonical_curve_draws(
                                     ),
                                     "observed_spend_min": (
                                         channel_support["observed_spend_min"]
-                                        * (
-                                            spend_unit_scale
-                                            if legacy_monetary
-                                            else 1.0
-                                        )
+                                        * (spend_unit_scale if legacy_monetary else 1.0)
                                         * fx_rate
                                         if observed_status == SUPPORT_AVAILABLE
                                         and effective_curve_type == "monetary"
@@ -1726,11 +1656,7 @@ def generate_canonical_curve_draws(
                                     ),
                                     "observed_spend_max": (
                                         channel_support["observed_spend_max"]
-                                        * (
-                                            spend_unit_scale
-                                            if legacy_monetary
-                                            else 1.0
-                                        )
+                                        * (spend_unit_scale if legacy_monetary else 1.0)
                                         * fx_rate
                                         if observed_status == SUPPORT_AVAILABLE
                                         and effective_curve_type == "monetary"
@@ -1752,11 +1678,7 @@ def generate_canonical_curve_draws(
                                     ),
                                     "planning_spend_min": (
                                         channel_support["planning_spend_min"]
-                                        * (
-                                            spend_unit_scale
-                                            if legacy_monetary
-                                            else 1.0
-                                        )
+                                        * (spend_unit_scale if legacy_monetary else 1.0)
                                         * fx_rate
                                         if observed_status == SUPPORT_AVAILABLE
                                         and effective_curve_type == "monetary"
@@ -1778,11 +1700,7 @@ def generate_canonical_curve_draws(
                                     ),
                                     "planning_spend_max": (
                                         channel_support["planning_spend_max"]
-                                        * (
-                                            spend_unit_scale
-                                            if legacy_monetary
-                                            else 1.0
-                                        )
+                                        * (spend_unit_scale if legacy_monetary else 1.0)
                                         * fx_rate
                                         if observed_status == SUPPORT_AVAILABLE
                                         and effective_curve_type == "monetary"
@@ -1863,14 +1781,10 @@ def generate_canonical_curve_draws(
                                     **component_economics,
                                     "counterfactual_prediction_reconciliation_error": (
                                         channel_incremental
-                                        - (
-                                            mu_with[outcome_id]
-                                            - mu_without[outcome_id]
-                                        )
+                                        - (mu_with[outcome_id] - mu_without[outcome_id])
                                     ),
                                     "curve_attribution_reconciliation_error": (
-                                        channel_incremental
-                                        - matched_attribution
+                                        channel_incremental - matched_attribution
                                         if matched_attribution is not None
                                         else np.nan
                                     ),
@@ -1902,9 +1816,7 @@ def aggregate_curve_draws(
     if governance in {"headline", "planning"}:
         data = data[data[f"include_in_{governance}"]]
     elif governance not in {None, "attribution"}:
-        raise ValueError(
-            "governance must be attribution, headline, planning, or None"
-        )
+        raise ValueError("governance must be attribution, headline, planning, or None")
     if governance == "attribution":
         data = data[data["include_in_attribution"]]
     group_cols = list(by) + ["posterior_draw"]
@@ -1929,39 +1841,27 @@ def aggregate_curve_draws(
         local_spend=("local_spend", "max"),
         incremental_value=(
             "incremental_value",
-            lambda values: values.sum()
-            if values.notna().all()
-            else np.nan,
+            lambda values: values.sum() if values.notna().all() else np.nan,
         ),
         marginal_value=(
             "marginal_value",
-            lambda values: values.sum()
-            if values.notna().all()
-            else np.nan,
+            lambda values: values.sum() if values.notna().all() else np.nan,
         ),
         response_unit=(
             "response_unit",
-            lambda values: values.iloc[0]
-            if values.nunique() == 1
-            else "mixed",
+            lambda values: values.iloc[0] if values.nunique() == 1 else "mixed",
         ),
         spend_unit=(
             "reporting_currency",
-            lambda values: values.iloc[0]
-            if values.nunique() == 1
-            else "mixed",
+            lambda values: values.iloc[0] if values.nunique() == 1 else "mixed",
         ),
         is_extrapolated=(
             "is_extrapolated",
-            lambda values: (
-                None if values.isna().all() else bool(values.dropna().max())
-            ),
+            lambda values: None if values.isna().all() else bool(values.dropna().max()),
         ),
         observed_support_status=(
             "observed_support_status",
-            lambda values: values.iloc[0]
-            if values.nunique() == 1
-            else SUPPORT_MISSING,
+            lambda values: values.iloc[0] if values.nunique() == 1 else SUPPORT_MISSING,
         ),
         counterfactual_prediction_reconciliation_error=(
             "counterfactual_prediction_reconciliation_error",
@@ -2008,17 +1908,19 @@ def aggregate_curve_draws(
                 }
             )
         else:
-            economics.append(_economic_values(
-                spend=float(row["incremental_spend"]),
-                response=float(row["incremental_response"]),
-                marginal_response=float(
-                    row["marginal_incremental_response_per_currency_unit"]
-                ),
-                value_per_response=value,
-                units_valid=row["response_unit"] != "mixed",
-                currency_valid=row["spend_unit"] != "mixed",
-                near_zero=DEFAULT_NEAR_ZERO,
-            ))
+            economics.append(
+                _economic_values(
+                    spend=float(row["incremental_spend"]),
+                    response=float(row["incremental_response"]),
+                    marginal_response=float(
+                        row["marginal_incremental_response_per_currency_unit"]
+                    ),
+                    value_per_response=value,
+                    units_valid=row["response_unit"] != "mixed",
+                    currency_valid=row["spend_unit"] != "mixed",
+                    near_zero=DEFAULT_NEAR_ZERO,
+                )
+            )
     economics_columns = [
         "average_cpa",
         "marginal_cpa",
@@ -2045,8 +1947,7 @@ def aggregate_curve_draws(
     if values and "outcome_id" in result:
         missing_value = result["incremental_value"].isna()
         result.loc[missing_value, "incremental_value"] = [
-            row["incremental_response"]
-            * values.get(row.get("outcome_id"), np.nan)
+            row["incremental_response"] * values.get(row.get("outcome_id"), np.nan)
             for _, row in result[missing_value].iterrows()
         ]
         result.loc[missing_value, "marginal_value"] = [
@@ -2085,9 +1986,7 @@ def aggregate_curve_draws(
     result.loc[
         cost_unavailable,
         ["average_economics_status", "marginal_economics_status", "roi_status"],
-    ] = result.loc[
-        cost_unavailable, "economics_availability_status"
-    ].replace(
+    ] = result.loc[cost_unavailable, "economics_availability_status"].replace(
         {
             "mapping_missing": ECONOMICS_COST_MAPPING_MISSING,
             "response_only": "response_only",
@@ -2120,9 +2019,7 @@ def aggregate_portfolio_marginal(
         raise ValueError(
             "Portfolio marginal economics require an explicit portfolio_path_id"
         )
-    missing = set(channel_draws["channel"]) - set(
-        perturbation.allocation_direction
-    )
+    missing = set(channel_draws["channel"]) - set(perturbation.allocation_direction)
     if missing:
         raise ValueError(
             f"Perturbation is missing allocation shares for {sorted(missing)}"
@@ -2225,9 +2122,7 @@ def canonical_governance_views(
 
 def reconcile_curve_to_attribution(
     draws: pd.DataFrame,
-    attribution_by_market_channel_outcome: Mapping[
-        Tuple[str, str, str], float
-    ],
+    attribution_by_market_channel_outcome: Mapping[Tuple[str, str, str], float],
 ) -> pd.DataFrame:
     """Attach curve-minus-attribution diagnostics under matched assumptions."""
     result = draws.copy()
@@ -2285,12 +2180,16 @@ def summarize_curve_draws(
     ]
     result = base[keep].copy()
     for measure in measures:
-        stats = grouped[measure].agg(
-            posterior_mean="mean",
-            posterior_median="median",
-            lower_interval=lambda values: values.quantile(tail),
-            upper_interval=lambda values: values.quantile(1.0 - tail),
-        ).reset_index()
+        stats = (
+            grouped[measure]
+            .agg(
+                posterior_mean="mean",
+                posterior_median="median",
+                lower_interval=lambda values: values.quantile(tail),
+                upper_interval=lambda values: values.quantile(1.0 - tail),
+            )
+            .reset_index()
+        )
         result = result.merge(
             stats.rename(
                 columns={
@@ -2304,18 +2203,10 @@ def summarize_curve_draws(
             how="left",
         )
     if "incremental_response_posterior_mean" in result:
-        result["posterior_mean"] = result[
-            "incremental_response_posterior_mean"
-        ]
-        result["posterior_median"] = result[
-            "incremental_response_posterior_median"
-        ]
-        result["lower_interval"] = result[
-            "incremental_response_lower_interval"
-        ]
-        result["upper_interval"] = result[
-            "incremental_response_upper_interval"
-        ]
+        result["posterior_mean"] = result["incremental_response_posterior_mean"]
+        result["posterior_median"] = result["incremental_response_posterior_median"]
+        result["lower_interval"] = result["incremental_response_lower_interval"]
+        result["upper_interval"] = result["incremental_response_upper_interval"]
     return result
 
 

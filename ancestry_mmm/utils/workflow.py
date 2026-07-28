@@ -230,4 +230,7 @@ def home_workflow_lines() -> List[str]:
     summary, derived directly from WORKFLOW_STEPS so it can never drift out
     of sync with the actual page count, order, or labels (see
     docs/decision_log.md - this replaced a hand-maintained, stale copy)."""
-    return [f"{i}. **{step['label']}** - {step['purpose']}" for i, step in enumerate(WORKFLOW_STEPS, start=1)]
+    return [
+        f"{i}. **{step['label']}** - {step['purpose']}"
+        for i, step in enumerate(WORKFLOW_STEPS, start=1)
+    ]

@@ -53,7 +53,9 @@ class FunnelLink:
         )
 
 
-def validate_funnel_links(links: List[FunnelLink], outcome_ids: Sequence[str]) -> List[str]:
+def validate_funnel_links(
+    links: List[FunnelLink], outcome_ids: Sequence[str]
+) -> List[str]:
     """
     Rejects (returns non-empty error list, never raises):
 
@@ -72,12 +74,18 @@ def validate_funnel_links(links: List[FunnelLink], outcome_ids: Sequence[str]) -
                 "upstream and downstream."
             )
         if link.upstream_outcome_id not in known_ids:
-            errors.append(f"Funnel link references unknown upstream outcome_id '{link.upstream_outcome_id}'.")
+            errors.append(
+                f"Funnel link references unknown upstream outcome_id '{link.upstream_outcome_id}'."
+            )
         if link.downstream_outcome_id not in known_ids:
-            errors.append(f"Funnel link references unknown downstream outcome_id '{link.downstream_outcome_id}'.")
+            errors.append(
+                f"Funnel link references unknown downstream outcome_id '{link.downstream_outcome_id}'."
+            )
         pair = (link.upstream_outcome_id, link.downstream_outcome_id)
         if pair in seen:
-            errors.append(f"Duplicate funnel link: {link.upstream_outcome_id} -> {link.downstream_outcome_id}.")
+            errors.append(
+                f"Duplicate funnel link: {link.upstream_outcome_id} -> {link.downstream_outcome_id}."
+            )
         seen.add(pair)
     return errors
 
@@ -92,7 +100,10 @@ def funnel_links_fingerprint_payload(links: List[FunnelLink]) -> List[dict]:
     fingerprint identically."""
     return [
         {f: getattr(link, f) for f in _FUNNEL_LINK_FINGERPRINT_FIELDS}
-        for link in sorted(links, key=lambda link: (link.upstream_outcome_id, link.downstream_outcome_id))
+        for link in sorted(
+            links,
+            key=lambda link: (link.upstream_outcome_id, link.downstream_outcome_id),
+        )
     ]
 
 
@@ -137,18 +148,26 @@ def funnel_coherence_diagnostics(
     n_violations = int(violation_mask.sum())
 
     with np.errstate(divide="ignore", invalid="ignore"):
-        conversion_rate = np.where(upstream_values > 0, downstream_values / upstream_values, np.nan)
+        conversion_rate = np.where(
+            upstream_values > 0, downstream_values / upstream_values, np.nan
+        )
     valid_rates = conversion_rate[~np.isnan(conversion_rate)]
-    out_of_range_mask = ~np.isnan(conversion_rate) & ((conversion_rate < 0) | (conversion_rate > 1))
+    out_of_range_mask = ~np.isnan(conversion_rate) & (
+        (conversion_rate < 0) | (conversion_rate > 1)
+    )
     n_out_of_range = int(out_of_range_mask.sum())
 
     conversion_rate_mean = float(np.mean(valid_rates)) if len(valid_rates) else None
     conversion_rate_cv = (
         float(np.std(valid_rates) / conversion_rate_mean)
-        if conversion_rate_mean is not None and conversion_rate_mean > 0 and len(valid_rates) > 1
+        if conversion_rate_mean is not None
+        and conversion_rate_mean > 0
+        and len(valid_rates) > 1
         else None
     )
-    unstable = conversion_rate_cv is not None and conversion_rate_cv > conversion_cv_threshold
+    unstable = (
+        conversion_rate_cv is not None and conversion_rate_cv > conversion_cv_threshold
+    )
 
     def _labels(mask: np.ndarray) -> Optional[List[Any]]:
         if period_labels is None:
@@ -173,7 +192,8 @@ def funnel_coherence_diagnostics(
 
 
 def funnel_channel_attribution_consistency(
-    link: FunnelLink, channel_summary_df: pd.DataFrame,
+    link: FunnelLink,
+    channel_summary_df: pd.DataFrame,
 ) -> Dict[str, Any]:
     """
     Diagnostic-only check for "media attribution inconsistent across funnel
@@ -192,11 +212,15 @@ def funnel_channel_attribution_consistency(
     """
     up = (
         channel_summary_df[channel_summary_df["outcome_id"] == link.upstream_outcome_id]
-        .groupby("channel")["volume_contribution"].sum()
+        .groupby("channel")["volume_contribution"]
+        .sum()
     )
     down = (
-        channel_summary_df[channel_summary_df["outcome_id"] == link.downstream_outcome_id]
-        .groupby("channel")["volume_contribution"].sum()
+        channel_summary_df[
+            channel_summary_df["outcome_id"] == link.downstream_outcome_id
+        ]
+        .groupby("channel")["volume_contribution"]
+        .sum()
     )
     channels = sorted(set(up.index) | set(down.index))
     up_total = float(up.sum()) if len(up) else 0.0
@@ -209,14 +233,16 @@ def funnel_channel_attribution_consistency(
         if up_val == 0.0 and down_val == 0.0:
             continue
         if (up_val > 0) != (down_val > 0):
-            inconsistent_channels.append({
-                "channel": ch,
-                "upstream_contribution": up_val,
-                "downstream_contribution": down_val,
-                "upstream_share": (up_val / up_total) if up_total else None,
-                "downstream_share": (down_val / down_total) if down_total else None,
-                "reason": "sign_mismatch",
-            })
+            inconsistent_channels.append(
+                {
+                    "channel": ch,
+                    "upstream_contribution": up_val,
+                    "downstream_contribution": down_val,
+                    "upstream_share": (up_val / up_total) if up_total else None,
+                    "downstream_share": (down_val / down_total) if down_total else None,
+                    "reason": "sign_mismatch",
+                }
+            )
 
     return {
         "upstream_outcome_id": link.upstream_outcome_id,

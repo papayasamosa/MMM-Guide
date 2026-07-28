@@ -50,7 +50,12 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 import pandas as pd
 import arviz as az
 
-from .approval import ApprovalMismatchError, ModelApproval, fingerprint_model_approval, require_matching_approval
+from .approval import (
+    ApprovalMismatchError,
+    ModelApproval,
+    fingerprint_model_approval,
+    require_matching_approval,
+)
 from .activities import ActivityDefinition, activity_fit_fingerprint
 from .fingerprint import (
     fingerprint_dataframe,
@@ -302,7 +307,8 @@ def export_project(
                 "diagnostics": bool(diagnostics),
                 "curves": (tmp / "curve_bank").exists(),
                 "approval": model_approval is not None,
-                "outcome_approvals": outcome_approvals is not None and bool(outcome_approvals),
+                "outcome_approvals": outcome_approvals is not None
+                and bool(outcome_approvals),
                 "scenarios": bool(scenarios),
                 "notes": bool(notes),
             },
@@ -494,6 +500,7 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
             for i, s in enumerate(scenarios_meta):
                 # G2A.7a.4: use shared scenario_from_dict for migration
                 from .optimization import scenario_from_dict
+
                 migrated = scenario_from_dict(s)
                 pred_path = tmp / "scenarios" / f"scenario_{i}_predicted.csv"
                 if pred_path.exists():
@@ -603,7 +610,9 @@ def resolve_imported_outcome_approvals(
         segment_outcomes = spec.segment_outcomes
         segment_ltv = spec.segment_ltv
     resolved_outcomes = resolve_outcome_definitions(
-        imported.get("outcome_definitions"), segment_outcomes, segment_ltv,
+        imported.get("outcome_definitions"),
+        segment_outcomes,
+        segment_ltv,
     )
     legacy_records = [
         legacy_unapproved_approval(outcome.outcome_id).to_dict()
@@ -681,9 +690,7 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
     def present(key: str) -> bool:
         value = imported.get(key)
         if key == "curve_bank_files":
-            return bool(
-                value or imported.get("curve_bank_binary_files")
-            )
+            return bool(value or imported.get("curve_bank_binary_files"))
         if key == "trace":
             return value is not None
         if key in {"transformed_data", "model_spec", "model_meta", "model_approval"}:
@@ -726,36 +733,45 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
             try:
                 approval = OutcomeApproval.from_dict(a_dict)
             except (TypeError, ValueError, KeyError, AttributeError):
-                official_blocking_reasons.append({
-                    "artefact_type": "outcome_approval",
-                    "artefact_id": a_dict.get("approval_id", "<unknown>"),
-                    "reason": "malformed_approval_record",
-                })
+                official_blocking_reasons.append(
+                    {
+                        "artefact_type": "outcome_approval",
+                        "artefact_id": a_dict.get("approval_id", "<unknown>"),
+                        "reason": "malformed_approval_record",
+                    }
+                )
                 continue
             if approval.status != "approved":
                 continue
             if not approval.is_active():
-                official_blocking_reasons.append({
-                    "artefact_type": "outcome_approval",
-                    "artefact_id": approval.approval_id,
-                    "outcome_id": approval.outcome_id,
-                    "reason": "approval_not_active",
-                })
+                official_blocking_reasons.append(
+                    {
+                        "artefact_type": "outcome_approval",
+                        "artefact_id": approval.approval_id,
+                        "outcome_id": approval.outcome_id,
+                        "reason": "approval_not_active",
+                    }
+                )
                 continue
             if not approval.definition_fingerprint:
-                official_blocking_reasons.append({
-                    "artefact_type": "outcome_approval",
-                    "artefact_id": approval.approval_id,
-                    "outcome_id": approval.outcome_id,
-                    "reason": "missing_definition_fingerprint",
-                })
+                official_blocking_reasons.append(
+                    {
+                        "artefact_type": "outcome_approval",
+                        "artefact_id": approval.approval_id,
+                        "outcome_id": approval.outcome_id,
+                        "reason": "missing_definition_fingerprint",
+                    }
+                )
                 continue
             # Valid active approval
             active_approvals.append(a_dict)
 
         if not active_approvals:
             officially_resumable = False
-            if not any(r["reason"] == "malformed_approval_record" for r in official_blocking_reasons):
+            if not any(
+                r["reason"] == "malformed_approval_record"
+                for r in official_blocking_reasons
+            ):
                 outcome_governance_warnings.append(
                     "No outcome has an active 'approved' OutcomeApproval - "
                     "official curves, scenarios, and reports remain blocked "
@@ -775,13 +791,12 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
                 validation_context_from_legacy_args,
                 validate_scenario_dependencies,
             )
+
             # G2A.7a.9: build a complete validation context per scenario.
             # Each official scenario has its own planning objective which
             # must match the current project state.
             current_outcome_defns = imported.get("outcome_definitions") or ()
-            current_outcome_appr = tuple(
-                a_dict for a_dict in active_approvals
-            )
+            current_outcome_appr = tuple(a_dict for a_dict in active_approvals)
 
             # G2A.7a.10: the model-approval fingerprint and current identity
             # fingerprints used to be read from a "fingerprint" dict key that
@@ -796,7 +811,10 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
             verified_model_approval_fingerprint = ""
             current_data_fp = current_spec_fp = current_posterior_fp = ""
             model_identity_reason: Optional[str] = None
-            if reconstructed.get("frame") is None or reconstructed.get("posterior_params") is None:
+            if (
+                reconstructed.get("frame") is None
+                or reconstructed.get("posterior_params") is None
+            ):
                 model_identity_reason = (
                     "model_identity_unreconstructable: could not rebuild this "
                     "bundle's modelling frame/posterior well enough to verify "
@@ -822,8 +840,8 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
                             model_spec_fingerprint=current_spec_fp,
                             posterior_fingerprint=current_posterior_fp,
                         )
-                        verified_model_approval_fingerprint = fingerprint_model_approval(
-                            approval_obj
+                        verified_model_approval_fingerprint = (
+                            fingerprint_model_approval(approval_obj)
                         )
                     except (TypeError, ValueError, ApprovalMismatchError) as exc:
                         model_identity_reason = f"model_approval_mismatch: {exc}"
@@ -842,20 +860,24 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
                     )
                 except (TypeError, ValueError):
                     officially_resumable = False
-                    official_blocking_reasons.append({
-                        "artefact_type": "scenario",
-                        "artefact_id": sc.get("name", f"scenario_{idx}"),
-                        "reason": "invalid_planning_objective: saved objective cannot be deserialised",
-                    })
+                    official_blocking_reasons.append(
+                        {
+                            "artefact_type": "scenario",
+                            "artefact_id": sc.get("name", f"scenario_{idx}"),
+                            "reason": "invalid_planning_objective: saved objective cannot be deserialised",
+                        }
+                    )
                     continue
 
                 if model_identity_reason is not None:
                     officially_resumable = False
-                    official_blocking_reasons.append({
-                        "artefact_type": "scenario",
-                        "artefact_id": sc.get("name", f"scenario_{idx}"),
-                        "reason": model_identity_reason,
-                    })
+                    official_blocking_reasons.append(
+                        {
+                            "artefact_type": "scenario",
+                            "artefact_id": sc.get("name", f"scenario_{idx}"),
+                            "reason": model_identity_reason,
+                        }
+                    )
                     continue
 
                 # G2A.7a.10 (brief section 7.2): no project-level
@@ -874,16 +896,18 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
                 )
                 if sc_cf_fp:
                     officially_resumable = False
-                    official_blocking_reasons.append({
-                        "artefact_type": "scenario",
-                        "artefact_id": sc.get("name", f"scenario_{idx}"),
-                        "reason": (
-                            "counterfactual_identity_unverifiable: this bundle "
-                            "has no project-level counterfactual policy to "
-                            "verify the scenario's saved counterfactual "
-                            "identity against."
-                        ),
-                    })
+                    official_blocking_reasons.append(
+                        {
+                            "artefact_type": "scenario",
+                            "artefact_id": sc.get("name", f"scenario_{idx}"),
+                            "reason": (
+                                "counterfactual_identity_unverifiable: this bundle "
+                                "has no project-level counterfactual policy to "
+                                "verify the scenario's saved counterfactual "
+                                "identity against."
+                            ),
+                        }
+                    )
                     continue
 
                 # Build per-scenario validation context
@@ -901,22 +925,26 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
                     )
                 except ValueError as exc:
                     officially_resumable = False
-                    official_blocking_reasons.append({
-                        "artefact_type": "scenario",
-                        "artefact_id": sc.get("name", f"scenario_{idx}"),
-                        "reason": f"incomplete_validation_context: {exc}",
-                    })
+                    official_blocking_reasons.append(
+                        {
+                            "artefact_type": "scenario",
+                            "artefact_id": sc.get("name", f"scenario_{idx}"),
+                            "reason": f"incomplete_validation_context: {exc}",
+                        }
+                    )
                     continue
                 issues = validate_scenario_dependencies(sc, context=val_context)
                 for issue in issues:
                     officially_resumable = False
-                    official_blocking_reasons.append({
-                        "artefact_type": "scenario",
-                        "artefact_id": sc.get("name", f"scenario_{idx}"),
-                        "outcome_id": "",
-                        "required_use": "",
-                        "reason": f"{issue.reason_code or issue.issue_type}: {issue.detail}",
-                    })
+                    official_blocking_reasons.append(
+                        {
+                            "artefact_type": "scenario",
+                            "artefact_id": sc.get("name", f"scenario_{idx}"),
+                            "outcome_id": "",
+                            "required_use": "",
+                            "reason": f"{issue.reason_code or issue.issue_type}: {issue.detail}",
+                        }
+                    )
 
     return {
         "resumable": not missing,

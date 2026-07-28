@@ -23,9 +23,7 @@ def _activity(**overrides):
 
 def test_organic_social_is_response_only_without_fake_cpa():
     activity = _activity()
-    assert activity.economics_status(
-        has_approved_cost_basis=False
-    ) == "response_only"
+    assert activity.economics_status(has_approved_cost_basis=False) == "response_only"
 
 
 def test_promotional_crm_can_use_fully_loaded_cost():
@@ -36,12 +34,11 @@ def test_promotional_crm_can_use_fully_loaded_cost():
         economic_treatment="fully_loaded_cost",
         planning_eligibility="scenario_only",
     )
-    assert crm.economics_status(
-        has_approved_cost_basis=False
-    ) == "mapping_missing"
-    assert crm.economics_status(
-        has_approved_cost_basis=True
-    ) == "fully_loaded_economics_available"
+    assert crm.economics_status(has_approved_cost_basis=False) == "mapping_missing"
+    assert (
+        crm.economics_status(has_approved_cost_basis=True)
+        == "fully_loaded_economics_available"
+    )
 
 
 @pytest.mark.parametrize(
@@ -58,9 +55,7 @@ def test_non_acquisition_activities_are_not_freely_optimisable(
     definition = _activity(
         activity_id=activity_id,
         channel=activity_id,
-        activity_ownership=(
-            "earned" if activity_id == "named-pr-event" else "owned"
-        ),
+        activity_ownership=("earned" if activity_id == "named-pr-event" else "owned"),
         model_role=model_role,
         economic_treatment="response_only",
         planning_eligibility=planning_eligibility,

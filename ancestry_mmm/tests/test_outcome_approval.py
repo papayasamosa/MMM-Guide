@@ -73,17 +73,14 @@ class TestDefinitionFingerprint:
         """REQ-STALE-001: changing event definition changes the fingerprint."""
         o1 = self._base_outcome()
         o2 = OutcomeDefinition(
-            **{**o1.__dict__,
-               "event_definition": "A different event definition"}
+            **{**o1.__dict__, "event_definition": "A different event definition"}
         )
         assert fingerprint_outcome_definition(o1) != fingerprint_outcome_definition(o2)
 
     def test_date_basis_change_changes_fingerprint(self):
         """REQ-STALE-001: changing date basis changes the fingerprint."""
         o1 = self._base_outcome()
-        o2 = OutcomeDefinition(
-            **{**o1.__dict__, "date_basis": "billing_date"}
-        )
+        o2 = OutcomeDefinition(**{**o1.__dict__, "date_basis": "billing_date"})
         assert fingerprint_outcome_definition(o1) != fingerprint_outcome_definition(o2)
 
     def test_exclusions_change_changes_fingerprint(self):
@@ -97,18 +94,14 @@ class TestDefinitionFingerprint:
     def test_definition_version_change_changes_fingerprint(self):
         """REQ-STALE-001: changing definition_version changes fingerprint."""
         o1 = self._base_outcome()
-        o2 = OutcomeDefinition(
-            **{**o1.__dict__, "definition_version": "2.0"}
-        )
+        o2 = OutcomeDefinition(**{**o1.__dict__, "definition_version": "2.0"})
         assert fingerprint_outcome_definition(o1) != fingerprint_outcome_definition(o2)
 
     def test_review_notes_do_not_change_definition_fingerprint(self):
         """REQ-STALE-001: role/inclusion/review fields do NOT affect the
         outcome-definition fingerprint used for approval matching."""
         o1 = self._base_outcome()
-        o2 = OutcomeDefinition(
-            **{**o1.__dict__, "role": "secondary"}
-        )
+        o2 = OutcomeDefinition(**{**o1.__dict__, "role": "secondary"})
         # role is NOT a fingerprint field for outcome-definition fingerprinting
         # (it is for model-spec fingerprinting, but this test is about the
         #  outcome_approval fingerprint, which only covers business-definition
@@ -189,8 +182,7 @@ class TestOutcomeApprovalMatching:
         )
         # Change the definition
         outcome_v2 = OutcomeDefinition(
-            **{**outcome_v1.__dict__,
-               "event_definition": "Completely different event"}
+            **{**outcome_v1.__dict__, "event_definition": "Completely different event"}
         )
         assert not outcome_is_approved_for_use(outcome_v2, approval, "planning")
 
@@ -299,6 +291,7 @@ class TestPlanningObjectiveDefaults:
         # allowed_in_optimiser=False — this test confirms the planning
         # layer doesn't override that.
         from ancestry_mmm.core.outcomes import METRIC_KEY_FH_NET_BILLTHROUGH_RATE
+
         obj = PlanningObjective(
             metric_key=METRIC_KEY_FH_NET_BILLTHROUGH_RATE,
             target_outcome_ids=("fh_nbt_rate",),
@@ -485,8 +478,7 @@ class TestConditionalNBTUse:
         )
         # Change the reconciliation source
         changed = OutcomeDefinition(
-            **{**outcome.__dict__,
-               "reconciliation_source": "Different source"}
+            **{**outcome.__dict__, "reconciliation_source": "Different source"}
         )
         assert not outcome_is_approved_for_use(changed, approval, "planning")
 
@@ -575,12 +567,20 @@ class TestDefinitionValidation:
 class TestBulkResolution:
     def test_resolve_approvals_by_outcome_id_last_wins(self):
         a1 = OutcomeApproval(
-            approval_id="a1", outcome_id="o1", definition_fingerprint="fp1",
-            status="approved", allowed_uses=("planning",), approved_at="2020-01-01",
+            approval_id="a1",
+            outcome_id="o1",
+            definition_fingerprint="fp1",
+            status="approved",
+            allowed_uses=("planning",),
+            approved_at="2020-01-01",
         )
         a2 = OutcomeApproval(
-            approval_id="a2", outcome_id="o1", definition_fingerprint="fp2",
-            status="approved", allowed_uses=("planning",), approved_at="2021-01-01",
+            approval_id="a2",
+            outcome_id="o1",
+            definition_fingerprint="fp2",
+            status="approved",
+            allowed_uses=("planning",),
+            approved_at="2021-01-01",
         )
         by_id = resolve_approvals_by_outcome_id([a1, a2])
         assert by_id["o1"].approval_id == "a2"
@@ -615,7 +615,9 @@ class TestBulkResolution:
             approved_at="2026-01-01",
         )
         ids = approved_outcome_ids_for_use(
-            [outcome], [approval], "planning",
+            [outcome],
+            [approval],
+            "planning",
         )
         assert "fh_new_gsa" in ids
 
@@ -636,7 +638,9 @@ class TestBulkResolution:
             business_owner="Analytics",
         )
         ids = approved_outcome_ids_for_use(
-            [outcome], [], "planning",
+            [outcome],
+            [],
+            "planning",
         )
         assert "fh_new_gsa" not in ids
 
@@ -651,17 +655,32 @@ class TestAuthorityConsistency:
 
     def test_approved_requirements_readme_exists(self):
         """REQ-AUTH-001: approved_requirements/README.md is present."""
-        readme_path = Path(__file__).parent.parent.parent / "docs" / "approved_requirements" / "README.md"
+        readme_path = (
+            Path(__file__).parent.parent.parent
+            / "docs"
+            / "approved_requirements"
+            / "README.md"
+        )
         assert readme_path.exists()
 
     def test_index_json_exists(self):
         """REQ-AUTH-001: approved_requirements/index.json is present."""
-        index_path = Path(__file__).parent.parent.parent / "docs" / "approved_requirements" / "index.json"
+        index_path = (
+            Path(__file__).parent.parent.parent
+            / "docs"
+            / "approved_requirements"
+            / "index.json"
+        )
         assert index_path.exists()
 
     def test_index_json_is_valid(self):
         """REQ-AUTH-001: index.json is valid JSON with required fields."""
-        index_path = Path(__file__).parent.parent.parent / "docs" / "approved_requirements" / "index.json"
+        index_path = (
+            Path(__file__).parent.parent.parent
+            / "docs"
+            / "approved_requirements"
+            / "index.json"
+        )
         data = json.loads(index_path.read_text())
         assert "schema_version" in data
         assert "requirements" in data
@@ -670,7 +689,12 @@ class TestAuthorityConsistency:
 
     def test_indexed_records_exist(self):
         """REQ-AUTH-001: every indexed record path exists."""
-        index_path = Path(__file__).parent.parent.parent / "docs" / "approved_requirements" / "index.json"
+        index_path = (
+            Path(__file__).parent.parent.parent
+            / "docs"
+            / "approved_requirements"
+            / "index.json"
+        )
         data = json.loads(index_path.read_text())
         docs_root = Path(__file__).parent.parent.parent
         for req in data["requirements"]:
@@ -754,6 +778,7 @@ class TestPlanningObjectiveLegacy:
     def test_legacy_fh_net_billthrough_maps_but_no_target(self):
         """Legacy NBT objective maps metric_key but has empty target_outcome_ids."""
         from ancestry_mmm.core.optimization import planning_objective_from_legacy
+
         obj = planning_objective_from_legacy("fh_net_billthrough")
         assert obj.metric_key == METRIC_KEY_FH_NET_BILLTHROUGH_COUNT
         assert obj.target_outcome_ids == ()
@@ -761,10 +786,12 @@ class TestPlanningObjectiveLegacy:
 
     def test_legacy_fh_gsa_maps_correctly(self):
         from ancestry_mmm.core.optimization import planning_objective_from_legacy
+
         obj = planning_objective_from_legacy("fh_gsa")
         assert obj.metric_key == METRIC_KEY_FH_GSA
 
     def test_unknown_legacy_raises(self):
         from ancestry_mmm.core.optimization import planning_objective_from_legacy
+
         with pytest.raises(ValueError, match="unknown legacy objective"):
             planning_objective_from_legacy("unknown_objective")

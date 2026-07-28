@@ -51,7 +51,9 @@ class TestSidebarEntries:
         # without updating the registry `path` alongside it.
         app_root = Path(__file__).resolve().parents[1]
         for entry in sidebar_entries():
-            assert (app_root / entry["path"]).is_file(), f"missing page file for {entry['key']}: {entry['path']}"
+            assert (app_root / entry["path"]).is_file(), (
+                f"missing page file for {entry['key']}: {entry['path']}"
+            )
 
 
 class TestWorkflowStepMetadata:
@@ -107,7 +109,9 @@ class TestHomeWorkflowLines:
         for step in WORKFLOW_STEPS:
             assert sum(step["label"] in line for line in lines) == 1
 
-    def test_adding_a_step_to_the_registry_changes_the_rendered_lines(self, monkeypatch):
+    def test_adding_a_step_to_the_registry_changes_the_rendered_lines(
+        self, monkeypatch
+    ):
         # Regression guard for the exact bug fixed: a hardcoded Home-page
         # list silently fell out of sync once the workflow grew past 9
         # steps. Proves home_workflow_lines() tracks WORKFLOW_STEPS live -
@@ -115,13 +119,21 @@ class TestHomeWorkflowLines:
         # change, which a hardcoded list could never do.
         import ancestry_mmm.utils.workflow as workflow_module
 
-        extra_step = {"key": "extra", "label": "Extra Step", "path": "pages/99_Extra.py", "purpose": "A test-only step."}
+        extra_step = {
+            "key": "extra",
+            "label": "Extra Step",
+            "path": "pages/99_Extra.py",
+            "purpose": "A test-only step.",
+        }
         patched = WORKFLOW_STEPS + [extra_step]
         monkeypatch.setattr(workflow_module, "WORKFLOW_STEPS", patched)
 
         lines = workflow_module.home_workflow_lines()
         assert len(lines) == len(WORKFLOW_STEPS) + 1
-        assert lines[-1] == f"{len(WORKFLOW_STEPS) + 1}. **Extra Step** - A test-only step."
+        assert (
+            lines[-1]
+            == f"{len(WORKFLOW_STEPS) + 1}. **Extra Step** - A test-only step."
+        )
 
 
 class TestNextStepMapping:

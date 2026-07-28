@@ -52,7 +52,9 @@ def fingerprint_dataframe(df: pd.DataFrame) -> str:
     hasher = hashlib.sha256()
     columns = list(df.columns)
     dtype_signature = "|".join(f"{c}:{df[c].dtype}" for c in columns)
-    hasher.update(("COLUMNS:" + "|".join(str(c) for c in columns) + "\n").encode("utf-8"))
+    hasher.update(
+        ("COLUMNS:" + "|".join(str(c) for c in columns) + "\n").encode("utf-8")
+    )
     hasher.update(("DTYPES:" + dtype_signature + "\n").encode("utf-8"))
 
     for _, row in df[columns].iterrows() if columns else []:
@@ -68,7 +70,9 @@ def _canonical_json(payload: Any) -> str:
     return json.dumps(payload, sort_keys=True, default=str, separators=(",", ":"))
 
 
-def _model_relevant_market_config(market_spec_config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+def _model_relevant_market_config(
+    market_spec_config: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
     """
     The subset of a `MarketSpecConfig.to_dict()` payload that actually feeds
     a calculation, for the fingerprint - not the whole thing.
@@ -98,7 +102,10 @@ def _model_relevant_market_config(market_spec_config: Optional[Dict[str, Any]]) 
         return {}
     profiles = market_spec_config.get("market_profiles") or {}
     return {
-        "market_currencies": {market: (profile.get("currency") or {}) for market, profile in profiles.items()},
+        "market_currencies": {
+            market: (profile.get("currency") or {})
+            for market, profile in profiles.items()
+        },
         "channel_media_units": market_spec_config.get("channel_media_units") or {},
     }
 
@@ -223,17 +230,32 @@ def fingerprint_model_spec(
         "model_type": model_type,
         "pipeline_steps": pipeline_steps or [],
         "market_relevant_config": _model_relevant_market_config(market_spec_config),
-        "direct_dna_outcome_ids": sorted(direct_dna_outcome_ids) if direct_dna_outcome_ids else [],
+        "direct_dna_outcome_ids": sorted(direct_dna_outcome_ids)
+        if direct_dna_outcome_ids
+        else [],
         "outcome_catalogue": (
-            sorted(outcome_catalogue, key=lambda o: o.get("outcome_id", "")) if outcome_catalogue else []
+            sorted(outcome_catalogue, key=lambda o: o.get("outcome_id", ""))
+            if outcome_catalogue
+            else []
         ),
         "funnel_links": (
-            sorted(funnel_links, key=lambda link: (link.get("upstream_outcome_id", ""), link.get("downstream_outcome_id", "")))
-            if funnel_links else []
+            sorted(
+                funnel_links,
+                key=lambda link: (
+                    link.get("upstream_outcome_id", ""),
+                    link.get("downstream_outcome_id", ""),
+                ),
+            )
+            if funnel_links
+            else []
         ),
         "media_outcome_pathways": (
-            sorted(media_outcome_pathways, key=lambda p: (p.get("channel", ""), p.get("target_outcome_id", "")))
-            if media_outcome_pathways else []
+            sorted(
+                media_outcome_pathways,
+                key=lambda p: (p.get("channel", ""), p.get("target_outcome_id", "")),
+            )
+            if media_outcome_pathways
+            else []
         ),
         "activity_fit_fingerprint": activity_fit_fingerprint or "",
     }

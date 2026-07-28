@@ -12,18 +12,31 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from ancestry_mmm.components import ui as ui_module
-from ancestry_mmm.core.outcomes import FAMILY_HISTORY, METRIC_GSA, METRIC_SIGNUP, OutcomeDefinition
+from ancestry_mmm.core.outcomes import (
+    FAMILY_HISTORY,
+    METRIC_GSA,
+    METRIC_SIGNUP,
+    OutcomeDefinition,
+)
 
 
 def _outcome(**overrides):
-    base = dict(outcome_id="fh_new", product=FAMILY_HISTORY, segment="New", metric=METRIC_GSA, source_column="col_a")
+    base = dict(
+        outcome_id="fh_new",
+        product=FAMILY_HISTORY,
+        segment="New",
+        metric=METRIC_GSA,
+        source_column="col_a",
+    )
     base.update(overrides)
     return OutcomeDefinition(**base)
 
 
 def _patch_streamlit(monkeypatch):
     calls = {"warning": [], "error": [], "info": []}
-    monkeypatch.setattr(ui_module.st, "warning", lambda msg: calls["warning"].append(msg))
+    monkeypatch.setattr(
+        ui_module.st, "warning", lambda msg: calls["warning"].append(msg)
+    )
     monkeypatch.setattr(ui_module.st, "error", lambda msg: calls["error"].append(msg))
     monkeypatch.setattr(ui_module.st, "info", lambda msg: calls["info"].append(msg))
     expander_cm = MagicMock()
@@ -60,6 +73,7 @@ def test_calculation_relevant_drift_shows_warning_by_default(monkeypatch):
     assert "fh_new" in calls["warning"][0]
     assert "Changed since fit" in calls["warning"][0]
     assert calls["error"] == []
+
 
 def test_calculation_relevant_drift_shows_error_when_blocking(monkeypatch):
     calls = _patch_streamlit(monkeypatch)

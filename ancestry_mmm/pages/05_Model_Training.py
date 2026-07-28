@@ -11,20 +11,36 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 import streamlit as st
 
 from ancestry_mmm.utils import init_session_state, get_state, set_state, format_number
-from ancestry_mmm.components import apply_theme, render_sidebar, render_page_header, render_next_step, render_empty_state, render_drift_status
+from ancestry_mmm.components import (
+    apply_theme,
+    render_sidebar,
+    render_page_header,
+    render_next_step,
+    render_empty_state,
+    render_drift_status,
+)
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
 from ancestry_mmm.core.market_specific_model import build_fh_market_specific_model
 from ancestry_mmm.core.models import fit_model
 from ancestry_mmm.core.predict import extract_posterior_params
-from ancestry_mmm.core.market_specific_predict import extract_market_specific_posterior_params
+from ancestry_mmm.core.market_specific_predict import (
+    extract_market_specific_posterior_params,
+)
 from ancestry_mmm.core.model_comparison import ModelComparisonCandidate
-from ancestry_mmm.core.market_specific_diagnostics import compute_scorecard_market_specific
+from ancestry_mmm.core.market_specific_diagnostics import (
+    compute_scorecard_market_specific,
+)
 from ancestry_mmm.core.diagnostics import compute_scorecard
 
-MODEL_TYPE_LABELS = {"shared": "Model A - shared curve", "market_specific": "Model C - market-specific, partially pooled"}
+MODEL_TYPE_LABELS = {
+    "shared": "Model A - shared curve",
+    "market_specific": "Model C - market-specific, partially pooled",
+}
 
-st.set_page_config(page_title="Model Training - Ancestry FH MMM", page_icon="🧬", layout="wide")
+st.set_page_config(
+    page_title="Model Training - Ancestry FH MMM", page_icon="🧬", layout="wide"
+)
 init_session_state()
 apply_theme()
 render_sidebar("model_training")
@@ -36,7 +52,8 @@ if frame is None or not spec_dict:
     st.markdown("---")
     render_empty_state(
         "No modelling frame ready yet. Complete Model Configuration first.",
-        button_label="Go to Model Configuration", target_key="model_config",
+        button_label="Go to Model Configuration",
+        target_key="model_config",
     )
     st.stop()
 
@@ -56,11 +73,11 @@ dna_kit_outcome_ids = get_state("direct_dna_outcome_ids") or []
 st.markdown("---")
 st.markdown(f"""
 - **Model structure:** {MODEL_TYPE_LABELS[model_type]}
-- **Observations:** {format_number(frame['X_media'].shape[0])}
-- **Markets:** {', '.join(frame['markets'])}
-- **Outcomes:** {', '.join(frame['outcome_ids'])}{f" (DNA-product, direct media response: {', '.join(dna_kit_outcome_ids)})" if dna_kit_outcome_ids else ""}
-- **Channels:** {', '.join(frame['channels'])} (DNA: {', '.join(frame['channels'][i] for i in frame['dna_channel_idx']) or 'none'})
-- **MCMC:** {format_number(get_state('mcmc_draws'))} draws, {format_number(get_state('mcmc_tune'))} tune, {get_state('mcmc_chains')} chains
+- **Observations:** {format_number(frame["X_media"].shape[0])}
+- **Markets:** {", ".join(frame["markets"])}
+- **Outcomes:** {", ".join(frame["outcome_ids"])}{f" (DNA-product, direct media response: {', '.join(dna_kit_outcome_ids)})" if dna_kit_outcome_ids else ""}
+- **Channels:** {", ".join(frame["channels"])} (DNA: {", ".join(frame["channels"][i] for i in frame["dna_channel_idx"]) or "none"})
+- **MCMC:** {format_number(get_state("mcmc_draws"))} draws, {format_number(get_state("mcmc_tune"))} tune, {get_state("mcmc_chains")} chains
 """)
 
 st.info(
@@ -78,18 +95,26 @@ if st.button("Build & fit model", type="primary"):
         with st.spinner("Building model..."):
             if model_type == "market_specific":
                 model, meta = build_fh_market_specific_model(
-                    frame, spec, dna_lag_weeks=dna_lag_weeks, prior_config=prior_config,
+                    frame,
+                    spec,
+                    dna_lag_weeks=dna_lag_weeks,
+                    prior_config=prior_config,
                     dna_outcome_id=spec.fh_dna_cross_sell_outcome_id,
                     direct_dna_outcome_ids=direct_dna_outcome_ids,
                 )
             else:
                 model, meta = build_fh_hierarchical_model(
-                    frame, spec, dna_lag_weeks=dna_lag_weeks, prior_config=prior_config,
+                    frame,
+                    spec,
+                    dna_lag_weeks=dna_lag_weeks,
+                    prior_config=prior_config,
                     dna_outcome_id=spec.fh_dna_cross_sell_outcome_id,
                     direct_dna_outcome_ids=direct_dna_outcome_ids,
                 )
     except ValueError as e:
-        st.error(f"Could not build the model: {e} Set the FH DNA cross-sell outcome on the Structure page if needed, and try again.")
+        st.error(
+            f"Could not build the model: {e} Set the FH DNA cross-sell outcome on the Structure page if needed, and try again."
+        )
         st.stop()
     st.success(f"Model built ({MODEL_TYPE_LABELS[model_type]}).")
 
@@ -112,7 +137,9 @@ if st.button("Build & fit model", type="primary"):
                 tune=mcmc_tune,
                 chains=mcmc_chains,
                 target_accept=mcmc_target_accept,
-                progress_callback=lambda done, total: progress_state.update(done=done, total=total),
+                progress_callback=lambda done, total: progress_state.update(
+                    done=done, total=total
+                ),
                 cores=1,
             )
             progress_state["trace"] = trace
@@ -127,17 +154,22 @@ if st.button("Build & fit model", type="primary"):
     while thread.is_alive():
         frac = min(1.0, progress_state["done"] / max(progress_state["total"], 1))
         progress_bar.progress(frac)
-        status.caption(f"Sampling: {format_number(progress_state['done'])} / {format_number(progress_state['total'])} draws")
+        status.caption(
+            f"Sampling: {format_number(progress_state['done'])} / {format_number(progress_state['total'])} draws"
+        )
         time.sleep(0.5)
     thread.join()
     progress_bar.progress(1.0)
 
     if progress_state["error"]:
-        st.error(f"Sampling failed: {progress_state['error']} Try fewer draws/chains, or simplify the hierarchy, and fit again.")
+        st.error(
+            f"Sampling failed: {progress_state['error']} Try fewer draws/chains, or simplify the hierarchy, and fit again."
+        )
     else:
         trace = progress_state["trace"]
         posterior_params = (
-            extract_market_specific_posterior_params(trace, meta) if model_type == "market_specific"
+            extract_market_specific_posterior_params(trace, meta)
+            if model_type == "market_specific"
             else extract_posterior_params(trace, meta)
         )
         set_state("model", model)
@@ -176,7 +208,8 @@ if get_state("model_trained"):
         "selection) on Compare Models."
     )
     candidate_label = st.text_input(
-        "Candidate label", value=f"{MODEL_TYPE_LABELS[get_state('model_type')]} - {', '.join(frame['markets'])}",
+        "Candidate label",
+        value=f"{MODEL_TYPE_LABELS[get_state('model_type')]} - {', '.join(frame['markets'])}",
     )
     if st.button("Save this fit as a comparison candidate"):
         trace = get_state("trace")
@@ -184,13 +217,17 @@ if get_state("model_trained"):
         current_type = get_state("model_type")
         with st.spinner("Computing scorecard for comparison..."):
             scorecard = (
-                compute_scorecard_market_specific(trace, frame, current_meta) if current_type == "market_specific"
+                compute_scorecard_market_specific(trace, frame, current_meta)
+                if current_type == "market_specific"
                 else compute_scorecard(trace, frame, current_meta)
             )
         candidate = ModelComparisonCandidate.from_scorecard(
             model_type="C" if current_type == "market_specific" else "A",
-            label=candidate_label, model_run_id=get_state("model_run_id"), fitted_at=time.time(),
-            scorecard=scorecard, market=frame["markets"][0] if len(frame["markets"]) == 1 else None,
+            label=candidate_label,
+            model_run_id=get_state("model_run_id"),
+            fitted_at=time.time(),
+            scorecard=scorecard,
+            market=frame["markets"][0] if len(frame["markets"]) == 1 else None,
         )
         candidates = get_state("model_comparison_candidates") or []
         candidates.append(candidate.to_dict())

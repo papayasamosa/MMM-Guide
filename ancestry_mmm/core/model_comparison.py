@@ -39,7 +39,9 @@ def slice_frame_to_market(frame: Dict[str, Any], market: str) -> Dict[str, Any]:
     `core.hierarchical_model.build_fh_hierarchical_model` unchanged.
     """
     if market not in frame["markets"]:
-        raise ValueError(f"'{market}' is not one of this frame's markets: {frame['markets']}")
+        raise ValueError(
+            f"'{market}' is not one of this frame's markets: {frame['markets']}"
+        )
 
     idx = frame["markets"].index(market)
     start, end = frame["market_bounds"][idx]
@@ -48,13 +50,16 @@ def slice_frame_to_market(frame: Dict[str, Any], market: str) -> Dict[str, Any]:
     sliced["markets"] = [market]
     sliced["market_idx"] = np.zeros(end - start, dtype=int)
     sliced["market_bounds"] = [(0, end - start)]
-    sliced["unpooled_markets"] = []  # a single market has nothing to pool with or opt out of
+    sliced[
+        "unpooled_markets"
+    ] = []  # a single market has nothing to pool with or opt out of
 
     for key in ("X_media", "Y", "promo", "X_controls", "fourier", "trend", "dates"):
         sliced[key] = frame[key][start:end]
 
     sliced["segment_controls"] = {
-        seg: arr[start:end] for seg, arr in (frame.get("segment_controls") or {}).items()
+        seg: arr[start:end]
+        for seg, arr in (frame.get("segment_controls") or {}).items()
     }
     sliced["df"] = frame["df"].iloc[start:end].reset_index(drop=True)
 
@@ -68,21 +73,32 @@ class ModelComparisonCandidate:
     them; keeping only the scorecard here keeps this list small and
     JSON-serialisable for session state / persistence)."""
 
-    model_type: str            # "A" (shared), "B" (independent per-market), "C" (partially pooled)
-    label: str                 # user-facing label, e.g. "Model A - shared curve" or "Model B - UK only"
+    model_type: (
+        str  # "A" (shared), "B" (independent per-market), "C" (partially pooled)
+    )
+    label: (
+        str  # user-facing label, e.g. "Model A - shared curve" or "Model B - UK only"
+    )
     model_run_id: str
     fitted_at: float
-    market: Optional[str] = None       # set for Model B candidates (which market)
+    market: Optional[str] = None  # set for Model B candidates (which market)
     convergence: Dict[str, Any] = field(default_factory=dict)
-    in_sample_fit: list = field(default_factory=list)   # list of {segment, r_squared, mape_pct, ...}
+    in_sample_fit: list = field(
+        default_factory=list
+    )  # list of {segment, r_squared, mape_pct, ...}
     ppc_coverage: list = field(default_factory=list)
     n_plausibility_flags: int = 0
 
     def to_dict(self) -> dict:
         return {
-            "model_type": self.model_type, "label": self.label, "model_run_id": self.model_run_id,
-            "fitted_at": self.fitted_at, "market": self.market, "convergence": self.convergence,
-            "in_sample_fit": self.in_sample_fit, "ppc_coverage": self.ppc_coverage,
+            "model_type": self.model_type,
+            "label": self.label,
+            "model_run_id": self.model_run_id,
+            "fitted_at": self.fitted_at,
+            "market": self.market,
+            "convergence": self.convergence,
+            "in_sample_fit": self.in_sample_fit,
+            "ppc_coverage": self.ppc_coverage,
             "n_plausibility_flags": self.n_plausibility_flags,
         }
 
@@ -93,12 +109,22 @@ class ModelComparisonCandidate:
 
     @classmethod
     def from_scorecard(
-        cls, *, model_type: str, label: str, model_run_id: str, fitted_at: float,
-        scorecard: Dict[str, Any], market: Optional[str] = None,
+        cls,
+        *,
+        model_type: str,
+        label: str,
+        model_run_id: str,
+        fitted_at: float,
+        scorecard: Dict[str, Any],
+        market: Optional[str] = None,
     ) -> "ModelComparisonCandidate":
         return cls(
-            model_type=model_type, label=label, model_run_id=model_run_id, fitted_at=fitted_at,
-            market=market, convergence=scorecard.get("convergence", {}),
+            model_type=model_type,
+            label=label,
+            model_run_id=model_run_id,
+            fitted_at=fitted_at,
+            market=market,
+            convergence=scorecard.get("convergence", {}),
             in_sample_fit=scorecard.get("in_sample_fit", []),
             ppc_coverage=scorecard.get("ppc_coverage", []),
             n_plausibility_flags=len(scorecard.get("plausibility_flags", [])),
@@ -113,20 +139,30 @@ def candidates_to_dataframe(candidates: list) -> pd.DataFrame:
     remains available on each ModelComparisonCandidate itself."""
     rows = []
     for c in candidates:
-        r2_vals = [r["r_squared"] for r in c.in_sample_fit if r.get("r_squared") is not None]
-        mape_vals = [r["mape_pct"] for r in c.in_sample_fit if r.get("mape_pct") is not None]
-        cov_vals = [r["coverage_pct"] for r in c.ppc_coverage if r.get("coverage_pct") is not None]
-        rows.append({
-            "label": c.label,
-            "model_type": c.model_type,
-            "market": c.market or "(all)",
-            "rhat_max": c.convergence.get("rhat_max"),
-            "ess_min": c.convergence.get("ess_min"),
-            "divergences": c.convergence.get("divergences"),
-            "converged": c.convergence.get("converged"),
-            "mean_r_squared": float(np.mean(r2_vals)) if r2_vals else None,
-            "mean_mape_pct": float(np.mean(mape_vals)) if mape_vals else None,
-            "mean_ppc_coverage_pct": float(np.mean(cov_vals)) if cov_vals else None,
-            "plausibility_flags": c.n_plausibility_flags,
-        })
+        r2_vals = [
+            r["r_squared"] for r in c.in_sample_fit if r.get("r_squared") is not None
+        ]
+        mape_vals = [
+            r["mape_pct"] for r in c.in_sample_fit if r.get("mape_pct") is not None
+        ]
+        cov_vals = [
+            r["coverage_pct"]
+            for r in c.ppc_coverage
+            if r.get("coverage_pct") is not None
+        ]
+        rows.append(
+            {
+                "label": c.label,
+                "model_type": c.model_type,
+                "market": c.market or "(all)",
+                "rhat_max": c.convergence.get("rhat_max"),
+                "ess_min": c.convergence.get("ess_min"),
+                "divergences": c.convergence.get("divergences"),
+                "converged": c.convergence.get("converged"),
+                "mean_r_squared": float(np.mean(r2_vals)) if r2_vals else None,
+                "mean_mape_pct": float(np.mean(mape_vals)) if mape_vals else None,
+                "mean_ppc_coverage_pct": float(np.mean(cov_vals)) if cov_vals else None,
+                "plausibility_flags": c.n_plausibility_flags,
+            }
+        )
     return pd.DataFrame(rows)

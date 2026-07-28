@@ -11,7 +11,10 @@ from ancestry_mmm.core.approval import ModelApproval
 from ancestry_mmm.core.curve_bank import make_entries
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
 from ancestry_mmm.core.market_config import (
-    ChannelMediaUnitConfig, MarketCurrency, MarketProfile, MarketSpecConfig,
+    ChannelMediaUnitConfig,
+    MarketCurrency,
+    MarketProfile,
+    MarketSpecConfig,
 )
 from ancestry_mmm.core.predict import FHPosteriorParams
 from ancestry_mmm.core.report import build_report_sections, render_html, render_markdown
@@ -22,60 +25,94 @@ SEGMENTS = ["New", "DNA_CrossSell"]
 CHANNELS = ["TV", "Search"]
 
 IDENTITY = dict(
-    model_run_id="run-1", data_fingerprint="data-1",
-    model_spec_fingerprint="spec-1", posterior_fingerprint="posterior-1",
+    model_run_id="run-1",
+    data_fingerprint="data-1",
+    model_spec_fingerprint="spec-1",
+    posterior_fingerprint="posterior-1",
 )
 
 
 @pytest.fixture
 def spec() -> ModelSpec:
     return ModelSpec(
-        date_col="date", market_col="market", markets=["UK"],
+        date_col="date",
+        market_col="market",
+        markets=["UK"],
         segment_outcomes={"New": "fh_new_gsa", "DNA_CrossSell": "fh_dna_gsa"},
-        channels=CHANNELS, dna_channels=["TV"],
+        channels=CHANNELS,
+        dna_channels=["TV"],
     )
 
 
 @pytest.fixture
 def meta() -> FHModelMeta:
     return FHModelMeta(
-        markets=["UK"], outcome_ids=SEGMENTS, channels=CHANNELS,
-        dna_channels=["TV"], dna_channel_idx=[0], non_dna_idx=[1],
-        dna_outcome_id="DNA_CrossSell", dna_lag_weeks=4, unpooled_markets=[], control_names=[],
+        markets=["UK"],
+        outcome_ids=SEGMENTS,
+        channels=CHANNELS,
+        dna_channels=["TV"],
+        dna_channel_idx=[0],
+        non_dna_idx=[1],
+        dna_outcome_id="DNA_CrossSell",
+        dna_lag_weeks=4,
+        unpooled_markets=[],
+        control_names=[],
     )
 
 
 @pytest.fixture
 def params() -> FHPosteriorParams:
     return FHPosteriorParams(
-        decay_rate={"TV": 0.5, "Search": 0.3}, hill_K={"TV": 1000.0, "Search": 500.0},
+        decay_rate={"TV": 0.5, "Search": 0.3},
+        hill_K={"TV": 1000.0, "Search": 500.0},
         hill_S={"TV": 1.0, "Search": 1.0},
-        beta={"New": {"TV": 0.1, "Search": 0.05}, "DNA_CrossSell": {"TV": 0.02, "Search": 0.01}},
-        pathway_strength=pathway_strength_from_flat({"New": 0.1, "DNA_CrossSell": 1.0}, "TV"), promo_coef={"New": 0.1, "DNA_CrossSell": 0.1},
-        market_offset={"UK": {"New": 0.0, "DNA_CrossSell": 0.0}}, intercept={"New": 3.0, "DNA_CrossSell": 2.0},
+        beta={
+            "New": {"TV": 0.1, "Search": 0.05},
+            "DNA_CrossSell": {"TV": 0.02, "Search": 0.01},
+        },
+        pathway_strength=pathway_strength_from_flat(
+            {"New": 0.1, "DNA_CrossSell": 1.0}, "TV"
+        ),
+        promo_coef={"New": 0.1, "DNA_CrossSell": 0.1},
+        market_offset={"UK": {"New": 0.0, "DNA_CrossSell": 0.0}},
+        intercept={"New": 3.0, "DNA_CrossSell": 2.0},
         trend_coef={"New": 0.0, "DNA_CrossSell": 0.0},
         gamma_fourier={"New": np.zeros(6), "DNA_CrossSell": np.zeros(6)},
-        alpha={"New": 5.0, "DNA_CrossSell": 5.0}, control_coef={}, outcome_control_coef={},
+        alpha={"New": 5.0, "DNA_CrossSell": 5.0},
+        control_coef={},
+        outcome_control_coef={},
     )
 
 
 @pytest.fixture
 def approval() -> ModelApproval:
-    return ModelApproval(approved_by="Jane Analyst", diagnostics_accepted=["convergence"], **IDENTITY)
+    return ModelApproval(
+        approved_by="Jane Analyst", diagnostics_accepted=["convergence"], **IDENTITY
+    )
 
 
 @pytest.fixture
 def curve_bank_entries(meta, params, approval):
     return make_entries(
-        meta, params, ("2023-01-01", "2024-01-01"), "uk-v1", approval,
-        model_type="shared", **IDENTITY,
+        meta,
+        params,
+        ("2023-01-01", "2024-01-01"),
+        "uk-v1",
+        approval,
+        model_type="shared",
+        **IDENTITY,
     )
 
 
 @pytest.fixture
 def scorecard():
     return {
-        "convergence": {"rhat_max": 1.01, "ess_min": 500, "divergences": 0, "converged": True},
+        "convergence": {
+            "rhat_max": 1.01,
+            "ess_min": 500,
+            "divergences": 0,
+            "converged": True,
+        },
         "in_sample_fit": [{"outcome_id": "New", "r_squared": 0.9, "mape_pct": 5.0}],
         "ppc_coverage": [{"outcome_id": "New", "coverage_pct": 90.0}],
         "plausibility_flags": [],
@@ -84,11 +121,25 @@ def scorecard():
 
 @pytest.fixture
 def scenarios():
-    predicted = pd.DataFrame({"month": ["2024-01"], "outcome_id": ["New"], "predicted_outcome": [10.0], "value": [10.0]})
-    return [{
-        "name": "manual-uk", "market": "UK", "spend_plan": {"2024-01": {"TV": 100.0}},
-        "objective": "value", "constraints": [], "notes": "manual", "predicted": predicted,
-    }]
+    predicted = pd.DataFrame(
+        {
+            "month": ["2024-01"],
+            "outcome_id": ["New"],
+            "predicted_outcome": [10.0],
+            "value": [10.0],
+        }
+    )
+    return [
+        {
+            "name": "manual-uk",
+            "market": "UK",
+            "spend_plan": {"2024-01": {"TV": 100.0}},
+            "objective": "value",
+            "constraints": [],
+            "notes": "manual",
+            "predicted": predicted,
+        }
+    ]
 
 
 class TestBuildReportSectionsEmptyState:
@@ -129,21 +180,29 @@ class TestBuildReportSectionsFullState:
         text = " ".join(objective.paragraphs)
         assert "New" in text and "DNA_CrossSell" in text and "UK" in text
 
-    def test_diagnostics_section_includes_convergence_and_in_sample_table(self, spec, scorecard):
+    def test_diagnostics_section_includes_convergence_and_in_sample_table(
+        self, spec, scorecard
+    ):
         sections = build_report_sections(spec=spec, scorecard=scorecard)
         diagnostics = next(s for s in sections if s.title == "Diagnostics")
         assert "1.01" in diagnostics.paragraphs[0]
         assert diagnostics.table is not None
         assert list(diagnostics.table["outcome_id"]) == ["New"]
 
-    def test_approval_section_includes_approver_and_diagnostics_reviewed(self, spec, approval):
+    def test_approval_section_includes_approver_and_diagnostics_reviewed(
+        self, spec, approval
+    ):
         sections = build_report_sections(spec=spec, approval=approval)
         approval_section = next(s for s in sections if s.title == "Approval")
         assert "Jane Analyst" in approval_section.paragraphs[0]
         assert any("convergence" in b for b in approval_section.bullets)
 
-    def test_curve_bank_section_summarises_by_market_and_status(self, spec, curve_bank_entries):
-        sections = build_report_sections(spec=spec, curve_bank_entries=curve_bank_entries)
+    def test_curve_bank_section_summarises_by_market_and_status(
+        self, spec, curve_bank_entries
+    ):
+        sections = build_report_sections(
+            spec=spec, curve_bank_entries=curve_bank_entries
+        )
         curve_bank = next(s for s in sections if s.title == "Curve bank")
         assert str(len(curve_bank_entries)) in curve_bank.paragraphs[0]
         assert curve_bank.table is not None
@@ -165,17 +224,35 @@ class TestOutcomesSection:
     def test_derives_fh_outcomes_from_spec_when_none_saved(self, spec):
         sections = build_report_sections(spec=spec, outcome_definitions=None)
         outcomes = next(s for s in sections if s.title == "Outcomes")
-        assert "2 outcome(s) catalogued: 2 Family History, 0 DNA" in outcomes.paragraphs[0]
+        assert (
+            "2 outcome(s) catalogued: 2 Family History, 0 DNA" in outcomes.paragraphs[0]
+        )
         assert outcomes.table is not None
         assert set(outcomes.table["product"]) == {"Family History"}
         assert (outcomes.table["status"] == "Configured").all()
 
     def test_includes_dna_outcomes_and_flags_them_as_opt_in(self, spec):
         outcome_definitions = [
-            {"outcome_id": "fh_new", "product": "Family History", "segment": "New", "metric": "GSA", "column": "fh_new_gsa", "value_weight": 180.0},
-            {"outcome_id": "dna_new_kit", "product": "DNA", "segment": "New Customer", "metric": "Kit sale", "column": "DNA_Kit_New", "value_weight": 90.0},
+            {
+                "outcome_id": "fh_new",
+                "product": "Family History",
+                "segment": "New",
+                "metric": "GSA",
+                "column": "fh_new_gsa",
+                "value_weight": 180.0,
+            },
+            {
+                "outcome_id": "dna_new_kit",
+                "product": "DNA",
+                "segment": "New Customer",
+                "metric": "Kit sale",
+                "column": "DNA_Kit_New",
+                "value_weight": 90.0,
+            },
         ]
-        sections = build_report_sections(spec=spec, outcome_definitions=outcome_definitions)
+        sections = build_report_sections(
+            spec=spec, outcome_definitions=outcome_definitions
+        )
         outcomes = next(s for s in sections if s.title == "Outcomes")
         assert "1 Family History, 1 DNA" in outcomes.paragraphs[0]
         assert any("opt-in" in p for p in outcomes.paragraphs)
@@ -184,22 +261,38 @@ class TestOutcomesSection:
 
     def test_model_meta_marks_a_dna_outcome_as_included_in_fitted_run(self, spec):
         outcome_definitions = [
-            {"outcome_id": "dna_new_kit", "product": "DNA", "segment": "New Customer", "metric": "Kit sale", "column": "DNA_Kit_New"},
+            {
+                "outcome_id": "dna_new_kit",
+                "product": "DNA",
+                "segment": "New Customer",
+                "metric": "Kit sale",
+                "column": "DNA_Kit_New",
+            },
         ]
 
         class FakeMeta:
             outcome_ids = ["dna_new_kit"]
 
-        sections = build_report_sections(spec=spec, outcome_definitions=outcome_definitions, model_meta=FakeMeta())
+        sections = build_report_sections(
+            spec=spec, outcome_definitions=outcome_definitions, model_meta=FakeMeta()
+        )
         outcomes = next(s for s in sections if s.title == "Outcomes")
         dna_row = outcomes.table[outcomes.table["product"] == "DNA"].iloc[0]
         assert dna_row["status"] == "Included in fitted run"
 
     def test_renders_without_error_with_dna_outcomes(self, spec):
         outcome_definitions = [
-            {"outcome_id": "dna_new_kit", "product": "DNA", "segment": "New Customer", "metric": "Kit sale", "column": "DNA_Kit_New"},
+            {
+                "outcome_id": "dna_new_kit",
+                "product": "DNA",
+                "segment": "New Customer",
+                "metric": "Kit sale",
+                "column": "DNA_Kit_New",
+            },
         ]
-        sections = build_report_sections(spec=spec, outcome_definitions=outcome_definitions)
+        sections = build_report_sections(
+            spec=spec, outcome_definitions=outcome_definitions
+        )
         md = render_markdown("proj", sections)
         html = render_html("proj", sections)
         assert "DNA" in md and "DNA" in html
@@ -208,29 +301,48 @@ class TestOutcomesSection:
 class TestLimitationsSectionVariesByModelType:
     def test_shared_model_does_not_mention_market_specific_caveats(self, spec):
         sections = build_report_sections(spec=spec, model_type="shared")
-        limitations = next(s for s in sections if s.title == "Known limitations & assumptions")
+        limitations = next(
+            s for s in sections if s.title == "Known limitations & assumptions"
+        )
         assert not any("evidence-tier" in b for b in limitations.bullets)
 
     def test_market_specific_model_mentions_shared_decay_and_evidence_tiers(self, spec):
         sections = build_report_sections(spec=spec, model_type="market_specific")
-        limitations = next(s for s in sections if s.title == "Known limitations & assumptions")
+        limitations = next(
+            s for s in sections if s.title == "Known limitations & assumptions"
+        )
         text = " ".join(limitations.bullets)
         assert "decay" in text.lower()
         assert "evidence-tier" in text.lower()
 
     def test_media_unit_mapping_adds_a_cost_per_unit_caveat(self, spec):
         config = MarketSpecConfig()
-        config.set_profile(MarketProfile(market="UK", currency=MarketCurrency(local_currency="GBP")))
-        config.set_media_unit_config(ChannelMediaUnitConfig(
-            market="UK", channel="TV", spend_column="tv_spend", response_unit_column="tv_impressions",
-        ))
-        sections = build_report_sections(spec=spec, model_type="shared", market_spec_config=config)
-        limitations = next(s for s in sections if s.title == "Known limitations & assumptions")
+        config.set_profile(
+            MarketProfile(market="UK", currency=MarketCurrency(local_currency="GBP"))
+        )
+        config.set_media_unit_config(
+            ChannelMediaUnitConfig(
+                market="UK",
+                channel="TV",
+                spend_column="tv_spend",
+                response_unit_column="tv_impressions",
+            )
+        )
+        sections = build_report_sections(
+            spec=spec, model_type="shared", market_spec_config=config
+        )
+        limitations = next(
+            s for s in sections if s.title == "Known limitations & assumptions"
+        )
         assert any("cost per unit" in b.lower() for b in limitations.bullets)
 
     def test_no_media_unit_mapping_omits_the_cost_per_unit_caveat(self, spec):
-        sections = build_report_sections(spec=spec, model_type="shared", market_spec_config=MarketSpecConfig())
-        limitations = next(s for s in sections if s.title == "Known limitations & assumptions")
+        sections = build_report_sections(
+            spec=spec, model_type="shared", market_spec_config=MarketSpecConfig()
+        )
+        limitations = next(
+            s for s in sections if s.title == "Known limitations & assumptions"
+        )
         assert not any("cost per unit" in b.lower() for b in limitations.bullets)
 
 

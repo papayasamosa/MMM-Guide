@@ -29,13 +29,23 @@ import pandas as pd
 # ---------------------------------------------------------------------------
 
 _ALLOWED_BINOPS = {
-    ast.Add: _op.add, ast.Sub: _op.sub, ast.Mult: _op.mul,
-    ast.Div: _op.truediv, ast.Pow: _op.pow, ast.Mod: _op.mod,
+    ast.Add: _op.add,
+    ast.Sub: _op.sub,
+    ast.Mult: _op.mul,
+    ast.Div: _op.truediv,
+    ast.Pow: _op.pow,
+    ast.Mod: _op.mod,
 }
 _ALLOWED_UNARYOPS = {ast.USub: _op.neg, ast.UAdd: _op.pos}
 _ALLOWED_FUNCS = {
-    "log": np.log, "log1p": np.log1p, "exp": np.exp, "sqrt": np.sqrt,
-    "abs": np.abs, "min": np.minimum, "max": np.maximum, "clip": np.clip,
+    "log": np.log,
+    "log1p": np.log1p,
+    "exp": np.exp,
+    "sqrt": np.sqrt,
+    "abs": np.abs,
+    "min": np.minimum,
+    "max": np.maximum,
+    "clip": np.clip,
 }
 
 
@@ -67,7 +77,9 @@ def _eval_node(node: ast.AST, columns: Dict[str, pd.Series]) -> Any:
             raise UnsafeExpressionError("Keyword arguments are not allowed.")
         args = [_eval_node(a, columns) for a in node.args]
         return _ALLOWED_FUNCS[node.func.id](*args)
-    raise UnsafeExpressionError(f"Expression element not permitted: {type(node).__name__}")
+    raise UnsafeExpressionError(
+        f"Expression element not permitted: {type(node).__name__}"
+    )
 
 
 def safe_eval_expression(expr: str, df: pd.DataFrame) -> pd.Series:
@@ -88,8 +100,13 @@ def safe_eval_expression(expr: str, df: pd.DataFrame) -> pd.Series:
 # ---------------------------------------------------------------------------
 
 SUPPORTED_OPS = [
-    "rename_column", "cast_type", "calculated_column", "lag_variable",
-    "fill_missing", "drop_columns", "event_flag",
+    "rename_column",
+    "cast_type",
+    "calculated_column",
+    "lag_variable",
+    "fill_missing",
+    "drop_columns",
+    "event_flag",
 ]
 
 # "promotion_event" is intentionally excluded from SUPPORTED_OPS - it is
@@ -109,7 +126,9 @@ class TransformStep:
 
     @classmethod
     def from_dict(cls, d: dict) -> "TransformStep":
-        return cls(op=d["op"], params=d.get("params", {}), description=d.get("description", ""))
+        return cls(
+            op=d["op"], params=d.get("params", {}), description=d.get("description", "")
+        )
 
 
 def apply_step(df: pd.DataFrame, step: TransformStep) -> pd.DataFrame:
@@ -150,12 +169,16 @@ def apply_step(df: pd.DataFrame, step: TransformStep) -> pd.DataFrame:
             df[col] = df[col].fillna(0)
         elif strategy == "mean":
             if group_col and group_col in df.columns:
-                df[col] = df.groupby(group_col)[col].transform(lambda s: s.fillna(s.mean()))
+                df[col] = df.groupby(group_col)[col].transform(
+                    lambda s: s.fillna(s.mean())
+                )
             else:
                 df[col] = df[col].fillna(df[col].mean())
         elif strategy == "median":
             if group_col and group_col in df.columns:
-                df[col] = df.groupby(group_col)[col].transform(lambda s: s.fillna(s.median()))
+                df[col] = df.groupby(group_col)[col].transform(
+                    lambda s: s.fillna(s.median())
+                )
             else:
                 df[col] = df[col].fillna(df[col].median())
         elif strategy == "ffill":
@@ -219,6 +242,7 @@ def pipeline_from_json(data: List[dict]) -> List[TransformStep]:
 # Multi-source join
 # ---------------------------------------------------------------------------
 
+
 def join_sources(
     frames: Dict[str, pd.DataFrame],
     date_col: str,
@@ -260,6 +284,7 @@ def join_sources(
 # Validation checks - flagged before fitting, not discovered after
 # ---------------------------------------------------------------------------
 
+
 def validate_modeling_frame(
     df: pd.DataFrame,
     channels: List[str],
@@ -279,53 +304,71 @@ def validate_modeling_frame(
     # Low-variation channels (coefficient of variation) -> weakly identified curve
     for ch in channels:
         if ch not in df.columns:
-            issues.append({"level": "error", "message": f"Channel column '{ch}' not found in data."})
+            issues.append(
+                {
+                    "level": "error",
+                    "message": f"Channel column '{ch}' not found in data.",
+                }
+            )
             continue
         series = df[ch].astype(float)
         mean = series.mean()
         cv = series.std() / mean if mean > 0 else 0
         if cv < variance_cv_threshold:
-            issues.append({
-                "level": "warning",
-                "message": f"'{ch}' has very low spend variation (CV={cv:.2f}) - "
-                           "adstock/saturation for this channel will be weakly identified.",
-            })
+            issues.append(
+                {
+                    "level": "warning",
+                    "message": f"'{ch}' has very low spend variation (CV={cv:.2f}) - "
+                    "adstock/saturation for this channel will be weakly identified.",
+                }
+            )
 
     # Collinearity between channel pairs
     present_channels = [c for c in channels if c in df.columns]
     if len(present_channels) >= 2:
         corr = df[present_channels].corr().abs()
         for i, c1 in enumerate(present_channels):
-            for c2 in present_channels[i + 1:]:
+            for c2 in present_channels[i + 1 :]:
                 r = corr.loc[c1, c2]
                 if r >= collinearity_threshold:
-                    issues.append({
-                        "level": "warning",
-                        "message": f"'{c1}' and '{c2}' are highly correlated (r={r:.2f}) - "
-                                   "their individual effects will be hard to separate.",
-                    })
+                    issues.append(
+                        {
+                            "level": "warning",
+                            "message": f"'{c1}' and '{c2}' are highly correlated (r={r:.2f}) - "
+                            "their individual effects will be hard to separate.",
+                        }
+                    )
 
     # Sparse segments / geographies
     for seg, col in segment_outcomes.items():
         if col not in df.columns:
-            issues.append({"level": "error", "message": f"Segment outcome column '{col}' not found."})
+            issues.append(
+                {
+                    "level": "error",
+                    "message": f"Segment outcome column '{col}' not found.",
+                }
+            )
             continue
         n_nonzero = (df[col].fillna(0) > 0).sum()
         if n_nonzero < min_obs_per_group:
-            issues.append({
-                "level": "warning",
-                "message": f"Segment '{seg}' has only {n_nonzero} non-zero observations - "
-                           "consider leaning more on partial pooling for this segment.",
-            })
+            issues.append(
+                {
+                    "level": "warning",
+                    "message": f"Segment '{seg}' has only {n_nonzero} non-zero observations - "
+                    "consider leaning more on partial pooling for this segment.",
+                }
+            )
 
     if market_col and market_col in df.columns:
         counts = df.groupby(market_col).size()
         for market, n in counts.items():
             if n < min_obs_per_group:
-                issues.append({
-                    "level": "warning",
-                    "message": f"Market '{market}' has only {n} observations - "
-                               "likely too thin to model unpooled; keep it partially pooled.",
-                })
+                issues.append(
+                    {
+                        "level": "warning",
+                        "message": f"Market '{market}' has only {n} observations - "
+                        "likely too thin to model unpooled; keep it partially pooled.",
+                    }
+                )
 
     return issues

@@ -46,7 +46,20 @@ from dataclasses import asdict, dataclass, replace
 import hashlib
 import json
 import warnings
-from typing import Any, Dict, List, Literal, Mapping, Optional, Tuple, Union
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    List,
+    Literal,
+    Mapping,
+    Optional,
+    Tuple,
+    Union,
+)
+
+if TYPE_CHECKING:
+    from .validation_policy import ApprovalReadiness
 
 import numpy as np
 import pandas as pd
@@ -61,9 +74,17 @@ from .activities import (
 from .hierarchical_model import FHModelMeta
 from .media_costs import CostMappingRegistry
 from .outcomes import (
-    fh_gsa_outcome_ids, fh_signup_outcome_ids, fh_net_billthrough_outcome_ids, dna_kit_sale_outcome_ids, select_outcome_ids,
-    outcome_catalogue_at_fit_by_id, eligible_outcome_ids,
-    METRIC_KEY_FH_GSA, METRIC_KEY_FH_SIGNUP, METRIC_KEY_FH_NET_BILLTHROUGH_COUNT, METRIC_KEY_DNA_KIT_SALE,
+    fh_gsa_outcome_ids,
+    fh_signup_outcome_ids,
+    fh_net_billthrough_outcome_ids,
+    dna_kit_sale_outcome_ids,
+    select_outcome_ids,
+    outcome_catalogue_at_fit_by_id,
+    eligible_outcome_ids,
+    METRIC_KEY_FH_GSA,
+    METRIC_KEY_FH_SIGNUP,
+    METRIC_KEY_FH_NET_BILLTHROUGH_COUNT,
+    METRIC_KEY_DNA_KIT_SALE,
 )
 from .outcome_approval import (
     OutcomeApproval,
@@ -71,7 +92,10 @@ from .outcome_approval import (
     PlanningGovernanceError,
 )
 from .predict import FHPosteriorParams, steady_state_outcome_response
-from .market_specific_predict import FHMarketSpecificPosteriorParams, steady_state_outcome_response_market_specific
+from .market_specific_predict import (
+    FHMarketSpecificPosteriorParams,
+    steady_state_outcome_response_market_specific,
+)
 from .scenario_governance import (
     CounterfactualPolicy,
     ScenarioPlan,
@@ -88,14 +112,13 @@ from .planning import (
     CurrencyContext,
     OutcomeValueMapping,
     PlanningObjective,
-    ResolvedOutcomeAuthorisation,
+    ResolvedOutcomeAuthorisation,  # noqa: F401 — re-exported for planning_governance.py
     ResolvedPlanningGovernance,
     ScenarioDependencyIssue,
     ScenarioEvaluationResult,
     ScenarioGovernanceDependencies,
     ScenarioValidationContext,
     planning_objective_from_legacy,
-    validation_context_from_legacy_args,
 )
 
 WEEKS_PER_MONTH = 365.25 / 12 / 7  # ~4.348
@@ -109,7 +132,11 @@ def _is_nbt_outcome(outcome_id: str, meta: object) -> bool:
         catalogue = outcome_catalogue_at_fit_by_id(meta)
         if outcome_id in catalogue:
             from .outcomes import METRIC_KEY_FH_NET_BILLTHROUGH_COUNT
-            return getattr(catalogue[outcome_id], 'metric_key', None) == METRIC_KEY_FH_NET_BILLTHROUGH_COUNT
+
+            return (
+                getattr(catalogue[outcome_id], "metric_key", None)
+                == METRIC_KEY_FH_NET_BILLTHROUGH_COUNT
+            )
     except Exception:
         pass
     return outcome_id.startswith("fh_nbt")
@@ -133,6 +160,7 @@ def _resolve_nbt_completeness_fingerprint(
     if nbt_completeness_metadata is None:
         if fail_closed:
             from .outcome_approval import PlanningGovernanceError
+
             raise PlanningGovernanceError(
                 "NBT completeness metadata is required for official "
                 "planning or optimisation but was not provided."
@@ -140,6 +168,7 @@ def _resolve_nbt_completeness_fingerprint(
         return None
     try:
         from .net_billthrough import NetBillthroughCompletenessMetadata
+
         metadata = NetBillthroughCompletenessMetadata.from_dict(
             nbt_completeness_metadata
         )
@@ -147,13 +176,14 @@ def _resolve_nbt_completeness_fingerprint(
     except (TypeError, ValueError) as exc:
         if fail_closed:
             from .outcome_approval import PlanningGovernanceError
+
             raise PlanningGovernanceError(
                 f"NBT completeness metadata is malformed: {exc}"
             )
         return None
 
+
 # Import PLANNING_ESTIMANDS from the canonical planning package.
-from .planning.value import PLANNING_ESTIMANDS
 
 
 # ---------------------------------------------------------------------------
@@ -164,6 +194,7 @@ from .planning.value import PLANNING_ESTIMANDS
 
 class ObjectiveMissingError(PlanningGovernanceError):
     """Official planning/optimisation requires an explicit objective."""
+
     # Not a subclass of OutcomeApprovalBlockedError because it is raised
     # before any approval check runs — the objective is missing regardless
     # of whether approvals exist.
@@ -174,11 +205,13 @@ class ObjectiveMissingError(PlanningGovernanceError):
 # constraints, names, or notes.
 # ---------------------------------------------------------------------------
 
-ARTEFACT_KINDS = frozenset({
-    "manual_scenario",
-    "constrained_optimisation",
-    "unconstrained_benchmark",
-})
+ARTEFACT_KINDS = frozenset(
+    {
+        "manual_scenario",
+        "constrained_optimisation",
+        "unconstrained_benchmark",
+    }
+)
 
 # Required use per artefact kind — enforced by governance validation.
 ARTEFACT_KIND_REQUIRED_USE: dict[str, str] = {
@@ -240,7 +273,9 @@ def fingerprint_planning_objective(objective: PlanningObjective) -> str:
     the single fingerprint function used everywhere, including resolved
     governance and saved scenario dependencies."""
     payload = objective.to_dict()
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    encoded = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), default=str
+    ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 
@@ -292,7 +327,11 @@ def resolve_planning_objective(
         )
     elif objective_kind in ("expected_value", "value"):
         # Use outcome-level weights as primary source, fall back to legacy segment LTV
-        weights = value_weights_by_outcome_id if value_weights_by_outcome_id is not None else ltv
+        weights = (
+            value_weights_by_outcome_id
+            if value_weights_by_outcome_id is not None
+            else ltv
+        )
         if not weights:
             raise ValueError(
                 "Expected-value objective requires value weights. "
@@ -420,7 +459,9 @@ def validate_scenario_dependencies(
         current_posterior_fingerprint = context.posterior_fingerprint
         current_planning_objective = context.planning_objective
         current_outcome_definitions = context.outcome_definitions
-        current_outcome_approvals = list(context.outcome_approvals) if context.outcome_approvals else None
+        current_outcome_approvals = (
+            list(context.outcome_approvals) if context.outcome_approvals else None
+        )
         current_activity_fingerprint = context.activity_fingerprint
         current_cost_fingerprint = context.cost_fingerprint
         current_counterfactual_fingerprint = context.counterfactual_fingerprint
@@ -429,7 +470,8 @@ def validate_scenario_dependencies(
                 context.nbt_completeness_metadata,
                 fail_closed=True,
             )
-            if context.nbt_completeness_metadata else None
+            if context.nbt_completeness_metadata
+            else None
         )
 
     schema_ver = scenario.get("schema_version", 1)
@@ -445,220 +487,294 @@ def validate_scenario_dependencies(
     # G2A.7a.4: check _migrated_from_schema — a migrated record with
     # null fields is legacy_unverified, never current.
     if migrated_from is not None and migrated_from < 3:
-        issues.append(ScenarioDependencyIssue(
-            artefact_id=scenario.get("name", "<unknown>"),
-            issue_type="legacy_unverified",
-            detail=(
-                f"Scenario was migrated from schema version {migrated_from}. "
-                "Migration by adding null fields does not produce 'current' "
-                "status — re-save with explicit governance dependencies."
-            ),
-        ))
+        issues.append(
+            ScenarioDependencyIssue(
+                artefact_id=scenario.get("name", "<unknown>"),
+                issue_type="legacy_unverified",
+                detail=(
+                    f"Scenario was migrated from schema version {migrated_from}. "
+                    "Migration by adding null fields does not produce 'current' "
+                    "status — re-save with explicit governance dependencies."
+                ),
+            )
+        )
         return issues
 
     if schema_ver < 3:
-        issues.append(ScenarioDependencyIssue(
-            artefact_id=scenario.get("name", "<unknown>"),
-            issue_type="legacy_unverified",
-            detail=(
-                f"Scenario schema version {schema_ver} predates governance "
-                "dependency tracking. Migration by adding null fields does "
-                "not produce 'current' status — re-save with explicit "
-                "governance dependencies."
-            ),
-        ))
+        issues.append(
+            ScenarioDependencyIssue(
+                artefact_id=scenario.get("name", "<unknown>"),
+                issue_type="legacy_unverified",
+                detail=(
+                    f"Scenario schema version {schema_ver} predates governance "
+                    "dependency tracking. Migration by adding null fields does "
+                    "not produce 'current' status — re-save with explicit "
+                    "governance dependencies."
+                ),
+            )
+        )
         return issues
 
     if not deps:
-        issues.append(ScenarioDependencyIssue(
-            artefact_id=scenario.get("name", "<unknown>"),
-            issue_type="invalid",
-            detail="Governance dependencies block is empty or missing.",
-        ))
+        issues.append(
+            ScenarioDependencyIssue(
+                artefact_id=scenario.get("name", "<unknown>"),
+                issue_type="invalid",
+                detail="Governance dependencies block is empty or missing.",
+            )
+        )
         return issues
 
     # G2A.7a.4: validate artefact kind
     if artefact_kind not in ARTEFACT_KINDS:
-        issues.append(ScenarioDependencyIssue(
-            artefact_id=scenario.get("name", "<unknown>"),
-            issue_type="invalid",
-            detail=f"Unknown or missing artefact kind: {artefact_kind!r}.",
-        ))
+        issues.append(
+            ScenarioDependencyIssue(
+                artefact_id=scenario.get("name", "<unknown>"),
+                issue_type="invalid",
+                detail=f"Unknown or missing artefact kind: {artefact_kind!r}.",
+            )
+        )
 
     # G2A.7a.4: validate required use from artefact kind
     required_use = ARTEFACT_KIND_REQUIRED_USE.get(artefact_kind, "planning")
     saved_authorisations = deps.get("outcome_authorisations") or []
     for auth in saved_authorisations:
         if isinstance(auth, dict) and auth.get("requested_use") != required_use:
-            issues.append(ScenarioDependencyIssue(
-                artefact_id=scenario.get("name", "<unknown>"),
-                issue_type="invalid",
-                detail=(
-                    f"Authorisation for outcome '{auth.get('outcome_id')}' "
-                    f"has requested_use='{auth.get('requested_use')}' but "
-                    f"artefact kind '{artefact_kind}' requires '{required_use}'."
-                ),
-            ))
+            issues.append(
+                ScenarioDependencyIssue(
+                    artefact_id=scenario.get("name", "<unknown>"),
+                    issue_type="invalid",
+                    detail=(
+                        f"Authorisation for outcome '{auth.get('outcome_id')}' "
+                        f"has requested_use='{auth.get('requested_use')}' but "
+                        f"artefact kind '{artefact_kind}' requires '{required_use}'."
+                    ),
+                )
+            )
 
     # Model identity
     saved_run_id = deps.get("model_run_id")
     if saved_run_id is None:
-        issues.append(ScenarioDependencyIssue(
-            artefact_id=scenario.get("name", "<unknown>"),
-            issue_type="missing",
-            detail="Governance dependency 'model_run_id' is missing.",
-        ))
+        issues.append(
+            ScenarioDependencyIssue(
+                artefact_id=scenario.get("name", "<unknown>"),
+                issue_type="missing",
+                detail="Governance dependency 'model_run_id' is missing.",
+            )
+        )
     elif current_model_run_id is not None and saved_run_id != current_model_run_id:
-        issues.append(ScenarioDependencyIssue(
-            artefact_id=scenario.get("name", "<unknown>"),
-            issue_type="stale",
-            detail=(
-                f"Model run changed from {saved_run_id} to "
-                f"{current_model_run_id}."
-            ),
-        ))
+        issues.append(
+            ScenarioDependencyIssue(
+                artefact_id=scenario.get("name", "<unknown>"),
+                issue_type="stale",
+                detail=(
+                    f"Model run changed from {saved_run_id} to {current_model_run_id}."
+                ),
+            )
+        )
 
     # G2A.7a.4: validate model approval fingerprint
     saved_approval_fp = deps.get("model_approval_fingerprint")
     if saved_approval_fp is None:
-        issues.append(ScenarioDependencyIssue(
-            artefact_id=scenario.get("name", "<unknown>"),
-            issue_type="missing",
-            detail="Governance dependency 'model_approval_fingerprint' is missing.",
-        ))
+        issues.append(
+            ScenarioDependencyIssue(
+                artefact_id=scenario.get("name", "<unknown>"),
+                issue_type="missing",
+                detail="Governance dependency 'model_approval_fingerprint' is missing.",
+            )
+        )
     elif current_model_approval_fingerprint or current_model_approval:
         if not current_model_approval_fingerprint and current_model_approval:
             from .approval import ModelApproval, fingerprint_model_approval
+
             try:
                 current_model_approval_fingerprint = fingerprint_model_approval(
                     ModelApproval.from_dict(current_model_approval)
                 )
             except (TypeError, ValueError):
                 pass
-        if current_model_approval_fingerprint and saved_approval_fp != current_model_approval_fingerprint:
-            issues.append(ScenarioDependencyIssue(
-                artefact_id=scenario.get("name", "<unknown>"),
-                issue_type="stale",
-                detail="Model approval fingerprint has changed.",
-            ))
+        if (
+            current_model_approval_fingerprint
+            and saved_approval_fp != current_model_approval_fingerprint
+        ):
+            issues.append(
+                ScenarioDependencyIssue(
+                    artefact_id=scenario.get("name", "<unknown>"),
+                    issue_type="stale",
+                    detail="Model approval fingerprint has changed.",
+                )
+            )
 
     saved_data_fp = deps.get("data_fingerprint")
     if saved_data_fp is None:
-        issues.append(ScenarioDependencyIssue(
-            artefact_id=scenario.get("name", "<unknown>"),
-            issue_type="missing",
-            detail="Governance dependency 'data_fingerprint' is missing.",
-        ))
-    elif current_data_fingerprint is not None and saved_data_fp != current_data_fingerprint:
-        issues.append(ScenarioDependencyIssue(
-            artefact_id=scenario.get("name", "<unknown>"),
-            issue_type="stale",
-            detail="Data fingerprint has changed.",
-        ))
+        issues.append(
+            ScenarioDependencyIssue(
+                artefact_id=scenario.get("name", "<unknown>"),
+                issue_type="missing",
+                detail="Governance dependency 'data_fingerprint' is missing.",
+            )
+        )
+    elif (
+        current_data_fingerprint is not None
+        and saved_data_fp != current_data_fingerprint
+    ):
+        issues.append(
+            ScenarioDependencyIssue(
+                artefact_id=scenario.get("name", "<unknown>"),
+                issue_type="stale",
+                detail="Data fingerprint has changed.",
+            )
+        )
 
     saved_spec_fp = deps.get("model_spec_fingerprint")
     if saved_spec_fp is None:
-        issues.append(ScenarioDependencyIssue(
-            artefact_id=scenario.get("name", "<unknown>"),
-            issue_type="missing",
-            detail="Governance dependency 'model_spec_fingerprint' is missing.",
-        ))
-    elif current_model_spec_fingerprint is not None and saved_spec_fp != current_model_spec_fingerprint:
-        issues.append(ScenarioDependencyIssue(
-            artefact_id=scenario.get("name", "<unknown>"),
-            issue_type="stale",
-            detail="Model spec fingerprint has changed.",
-        ))
+        issues.append(
+            ScenarioDependencyIssue(
+                artefact_id=scenario.get("name", "<unknown>"),
+                issue_type="missing",
+                detail="Governance dependency 'model_spec_fingerprint' is missing.",
+            )
+        )
+    elif (
+        current_model_spec_fingerprint is not None
+        and saved_spec_fp != current_model_spec_fingerprint
+    ):
+        issues.append(
+            ScenarioDependencyIssue(
+                artefact_id=scenario.get("name", "<unknown>"),
+                issue_type="stale",
+                detail="Model spec fingerprint has changed.",
+            )
+        )
 
     saved_post_fp = deps.get("posterior_fingerprint")
     if saved_post_fp is None:
-        issues.append(ScenarioDependencyIssue(
-            artefact_id=scenario.get("name", "<unknown>"),
-            issue_type="missing",
-            detail="Governance dependency 'posterior_fingerprint' is missing.",
-        ))
-    elif current_posterior_fingerprint is not None and saved_post_fp != current_posterior_fingerprint:
-        issues.append(ScenarioDependencyIssue(
-            artefact_id=scenario.get("name", "<unknown>"),
-            issue_type="stale",
-            detail="Posterior fingerprint has changed.",
-        ))
+        issues.append(
+            ScenarioDependencyIssue(
+                artefact_id=scenario.get("name", "<unknown>"),
+                issue_type="missing",
+                detail="Governance dependency 'posterior_fingerprint' is missing.",
+            )
+        )
+    elif (
+        current_posterior_fingerprint is not None
+        and saved_post_fp != current_posterior_fingerprint
+    ):
+        issues.append(
+            ScenarioDependencyIssue(
+                artefact_id=scenario.get("name", "<unknown>"),
+                issue_type="stale",
+                detail="Posterior fingerprint has changed.",
+            )
+        )
 
     # Objective fingerprint
     saved_obj_fp = deps.get("planning_objective_fingerprint")
     if saved_obj_fp is None:
-        issues.append(ScenarioDependencyIssue(
-            artefact_id=scenario.get("name", "<unknown>"),
-            issue_type="missing",
-            detail="Governance dependency 'planning_objective_fingerprint' is missing.",
-        ))
+        issues.append(
+            ScenarioDependencyIssue(
+                artefact_id=scenario.get("name", "<unknown>"),
+                issue_type="missing",
+                detail="Governance dependency 'planning_objective_fingerprint' is missing.",
+            )
+        )
     elif current_planning_objective is not None:
         current_obj_fp = fingerprint_planning_objective(current_planning_objective)
         if saved_obj_fp != current_obj_fp:
-            issues.append(ScenarioDependencyIssue(
-                artefact_id=scenario.get("name", "<unknown>"),
-                issue_type="stale",
-                detail="Planning objective fingerprint has changed.",
-            ))
+            issues.append(
+                ScenarioDependencyIssue(
+                    artefact_id=scenario.get("name", "<unknown>"),
+                    issue_type="stale",
+                    detail="Planning objective fingerprint has changed.",
+                )
+            )
 
     # Activity and cost fingerprints (only relevant for specific uses)
     saved_act_fp = deps.get("activity_definitions_fingerprint")
-    if current_activity_fingerprint is not None and saved_act_fp is not None and saved_act_fp != current_activity_fingerprint:
-        issues.append(ScenarioDependencyIssue(
-            artefact_id=scenario.get("name", "<unknown>"),
-            issue_type="stale",
-            detail="Activity definitions fingerprint has changed.",
-        ))
+    if (
+        current_activity_fingerprint is not None
+        and saved_act_fp is not None
+        and saved_act_fp != current_activity_fingerprint
+    ):
+        issues.append(
+            ScenarioDependencyIssue(
+                artefact_id=scenario.get("name", "<unknown>"),
+                issue_type="stale",
+                detail="Activity definitions fingerprint has changed.",
+            )
+        )
 
     saved_cost_fp = deps.get("cost_mapping_fingerprint")
-    if current_cost_fingerprint is not None and saved_cost_fp is not None and saved_cost_fp != current_cost_fingerprint:
-        issues.append(ScenarioDependencyIssue(
-            artefact_id=scenario.get("name", "<unknown>"),
-            issue_type="stale",
-            detail="Cost mapping fingerprint has changed.",
-        ))
+    if (
+        current_cost_fingerprint is not None
+        and saved_cost_fp is not None
+        and saved_cost_fp != current_cost_fingerprint
+    ):
+        issues.append(
+            ScenarioDependencyIssue(
+                artefact_id=scenario.get("name", "<unknown>"),
+                issue_type="stale",
+                detail="Cost mapping fingerprint has changed.",
+            )
+        )
 
     saved_cf_fp = deps.get("counterfactual_policy_fingerprint")
-    if current_counterfactual_fingerprint is not None and saved_cf_fp is not None and saved_cf_fp != current_counterfactual_fingerprint:
-        issues.append(ScenarioDependencyIssue(
-            artefact_id=scenario.get("name", "<unknown>"),
-            issue_type="stale",
-            detail="Counterfactual policy fingerprint has changed.",
-        ))
+    if (
+        current_counterfactual_fingerprint is not None
+        and saved_cf_fp is not None
+        and saved_cf_fp != current_counterfactual_fingerprint
+    ):
+        issues.append(
+            ScenarioDependencyIssue(
+                artefact_id=scenario.get("name", "<unknown>"),
+                issue_type="stale",
+                detail="Counterfactual policy fingerprint has changed.",
+            )
+        )
 
     saved_nbt_fp = deps.get("nbt_completeness_fingerprint")
-    if current_nbt_completeness_fingerprint is not None and saved_nbt_fp is not None and saved_nbt_fp != current_nbt_completeness_fingerprint:
-        issues.append(ScenarioDependencyIssue(
-            artefact_id=scenario.get("name", "<unknown>"),
-            issue_type="stale",
-            detail="NBT completeness fingerprint has changed.",
-        ))
+    if (
+        current_nbt_completeness_fingerprint is not None
+        and saved_nbt_fp is not None
+        and saved_nbt_fp != current_nbt_completeness_fingerprint
+    ):
+        issues.append(
+            ScenarioDependencyIssue(
+                artefact_id=scenario.get("name", "<unknown>"),
+                issue_type="stale",
+                detail="NBT completeness fingerprint has changed.",
+            )
+        )
 
     # Outcome authorisations — G2A.7a.9: complete validation with
     # canonical deserialisation, missing/duplicate detection, and
     # malformed-record rejection (never silently continue).
     if not saved_authorisations:
-        issues.append(ScenarioDependencyIssue(
-            artefact_id=scenario.get("name", "<unknown>"),
-            issue_type="invalid",
-            detail="No outcome authorisations recorded for this official scenario.",
-        ))
+        issues.append(
+            ScenarioDependencyIssue(
+                artefact_id=scenario.get("name", "<unknown>"),
+                issue_type="invalid",
+                detail="No outcome authorisations recorded for this official scenario.",
+            )
+        )
     else:
         _artefact_id = scenario.get("name", "<unknown>")
         seen_outcome_ids: set = set()
         seen_approval_ids: set = set()
         for auth_idx, auth in enumerate(saved_authorisations):
             if not isinstance(auth, dict):
-                issues.append(ScenarioDependencyIssue(
-                    artefact_id=_artefact_id,
-                    issue_type="invalid",
-                    detail=(
-                        f"Saved authorisation at index {auth_idx} is not a "
-                        f"valid dictionary (type={type(auth).__name__})."
-                    ),
-                    dependency_type="outcome_authorisation",
-                    reason_code="malformed_authorisation",
-                ))
+                issues.append(
+                    ScenarioDependencyIssue(
+                        artefact_id=_artefact_id,
+                        issue_type="invalid",
+                        detail=(
+                            f"Saved authorisation at index {auth_idx} is not a "
+                            f"valid dictionary (type={type(auth).__name__})."
+                        ),
+                        dependency_type="outcome_authorisation",
+                        reason_code="malformed_authorisation",
+                    )
+                )
                 continue
             auth_id = auth.get("approval_id", "<unknown>")
             auth_outcome = auth.get("outcome_id", "<unknown>")
@@ -666,23 +782,27 @@ def validate_scenario_dependencies(
 
             # Reject duplicate IDs
             if auth_id in seen_approval_ids:
-                issues.append(ScenarioDependencyIssue(
-                    artefact_id=_artefact_id,
-                    issue_type="invalid",
-                    detail=f"Duplicate approval ID '{auth_id}' in saved authorisations.",
-                    dependency_type="outcome_authorisation",
-                    reason_code="duplicate_approval_id",
-                ))
+                issues.append(
+                    ScenarioDependencyIssue(
+                        artefact_id=_artefact_id,
+                        issue_type="invalid",
+                        detail=f"Duplicate approval ID '{auth_id}' in saved authorisations.",
+                        dependency_type="outcome_authorisation",
+                        reason_code="duplicate_approval_id",
+                    )
+                )
             seen_approval_ids.add(auth_id)
 
             if auth_outcome and auth_outcome in seen_outcome_ids:
-                issues.append(ScenarioDependencyIssue(
-                    artefact_id=_artefact_id,
-                    issue_type="invalid",
-                    detail=f"Duplicate outcome ID '{auth_outcome}' in saved authorisations.",
-                    dependency_type="outcome_authorisation",
-                    reason_code="duplicate_outcome_id",
-                ))
+                issues.append(
+                    ScenarioDependencyIssue(
+                        artefact_id=_artefact_id,
+                        issue_type="invalid",
+                        detail=f"Duplicate outcome ID '{auth_outcome}' in saved authorisations.",
+                        dependency_type="outcome_authorisation",
+                        reason_code="duplicate_outcome_id",
+                    )
+                )
             seen_outcome_ids.add(auth_outcome)
 
             if current_outcome_approvals is None:
@@ -690,70 +810,82 @@ def validate_scenario_dependencies(
 
             # Find matching current approval by ID
             from .outcome_approval import OutcomeApproval
+
             matching_current = [
-                a for a in current_outcome_approvals
+                a
+                for a in current_outcome_approvals
                 if isinstance(a, dict) and a.get("approval_id") == auth_id
             ]
             if not matching_current:
-                issues.append(ScenarioDependencyIssue(
-                    artefact_id=_artefact_id,
-                    issue_type="stale",
-                    detail=(
-                        f"Saved approval '{auth_id}' for outcome "
-                        f"'{auth_outcome}' no longer exists in current approvals."
-                    ),
-                    dependency_type="outcome_approval",
-                    reason_code="approval_not_found",
-                ))
+                issues.append(
+                    ScenarioDependencyIssue(
+                        artefact_id=_artefact_id,
+                        issue_type="stale",
+                        detail=(
+                            f"Saved approval '{auth_id}' for outcome "
+                            f"'{auth_outcome}' no longer exists in current approvals."
+                        ),
+                        dependency_type="outcome_approval",
+                        reason_code="approval_not_found",
+                    )
+                )
                 continue
 
             try:
                 current_approval = OutcomeApproval.from_dict(matching_current[0])
             except (TypeError, ValueError, KeyError, AttributeError) as exc:
-                issues.append(ScenarioDependencyIssue(
-                    artefact_id=_artefact_id,
-                    issue_type="invalid",
-                    detail=f"Approval '{auth_id}' record is malformed: {exc}.",
-                    dependency_type="outcome_approval",
-                    reason_code="approval_malformed",
-                ))
+                issues.append(
+                    ScenarioDependencyIssue(
+                        artefact_id=_artefact_id,
+                        issue_type="invalid",
+                        detail=f"Approval '{auth_id}' record is malformed: {exc}.",
+                        dependency_type="outcome_approval",
+                        reason_code="approval_malformed",
+                    )
+                )
                 continue
 
             # Verify status
             if current_approval.status != "approved":
-                issues.append(ScenarioDependencyIssue(
-                    artefact_id=_artefact_id,
-                    issue_type="stale",
-                    detail=(
-                        f"Approval '{auth_id}' status is "
-                        f"'{current_approval.status}', not 'approved'."
-                    ),
-                    dependency_type="outcome_approval",
-                    reason_code="approval_not_approved",
-                ))
+                issues.append(
+                    ScenarioDependencyIssue(
+                        artefact_id=_artefact_id,
+                        issue_type="stale",
+                        detail=(
+                            f"Approval '{auth_id}' status is "
+                            f"'{current_approval.status}', not 'approved'."
+                        ),
+                        dependency_type="outcome_approval",
+                        reason_code="approval_not_approved",
+                    )
+                )
 
             # Verify active
             if not current_approval.is_active():
-                issues.append(ScenarioDependencyIssue(
-                    artefact_id=_artefact_id,
-                    issue_type="stale",
-                    detail=f"Approval '{auth_id}' is not active (expired or future-dated).",
-                    dependency_type="outcome_approval",
-                    reason_code="approval_not_active",
-                ))
+                issues.append(
+                    ScenarioDependencyIssue(
+                        artefact_id=_artefact_id,
+                        issue_type="stale",
+                        detail=f"Approval '{auth_id}' is not active (expired or future-dated).",
+                        dependency_type="outcome_approval",
+                        reason_code="approval_not_active",
+                    )
+                )
 
             # Verify requested use
             if auth_use and not current_approval.allows_use(auth_use):
-                issues.append(ScenarioDependencyIssue(
-                    artefact_id=_artefact_id,
-                    issue_type="stale",
-                    detail=(
-                        f"Approval '{auth_id}' does not allow "
-                        f"required use '{auth_use}'."
-                    ),
-                    dependency_type="outcome_approval",
-                    reason_code="approval_use_not_allowed",
-                ))
+                issues.append(
+                    ScenarioDependencyIssue(
+                        artefact_id=_artefact_id,
+                        issue_type="stale",
+                        detail=(
+                            f"Approval '{auth_id}' does not allow "
+                            f"required use '{auth_use}'."
+                        ),
+                        dependency_type="outcome_approval",
+                        reason_code="approval_use_not_allowed",
+                    )
+                )
 
             # Verify scope (market, product, segment)
             auth_market = auth.get("market")
@@ -764,17 +896,19 @@ def validate_scenario_dependencies(
                 product=auth_product,
                 segment=auth_segment,
             ):
-                issues.append(ScenarioDependencyIssue(
-                    artefact_id=_artefact_id,
-                    issue_type="stale",
-                    detail=(
-                        f"Approval '{auth_id}' scope does not cover "
-                        f"market={auth_market}, product={auth_product}, "
-                        f"segment={auth_segment}."
-                    ),
-                    dependency_type="outcome_approval",
-                    reason_code="approval_scope_mismatch",
-                ))
+                issues.append(
+                    ScenarioDependencyIssue(
+                        artefact_id=_artefact_id,
+                        issue_type="stale",
+                        detail=(
+                            f"Approval '{auth_id}' scope does not cover "
+                            f"market={auth_market}, product={auth_product}, "
+                            f"segment={auth_segment}."
+                        ),
+                        dependency_type="outcome_approval",
+                        reason_code="approval_scope_mismatch",
+                    )
+                )
 
             # G2A.7a.9: canonical outcome definition deserialisation before
             # fingerprinting. Raw dicts are deserialised to OutcomeDefinition;
@@ -784,32 +918,38 @@ def validate_scenario_dependencies(
                     OutcomeDefinition,
                     fingerprint_outcome_definition,
                 )
+
                 matching_defns = [
-                    d for d in current_outcome_definitions
+                    d
+                    for d in current_outcome_definitions
                     if isinstance(d, dict) and d.get("outcome_id") == auth_outcome
                 ]
                 if not matching_defns:
-                    issues.append(ScenarioDependencyIssue(
-                        artefact_id=_artefact_id,
-                        issue_type="invalid",
-                        detail=(
-                            f"Current outcome definition for '{auth_outcome}' "
-                            "not found — cannot verify saved authorisation."
-                        ),
-                        dependency_type="outcome_definition",
-                        reason_code="current_definition_not_found",
-                    ))
+                    issues.append(
+                        ScenarioDependencyIssue(
+                            artefact_id=_artefact_id,
+                            issue_type="invalid",
+                            detail=(
+                                f"Current outcome definition for '{auth_outcome}' "
+                                "not found — cannot verify saved authorisation."
+                            ),
+                            dependency_type="outcome_definition",
+                            reason_code="current_definition_not_found",
+                        )
+                    )
                 elif len(matching_defns) > 1:
-                    issues.append(ScenarioDependencyIssue(
-                        artefact_id=_artefact_id,
-                        issue_type="invalid",
-                        detail=(
-                            f"Duplicate current definitions for outcome "
-                            f"'{auth_outcome}' — expected exactly one."
-                        ),
-                        dependency_type="outcome_definition",
-                        reason_code="duplicate_current_definitions",
-                    ))
+                    issues.append(
+                        ScenarioDependencyIssue(
+                            artefact_id=_artefact_id,
+                            issue_type="invalid",
+                            detail=(
+                                f"Duplicate current definitions for outcome "
+                                f"'{auth_outcome}' — expected exactly one."
+                            ),
+                            dependency_type="outcome_definition",
+                            reason_code="duplicate_current_definitions",
+                        )
+                    )
                 else:
                     try:
                         current_definition = OutcomeDefinition.from_dict(
@@ -819,47 +959,53 @@ def validate_scenario_dependencies(
                             current_definition
                         )
                     except (TypeError, ValueError, KeyError, AttributeError) as exc:
-                        issues.append(ScenarioDependencyIssue(
-                            artefact_id=_artefact_id,
-                            issue_type="invalid",
-                            detail=(
-                                f"Current outcome definition for "
-                                f"'{auth_outcome}' is malformed and cannot "
-                                f"be deserialised: {exc}."
-                            ),
-                            dependency_type="outcome_definition",
-                            reason_code="definition_deserialisation_failed",
-                        ))
+                        issues.append(
+                            ScenarioDependencyIssue(
+                                artefact_id=_artefact_id,
+                                issue_type="invalid",
+                                detail=(
+                                    f"Current outcome definition for "
+                                    f"'{auth_outcome}' is malformed and cannot "
+                                    f"be deserialised: {exc}."
+                                ),
+                                dependency_type="outcome_definition",
+                                reason_code="definition_deserialisation_failed",
+                            )
+                        )
                         continue
 
                     saved_def_fp = auth.get("definition_fingerprint")
                     if saved_def_fp and saved_def_fp != current_def_fp:
-                        issues.append(ScenarioDependencyIssue(
-                            artefact_id=_artefact_id,
-                            issue_type="stale",
-                            detail=(
-                                f"Outcome '{auth_outcome}' definition has changed "
-                                f"(saved fingerprint '{saved_def_fp[:16]}...', "
-                                f"current '{current_def_fp[:16]}...')."
-                            ),
-                            dependency_type="outcome_definition",
-                            reason_code="definition_fingerprint_mismatch",
-                        ))
+                        issues.append(
+                            ScenarioDependencyIssue(
+                                artefact_id=_artefact_id,
+                                issue_type="stale",
+                                detail=(
+                                    f"Outcome '{auth_outcome}' definition has changed "
+                                    f"(saved fingerprint '{saved_def_fp[:16]}...', "
+                                    f"current '{current_def_fp[:16]}...')."
+                                ),
+                                dependency_type="outcome_definition",
+                                reason_code="definition_fingerprint_mismatch",
+                            )
+                        )
 
             # Verify approval definition fingerprint
             saved_fp = auth.get("definition_fingerprint")
             if saved_fp and saved_fp != current_approval.definition_fingerprint:
-                issues.append(ScenarioDependencyIssue(
-                    artefact_id=_artefact_id,
-                    issue_type="stale",
-                    detail=(
-                        f"Approval '{auth_id}' definition fingerprint has changed "
-                        f"(saved '{saved_fp[:16]}...', current "
-                        f"'{current_approval.definition_fingerprint[:16]}...')."
-                    ),
-                    dependency_type="outcome_approval",
-                    reason_code="approval_fingerprint_mismatch",
-                ))
+                issues.append(
+                    ScenarioDependencyIssue(
+                        artefact_id=_artefact_id,
+                        issue_type="stale",
+                        detail=(
+                            f"Approval '{auth_id}' definition fingerprint has changed "
+                            f"(saved '{saved_fp[:16]}...', current "
+                            f"'{current_approval.definition_fingerprint[:16]}...')."
+                        ),
+                        dependency_type="outcome_approval",
+                        reason_code="approval_fingerprint_mismatch",
+                    )
+                )
 
     # G2A.7a.10: validate value-mapping and currency-context identity
     # symmetrically. Whether a dependency is *required* is determined from
@@ -879,72 +1025,84 @@ def validate_scenario_dependencies(
     saved_value_mapping_fp = deps.get("value_mapping_fingerprint")
     if requires_value_and_currency or saved_value_mapping_fp:
         if not saved_value_mapping_fp:
-            issues.append(ScenarioDependencyIssue(
-                artefact_id=scenario.get("name", "<unknown>"),
-                issue_type="invalid",
-                detail=(
-                    "This scenario's objective requires a value mapping, "
-                    "but no 'value_mapping_fingerprint' governance "
-                    "dependency was saved."
-                ),
-                dependency_type="value_mapping",
-                reason_code="missing_value_mapping_fingerprint",
-            ))
+            issues.append(
+                ScenarioDependencyIssue(
+                    artefact_id=scenario.get("name", "<unknown>"),
+                    issue_type="invalid",
+                    detail=(
+                        "This scenario's objective requires a value mapping, "
+                        "but no 'value_mapping_fingerprint' governance "
+                        "dependency was saved."
+                    ),
+                    dependency_type="value_mapping",
+                    reason_code="missing_value_mapping_fingerprint",
+                )
+            )
         elif context is None or context.value_mapping_fingerprint is None:
-            issues.append(ScenarioDependencyIssue(
-                artefact_id=scenario.get("name", "<unknown>"),
-                issue_type="invalid",
-                detail=(
-                    "Saved scenario has a value mapping on record, but the "
-                    "current project supplies no current value mapping to "
-                    "verify it against."
-                ),
-                dependency_type="value_mapping",
-                reason_code="missing_current_value_mapping",
-            ))
+            issues.append(
+                ScenarioDependencyIssue(
+                    artefact_id=scenario.get("name", "<unknown>"),
+                    issue_type="invalid",
+                    detail=(
+                        "Saved scenario has a value mapping on record, but the "
+                        "current project supplies no current value mapping to "
+                        "verify it against."
+                    ),
+                    dependency_type="value_mapping",
+                    reason_code="missing_current_value_mapping",
+                )
+            )
         elif saved_value_mapping_fp != context.value_mapping_fingerprint:
-            issues.append(ScenarioDependencyIssue(
-                artefact_id=scenario.get("name", "<unknown>"),
-                issue_type="stale",
-                detail="Value mapping fingerprint has changed.",
-                dependency_type="value_mapping",
-                reason_code="value_mapping_stale",
-            ))
+            issues.append(
+                ScenarioDependencyIssue(
+                    artefact_id=scenario.get("name", "<unknown>"),
+                    issue_type="stale",
+                    detail="Value mapping fingerprint has changed.",
+                    dependency_type="value_mapping",
+                    reason_code="value_mapping_stale",
+                )
+            )
 
     saved_currency_context_fp = deps.get("currency_context_fingerprint")
     if requires_value_and_currency or saved_currency_context_fp:
         if not saved_currency_context_fp:
-            issues.append(ScenarioDependencyIssue(
-                artefact_id=scenario.get("name", "<unknown>"),
-                issue_type="invalid",
-                detail=(
-                    "This scenario's objective requires a currency context, "
-                    "but no 'currency_context_fingerprint' governance "
-                    "dependency was saved."
-                ),
-                dependency_type="currency_context",
-                reason_code="missing_currency_context_fingerprint",
-            ))
+            issues.append(
+                ScenarioDependencyIssue(
+                    artefact_id=scenario.get("name", "<unknown>"),
+                    issue_type="invalid",
+                    detail=(
+                        "This scenario's objective requires a currency context, "
+                        "but no 'currency_context_fingerprint' governance "
+                        "dependency was saved."
+                    ),
+                    dependency_type="currency_context",
+                    reason_code="missing_currency_context_fingerprint",
+                )
+            )
         elif context is None or context.currency_context_fingerprint is None:
-            issues.append(ScenarioDependencyIssue(
-                artefact_id=scenario.get("name", "<unknown>"),
-                issue_type="invalid",
-                detail=(
-                    "Saved scenario has a currency context on record, but "
-                    "the current project supplies no current currency "
-                    "context to verify it against."
-                ),
-                dependency_type="currency_context",
-                reason_code="missing_current_currency_context",
-            ))
+            issues.append(
+                ScenarioDependencyIssue(
+                    artefact_id=scenario.get("name", "<unknown>"),
+                    issue_type="invalid",
+                    detail=(
+                        "Saved scenario has a currency context on record, but "
+                        "the current project supplies no current currency "
+                        "context to verify it against."
+                    ),
+                    dependency_type="currency_context",
+                    reason_code="missing_current_currency_context",
+                )
+            )
         elif saved_currency_context_fp != context.currency_context_fingerprint:
-            issues.append(ScenarioDependencyIssue(
-                artefact_id=scenario.get("name", "<unknown>"),
-                issue_type="stale",
-                detail="Currency context fingerprint has changed.",
-                dependency_type="currency_context",
-                reason_code="currency_context_stale",
-            ))
+            issues.append(
+                ScenarioDependencyIssue(
+                    artefact_id=scenario.get("name", "<unknown>"),
+                    issue_type="stale",
+                    detail="Currency context fingerprint has changed.",
+                    dependency_type="currency_context",
+                    reason_code="currency_context_stale",
+                )
+            )
 
     return issues
 
@@ -1044,7 +1202,10 @@ def _resolved_currency_by_activity(
         fully_resolvable = True
         for as_of in dates:
             mapping = cost_mapping_registry.resolve(
-                market, definition.channel, cost_context_id, as_of=as_of,
+                market,
+                definition.channel,
+                cost_context_id,
+                as_of=as_of,
             )
             if mapping is None:
                 fully_resolvable = False
@@ -1121,7 +1282,11 @@ def monetary_optimization_resource(
         )
 
     currency_by_activity = _resolved_currency_by_activity(
-        candidates, market, cost_mapping_registry, cost_context_id, cost_as_of_dates,
+        candidates,
+        market,
+        cost_mapping_registry,
+        cost_context_id,
+        cost_as_of_dates,
     )
     resolved_currencies = set(currency_by_activity.values())
     if currency is None:
@@ -1248,9 +1413,7 @@ def validate_optimization_resource(
             if definition.market == specificity:
                 by_id[definition.activity_id] = definition
     plan_activity_ids = {
-        by_input[channel].activity_id
-        for channel in channels
-        if channel in by_input
+        by_input[channel].activity_id for channel in channels if channel in by_input
     }
 
     unknown = [
@@ -1355,7 +1518,10 @@ def validate_optimization_resource(
                 for activity_id in resource.eligible_activity_ids
             }
             currency_by_activity = _resolved_currency_by_activity(
-                candidates, market, cost_mapping_registry, cost_context_id,
+                candidates,
+                market,
+                cost_mapping_registry,
+                cost_context_id,
                 cost_as_of_dates,
             )
             unresolved = [
@@ -1443,7 +1609,10 @@ def seed_monetary_and_quantity_defaults(
             continue
         mapping = (
             cost_mapping_registry.resolve(
-                market, definition.channel, cost_context_id, as_of=as_of,
+                market,
+                definition.channel,
+                cost_context_id,
+                as_of=as_of,
             )
             if cost_mapping_registry is not None
             else None
@@ -1491,16 +1660,20 @@ def monetary_plan_to_media_input(
                     "Monetary planning blocked without an approved effective "
                     f"mapping for {market}/{channel}/{period}"
                 )
-            converted[period][channel] = float(
-                mapping.spend_to_media_input(spend)
-            )
+            converted[period][channel] = float(mapping.spend_to_media_input(spend))
     return converted
 
 
 def _steady_state_response_fn(model_type: str):
     if model_type not in ("shared", "market_specific"):
-        raise ValueError(f"model_type must be 'shared' or 'market_specific', got {model_type!r}")
-    return steady_state_outcome_response_market_specific if model_type == "market_specific" else steady_state_outcome_response
+        raise ValueError(
+            f"model_type must be 'shared' or 'market_specific', got {model_type!r}"
+        )
+    return (
+        steady_state_outcome_response_market_specific
+        if model_type == "market_specific"
+        else steady_state_outcome_response
+    )
 
 
 def _require_planning_outcome_approvals(
@@ -1576,7 +1749,8 @@ def _require_planning_outcome_approvals(
             from .net_billthrough import validate_nbt_completeness_metadata_for_outcome
 
             nbt_issues = validate_nbt_completeness_metadata_for_outcome(
-                outcome, nbt_completeness_metadata,
+                outcome,
+                nbt_completeness_metadata,
             )
             if nbt_issues:
                 raise OutcomeApprovalBlockedError(
@@ -1591,6 +1765,7 @@ def _require_planning_outcome_approvals(
 # Scenario evaluation (manual mode)
 # ---------------------------------------------------------------------------
 
+
 def _calculate_scenario(
     spend_plan: Dict[str, Dict[str, float]],
     market: str,
@@ -1603,9 +1778,7 @@ def _calculate_scenario(
     cost_mapping_registry: Optional[CostMappingRegistry] = None,
     cost_context_id: Optional[str] = None,
     cost_as_of_by_month: Optional[Dict[str, str]] = None,
-    counterfactual_media_input_by_month: Optional[
-        Dict[str, Dict[str, float]]
-    ] = None,
+    counterfactual_media_input_by_month: Optional[Dict[str, Dict[str, float]]] = None,
     planning_objective: Optional[PlanningObjective] = None,
     activity_definitions: Optional[List[ActivityDefinition]] = None,
     scenario_plan: Optional[ScenarioPlan] = None,
@@ -1708,15 +1881,15 @@ def _calculate_scenario(
             costed = sorted(
                 {
                     item.activity_id
-                for item in active_definitions
-                if item.is_cost_bearing
+                    for item in active_definitions
+                    if item.is_cost_bearing
                 }
             )
             response_only = sorted(
                 {
                     item.activity_id
-                for item in active_definitions
-                if item.economic_treatment == "response_only"
+                    for item in active_definitions
+                    if item.economic_treatment == "response_only"
                 }
             )
             coverage.update(
@@ -1808,9 +1981,7 @@ def _calculate_scenario(
             ref,
             planning_only=True,
         )
-        paid_counterfactual_input = _scoped_counterfactual(
-            month, "paid_media_cost"
-        )
+        paid_counterfactual_input = _scoped_counterfactual(month, "paid_media_cost")
         response_only_counterfactual_input = _scoped_counterfactual(
             month, "response_only"
         )
@@ -1849,14 +2020,15 @@ def _calculate_scenario(
                 }
             }
         )
-        monthly_outcome_by_id = {oid: rate * WEEKS_PER_MONTH for oid, rate in weekly_rate.items()}
+        monthly_outcome_by_id = {
+            oid: rate * WEEKS_PER_MONTH for oid, rate in weekly_rate.items()
+        }
         counterfactual_outcome_by_id = {
             oid: rate * WEEKS_PER_MONTH
             for oid, rate in counterfactual_weekly_rate.items()
         }
         incremental_outcome_by_id = {
-            oid: monthly_outcome_by_id[oid]
-            - counterfactual_outcome_by_id[oid]
+            oid: monthly_outcome_by_id[oid] - counterfactual_outcome_by_id[oid]
             for oid in monthly_outcome_by_id
         }
         paid_incremental_outcome_by_id = {
@@ -1870,13 +2042,25 @@ def _calculate_scenario(
             for oid in monthly_outcome_by_id
         }
         fh_gsa = sum(v for oid, v in monthly_outcome_by_id.items() if oid in gsa_ids)
-        fh_signups = sum(v for oid, v in monthly_outcome_by_id.items() if oid in signup_ids)
-        fh_net_billthrough = sum(v for oid, v in monthly_outcome_by_id.items() if oid in nbt_ids)
+        fh_signups = sum(
+            v for oid, v in monthly_outcome_by_id.items() if oid in signup_ids
+        )
+        fh_net_billthrough = sum(
+            v for oid, v in monthly_outcome_by_id.items() if oid in nbt_ids
+        )
         dna_kits = sum(v for oid, v in monthly_outcome_by_id.items() if oid in dna_ids)
-        incremental_fh_gsa = sum(v for oid, v in incremental_outcome_by_id.items() if oid in gsa_ids)
-        incremental_fh_signups = sum(v for oid, v in incremental_outcome_by_id.items() if oid in signup_ids)
-        incremental_fh_nbt = sum(v for oid, v in incremental_outcome_by_id.items() if oid in nbt_ids)
-        incremental_dna_kits = sum(v for oid, v in incremental_outcome_by_id.items() if oid in dna_ids)
+        incremental_fh_gsa = sum(
+            v for oid, v in incremental_outcome_by_id.items() if oid in gsa_ids
+        )
+        incremental_fh_signups = sum(
+            v for oid, v in incremental_outcome_by_id.items() if oid in signup_ids
+        )
+        incremental_fh_nbt = sum(
+            v for oid, v in incremental_outcome_by_id.items() if oid in nbt_ids
+        )
+        incremental_dna_kits = sum(
+            v for oid, v in incremental_outcome_by_id.items() if oid in dna_ids
+        )
         paid_incremental_fh_gsa = sum(
             value
             for oid, value in paid_incremental_outcome_by_id.items()
@@ -1887,10 +2071,22 @@ def _calculate_scenario(
             for oid, value in paid_incremental_outcome_by_id.items()
             if oid in nbt_ids
         )
-        avg_cpa = (total_spend / incremental_fh_gsa) if incremental_fh_gsa > 0 and total_spend > 0 else None
-        fh_signup_avg_cpa = (total_spend / incremental_fh_signups) if incremental_fh_signups > 0 else None
-        nbt_avg_cpa = (total_spend / incremental_fh_nbt) if incremental_fh_nbt > 0 else None
-        dna_avg_cpa = (total_spend / incremental_dna_kits) if incremental_dna_kits > 0 else None
+        avg_cpa = (
+            (total_spend / incremental_fh_gsa)
+            if incremental_fh_gsa > 0 and total_spend > 0
+            else None
+        )
+        fh_signup_avg_cpa = (
+            (total_spend / incremental_fh_signups)
+            if incremental_fh_signups > 0
+            else None
+        )
+        nbt_avg_cpa = (
+            (total_spend / incremental_fh_nbt) if incremental_fh_nbt > 0 else None
+        )
+        dna_avg_cpa = (
+            (total_spend / incremental_dna_kits) if incremental_dna_kits > 0 else None
+        )
         paid_media_incremental_cpa = (
             paid_spend / paid_incremental_fh_gsa
             if paid_spend > 0 and paid_incremental_fh_gsa > 0
@@ -1914,11 +2110,15 @@ def _calculate_scenario(
             total_value_is_complete = False
         elif unpriced_ids:
             value_status = "partial"
-            total_value = sum(monthly_outcome_by_id[oid] * ltv[oid] for oid in priced_ids)
+            total_value = sum(
+                monthly_outcome_by_id[oid] * ltv[oid] for oid in priced_ids
+            )
             total_value_is_complete = False
         else:
             value_status = "complete"
-            total_value = sum(monthly_outcome_by_id[oid] * ltv[oid] for oid in priced_ids)
+            total_value = sum(
+                monthly_outcome_by_id[oid] * ltv[oid] for oid in priced_ids
+            )
             total_value_is_complete = True
         incremental_total_value = (
             sum(
@@ -1966,84 +2166,86 @@ def _calculate_scenario(
 
         for oid, monthly_outcome in monthly_outcome_by_id.items():
             value = monthly_outcome * ltv[oid] if oid in ltv else None
-            rows.append({
-                "month": month,
-                "outcome_id": oid,
-                "predicted_outcome": monthly_outcome,
-                "predicted_total_outcome": monthly_outcome,
-                "predicted_counterfactual_outcome": counterfactual_outcome_by_id[oid],
-                "incremental_outcome": incremental_outcome_by_id[oid],
-                "incremental_outcome_all_activities": (
-                    incremental_outcome_by_id[oid]
-                ),
-                "incremental_outcome_paid_decisions": (
-                    paid_incremental_outcome_by_id[oid]
-                ),
-                "incremental_outcome_response_only_activities": (
-                    response_only_incremental_outcome_by_id[oid]
-                ),
-                "counterfactual_media_input": dict(counterfactual_input),
-                "resolved_counterfactual_vector": dict(counterfactual_input),
-                "counterfactual_policy": policy.to_dict(),
-                "counterfactual_policy_fingerprint": policy.fingerprint(),
-                "value": value,
-                "value_status": value_status,
-                "unpriced_outcome_ids": unpriced_ids,
-                "total_spend": total_spend,
-                "paid_spend": paid_spend,
-                "fully_loaded_owned_spend": fully_loaded_owned_spend,
-                "campaign_cost_spend": campaign_cost_spend,
-                "non_costed_activity_present": bool(non_costed_ids),
-                "fh_gsa": fh_gsa,
-                "fh_signups": fh_signups,
-                "fh_net_billthrough": fh_net_billthrough,
-                "incremental_fh_gsa": incremental_fh_gsa,
-                "incremental_fh_signups": incremental_fh_signups,
-                "incremental_fh_net_billthrough": incremental_fh_nbt,
-                "incremental_dna_kits": incremental_dna_kits,
-                "dna_kits": dna_kits,
-                "avg_cpa": avg_cpa,
-                "cost_per_fh_gsa": avg_cpa,
-                # `whole_plan_*` (PR E.2 #8) - the explicit-spend-scope name:
-                # this divides *total scenario spend across every channel* by
-                # a KPI total, so it is a whole-plan efficiency number, never
-                # a channel-specific one (see core.media_units.CPA_SPEND_SCOPES/
-                # cpa_scope_metadata). The bare avg_cpa/cost_per_fh_gsa names
-                # are kept as legacy aliases.
-                "whole_plan_cost_per_fh_gsa": avg_cpa,
-                "fh_signup_avg_cpa": fh_signup_avg_cpa,
-                "cost_per_fh_signup": fh_signup_avg_cpa,
-                "whole_plan_cost_per_fh_signup": fh_signup_avg_cpa,
-                "whole_plan_cost_per_fh_net_billthrough": nbt_avg_cpa,
-                "whole_plan_incremental_nbt_cpa": nbt_avg_cpa,
-                "paid_media_incremental_cpa": paid_media_incremental_cpa,
-                "paid_media_incremental_nbt_cpa": (
-                    paid_media_incremental_nbt_cpa
-                ),
-                "dna_avg_cpa": dna_avg_cpa,
-                "cost_per_dna_kit": dna_avg_cpa,
-                "whole_plan_cost_per_dna_kit": dna_avg_cpa,
-                "total_value": total_value,
-                "incremental_total_value": incremental_total_value,
-                "whole_plan_incremental_roi": whole_plan_incremental_roi,
-                "paid_media_incremental_roi": paid_media_incremental_roi,
-                "economics_availability_status": period_coverage[
-                    "economics_status"
-                ],
-                "economics_coverage": period_coverage,
-                "activity_definitions_fingerprint": activity_fingerprint,
-                "scenario_plan_fingerprint": (
-                    scenario_plan.fingerprint()
-                    if scenario_plan is not None
-                    else None
-                ),
-                "planning_objective": (
-                    planning_objective.to_dict()
-                    if planning_objective is not None
-                    else None
-                ),
-                "total_value_is_complete": total_value_is_complete,
-            })
+            rows.append(
+                {
+                    "month": month,
+                    "outcome_id": oid,
+                    "predicted_outcome": monthly_outcome,
+                    "predicted_total_outcome": monthly_outcome,
+                    "predicted_counterfactual_outcome": counterfactual_outcome_by_id[
+                        oid
+                    ],
+                    "incremental_outcome": incremental_outcome_by_id[oid],
+                    "incremental_outcome_all_activities": (
+                        incremental_outcome_by_id[oid]
+                    ),
+                    "incremental_outcome_paid_decisions": (
+                        paid_incremental_outcome_by_id[oid]
+                    ),
+                    "incremental_outcome_response_only_activities": (
+                        response_only_incremental_outcome_by_id[oid]
+                    ),
+                    "counterfactual_media_input": dict(counterfactual_input),
+                    "resolved_counterfactual_vector": dict(counterfactual_input),
+                    "counterfactual_policy": policy.to_dict(),
+                    "counterfactual_policy_fingerprint": policy.fingerprint(),
+                    "value": value,
+                    "value_status": value_status,
+                    "unpriced_outcome_ids": unpriced_ids,
+                    "total_spend": total_spend,
+                    "paid_spend": paid_spend,
+                    "fully_loaded_owned_spend": fully_loaded_owned_spend,
+                    "campaign_cost_spend": campaign_cost_spend,
+                    "non_costed_activity_present": bool(non_costed_ids),
+                    "fh_gsa": fh_gsa,
+                    "fh_signups": fh_signups,
+                    "fh_net_billthrough": fh_net_billthrough,
+                    "incremental_fh_gsa": incremental_fh_gsa,
+                    "incremental_fh_signups": incremental_fh_signups,
+                    "incremental_fh_net_billthrough": incremental_fh_nbt,
+                    "incremental_dna_kits": incremental_dna_kits,
+                    "dna_kits": dna_kits,
+                    "avg_cpa": avg_cpa,
+                    "cost_per_fh_gsa": avg_cpa,
+                    # `whole_plan_*` (PR E.2 #8) - the explicit-spend-scope name:
+                    # this divides *total scenario spend across every channel* by
+                    # a KPI total, so it is a whole-plan efficiency number, never
+                    # a channel-specific one (see core.media_units.CPA_SPEND_SCOPES/
+                    # cpa_scope_metadata). The bare avg_cpa/cost_per_fh_gsa names
+                    # are kept as legacy aliases.
+                    "whole_plan_cost_per_fh_gsa": avg_cpa,
+                    "fh_signup_avg_cpa": fh_signup_avg_cpa,
+                    "cost_per_fh_signup": fh_signup_avg_cpa,
+                    "whole_plan_cost_per_fh_signup": fh_signup_avg_cpa,
+                    "whole_plan_cost_per_fh_net_billthrough": nbt_avg_cpa,
+                    "whole_plan_incremental_nbt_cpa": nbt_avg_cpa,
+                    "paid_media_incremental_cpa": paid_media_incremental_cpa,
+                    "paid_media_incremental_nbt_cpa": (paid_media_incremental_nbt_cpa),
+                    "dna_avg_cpa": dna_avg_cpa,
+                    "cost_per_dna_kit": dna_avg_cpa,
+                    "whole_plan_cost_per_dna_kit": dna_avg_cpa,
+                    "total_value": total_value,
+                    "incremental_total_value": incremental_total_value,
+                    "whole_plan_incremental_roi": whole_plan_incremental_roi,
+                    "paid_media_incremental_roi": paid_media_incremental_roi,
+                    "economics_availability_status": period_coverage[
+                        "economics_status"
+                    ],
+                    "economics_coverage": period_coverage,
+                    "activity_definitions_fingerprint": activity_fingerprint,
+                    "scenario_plan_fingerprint": (
+                        scenario_plan.fingerprint()
+                        if scenario_plan is not None
+                        else None
+                    ),
+                    "planning_objective": (
+                        planning_objective.to_dict()
+                        if planning_objective is not None
+                        else None
+                    ),
+                    "total_value_is_complete": total_value_is_complete,
+                }
+            )
     return pd.DataFrame(rows)
 
 
@@ -2064,9 +2266,7 @@ def evaluate_scenario(
     cost_mapping_registry: Optional[CostMappingRegistry] = None,
     cost_context_id: Optional[str] = None,
     cost_as_of_by_month: Optional[Dict[str, str]] = None,
-    counterfactual_media_input_by_month: Optional[
-        Dict[str, Dict[str, float]]
-    ] = None,
+    counterfactual_media_input_by_month: Optional[Dict[str, Dict[str, float]]] = None,
     planning_objective: Optional[PlanningObjective] = None,
     activity_definitions: Optional[List[ActivityDefinition]] = None,
     scenario_plan: Optional[ScenarioPlan] = None,
@@ -2127,16 +2327,21 @@ def evaluate_scenario(
                 "or provide a complete PlanningObjective."
             )
         _require_planning_outcome_approvals(
-                planning_objective=planning_objective,
-                meta=meta,
-                outcome_approvals=outcome_approvals,
-                requested_use="planning",
-                market=market,
-                nbt_completeness_metadata=nbt_completeness_metadata,
-            )
+            planning_objective=planning_objective,
+            meta=meta,
+            outcome_approvals=outcome_approvals,
+            requested_use="planning",
+            market=market,
+            nbt_completeness_metadata=nbt_completeness_metadata,
+        )
     # --- end outcome-approval gate ---
     return _calculate_scenario(
-        spend_plan, market, meta, params, reference_context_by_month, ltv,
+        spend_plan,
+        market,
+        meta,
+        params,
+        reference_context_by_month,
+        ltv,
         model_type=model_type,
         cost_mapping_registry=cost_mapping_registry,
         cost_context_id=cost_context_id,
@@ -2150,7 +2355,9 @@ def evaluate_scenario(
 
 
 def _validate_no_mixed_currency_value_weights(
-    priced_outcome_ids: List[str], ltv: Dict[str, float], catalogue_by_id: Dict[str, object],
+    priced_outcome_ids: List[str],
+    ltv: Dict[str, float],
+    catalogue_by_id: Dict[str, object],
 ) -> None:
     """Raise ValueError if `priced_outcome_ids`' value weights would combine
     two different explicit currencies into one `total_value` (PR E.2 - "stop
@@ -2226,7 +2433,9 @@ def evaluate_manual_scenario(
     both are given."""
     from .planning_governance import resolve_planning_governance
 
-    effective_ltv = dict(value_mapping.value_by_outcome_id) if value_mapping is not None else ltv
+    effective_ltv = (
+        dict(value_mapping.value_by_outcome_id) if value_mapping is not None else ltv
+    )
 
     # Resolve governance for official mode
     resolved_gov = None
@@ -2259,8 +2468,12 @@ def evaluate_manual_scenario(
             posterior_fingerprint=posterior_fingerprint,
             planning_objective_fingerprint=resolved_gov.objective_fingerprint,
             outcome_authorisations=resolved_gov.authorisations,
-            value_mapping_id=value_mapping.mapping_id if value_mapping is not None else None,
-            value_mapping_fingerprint=value_mapping.fingerprint if value_mapping is not None else None,
+            value_mapping_id=value_mapping.mapping_id
+            if value_mapping is not None
+            else None,
+            value_mapping_fingerprint=value_mapping.fingerprint
+            if value_mapping is not None
+            else None,
             currency_context_fingerprint=(
                 currency_context.fingerprint() if currency_context is not None else None
             ),
@@ -2297,7 +2510,12 @@ def evaluate_manual_scenario(
     # exact proof (resolved_gov) is returned to the caller. The numerical
     # calculation does NOT re-validate governance.
     predicted = _calculate_scenario(
-        spend_plan, market, meta, params, reference_context_by_month, effective_ltv,
+        spend_plan,
+        market,
+        meta,
+        params,
+        reference_context_by_month,
+        effective_ltv,
         model_type=model_type,
         cost_mapping_registry=cost_mapping_registry,
         cost_context_id=cost_context_id,
@@ -2336,13 +2554,16 @@ def evaluate_manual_scenario(
             if counterfactual_policy is not None
             else ""
         ),
-        economics_coverage=dict(economics_cov) if isinstance(economics_cov, dict) else None,
+        economics_coverage=dict(economics_cov)
+        if isinstance(economics_cov, dict)
+        else None,
     )
 
 
 # ---------------------------------------------------------------------------
 # Constraints
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class SpendConstraint:
@@ -2356,9 +2577,13 @@ class SpendConstraint:
 
     def to_dict(self) -> dict:
         return {
-            "kind": self.kind, "channel": self.channel, "month": self.month,
-            "months": self.months, "value": self.value,
-            "max_pct_move": self.max_pct_move, "label": self.label,
+            "kind": self.kind,
+            "channel": self.channel,
+            "month": self.month,
+            "months": self.months,
+            "value": self.value,
+            "max_pct_move": self.max_pct_move,
+            "label": self.label,
         }
 
     @classmethod
@@ -2366,11 +2591,15 @@ class SpendConstraint:
         return cls(**d)
 
 
-def _flatten(spend_plan: Dict[str, Dict[str, float]], months: List[str], channels: List[str]) -> np.ndarray:
+def _flatten(
+    spend_plan: Dict[str, Dict[str, float]], months: List[str], channels: List[str]
+) -> np.ndarray:
     return np.array([spend_plan[m].get(c, 0.0) for m in months for c in channels])
 
 
-def _unflatten(x: np.ndarray, months: List[str], channels: List[str]) -> Dict[str, Dict[str, float]]:
+def _unflatten(
+    x: np.ndarray, months: List[str], channels: List[str]
+) -> Dict[str, Dict[str, float]]:
     n_ch = len(channels)
     return {
         m: {c: float(x[mi * n_ch + ci]) for ci, c in enumerate(channels)}
@@ -2378,7 +2607,9 @@ def _unflatten(x: np.ndarray, months: List[str], channels: List[str]) -> Dict[st
     }
 
 
-def _cell_index(month: str, channel: str, months: List[str], channels: List[str]) -> int:
+def _cell_index(
+    month: str, channel: str, months: List[str], channels: List[str]
+) -> int:
     return months.index(month) * len(channels) + channels.index(channel)
 
 
@@ -2441,8 +2672,15 @@ def build_bounds_and_constraints(
             row = np.zeros(n)
             for m in months:
                 row[_cell_index(m, c.channel, months, channels)] = 1
-            target = c.value if c.value is not None else float(
-                sum(current_spend[_cell_index(m, c.channel, months, channels)] for m in months)
+            target = (
+                c.value
+                if c.value is not None
+                else float(
+                    sum(
+                        current_spend[_cell_index(m, c.channel, months, channels)]
+                        for m in months
+                    )
+                )
             )
             linear_constraints.append(LinearConstraint(row, lb=target, ub=target))
 
@@ -2453,8 +2691,15 @@ def build_bounds_and_constraints(
             row = np.zeros(n)
             for ch in target_channels:
                 row[_cell_index(c.month, ch, months, channels)] = 1
-            target = c.value if c.value is not None else float(
-                sum(current_spend[_cell_index(c.month, ch, months, channels)] for ch in target_channels)
+            target = (
+                c.value
+                if c.value is not None
+                else float(
+                    sum(
+                        current_spend[_cell_index(c.month, ch, months, channels)]
+                        for ch in target_channels
+                    )
+                )
             )
             linear_constraints.append(LinearConstraint(row, lb=target, ub=target))
 
@@ -2469,7 +2714,14 @@ def build_bounds_and_constraints(
 # Optimiser
 # ---------------------------------------------------------------------------
 
-VALID_OBJECTIVES = ("fh_net_billthrough", "fh_gsa", "fh_signups", "dna_kits", "weighted_mix", "expected_value")
+VALID_OBJECTIVES = (
+    "fh_net_billthrough",
+    "fh_gsa",
+    "fh_signups",
+    "dna_kits",
+    "weighted_mix",
+    "expected_value",
+)
 
 _OBJECTIVE_METRIC_KEY = {
     "fh_gsa": METRIC_KEY_FH_GSA,
@@ -2480,7 +2732,10 @@ _OBJECTIVE_METRIC_KEY = {
 
 
 def _validate_target_outcome_ids(
-    target_outcome_ids: Optional[List[str]], meta: FHModelMeta, *, metric_key: Optional[str] = None,
+    target_outcome_ids: Optional[List[str]],
+    meta: FHModelMeta,
+    *,
+    metric_key: Optional[str] = None,
 ) -> None:
     """PR E.2 requirement #9 (harden optimiser target validation): every
     `target_outcome_id` must (a) actually exist in this fit, (b) match the
@@ -2504,7 +2759,9 @@ def _validate_target_outcome_ids(
         return
     unknown = sorted(set(target_outcome_ids) - set(meta.outcome_ids))
     if unknown:
-        raise ValueError(f"target_outcome_ids contains outcome_id(s) not fitted in this model: {unknown}.")
+        raise ValueError(
+            f"target_outcome_ids contains outcome_id(s) not fitted in this model: {unknown}."
+        )
     has_catalogue_metadata = bool(getattr(meta, "outcome_id_to_product", {}))
     if metric_key is not None and has_catalogue_metadata:
         matching = set(select_outcome_ids(meta, metric_key=metric_key))
@@ -2515,7 +2772,9 @@ def _validate_target_outcome_ids(
                 f"({metric_key!r}) - a sign-up outcome cannot be optimised under a mismatched-metric "
                 "objective (e.g. 'fh_gsa'), or vice versa."
             )
-    optimisable = set(eligible_outcome_ids(meta, list(target_outcome_ids), "include_in_optimisation"))
+    optimisable = set(
+        eligible_outcome_ids(meta, list(target_outcome_ids), "include_in_optimisation")
+    )
     excluded = sorted(set(target_outcome_ids) - optimisable)
     if excluded:
         raise ValueError(
@@ -2590,24 +2849,41 @@ def _objective_weight(
         metric_key = _OBJECTIVE_METRIC_KEY[objective]
         _validate_target_outcome_ids(target_outcome_ids, meta, metric_key=metric_key)
         default_selector = {
-            "fh_gsa": fh_gsa_outcome_ids, "fh_signups": fh_signup_outcome_ids,
-            "fh_net_billthrough": fh_net_billthrough_outcome_ids, "dna_kits": dna_kit_sale_outcome_ids,
+            "fh_gsa": fh_gsa_outcome_ids,
+            "fh_signups": fh_signup_outcome_ids,
+            "fh_net_billthrough": fh_net_billthrough_outcome_ids,
+            "dna_kits": dna_kit_sale_outcome_ids,
         }[objective]
-        eligible = set(target_outcome_ids) if target_outcome_ids else set(default_selector(meta))
+        eligible = (
+            set(target_outcome_ids)
+            if target_outcome_ids
+            else set(default_selector(meta))
+        )
         if objective != "fh_gsa" and not eligible:
-            noun = {"fh_signups": "Family History sign-up", "fh_net_billthrough": "Family History net bill-through", "dna_kits": "DNA-kit"}[objective]
-            raise ValueError(f"objective={objective!r} but this model has no {noun} outcomes.")
+            noun = {
+                "fh_signups": "Family History sign-up",
+                "fh_net_billthrough": "Family History net bill-through",
+                "dna_kits": "DNA-kit",
+            }[objective]
+            raise ValueError(
+                f"objective={objective!r} but this model has no {noun} outcomes."
+            )
         return {s: 1.0 for s in eligible}
     if objective == "weighted_mix":
         if not weights:
-            raise ValueError("objective='weighted_mix' requires an explicit weights={outcome_id: weight} dict - there is no default mix.")
+            raise ValueError(
+                "objective='weighted_mix' requires an explicit weights={outcome_id: weight} dict - there is no default mix."
+            )
         _validate_target_outcome_ids(list(weights), meta)
         invalid = sorted(
-            oid for oid, w in weights.items()
+            oid
+            for oid, w in weights.items()
             if not (isinstance(w, (int, float)) and np.isfinite(w) and w >= 0)
         )
         if invalid:
-            raise ValueError(f"weighted_mix weights must be finite and non-negative; invalid for: {invalid}.")
+            raise ValueError(
+                f"weighted_mix weights must be finite and non-negative; invalid for: {invalid}."
+            )
         units = {meta.outcome_id_to_unit.get(oid) for oid in weights}
         units.discard(None)
         if len(units) > 1 and not assume_value_scaled_weights:
@@ -2620,14 +2896,18 @@ def _objective_weight(
         return weights
     # objective == "expected_value"
     if not ltv:
-        raise ValueError("objective='expected_value' requires ltv={outcome_id: value} - it is the LTV-weighted total across every outcome_id.")
+        raise ValueError(
+            "objective='expected_value' requires ltv={outcome_id: value} - it is the LTV-weighted total across every outcome_id."
+        )
     if target_outcome_ids:
         _validate_target_outcome_ids(target_outcome_ids, meta)
         eligible = set(target_outcome_ids)
     else:
         all_ids = list(meta.outcome_ids)
         value_eligible = set(eligible_outcome_ids(meta, all_ids, "include_in_value"))
-        optimisation_eligible = set(eligible_outcome_ids(meta, all_ids, "include_in_optimisation"))
+        optimisation_eligible = set(
+            eligible_outcome_ids(meta, all_ids, "include_in_optimisation")
+        )
         eligible = value_eligible & optimisation_eligible
     missing = sorted(oid for oid in eligible if oid not in ltv)
     if missing:
@@ -2636,7 +2916,15 @@ def _objective_weight(
             f"{missing} have none in ltv - a missing weight must never be silently treated as 0 or 1. "
             "Provide ltv entries for all of them, or pass target_outcome_ids to restrict the objective."
         )
-    invalid = sorted(oid for oid in eligible if not (isinstance(ltv[oid], (int, float)) and np.isfinite(ltv[oid]) and ltv[oid] >= 0))
+    invalid = sorted(
+        oid
+        for oid in eligible
+        if not (
+            isinstance(ltv[oid], (int, float))
+            and np.isfinite(ltv[oid])
+            and ltv[oid] >= 0
+        )
+    )
     if invalid:
         raise ValueError(
             f"objective='expected_value' requires finite, non-negative value weights; invalid for: {invalid}."
@@ -2647,10 +2935,14 @@ def _objective_weight(
 
 
 def _objective_factory(
-    months: List[str], channels: List[str], market: str,
-    meta: FHModelMeta, params: AnyPosteriorParams,
+    months: List[str],
+    channels: List[str],
+    market: str,
+    meta: FHModelMeta,
+    params: AnyPosteriorParams,
     reference_context_by_month: Dict[str, dict],
-    ltv: Optional[Dict[str, float]], objective: str,
+    ltv: Optional[Dict[str, float]],
+    objective: str,
     model_type: str = "shared",
     target_outcome_ids: Optional[List[str]] = None,
     weights: Optional[Dict[str, float]] = None,
@@ -2659,9 +2951,7 @@ def _objective_factory(
     cost_context_id: Optional[str] = None,
     cost_as_of_by_month: Optional[Dict[str, str]] = None,
     planning_objective: Optional[PlanningObjective] = None,
-    counterfactual_media_input_by_month: Optional[
-        Dict[str, Dict[str, float]]
-    ] = None,
+    counterfactual_media_input_by_month: Optional[Dict[str, Dict[str, float]]] = None,
     activity_definitions: Optional[List[ActivityDefinition]] = None,
     counterfactual_policy: Optional[CounterfactualPolicy] = None,
 ):
@@ -2682,7 +2972,11 @@ def _objective_factory(
         )
         target_outcome_ids = list(planning_objective.target_outcome_ids) or None
     weight = _objective_weight(
-        objective, meta, ltv, target_outcome_ids, weights,
+        objective,
+        meta,
+        ltv,
+        target_outcome_ids,
+        weights,
         assume_value_scaled_weights=assume_value_scaled_weights,
     )
     response_fn = _steady_state_response_fn(model_type)
@@ -2751,9 +3045,7 @@ def _objective_factory(
                 planning_objective is not None
                 and planning_objective.estimand != "total_outcome"
             ):
-                counterfactual = (
-                    resolved_counterfactual[m]
-                )
+                counterfactual = resolved_counterfactual[m]
                 counterfactual_rates = response_fn(
                     market,
                     counterfactual,
@@ -2800,9 +3092,7 @@ def optimize_scenario(
     cost_context_id: Optional[str] = None,
     cost_as_of_by_month: Optional[Dict[str, str]] = None,
     planning_objective: Optional[PlanningObjective] = None,
-    counterfactual_media_input_by_month: Optional[
-        Dict[str, Dict[str, float]]
-    ] = None,
+    counterfactual_media_input_by_month: Optional[Dict[str, Dict[str, float]]] = None,
     activity_definitions: Optional[List[ActivityDefinition]] = None,
     counterfactual_policy: Optional[CounterfactualPolicy] = None,
     posterior_trace: Optional[Any] = None,
@@ -2853,7 +3143,9 @@ def optimize_scenario(
     # function, the current/optimised predicted-value calculations, and
     # posterior evaluation alike, replacing the previous split where target
     # resolution used catalogue weights but calculation used legacy ltv.
-    effective_ltv = dict(value_mapping.value_by_outcome_id) if value_mapping is not None else ltv
+    effective_ltv = (
+        dict(value_mapping.value_by_outcome_id) if value_mapping is not None else ltv
+    )
     # --- Outcome-approval gate (G2A.7a.2, G2A.7a.3, REQ-PLAN-001, REQ-USE-001) ---
     # G2A.7a.10 (brief section 12.1): cheap, fast-fail presence checks only -
     # a friendlier error before the (possibly deprecated-string) objective is
@@ -2864,7 +3156,9 @@ def optimize_scenario(
     # Official mode: fail closed. Missing or empty approval collections block.
     # Track whether the caller gave ANY objective information at all
     # (a typed object, or a legacy string) *before* reconstruction below.
-    _caller_gave_objective_info = objective is not None or planning_objective is not None
+    _caller_gave_objective_info = (
+        objective is not None or planning_objective is not None
+    )
     if governance_mode == "official":
         if outcome_approvals is None or len(outcome_approvals) == 0:
             raise OutcomeApprovalBlockedError(
@@ -2895,7 +3189,9 @@ def optimize_scenario(
         else (
             artefact_kind
             if artefact_kind is not None
-            else ("constrained_optimisation" if constraints else "unconstrained_benchmark")
+            else (
+                "constrained_optimisation" if constraints else "unconstrained_benchmark"
+            )
         )
     )
     policy = counterfactual_policy or CounterfactualPolicy()
@@ -2939,7 +3235,11 @@ def optimize_scenario(
             # call to `_objective_weight` later in this function.
             try:
                 resolved_weight = _objective_weight(
-                    objective, meta, effective_ltv, None, weights,
+                    objective,
+                    meta,
+                    effective_ltv,
+                    None,
+                    weights,
                     assume_value_scaled_weights=assume_value_scaled_weights,
                 )
                 resolved_ids = tuple(sorted(resolved_weight))
@@ -2947,14 +3247,16 @@ def optimize_scenario(
                 resolved_ids = ()
             if resolved_ids:
                 planning_objective = replace(
-                    planning_objective, target_outcome_ids=resolved_ids,
+                    planning_objective,
+                    target_outcome_ids=resolved_ids,
                 )
     # G2A.7a (REQ-PLAN-001, DEFECT-9): no implicit NBT fallback.
     # legacy_objective is derived from the resolved objective, never from a
     # hard-coded default. It is used only for labelling/economics, not for
     # target selection (which comes from planning_objective.target_outcome_ids).
     legacy_objective = (
-        planning_objective.metric_key if planning_objective and planning_objective.metric_key
+        planning_objective.metric_key
+        if planning_objective and planning_objective.metric_key
         else (objective if objective else "")
     )
     # G2A.7a.10 (brief section 12.1): the deprecated objective= string path
@@ -2967,6 +3269,7 @@ def optimize_scenario(
     _resolved_gov: Optional[ResolvedPlanningGovernance] = None
     if governance_mode == "official" and planning_objective is not None:
         from .planning_governance import resolve_planning_governance
+
         _resolved_gov = resolve_planning_governance(
             operation="optimisation",
             planning_objective=planning_objective,
@@ -3006,7 +3309,8 @@ def optimize_scenario(
             (cost_as_of_by_month or {}).get(month) for month in months
         ]
         resource = optimization_resource or monetary_optimization_resource(
-            activity_definitions, market,
+            activity_definitions,
+            market,
             cost_mapping_registry=cost_mapping_registry,
             cost_context_id=cost_context_id or "default",
             cost_as_of_dates=resource_cost_as_of_dates,
@@ -3017,7 +3321,10 @@ def optimize_scenario(
         # resource is cheap to re-check for defense in depth (PR G2A.6b
         # workstream 1). Raises before the (potentially slow) SLSQP call.
         validate_optimization_resource(
-            resource, activity_definitions, market, channels,
+            resource,
+            activity_definitions,
+            market,
+            channels,
             cost_mapping_registry=cost_mapping_registry,
             cost_context_id=cost_context_id or "default",
             cost_as_of_dates=resource_cost_as_of_dates,
@@ -3030,7 +3337,10 @@ def optimize_scenario(
         ]
 
     bounds, linear_constraints = build_bounds_and_constraints(
-        months, channels, current_spend, constraints,
+        months,
+        channels,
+        current_spend,
+        constraints,
         resource_channels=resource_channels,
     )
 
@@ -3079,11 +3389,24 @@ def optimize_scenario(
             reference_resource_total = float(current_spend.sum())
             optimisation_resource_total = reference_resource_total
             total_row = np.ones(len(current_spend))
-            linear_constraints.append(LinearConstraint(total_row, lb=current_spend.sum(), ub=current_spend.sum()))
+            linear_constraints.append(
+                LinearConstraint(
+                    total_row, lb=current_spend.sum(), ub=current_spend.sum()
+                )
+            )
 
     objective_fn = _objective_factory(
-        months, channels, market, meta, params, reference_context_by_month, effective_ltv, legacy_objective, model_type,
-        target_outcome_ids=target_outcome_ids, weights=weights,
+        months,
+        channels,
+        market,
+        meta,
+        params,
+        reference_context_by_month,
+        effective_ltv,
+        legacy_objective,
+        model_type,
+        target_outcome_ids=target_outcome_ids,
+        weights=weights,
         assume_value_scaled_weights=assume_value_scaled_weights,
         cost_mapping_registry=cost_mapping_registry,
         cost_context_id=cost_context_id,
@@ -3136,12 +3459,22 @@ def optimize_scenario(
         counterfactual_policy=policy,
     )
     predicted = _calculate_scenario(
-        optimized_plan, market, meta, params, reference_context_by_month, effective_ltv,
+        optimized_plan,
+        market,
+        meta,
+        params,
+        reference_context_by_month,
+        effective_ltv,
         scenario_plan=optimized_scenario_plan,
         **_calculate_kwargs,
     )
     current_predicted = _calculate_scenario(
-        current_spend_plan, market, meta, params, reference_context_by_month, effective_ltv,
+        current_spend_plan,
+        market,
+        meta,
+        params,
+        reference_context_by_month,
+        effective_ltv,
         scenario_plan=current_scenario_plan,
         **_calculate_kwargs,
     )
@@ -3195,9 +3528,7 @@ def optimize_scenario(
         "scenario_plan": (
             optimized_scenario_plan.to_dict()
             if optimized_scenario_plan is not None
-            else ScenarioPlan.from_legacy_spend_plan(
-                optimized_plan
-            ).to_dict()
+            else ScenarioPlan.from_legacy_spend_plan(optimized_plan).to_dict()
         ),
         "predicted": predicted,
         "current_predicted": current_predicted,
@@ -3255,16 +3586,19 @@ def optimize_scenario(
 # Scenario save/reload
 # ---------------------------------------------------------------------------
 
+
 def scenario_to_dict(
-    name: str, market: str, spend_plan: Dict[str, Dict[str, float]],
-    objective: str, constraints: List[SpendConstraint], notes: str = "",
+    name: str,
+    market: str,
+    spend_plan: Dict[str, Dict[str, float]],
+    objective: str,
+    constraints: List[SpendConstraint],
+    notes: str = "",
     cost_mapping_fingerprint: Optional[str] = None,
     planning_objective: Optional[PlanningObjective | Dict[str, object]] = None,
     activity_definitions_fingerprint: Optional[str] = None,
     scenario_plan: Optional[ScenarioPlan] = None,
-    counterfactual_policy: Optional[
-        CounterfactualPolicy | Dict[str, object]
-    ] = None,
+    counterfactual_policy: Optional[CounterfactualPolicy | Dict[str, object]] = None,
     economics_coverage: Optional[Dict[str, object]] = None,
     governance_mode: Optional[str] = None,
     # G2A.7a.2: governance dependency identity
@@ -3329,9 +3663,7 @@ def scenario_to_dict(
         resolved_kind = artefact_kind
         if resolved_kind is None:
             resolved_kind = (
-                "constrained_optimisation"
-                if constraints
-                else "manual_scenario"
+                "constrained_optimisation" if constraints else "manual_scenario"
             )
         elif resolved_kind not in ARTEFACT_KINDS:
             raise ValueError(
@@ -3340,9 +3672,13 @@ def scenario_to_dict(
             )
 
     return {
-        "name": name, "market": market, "spend_plan": spend_plan,
+        "name": name,
+        "market": market,
+        "spend_plan": spend_plan,
         "scenario_plan": typed_plan.to_dict(),
-        "objective": objective, "constraints": [c.to_dict() for c in constraints], "notes": notes,
+        "objective": objective,
+        "constraints": [c.to_dict() for c in constraints],
+        "notes": notes,
         "cost_mapping_fingerprint": cost_mapping_fingerprint,
         "planning_objective": objective_payload,
         "activity_definitions_fingerprint": activity_definitions_fingerprint,
@@ -3404,9 +3740,13 @@ def scenario_from_dict(d: dict) -> dict:
             "historical_fx_rate_set_fingerprint": None,
             "future_fx_assumption_id": None,
             "future_fx_assumption_fingerprint": None,
-            "activity_definitions_fingerprint": d.get("activity_definitions_fingerprint"),
+            "activity_definitions_fingerprint": d.get(
+                "activity_definitions_fingerprint"
+            ),
             "cost_mapping_fingerprint": d.get("cost_mapping_fingerprint"),
-            "counterfactual_policy_fingerprint": d.get("counterfactual_policy_fingerprint"),
+            "counterfactual_policy_fingerprint": d.get(
+                "counterfactual_policy_fingerprint"
+            ),
             "nbt_completeness_fingerprint": None,
         }
         d["schema_version"] = max(schema_ver, 3)
@@ -3415,9 +3755,7 @@ def scenario_from_dict(d: dict) -> dict:
         # Legacy: infer from constraints — but then mark as migrated
         has_constraints = bool(d.get("constraints"))
         d["artefact_kind"] = (
-            "constrained_optimisation"
-            if has_constraints
-            else "manual_scenario"
+            "constrained_optimisation" if has_constraints else "manual_scenario"
         )
         d["_migrated_from_schema"] = max(
             d.get("_migrated_from_schema", schema_ver),
@@ -3437,9 +3775,7 @@ def require_current_cost_mapping(
     """Reject scenarios/curve metadata created under another cost mapping."""
     saved = artifact.get("cost_mapping_fingerprint")
     if not saved or saved != current_cost_mapping_fingerprint:
-        raise ValueError(
-            "Artifact is stale because its governed cost mapping changed"
-        )
+        raise ValueError("Artifact is stale because its governed cost mapping changed")
 
 
 def governance_deps_from_optimizer_result(result: dict) -> dict:
@@ -3458,7 +3794,10 @@ def governance_deps_from_optimizer_result(result: dict) -> dict:
         if isinstance(auth, dict) and auth.get("nbt_completeness_fingerprint"):
             nbt_fingerprint = auth["nbt_completeness_fingerprint"]
             break
-        elif hasattr(auth, "nbt_completeness_fingerprint") and auth.nbt_completeness_fingerprint:
+        elif (
+            hasattr(auth, "nbt_completeness_fingerprint")
+            and auth.nbt_completeness_fingerprint
+        ):
             nbt_fingerprint = auth.nbt_completeness_fingerprint
             break
     return {
@@ -3473,17 +3812,27 @@ def governance_deps_from_optimizer_result(result: dict) -> dict:
         "value_mapping_fingerprint": result.get("value_mapping_fingerprint"),
         "currency_context_fingerprint": result.get("currency_context_fingerprint"),
         "historical_fx_rate_set_id": result.get("historical_fx_rate_set_id"),
-        "historical_fx_rate_set_fingerprint": result.get("historical_fx_rate_set_fingerprint"),
+        "historical_fx_rate_set_fingerprint": result.get(
+            "historical_fx_rate_set_fingerprint"
+        ),
         "future_fx_assumption_id": result.get("future_fx_assumption_id"),
-        "future_fx_assumption_fingerprint": result.get("future_fx_assumption_fingerprint"),
-        "activity_definitions_fingerprint": result.get("activity_definitions_fingerprint"),
+        "future_fx_assumption_fingerprint": result.get(
+            "future_fx_assumption_fingerprint"
+        ),
+        "activity_definitions_fingerprint": result.get(
+            "activity_definitions_fingerprint"
+        ),
         "cost_mapping_fingerprint": result.get("cost_mapping_fingerprint"),
-        "counterfactual_policy_fingerprint": result.get("counterfactual_policy_fingerprint"),
+        "counterfactual_policy_fingerprint": result.get(
+            "counterfactual_policy_fingerprint"
+        ),
         "nbt_completeness_fingerprint": nbt_fingerprint,
     }
 
 
-def compare_scenarios(scenarios: List[Dict], predicted_key: str = "predicted") -> pd.DataFrame:
+def compare_scenarios(
+    scenarios: List[Dict], predicted_key: str = "predicted"
+) -> pd.DataFrame:
     """
     Compare total predicted value/volume and spend across saved scenarios.
 
@@ -3512,29 +3861,41 @@ def compare_scenarios(scenarios: List[Dict], predicted_key: str = "predicted") -
         total_spend = sum(sum(ch.values()) for ch in s["spend_plan"].values())
         has_product_split = "fh_gsa" in pred.columns and "dna_kits" in pred.columns
         if has_product_split:
-            dedup_cols = ["fh_gsa", "dna_kits"] + (["fh_signups"] if "fh_signups" in pred.columns else [])
+            dedup_cols = ["fh_gsa", "dna_kits"] + (
+                ["fh_signups"] if "fh_signups" in pred.columns else []
+            )
             by_month = pred.groupby("month")[dedup_cols].first()
             total_fh_gsa = float(by_month["fh_gsa"].sum())
-            total_fh_signups = float(by_month["fh_signups"].sum()) if "fh_signups" in dedup_cols else 0.0
+            total_fh_signups = (
+                float(by_month["fh_signups"].sum())
+                if "fh_signups" in dedup_cols
+                else 0.0
+            )
             total_dna_kits = float(by_month["dna_kits"].sum())
         else:
             total_fh_gsa = float(pred["predicted_outcome"].sum())
             total_fh_signups = 0.0
             total_dna_kits = 0.0
         total_value_is_complete = (
-            bool(pred["total_value_is_complete"].all()) if "total_value_is_complete" in pred else True
+            bool(pred["total_value_is_complete"].all())
+            if "total_value_is_complete" in pred
+            else True
         )
-        rows.append({
-            "scenario": s["name"],
-            "market": s.get("market"),
-            "governance_mode": s.get("governance_mode"),
-            "total_spend": total_spend,
-            "total_value": pred["value"].sum(min_count=1) if "value" in pred else np.nan,
-            "total_value_is_complete": total_value_is_complete,
-            "total_fh_gsa": total_fh_gsa,
-            "total_fh_signups": total_fh_signups,
-            "total_dna_kits": total_dna_kits,
-        })
+        rows.append(
+            {
+                "scenario": s["name"],
+                "market": s.get("market"),
+                "governance_mode": s.get("governance_mode"),
+                "total_spend": total_spend,
+                "total_value": pred["value"].sum(min_count=1)
+                if "value" in pred
+                else np.nan,
+                "total_value_is_complete": total_value_is_complete,
+                "total_fh_gsa": total_fh_gsa,
+                "total_fh_signups": total_fh_signups,
+                "total_dna_kits": total_dna_kits,
+            }
+        )
     return pd.DataFrame(rows)
 
 
@@ -3592,6 +3953,7 @@ def whole_plan_scope_compatible(predicted_df: pd.DataFrame) -> bool:
 # Generic single-KPI helpers, kept for reuse
 # ---------------------------------------------------------------------------
 
+
 def calculate_marginal_roi_loglog(
     current_spend: float,
     elasticity: float,
@@ -3638,19 +4000,27 @@ def optimize_budget_marginal_roi(
     bounds = list(zip(min_bounds, max_bounds))
     total_current = sum(current_spend.values())
     if total_current > 0:
-        x0 = np.array([
-            current_spend.get(ch, total_budget / n_channels) / total_current * total_budget
-            for ch in channels
-        ])
+        x0 = np.array(
+            [
+                current_spend.get(ch, total_budget / n_channels)
+                / total_current
+                * total_budget
+                for ch in channels
+            ]
+        )
     else:
         x0 = np.full(n_channels, total_budget / n_channels)
     x0 = np.clip(x0, min_bounds, max_bounds)
     x0 = x0 / x0.sum() * total_budget
 
     result = minimize(
-        objective, x0, method='SLSQP', jac=gradient, bounds=bounds,
-        constraints={'type': 'eq', 'fun': lambda x: x.sum() - total_budget},
-        options={'maxiter': 1000, 'ftol': 1e-10},
+        objective,
+        x0,
+        method="SLSQP",
+        jac=gradient,
+        bounds=bounds,
+        constraints={"type": "eq", "fun": lambda x: x.sum() - total_budget},
+        options={"maxiter": 1000, "ftol": 1e-10},
     )
 
     optimal_spend = {ch: max(0, result.x[i]) for i, ch in enumerate(channels)}
@@ -3677,8 +4047,8 @@ def calculate_expected_lift(
 
     expected_sales = current_sales * (1 + total_pct_change)
     return {
-        'current_sales': current_sales,
-        'expected_sales': expected_sales,
-        'lift': expected_sales - current_sales,
-        'lift_pct': total_pct_change * 100,
+        "current_sales": current_sales,
+        "expected_sales": expected_sales,
+        "lift": expected_sales - current_sales,
+        "lift_pct": total_pct_change * 100,
     }

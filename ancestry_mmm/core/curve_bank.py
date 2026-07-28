@@ -61,12 +61,12 @@ class CurveBankEntry:
     run_label: str
     data_window: Tuple[str, str]
 
-    model_type: str            # "shared" (Model A) | "market_specific" (Model C)
-    market: Optional[str]      # None for a shared curve; a market name for Model C
+    model_type: str  # "shared" (Model A) | "market_specific" (Model C)
+    market: Optional[str]  # None for a shared curve; a market name for Model C
     channel: str
-    segment_or_overall: str    # one of the model's outcome_ids, or OVERALL
+    segment_or_overall: str  # one of the model's outcome_ids, or OVERALL
     dna_channel: bool
-    curve_status: str          # one of the CURVE_STATUS_* constants above
+    curve_status: str  # one of the CURVE_STATUS_* constants above
 
     decay_rate: float
     hill_K: float
@@ -167,23 +167,36 @@ def _expand_legacy_entry(d: dict) -> List["CurveBankEntry"]:
         for segment in segments:
             b = beta.get(segment, {}).get(channel, 0.0)
             overall_beta += b
-            entries.append(CurveBankEntry(
-                entry_id=f"{base_entry_id}::{segment}::{channel}",
-                channel=channel, segment_or_overall=segment, dna_channel=is_dna,
+            entries.append(
+                CurveBankEntry(
+                    entry_id=f"{base_entry_id}::{segment}::{channel}",
+                    channel=channel,
+                    segment_or_overall=segment,
+                    dna_channel=is_dna,
+                    curve_status=CURVE_STATUS_LEGACY,
+                    decay_rate=decay_rate.get(channel, 0.0),
+                    hill_K=hill_K.get(channel, 0.0),
+                    hill_S=hill_S.get(channel, 0.0),
+                    beta=b,
+                    halo_strength=halo_strength.get(segment) if is_dna else None,
+                    **shared_fields,
+                )
+            )
+        entries.append(
+            CurveBankEntry(
+                entry_id=f"{base_entry_id}::{OVERALL}::{channel}",
+                channel=channel,
+                segment_or_overall=OVERALL,
+                dna_channel=is_dna,
                 curve_status=CURVE_STATUS_LEGACY,
-                decay_rate=decay_rate.get(channel, 0.0), hill_K=hill_K.get(channel, 0.0),
-                hill_S=hill_S.get(channel, 0.0), beta=b,
-                halo_strength=halo_strength.get(segment) if is_dna else None,
+                decay_rate=decay_rate.get(channel, 0.0),
+                hill_K=hill_K.get(channel, 0.0),
+                hill_S=hill_S.get(channel, 0.0),
+                beta=overall_beta,
+                halo_strength=None,
                 **shared_fields,
-            ))
-        entries.append(CurveBankEntry(
-            entry_id=f"{base_entry_id}::{OVERALL}::{channel}",
-            channel=channel, segment_or_overall=OVERALL, dna_channel=is_dna,
-            curve_status=CURVE_STATUS_LEGACY,
-            decay_rate=decay_rate.get(channel, 0.0), hill_K=hill_K.get(channel, 0.0),
-            hill_S=hill_S.get(channel, 0.0), beta=overall_beta, halo_strength=None,
-            **shared_fields,
-        ))
+            )
+        )
     return entries
 
 
@@ -247,7 +260,9 @@ def make_entries(
     ApprovalMismatchError for missing, legacy, or mismatched approval.
     """
     if model_type not in ("shared", "market_specific"):
-        raise ValueError(f"model_type must be 'shared' or 'market_specific', got {model_type!r}")
+        raise ValueError(
+            f"model_type must be 'shared' or 'market_specific', got {model_type!r}"
+        )
     if model_type == "market_specific" and evidence_tiers is None:
         raise ValueError("evidence_tiers is required when model_type='market_specific'")
 
@@ -279,7 +294,9 @@ def make_entries(
     }
 
     entries: List[CurveBankEntry] = []
-    markets: List[Optional[str]] = meta.markets if model_type == "market_specific" else [None]
+    markets: List[Optional[str]] = (
+        meta.markets if model_type == "market_specific" else [None]
+    )
     currency_by_market = currency_by_market or {}
 
     for market in markets:
@@ -289,7 +306,9 @@ def make_entries(
                 decay_rate = params.decay_rate[channel]
                 hill_K = params.hill_K[market][channel]
                 hill_S = params.hill_S[channel]
-                beta_by_segment = {s: params.beta[market][s][channel] for s in meta.outcome_ids}
+                beta_by_segment = {
+                    s: params.beta[market][s][channel] for s in meta.outcome_ids
+                }
                 curve_status = evidence_tiers[market][channel]
                 currency = currency_by_market.get(market)
             else:
@@ -302,23 +321,51 @@ def make_entries(
 
             for segment, beta_val in beta_by_segment.items():
                 is_cross_product_cell = (
-                    channel in meta.pathway_masks.active_channels_by_outcome.get(segment, [])
-                    or channel in meta.pathway_masks.exploratory_channels_by_outcome.get(segment, [])
+                    channel
+                    in meta.pathway_masks.active_channels_by_outcome.get(segment, [])
+                    or channel
+                    in meta.pathway_masks.exploratory_channels_by_outcome.get(
+                        segment, []
+                    )
                 )
-                entries.append(CurveBankEntry(
-                    entry_id=str(uuid.uuid4()), market=market, channel=channel,
-                    segment_or_overall=segment, dna_channel=is_dna, curve_status=curve_status,
-                    decay_rate=decay_rate, hill_K=hill_K, hill_S=hill_S, beta=beta_val,
-                    halo_strength=params.pathway_strength.get(segment, {}).get(channel) if is_cross_product_cell else None,
-                    currency=currency, **shared_fields,
-                ))
-            entries.append(CurveBankEntry(
-                entry_id=str(uuid.uuid4()), market=market, channel=channel,
-                segment_or_overall=OVERALL, dna_channel=is_dna, curve_status=curve_status,
-                decay_rate=decay_rate, hill_K=hill_K, hill_S=hill_S,
-                beta=sum(beta_by_segment.values()), halo_strength=None,
-                currency=currency, **shared_fields,
-            ))
+                entries.append(
+                    CurveBankEntry(
+                        entry_id=str(uuid.uuid4()),
+                        market=market,
+                        channel=channel,
+                        segment_or_overall=segment,
+                        dna_channel=is_dna,
+                        curve_status=curve_status,
+                        decay_rate=decay_rate,
+                        hill_K=hill_K,
+                        hill_S=hill_S,
+                        beta=beta_val,
+                        halo_strength=params.pathway_strength.get(segment, {}).get(
+                            channel
+                        )
+                        if is_cross_product_cell
+                        else None,
+                        currency=currency,
+                        **shared_fields,
+                    )
+                )
+            entries.append(
+                CurveBankEntry(
+                    entry_id=str(uuid.uuid4()),
+                    market=market,
+                    channel=channel,
+                    segment_or_overall=OVERALL,
+                    dna_channel=is_dna,
+                    curve_status=curve_status,
+                    decay_rate=decay_rate,
+                    hill_K=hill_K,
+                    hill_S=hill_S,
+                    beta=sum(beta_by_segment.values()),
+                    halo_strength=None,
+                    currency=currency,
+                    **shared_fields,
+                )
+            )
 
     return entries
 
@@ -350,12 +397,16 @@ def make_media_unit_entries(
         info = media_unit_info.get((e.market, e.channel))
         if info is None:
             continue
-        mirrored.append(replace(
-            e, entry_id=str(uuid.uuid4()), input_type="media_unit",
-            unit_type=info.get("unit_type"),
-            currency=info.get("currency") or e.currency,
-            cost_per_unit=info.get("avg_cost_per_unit"),
-        ))
+        mirrored.append(
+            replace(
+                e,
+                entry_id=str(uuid.uuid4()),
+                input_type="media_unit",
+                unit_type=info.get("unit_type"),
+                currency=info.get("currency") or e.currency,
+                cost_per_unit=info.get("avg_cost_per_unit"),
+            )
+        )
     return mirrored
 
 
@@ -393,32 +444,36 @@ def entries_to_dataframe(entries: List[CurveBankEntry]) -> pd.DataFrame:
     directly on the returned frame, per docs/curve_bank.md's planned UI."""
     rows = []
     for e in entries:
-        rows.append({
-            "entry_id": e.entry_id,
-            "run_label": e.run_label,
-            "created_at": pd.Timestamp.fromtimestamp(e.created_at),
-            "data_window_start": e.data_window[0],
-            "data_window_end": e.data_window[1],
-            "model_type": e.model_type,
-            "market": e.market or "(shared)",
-            "channel": e.channel,
-            "segment_or_overall": e.segment_or_overall,
-            "curve_status": e.curve_status,
-            "input_type": e.input_type,
-            "currency": e.currency,
-            "unit_type": e.unit_type,
-            "cost_per_unit": e.cost_per_unit,
-            "decay_rate": e.decay_rate,
-            "hill_K": e.hill_K,
-            "hill_S": e.hill_S,
-            "beta": e.beta,
-            "halo_strength": e.halo_strength,
-            "approved_by": e.approved_by,
-            "approved_at": pd.Timestamp.fromtimestamp(e.approved_at) if e.approved_at else None,
-            "model_run_id": e.model_run_id,
-            "legacy_approval": e.legacy_approval,
-            "legacy_format": e.legacy_format,
-        })
+        rows.append(
+            {
+                "entry_id": e.entry_id,
+                "run_label": e.run_label,
+                "created_at": pd.Timestamp.fromtimestamp(e.created_at),
+                "data_window_start": e.data_window[0],
+                "data_window_end": e.data_window[1],
+                "model_type": e.model_type,
+                "market": e.market or "(shared)",
+                "channel": e.channel,
+                "segment_or_overall": e.segment_or_overall,
+                "curve_status": e.curve_status,
+                "input_type": e.input_type,
+                "currency": e.currency,
+                "unit_type": e.unit_type,
+                "cost_per_unit": e.cost_per_unit,
+                "decay_rate": e.decay_rate,
+                "hill_K": e.hill_K,
+                "hill_S": e.hill_S,
+                "beta": e.beta,
+                "halo_strength": e.halo_strength,
+                "approved_by": e.approved_by,
+                "approved_at": pd.Timestamp.fromtimestamp(e.approved_at)
+                if e.approved_at
+                else None,
+                "model_run_id": e.model_run_id,
+                "legacy_approval": e.legacy_approval,
+                "legacy_format": e.legacy_format,
+            }
+        )
     return pd.DataFrame(rows)
 
 
@@ -471,12 +526,16 @@ def record_calibration(
         test_estimate=test_estimate,
         test_ci_low=test_ci[0] if test_ci else None,
         test_ci_high=test_ci[1] if test_ci else None,
-        agreement=compare_to_test(model_estimate, test_estimate, test_ci, tolerance_pct),
+        agreement=compare_to_test(
+            model_estimate, test_estimate, test_ci, tolerance_pct
+        ),
         notes=notes,
     )
     curve_bank_dir = Path(curve_bank_dir)
     curve_bank_dir.mkdir(parents=True, exist_ok=True)
-    path = curve_bank_dir / f"calibration_{int(record.created_at)}_{record.record_id}.json"
+    path = (
+        curve_bank_dir / f"calibration_{int(record.created_at)}_{record.record_id}.json"
+    )
     path.write_text(json.dumps(record.to_dict(), indent=2))
     return record
 

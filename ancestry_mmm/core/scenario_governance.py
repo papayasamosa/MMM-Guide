@@ -117,9 +117,7 @@ class ScenarioPlan:
         if "spend_plan" in values:
             return cls.from_legacy_spend_plan(values["spend_plan"])
         return cls(
-            monetary_decisions_by_period=values.get(
-                "monetary_decisions_by_period", {}
-            ),
+            monetary_decisions_by_period=values.get("monetary_decisions_by_period", {}),
             activity_quantity_assumptions_by_period=values.get(
                 "activity_quantity_assumptions_by_period", {}
             ),
@@ -159,9 +157,7 @@ def classify_activity_plan(
         quantities[period] = {}
         for key, value in values.items():
             if key not in by_input:
-                raise ValueError(
-                    f"missing activity definition for model input {key!r}"
-                )
+                raise ValueError(f"missing activity definition for model input {key!r}")
             target = monetary if by_input[key].is_cost_bearing else quantities
             target[period][key] = float(value)
     return ScenarioPlan(
@@ -169,9 +165,7 @@ def classify_activity_plan(
         activity_quantity_assumptions_by_period=quantities,
         activity_units={
             column: (
-                "currency"
-                if definition.is_cost_bearing
-                else "model_input_quantity"
+                "currency" if definition.is_cost_bearing else "model_input_quantity"
             )
             for column, definition in by_input.items()
         },
@@ -224,17 +218,21 @@ def resolve_scenario_plan(
             for values in plan.monetary_decisions_by_period.values()
             for value in values.values()
         )
-        return model_input, {"paid_media_cost": {"total": total}}, {
-            "economics_status": "legacy_monetary_assumption",
-            "covered_activity_ids": [],
-            "uncovered_activity_ids": [],
-            "excluded_response_only_activity_ids": [],
-            "mapping_ids": [],
-            "mapping_effective_dates": [],
-            "value_coverage": "evaluated_separately",
-            "currency_coverage": "legacy_unspecified",
-            "counterfactual_scope": "resolved_separately",
-        }
+        return (
+            model_input,
+            {"paid_media_cost": {"total": total}},
+            {
+                "economics_status": "legacy_monetary_assumption",
+                "covered_activity_ids": [],
+                "uncovered_activity_ids": [],
+                "excluded_response_only_activity_ids": [],
+                "mapping_ids": [],
+                "mapping_effective_dates": [],
+                "value_coverage": "evaluated_separately",
+                "currency_coverage": "legacy_unspecified",
+                "counterfactual_scope": "resolved_separately",
+            },
+        )
 
     by_input = activity_by_model_input(activity_definitions, market)
     by_id = _activities_by_id(activity_definitions, market)
@@ -251,9 +249,7 @@ def resolve_scenario_plan(
 
     for period in plan.periods:
         model_input[period] = {}
-        for key, amount in plan.monetary_decisions_by_period.get(
-            period, {}
-        ).items():
+        for key, amount in plan.monetary_decisions_by_period.get(period, {}).items():
             definition = _resolve_activity(key, by_id, by_input)
             if not definition.is_cost_bearing:
                 raise ValueError(
@@ -277,12 +273,9 @@ def resolve_scenario_plan(
             model_input[period][definition.resolved_model_input_column] = float(
                 mapping.spend_to_media_input(float(amount))
             )
-            costs[definition.economic_treatment][definition.activity_id] = (
-                costs[definition.economic_treatment].get(
-                    definition.activity_id, 0.0
-                )
-                + float(amount)
-            )
+            costs[definition.economic_treatment][definition.activity_id] = costs[
+                definition.economic_treatment
+            ].get(definition.activity_id, 0.0) + float(amount)
             covered.add(definition.activity_id)
             mapping_ids.add(mapping.mapping_id)
             mapping_dates.add(dates[period])

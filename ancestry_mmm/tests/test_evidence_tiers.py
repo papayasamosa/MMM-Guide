@@ -24,9 +24,16 @@ CHANNELS = ["TV", "Search"]
 @pytest.fixture
 def meta() -> FHModelMeta:
     return FHModelMeta(
-        markets=MARKETS, outcome_ids=SEGMENTS, channels=CHANNELS,
-        dna_channels=[], dna_channel_idx=[], non_dna_idx=[0, 1],
-        dna_outcome_id="New", dna_lag_weeks=1, unpooled_markets=[], control_names=[],
+        markets=MARKETS,
+        outcome_ids=SEGMENTS,
+        channels=CHANNELS,
+        dna_channels=[],
+        dna_channel_idx=[],
+        non_dna_idx=[0, 1],
+        dna_outcome_id="New",
+        dna_lag_weeks=1,
+        unpooled_markets=[],
+        control_names=[],
     )
 
 
@@ -52,11 +59,15 @@ def _trace(rel_uncertainty_by_market, n_chain=2, n_draw=10):
         base = np.full((n_chain, n_draw, len(MARKETS), len(CHANNELS)), mean_value)
         for i, m in enumerate(MARKETS):
             noise_sd = rel_uncertainty_by_market[m] * mean_value
-            base[:, :, i, :] += rng.normal(0, noise_sd, size=(n_chain, n_draw, len(CHANNELS)))
+            base[:, :, i, :] += rng.normal(
+                0, noise_sd, size=(n_chain, n_draw, len(CHANNELS))
+            )
         return base
 
     hill_K = var(1000.0)
-    beta = np.stack([var(0.1) for _ in SEGMENTS], axis=3)  # (chain, draw, market, segment, channel)
+    beta = np.stack(
+        [var(0.1) for _ in SEGMENTS], axis=3
+    )  # (chain, draw, market, segment, channel)
 
     posterior = {"hill_K": hill_K, "beta": beta}
     dims = {"hill_K": ["market", "channel"], "beta": ["market", "outcome", "channel"]}
@@ -76,37 +87,63 @@ class TestClassifyMarketEvidence:
         with pytest.raises(ValueError, match="not one of this model's channels"):
             classify_market_evidence(trace, frame, meta, "UK", "Radio")
 
-    def test_few_observations_is_transferred_estimate_regardless_of_uncertainty(self, meta):
+    def test_few_observations_is_transferred_estimate_regardless_of_uncertainty(
+        self, meta
+    ):
         # Even with very tight posterior uncertainty, too few periods forces "Transferred estimate".
         frame = _frame_with_market_sizes([60, 60, 5])
         trace = _trace({m: 0.01 for m in MARKETS})
-        assert classify_market_evidence(trace, frame, meta, "NewMarket", "TV") == TRANSFERRED_ESTIMATE
+        assert (
+            classify_market_evidence(trace, frame, meta, "NewMarket", "TV")
+            == TRANSFERRED_ESTIMATE
+        )
 
     def test_many_observations_and_low_uncertainty_is_locally_estimated(self, meta):
         frame = _frame_with_market_sizes([104, 60, 60])
         trace = _trace({"UK": 0.05, "Australia": 0.05, "NewMarket": 0.05})
-        assert classify_market_evidence(trace, frame, meta, "UK", "TV") == LOCALLY_ESTIMATED
+        assert (
+            classify_market_evidence(trace, frame, meta, "UK", "TV")
+            == LOCALLY_ESTIMATED
+        )
 
     def test_enough_observations_but_high_uncertainty_is_partially_pooled(self, meta):
         frame = _frame_with_market_sizes([104, 60, 60])
         trace = _trace({"UK": 0.05, "Australia": 0.9, "NewMarket": 0.05})
-        assert classify_market_evidence(trace, frame, meta, "Australia", "TV") == PARTIALLY_POOLED
+        assert (
+            classify_market_evidence(trace, frame, meta, "Australia", "TV")
+            == PARTIALLY_POOLED
+        )
 
-    def test_moderate_observations_below_local_threshold_is_partially_pooled(self, meta):
+    def test_moderate_observations_below_local_threshold_is_partially_pooled(
+        self, meta
+    ):
         # Between the "pooled" and "local" observation thresholds, even with tight uncertainty.
         frame = _frame_with_market_sizes([104, 20, 60])
         trace = _trace({m: 0.01 for m in MARKETS})
-        assert classify_market_evidence(trace, frame, meta, "Australia", "TV") == PARTIALLY_POOLED
+        assert (
+            classify_market_evidence(trace, frame, meta, "Australia", "TV")
+            == PARTIALLY_POOLED
+        )
 
     def test_custom_thresholds_are_respected(self, meta):
         frame = _frame_with_market_sizes([30, 60, 60])
         trace = _trace({m: 0.01 for m in MARKETS})
         # With default thresholds, 30 observations is below "local" (52).
-        assert classify_market_evidence(trace, frame, meta, "UK", "TV") == PARTIALLY_POOLED
+        assert (
+            classify_market_evidence(trace, frame, meta, "UK", "TV") == PARTIALLY_POOLED
+        )
         # Lowering the "local" threshold to 20 should now qualify it.
-        assert classify_market_evidence(
-            trace, frame, meta, "UK", "TV", min_observations_for_local=20,
-        ) == LOCALLY_ESTIMATED
+        assert (
+            classify_market_evidence(
+                trace,
+                frame,
+                meta,
+                "UK",
+                "TV",
+                min_observations_for_local=20,
+            )
+            == LOCALLY_ESTIMATED
+        )
 
 
 class TestClassifyAllMarkets:

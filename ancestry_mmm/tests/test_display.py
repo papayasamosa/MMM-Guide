@@ -29,6 +29,7 @@ class TestFormatDate:
 
     def test_accepts_python_date(self):
         import datetime
+
         assert format_date(datetime.date(2024, 3, 5)) == "5 Mar 24"
 
     def test_accepts_iso_string(self):
@@ -101,11 +102,13 @@ class TestReadableLabel:
 
 class TestDataframeColumnConfig:
     def test_column_config_is_display_only(self):
-        df = pd.DataFrame({
-            "date": pd.date_range("2023-01-01", periods=3),
-            "TV_Brand": [1.0, 2.0, 3.0],
-            "market": ["UK", "AU", "CA"],
-        })
+        df = pd.DataFrame(
+            {
+                "date": pd.date_range("2023-01-01", periods=3),
+                "TV_Brand": [1.0, 2.0, 3.0],
+                "market": ["UK", "AU", "CA"],
+            }
+        )
         original_columns = list(df.columns)
         original_dtypes = df.dtypes.copy()
 

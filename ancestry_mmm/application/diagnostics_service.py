@@ -10,9 +10,8 @@ One authoritative PPC calculation (not double-counted).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
-import numpy as np
 import pandas as pd
 import arviz as az
 
@@ -34,6 +33,7 @@ from ancestry_mmm.core.market_specific_predict import FHMarketSpecificPosteriorP
 @dataclass
 class DiagnosticsInput:
     """Typed input for diagnostics evaluation."""
+
     trace: az.InferenceData
     frame: Dict[str, Any]
     meta: FHModelMeta
@@ -57,6 +57,7 @@ class DiagnosticsResult:
     No hard-coded thresholds. Convergence metrics are raw values; callers
     apply policies.
     """
+
     scorecard: Dict[str, Any]
     max_rhat: float
     min_ess: float
@@ -72,8 +73,7 @@ class DiagnosticsResult:
     def convergence_ok(self) -> bool:
         """Backward-compatible property. Note: thresholds should come
         from a validation policy, not this property."""
-        return (self.max_rhat < 1.05 and self.min_ess > 200
-                and not self.has_divergences)
+        return self.max_rhat < 1.05 and self.min_ess > 200 and not self.has_divergences
 
 
 class DiagnosticsService:
@@ -101,8 +101,11 @@ class DiagnosticsService:
         if diag_input.trace is None:
             errors.append("No posterior trace provided.")
             return DiagnosticsResult(
-                scorecard={}, max_rhat=float("nan"), min_ess=float("nan"),
-                has_divergences=False, mean_ppc_coverage_pct=float("nan"),
+                scorecard={},
+                max_rhat=float("nan"),
+                min_ess=float("nan"),
+                has_divergences=False,
+                mean_ppc_coverage_pct=float("nan"),
                 errors=errors,
             )
 
@@ -117,12 +120,16 @@ class DiagnosticsService:
         try:
             if diag_input.model_type == "market_specific":
                 scorecard = compute_scorecard_market_specific(
-                    diag_input.trace, diag_input.frame, diag_input.meta,
+                    diag_input.trace,
+                    diag_input.frame,
+                    diag_input.meta,
                     roi_bounds=diag_input.roi_bounds,
                 )
             else:
                 scorecard = compute_scorecard(
-                    diag_input.trace, diag_input.frame, diag_input.meta,
+                    diag_input.trace,
+                    diag_input.frame,
+                    diag_input.meta,
                     roi_bounds=diag_input.roi_bounds,
                 )
         except Exception as exc:
@@ -134,7 +141,9 @@ class DiagnosticsService:
         mean_ppc = float("nan")
         try:
             ppc_details = posterior_predictive_coverage(
-                diag_input.trace, diag_input.frame, diag_input.meta,
+                diag_input.trace,
+                diag_input.frame,
+                diag_input.meta,
                 credible_mass=diag_input.credible_mass,
                 predictive_replications=diag_input.predictive_replications,
                 random_seed=diag_input.random_seed,
@@ -147,12 +156,16 @@ class DiagnosticsService:
         try:
             if diag_input.model_type == "market_specific":
                 plausibility = curve_plausibility_checks_market_specific(
-                    diag_input.trace, diag_input.meta, diag_input.frame,
+                    diag_input.trace,
+                    diag_input.meta,
+                    diag_input.frame,
                     roi_bounds=diag_input.roi_bounds,
                 )
             else:
                 plausibility = curve_plausibility_checks(
-                    diag_input.trace, diag_input.meta, diag_input.frame,
+                    diag_input.trace,
+                    diag_input.meta,
+                    diag_input.frame,
                     roi_bounds=diag_input.roi_bounds,
                 )
             for issue in plausibility:
@@ -168,7 +181,8 @@ class DiagnosticsService:
         if diag_input.backtest_folds > 0 and diag_input.fit_fold_fn is not None:
             try:
                 backtest_results = expanding_window_backtest(
-                    diag_input.frame if isinstance(diag_input.frame, pd.DataFrame)
+                    diag_input.frame
+                    if isinstance(diag_input.frame, pd.DataFrame)
                     else pd.DataFrame(),
                     diag_input.meta,  # spec-like object
                     diag_input.fit_fold_fn,

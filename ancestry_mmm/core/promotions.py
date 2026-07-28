@@ -103,7 +103,10 @@ class PromotionEvent:
 
     def duration_days(self) -> Optional[int]:
         try:
-            return int((pd.Timestamp(self.end_date) - pd.Timestamp(self.start_date)).days) + 1
+            return (
+                int((pd.Timestamp(self.end_date) - pd.Timestamp(self.start_date)).days)
+                + 1
+            )
         except (ValueError, TypeError):
             return None
 
@@ -121,7 +124,9 @@ class PromotionEvent:
         except (ValueError, TypeError):
             errors.append(f"Promotion '{label}' has an unparseable start/end date.")
         if self.discount_depth is not None and not (0.0 <= self.discount_depth <= 1.0):
-            errors.append(f"Promotion '{label}' discount_depth should be a 0-1 fraction, got {self.discount_depth}.")
+            errors.append(
+                f"Promotion '{label}' discount_depth should be a 0-1 fraction, got {self.discount_depth}."
+            )
         return errors
 
 
@@ -132,7 +137,9 @@ def validate_promotion_events(events: List[PromotionEvent]) -> List[str]:
     return errors
 
 
-def promotion_weekly_series(events: List[PromotionEvent], dates, segment: str) -> np.ndarray:
+def promotion_weekly_series(
+    events: List[PromotionEvent], dates, segment: str
+) -> np.ndarray:
     """
     Weekly promo intensity series for `segment` over `dates` (any date-like
     array/Series/Index) - 0.0 for periods outside every applicable event's
@@ -153,7 +160,10 @@ def promotion_weekly_series(events: List[PromotionEvent], dates, segment: str) -
 
 
 def apply_promotion_events_to_frame(
-    df: pd.DataFrame, date_col: str, events: List[PromotionEvent], column_prefix: str = "_promo_event_",
+    df: pd.DataFrame,
+    date_col: str,
+    events: List[PromotionEvent],
+    column_prefix: str = "_promo_event_",
 ) -> Tuple[pd.DataFrame, Dict[str, str]]:
     """
     Materialise one derived promo column per segment that has events, so it
@@ -188,7 +198,9 @@ PROMOTION_EVENT_OP = "promotion_event"
 
 
 def promotion_events_to_transform_steps(
-    events: List[PromotionEvent], date_col: str, column_prefix: str = "_promo_event_",
+    events: List[PromotionEvent],
+    date_col: str,
+    column_prefix: str = "_promo_event_",
 ) -> List["TransformStep"]:
     """
     Encode each event as one `TransformStep(op="promotion_event", ...)`, in
@@ -207,14 +219,20 @@ def promotion_events_to_transform_steps(
         steps.append(
             TransformStep(
                 op=PROMOTION_EVENT_OP,
-                params={"event": e.to_dict(), "date_col": date_col, "column_prefix": column_prefix},
+                params={
+                    "event": e.to_dict(),
+                    "date_col": date_col,
+                    "column_prefix": column_prefix,
+                },
                 description=f"Promotion event: {e.event_name or '(unnamed)'} ({e.segment})",
             )
         )
     return steps
 
 
-def transform_steps_to_promotion_events(steps: List["TransformStep"]) -> List[PromotionEvent]:
+def transform_steps_to_promotion_events(
+    steps: List["TransformStep"],
+) -> List[PromotionEvent]:
     """Recover the `PromotionEvent` list encoded by `promotion_events_to_transform_steps`,
     ignoring any non-`promotion_event` steps in the same pipeline."""
     return [

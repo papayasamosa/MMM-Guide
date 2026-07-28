@@ -25,6 +25,7 @@ class ProjectExportInput:
 
     Matches the ``export_project()`` signature exactly.
     """
+
     output_path: str
     raw_sources: Dict[str, pd.DataFrame]
     transformed_data: Optional[pd.DataFrame]
@@ -64,12 +65,14 @@ class ProjectExportInput:
 @dataclass
 class ProjectImportInput:
     """Typed input for project import."""
+
     bundle_path: str
 
 
 @dataclass
 class ProjectServiceResult:
     """Structured project operation result."""
+
     success: bool = False
     errors: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
@@ -109,7 +112,11 @@ class ProjectService:
             return ProjectServiceResult(success=False, errors=errors)
 
         # Resolve curve_bank_source_dir to Path if provided
-        cb_path = Path(exp_input.curve_bank_source_dir) if exp_input.curve_bank_source_dir else None
+        cb_path = (
+            Path(exp_input.curve_bank_source_dir)
+            if exp_input.curve_bank_source_dir
+            else None
+        )
 
         try:
             actual_path = export_project(
@@ -152,7 +159,11 @@ class ProjectService:
         export_paths = [str(actual_path)]
 
         # Optional Excel export
-        if exp_input.include_excel and exp_input.excel_output_path and exp_input.excel_sheets:
+        if (
+            exp_input.include_excel
+            and exp_input.excel_output_path
+            and exp_input.excel_sheets
+        ):
             try:
                 excel_path = export_excel_summary(
                     Path(exp_input.excel_output_path),
@@ -179,7 +190,10 @@ class ProjectService:
         errors: List[str] = []
         warnings: List[str] = []
 
-        from ancestry_mmm.core.persistence import import_project, reconstruct_model_state
+        from ancestry_mmm.core.persistence import (
+            import_project,
+            reconstruct_model_state,
+        )
 
         bundle_path = Path(imp_input.bundle_path)
         if not bundle_path.exists():

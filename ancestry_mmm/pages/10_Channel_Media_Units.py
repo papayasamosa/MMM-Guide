@@ -20,10 +20,20 @@ from ancestry_mmm.utils import (
     readable_label,
     set_state,
 )
-from ancestry_mmm.components import apply_theme, render_sidebar, render_page_header, render_next_step, render_empty_state, render_glossary
+from ancestry_mmm.components import (
+    apply_theme,
+    render_sidebar,
+    render_page_header,
+    render_next_step,
+    render_empty_state,
+    render_glossary,
+)
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.market_config import (
-    ChannelMediaUnitConfig, MarketSpecConfig, UNIT_TYPE_SUGGESTIONS, COST_BASIS_SUGGESTIONS,
+    ChannelMediaUnitConfig,
+    MarketSpecConfig,
+    UNIT_TYPE_SUGGESTIONS,
+    COST_BASIS_SUGGESTIONS,
 )
 from ancestry_mmm.core.activities import (
     APPROVAL_STATUSES,
@@ -36,7 +46,9 @@ from ancestry_mmm.core.activities import (
 )
 from ancestry_mmm.data import detect_column_types
 
-st.set_page_config(page_title="Channel & Media Units - Ancestry FH MMM", page_icon="🧬", layout="wide")
+st.set_page_config(
+    page_title="Channel & Media Units - Ancestry FH MMM", page_icon="🧬", layout="wide"
+)
 init_session_state()
 apply_theme()
 render_sidebar("channel_media_units")
@@ -48,7 +60,8 @@ if not spec_dict or df is None:
     st.markdown("---")
     render_empty_state(
         "No structure defined yet. Complete Structure: Segments & Markets first.",
-        button_label="Go to Structure: Segments & Markets", target_key="structure",
+        button_label="Go to Structure: Segments & Markets",
+        target_key="structure",
     )
     st.stop()
 
@@ -60,7 +73,9 @@ st.info(
     "**Activity and causal-role governance is required before model approval.** "
     "Physical media-unit and cost mapping is a separate optional section."
 )
-st.caption("See docs/media_units_and_inflation.md for the full design this mapping feeds into.")
+st.caption(
+    "See docs/media_units_and_inflation.md for the full design this mapping feeds into."
+)
 
 hints = detect_column_types(df)
 numeric_cols = hints["numeric"]
@@ -77,8 +92,7 @@ st.caption(
 )
 if existing_activity_items:
     activity_rows = [
-        ActivityDefinition.from_dict(item).to_dict()
-        for item in existing_activity_items
+        ActivityDefinition.from_dict(item).to_dict() for item in existing_activity_items
     ]
 else:
     activity_rows = [
@@ -136,7 +150,8 @@ activity_editor = st.data_editor(
             "Market", options=spec.markets, required=True
         ),
         "channel": st.column_config.TextColumn(
-            "Reporting channel", required=True,
+            "Reporting channel",
+            required=True,
             help=(
                 "Shared reporting label, such as Social. Multiple activities "
                 "may share it when their model-input columns differ."
@@ -176,9 +191,7 @@ for row_number, row in activity_editor.fillna("").iterrows():
         if activity_key in seen_keys:
             raise ValueError(f"duplicate market/activity_id {activity_key}")
         if input_key in seen_inputs:
-            raise ValueError(
-                f"duplicate market/model_input_column {input_key}"
-            )
+            raise ValueError(f"duplicate market/model_input_column {input_key}")
         seen_keys.add(activity_key)
         seen_inputs.add(input_key)
         activity_definitions.append(
@@ -223,8 +236,7 @@ if st.button("Save required activity governance", type="primary"):
         st.error("Nothing was saved. Resolve every governance error first.")
     else:
         previous = [
-            ActivityDefinition.from_dict(item)
-            for item in existing_activity_items
+            ActivityDefinition.from_dict(item) for item in existing_activity_items
         ]
         previous_by_key = {item.activity_key: item for item in previous}
         refit_required = set(previous_by_key) != {
@@ -239,13 +251,9 @@ if st.button("Save required activity governance", type="primary"):
             impact = activity_invalidation(prior, definition)
             refit_required = refit_required or impact.refit_model
             rebuild_curves = (
-                rebuild_curves
-                or impact.rebuild_curves
-                or impact.rebuild_economics
+                rebuild_curves or impact.rebuild_curves or impact.rebuild_economics
             )
-            rebuild_scenarios = (
-                rebuild_scenarios or impact.rebuild_scenarios
-            )
+            rebuild_scenarios = rebuild_scenarios or impact.rebuild_scenarios
         set_state(
             "activity_definitions",
             [definition.to_dict() for definition in activity_definitions],
@@ -285,39 +293,50 @@ for market in spec.markets:
             st.markdown(f"**{readable_label(channel)}**")
             c1, c2, c3 = st.columns(3)
             response_col = c1.selectbox(
-                "Response-unit column", ["(none)"] + numeric_cols,
+                "Response-unit column",
+                ["(none)"] + numeric_cols,
                 index=(["(none)"] + numeric_cols).index(existing.response_unit_column)
-                if existing and existing.response_unit_column in numeric_cols else 0,
+                if existing and existing.response_unit_column in numeric_cols
+                else 0,
                 format_func=lambda c: c if c == "(none)" else readable_label(c),
                 key=f"unit_col_{market}_{channel}",
                 help="The column that measures physical delivery for this channel, e.g. impressions or GRPs.",
             )
             unit_type = c2.selectbox(
-                "Unit type", ["(none)"] + UNIT_TYPE_SUGGESTIONS,
+                "Unit type",
+                ["(none)"] + UNIT_TYPE_SUGGESTIONS,
                 index=(["(none)"] + UNIT_TYPE_SUGGESTIONS).index(existing.unit_type)
-                if existing and existing.unit_type in UNIT_TYPE_SUGGESTIONS else 0,
+                if existing and existing.unit_type in UNIT_TYPE_SUGGESTIONS
+                else 0,
                 key=f"unit_type_{market}_{channel}",
             )
             cost_basis = c3.selectbox(
-                "Cost basis", ["(none)"] + COST_BASIS_SUGGESTIONS,
+                "Cost basis",
+                ["(none)"] + COST_BASIS_SUGGESTIONS,
                 index=(["(none)"] + COST_BASIS_SUGGESTIONS).index(existing.cost_basis)
-                if existing and existing.cost_basis in COST_BASIS_SUGGESTIONS else 0,
+                if existing and existing.cost_basis in COST_BASIS_SUGGESTIONS
+                else 0,
                 key=f"cost_basis_{market}_{channel}",
             )
             currency = st.text_input(
-                "Currency (ISO code, e.g. GBP)", value=(existing.currency if existing else "") or "",
+                "Currency (ISO code, e.g. GBP)",
+                value=(existing.currency if existing else "") or "",
                 key=f"currency_{market}_{channel}",
             )
 
-            market_config.set_media_unit_config(ChannelMediaUnitConfig(
-                market=market,
-                channel=channel,
-                spend_column=channel,
-                response_unit_column=None if response_col == "(none)" else response_col,
-                unit_type=None if unit_type == "(none)" else unit_type,
-                cost_basis=None if cost_basis == "(none)" else cost_basis,
-                currency=currency or None,
-            ))
+            market_config.set_media_unit_config(
+                ChannelMediaUnitConfig(
+                    market=market,
+                    channel=channel,
+                    spend_column=channel,
+                    response_unit_column=None
+                    if response_col == "(none)"
+                    else response_col,
+                    unit_type=None if unit_type == "(none)" else unit_type,
+                    cost_basis=None if cost_basis == "(none)" else cost_basis,
+                    currency=currency or None,
+                )
+            )
             st.markdown("---")
 
 if st.button("Save optional media-unit mapping"):

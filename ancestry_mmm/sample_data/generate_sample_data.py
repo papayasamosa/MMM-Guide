@@ -29,31 +29,75 @@ MARKETS = {
 }
 
 CHANNELS = [
-    "TV_Brand", "TV_DR", "Search_Brand", "Search_NonBrand",
-    "Social", "Direct_Mail", "DNA_Media",
+    "TV_Brand",
+    "TV_DR",
+    "Search_Brand",
+    "Search_NonBrand",
+    "Social",
+    "Direct_Mail",
+    "DNA_Media",
 ]
 
 # Adstock decay (carryover) and Hill saturation params used to *simulate*
 # the "true" shared curves the model should be able to recover.
 TRUE_ADSTOCK = {
-    "TV_Brand": 0.75, "TV_DR": 0.55, "Search_Brand": 0.20, "Search_NonBrand": 0.30,
-    "Social": 0.35, "Direct_Mail": 0.45, "DNA_Media": 0.60,
+    "TV_Brand": 0.75,
+    "TV_DR": 0.55,
+    "Search_Brand": 0.20,
+    "Search_NonBrand": 0.30,
+    "Social": 0.35,
+    "Direct_Mail": 0.45,
+    "DNA_Media": 0.60,
 }
 TRUE_HILL_K = {  # half-saturation point, in weekly spend units (scaled per market below)
-    "TV_Brand": 45000, "TV_DR": 30000, "Search_Brand": 8000, "Search_NonBrand": 15000,
-    "Social": 12000, "Direct_Mail": 10000, "DNA_Media": 20000,
+    "TV_Brand": 45000,
+    "TV_DR": 30000,
+    "Search_Brand": 8000,
+    "Search_NonBrand": 15000,
+    "Social": 12000,
+    "Direct_Mail": 10000,
+    "DNA_Media": 20000,
 }
 TRUE_HILL_S = {
-    "TV_Brand": 1.3, "TV_DR": 1.1, "Search_Brand": 0.9, "Search_NonBrand": 1.0,
-    "Social": 1.0, "Direct_Mail": 1.1, "DNA_Media": 1.2,
+    "TV_Brand": 1.3,
+    "TV_DR": 1.1,
+    "Search_Brand": 0.9,
+    "Search_NonBrand": 1.0,
+    "Social": 1.0,
+    "Direct_Mail": 1.1,
+    "DNA_Media": 1.2,
 }
 
 # Segment-specific response multipliers relative to the shared curve (the
 # "partial pooling" target the hierarchical model should recover).
 SEGMENT_MULT = {
-    "New":            {"TV_Brand": 1.00, "TV_DR": 1.00, "Search_Brand": 0.70, "Search_NonBrand": 1.00, "Social": 1.00, "Direct_Mail": 0.60, "DNA_Media": 0.15},
-    "DNA_CrossSell":  {"TV_Brand": 0.30, "TV_DR": 0.25, "Search_Brand": 0.55, "Search_NonBrand": 0.35, "Social": 0.45, "Direct_Mail": 0.40, "DNA_Media": 1.00},
-    "Winback":        {"TV_Brand": 0.35, "TV_DR": 0.45, "Search_Brand": 0.60, "Search_NonBrand": 0.40, "Social": 0.30, "Direct_Mail": 0.75, "DNA_Media": 0.10},
+    "New": {
+        "TV_Brand": 1.00,
+        "TV_DR": 1.00,
+        "Search_Brand": 0.70,
+        "Search_NonBrand": 1.00,
+        "Social": 1.00,
+        "Direct_Mail": 0.60,
+        "DNA_Media": 0.15,
+    },
+    "DNA_CrossSell": {
+        "TV_Brand": 0.30,
+        "TV_DR": 0.25,
+        "Search_Brand": 0.55,
+        "Search_NonBrand": 0.35,
+        "Social": 0.45,
+        "Direct_Mail": 0.40,
+        "DNA_Media": 1.00,
+    },
+    "Winback": {
+        "TV_Brand": 0.35,
+        "TV_DR": 0.45,
+        "Search_Brand": 0.60,
+        "Search_NonBrand": 0.40,
+        "Social": 0.30,
+        "Direct_Mail": 0.75,
+        "DNA_Media": 0.10,
+    },
 }
 
 # DNA halo: DNA media also lifts the *New* segment a little (people see DNA
@@ -104,19 +148,27 @@ def geometric_adstock(x, decay):
 
 def hill(x, k, s):
     x = np.clip(x, 0, None)
-    return x ** s / (k ** s + x ** s)
+    return x**s / (k**s + x**s)
 
 
 def gifting_seasonality(dates: pd.DatetimeIndex) -> np.ndarray:
     """Christmas/New Year DNA gifting spike, Mother's/Father's Day, DNA Day, WDYTYA airing."""
     week_of_year = dates.isocalendar().week.to_numpy()
     signal = np.zeros(len(dates))
-    signal += 0.9 * np.exp(-0.5 * ((week_of_year - 51) / 1.5) ** 2)   # Christmas gifting
-    signal += 0.9 * np.exp(-0.5 * ((week_of_year - 1) / 1.5) ** 2)    # New Year "start my tree"
-    signal += 0.35 * np.exp(-0.5 * ((week_of_year - 11) / 1.2) ** 2)  # Mother's Day (UK, approx)
-    signal += 0.25 * np.exp(-0.5 * ((week_of_year - 24) / 1.2) ** 2)  # Father's Day (approx)
+    signal += 0.9 * np.exp(-0.5 * ((week_of_year - 51) / 1.5) ** 2)  # Christmas gifting
+    signal += 0.9 * np.exp(
+        -0.5 * ((week_of_year - 1) / 1.5) ** 2
+    )  # New Year "start my tree"
+    signal += 0.35 * np.exp(
+        -0.5 * ((week_of_year - 11) / 1.2) ** 2
+    )  # Mother's Day (UK, approx)
+    signal += 0.25 * np.exp(
+        -0.5 * ((week_of_year - 24) / 1.2) ** 2
+    )  # Father's Day (approx)
     signal += 0.30 * np.exp(-0.5 * ((week_of_year - 15) / 1.0) ** 2)  # DNA Day (25 Apr)
-    signal += 0.20 * np.exp(-0.5 * ((week_of_year - 40) / 1.5) ** 2)  # WDYTYA autumn TV run
+    signal += 0.20 * np.exp(
+        -0.5 * ((week_of_year - 40) / 1.5) ** 2
+    )  # WDYTYA autumn TV run
     return signal
 
 
@@ -130,8 +182,13 @@ def build_market(market: str, n_weeks: int, start_date: str, maturity: float) ->
     media = {}
     for ch in CHANNELS:
         base_level = {
-            "TV_Brand": 55000, "TV_DR": 35000, "Search_Brand": 12000, "Search_NonBrand": 22000,
-            "Social": 18000, "Direct_Mail": 15000, "DNA_Media": 25000,
+            "TV_Brand": 55000,
+            "TV_DR": 35000,
+            "Search_Brand": 12000,
+            "Search_NonBrand": 22000,
+            "Social": 18000,
+            "Direct_Mail": 15000,
+            "DNA_Media": 25000,
         }[ch] * maturity
         flight = 0.5 + 0.5 * (0.4 + 0.6 * seasonality / seasonality.max())
         noise = rng.normal(1.0, 0.12, n_weeks).clip(0.5, 1.6)
@@ -143,12 +200,16 @@ def build_market(market: str, n_weeks: int, start_date: str, maturity: float) ->
         media[ch] = np.round(spend, 0)
 
     # --- controls
-    dna_kit_price = 79 + 20 * np.sin(np.linspace(0, 6, n_weeks)) + rng.normal(0, 2, n_weeks)
+    dna_kit_price = (
+        79 + 20 * np.sin(np.linspace(0, 6, n_weeks)) + rng.normal(0, 2, n_weeks)
+    )
     dna_kit_price = np.round(dna_kit_price.clip(39, 129), 2)
     new_promo = (rng.random(n_weeks) < 0.15).astype(float)
     winback_promo = (rng.random(n_weeks) < 0.20).astype(float)
     dna_promo = ((seasonality > 0.5) | (rng.random(n_weeks) < 0.10)).astype(float)
-    consumer_confidence = 100 + 5 * np.sin(np.linspace(0, 4, n_weeks)) + rng.normal(0, 1.5, n_weeks)
+    consumer_confidence = (
+        100 + 5 * np.sin(np.linspace(0, 4, n_weeks)) + rng.normal(0, 1.5, n_weeks)
+    )
 
     # --- adstock + saturation per channel (shared "true" curve, market-scaled K)
     adstocked = {}
@@ -168,14 +229,27 @@ def build_market(market: str, n_weeks: int, start_date: str, maturity: float) ->
         if seg == "New":
             media_effect += DNA_HALO_ON_NEW * saturated["DNA_Media"]
 
-        promo_flag = {"New": new_promo, "DNA_CrossSell": dna_promo, "Winback": winback_promo}[seg]
+        promo_flag = {
+            "New": new_promo,
+            "DNA_CrossSell": dna_promo,
+            "Winback": winback_promo,
+        }[seg]
         promo_lift = 1 + PROMO_SENSITIVITY[seg] * promo_flag
 
         price_effect = 1.0
         if seg == "DNA_CrossSell":
             price_effect = 1 - 0.006 * (dna_kit_price - dna_kit_price.mean())
 
-        baseline = BASELINE_GSA[seg] * maturity * (1 + trend) * (1 + 0.5 * seasonality if seg == "DNA_CrossSell" else 1 + 0.15 * seasonality)
+        baseline = (
+            BASELINE_GSA[seg]
+            * maturity
+            * (1 + trend)
+            * (
+                1 + 0.5 * seasonality
+                if seg == "DNA_CrossSell"
+                else 1 + 0.15 * seasonality
+            )
+        )
         mean_gsa = baseline * (1 + media_effect) * promo_lift * price_effect
         mean_gsa = np.clip(mean_gsa, 5, None)
 
@@ -192,30 +266,43 @@ def build_market(market: str, n_weeks: int, start_date: str, maturity: float) ->
         media_effect = DNA_KIT_MEDIA_MULT[dna_seg] * saturated["DNA_Media"]
         promo_lift = 1 + DNA_KIT_PROMO_SENSITIVITY[dna_seg] * dna_promo
         price_effect = 1 + DNA_KIT_PRICE_COEF * (dna_kit_price - dna_kit_price.mean())
-        baseline = DNA_KIT_BASELINE[dna_seg] * maturity * (1 + trend) * (1 + DNA_KIT_SEASONALITY_WEIGHT * seasonality)
-        mean_kits = np.clip(baseline * (1 + media_effect) * promo_lift * price_effect, 5, None)
+        baseline = (
+            DNA_KIT_BASELINE[dna_seg]
+            * maturity
+            * (1 + trend)
+            * (1 + DNA_KIT_SEASONALITY_WEIGHT * seasonality)
+        )
+        mean_kits = np.clip(
+            baseline * (1 + media_effect) * promo_lift * price_effect, 5, None
+        )
 
         dispersion = 20.0
         p = dispersion / (dispersion + mean_kits)
         dna_kit_outcomes[dna_seg] = rng.negative_binomial(dispersion, p)
 
     media_df = pd.DataFrame({"date": dates, "market": market, **media})
-    outcomes_df = pd.DataFrame({
-        "date": dates, "market": market,
-        "GSA_New": outcomes["New"],
-        "GSA_DNA_CrossSell": outcomes["DNA_CrossSell"],
-        "GSA_Winback": outcomes["Winback"],
-        "DNA_Kit_New_Customer": dna_kit_outcomes["New Customer"],
-        "DNA_Kit_Existing_FH_Customer": dna_kit_outcomes["Existing FH Customer"],
-    })
-    controls_df = pd.DataFrame({
-        "date": dates, "market": market,
-        "DNA_Kit_Price": dna_kit_price,
-        "Promo_New": new_promo,
-        "Promo_DNA": dna_promo,
-        "Promo_Winback": winback_promo,
-        "Consumer_Confidence": np.round(consumer_confidence, 1),
-    })
+    outcomes_df = pd.DataFrame(
+        {
+            "date": dates,
+            "market": market,
+            "GSA_New": outcomes["New"],
+            "GSA_DNA_CrossSell": outcomes["DNA_CrossSell"],
+            "GSA_Winback": outcomes["Winback"],
+            "DNA_Kit_New_Customer": dna_kit_outcomes["New Customer"],
+            "DNA_Kit_Existing_FH_Customer": dna_kit_outcomes["Existing FH Customer"],
+        }
+    )
+    controls_df = pd.DataFrame(
+        {
+            "date": dates,
+            "market": market,
+            "DNA_Kit_Price": dna_kit_price,
+            "Promo_New": new_promo,
+            "Promo_DNA": dna_promo,
+            "Promo_Winback": winback_promo,
+            "Consumer_Confidence": np.round(consumer_confidence, 1),
+        }
+    )
     return {"media": media_df, "outcomes": outcomes_df, "controls": controls_df}
 
 

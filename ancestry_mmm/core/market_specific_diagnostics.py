@@ -26,20 +26,24 @@ from .models import compute_model_diagnostics
 
 
 def in_sample_fit_market_specific(
-    frame: Dict, meta: FHModelMeta, params: FHMarketSpecificPosteriorParams,
+    frame: Dict,
+    meta: FHModelMeta,
+    params: FHMarketSpecificPosteriorParams,
 ) -> pd.DataFrame:
     """R-squared and MAPE per outcome_id - Model C equivalent of core.diagnostics.in_sample_fit."""
     mu = predict_mu_market_specific(frame, meta, params)
     Y = frame["Y"]
     rows = []
     for i, oid in enumerate(meta.outcome_ids):
-        rows.append({
-            "outcome_id": oid,
-            "r_squared": _r_squared(Y[:, i], mu[:, i]),
-            "mape_pct": _mape(Y[:, i], mu[:, i]),
-            "actual_mean": float(Y[:, i].mean()),
-            "predicted_mean": float(mu[:, i].mean()),
-        })
+        rows.append(
+            {
+                "outcome_id": oid,
+                "r_squared": _r_squared(Y[:, i], mu[:, i]),
+                "mape_pct": _mape(Y[:, i], mu[:, i]),
+                "actual_mean": float(Y[:, i].mean()),
+                "predicted_mean": float(mu[:, i].mean()),
+            }
+        )
     return pd.DataFrame(rows)
 
 
@@ -55,8 +59,10 @@ def curve_plausibility_checks_market_specific(
     roi_bounds = roi_bounds or {}
     issues: List[Dict[str, str]] = []
 
-    K_mean = trace.posterior["hill_K"].mean(dim=["chain", "draw"])   # (market, channel)
-    beta_mean = trace.posterior["beta"].mean(dim=["chain", "draw"])  # (market, outcome, channel)
+    K_mean = trace.posterior["hill_K"].mean(dim=["chain", "draw"])  # (market, channel)
+    beta_mean = trace.posterior["beta"].mean(
+        dim=["chain", "draw"]
+    )  # (market, outcome, channel)
     beta_std = trace.posterior["beta"].std(dim=["chain", "draw"])
 
     markets = frame["markets"]
@@ -69,55 +75,71 @@ def curve_plausibility_checks_market_specific(
             k_val = float(K_mean.sel(market=market, channel=ch).values)
 
             if spend_max > 0 and k_val > spend_max * 3:
-                issues.append({
-                    "level": "warning",
-                    "channel": ch,
-                    "message": f"[{market}] Half-saturation point for '{ch}' (K={k_val:,.0f}) is far "
-                               f"above the highest observed spend in this market ({spend_max:,.0f}) - "
-                               "the saturation curve is essentially unidentified in the observed spend "
-                               "range for this market; treat as ~linear.",
-                })
-            if spend_nonzero_min and k_val < spend_nonzero_min / 3:
-                issues.append({
-                    "level": "warning",
-                    "channel": ch,
-                    "message": f"[{market}] Half-saturation point for '{ch}' (K={k_val:,.0f}) is far "
-                               f"below the lowest observed non-zero spend in this market "
-                               f"({spend_nonzero_min:,.0f}) - the channel looks fully saturated across "
-                               "this market's whole observed range.",
-                })
-
-            for oid in meta.outcome_ids:
-                b_mean = float(beta_mean.sel(market=market, outcome=oid, channel=ch).values)
-                b_std = float(beta_std.sel(market=market, outcome=oid, channel=ch).values)
-                if b_mean > 0 and b_std / b_mean > 1.0:
-                    issues.append({
+                issues.append(
+                    {
                         "level": "warning",
                         "channel": ch,
-                        "message": f"[{market}] '{ch}' effect on outcome '{oid}' has high relative "
-                                   f"uncertainty (std/mean = {b_std / b_mean:.1f}) - treat the point "
-                                   "estimate cautiously; this market may have insufficient local "
-                                   "evidence (see docs/market_hierarchy.md section 4).",
-                    })
+                        "message": f"[{market}] Half-saturation point for '{ch}' (K={k_val:,.0f}) is far "
+                        f"above the highest observed spend in this market ({spend_max:,.0f}) - "
+                        "the saturation curve is essentially unidentified in the observed spend "
+                        "range for this market; treat as ~linear.",
+                    }
+                )
+            if spend_nonzero_min and k_val < spend_nonzero_min / 3:
+                issues.append(
+                    {
+                        "level": "warning",
+                        "channel": ch,
+                        "message": f"[{market}] Half-saturation point for '{ch}' (K={k_val:,.0f}) is far "
+                        f"below the lowest observed non-zero spend in this market "
+                        f"({spend_nonzero_min:,.0f}) - the channel looks fully saturated across "
+                        "this market's whole observed range.",
+                    }
+                )
+
+            for oid in meta.outcome_ids:
+                b_mean = float(
+                    beta_mean.sel(market=market, outcome=oid, channel=ch).values
+                )
+                b_std = float(
+                    beta_std.sel(market=market, outcome=oid, channel=ch).values
+                )
+                if b_mean > 0 and b_std / b_mean > 1.0:
+                    issues.append(
+                        {
+                            "level": "warning",
+                            "channel": ch,
+                            "message": f"[{market}] '{ch}' effect on outcome '{oid}' has high relative "
+                            f"uncertainty (std/mean = {b_std / b_mean:.1f}) - treat the point "
+                            "estimate cautiously; this market may have insufficient local "
+                            "evidence (see docs/market_hierarchy.md section 4).",
+                        }
+                    )
 
             if ch in roi_bounds:
                 lo, hi = roi_bounds[ch]
                 S = float(trace.posterior["hill_S"].sel(channel=ch).mean().values)
                 mean_spend = spend[spend > 0].mean() if (spend > 0).any() else 1.0
-                slope = (S * (mean_spend ** (S - 1)) * (k_val ** S)) / ((k_val ** S + mean_spend ** S) ** 2)
+                slope = (S * (mean_spend ** (S - 1)) * (k_val**S)) / (
+                    (k_val**S + mean_spend**S) ** 2
+                )
                 beta_sum = float(
-                    trace.posterior["beta"].sel(market=market, channel=ch)
-                    .mean(dim=["chain", "draw", "outcome"]).values
+                    trace.posterior["beta"]
+                    .sel(market=market, channel=ch)
+                    .mean(dim=["chain", "draw", "outcome"])
+                    .values
                 )
                 approx_roi = slope * beta_sum
                 if not (lo <= approx_roi <= hi):
-                    issues.append({
-                        "level": "warning",
-                        "channel": ch,
-                        "message": f"[{market}] Approximate marginal ROI for '{ch}' ({approx_roi:.2f}) "
-                                   f"falls outside the business-expected range [{lo}, {hi}] - worth a "
-                                   "sense-check against known channel economics for this market.",
-                    })
+                    issues.append(
+                        {
+                            "level": "warning",
+                            "channel": ch,
+                            "message": f"[{market}] Approximate marginal ROI for '{ch}' ({approx_roi:.2f}) "
+                            f"falls outside the business-expected range [{lo}, {hi}] - worth a "
+                            "sense-check against known channel economics for this market.",
+                        }
+                    )
 
     return issues
 
@@ -134,7 +156,13 @@ def compute_scorecard_market_specific(
     params = extract_market_specific_posterior_params(trace, meta)
     return {
         "convergence": compute_model_diagnostics(trace),
-        "in_sample_fit": in_sample_fit_market_specific(frame, meta, params).to_dict(orient="records"),
-        "ppc_coverage": posterior_predictive_coverage(trace, frame, meta).to_dict(orient="records"),
-        "plausibility_flags": curve_plausibility_checks_market_specific(trace, meta, frame, roi_bounds),
+        "in_sample_fit": in_sample_fit_market_specific(frame, meta, params).to_dict(
+            orient="records"
+        ),
+        "ppc_coverage": posterior_predictive_coverage(trace, frame, meta).to_dict(
+            orient="records"
+        ),
+        "plausibility_flags": curve_plausibility_checks_market_specific(
+            trace, meta, frame, roi_bounds
+        ),
     }

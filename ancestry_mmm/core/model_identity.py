@@ -32,6 +32,7 @@ class ModelIdentity:
     posterior_fingerprint : str
         SHA-256 fingerprint of the fitted posterior.
     """
+
     model_run_id: str
     data_fingerprint: str
     model_spec_fingerprint: str
@@ -49,12 +50,14 @@ class ModelIdentity:
 
     def is_complete(self) -> bool:
         """True if every field is non-blank."""
-        return all([
-            self.model_run_id and self.model_run_id.strip(),
-            self.data_fingerprint and self.data_fingerprint.strip(),
-            self.model_spec_fingerprint and self.model_spec_fingerprint.strip(),
-            self.posterior_fingerprint and self.posterior_fingerprint.strip(),
-        ])
+        return all(
+            [
+                self.model_run_id and self.model_run_id.strip(),
+                self.data_fingerprint and self.data_fingerprint.strip(),
+                self.model_spec_fingerprint and self.model_spec_fingerprint.strip(),
+                self.posterior_fingerprint and self.posterior_fingerprint.strip(),
+            ]
+        )
 
     def fingerprint(self) -> str:
         """Deterministic SHA-256 fingerprint of this identity."""
@@ -64,7 +67,9 @@ class ModelIdentity:
             "model_spec_fingerprint": self.model_spec_fingerprint,
             "posterior_fingerprint": self.posterior_fingerprint,
         }
-        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+        encoded = json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), default=str
+        ).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()
 
     def matches(self, other: ModelIdentity) -> bool:
@@ -91,6 +96,11 @@ class ModelIdentity:
 
     @classmethod
     def from_dict(cls, d: dict) -> ModelIdentity:
-        known = {"model_run_id", "data_fingerprint", "model_spec_fingerprint", "posterior_fingerprint"}
+        known = {
+            "model_run_id",
+            "data_fingerprint",
+            "model_spec_fingerprint",
+            "posterior_fingerprint",
+        }
         payload = {k: v for k, v in d.items() if k in known}
         return cls(**payload)

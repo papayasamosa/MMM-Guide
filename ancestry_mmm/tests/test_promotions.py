@@ -19,8 +19,13 @@ from ancestry_mmm.data.pipeline import TransformStep, apply_pipeline
 
 def _event(**overrides) -> PromotionEvent:
     defaults = dict(
-        event_name="Christmas Sale", start_date="2024-12-01", end_date="2024-12-25",
-        segment="New Customer", discount_depth=0.2, sale_price=None, intensity=1.0,
+        event_name="Christmas Sale",
+        start_date="2024-12-01",
+        end_date="2024-12-25",
+        segment="New Customer",
+        discount_depth=0.2,
+        sale_price=None,
+        intensity=1.0,
     )
     defaults.update(overrides)
     return PromotionEvent(**defaults)
@@ -79,26 +84,45 @@ class TestValidatePromotionEvents:
 
 
 class TestPromotionWeeklySeries:
-    DATES = pd.date_range("2024-11-25", periods=6, freq="W-MON")  # 2024-11-25 .. 2024-12-30
+    DATES = pd.date_range(
+        "2024-11-25", periods=6, freq="W-MON"
+    )  # 2024-11-25 .. 2024-12-30
 
     def test_zero_outside_the_event_window(self):
         series = promotion_weekly_series([_event()], self.DATES, "New Customer")
         assert series[0] == 0.0  # 2024-11-25, before the event starts
 
     def test_intensity_inside_the_event_window(self):
-        series = promotion_weekly_series([_event(intensity=0.5)], self.DATES, "New Customer")
-        in_window = (self.DATES >= pd.Timestamp("2024-12-01")) & (self.DATES <= pd.Timestamp("2024-12-25"))
+        series = promotion_weekly_series(
+            [_event(intensity=0.5)], self.DATES, "New Customer"
+        )
+        in_window = (self.DATES >= pd.Timestamp("2024-12-01")) & (
+            self.DATES <= pd.Timestamp("2024-12-25")
+        )
         assert (series[in_window] == 0.5).all()
 
     def test_only_returns_series_for_the_requested_segment(self):
-        events = [_event(segment="New Customer"), _event(segment="Existing FH Customer", intensity=2.0)]
+        events = [
+            _event(segment="New Customer"),
+            _event(segment="Existing FH Customer", intensity=2.0),
+        ]
         series = promotion_weekly_series(events, self.DATES, "Existing FH Customer")
         assert series.max() == 2.0
 
     def test_overlapping_events_for_the_same_segment_compound(self):
         events = [
-            _event(event_name="A", intensity=1.0, start_date="2024-12-01", end_date="2024-12-31"),
-            _event(event_name="B", intensity=0.5, start_date="2024-12-08", end_date="2024-12-31"),
+            _event(
+                event_name="A",
+                intensity=1.0,
+                start_date="2024-12-01",
+                end_date="2024-12-31",
+            ),
+            _event(
+                event_name="B",
+                intensity=0.5,
+                start_date="2024-12-08",
+                end_date="2024-12-31",
+            ),
         ]
         series = promotion_weekly_series(events, self.DATES, "New Customer")
         # 2024-12-09 falls inside both events' windows
@@ -112,27 +136,38 @@ class TestPromotionWeeklySeries:
 
 class TestApplyPromotionEventsToFrame:
     def test_adds_one_column_per_segment_with_events(self):
-        df = pd.DataFrame({"date": pd.date_range("2024-11-25", periods=6, freq="W-MON")})
-        events = [_event(segment="New Customer"), _event(segment="Existing FH Customer")]
+        df = pd.DataFrame(
+            {"date": pd.date_range("2024-11-25", periods=6, freq="W-MON")}
+        )
+        events = [
+            _event(segment="New Customer"),
+            _event(segment="Existing FH Customer"),
+        ]
         out, column_by_segment = apply_promotion_events_to_frame(df, "date", events)
         assert set(column_by_segment) == {"New Customer", "Existing FH Customer"}
         for col in column_by_segment.values():
             assert col in out.columns
 
     def test_does_not_mutate_the_input_dataframe(self):
-        df = pd.DataFrame({"date": pd.date_range("2024-11-25", periods=6, freq="W-MON")})
+        df = pd.DataFrame(
+            {"date": pd.date_range("2024-11-25", periods=6, freq="W-MON")}
+        )
         original_columns = list(df.columns)
         apply_promotion_events_to_frame(df, "date", [_event()])
         assert list(df.columns) == original_columns
 
     def test_no_events_gives_no_derived_columns(self):
-        df = pd.DataFrame({"date": pd.date_range("2024-11-25", periods=6, freq="W-MON")})
+        df = pd.DataFrame(
+            {"date": pd.date_range("2024-11-25", periods=6, freq="W-MON")}
+        )
         out, column_by_segment = apply_promotion_events_to_frame(df, "date", [])
         assert column_by_segment == {}
         assert list(out.columns) == list(df.columns)
 
     def test_derived_column_values_match_promotion_weekly_series(self):
-        df = pd.DataFrame({"date": pd.date_range("2024-11-25", periods=6, freq="W-MON")})
+        df = pd.DataFrame(
+            {"date": pd.date_range("2024-11-25", periods=6, freq="W-MON")}
+        )
         events = [_event(segment="New Customer", intensity=0.7)]
         out, column_by_segment = apply_promotion_events_to_frame(df, "date", events)
         expected = promotion_weekly_series(events, df["date"], "New Customer")
@@ -146,7 +181,9 @@ class TestPromotionEventsToDataframe:
         assert "event_name" in df.columns
 
     def test_has_one_row_per_event(self):
-        df = promotion_events_to_dataframe([_event(), _event(event_name="New Year Sale")])
+        df = promotion_events_to_dataframe(
+            [_event(), _event(event_name="New Year Sale")]
+        )
         assert len(df) == 2
         assert set(df["event_name"]) == {"Christmas Sale", "New Year Sale"}
 
@@ -191,7 +228,10 @@ class TestPromotionEventsToTransformSteps:
 
 class TestTransformStepsToPromotionEvents:
     def test_round_trips_the_event_list(self):
-        events = [_event(), _event(event_name="New Year Sale", segment="Existing FH Customer")]
+        events = [
+            _event(),
+            _event(event_name="New Year Sale", segment="Existing FH Customer"),
+        ]
         steps = promotion_events_to_transform_steps(events, date_col="date")
         recovered = transform_steps_to_promotion_events(steps)
         assert recovered == events
@@ -199,7 +239,15 @@ class TestTransformStepsToPromotionEvents:
     def test_ignores_non_promotion_event_steps(self):
         events = [_event()]
         steps = promotion_events_to_transform_steps(events, date_col="date")
-        other_step = TransformStep(op="event_flag", params={"date_col": "date", "new_column": "x", "start": "2024-01-01", "end": "2024-01-02"})
+        other_step = TransformStep(
+            op="event_flag",
+            params={
+                "date_col": "date",
+                "new_column": "x",
+                "start": "2024-01-01",
+                "end": "2024-01-02",
+            },
+        )
         recovered = transform_steps_to_promotion_events([other_step] + steps)
         assert recovered == events
 
@@ -216,12 +264,18 @@ class TestResaveReplacesStalePromotionEventSteps:
     accumulating duplicate/stale steps forever."""
 
     def test_other_step_types_survive_a_resave(self):
-        other_step = TransformStep(op="calculated_column", params={"new_column": "x", "expression": "1"})
-        old_promo_steps = promotion_events_to_transform_steps([_event()], date_col="date")
+        other_step = TransformStep(
+            op="calculated_column", params={"new_column": "x", "expression": "1"}
+        )
+        old_promo_steps = promotion_events_to_transform_steps(
+            [_event()], date_col="date"
+        )
         existing = [other_step] + old_promo_steps
 
         non_promo = [s for s in existing if s.op != PROMOTION_EVENT_OP]
-        resaved = non_promo + promotion_events_to_transform_steps([_event(event_name="Updated")], date_col="date")
+        resaved = non_promo + promotion_events_to_transform_steps(
+            [_event(event_name="Updated")], date_col="date"
+        )
 
         assert other_step in resaved
         assert len([s for s in resaved if s.op == PROMOTION_EVENT_OP]) == 1
@@ -239,11 +293,30 @@ class TestPromotionEventPipelineReplay:
     directly - the whole point of encoding events as TransformSteps."""
 
     def test_replay_reproduces_apply_promotion_events_to_frame(self):
-        df = pd.DataFrame({"date": pd.date_range("2024-11-25", periods=8, freq="W-MON")})
+        df = pd.DataFrame(
+            {"date": pd.date_range("2024-11-25", periods=8, freq="W-MON")}
+        )
         events = [
-            _event(segment="New Customer", intensity=1.0, start_date="2024-12-01", end_date="2025-01-05"),
-            _event(event_name="Boxing Day", segment="New Customer", intensity=0.5, start_date="2024-12-26", end_date="2025-01-05"),
-            _event(event_name="FH Sale", segment="Existing FH Customer", intensity=0.3, start_date="2024-12-01", end_date="2024-12-31"),
+            _event(
+                segment="New Customer",
+                intensity=1.0,
+                start_date="2024-12-01",
+                end_date="2025-01-05",
+            ),
+            _event(
+                event_name="Boxing Day",
+                segment="New Customer",
+                intensity=0.5,
+                start_date="2024-12-26",
+                end_date="2025-01-05",
+            ),
+            _event(
+                event_name="FH Sale",
+                segment="Existing FH Customer",
+                intensity=0.3,
+                start_date="2024-12-01",
+                end_date="2024-12-31",
+            ),
         ]
 
         direct, column_by_segment = apply_promotion_events_to_frame(df, "date", events)
@@ -259,8 +332,17 @@ class TestPromotionEventPipelineReplay:
         # date range) refreshed raw frame must reproduce the same promo
         # series - the whole point of a *replayable* step, vs. a one-way
         # mutation baked into a specific transformed_data snapshot.
-        df = pd.DataFrame({"date": pd.date_range("2024-11-25", periods=6, freq="W-MON"), "spend": [1.0] * 6})
-        events = [_event(segment="New Customer", start_date="2024-12-01", end_date="2024-12-31")]
+        df = pd.DataFrame(
+            {
+                "date": pd.date_range("2024-11-25", periods=6, freq="W-MON"),
+                "spend": [1.0] * 6,
+            }
+        )
+        events = [
+            _event(
+                segment="New Customer", start_date="2024-12-01", end_date="2024-12-31"
+            )
+        ]
         steps = promotion_events_to_transform_steps(events, date_col="date")
 
         result_1 = apply_pipeline(df, steps)
@@ -268,4 +350,7 @@ class TestPromotionEventPipelineReplay:
         df_refreshed["spend"] = df_refreshed["spend"] * 100
         result_2 = apply_pipeline(df_refreshed, steps)
 
-        assert result_1["_promo_event_New Customer"].tolist() == result_2["_promo_event_New Customer"].tolist()
+        assert (
+            result_1["_promo_event_New Customer"].tolist()
+            == result_2["_promo_event_New Customer"].tolist()
+        )

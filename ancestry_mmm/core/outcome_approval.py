@@ -22,7 +22,12 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
-from .outcomes import OutcomeDefinition, AGGREGATION_TYPES, DATE_BASIS_VALUES, METRIC_REGISTRY
+from .outcomes import (
+    OutcomeDefinition,
+    AGGREGATION_TYPES,
+    DATE_BASIS_VALUES,
+    METRIC_REGISTRY,
+)
 
 # ---------------------------------------------------------------------------
 # G2A.7a.2 date normalisation (REQ-OUT-002 section 7.4)
@@ -163,8 +168,7 @@ class OutcomeApproval:
         for use in self.allowed_uses:
             if use not in OUTCOME_USES:
                 raise ValueError(
-                    f"Unknown outcome use {use!r}; "
-                    f"must be one of {OUTCOME_USES}"
+                    f"Unknown outcome use {use!r}; must be one of {OUTCOME_USES}"
                 )
 
     def is_active(self, as_of: Optional[str] = None) -> bool:
@@ -280,7 +284,13 @@ class OutcomeApproval:
     def from_dict(cls, d: dict) -> "OutcomeApproval":
         known = set(cls.__dataclass_fields__)
         payload = {k: v for k, v in d.items() if k in known}
-        for tuple_field in ("allowed_uses", "market_scope", "product_scope", "segment_scope", "conditions"):
+        for tuple_field in (
+            "allowed_uses",
+            "market_scope",
+            "product_scope",
+            "segment_scope",
+            "conditions",
+        ):
             if tuple_field in payload and isinstance(payload[tuple_field], list):
                 payload[tuple_field] = tuple(payload[tuple_field])
         return cls(**payload)
@@ -325,7 +335,9 @@ def fingerprint_outcome_definition(outcome: OutcomeDefinition) -> str:
         elif isinstance(value, tuple):
             value = sorted(str(v) for v in value)
         payload[field_name] = value
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    encoded = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), default=str
+    ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 
@@ -376,13 +388,24 @@ def validate_outcome_definition_for_approval(outcome: OutcomeDefinition) -> List
                 f"Required definition field '{field_name}' is missing or blank"
             )
     # date_basis: blank is invalid (must be explicit or "not_applicable")
-    if outcome.date_basis is None or (isinstance(outcome.date_basis, str) and not outcome.date_basis.strip()):
-        issues.append("date_basis must be an explicit value from DATE_BASIS_VALUES or 'not_applicable'")
-    elif outcome.date_basis not in DATE_BASIS_VALUES and outcome.date_basis != "not_applicable":
-        issues.append(f"date_basis '{outcome.date_basis}' is not a recognised value; must be one of {DATE_BASIS_VALUES} or 'not_applicable'")
+    if outcome.date_basis is None or (
+        isinstance(outcome.date_basis, str) and not outcome.date_basis.strip()
+    ):
+        issues.append(
+            "date_basis must be an explicit value from DATE_BASIS_VALUES or 'not_applicable'"
+        )
+    elif (
+        outcome.date_basis not in DATE_BASIS_VALUES
+        and outcome.date_basis != "not_applicable"
+    ):
+        issues.append(
+            f"date_basis '{outcome.date_basis}' is not a recognised value; must be one of {DATE_BASIS_VALUES} or 'not_applicable'"
+        )
     # aggregation_type vocabulary
     if outcome.aggregation_type and outcome.aggregation_type not in AGGREGATION_TYPES:
-        issues.append(f"aggregation_type '{outcome.aggregation_type}' is not one of {AGGREGATION_TYPES}")
+        issues.append(
+            f"aggregation_type '{outcome.aggregation_type}' is not one of {AGGREGATION_TYPES}"
+        )
     # Custom metric must have explicit unit
     if outcome.metric_key == "custom" and not outcome.unit:
         issues.append("Custom-metric outcomes must have an explicit unit set")
@@ -402,7 +425,9 @@ def validate_outcome_definition_for_approval(outcome: OutcomeDefinition) -> List
     return issues
 
 
-def validate_outcome_for_requested_use(outcome: OutcomeDefinition, requested_use: str) -> List[str]:
+def validate_outcome_for_requested_use(
+    outcome: OutcomeDefinition, requested_use: str
+) -> List[str]:
     """Requested-use-aware metric restrictions, separate from definition
     completeness (G2A.7a.1, REQ-OUT-002 fix). A metric invalid for one use
     (a rate metric as an optimisation target or a CPA denominator) must not
@@ -470,7 +495,9 @@ def _validate_approved_record(approval: OutcomeApproval) -> List[str]:
         try:
             _normalise_datetime(approval.approved_at)
         except (ValueError, TypeError):
-            issues.append(f"approved_at '{approval.approved_at}' is not a valid ISO date")
+            issues.append(
+                f"approved_at '{approval.approved_at}' is not a valid ISO date"
+            )
     if approval.expires_at is not None:
         try:
             _normalise_datetime(approval.expires_at)
@@ -664,7 +691,8 @@ def find_matching_outcome_approval(
     if validate_outcome_for_requested_use(outcome, requested_use):
         return None
     candidates = [
-        a for a in approvals
+        a
+        for a in approvals
         if a.outcome_id == outcome.outcome_id
         and a.status == "approved"
         and not _validate_approved_record(a)
@@ -672,7 +700,9 @@ def find_matching_outcome_approval(
         and a.definition_fingerprint == fingerprint_outcome_definition(outcome)
         and a.allows_use(requested_use)
         and a.matches_scope(
-            market=market, product=product, segment=segment,
+            market=market,
+            product=product,
+            segment=segment,
             require_explicit_scoped_dimensions=True,
         )
     ]
@@ -708,7 +738,10 @@ def approved_outcome_ids_for_use(
     result: List[str] = []
     for outcome in outcomes:
         if find_matching_outcome_approval(
-            outcome, approvals, requested_use, **scope,
+            outcome,
+            approvals,
+            requested_use,
+            **scope,
         ):
             result.append(outcome.outcome_id)
     return result

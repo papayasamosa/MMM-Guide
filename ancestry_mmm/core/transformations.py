@@ -86,7 +86,7 @@ def hill_function(
     Returns:
         Saturated values in [0, 1] range.
     """
-    return x ** S / (K ** S + x ** S)
+    return x**S / (K**S + x**S)
 
 
 def hill_function_scaled(
@@ -149,6 +149,7 @@ def inverse_log_transform(
 
 # PyTensor versions for use in PyMC models
 
+
 def pt_geometric_adstock(
     x: pt.TensorVariable,
     decay_rate: pt.TensorVariable,
@@ -159,6 +160,7 @@ def pt_geometric_adstock(
 
     Uses scan for the recursive computation.
     """
+
     def step(x_t, adstock_prev, decay):
         return x_t + decay * adstock_prev
 
@@ -189,6 +191,7 @@ def pt_geometric_adstock_matrix(
         X: Spend tensor, shape (n_periods, n_channels)
         decay_rates: Per-channel decay rate tensor, shape (n_channels,)
     """
+
     def step(x_t, adstock_prev, decay):
         return x_t + decay * adstock_prev
 
@@ -221,4 +224,4 @@ def pt_hill_function(
     negligible (spend is in the thousands) but keeps autodiff finite.
     """
     x_safe = pt.maximum(x, epsilon)
-    return x_safe ** S / (K ** S + x_safe ** S)
+    return x_safe**S / (K**S + x_safe**S)

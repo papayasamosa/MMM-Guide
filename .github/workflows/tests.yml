@@ -6,7 +6,7 @@ on:
   push:
     branches: [main]
   schedule:
-    # Weekly Monday morning MCMC recovery run
+    # Weekly Monday morning deterministic attribution recovery run
     - cron: "0 6 * * 1"
   workflow_dispatch:
     inputs:
@@ -16,6 +16,30 @@ on:
         default: "Manual trigger"
 
 jobs:
+  # ── Early compile and import check ─────────────────────────────────
+  compile-and-import:
+    name: Compile + Import
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - run: uv sync --locked
+      - name: Compile package
+        run: uv run python -m compileall -q ancestry_mmm
+      - name: Import critical modules
+        run: |
+          uv run python -c "import ancestry_mmm.core.validation_policy"
+          uv run python -c "import ancestry_mmm.application.validation_service"
+          uv run python -c "import ancestry_mmm.core.optimization"
+          uv run python -c "import ancestry_mmm.core.planning_governance"
+          uv run python -c "import ancestry_mmm.application.scenario_service"
+          uv run python -c "import ancestry_mmm.core.persistence"
+          uv run python -c "import ancestry_mmm.core.model_identity"
+
   # ── Python 3.11 unit/integration ──────────────────────────────────
   py311-tests:
     name: Python 3.11 tests
