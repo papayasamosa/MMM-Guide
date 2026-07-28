@@ -98,6 +98,14 @@ class ValidationService:
             errors.append("No posterior trace provided for validation.")
             return ValidationServiceResult(errors=errors)
 
+        # --- Compute identity-dependent fingerprints once ---
+        identity_fp = (
+            v_input.model_identity.fingerprint()
+            if v_input.model_identity
+            else ""
+        )
+        diag_fp = v_input.diagnostic_artefact_fingerprint or ""
+
         # --- Evaluate each gate with identity binding ---
         for gate in policy.gates:
             try:
@@ -119,6 +127,8 @@ class ValidationService:
                         policy_id=policy.policy_id,
                         policy_version=policy.version,
                         gate_fingerprint=gate.fingerprint(),
+                        model_identity_fingerprint=identity_fp,
+                        diagnostic_artefact_fingerprint=diag_fp,
                     )
                 results.append(result)
             except Exception as exc:
@@ -129,7 +139,9 @@ class ValidationService:
             readiness = evaluate_approval_readiness(
                 results,
                 policy,
-                current_model_identity=v_input.model_identity,
+                v_input.model_identity,
+                diagnostic_artefact_id=v_input.diagnostic_artefact_id or "",
+                diagnostic_artefact_fingerprint=diag_fp,
                 waivers=v_input.waivers,
                 as_of=v_input.as_of,
             )

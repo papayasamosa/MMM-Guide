@@ -8,6 +8,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import pytest
 
+from ancestry_mmm.core.model_identity import ModelIdentity
 from ancestry_mmm.core.validation_policy import (
     ThresholdPolicy,
     ValidationGate,
@@ -16,6 +17,9 @@ from ancestry_mmm.core.validation_policy import (
     evaluate_approval_readiness,
     readiness_to_dict,
 )
+
+# Default ModelIdentity matching _make_result's identity fields
+_DEFAULT_IDENTITY = ModelIdentity("run-123", "data-abc", "spec-def", "post-ghi")
 
 
 # ---------------------------------------------------------------------------
@@ -321,7 +325,7 @@ class TestApprovalReadinessEvaluation:
             _make_result("backtest_mape", "pass", 20.0, "MAPE OK"),
             _make_result("divergences", "pass", 0, "No divergences"),
         ]
-        readiness = evaluate_approval_readiness(results, sample_policy)
+        readiness = evaluate_approval_readiness(results, sample_policy, _DEFAULT_IDENTITY)
         assert readiness.overall_ready is True
         assert len(readiness.blocking_failures) == 0
         assert len(readiness.missing_required_gates) == 0
@@ -335,7 +339,7 @@ class TestApprovalReadinessEvaluation:
             _make_result("backtest_mape", "pass", 20.0),
             _make_result("divergences", "pass", 0),
         ]
-        readiness = evaluate_approval_readiness(results, sample_policy)
+        readiness = evaluate_approval_readiness(results, sample_policy, _DEFAULT_IDENTITY)
         assert readiness.overall_ready is False
         assert "ppc_coverage" in readiness.missing_required_gates
 
@@ -347,7 +351,7 @@ class TestApprovalReadinessEvaluation:
             _make_result("backtest_mape", "pass", 20.0),
             _make_result("divergences", "pass", 0),
         ]
-        readiness = evaluate_approval_readiness(results, sample_policy)
+        readiness = evaluate_approval_readiness(results, sample_policy, _DEFAULT_IDENTITY)
         assert readiness.overall_ready is False
         assert len(readiness.blocking_failures) == 1
         assert readiness.blocking_failures[0].gate_name == "convergence_rhat"
@@ -361,7 +365,7 @@ class TestApprovalReadinessEvaluation:
             _make_result("backtest_mape", "review", 35.0, "MAPE elevated"),
             _make_result("divergences", "pass", 0),
         ]
-        readiness = evaluate_approval_readiness(results, sample_policy)
+        readiness = evaluate_approval_readiness(results, sample_policy, _DEFAULT_IDENTITY)
         assert readiness.overall_ready is True  # review doesn't block
         assert len(readiness.review_items) == 1
         assert readiness.review_items[0].gate_name == "backtest_mape"
@@ -373,7 +377,7 @@ class TestApprovalReadinessEvaluation:
             _make_result("convergence_rhat", "pass", 1.02),
         ]
         as_of = datetime(2026, 7, 1, tzinfo=timezone.utc)
-        readiness = evaluate_approval_readiness(results, expired_policy, as_of=as_of)
+        readiness = evaluate_approval_readiness(results, expired_policy, _DEFAULT_IDENTITY, as_of=as_of)
         assert readiness.overall_ready is False
 
     def test_stale_validation_artefact_blocks(self, sample_policy):
@@ -396,7 +400,7 @@ class TestApprovalReadinessEvaluation:
             _make_result("backtest_mape", "pass", 20.0),
             _make_result("divergences", "pass", 0),
         ]
-        readiness = evaluate_approval_readiness(results, sample_policy)
+        readiness = evaluate_approval_readiness(results, sample_policy, _DEFAULT_IDENTITY)
         # A stale result is treated as missing — convergence_rhat is required
         assert "convergence_rhat" in readiness.missing_required_gates
         assert readiness.overall_ready is False
@@ -419,7 +423,7 @@ class TestApprovalReadinessEvaluation:
                 gate_name="ppc_coverage",
             ),
         ]
-        readiness = evaluate_approval_readiness(results, sample_policy, waivers=waivers)
+        readiness = evaluate_approval_readiness(results, sample_policy, _DEFAULT_IDENTITY, waivers=waivers)
         assert readiness.overall_ready is True
         assert len(readiness.waivers_applied) == 1
 
@@ -440,7 +444,7 @@ class TestApprovalReadinessEvaluation:
                 gate_name="convergence_rhat",
             ),
         ]
-        readiness = evaluate_approval_readiness(results, sample_policy, waivers=waivers)
+        readiness = evaluate_approval_readiness(results, sample_policy, _DEFAULT_IDENTITY, waivers=waivers)
         # convergence_rhat is not waivable, so waiver doesn't apply
         assert readiness.overall_ready is False
         assert len(readiness.blocking_failures) == 1
@@ -453,13 +457,13 @@ class TestApprovalReadinessEvaluation:
             _make_result("backtest_mape", "pass", 20.0),
             _make_result("divergences", "fail", 5, "Divergences found"),
         ]
-        readiness = evaluate_approval_readiness(results, sample_policy)
+        readiness = evaluate_approval_readiness(results, sample_policy, _DEFAULT_IDENTITY)
         assert readiness.overall_ready is False
         assert len(readiness.blocking_failures) == 3
 
     def test_no_results_at_all(self, sample_policy):
         """With no results, all required gates are missing."""
-        readiness = evaluate_approval_readiness([], sample_policy)
+        readiness = evaluate_approval_readiness([], sample_policy, _DEFAULT_IDENTITY)
         assert readiness.overall_ready is False
         assert (
             len(readiness.missing_required_gates) == 3
@@ -486,7 +490,7 @@ class TestApprovalReadinessEvaluation:
         ]
         as_of = datetime(2026, 7, 1, tzinfo=timezone.utc)
         readiness = evaluate_approval_readiness(
-            results, sample_policy, waivers=waivers, as_of=as_of
+            results, sample_policy, _DEFAULT_IDENTITY, waivers=waivers, as_of=as_of
         )
         assert readiness.overall_ready is False
         assert len(readiness.waivers_applied) == 0  # expired waiver not applied
@@ -526,7 +530,7 @@ class TestApprovalReadinessEvaluation:
                 policy_version="1.0",
             ),
         ]
-        readiness = evaluate_approval_readiness(results, policy)
+        readiness = evaluate_approval_readiness(results, policy, _DEFAULT_IDENTITY)
         # The gate is evaluated normally (scope mismatch is not enforced
         # at gate level — policy scope governs which models it applies to)
         assert readiness.overall_ready is True
@@ -567,7 +571,7 @@ class TestApprovalReadinessEvaluation:
                 policy_version="1.0",
             ),
         ]
-        readiness = evaluate_approval_readiness(results, policy)
+        readiness = evaluate_approval_readiness(results, policy, _DEFAULT_IDENTITY)
         assert readiness.overall_ready is True  # review doesn't block
         assert len(readiness.review_items) == 1
         assert len(readiness.blocking_failures) == 0
@@ -586,7 +590,7 @@ class TestReadinessToDict:
             _make_result("backtest_mape", "pass", 20.0),
             _make_result("divergences", "pass", 0),
         ]
-        readiness = evaluate_approval_readiness(results, sample_policy)
+        readiness = evaluate_approval_readiness(results, sample_policy, _DEFAULT_IDENTITY)
         d = readiness_to_dict(readiness)
         assert isinstance(d, dict)
         assert d["overall_ready"] is True
@@ -600,7 +604,7 @@ class TestReadinessToDict:
             _make_result("backtest_mape", "pass", 20.0),
             _make_result("divergences", "pass", 0),
         ]
-        readiness = evaluate_approval_readiness(results, sample_policy)
+        readiness = evaluate_approval_readiness(results, sample_policy, _DEFAULT_IDENTITY)
         d = readiness_to_dict(readiness)
         assert len(d["blocking_failures"]) == 1
         assert d["blocking_failures"][0]["gate_name"] == "convergence_rhat"
@@ -622,7 +626,7 @@ class TestReadinessToDict:
                 gate_name="ppc_coverage",
             ),
         ]
-        readiness = evaluate_approval_readiness(results, sample_policy, waivers=waivers)
+        readiness = evaluate_approval_readiness(results, sample_policy, _DEFAULT_IDENTITY, waivers=waivers)
         d = readiness_to_dict(readiness)
         assert len(d["waivers_applied"]) == 1
         assert d["waivers_applied"][0]["waiver_id"] == "wv-001"
