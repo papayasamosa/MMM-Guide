@@ -41,7 +41,7 @@ from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, List, Optional
 
 if TYPE_CHECKING:
-    from .validation_policy import ApprovalReadiness
+    from .validation_policy import ApprovalReadiness, ThresholdPolicy
 
 
 class ApprovalMismatchError(RuntimeError):
@@ -148,6 +148,7 @@ def require_matching_approval(
     model_spec_fingerprint: str,
     posterior_fingerprint: str,
     approval_readiness: Optional["ApprovalReadiness"] = None,
+    current_policy: Optional["ThresholdPolicy"] = None,
 ) -> ModelApproval:
     """
     Raise ApprovalMismatchError unless `approval` is a ModelApproval that is
@@ -162,6 +163,9 @@ def require_matching_approval(
     ``overall_ready=True``, otherwise ``ValidationPolicyBlockedError`` is
     raised. When ``approval_readiness`` is provided but the approval does
     not reference a policy, the readiness is ignored (backward compatible).
+
+    PR 64A: When ``current_policy`` is provided, verifies the policy is
+    still active (not expired and not superseded) at the time of use.
     """
     # Lazy import to avoid circular dependency at module level
     from .validation_policy import ApprovalReadiness as _ApprovalReadiness
@@ -300,6 +304,23 @@ def require_matching_approval(
                 f"PR 62B evidence enforcement (v2+ required). "
                 "Re-evaluate readiness with the current policy."
             )
+
+        # PR 64A: Verify policy is still active (not expired, not superseded)
+        if current_policy is not None:
+            from .validation_policy import ThresholdPolicy as _TP
+
+            if not isinstance(current_policy, _TP):
+                raise ValidationPolicyBlockedError(
+                    "current_policy must be a valid ThresholdPolicy object."
+                )
+            if not current_policy.is_active():
+                raise ValidationPolicyBlockedError(
+                    f"Validation policy '{current_policy.policy_id}' "
+                    f"version '{current_policy.version}' is no longer active. "
+                    f"Expired: {current_policy.is_expired()}, "
+                    f"Superseded: {bool(current_policy.superseded_by)}. "
+                    "A new readiness evaluation is required."
+                )
 
     return approval
 

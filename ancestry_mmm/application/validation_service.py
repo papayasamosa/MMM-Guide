@@ -21,6 +21,7 @@ from ancestry_mmm.core.validation_policy import (
     ValidationResult,
     ValidationWaiverReference,
     evaluate_approval_readiness,
+    evaluate_legacy_readiness,
     get_evaluator,
     readiness_to_dict,
     validate_gate_config,
@@ -119,6 +120,17 @@ class ValidationService:
             # We can still return a readiness with config errors if we have identity
             if v_input.model_identity is not None:
                 try:
+                    # Build minimal evidence context for config-errors path
+                    _cfg_ctx = ValidationEvidenceContext(
+                        model_identity=v_input.model_identity,
+                        policy=policy,
+                        diagnostic_artefact_id=v_input.diagnostic_artefact_id or "",
+                        diagnostic_artefact_fingerprint=v_input.diagnostic_artefact_fingerprint
+                        or "",
+                        model_type=v_input.model_type,
+                        market=v_input.market,
+                        intended_use=v_input.intended_use,
+                    )
                     readiness = evaluate_approval_readiness(
                         [],
                         policy,
@@ -128,6 +140,7 @@ class ValidationService:
                         or "",
                         waivers=v_input.waivers,
                         as_of=v_input.as_of,
+                        evidence_context=_cfg_ctx,
                     )
                     readiness_dict = readiness_to_dict(readiness)
                 except Exception as exc:
@@ -172,6 +185,7 @@ class ValidationService:
                         posterior_fingerprint=v_input.model_identity.posterior_fingerprint,
                         policy_id=policy.policy_id,
                         policy_version=policy.version,
+                        policy_fingerprint=policy.fingerprint(),
                         gate_fingerprint=gate.fingerprint(),
                         model_identity_fingerprint=identity_fp,
                         diagnostic_artefact_fingerprint=diag_fp,
@@ -182,9 +196,35 @@ class ValidationService:
 
         # --- Aggregate into readiness with current identity ---
         if v_input.model_identity is None:
-            errors.append("Readiness evaluation failed: no model identity provided.")
-            readiness = None
-            readiness_dict = None
+            # PR 64A: No model identity — use legacy evaluator (schema v0, unverified)
+            warnings.append(
+                "No model identity provided. Using legacy readiness evaluator "
+                "(schema v0, unverified, not usable for official approval)."
+            )
+            try:
+                # Create a minimal identity for legacy evaluation
+                from ancestry_mmm.core.model_identity import ModelIdentity as _MI
+
+                _legacy_identity = _MI(
+                    model_run_id="",
+                    data_fingerprint="",
+                    model_spec_fingerprint="",
+                    posterior_fingerprint="",
+                )
+                readiness = evaluate_legacy_readiness(
+                    results,
+                    policy,
+                    _legacy_identity,
+                    diagnostic_artefact_id=v_input.diagnostic_artefact_id or "",
+                    diagnostic_artefact_fingerprint=diag_fp,
+                    waivers=v_input.waivers,
+                    as_of=v_input.as_of,
+                )
+                readiness_dict = readiness_to_dict(readiness)
+            except Exception as exc:
+                errors.append(f"Legacy readiness evaluation failed: {exc}")
+                readiness = None
+                readiness_dict = None
         else:
             try:
                 # PR 62B: Build evidence context for full binding
