@@ -154,9 +154,16 @@ class TestValidationPolicyIntegration:
         from ancestry_mmm.core.validation_policy import (
             ApprovalReadiness, ValidationResult, ThresholdPolicy,
         )
-        # Build a minimal passing readiness
-        policy = ThresholdPolicy(policy_id="val-pol-001", version="1.0", scope="test")
-        results = [ValidationResult(gate_name="convergence_rhat", passed=True)]
+        policy = ThresholdPolicy(
+            policy_id="val-pol-001", version="1.0", scope="test",
+            owner="Test Owner",
+        )
+        results = [ValidationResult(
+            gate_name="convergence_rhat", status="pass",
+            model_run_id="run-123", data_fingerprint="data-abc",
+            model_spec_fingerprint="spec-def", posterior_fingerprint="post-ghi",
+            policy_id="val-pol-001", policy_version="1.0",
+        )]
         from ancestry_mmm.core.validation_policy import evaluate_approval_readiness
         return evaluate_approval_readiness(results, policy)
 
@@ -171,10 +178,14 @@ class TestValidationPolicyIntegration:
         )
         policy = ThresholdPolicy(
             policy_id="val-pol-001", version="1.0", scope="test", gates=[gate],
+            owner="Test Owner",
         )
         results = [ValidationResult(
-            gate_name="convergence_rhat", passed=False, value=1.2,
+            gate_name="convergence_rhat", status="fail", value=1.2,
             message="R-hat too high",
+            model_run_id="run-123", data_fingerprint="data-abc",
+            model_spec_fingerprint="spec-def", posterior_fingerprint="post-ghi",
+            policy_id="val-pol-001", policy_version="1.0",
         )]
         from ancestry_mmm.core.validation_policy import evaluate_approval_readiness
         return evaluate_approval_readiness(results, policy)
@@ -220,6 +231,7 @@ class TestValidationPolicyIntegration:
         from ancestry_mmm.core.approval import ValidationPolicyBlockedError
         wrong_policy = ThresholdPolicy(
             policy_id="different-policy", version="1.0", scope="test",
+            owner="Test Owner",
         )
         readiness = evaluate_approval_readiness([], wrong_policy)
         with pytest.raises(ValidationPolicyBlockedError):

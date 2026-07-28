@@ -2,48 +2,118 @@
 Scenario service — orchestrates scenario construction, evaluation, and
 governance checks without Streamlit dependencies.
 
-PR 6: Separates scenario orchestration from Streamlit page rendering.
+PR 51B: Correctly dispatches to ``evaluate_manual_scenario()`` for manual
+scenarios and ``optimize_scenario()`` for optimisation. Identity fields
+(model_run_id, fingerprints) must be supplied explicitly — never read
+from ``FHModelMeta``.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Union
 
-import numpy as np
 import pandas as pd
 
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
-from ancestry_mmm.core.approval import (
-    ModelApproval,
-    require_matching_approval,
-)
+from ancestry_mmm.core.approval import ModelApproval
 from ancestry_mmm.core.predict import FHPosteriorParams
+from ancestry_mmm.core.market_specific_predict import FHMarketSpecificPosteriorParams
+from ancestry_mmm.core.activities import ActivityDefinition
+from ancestry_mmm.core.media_costs import CostMappingRegistry
 from ancestry_mmm.core.scenario_governance import (
     ScenarioPlan,
     CounterfactualPolicy,
 )
 from ancestry_mmm.core.planning.value import (
+    CurrencyContext,
+    OutcomeValueMapping,
     PlanningObjective,
-    ResolvedPlanningGovernance,
     ScenarioEvaluationResult,
     ScenarioValidationContext,
 )
 from ancestry_mmm.core.validation_policy import ApprovalReadiness
+from ancestry_mmm.core.outcome_approval import OutcomeApproval
+
+AnyPosteriorParams = Union[FHPosteriorParams, FHMarketSpecificPosteriorParams]
 
 
 @dataclass
-class ScenarioInput:
-    """Typed input for scenario evaluation."""
+class ManualScenarioInput:
+    """Typed input for manual scenario evaluation.
+
+    All identity fields are explicit. Never read from FHModelMeta.
+    """
     market: str
-    spend_plan: pd.DataFrame
+    spend_plan: Dict[str, Dict[str, float]]
     meta: FHModelMeta
-    params: FHPosteriorParams
+    params: AnyPosteriorParams
+    reference_context_by_month: Dict[str, dict]
+    ltv: Optional[Dict[str, float]] = None
+    model_type: str = "shared"
     approval: Optional[ModelApproval] = None
+    model_run_id: str = ""
+    data_fingerprint: str = ""
+    model_spec_fingerprint: str = ""
+    posterior_fingerprint: str = ""
+    cost_mapping_registry: Optional[CostMappingRegistry] = None
+    cost_context_id: Optional[str] = None
+    cost_as_of_by_month: Optional[Dict[str, str]] = None
+    counterfactual_media_input_by_month: Optional[Dict[str, Dict[str, float]]] = None
     planning_objective: Optional[PlanningObjective] = None
-    governance_mode: str = "exploratory"
-    artefact_kind: str = "manual_scenario"
+    activity_definitions: Optional[List[ActivityDefinition]] = None
+    scenario_plan: Optional[ScenarioPlan] = None
     counterfactual_policy: Optional[CounterfactualPolicy] = None
+    outcome_approvals: Optional[List[OutcomeApproval]] = None
+    governance_mode: str = "official"
+    nbt_completeness_metadata: Optional[dict] = None
+    artefact_kind: str = "manual_scenario"
+    value_mapping: Optional[OutcomeValueMapping] = None
+    currency_context: Optional[CurrencyContext] = None
+    approval_readiness: Optional[ApprovalReadiness] = None
+
+
+@dataclass
+class OptimisationInput:
+    """Typed input for scenario optimisation."""
+    current_spend_plan: Dict[str, Dict[str, float]]
+    months: List[str]
+    channels: List[str]
+    market: str
+    meta: FHModelMeta
+    params: AnyPosteriorParams
+    reference_context_by_month: Dict[str, dict]
+    ltv: Optional[Dict[str, float]] = None
+    objective: Optional[str] = None
+    constraints: Optional[List[Any]] = None  # SpendConstraint
+    conserve_total_budget: bool = True
+    max_iter: int = 200
+    model_type: str = "shared"
+    target_outcome_ids: Optional[List[str]] = None
+    weights: Optional[Dict[str, float]] = None
+    assume_value_scaled_weights: bool = False
+    approval: Optional[ModelApproval] = None
+    model_run_id: str = ""
+    data_fingerprint: str = ""
+    model_spec_fingerprint: str = ""
+    posterior_fingerprint: str = ""
+    cost_mapping_registry: Optional[CostMappingRegistry] = None
+    cost_context_id: Optional[str] = None
+    cost_as_of_by_month: Optional[Dict[str, str]] = None
+    planning_objective: Optional[PlanningObjective] = None
+    counterfactual_media_input_by_month: Optional[Dict[str, Dict[str, float]]] = None
+    activity_definitions: Optional[List[ActivityDefinition]] = None
+    counterfactual_policy: Optional[CounterfactualPolicy] = None
+    posterior_trace: Optional[Any] = None
+    posterior_evaluation_draws: int = 100
+    optimization_resource: Optional[Any] = None  # OptimizationResource
+    governance_mode: str = "official"
+    outcome_approvals: Optional[List[OutcomeApproval]] = None
+    nbt_completeness_metadata: Optional[dict] = None
+    artefact_kind: Optional[str] = None
+    value_currency: Optional[str] = None
+    value_mapping: Optional[OutcomeValueMapping] = None
+    currency_context: Optional[CurrencyContext] = None
     approval_readiness: Optional[ApprovalReadiness] = None
 
 
@@ -51,81 +121,152 @@ class ScenarioInput:
 class ScenarioServiceResult:
     """Structured scenario evaluation output."""
     evaluation: Optional[ScenarioEvaluationResult] = None
-    resolved_governance: Optional[ResolvedPlanningGovernance] = None
+    evaluation_df: Optional[pd.DataFrame] = None
+    optimisation_result: Optional[dict] = None
     errors: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
-    validation_context: Optional[ScenarioValidationContext] = None
 
 
 class ScenarioService:
     """Application service for scenario planning and evaluation.
 
-    Usage::
+    Dispatches to the correct core API:
+    - ``evaluate_manual_scenario()`` for manual scenarios
+    - ``optimize_scenario()`` for optimisation
 
-        service = ScenarioService()
-        result = service.evaluate(input_data)
-        if result.errors:
-            # handle errors
+    Does not access Streamlit session state, mutate global state, or
+    render any UI.
     """
 
-    def evaluate(self, sc_input: ScenarioInput) -> ScenarioServiceResult:
-        """Evaluate a scenario with full governance validation.
+    def evaluate_manual(self, sc_input: ManualScenarioInput) -> ScenarioServiceResult:
+        """Evaluate a manual scenario.
 
-        Does not access Streamlit session state, mutate global state, or
-        render any UI.
+        Calls ``evaluate_manual_scenario()`` with the correct signature.
+        All identity fields must be supplied explicitly.
         """
         errors: List[str] = []
         warnings: List[str] = []
 
-        # Validate required inputs
-        if sc_input.spend_plan is None or sc_input.spend_plan.empty:
+        if sc_input.spend_plan is None:
             errors.append("No spend plan provided.")
             return ScenarioServiceResult(errors=errors)
-
         if sc_input.params is None:
             errors.append("No posterior params provided.")
             return ScenarioServiceResult(errors=errors)
-
-        # --- Governance resolution ---
-        # In official mode, require a matching model approval
-        if sc_input.governance_mode == "official":
-            if sc_input.approval is None:
-                errors.append("Official mode requires a model approval.")
-            else:
-                try:
-                    require_matching_approval(
-                        sc_input.approval,
-                        model_run_id=sc_input.meta.model_run_id if hasattr(sc_input.meta, "model_run_id") else "",
-                        data_fingerprint=sc_input.meta.data_fingerprint if hasattr(sc_input.meta, "data_fingerprint") else "",
-                        model_spec_fingerprint=sc_input.meta.model_spec_fingerprint if hasattr(sc_input.meta, "model_spec_fingerprint") else "",
-                        posterior_fingerprint=sc_input.meta.posterior_fingerprint if hasattr(sc_input.meta, "posterior_fingerprint") else "",
-                        approval_readiness=sc_input.approval_readiness,
-                    )
-                except Exception as exc:
-                    errors.append(f"Approval check failed: {exc}")
+        if sc_input.meta is None:
+            errors.append("No model metadata provided.")
+            return ScenarioServiceResult(errors=errors)
 
         if errors:
             return ScenarioServiceResult(errors=errors)
 
-        # --- Evaluate scenario ---
+        from ancestry_mmm.core.optimization import evaluate_manual_scenario
+
         try:
-            from ancestry_mmm.core.optimization import evaluate_scenario
-            evaluation = evaluate_scenario(
+            evaluation = evaluate_manual_scenario(
                 sc_input.spend_plan,
+                sc_input.market,
                 sc_input.meta,
                 sc_input.params,
-                market=sc_input.market,
-                governance_mode=sc_input.governance_mode,
+                sc_input.reference_context_by_month,
+                sc_input.ltv,
+                model_type=sc_input.model_type,
+                approval=sc_input.approval,
+                model_run_id=sc_input.model_run_id,
+                data_fingerprint=sc_input.data_fingerprint,
+                model_spec_fingerprint=sc_input.model_spec_fingerprint,
+                posterior_fingerprint=sc_input.posterior_fingerprint,
+                cost_mapping_registry=sc_input.cost_mapping_registry,
+                cost_context_id=sc_input.cost_context_id,
+                cost_as_of_by_month=sc_input.cost_as_of_by_month,
+                counterfactual_media_input_by_month=sc_input.counterfactual_media_input_by_month,
                 planning_objective=sc_input.planning_objective,
-                artefact_kind=sc_input.artefact_kind,
+                activity_definitions=sc_input.activity_definitions,
+                scenario_plan=sc_input.scenario_plan,
                 counterfactual_policy=sc_input.counterfactual_policy,
+                outcome_approvals=sc_input.outcome_approvals,
+                governance_mode=sc_input.governance_mode,
+                nbt_completeness_metadata=sc_input.nbt_completeness_metadata,
+                artefact_kind=sc_input.artefact_kind,
+                value_mapping=sc_input.value_mapping,
+                currency_context=sc_input.currency_context,
             )
         except Exception as exc:
-            errors.append(f"Scenario evaluation failed: {exc}")
+            errors.append(f"Manual scenario evaluation failed: {exc}")
             return ScenarioServiceResult(errors=errors)
 
         return ScenarioServiceResult(
             evaluation=evaluation,
             errors=errors,
             warnings=warnings,
+        )
+
+    def optimise(self, opt_input: OptimisationInput) -> ScenarioServiceResult:
+        """Run constrained/unconstrained optimisation.
+
+        Calls ``optimize_scenario()`` with the correct signature.
+        """
+        errors: List[str] = []
+
+        if opt_input.current_spend_plan is None:
+            errors.append("No current spend plan provided.")
+            return ScenarioServiceResult(errors=errors)
+        if opt_input.params is None:
+            errors.append("No posterior params provided.")
+            return ScenarioServiceResult(errors=errors)
+
+        if errors:
+            return ScenarioServiceResult(errors=errors)
+
+        from ancestry_mmm.core.optimization import optimize_scenario
+
+        try:
+            result = optimize_scenario(
+                opt_input.current_spend_plan,
+                opt_input.months,
+                opt_input.channels,
+                opt_input.market,
+                opt_input.meta,
+                opt_input.params,
+                opt_input.reference_context_by_month,
+                opt_input.ltv,
+                opt_input.objective,
+                opt_input.constraints,
+                opt_input.conserve_total_budget,
+                opt_input.max_iter,
+                model_type=opt_input.model_type,
+                target_outcome_ids=opt_input.target_outcome_ids,
+                weights=opt_input.weights,
+                assume_value_scaled_weights=opt_input.assume_value_scaled_weights,
+                approval=opt_input.approval,
+                model_run_id=opt_input.model_run_id,
+                data_fingerprint=opt_input.data_fingerprint,
+                model_spec_fingerprint=opt_input.model_spec_fingerprint,
+                posterior_fingerprint=opt_input.posterior_fingerprint,
+                cost_mapping_registry=opt_input.cost_mapping_registry,
+                cost_context_id=opt_input.cost_context_id,
+                cost_as_of_by_month=opt_input.cost_as_of_by_month,
+                planning_objective=opt_input.planning_objective,
+                counterfactual_media_input_by_month=opt_input.counterfactual_media_input_by_month,
+                activity_definitions=opt_input.activity_definitions,
+                counterfactual_policy=opt_input.counterfactual_policy,
+                posterior_trace=opt_input.posterior_trace,
+                posterior_evaluation_draws=opt_input.posterior_evaluation_draws,
+                optimization_resource=opt_input.optimization_resource,
+                governance_mode=opt_input.governance_mode,
+                outcome_approvals=opt_input.outcome_approvals,
+                nbt_completeness_metadata=opt_input.nbt_completeness_metadata,
+                artefact_kind=opt_input.artefact_kind,
+                value_currency=opt_input.value_currency,
+                value_mapping=opt_input.value_mapping,
+                currency_context=opt_input.currency_context,
+            )
+        except Exception as exc:
+            errors.append(f"Optimisation failed: {exc}")
+            return ScenarioServiceResult(errors=errors)
+
+        return ScenarioServiceResult(
+            optimisation_result=result,
+            errors=errors,
+            warnings=[],
         )
