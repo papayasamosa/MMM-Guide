@@ -61,7 +61,7 @@ alone with no support.
   baseline - Model B in `docs/model_validation.md`).
 - Automating currency conversion decisions - the tool stores exchange-rate context but does not
   silently convert or apply inflation assumptions without the assumption being visible in the UI.
-- PowerPoint export (Excel + the project bundle cover handover).
+- PowerPoint export (Excel + the project bundle cover portability and recovery).
 
 ## Current markets and segments
 
@@ -84,4 +84,4 @@ alone with no support.
 - A reproducible project report (Markdown + HTML, `core.report`) covering objective, data,
   model, diagnostics, curve bank, scenarios, known limitations and a decision-log pointer, built
   from the project's actual current state and available at any point in the workflow -
-  Project Export & Handover.
+  Project Export & Recovery.

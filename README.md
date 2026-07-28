@@ -27,7 +27,7 @@ Opens at `http://localhost:8501`. From there: **Data Upload** → click "Load sy
 sources" for a working UK/Australia/Canada dataset with no setup required, then work through the
 sidebar in order (Transform Pipeline → Structure → Channel & Media Units → Market Descriptors →
 Model Configuration → Model Training → Compare Models → Diagnostics → Results & Curve Bank →
-Scenario Planner → Project Export & Handover).
+Scenario Planner → Project Export & Recovery).
 
 Requires Python 3.11 or 3.12 (see [Deployment](#deployment) below for why there's an upper bound).
 

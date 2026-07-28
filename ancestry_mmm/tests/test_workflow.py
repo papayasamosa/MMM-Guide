@@ -29,7 +29,7 @@ EXPECTED_LABELS = [
     "Diagnostics",
     "Results & Curve Bank",
     "Scenario Planner",
-    "Project Export & Handover",
+    "Project Export & Recovery",
 ]
 
 
@@ -146,3 +146,38 @@ class TestNextStepMapping:
 
     def test_unknown_key_has_no_next(self):
         assert next_step_key("not_a_real_page") is None
+
+
+class TestProhibitedTerminology:
+    """PR 1: No current user-facing page or workflow label may expose
+    vendor-handover terminology (handover, post-handover, inherits,
+    training completion, competency, handover readiness) in its
+    current-purpose display."""
+
+    PROHIBITED_TERMS = [
+        "handover",
+        "post-handover",
+        "inherits",
+        "training completion",
+        "competency",
+        "handover readiness",
+    ]
+
+    def test_no_workflow_label_contains_handover_terminology(self):
+        for step in WORKFLOW_STEPS:
+            for field in ("label", "title", "purpose"):
+                val = step.get(field, "")
+                for term in self.PROHIBITED_TERMS:
+                    assert term.lower() not in val.lower(), (
+                        f"Prohibited term '{term}' found in workflow step "
+                        f"'{step['key']}' field '{field}': '{val}'"
+                    )
+
+    def test_no_workflow_next_field_contains_handover_terminology(self):
+        for step in WORKFLOW_STEPS:
+            val = step.get("next", "")
+            for term in self.PROHIBITED_TERMS:
+                assert term.lower() not in val.lower(), (
+                    f"Prohibited term '{term}' found in workflow step "
+                    f"'{step['key']}' field 'next': '{val}'"
+                )

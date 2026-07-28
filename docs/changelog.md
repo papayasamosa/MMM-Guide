@@ -49,7 +49,7 @@ earlier than the entries below.
   Both renderers consume the same structured section data, so Markdown and HTML can never drift out
   of sync with each other. No dependency on `ancestry_mmm.utils` or Streamlit, matching every other
   `core` module.
-- Project Export & Handover: added a "Project report" section (Markdown + HTML download); replaced
+- Project Export & Recovery: added a "Project report" section (Markdown + HTML download); replaced
   the page's stale "Roadmap" block (still describing the pre-redesign phase numbering) with an
   accurate "What's out of scope" list reflecting the completed market-specific redesign.
 - 19 new tests (`test_report.py`), plus AppTest-based end-to-end verification of report generation in

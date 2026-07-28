@@ -135,3 +135,103 @@ class TestRequireMatchingApproval:
         current["model_run_id"] = "a-different-run"
         with pytest.raises(ApprovalMismatchError):
             require_matching_approval(approval, **current)
+
+
+# ---------------------------------------------------------------------------
+# REQ-VAL-001: Validation policy integration
+# ---------------------------------------------------------------------------
+
+
+class TestValidationPolicyIntegration:
+    """require_matching_approval with validation-policy-bound approval."""
+
+    @pytest.fixture
+    def val_policy_approval(self):
+        return _bound_approval(validation_policy_id="val-pol-001")
+
+    @pytest.fixture
+    def passing_readiness(self):
+        from ancestry_mmm.core.validation_policy import (
+            ApprovalReadiness, ValidationResult, ThresholdPolicy,
+        )
+        # Build a minimal passing readiness
+        policy = ThresholdPolicy(policy_id="val-pol-001", version="1.0", scope="test")
+        results = [ValidationResult(gate_name="convergence_rhat", passed=True)]
+        from ancestry_mmm.core.validation_policy import evaluate_approval_readiness
+        return evaluate_approval_readiness(results, policy)
+
+    @pytest.fixture
+    def failing_readiness(self):
+        from ancestry_mmm.core.validation_policy import (
+            ApprovalReadiness, ValidationResult, ValidationGate, ThresholdPolicy,
+        )
+        gate = ValidationGate(
+            name="convergence_rhat", description="R-hat check",
+            blocking=True, required=True,
+        )
+        policy = ThresholdPolicy(
+            policy_id="val-pol-001", version="1.0", scope="test", gates=[gate],
+        )
+        results = [ValidationResult(
+            gate_name="convergence_rhat", passed=False, value=1.2,
+            message="R-hat too high",
+        )]
+        from ancestry_mmm.core.validation_policy import evaluate_approval_readiness
+        return evaluate_approval_readiness(results, policy)
+
+    def test_policy_bound_approval_passes_with_readiness(
+        self, val_policy_approval, passing_readiness,
+    ):
+        result = require_matching_approval(
+            val_policy_approval, **IDENTITY,
+            approval_readiness=passing_readiness,
+        )
+        assert result is val_policy_approval
+
+    def test_policy_bound_approval_blocked_without_readiness(
+        self, val_policy_approval,
+    ):
+        from ancestry_mmm.core.approval import ValidationPolicyBlockedError
+        with pytest.raises(ValidationPolicyBlockedError):
+            require_matching_approval(val_policy_approval, **IDENTITY)
+
+    def test_policy_bound_approval_blocked_with_failing_readiness(
+        self, val_policy_approval, failing_readiness,
+    ):
+        from ancestry_mmm.core.approval import ValidationPolicyBlockedError
+        with pytest.raises(ValidationPolicyBlockedError):
+            require_matching_approval(
+                val_policy_approval, **IDENTITY,
+                approval_readiness=failing_readiness,
+            )
+
+    def test_non_policy_approval_ignores_readiness(self, passing_readiness):
+        approval = _bound_approval()  # no validation_policy_id
+        result = require_matching_approval(
+            approval, **IDENTITY, approval_readiness=passing_readiness,
+        )
+        assert result is approval
+
+    def test_policy_mismatch_blocked(self, val_policy_approval):
+        from ancestry_mmm.core.validation_policy import (
+            ThresholdPolicy, ValidationResult,
+        )
+        from ancestry_mmm.core.validation_policy import evaluate_approval_readiness
+        from ancestry_mmm.core.approval import ValidationPolicyBlockedError
+        wrong_policy = ThresholdPolicy(
+            policy_id="different-policy", version="1.0", scope="test",
+        )
+        readiness = evaluate_approval_readiness([], wrong_policy)
+        with pytest.raises(ValidationPolicyBlockedError):
+            require_matching_approval(
+                val_policy_approval, **IDENTITY,
+                approval_readiness=readiness,
+            )
+
+    def test_wrong_type_readiness_blocked(self, val_policy_approval):
+        from ancestry_mmm.core.approval import ValidationPolicyBlockedError
+        with pytest.raises(ValidationPolicyBlockedError):
+            require_matching_approval(
+                val_policy_approval, **IDENTITY,
+                approval_readiness="not_a_readiness_object",  # type: ignore
+            )

@@ -100,11 +100,11 @@ posterior draw and summarizes the resulting distribution (mean/median/90% interv
 probability the current plan actually outperforms the current/baseline plan, paired draw-for-draw so
 the comparison isn't inflated by independently-resampled noise.
 
-## Step 12: Project Export & Handover
+## Step 12: Project Export & Recovery
 
 Build a downloadable project bundle (Parquet + JSON + NetCDF - all open formats) so your work is
 never only sitting in a browser session. Import a previous bundle to pick up where you left off.
-Build an Excel summary of curves and contributions for handover, or a reproducible project report
+Build an Excel summary of curves and contributions for portability, or a reproducible project report
 (Markdown + HTML) covering objective, data, model, diagnostics, curve bank, scenarios, and known
 limitations in one document - available at any point in the workflow, not only once every step is
 complete.

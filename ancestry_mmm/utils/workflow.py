@@ -165,14 +165,14 @@ WORKFLOW_STEPS: List[Dict[str, Any]] = [
             "Edit the spend plan directly, or add constraints and run optimisation.",
             "Save the scenarios you want to keep.",
         ],
-        "next": "Export the project bundle for handover.",
+        "next": "Export the project bundle for recovery or archival.",
     },
     {
         "key": "export",
-        "label": "Project Export & Handover",
+        "label": "Project Export & Recovery",
         "path": "pages/09_Project_Export.py",
-        "title": "Project Export & Handover",
-        "purpose": "Export a portable project bundle, or an Excel summary, for handover and later re-import.",
+        "title": "Project Export & Recovery",
+        "purpose": "Export a portable project bundle, or an Excel summary, for portability, recovery and later re-import.",
         "steps": [
             "Build and download the project bundle.",
             "Or build an Excel summary of curves and contributions.",

@@ -1,4 +1,4 @@
-"""Page 9: project export/import bundle (Parquet + JSON + NetCDF) and Excel export for handover."""
+"""Page 9: project export/import bundle (Parquet + JSON + NetCDF) and Excel export for portability and recovery."""
 
 import sys
 from pathlib import Path
@@ -511,7 +511,7 @@ Per `docs/project_objectives.md` and `docs/limitations.md`, deliberately **not**
   Family History GSAs and DNA kit sales into one "volume" number.
 - **Media-unit spend constraints** (locked/min/max media units) - `SpendConstraint` still operates in
   spend terms only.
-- **PowerPoint export** - Excel + the project bundle + this report cover handover today.
+- **PowerPoint export** - Excel + the project bundle + this report cover portability and recovery today.
 - **Automating currency conversion** - the tool stores exchange-rate context but never silently
   converts or applies an inflation assumption without it being visible in the UI.
 - **Stage 2 media x context interactions** - explicitly out of scope for the core model per the brief.
