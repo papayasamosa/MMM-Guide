@@ -185,7 +185,7 @@ def require_matching_approval(
             "Re-approve after review."
         )
 
-    # REQ-VAL-001 / PR 53D: Validation policy and readiness check
+    # REQ-VAL-001 / PR 53D + PR 56C: Validation policy and readiness check
     if approval.validation_policy_id:
         if approval_readiness is None:
             raise ValidationPolicyBlockedError(
@@ -213,6 +213,35 @@ def require_matching_approval(
                 f"was evaluated against version "
                 f"'{approval_readiness.policy_version}'."
             )
+        # PR 56C: Verify policy fingerprint matches
+        if (
+            approval.validation_policy_fingerprint
+            and approval_readiness.policy_fingerprint != approval.validation_policy_fingerprint
+        ):
+            raise ValidationPolicyBlockedError(
+                f"Approval references policy fingerprint "
+                f"'{approval.validation_policy_fingerprint}' but readiness "
+                f"was evaluated against fingerprint "
+                f"'{approval_readiness.policy_fingerprint}'."
+            )
+        # PR 56C: Verify readiness artefact identity
+        if approval.readiness_artefact_id and (
+            approval_readiness.readiness_artefact_id != approval.readiness_artefact_id
+        ):
+            raise ValidationPolicyBlockedError(
+                f"Approval references readiness artefact "
+                f"'{approval.readiness_artefact_id}' but readiness "
+                f"has artefact '{approval_readiness.readiness_artefact_id}'."
+            )
+        # PR 56C: Verify readiness fingerprint matches
+        if approval.readiness_fingerprint:
+            actual_fp = approval_readiness.fingerprint()
+            if actual_fp != approval.readiness_fingerprint:
+                raise ValidationPolicyBlockedError(
+                    f"Approval readiness fingerprint mismatch: "
+                    f"stored '{approval.readiness_fingerprint}' vs "
+                    f"computed '{actual_fp}'."
+                )
         if not approval_readiness.overall_ready:
             raise ValidationPolicyBlockedError(
                 "Validation policy gates are not satisfied. "

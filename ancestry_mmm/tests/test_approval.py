@@ -184,9 +184,13 @@ class TestValidationPolicyIntegration:
                 policy_version="1.0",
             )
         ]
+        from ancestry_mmm.core.model_identity import ModelIdentity as _MI
         from ancestry_mmm.core.validation_policy import evaluate_approval_readiness
 
-        return evaluate_approval_readiness(results, policy)
+        return evaluate_approval_readiness(
+            results, policy,
+            _MI("run-123", "data-abc", "spec-def", "post-ghi"),
+        )
 
     @pytest.fixture
     def failing_readiness(self):
@@ -223,9 +227,10 @@ class TestValidationPolicyIntegration:
                 policy_version="1.0",
             )
         ]
+        from ancestry_mmm.core.model_identity import ModelIdentity as _MI
         from ancestry_mmm.core.validation_policy import evaluate_approval_readiness
 
-        return evaluate_approval_readiness(results, policy)
+        return evaluate_approval_readiness(results, policy, _MI("run-123", "data-abc", "spec-def", "post-ghi"))
 
     def test_policy_bound_approval_passes_with_readiness(
         self,
@@ -284,7 +289,8 @@ class TestValidationPolicyIntegration:
             scope="test",
             owner="Test Owner",
         )
-        readiness = evaluate_approval_readiness([], wrong_policy)
+        from ancestry_mmm.core.model_identity import ModelIdentity as _MI
+        readiness = evaluate_approval_readiness([], wrong_policy, _MI("run-123", "data-abc", "spec-def", "post-ghi"))
         with pytest.raises(ValidationPolicyBlockedError):
             require_matching_approval(
                 val_policy_approval,

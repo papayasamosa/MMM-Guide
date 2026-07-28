@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 if TYPE_CHECKING:
     from .model_identity import ModelIdentity
@@ -292,6 +293,10 @@ class ValidationResult:
         Policy version this result was evaluated under.
     gate_fingerprint : str
         Fingerprint of the gate definition at evaluation time.
+    model_identity_fingerprint : str
+        Fingerprint of the ModelIdentity at evaluation time.
+    diagnostic_artefact_fingerprint : str
+        Fingerprint of the diagnostic artefact at evaluation time.
     """
 
     gate_name: str
@@ -307,6 +312,8 @@ class ValidationResult:
     policy_id: str = ""
     policy_version: str = ""
     gate_fingerprint: str = ""
+    model_identity_fingerprint: str = ""
+    diagnostic_artefact_fingerprint: str = ""
 
     def __post_init__(self) -> None:
         if self.status not in VALIDATION_STATUS_VALUES:
@@ -390,37 +397,241 @@ class ValidationResult:
 
 @dataclass(frozen=True)
 class ApprovalReadiness:
-    """Aggregate of all gate results under a policy.
+    """Immutable, auditable readiness artefact binding model identity,
+    diagnostic evidence, policy definition, and gate results into a single
+    fingerprinted proof.
+
+    PR 56B: Extended to include artefacts IDs and fingerprints for every
+    evidence component, plus deterministic ``fingerprint()``,
+    ``to_dict()``, and ``from_dict()``.
 
     Parameters
     ----------
+    readiness_artefact_id : str
+        Unique identifier for this readiness evaluation.
     policy_id : str
         The policy that was evaluated.
     policy_version : str
         Version of the policy.
-    blocking_failures : list[ValidationResult]
+    policy_fingerprint : str
+        Fingerprint of the policy definition at evaluation time.
+    model_identity_fingerprint : str
+        Fingerprint of the ModelIdentity at evaluation time.
+    diagnostic_artefact_id : str
+        Identifier of the diagnostic artefact evaluated.
+    diagnostic_artefact_fingerprint : str
+        Fingerprint of the diagnostic artefact at evaluation time.
+    gate_results : tuple[ValidationResult, ...]
+        All gate results from the evaluation.
+    blocking_failures : tuple[ValidationResult, ...]
         Gates that failed and are marked as blocking.
-    review_items : list[ValidationResult]
+    review_items : tuple[ValidationResult, ...]
         Gates that failed but are not blocking (review-only).
-    passes : list[ValidationResult]
+    passes : tuple[ValidationResult, ...]
         Gates that passed.
-    missing_required_gates : list[str]
+    missing_required_gates : tuple[str, ...]
         Names of required gates for which no result was provided.
-    waivers_applied : list[ValidationWaiverReference]
+    waivers_applied : tuple[ValidationWaiverReference, ...]
         Waivers that were accepted for failing gates.
+    evaluated_at : datetime
+        When the evaluation was performed.
     overall_ready : bool
         True if no blocking failures, no missing required gates, no
         non-waivable failures, and policy is not expired.
+    schema_version : int
+        Version of the readiness artefact schema.
     """
 
-    policy_id: str
-    policy_version: str
-    blocking_failures: List[ValidationResult] = field(default_factory=list)
-    review_items: List[ValidationResult] = field(default_factory=list)
-    passes: List[ValidationResult] = field(default_factory=list)
-    missing_required_gates: List[str] = field(default_factory=list)
-    waivers_applied: List[ValidationWaiverReference] = field(default_factory=list)
+    readiness_artefact_id: str = ""
+    policy_id: str = ""
+    policy_version: str = ""
+    policy_fingerprint: str = ""
+    model_identity_fingerprint: str = ""
+    diagnostic_artefact_id: str = ""
+    diagnostic_artefact_fingerprint: str = ""
+    gate_results: tuple[ValidationResult, ...] = field(default_factory=tuple)
+    blocking_failures: tuple[ValidationResult, ...] = field(default_factory=tuple)
+    review_items: tuple[ValidationResult, ...] = field(default_factory=tuple)
+    passes: tuple[ValidationResult, ...] = field(default_factory=tuple)
+    missing_required_gates: tuple[str, ...] = field(default_factory=tuple)
+    waivers_applied: tuple[ValidationWaiverReference, ...] = field(default_factory=tuple)
+    evaluated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     overall_ready: bool = False
+    schema_version: int = 1
+
+    def fingerprint(self) -> str:
+        """Deterministic SHA-256 fingerprint of this readiness artefact.
+
+        Includes all fields. Two artefacts with identical content produce
+        identical fingerprints regardless of when they were created.
+        """
+        payload = {
+            "readiness_artefact_id": self.readiness_artefact_id,
+            "policy_id": self.policy_id,
+            "policy_version": self.policy_version,
+            "policy_fingerprint": self.policy_fingerprint,
+            "model_identity_fingerprint": self.model_identity_fingerprint,
+            "diagnostic_artefact_id": self.diagnostic_artefact_id,
+            "diagnostic_artefact_fingerprint": self.diagnostic_artefact_fingerprint,
+            "gate_results": [
+                _result_to_dict(r) for r in self.gate_results
+            ],
+            "blocking_failures": [
+                _result_to_dict(r) for r in self.blocking_failures
+            ],
+            "review_items": [
+                _result_to_dict(r) for r in self.review_items
+            ],
+            "passes": [_result_to_dict(r) for r in self.passes],
+            "missing_required_gates": sorted(self.missing_required_gates),
+            "waivers_applied": [
+                {
+                    "waiver_id": w.waiver_id,
+                    "gate_name": w.gate_name,
+                    "approved_by": w.approved_by,
+                    "reason": w.reason,
+                    "expiry": w.expiry.isoformat() if w.expiry else None,
+                    "superseded_by": w.superseded_by,
+                }
+                for w in sorted(self.waivers_applied, key=lambda x: x.waiver_id)
+            ],
+            "evaluated_at": self.evaluated_at.isoformat(),
+            "overall_ready": self.overall_ready,
+            "schema_version": self.schema_version,
+        }
+        encoded = json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), default=str
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    def to_dict(self) -> dict:
+        """JSON-serialisable dict with all fields."""
+        return {
+            "readiness_artefact_id": self.readiness_artefact_id,
+            "policy_id": self.policy_id,
+            "policy_version": self.policy_version,
+            "policy_fingerprint": self.policy_fingerprint,
+            "model_identity_fingerprint": self.model_identity_fingerprint,
+            "diagnostic_artefact_id": self.diagnostic_artefact_id,
+            "diagnostic_artefact_fingerprint": self.diagnostic_artefact_fingerprint,
+            "gate_results": [_result_to_dict(r) for r in self.gate_results],
+            "blocking_failures": [_result_to_dict(r) for r in self.blocking_failures],
+            "review_items": [_result_to_dict(r) for r in self.review_items],
+            "passes": [_result_to_dict(r) for r in self.passes],
+            "missing_required_gates": list(self.missing_required_gates),
+            "waivers_applied": [
+                {
+                    "waiver_id": w.waiver_id,
+                    "gate_name": w.gate_name,
+                    "approved_by": w.approved_by,
+                    "approved_at": w.approved_at.isoformat(),
+                    "reason": w.reason,
+                    "expiry": w.expiry.isoformat() if w.expiry else None,
+                    "superseded_by": w.superseded_by,
+                }
+                for w in self.waivers_applied
+            ],
+            "evaluated_at": self.evaluated_at.isoformat(),
+            "overall_ready": self.overall_ready,
+            "schema_version": self.schema_version,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> ApprovalReadiness:
+        """Restore from a dict produced by ``to_dict()``."""
+        known_fields = {
+            "readiness_artefact_id",
+            "policy_id",
+            "policy_version",
+            "policy_fingerprint",
+            "model_identity_fingerprint",
+            "diagnostic_artefact_id",
+            "diagnostic_artefact_fingerprint",
+            "evaluated_at",
+            "overall_ready",
+            "schema_version",
+        }
+        kwargs: dict[str, Any] = {}
+        for k in known_fields:
+            if k in d:
+                kwargs[k] = d[k]
+        # Restore tuples from lists
+        if "gate_results" in d:
+            kwargs["gate_results"] = tuple(
+                _result_from_dict(r) for r in d["gate_results"]
+            )
+        if "blocking_failures" in d:
+            kwargs["blocking_failures"] = tuple(
+                _result_from_dict(r) for r in d["blocking_failures"]
+            )
+        if "review_items" in d:
+            kwargs["review_items"] = tuple(
+                _result_from_dict(r) for r in d["review_items"]
+            )
+        if "passes" in d:
+            kwargs["passes"] = tuple(
+                _result_from_dict(r) for r in d["passes"]
+            )
+        if "missing_required_gates" in d:
+            kwargs["missing_required_gates"] = tuple(d["missing_required_gates"])
+        if "waivers_applied" in d and isinstance(d.get("waivers_applied"), list):
+            kwargs["waivers_applied"] = tuple(
+                ValidationWaiverReference(
+                    waiver_id=w["waiver_id"],
+                    approved_by=w["approved_by"],
+                    approved_at=datetime.fromisoformat(w["approved_at"]),
+                    reason=w["reason"],
+                    gate_name=w["gate_name"],
+                    expiry=datetime.fromisoformat(w["expiry"]) if w.get("expiry") else None,
+                    superseded_by=w.get("superseded_by"),
+                )
+                for w in d["waivers_applied"]
+            )
+        if "evaluated_at" in d and isinstance(d["evaluated_at"], str):
+            kwargs["evaluated_at"] = datetime.fromisoformat(d["evaluated_at"])
+        return cls(**kwargs)
+
+
+def _result_to_dict(r: ValidationResult) -> dict:
+    """Convert a ValidationResult to a plain dict."""
+    return {
+        "gate_name": r.gate_name,
+        "status": r.status,
+        "value": r.value,
+        "message": r.message,
+        "artefact_id": r.artefact_id,
+        "evaluated_at": r.evaluated_at.isoformat(),
+        "model_run_id": r.model_run_id,
+        "data_fingerprint": r.data_fingerprint,
+        "model_spec_fingerprint": r.model_spec_fingerprint,
+        "posterior_fingerprint": r.posterior_fingerprint,
+        "policy_id": r.policy_id,
+        "policy_version": r.policy_version,
+        "gate_fingerprint": r.gate_fingerprint,
+        "model_identity_fingerprint": r.model_identity_fingerprint,
+        "diagnostic_artefact_fingerprint": r.diagnostic_artefact_fingerprint,
+    }
+
+
+def _result_from_dict(d: dict) -> ValidationResult:
+    """Restore a ValidationResult from a dict."""
+    kwargs: dict[str, Any] = {}
+    known = {
+        "gate_name", "status", "value", "message", "artefact_id",
+        "model_run_id", "data_fingerprint", "model_spec_fingerprint",
+        "posterior_fingerprint", "policy_id", "policy_version",
+        "gate_fingerprint", "model_identity_fingerprint",
+        "diagnostic_artefact_fingerprint",
+    }
+    for k in known:
+        if k in d:
+            kwargs[k] = d[k]
+    if "evaluated_at" in d:
+        if isinstance(d["evaluated_at"], str):
+            kwargs["evaluated_at"] = datetime.fromisoformat(d["evaluated_at"])
+        else:
+            kwargs["evaluated_at"] = d["evaluated_at"]
+    return ValidationResult(**kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -431,17 +642,19 @@ class ApprovalReadiness:
 def evaluate_approval_readiness(
     results: List[ValidationResult],
     policy: ThresholdPolicy,
-    current_model_identity: Optional["ModelIdentity"] = None,
+    current_model_identity: "ModelIdentity",
     *,
+    diagnostic_artefact_id: str = "",
+    diagnostic_artefact_fingerprint: str = "",
     waivers: Optional[List[ValidationWaiverReference]] = None,
     as_of: Optional[datetime] = None,
 ) -> ApprovalReadiness:
     """Evaluate validation results against a policy.
 
-    PR 53B: Accepts an optional ``current_model_identity``. When provided,
-    staleness is checked by comparing each result's identity bindings
-    against the current identity. Without it, results with empty identity
-    bindings are treated as stale.
+    PR 53B: Accepts ``current_model_identity`` for staleness checking.
+    PR 56B: ``current_model_identity`` is now mandatory for official
+    readiness. Results whose identity bindings do not match the current
+    identity are stale.
 
     This is a pure function: it does not choose thresholds, mutate approvals,
     or access any external state.
@@ -452,10 +665,13 @@ def evaluate_approval_readiness(
         Results from evaluating diagnostics against the fitted model.
     policy : ThresholdPolicy
         The policy to evaluate against.
-    current_model_identity : ModelIdentity | None
-        The current model's identity. When provided, results whose identity
-        does not match are stale. When ``None``, results with empty identity
-        fields are stale.
+    current_model_identity : ModelIdentity
+        The current model's identity. Results whose identity does not
+        match are stale. Must be provided for official readiness.
+    diagnostic_artefact_id : str
+        Identifier of the diagnostic artefact evaluated.
+    diagnostic_artefact_fingerprint : str
+        Fingerprint of the diagnostic artefact at evaluation time.
     waivers : list[ValidationWaiverReference] | None
         Any approved waivers for failing gates.
     as_of : datetime | None
@@ -464,9 +680,8 @@ def evaluate_approval_readiness(
     Returns
     -------
     ApprovalReadiness
-        Aggregate readiness with blockers, review items, and passes.
+        Full fingerprinted readiness artefact with binding evidence.
     """
-
     as_of = as_of or datetime.now(timezone.utc)
     waivers = waivers or []
 
@@ -480,6 +695,9 @@ def evaluate_approval_readiness(
     passes: List[ValidationResult] = []
     missing_required_gates: List[str] = []
 
+    # Compute identity fingerprint once
+    identity_fp = current_model_identity.fingerprint()
+
     # --- Check policy expiry first ---
     if policy.is_expired(as_of=as_of):
         for gate in policy.gates:
@@ -487,14 +705,21 @@ def evaluate_approval_readiness(
                 missing_required_gates.append(gate.name)
 
         return ApprovalReadiness(
+            readiness_artefact_id=uuid.uuid4().hex,
             policy_id=policy.policy_id,
             policy_version=policy.version,
-            blocking_failures=list(result_by_gate.values()),
-            review_items=[],
-            passes=[],
-            missing_required_gates=missing_required_gates,
-            waivers_applied=waivers,
+            policy_fingerprint=policy.fingerprint(),
+            model_identity_fingerprint=identity_fp,
+            diagnostic_artefact_id=diagnostic_artefact_id,
+            diagnostic_artefact_fingerprint=diagnostic_artefact_fingerprint,
+            gate_results=tuple(results),
+            blocking_failures=tuple(result_by_gate.values()),
+            passes=tuple(),
+            missing_required_gates=tuple(missing_required_gates),
+            waivers_applied=tuple(waivers),
+            evaluated_at=as_of,
             overall_ready=False,
+            schema_version=1,
         )
 
     # --- Evaluate each gate ---
@@ -508,30 +733,15 @@ def evaluate_approval_readiness(
 
         # Staleness check: compare each result's identity bindings against
         # the current model identity (supplied independently, never compared
-        # with itself). When current_model_identity is None, results with
-        # empty identity fields are stale (incomplete binding).
-        if current_model_identity is not None:
-            is_stale = not result.matches_identity(
-                model_run_id=current_model_identity.model_run_id,
-                data_fingerprint=current_model_identity.data_fingerprint,
-                model_spec_fingerprint=current_model_identity.model_spec_fingerprint,
-                posterior_fingerprint=current_model_identity.posterior_fingerprint,
-                policy_id=policy.policy_id,
-                policy_version=policy.version,
-            )
-        else:
-            # Without current identity, a result is stale if any identity
-            # field is empty (incomplete binding)
-            is_stale = not all(
-                [
-                    result.model_run_id,
-                    result.data_fingerprint,
-                    result.model_spec_fingerprint,
-                    result.posterior_fingerprint,
-                    result.policy_id,
-                    result.policy_version,
-                ]
-            )
+        # with itself).
+        is_stale = not result.matches_identity(
+            model_run_id=current_model_identity.model_run_id,
+            data_fingerprint=current_model_identity.data_fingerprint,
+            model_spec_fingerprint=current_model_identity.model_spec_fingerprint,
+            posterior_fingerprint=current_model_identity.posterior_fingerprint,
+            policy_id=policy.policy_id,
+            policy_version=policy.version,
+        )
 
         if is_stale:
             # Stale result: treat as missing if required
@@ -576,14 +786,22 @@ def evaluate_approval_readiness(
     )
 
     return ApprovalReadiness(
+        readiness_artefact_id=uuid.uuid4().hex,
         policy_id=policy.policy_id,
         policy_version=policy.version,
-        blocking_failures=blocking_failures,
-        review_items=review_items,
-        passes=passes,
-        missing_required_gates=missing_required_gates,
-        waivers_applied=applied_waivers,
+        policy_fingerprint=policy.fingerprint(),
+        model_identity_fingerprint=identity_fp,
+        diagnostic_artefact_id=diagnostic_artefact_id,
+        diagnostic_artefact_fingerprint=diagnostic_artefact_fingerprint,
+        gate_results=tuple(results),
+        blocking_failures=tuple(blocking_failures),
+        review_items=tuple(review_items),
+        passes=tuple(passes),
+        missing_required_gates=tuple(missing_required_gates),
+        waivers_applied=tuple(applied_waivers),
+        evaluated_at=as_of,
         overall_ready=overall_ready,
+        schema_version=1,
     )
 
 
@@ -594,50 +812,4 @@ def evaluate_approval_readiness(
 
 def readiness_to_dict(readiness: ApprovalReadiness) -> dict:
     """Convert ApprovalReadiness to a JSON-serialisable dict."""
-    return {
-        "policy_id": readiness.policy_id,
-        "policy_version": readiness.policy_version,
-        "overall_ready": readiness.overall_ready,
-        "blocking_failures": [
-            {
-                "gate_name": r.gate_name,
-                "status": r.status,
-                "passed": r.passed,
-                "value": r.value,
-                "message": r.message,
-                "artefact_id": r.artefact_id,
-            }
-            for r in readiness.blocking_failures
-        ],
-        "review_items": [
-            {
-                "gate_name": r.gate_name,
-                "status": r.status,
-                "passed": r.passed,
-                "value": r.value,
-                "message": r.message,
-            }
-            for r in readiness.review_items
-        ],
-        "passes": [
-            {
-                "gate_name": r.gate_name,
-                "status": r.status,
-                "passed": r.passed,
-                "value": r.value,
-                "message": r.message,
-            }
-            for r in readiness.passes
-        ],
-        "missing_required_gates": readiness.missing_required_gates,
-        "waivers_applied": [
-            {
-                "waiver_id": w.waiver_id,
-                "gate_name": w.gate_name,
-                "approved_by": w.approved_by,
-                "reason": w.reason,
-                "is_active": w.is_active(),
-            }
-            for w in readiness.waivers_applied
-        ],
-    }
+    return readiness.to_dict()
