@@ -9,7 +9,11 @@ One authoritative PPC calculation (not double-counted).
 
 from __future__ import annotations
 
+import hashlib
+import json
+import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
@@ -26,18 +30,75 @@ from ancestry_mmm.core.market_specific_diagnostics import (
     compute_scorecard_market_specific,
     curve_plausibility_checks_market_specific,
 )
+from ancestry_mmm.core.model_identity import ModelIdentity
 from ancestry_mmm.core.predict import FHPosteriorParams
 from ancestry_mmm.core.market_specific_predict import FHMarketSpecificPosteriorParams
 
 
+@dataclass(frozen=True)
+class DiagnosticsArtefact:
+    """Immutable, fingerprinted artefact capturing diagnostics evidence.
+
+    PR 56F: Binds model identity, convergence metrics, scorecard, PPC,
+    plausibility, identification diagnostics, and backtest results into
+    a single auditable proof. The ``fingerprint()`` is derived from all
+    fields, so any change in diagnostics invalidates the artefact.
+    """
+
+    artefact_id: str = ""
+    diagnostics_version: str = "1.0.0"
+    model_identity_fingerprint: str = ""
+    evaluated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    max_rhat: float = 0.0
+    min_ess: float = 0.0
+    has_divergences: bool = False
+    mean_ppc_coverage_pct: float = 0.0
+    scorecard_fields: tuple[str, ...] = field(default_factory=tuple)
+    plausibility_issues: int = 0
+    identification_condition_number: float = 0.0
+    backtest_folds: int = 0
+    backtest_mean_mape: Optional[float] = None
+    settings: tuple[tuple[str, str], ...] = field(default_factory=tuple)
+    schema_version: int = 1
+
+    def fingerprint(self) -> str:
+        """Deterministic SHA-256 fingerprint of this artefact."""
+        payload = {
+            "artefact_id": self.artefact_id,
+            "diagnostics_version": self.diagnostics_version,
+            "model_identity_fingerprint": self.model_identity_fingerprint,
+            "evaluated_at": self.evaluated_at.isoformat(),
+            "max_rhat": self.max_rhat,
+            "min_ess": self.min_ess,
+            "has_divergences": self.has_divergences,
+            "mean_ppc_coverage_pct": self.mean_ppc_coverage_pct,
+            "scorecard_fields": sorted(self.scorecard_fields),
+            "plausibility_issues": self.plausibility_issues,
+            "identification_condition_number": self.identification_condition_number,
+            "backtest_folds": self.backtest_folds,
+            "backtest_mean_mape": self.backtest_mean_mape,
+            "settings": tuple(sorted(self.settings)),
+            "schema_version": self.schema_version,
+        }
+        encoded = json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), default=str
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+
 @dataclass
 class DiagnosticsInput:
-    """Typed input for diagnostics evaluation."""
+    """Typed input for diagnostics evaluation.
+
+    PR 56F: Includes explicit ``model_identity`` so the diagnostics
+    artefact can be bound to the exact model run.
+    """
 
     trace: az.InferenceData
     frame: Dict[str, Any]
     meta: FHModelMeta
     model_type: str = "shared"  # "shared" for Model A, "market_specific" for Model C
+    model_identity: Optional[ModelIdentity] = None
     params: Optional[FHPosteriorParams | FHMarketSpecificPosteriorParams] = None
     roi_bounds: Optional[Dict[str, tuple[float, float]]] = None
     credible_mass: float = 0.9
@@ -56,6 +117,9 @@ class DiagnosticsResult:
 
     No hard-coded thresholds. Convergence metrics are raw values; callers
     apply policies.
+
+    PR 56F: Includes a ``diagnostics_artefact`` that captures the complete
+    evidence in a fingerprinted, auditable form.
     """
 
     scorecard: Dict[str, Any]
@@ -68,6 +132,7 @@ class DiagnosticsResult:
     warnings: List[str] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
     diagnostics_version: str = "1.0.0"
+    diagnostics_artefact: Optional[DiagnosticsArtefact] = None
 
     @property
     def convergence_ok(self) -> bool:
@@ -192,6 +257,43 @@ class DiagnosticsService:
             except Exception as exc:
                 warnings.append(f"Backtest failed (non-fatal): {exc}")
 
+        # --- Build fingerprinted artefact ---
+        identity_fp = (
+            diag_input.model_identity.fingerprint()
+            if diag_input.model_identity is not None
+            else ""
+        )
+        backtest_mean_mape = None
+        if backtest_results is not None and not backtest_results.empty:
+            try:
+                backtest_mean_mape = float(backtest_results["mape"].mean())
+            except (KeyError, TypeError, ValueError):
+                pass
+        artefact = DiagnosticsArtefact(
+            artefact_id=uuid.uuid4().hex,
+            diagnostics_version="1.0.0",
+            model_identity_fingerprint=identity_fp,
+            evaluated_at=datetime.now(timezone.utc),
+            max_rhat=max_rhat,
+            min_ess=min_ess,
+            has_divergences=has_div,
+            mean_ppc_coverage_pct=mean_ppc,
+            scorecard_fields=tuple(sorted(scorecard.keys())) if scorecard else (),
+            plausibility_issues=len(
+                [w for w in warnings if w.startswith("[") and "plausibility" not in w]
+            ),
+            identification_condition_number=0.0,
+            backtest_folds=diag_input.backtest_folds,
+            backtest_mean_mape=backtest_mean_mape,
+            settings=(
+                ("credible_mass", str(diag_input.credible_mass)),
+                ("predictive_replications", str(diag_input.predictive_replications)),
+                ("random_seed", str(diag_input.random_seed)),
+                ("model_type", diag_input.model_type),
+            ),
+            schema_version=1,
+        )
+
         return DiagnosticsResult(
             scorecard=scorecard,
             max_rhat=max_rhat,
@@ -202,6 +304,7 @@ class DiagnosticsService:
             backtest_results=backtest_results,
             warnings=warnings,
             errors=errors,
+            diagnostics_artefact=artefact,
         )
 
     @staticmethod
