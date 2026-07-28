@@ -43,7 +43,7 @@ IDENTITY = dict(
     model_run_id="run-123",
     data_fingerprint="data-abc",
     model_spec_fingerprint="spec-def",
-    posterior_fingerprint="posterior-ghi",
+    posterior_fingerprint="post-ghi",
 )
 
 
@@ -155,161 +155,151 @@ class TestRequireMatchingApproval:
 class TestValidationPolicyIntegration:
     """require_matching_approval with validation-policy-bound approval."""
 
-    @pytest.fixture
-    def val_policy_approval(self):
-        return _bound_approval(validation_policy_id="val-pol-001")
+    @staticmethod
+    def _make_gate():
+        from ancestry_mmm.core.validation_policy import ValidationGate
 
-    @pytest.fixture
-    def passing_readiness(self):
-        from ancestry_mmm.core.validation_policy import (
-            ValidationResult,
-            ThresholdPolicy,
+        return ValidationGate(
+            name="convergence_rhat",
+            description="R-hat check",
+            evaluator_id="rhat",
+            acceptable_range=(0.0, 1.05),
+            direction="lower_is_better",
+            blocking=True,
+            required=True,
         )
 
-        policy = ThresholdPolicy(
-            policy_id="val-pol-001",
-            version="1.0",
+    @staticmethod
+    def _make_policy(policy_id: str = "val-pol-001", version: str = "1.0"):
+        from ancestry_mmm.core.validation_policy import ThresholdPolicy
+
+        return ThresholdPolicy(
+            policy_id=policy_id,
+            version=version,
             scope="test",
+            gates=[TestValidationPolicyIntegration._make_gate()],
             owner="Test Owner",
         )
+
+    @staticmethod
+    def _make_readiness(
+        policy_id: str = "val-pol-001",
+        version: str = "1.0",
+        status: str = "pass",
+    ):
+        from ancestry_mmm.core.validation_policy import (
+            ValidationResult,
+            evaluate_approval_readiness,
+        )
+        from ancestry_mmm.core.model_identity import ModelIdentity as _MI
+
+        policy = TestValidationPolicyIntegration._make_policy(policy_id, version)
         results = [
             ValidationResult(
                 gate_name="convergence_rhat",
-                status="pass",
+                status=status,
+                value=1.2 if status == "fail" else 1.02,
+                message=f"R-hat {status}",
                 model_run_id="run-123",
                 data_fingerprint="data-abc",
                 model_spec_fingerprint="spec-def",
                 posterior_fingerprint="post-ghi",
-                policy_id="val-pol-001",
-                policy_version="1.0",
+                policy_id=policy_id,
+                policy_version=version,
             )
         ]
-        from ancestry_mmm.core.model_identity import ModelIdentity as _MI
-        from ancestry_mmm.core.validation_policy import evaluate_approval_readiness
-
         return evaluate_approval_readiness(
             results,
             policy,
             _MI("run-123", "data-abc", "spec-def", "post-ghi"),
         )
 
-    @pytest.fixture
-    def failing_readiness(self):
-        from ancestry_mmm.core.validation_policy import (
-            ValidationResult,
-            ValidationGate,
-            ThresholdPolicy,
+    @staticmethod
+    def _make_policy_approval(readiness):
+        """Create a policy-backed approval matched to a readiness object."""
+        return _bound_approval(
+            validation_policy_id=readiness.policy_id,
+            validation_policy_version=readiness.policy_version,
+            validation_policy_fingerprint=readiness.policy_fingerprint,
+            readiness_artefact_id=readiness.readiness_artefact_id,
+            readiness_fingerprint=readiness.fingerprint(),
         )
 
-        gate = ValidationGate(
-            name="convergence_rhat",
-            description="R-hat check",
-            blocking=True,
-            required=True,
-        )
-        policy = ThresholdPolicy(
-            policy_id="val-pol-001",
-            version="1.0",
-            scope="test",
-            gates=[gate],
-            owner="Test Owner",
-        )
-        results = [
-            ValidationResult(
-                gate_name="convergence_rhat",
-                status="fail",
-                value=1.2,
-                message="R-hat too high",
-                model_run_id="run-123",
-                data_fingerprint="data-abc",
-                model_spec_fingerprint="spec-def",
-                posterior_fingerprint="post-ghi",
-                policy_id="val-pol-001",
-                policy_version="1.0",
-            )
-        ]
-        from ancestry_mmm.core.model_identity import ModelIdentity as _MI
-        from ancestry_mmm.core.validation_policy import evaluate_approval_readiness
-
-        return evaluate_approval_readiness(
-            results, policy, _MI("run-123", "data-abc", "spec-def", "post-ghi")
-        )
-
-    def test_policy_bound_approval_passes_with_readiness(
-        self,
-        val_policy_approval,
-        passing_readiness,
-    ):
+    def test_policy_bound_approval_passes_with_readiness(self):
+        readiness = self._make_readiness()
+        approval = self._make_policy_approval(readiness)
         result = require_matching_approval(
-            val_policy_approval,
+            approval,
             **IDENTITY,
-            approval_readiness=passing_readiness,
+            approval_readiness=readiness,
         )
-        assert result is val_policy_approval
+        assert result is approval
 
-    def test_policy_bound_approval_blocked_without_readiness(
-        self,
-        val_policy_approval,
-    ):
+    def test_policy_bound_approval_blocked_without_readiness(self):
+        readiness = self._make_readiness()
+        approval = self._make_policy_approval(readiness)
         from ancestry_mmm.core.approval import ValidationPolicyBlockedError
 
         with pytest.raises(ValidationPolicyBlockedError):
-            require_matching_approval(val_policy_approval, **IDENTITY)
+            require_matching_approval(approval, **IDENTITY)
 
-    def test_policy_bound_approval_blocked_with_failing_readiness(
-        self,
-        val_policy_approval,
-        failing_readiness,
-    ):
+    def test_policy_bound_approval_blocked_with_failing_readiness(self):
+        passing = self._make_readiness()
+        approval = self._make_policy_approval(passing)
+        failing = self._make_readiness(status="fail")
         from ancestry_mmm.core.approval import ValidationPolicyBlockedError
 
         with pytest.raises(ValidationPolicyBlockedError):
             require_matching_approval(
-                val_policy_approval,
+                approval,
                 **IDENTITY,
-                approval_readiness=failing_readiness,
+                approval_readiness=failing,
             )
 
-    def test_non_policy_approval_ignores_readiness(self, passing_readiness):
+    def test_non_policy_approval_ignores_readiness(self):
+        readiness = self._make_readiness()
         approval = _bound_approval()  # no validation_policy_id
         result = require_matching_approval(
             approval,
             **IDENTITY,
-            approval_readiness=passing_readiness,
+            approval_readiness=readiness,
         )
         assert result is approval
 
-    def test_policy_mismatch_blocked(self, val_policy_approval):
-        from ancestry_mmm.core.validation_policy import (
-            ThresholdPolicy,
+    def test_policy_mismatch_blocked(self):
+        readiness = self._make_readiness()
+        approval = self._make_policy_approval(readiness)
+        wrong_readiness = self._make_readiness(
+            policy_id="different-policy", version="1.0"
         )
-        from ancestry_mmm.core.validation_policy import evaluate_approval_readiness
         from ancestry_mmm.core.approval import ValidationPolicyBlockedError
 
-        wrong_policy = ThresholdPolicy(
-            policy_id="different-policy",
-            version="1.0",
-            scope="test",
-            owner="Test Owner",
-        )
-        from ancestry_mmm.core.model_identity import ModelIdentity as _MI
-
-        readiness = evaluate_approval_readiness(
-            [], wrong_policy, _MI("run-123", "data-abc", "spec-def", "post-ghi")
-        )
         with pytest.raises(ValidationPolicyBlockedError):
             require_matching_approval(
-                val_policy_approval,
+                approval,
                 **IDENTITY,
-                approval_readiness=readiness,
+                approval_readiness=wrong_readiness,
             )
 
-    def test_wrong_type_readiness_blocked(self, val_policy_approval):
+    def test_wrong_type_readiness_blocked(self):
+        readiness = self._make_readiness()
+        approval = self._make_policy_approval(readiness)
         from ancestry_mmm.core.approval import ValidationPolicyBlockedError
 
         with pytest.raises(ValidationPolicyBlockedError):
             require_matching_approval(
-                val_policy_approval,
+                approval,
                 **IDENTITY,
                 approval_readiness="not_a_readiness_object",  # type: ignore
             )
+
+    def test_blank_evidence_fields_blocked(self):
+        """Policy-backed approval with blank evidence fields is blocked."""
+        from ancestry_mmm.core.approval import ValidationPolicyBlockedError
+
+        approval = _bound_approval(
+            validation_policy_id="val-pol-001",
+            # All other evidence fields are blank
+        )
+        with pytest.raises(ValidationPolicyBlockedError):
+            require_matching_approval(approval, **IDENTITY)

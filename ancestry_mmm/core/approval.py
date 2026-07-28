@@ -185,7 +185,7 @@ def require_matching_approval(
             "Re-approve after review."
         )
 
-    # REQ-VAL-001 / PR 53D + PR 56C: Validation policy and readiness check
+    # REQ-VAL-001 / PR 53D + PR 56C + PR 62B: Validation policy and readiness check
     if approval.validation_policy_id:
         if approval_readiness is None:
             raise ValidationPolicyBlockedError(
@@ -197,26 +197,39 @@ def require_matching_approval(
             raise ValidationPolicyBlockedError(
                 "Approval readiness must be a valid ApprovalReadiness object."
             )
+
+        # PR 62B: When policy-backed, ALL evidence fields must be present
+        _missing: list[str] = []
+        if not approval.validation_policy_version:
+            _missing.append("validation_policy_version")
+        if not approval.validation_policy_fingerprint:
+            _missing.append("validation_policy_fingerprint")
+        if not approval.readiness_artefact_id:
+            _missing.append("readiness_artefact_id")
+        if not approval.readiness_fingerprint:
+            _missing.append("readiness_fingerprint")
+        if _missing:
+            raise ValidationPolicyBlockedError(
+                f"Policy-backed approval is missing required evidence fields: "
+                f"{', '.join(_missing)}. "
+                "All proof fields must be present for policy-backed approval."
+            )
+
         if approval_readiness.policy_id != approval.validation_policy_id:
             raise ValidationPolicyBlockedError(
                 f"Approval references policy '{approval.validation_policy_id}' "
                 f"but readiness was evaluated against "
                 f"'{approval_readiness.policy_id}'."
             )
-        if (
-            approval.validation_policy_version
-            and approval_readiness.policy_version != approval.validation_policy_version
-        ):
+        if approval_readiness.policy_version != approval.validation_policy_version:
             raise ValidationPolicyBlockedError(
                 f"Approval references policy version "
                 f"'{approval.validation_policy_version}' but readiness "
                 f"was evaluated against version "
                 f"'{approval_readiness.policy_version}'."
             )
-        # PR 56C: Verify policy fingerprint matches
         if (
-            approval.validation_policy_fingerprint
-            and approval_readiness.policy_fingerprint
+            approval_readiness.policy_fingerprint
             != approval.validation_policy_fingerprint
         ):
             raise ValidationPolicyBlockedError(
@@ -225,37 +238,67 @@ def require_matching_approval(
                 f"was evaluated against fingerprint "
                 f"'{approval_readiness.policy_fingerprint}'."
             )
-        # PR 56C: Verify readiness artefact identity
-        if approval.readiness_artefact_id and (
-            approval_readiness.readiness_artefact_id != approval.readiness_artefact_id
-        ):
+        if approval_readiness.readiness_artefact_id != approval.readiness_artefact_id:
             raise ValidationPolicyBlockedError(
                 f"Approval references readiness artefact "
                 f"'{approval.readiness_artefact_id}' but readiness "
                 f"has artefact '{approval_readiness.readiness_artefact_id}'."
             )
-        # PR 56C: Verify readiness fingerprint matches
-        if approval.readiness_fingerprint:
-            actual_fp = approval_readiness.fingerprint()
-            if actual_fp != approval.readiness_fingerprint:
-                raise ValidationPolicyBlockedError(
-                    f"Approval readiness fingerprint mismatch: "
-                    f"stored '{approval.readiness_fingerprint}' vs "
-                    f"computed '{actual_fp}'."
-                )
+        # Verify readiness fingerprint matches
+        actual_fp = approval_readiness.fingerprint()
+        if actual_fp != approval.readiness_fingerprint:
+            raise ValidationPolicyBlockedError(
+                f"Approval readiness fingerprint mismatch: "
+                f"stored '{approval.readiness_fingerprint}' vs "
+                f"computed '{actual_fp}'."
+            )
+        # Verify readiness is overall ready
         if not approval_readiness.overall_ready:
+            _detail_parts: list[str] = []
+            if approval_readiness.config_errors:
+                _detail_parts.append(
+                    f"Config errors: {len(approval_readiness.config_errors)}"
+                )
+            if approval_readiness.blocking_failures:
+                _detail_parts.append(
+                    f"Blocking failures: {len(approval_readiness.blocking_failures)}"
+                )
+            if approval_readiness.missing_required_gates:
+                _detail_parts.append(
+                    f"Missing required gates: "
+                    f"{len(approval_readiness.missing_required_gates)}"
+                )
             raise ValidationPolicyBlockedError(
                 "Validation policy gates are not satisfied. "
-                f"Blocking failures: {len(approval_readiness.blocking_failures)}, "
-                f"Missing required gates: {len(approval_readiness.missing_required_gates)}. "
+                f"{'; '.join(_detail_parts)}. "
                 "Resolve issues or use exploratory mode."
             )
-        # PR 53D: verify readiness artefact identity is present when expected
-        if approval.readiness_artefact_id and not approval_readiness.passes:
-            # Readiness artefact was expected but no passing results exist
+        # PR 62B: Verify readiness model identity fingerprint matches the
+        # current model identity components provided to this function.
+        # We reconstruct the ModelIdentity to compute the expected fingerprint.
+        from .model_identity import ModelIdentity as _ModelIdentity
+
+        _current_identity = _ModelIdentity(
+            model_run_id=model_run_id,
+            data_fingerprint=data_fingerprint,
+            model_spec_fingerprint=model_spec_fingerprint,
+            posterior_fingerprint=posterior_fingerprint,
+        )
+        _expected_fp = _current_identity.fingerprint()
+        if approval_readiness.model_identity_fingerprint != _expected_fp:
             raise ValidationPolicyBlockedError(
-                "Approval references a readiness artefact but no passing "
-                "validation results were found."
+                f"Readiness model identity fingerprint "
+                f"'{approval_readiness.model_identity_fingerprint}' does not "
+                f"match current model identity fingerprint '{_expected_fp}'."
+            )
+
+        # PR 62B: Check schema version — must be >= 2 for policy-backed
+        if approval_readiness.schema_version < 2:
+            raise ValidationPolicyBlockedError(
+                f"Readiness artefact has schema version "
+                f"{approval_readiness.schema_version} which predates "
+                f"PR 62B evidence enforcement (v2+ required). "
+                "Re-evaluate readiness with the current policy."
             )
 
     return approval
