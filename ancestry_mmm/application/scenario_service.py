@@ -158,6 +158,9 @@ class ScenarioService:
         if sc_input.meta is None:
             errors.append("No model metadata provided.")
             return ScenarioServiceResult(errors=errors)
+        if sc_input.approval is None:
+            errors.append("No model approval provided.")
+            return ScenarioServiceResult(errors=errors)
 
         if errors:
             return ScenarioServiceResult(errors=errors)
@@ -216,6 +219,9 @@ class ScenarioService:
             return ScenarioServiceResult(errors=errors)
         if opt_input.params is None:
             errors.append("No posterior params provided.")
+            return ScenarioServiceResult(errors=errors)
+        if opt_input.approval is None:
+            errors.append("No model approval provided.")
             return ScenarioServiceResult(errors=errors)
 
         if errors:
