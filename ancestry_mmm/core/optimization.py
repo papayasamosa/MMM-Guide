@@ -119,6 +119,7 @@ from .planning import (
     ScenarioGovernanceDependencies,
     ScenarioValidationContext,
     planning_objective_from_legacy,
+    validation_context_from_legacy_args,  # noqa: F401 — re-exported for persistence.py
 )
 
 WEEKS_PER_MONTH = 365.25 / 12 / 7  # ~4.348
@@ -137,7 +138,7 @@ def _is_nbt_outcome(outcome_id: str, meta: object) -> bool:
                 getattr(catalogue[outcome_id], "metric_key", None)
                 == METRIC_KEY_FH_NET_BILLTHROUGH_COUNT
             )
-    except Exception:
+    except (AttributeError, KeyError, TypeError):
         pass
     return outcome_id.startswith("fh_nbt")
 
@@ -397,9 +398,6 @@ def resolve_planning_objective(
 
 
 # ---------------------------------------------------------------------------
-# validation_context_from_legacy_args imported from .planning.value
-
-
 # ScenarioDependencyIssue imported from .planning.value
 
 

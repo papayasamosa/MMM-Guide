@@ -16,10 +16,10 @@ import numpy as np
 import pandas as pd
 import pytest
 import arviz as az
-import xarray as xr
 
 from ancestry_mmm.core.diagnostics import posterior_predictive_coverage
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
+from ancestry_mmm.core.pathways import resolve_pathway_masks
 
 
 # ---------------------------------------------------------------------------
@@ -36,6 +36,7 @@ def _make_trace_and_frame(
     outcome_ids: List[str] | None = None,
     channels: List[str] | None = None,
     seed: int = 42,
+    mu_noise_frac: float = 0.05,
 ) -> tuple[az.InferenceData, Dict, FHModelMeta]:
     """Build a minimal InferenceData + frame + meta for PPC testing.
 
@@ -49,7 +50,7 @@ def _make_trace_and_frame(
 
     # True parameters
     true_mu = rng.uniform(5, 30, size=(n_obs, n_out))
-    true_alpha = np.array([5.0, 8.0])
+    true_alpha = rng.uniform(5.0, 9.0, size=n_out)
 
     # Generate "observed" data from the true NB distribution
     Y = np.zeros((n_obs, n_out))
@@ -63,71 +64,99 @@ def _make_trace_and_frame(
     alpha_draws = np.zeros((n_chain, n_draw, n_out))
     for i in range(n_out):
         mu_noise = rng.normal(
-            0, true_mu.mean(axis=0)[i] * 0.05, size=(n_chain, n_draw, n_obs)
+            0, true_mu.mean(axis=0)[i] * mu_noise_frac, size=(n_chain, n_draw, n_obs)
         )
         mu_draws[:, :, :, i] = np.maximum(true_mu[:, i] + mu_noise, 0.1)
         alpha_draws[:, :, i] = np.maximum(
             true_alpha[i] + rng.normal(0, 0.3, size=(n_chain, n_draw)), 0.5
         )
 
+    # az.from_dict() extracts raw arrays from its "posterior" dict — it does
+    # NOT preserve dims/coords carried on xr.DataArray values, it silently
+    # auto-names them (e.g. "decay_rate_dim_0"). Named coordinates (used by
+    # extract_posterior_params()'s by-channel/by-outcome lookups) must be
+    # declared through from_dict()'s own coords=/dims= arguments instead.
+    markets = ["UK"]
+    n_fourier = 4
     trace = az.from_dict(
         posterior={
-            "mu": xr.DataArray(
-                mu_draws,
-                dims=["chain", "draw", "obs", "outcome"],
-                coords={
-                    "chain": list(range(n_chain)),
-                    "draw": list(range(n_draw)),
-                    "obs": list(range(n_obs)),
-                    "outcome": oids,
-                },
-            ),
-            "alpha": xr.DataArray(
-                alpha_draws,
-                dims=["chain", "draw", "outcome"],
-                coords={
-                    "chain": list(range(n_chain)),
-                    "draw": list(range(n_draw)),
-                    "outcome": oids,
-                },
-            ),
-            # Minimal extra variables to avoid KeyError in coords
-            "hill_K": xr.DataArray(
-                np.ones((n_chain, n_draw, len(chs))),
-                dims=["chain", "draw", "channel"],
-                coords={
-                    "chain": list(range(n_chain)),
-                    "draw": list(range(n_draw)),
-                    "channel": chs,
-                },
-            ),
-            "beta": xr.DataArray(
-                np.ones((n_chain, n_draw, n_out, len(chs))),
-                dims=["chain", "draw", "outcome", "channel"],
-                coords={
-                    "chain": list(range(n_chain)),
-                    "draw": list(range(n_draw)),
-                    "outcome": oids,
-                    "channel": chs,
-                },
-            ),
+            "mu": mu_draws,
+            "alpha": alpha_draws,
+            # Remaining variables are the rest of extract_posterior_params()'s
+            # required set (compute_scorecard() -> extract_posterior_params()
+            # needs a complete parameter set, not just what PPC itself uses).
+            "decay_rate": np.full((n_chain, n_draw, len(chs)), 0.5),
+            "hill_K": np.ones((n_chain, n_draw, len(chs))),
+            "hill_S": np.full((n_chain, n_draw, len(chs)), 4.0),
+            "beta": np.ones((n_chain, n_draw, n_out, len(chs))),
+            "intercept": np.zeros((n_chain, n_draw, n_out)),
+            "trend_coef": np.zeros((n_chain, n_draw, n_out)),
+            "promo_coef": np.zeros((n_chain, n_draw, n_out)),
+            "market_offset": np.zeros((n_chain, n_draw, len(markets), n_out)),
+            "gamma_fourier": np.zeros((n_chain, n_draw, n_fourier, n_out)),
+        },
+        coords={
+            "obs": list(range(n_obs)),
+            "outcome": oids,
+            "channel": chs,
+            "market": markets,
+            "fourier": list(range(n_fourier)),
+        },
+        dims={
+            "mu": ["obs", "outcome"],
+            "alpha": ["outcome"],
+            "decay_rate": ["channel"],
+            "hill_K": ["channel"],
+            "hill_S": ["channel"],
+            "beta": ["outcome", "channel"],
+            "intercept": ["outcome"],
+            "trend_coef": ["outcome"],
+            "promo_coef": ["outcome"],
+            "market_offset": ["market", "outcome"],
+            "gamma_fourier": ["fourier", "outcome"],
         },
     )
 
+    dna_channel_idx = [chs.index("Digital")] if "Digital" in chs else []
+    dna_outcome_id = "DNA_CrossSell" if "DNA_CrossSell" in oids else oids[-1]
+
     meta = FHModelMeta(
-        markets=["UK"],
+        markets=markets,
         outcome_ids=oids,
         channels=chs,
         dna_channels=["Digital"] if "Digital" in chs else [],
-        dna_channel_idx=[chs.index("Digital")] if "Digital" in chs else [],
+        dna_channel_idx=dna_channel_idx,
         non_dna_idx=[i for i, ch in enumerate(chs) if ch != "Digital"],
-        dna_outcome_id="DNA_CrossSell" if "DNA_CrossSell" in oids else oids[-1],
+        dna_outcome_id=dna_outcome_id,
         dna_lag_weeks=1,
         unpooled_markets=[],
         control_names=[],
+        # Legacy defaults (no explicit pathway catalogue) so predict_mu()'s
+        # full linear-predictor replay — used by compute_scorecard() via
+        # in_sample_fit() — has a valid mask to replay against.
+        pathway_masks=resolve_pathway_masks(
+            oids,
+            chs,
+            [],
+            dna_channel_idx=dna_channel_idx,
+            dna_outcome_id=dna_outcome_id,
+            direct_dna_outcome_ids=[],
+            dna_lag_weeks=1,
+        ),
     )
 
-    frame = {"Y": Y}
+    # Full modeling frame — compute_scorecard() -> in_sample_fit() ->
+    # predict_mu() needs the same frame shape as
+    # data.preprocessor.prepare_fh_modeling_frame's output, not just Y.
+    frame = {
+        "Y": Y,
+        "X_media": rng.uniform(0, 100, size=(n_obs, len(chs))),
+        "market_bounds": [(0, n_obs)],
+        "market_idx": np.zeros(n_obs, dtype=int),
+        "promo": np.zeros((n_obs, n_out)),
+        "trend": np.arange(n_obs, dtype=float),
+        "fourier": np.zeros((n_obs, n_fourier)),
+    }
 
     return trace, frame, meta
 
@@ -269,11 +298,17 @@ class TestPosteriorPredictiveCoverageValidity:
         """Prove the old average-of-conditional-quantiles method is *not*
         equivalent to the correct predictive mixture.
 
-        The two methods will diverge, especially with few posterior draws
-        where the quantile-averaging bias is most visible.
+        The two methods only diverge when there's real inter-draw
+        (epistemic) spread in the posterior — with few posterior draws
+        *and* wide inter-draw spread, the quantile-averaging bias is most
+        visible. n_obs=10 with the fixture's default (tight) noise wasn't
+        enough headroom: coverage is a multiple of 10% at that sample size,
+        and both methods often round to the same nearby value by chance.
+        Widening mu_noise_frac and using more observations makes the
+        divergence robust rather than coincidental.
         """
         trace, frame, meta = _make_trace_and_frame(
-            n_obs=10, n_chain=2, n_draw=5, seed=7
+            n_obs=20, n_chain=2, n_draw=5, seed=7, mu_noise_frac=1.0
         )
         new_result = posterior_predictive_coverage(
             trace,
@@ -338,15 +373,37 @@ class TestPosteriorPredictiveCoverageEdgeCases:
         assert len(result) == 2
 
     def test_full_credible_interval(self):
-        """100% credible interval should always cover everything."""
+        """100% credible interval should always cover everything.
+
+        Needs enough predictive_replications that the empirical min/max of
+        the pooled predictive mixture reliably bounds every observation —
+        with the default of 1 replication (~50 pooled samples here), a
+        single fresh draw can occasionally land outside the sampled
+        min/max just from Monte Carlo noise, which is not what this test
+        is checking.
+        """
         trace, frame, meta = _make_trace_and_frame(n_obs=10)
-        result = posterior_predictive_coverage(trace, frame, meta, credible_mass=1.0)
+        result = posterior_predictive_coverage(
+            trace,
+            frame,
+            meta,
+            credible_mass=1.0,
+            predictive_replications=200,
+            random_seed=42,
+        )
         assert (result["coverage_pct"] == 100.0).all()
 
     def test_zero_credible_interval_no_coverage_expected(self):
         """0% credible interval should almost never cover."""
         trace, frame, meta = _make_trace_and_frame(n_obs=10)
-        result = posterior_predictive_coverage(trace, frame, meta, credible_mass=0.0)
+        result = posterior_predictive_coverage(
+            trace,
+            frame,
+            meta,
+            credible_mass=0.0,
+            predictive_replications=200,
+            random_seed=42,
+        )
         # With discrete NB, coverage might still be >0 for some outcomes
         # due to ties at zero — but should be very low
         assert (result["coverage_pct"] < 10).all()

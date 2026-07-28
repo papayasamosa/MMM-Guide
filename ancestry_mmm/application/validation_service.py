@@ -100,9 +100,7 @@ class ValidationService:
 
         # --- Compute identity-dependent fingerprints once ---
         identity_fp = (
-            v_input.model_identity.fingerprint()
-            if v_input.model_identity
-            else ""
+            v_input.model_identity.fingerprint() if v_input.model_identity else ""
         )
         diag_fp = v_input.diagnostic_artefact_fingerprint or ""
 
@@ -135,21 +133,26 @@ class ValidationService:
                 errors.append(f"Gate '{gate.name}' evaluation failed: {exc}")
 
         # --- Aggregate into readiness with current identity ---
-        try:
-            readiness = evaluate_approval_readiness(
-                results,
-                policy,
-                v_input.model_identity,
-                diagnostic_artefact_id=v_input.diagnostic_artefact_id or "",
-                diagnostic_artefact_fingerprint=diag_fp,
-                waivers=v_input.waivers,
-                as_of=v_input.as_of,
-            )
-            readiness_dict = readiness_to_dict(readiness)
-        except Exception as exc:
-            errors.append(f"Readiness evaluation failed: {exc}")
+        if v_input.model_identity is None:
+            errors.append("Readiness evaluation failed: no model identity provided.")
             readiness = None
             readiness_dict = None
+        else:
+            try:
+                readiness = evaluate_approval_readiness(
+                    results,
+                    policy,
+                    v_input.model_identity,
+                    diagnostic_artefact_id=v_input.diagnostic_artefact_id or "",
+                    diagnostic_artefact_fingerprint=diag_fp,
+                    waivers=v_input.waivers,
+                    as_of=v_input.as_of,
+                )
+                readiness_dict = readiness_to_dict(readiness)
+            except Exception as exc:
+                errors.append(f"Readiness evaluation failed: {exc}")
+                readiness = None
+                readiness_dict = None
 
         return ValidationServiceResult(
             readiness=readiness,
