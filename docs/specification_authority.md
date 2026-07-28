@@ -59,7 +59,6 @@ The following PRD v1.4 capabilities have not yet been translated into approved
 requirement records. Each needs a decision record before implementation begins:
 
 - Governed FX (`REQ-FX-001` through `REQ-FX-006`)
-- Governed FX (`REQ-FX-001` through `REQ-FX-006`)
 - Sequential / weekly planning (`REQ-STATE-001`, `REQ-SCEN-001` through `REQ-SCEN-003`)
 - Starting state and terminal state
 - Future-assumption bundles
