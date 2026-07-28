@@ -26,18 +26,27 @@ from ancestry_mmm.core.diagnostics import (
     posterior_predictive_coverage,
     compute_scorecard,
 )
+from ancestry_mmm.core.model_identity import ModelIdentity
 
 
 @dataclass
 class ValidationInput:
-    """Input for validation readiness evaluation."""
+    """Input for validation readiness evaluation.
+
+    PR 53B: ``model_identity`` and ``policy`` are required for producing
+    identity-bound validation results. Without them, results will have
+    empty identity fields and be treated as stale by the readiness evaluator.
+    """
     trace: Optional[az.InferenceData] = None
     frame: Optional[Dict[str, Any]] = None
     meta: Optional[Any] = None
     policy: Optional[ThresholdPolicy] = None
+    model_identity: Optional["ModelIdentity"] = None  # noqa: F821
     waivers: Optional[List[ValidationWaiverReference]] = None
     as_of: Optional[datetime] = None
     credible_mass: float = 0.9
+    diagnostic_artefact_id: Optional[str] = None
+    diagnostic_artefact_fingerprint: Optional[str] = None
 
 
 @dataclass
@@ -69,8 +78,9 @@ class ValidationService:
     def evaluate_readiness(self, v_input: ValidationInput) -> ValidationServiceResult:
         """Evaluate model diagnostics against a validation policy.
 
-        Produces ``ValidationResult`` objects for each gate in the policy
-        and aggregates them into an ``ApprovalReadiness``.
+        Produces identity-bound ``ValidationResult`` objects for each gate
+        and aggregates them into an ``ApprovalReadiness`` using the current
+        model identity for staleness checking.
 
         Does not mutate approvals, access Streamlit state, or render UI.
         """
@@ -87,19 +97,37 @@ class ValidationService:
             errors.append("No posterior trace provided for validation.")
             return ValidationServiceResult(errors=errors)
 
-        # --- Evaluate each gate ---
+        # --- Evaluate each gate with identity binding ---
         for gate in policy.gates:
             try:
                 result = self._evaluate_gate(gate, v_input)
+                # Bind identity fields from the input
+                if v_input.model_identity is not None:
+                    result = ValidationResult(
+                        gate_name=result.gate_name,
+                        status=result.status,
+                        value=result.value,
+                        message=result.message,
+                        artefact_id=v_input.diagnostic_artefact_id or result.artefact_id,
+                        evaluated_at=result.evaluated_at,
+                        model_run_id=v_input.model_identity.model_run_id,
+                        data_fingerprint=v_input.model_identity.data_fingerprint,
+                        model_spec_fingerprint=v_input.model_identity.model_spec_fingerprint,
+                        posterior_fingerprint=v_input.model_identity.posterior_fingerprint,
+                        policy_id=policy.policy_id,
+                        policy_version=policy.version,
+                        gate_fingerprint=gate.fingerprint(),
+                    )
                 results.append(result)
             except Exception as exc:
                 errors.append(f"Gate '{gate.name}' evaluation failed: {exc}")
 
-        # --- Aggregate into readiness ---
+        # --- Aggregate into readiness with current identity ---
         try:
             readiness = evaluate_approval_readiness(
                 results,
                 policy,
+                current_model_identity=v_input.model_identity,
                 waivers=v_input.waivers,
                 as_of=v_input.as_of,
             )
@@ -210,10 +238,9 @@ class ValidationService:
         Returns ``"pass"``, ``"review"``, or ``"fail"``.
         """
         if gate.acceptable_range is None:
-            # Boolean gate — treat any actual numeric value as pass
-            return "pass"
-
-        lo, hi = gate.acceptable_range
+            # PR 53C: Missing thresholds on a numeric gate is a configuration
+            # error, not a pass. The gate must define acceptable_range.
+            return "fail"
 
         if gate.direction == "lower_is_better":
             if value <= hi:
