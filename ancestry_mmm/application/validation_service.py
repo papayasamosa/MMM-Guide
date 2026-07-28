@@ -20,11 +20,11 @@ from ancestry_mmm.core.validation_policy import (
     ValidationResult,
     ValidationWaiverReference,
     evaluate_approval_readiness,
+    get_evaluator,
     readiness_to_dict,
+    validate_gate_config,
 )
-from ancestry_mmm.core.diagnostics import (
-    posterior_predictive_coverage,
-)
+from ancestry_mmm.core.diagnostics import posterior_predictive_coverage  # noqa: F401
 from ancestry_mmm.core.model_identity import ModelIdentity
 
 
@@ -164,11 +164,11 @@ class ValidationService:
         gate: ValidationGate,
         v_input: ValidationInput,
     ) -> ValidationResult:
-        """Evaluate a single validation gate.
+        """Evaluate a single validation gate using the evaluator registry.
 
-        PR 51C: No hard-coded thresholds. Every gate must have an
-        ``evaluator_id`` and its thresholds come from the gate definition.
-        Unknown evaluator IDs fail closed (status=fail, blocking).
+        PR 56E: Replaced the hard-coded if-chain with a typed evaluator
+        registry. Unknown evaluator IDs fail closed (status=fail).
+        Gate configuration is validated before evaluation.
         """
         trace = v_input.trace
         frame = v_input.frame
@@ -177,111 +177,52 @@ class ValidationService:
         # Resolve evaluator ID — fall back to gate name if not set
         evaluator_id = gate.evaluator_id or gate.name
 
-        if evaluator_id == "convergence_rhat" or evaluator_id == "rhat":
-            rhat = az.rhat(trace, var_names=["mu", "beta", "hill_K", "alpha"])
-            max_val = float("-inf")
-            for var_data in rhat.values():
-                if hasattr(var_data, "values"):
-                    max_val = max(max_val, float(var_data.values.max()))
-            status = self._classify_numeric_value(max_val, gate)
+        # Validate gate configuration first
+        config_errors = validate_gate_config(gate)
+        if config_errors:
             return ValidationResult(
                 gate_name=gate.name,
-                status=status,
-                value=max_val,
-                message=f"Max R-hat = {max_val:.4f}",
+                status="fail",
+                message="; ".join(config_errors),
             )
 
-        elif evaluator_id in ("min_ess", "ess"):
-            ess = az.ess(trace, var_names=["mu", "beta", "hill_K", "alpha"])
-            min_val = float("inf")
-            for var_data in ess.values():
-                if hasattr(var_data, "values"):
-                    min_val = min(min_val, float(var_data.values.min()))
-            status = self._classify_numeric_value(min_val, gate)
-            return ValidationResult(
-                gate_name=gate.name,
-                status=status,
-                value=min_val,
-                message=f"Min ESS = {min_val:.1f}",
-            )
-
-        elif evaluator_id == "divergences":
-            has_div = False
-            if hasattr(trace, "sample_stats") and "diverging" in trace.sample_stats:
-                has_div = bool(trace.sample_stats["diverging"].values.any())
-            status = "pass" if not has_div else "fail"
-            return ValidationResult(
-                gate_name=gate.name,
-                status=status,
-                value=float(has_div),
-                message="No divergences" if not has_div else "Divergences detected",
-            )
-
-        elif evaluator_id in ("ppc_coverage", "ppc"):
-            if frame is None or meta is None:
-                return ValidationResult(
-                    gate_name=gate.name,
-                    status="fail",
-                    message="Missing frame or meta for PPC evaluation",
-                )
-            ppc = posterior_predictive_coverage(
-                trace,
-                frame,
-                meta,
-                credible_mass=v_input.credible_mass,
-                random_seed=42,
-            )
-            mean_cov = float(ppc["coverage_pct"].mean())
-            status = self._classify_numeric_value(mean_cov, gate)
-            return ValidationResult(
-                gate_name=gate.name,
-                status=status,
-                value=mean_cov,
-                message=f"Mean PPC coverage = {mean_cov:.1f}%",
-            )
-
-        else:
-            # Unknown evaluator — fail closed
+        # Look up evaluator in registry
+        entry = get_evaluator(evaluator_id)
+        if entry is None:
             return ValidationResult(
                 gate_name=gate.name,
                 status="fail",
                 message=f"Unknown evaluator: {evaluator_id!r} — no evaluator registered",
             )
 
-    @staticmethod
-    def _classify_numeric_value(value: float, gate: ValidationGate) -> str:
-        """Classify a numeric value against a gate's pass/review/fail bands.
+        meta_info, evaluator_fn = entry
 
-        Returns ``"pass"``, ``"review"``, or ``"fail"``.
-        """
-        if gate.acceptable_range is None:
-            # PR 53C: Missing thresholds on a numeric gate is a configuration
-            # error, not a pass. The gate must define acceptable_range.
-            return "fail"
+        # Check required inputs
+        for req in meta_info.required_inputs:
+            if req == "trace" and trace is None:
+                return ValidationResult(
+                    gate_name=gate.name,
+                    status="fail",
+                    message=f"Evaluator '{evaluator_id}' requires trace but none provided.",
+                )
+            if req == "frame" and frame is None:
+                return ValidationResult(
+                    gate_name=gate.name,
+                    status="fail",
+                    message=f"Evaluator '{evaluator_id}' requires frame but none provided.",
+                )
+            if req == "meta" and meta is None:
+                return ValidationResult(
+                    gate_name=gate.name,
+                    status="fail",
+                    message=f"Evaluator '{evaluator_id}' requires meta but none provided.",
+                )
 
-        lo, hi = gate.acceptable_range
-
-        # Validate threshold values are finite
-        import math
-
-        if not (math.isfinite(lo) and math.isfinite(hi)):
-            return "fail"
-        if lo > hi:
-            return "fail"
-
-        if gate.direction == "lower_is_better":
-            if value <= hi:
-                return "pass"
-            if gate.review_range is not None:
-                _rlo, rhi = gate.review_range
-                if value <= rhi:
-                    return "review"
-            return "fail"
-        else:  # higher_is_better
-            if value >= lo:
-                return "pass"
-            if gate.review_range is not None:
-                rlo, _rhi = gate.review_range
-                if value >= rlo:
-                    return "review"
-            return "fail"
+        # Call the registered evaluator
+        return evaluator_fn(
+            gate,
+            trace,
+            frame,
+            meta,
+            v_input.credible_mass,
+        )
