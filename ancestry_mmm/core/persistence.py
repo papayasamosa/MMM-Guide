@@ -153,6 +153,10 @@ def export_project(
     monetary_spend_support: Optional[List[dict]] = None,
     activity_definitions: Optional[List[dict]] = None,
     outcome_approvals: Optional[List[dict]] = None,
+    validation_policy: Optional[dict] = None,
+    diagnostics_artefact: Optional[dict] = None,
+    validation_results: Optional[List[dict]] = None,
+    approval_readiness: Optional[dict] = None,
 ) -> Path:
     output_path = Path(output_path)
     with tempfile.TemporaryDirectory() as tmp:
@@ -258,6 +262,23 @@ def export_project(
             (tmp / "config" / "outcome_approvals.json").write_text(
                 json.dumps(outcome_approvals, indent=2, default=str)
             )
+        # PR 72E: Persist governance evidence chain
+        if validation_policy is not None:
+            (tmp / "config" / "validation_policy.json").write_text(
+                json.dumps(validation_policy, indent=2, default=str)
+            )
+        if diagnostics_artefact is not None:
+            (tmp / "config" / "diagnostics_artefact.json").write_text(
+                json.dumps(diagnostics_artefact, indent=2, default=str)
+            )
+        if validation_results is not None:
+            (tmp / "config" / "validation_results.json").write_text(
+                json.dumps(validation_results, indent=2, default=str)
+            )
+        if approval_readiness is not None:
+            (tmp / "config" / "approval_readiness.json").write_text(
+                json.dumps(approval_readiness, indent=2, default=str)
+            )
         if diagnostics is not None:
             for name, value in diagnostics.items():
                 if value is None:
@@ -311,6 +332,10 @@ def export_project(
                 and bool(outcome_approvals),
                 "scenarios": bool(scenarios),
                 "notes": bool(notes),
+                "validation_policy": validation_policy is not None,
+                "diagnostics_artefact": diagnostics_artefact is not None,
+                "validation_results": validation_results is not None,
+                "approval_readiness": approval_readiness is not None,
             },
         }
         (tmp / "manifest.json").write_text(json.dumps(manifest, indent=2, default=str))
@@ -381,6 +406,12 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         # (no approvals on file). Imported bundles without this file get
         # legacy_unapproved status for every outcome, never implicit approval.
         "outcome_approvals": None,
+        # PR 72E: Governance evidence chain - None for legacy bundles
+        # (no governance on file).
+        "validation_policy": None,
+        "diagnostics_artefact": None,
+        "validation_results": None,
+        "approval_readiness": None,
     }
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
@@ -487,6 +518,23 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         if (config_dir / "migration_review.json").exists():
             result["migration_review"] = json.loads(
                 (config_dir / "migration_review.json").read_text()
+            )
+        # PR 72E: Load governance evidence chain
+        if (config_dir / "validation_policy.json").exists():
+            result["validation_policy"] = json.loads(
+                (config_dir / "validation_policy.json").read_text()
+            )
+        if (config_dir / "diagnostics_artefact.json").exists():
+            result["diagnostics_artefact"] = json.loads(
+                (config_dir / "diagnostics_artefact.json").read_text()
+            )
+        if (config_dir / "validation_results.json").exists():
+            result["validation_results"] = json.loads(
+                (config_dir / "validation_results.json").read_text()
+            )
+        if (config_dir / "approval_readiness.json").exists():
+            result["approval_readiness"] = json.loads(
+                (config_dir / "approval_readiness.json").read_text()
             )
         # G2A.7 (REQ-OUT-002): outcome approvals persisted alongside outcome
         # definitions. Absent in legacy bundles — treated as no approvals on
