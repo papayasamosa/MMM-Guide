@@ -98,7 +98,8 @@ jobs:
         run: |
           $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $env:MMM_DEV_ROOT "cache\ms-playwright"
           $env:npm_config_cache = Join-Path $env:MMM_DEV_ROOT "cache\npm"
-          npx -y playwright@1.62.0 install chromium 2>&1
+          # Use cmd /c to avoid PowerShell's npx.ps1 wrapper exit-code issues
+          cmd /c npx -y playwright@1.62.0 install chromium 2>&1
       - name: Run prerequisite checker
         run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check_mcp_prereqs.ps1
       - name: Start Streamlit and health-check
