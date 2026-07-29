@@ -16,7 +16,7 @@ on:
         default: "Manual trigger"
 
 jobs:
-  # ── Early compile and import check ─────────────────────────────────
+  # -- Early compile and import check ---------------------------------
   compile-and-import:
     name: Compile + Import
     runs-on: ubuntu-latest
@@ -40,7 +40,7 @@ jobs:
           uv run python -c "import ancestry_mmm.core.persistence"
           uv run python -c "import ancestry_mmm.core.model_identity"
 
-  # ── Windows dev-tooling integration ───────────────────────────────
+  # -- Windows dev-tooling integration -------------------------------
   # Executes the PowerShell setup and checker scripts on Windows,
   # then starts Streamlit via the launcher and health-checks it.
   windows-tooling:
@@ -61,13 +61,32 @@ jobs:
         with:
           node-version: "20"
       - run: uv sync --locked
-      - name: Set CI root and create temp tooling directory
+      - name: Set CI root and MMM_DEV_ROOT
         run: |
           $ciRoot = Join-Path $env:RUNNER_TEMP "Ancestry-MMM"
           "MMM_DEV_ROOT=$ciRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
           Write-Host "CI root: $ciRoot"
-      - name: Run setup script
-        run: powershell -ExecutionPolicy Bypass -File scripts/setup_dev_tooling.ps1
+      - name: Parse all PowerShell scripts (Windows PowerShell 5.1)
+        shell: powershell
+        run: |
+          $errors = @()
+          Get-ChildItem scripts\*.ps1 | ForEach-Object {
+            $tokens = $null
+            $parseErrors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              $_.FullName, [ref]$tokens, [ref]$parseErrors
+            ) | Out-Null
+            if ($parseErrors.Count -gt 0) {
+              $errors += $_.Name
+              $parseErrors | Format-List
+            }
+          }
+          if ($errors.Count -gt 0) {
+            throw "PowerShell parse failures: $($errors -join ', ')"
+          }
+          Write-Host "All PowerShell scripts parse successfully."
+      - name: Run setup script (operational dirs only)
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup_dev_tooling.ps1
       - name: Verify operational directories exist
         run: |
           $ciRoot = $env:MMM_DEV_ROOT
@@ -81,34 +100,48 @@ jobs:
           $env:npm_config_cache = Join-Path $env:MMM_DEV_ROOT "cache\npm"
           npx -y playwright@1.62.0 install chromium 2>&1
       - name: Run prerequisite checker
-        run: powershell -ExecutionPolicy Bypass -File scripts/check_mcp_prereqs.ps1
-      - name: Start Streamlit via launcher (background)
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check_mcp_prereqs.ps1
+      - name: Start Streamlit and health-check
+        shell: powershell
         run: |
-          $job = Start-Job -ScriptBlock {
-            $env:MMM_DEV_ROOT = $using:env:MMM_DEV_ROOT
-            Set-Location $using:github.workspace
-            powershell -ExecutionPolicy Bypass -File scripts/start_dev_app.ps1
-          }
-          Start-Sleep 30
-          # Health check
+          $workspace = $env:GITHUB_WORKSPACE
+          $ciRoot = $env:MMM_DEV_ROOT
+          $job = $null
           try {
-            $response = Invoke-WebRequest -Uri "http://127.0.0.1:8501" -UseBasicParsing -TimeoutSec 10
-            if ($response.StatusCode -eq 200) { Write-Host "Streamlit responded: HTTP 200" } else { throw "HTTP $($response.StatusCode)" }
-          } catch {
-            Write-Host "Streamlit health check failed: $_" -ForegroundColor Red
-            Stop-Job $job
-            Remove-Job $job -Force
-            exit 1
+            $job = Start-Job -ScriptBlock {
+              $env:MMM_DEV_ROOT = $using:ciRoot
+              Set-Location $using:workspace
+              powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start_dev_app.ps1
+            }
+            # Poll for readiness (bounded retries)
+            $ready = $false
+            for ($i = 0; $i -lt 30; $i++) {
+              Start-Sleep 3
+              try {
+                $response = Invoke-WebRequest -Uri "http://127.0.0.1:8501" -UseBasicParsing -TimeoutSec 5
+                if ($response.StatusCode -eq 200) { $ready = $true; break }
+              } catch { }
+            }
+            if (-not $ready) { throw "Streamlit did not become ready within 90 seconds" }
+            Write-Host "Streamlit responded: HTTP 200"
+          } finally {
+            # Guaranteed cleanup
+            if ($job) {
+              Stop-Job $job -ErrorAction SilentlyContinue
+              Receive-Job $job -ErrorAction SilentlyContinue
+              Remove-Job $job -Force -ErrorAction SilentlyContinue
+            }
+            Start-Sleep 5
+            $portInUse = Get-NetTCPConnection -LocalPort 8501 -State Listen -ErrorAction SilentlyContinue
+            if ($portInUse) {
+              Write-Error "Port 8501 still in use after cleanup."
+              exit 1
+            }
+            Write-Host "Port 8501 free."
           }
-          # Cleanup
-          Stop-Job $job
-          Remove-Job $job -Force
-          Start-Sleep 5
-          $portInUse = Get-NetTCPConnection -LocalPort 8501 -State Listen -ErrorAction SilentlyContinue
-          if ($portInUse) { Write-Host "Port 8501 still in use after cleanup" -ForegroundColor Yellow } else { Write-Host "Port 8501 free" }
         timeout-minutes: 5
 
-  # ── Python 3.11 unit/integration ──────────────────────────────────
+  # -- Python 3.11 unit/integration ----------------------------------
   py311-tests:
     name: Python 3.11 tests
     runs-on: ubuntu-latest
@@ -129,7 +162,7 @@ jobs:
       - name: Run tests with coverage
         run: uv run pytest ancestry_mmm/tests/ -q --ignore=ancestry_mmm/tests/test_persistence.py --cov --cov-report=term-missing:skip-covered --cov-fail-under=30
 
-  # ── Python 3.12 unit/integration ──────────────────────────────────
+  # -- Python 3.12 unit/integration ----------------------------------
   py312-tests:
     name: Python 3.12 tests
     runs-on: ubuntu-latest
@@ -150,7 +183,7 @@ jobs:
       - name: Run tests with coverage
         run: uv run pytest ancestry_mmm/tests/ -q --ignore=ancestry_mmm/tests/test_persistence.py --cov --cov-report=term-missing:skip-covered --cov-fail-under=30
 
-  # ── Ruff lint and format check ─────────────────────────────────────
+  # -- Ruff lint and format check -------------------------------------
   ruff:
     name: Ruff
     runs-on: ubuntu-latest
@@ -167,7 +200,7 @@ jobs:
       - name: Run ruff format check
         run: uv run ruff format --check ancestry_mmm
 
-  # ── Mypy type checking ─────────────────────────────────────────────
+  # -- Mypy type checking ---------------------------------------------
   mypy:
     name: Mypy
     runs-on: ubuntu-latest
@@ -186,7 +219,7 @@ jobs:
           uv run mypy ancestry_mmm/application --ignore-missing-imports --follow-imports=silent
           uv run mypy ancestry_mmm/core --ignore-missing-imports || true
 
-  # ── Bandit security scan ───────────────────────────────────────────
+  # -- Bandit security scan -------------------------------------------
   bandit:
     name: Bandit
     runs-on: ubuntu-latest
@@ -201,7 +234,7 @@ jobs:
       - name: Run bandit
         run: uv run bandit -r ancestry_mmm/core -c pyproject.toml
 
-  # ── pip-audit dependency scan ──────────────────────────────────────
+  # -- pip-audit dependency scan --------------------------------------
   pip-audit:
     name: pip-audit
     runs-on: ubuntu-latest
@@ -219,7 +252,7 @@ jobs:
           uv run pip-audit -r /tmp/requirements.txt
         continue-on-error: true  # Blocking enforcement deferred - known advisories pending review
 
-  # ── Requirement-index conformance ──────────────────────────────────
+  # -- Requirement-index conformance ----------------------------------
   req-index:
     name: Requirements index
     runs-on: ubuntu-latest
@@ -234,7 +267,7 @@ jobs:
       - name: Run requirement-index conformance tests
         run: uv run pytest ancestry_mmm/tests/test_requirements_index_conformance.py -v --no-cov
 
-  # ── Streamlit AppTest ──────────────────────────────────────────────
+  # -- Streamlit AppTest ----------------------------------------------
   streamlit:
     name: Streamlit AppTest
     runs-on: ubuntu-latest
@@ -249,7 +282,7 @@ jobs:
       - name: Run Streamlit smoke tests
         run: uv run pytest ancestry_mmm/tests/test_streamlit_smoke.py ancestry_mmm/tests/test_scenario_planner_apptest.py -v
 
-  # ── Bundle round-trip ──────────────────────────────────────────────
+  # -- Bundle round-trip ----------------------------------------------
   bundle:
     name: Bundle round-trip
     runs-on: ubuntu-latest
@@ -264,7 +297,7 @@ jobs:
       - name: Run bundle round-trip tests
         run: uv run pytest ancestry_mmm/tests/test_persistence.py -v
 
-  # ── Deterministic attribution recovery (schedule/manual only) ──
+  # -- Deterministic attribution recovery (schedule/manual only) --
   # NOTE: This is NOT MCMC parameter recovery. It tests deterministic
   # replay and attribution using known parameters. A full MCMC recovery
   # test (fitting a PyMC model and evaluating posterior recovery) remains

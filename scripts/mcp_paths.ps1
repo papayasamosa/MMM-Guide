@@ -8,7 +8,7 @@
     so they use one directory list and never disagree about what
     is required vs optional.
 
-    This script is pure data — it does not create or modify anything.
+    This script is pure data - it does not create or modify anything.
 #>
 
 # Default local root.  Override via MMM_DEV_ROOT for CI or isolated testing
@@ -20,7 +20,7 @@ $script:DriveRoot = if ($env:MMM_DEV_ROOT) {
     "D:\Ancestry-MMM"
 }
 
-# ── Operational directories (must exist for day-to-day development) ──
+# --- Operational directories (must exist for day-to-day development) ---
 $script:OperationalDirs = @(
     "cache\npm"
     "cache\ms-playwright"
@@ -29,13 +29,13 @@ $script:OperationalDirs = @(
     "logs\mcp"
 )
 
-# ── Optional / reserved directories (documented, not required by checker) ──
+# --- Optional / reserved directories (documented, not required by checker) ---
 $script:OptionalDirs = @(
     "tools\mcp"
     "secrets"
 )
 
-# ── Resolved full paths ──
+# --- Resolved full paths ---
 $script:DriveRootResolved = $script:DriveRoot
 $script:OperationalPaths = $script:OperationalDirs | ForEach-Object {
     Join-Path $script:DriveRoot $_

@@ -55,10 +55,12 @@ Test-Check "npx available" ($null -ne $npx) $(if ($npx) { $npx.Source } else { "
 if ($npm) {
     $env:npm_config_cache = $NpmCachePath
     $npmCache = (& npm config get cache 2>$null | Select-Object -Last 1)
-    $onD = $npmCache -and ($npmCache.Trim().ToUpper().StartsWith("D:"))
-    Test-Check "npm cache on D:" $onD "resolved: $npmCache"
+    $expectedCache = [System.IO.Path]::GetFullPath($NpmCachePath).TrimEnd('\')
+    $actualCache = [System.IO.Path]::GetFullPath($npmCache.Trim()).TrimEnd('\')
+    $cacheMatches = [StringComparer]::OrdinalIgnoreCase.Equals($actualCache, $expectedCache)
+    Test-Check "npm cache matches configured root" $cacheMatches "expected: $expectedCache, resolved: $npmCache"
 } else {
-    Test-Check "npm cache on D:" $false "skipped - npm not found"
+    Test-Check "npm cache matches configured root" $false "skipped - npm not found"
 }
 
 # 5. uv

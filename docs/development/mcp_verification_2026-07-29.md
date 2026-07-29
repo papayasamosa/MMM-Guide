@@ -1,4 +1,4 @@
-# MCP live-verification report — 29 July 2026
+# MCP live-verification report - 29 July 2026
 
 ## Context
 
@@ -38,10 +38,10 @@
 |---|---|
 | Launch app | HTTP 200, `http://127.0.0.1:8501` |
 | Page title | "Marketing Mix Modelling & Scenario Planner" |
-| Navigate: Data Upload | Title "Data Upload - Ancestry FH MMM" — accessible |
+| Navigate: Data Upload | Title "Data Upload - Ancestry FH MMM" - accessible |
 | Navigate: Diagnostics | Page loaded successfully |
-| Navigate: Scenario Planner | Title "Scenario Planner - Ancestry FH MMM" — accessible |
-| Console errors (total) | 2 — benign Streamlit `_stcore/host-config` 404s (sub-page health endpoints) |
+| Navigate: Scenario Planner | Title "Scenario Planner - Ancestry FH MMM" - accessible |
+| Console errors (total) | 2 - benign Streamlit `_stcore/host-config` 404s (sub-page health endpoints) |
 | Failed network requests | None beyond the benign 404s above |
 | Screenshot captured | `D:\Ancestry-MMM\test-artifacts\playwright-mcp\pr69a-verification.png` |
 | Browser state | Isolated (`--isolated`), no persistent profile written to `C:` |
@@ -52,18 +52,18 @@
 
 | Status | Detail |
 |---|---|
-| Configured | No — documented in `.mcp.json` as placeholder only |
-| Connected | No — requires user authentication at huggingface.co/settings/mcp |
-| Live verified | No — pending user completion of the HF settings flow |
+| Configured | No - documented in `.mcp.json` as placeholder only |
+| Connected | No - requires user authentication at huggingface.co/settings/mcp |
+| Live verified | No - pending user completion of the HF settings flow |
 | Write calls made | N/A |
 
 ## Summary
 
 | MCP | Configured | Authenticated | Live verified | Access mode |
 |---|---|---|---|---|
-| GitHub | ✓ | ✓ (OAuth via Copilot) | ✓ | Read-only, no write tool calls |
-| Context7 | ✓ (v3.2.5 pinned) | — (unauthenticated) | ✓ (connectivity); exact 3.2.5 not independently verified | Read-only doc lookups; version lookup showed v3.2.4 as latest, configured version is 3.2.5 |
-| Playwright | ✓ (v0.0.78 pinned) | N/A | ✓ | Local-app testing only, origin allowlist (not a security boundary) |
+| GitHub | v | v (OAuth via Copilot) | v | Read-only, no write tool calls |
+| Context7 | v (v3.2.5 pinned) | - (unauthenticated) | v (connectivity); exact 3.2.5 not independently verified | Read-only doc lookups; version lookup showed v3.2.4 as latest, configured version is 3.2.5 |
+| Playwright | v (v0.0.78 pinned) | N/A | v | Local-app testing only, origin allowlist (not a security boundary) |
 | Hugging Face | Documented, not connected | Pending user authentication | Not verified | Read-only search/documentation only when connected |
 
 ## Known limitations
@@ -71,5 +71,5 @@
 - Hugging Face MCP cannot be connected without interactive user login.
 - GitHub MCP OAuth requires interactive consent on first tool call.
 - Playwright `--allowed-origins` is an advisory allowlist, not a network security boundary.
-- Verification uses synthetic demo data only — no real Ancestry data was sent to any MCP.
+- Verification uses synthetic demo data only - no real Ancestry data was sent to any MCP.
 - No credentials, browser storage, or login state were committed to the repository.
