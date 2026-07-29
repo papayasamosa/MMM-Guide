@@ -519,9 +519,7 @@ class ValidationGate:
                 acceptable_range=tuple(acceptable_range)
                 if acceptable_range is not None
                 else None,
-                review_range=tuple(review_range)
-                if review_range is not None
-                else None,
+                review_range=tuple(review_range) if review_range is not None else None,
                 direction=d.get("direction", "lower_is_better"),
                 units=d.get("units", ""),
                 blocking=d.get("blocking", True),
