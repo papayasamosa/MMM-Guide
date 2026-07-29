@@ -149,8 +149,10 @@ class TestDiagnosticsArtefactV2:
         assert restored.legacy_incomplete is False
 
     def test_deterministic_fingerprint(self):
+        ts = datetime(2026, 7, 29, tzinfo=timezone.utc)
         a1 = DiagnosticsArtefact(
             artefact_id="same",
+            evaluated_at=ts,
             convergence=DiagnosticSection(
                 status="computed",
                 payload={"max_rhat": 1.02},
@@ -158,6 +160,7 @@ class TestDiagnosticsArtefactV2:
         )
         a2 = DiagnosticsArtefact(
             artefact_id="same",
+            evaluated_at=ts,
             convergence=DiagnosticSection(
                 status="computed",
                 payload={"max_rhat": 1.02},
