@@ -2,10 +2,16 @@
 Read-only prerequisite checker for the MCP dev tooling described in
 docs/development/mcp_development_tooling.md. Never prints token/secret
 values - only presence/absence and paths. Attempts no authentication.
+
+Uses the canonical directory contract from mcp_paths.ps1 so the list of
+required directories stays consistent with setup and launcher scripts.
 #>
 
 $ErrorActionPreference = "Stop"
-$DriveRoot = "D:\Ancestry-MMM"
+
+# Source canonical path contract
+. (Join-Path $PSScriptRoot "mcp_paths.ps1")
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $failures = @()
 
 function Test-Check {
@@ -18,9 +24,7 @@ function Test-Check {
     }
 }
 
-# 1. Repo location sanity (informational - this repo is developed from C:,
-#    only MCP caches/tools/artefacts are required to live on D:).
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+# 1. Repo location
 Test-Check "Repository readable" (Test-Path $repoRoot) "root: $repoRoot"
 
 # 2. Node
@@ -39,7 +43,7 @@ Test-Check "npx available" ($null -ne $npx) $(if ($npx) { $npx.Source } else { "
 
 # 4. npm cache resolves under D
 if ($node) {
-    $env:npm_config_cache = Join-Path $DriveRoot "cache\npm"
+    $env:npm_config_cache = $NpmCachePath
     $npmCache = (& npx --yes npm@latest config get cache 2>$null | Select-Object -Last 1)
     $onD = $npmCache -and ($npmCache.Trim().ToUpper().StartsWith("D:"))
     Test-Check "npm cache on D:" $onD "resolved: $npmCache"
@@ -52,33 +56,33 @@ $uv = Get-Command uv -ErrorAction SilentlyContinue
 Test-Check "uv available" ($null -ne $uv) $(if ($uv) { $uv.Source } else { "uv not found on PATH" })
 
 # 6. Playwright browsers path under D + chromium present
-$browsersPath = Join-Path $DriveRoot "cache\ms-playwright"
-$chromiumPresent = (Test-Path $browsersPath) -and ((Get-ChildItem $browsersPath -Directory -Filter "chromium-*" -ErrorAction SilentlyContinue).Count -gt 0)
-Test-Check "Chromium installed under D:" $chromiumPresent "path: $browsersPath"
+$chromiumPresent = (Test-Path $BrowsersPath) -and ((Get-ChildItem $BrowsersPath -Directory -Filter "chromium-*" -ErrorAction SilentlyContinue).Count -gt 0)
+Test-Check "Chromium installed under D:" $chromiumPresent "path: $BrowsersPath"
 
-# 7. Streamlit importable via the project's venv Python
-$venvPython = Join-Path $repoRoot ".venv\Scripts\python.exe"
-if (Test-Path $venvPython) {
-    Push-Location $repoRoot
-    try {
-        & $venvPython -c "import streamlit" 2>&1 | Out-Null
-        Test-Check "Streamlit importable (venv)" ($LASTEXITCODE -eq 0) "$venvPython -c 'import streamlit'"
-    } finally {
-        Pop-Location
-    }
-} else {
-    Test-Check "Streamlit importable (venv)" $false "skipped - $venvPython not found"
+# 7. Streamlit importable via uv
+Push-Location $repoRoot
+try {
+    & uv run --no-sync python -c "import streamlit" 2>&1 | Out-Null
+    Test-Check "Streamlit importable (uv)" ($LASTEXITCODE -eq 0) "uv run --no-sync python -c 'import streamlit'"
+} catch {
+    Test-Check "Streamlit importable (uv)" $false "exception: $_"
+} finally {
+    Pop-Location
 }
 
-# 8. Required D-drive directories exist
-$requiredDirs = @(
-    "tools\mcp", "cache\npm", "cache\ms-playwright",
-    "temp", "secrets", "test-artifacts\playwright-mcp",
-    "logs\mcp"
-)
-foreach ($d in $requiredDirs) {
-    $full = Join-Path $DriveRoot $d
-    Test-Check "D-drive dir: $d" (Test-Path $full) $full
+# 8. Operational D-drive directories (required for day-to-day use)
+foreach ($p in $OperationalPaths) {
+    Test-Check "Operational dir: $(Split-Path $p -Leaf)" (Test-Path $p) $p
+}
+
+# 9. Optional/reserved directories (informational only)
+foreach ($p in $OptionalPaths) {
+    $leaf = Split-Path $p -Leaf
+    if (Test-Path $p) {
+        Write-Host "[i]    Optional dir: $leaf - $p (present)"
+    } else {
+        Write-Host "[i]    Optional dir: $leaf - $p (absent, not required)"
+    }
 }
 
 Write-Host ""

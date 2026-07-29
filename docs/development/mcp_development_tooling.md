@@ -25,8 +25,8 @@ manages - it has nothing to do with how the application itself runs.
 |---|---|---|
 | GitHub MCP | Read commits, PRs, review threads, Actions runs, issues | Installed, read-only |
 | Context7 MCP | Version-specific docs for PyMC, PyMC Marketing, ArviZ, Streamlit, pandas, etc. | Installed, unauthenticated |
-| Playwright MCP | Drive a real Chromium instance against the local Streamlit dev server | Installed, localhost-only |
-| Hugging Face MCP | Search models/datasets/papers/Spaces, mainly for Chronos-2 research | Configured on demand from the HF settings page |
+| Playwright MCP | Drive a real Chromium instance against the local Streamlit dev server | Configured for local-app testing with an origin allowlist |
+| Hugging Face MCP | Search models/datasets/papers/Spaces, mainly for Chronos-2 research | Documented, not connected |
 
 ## Detected coding client
 
@@ -64,14 +64,12 @@ in place rather than duplicated under `tools\mcp\node\` - it was already off
 1. **Prerequisites**: Node 18+ (`node --version`), `npx`, `uv`. Run
    `scripts/check_mcp_prereqs.ps1` to confirm all of the above resolve
    correctly and that D-drive paths are in effect.
-2. **Provision directories**: `scripts/start_dev_app.ps1` creates required
-   directories (including `D:\Ancestry-MMM\temp`) on startup. For a one-time
-   setup you can also create them manually:
-   ```powershell
-   $null = New-Item -ItemType Directory -Force D:\Ancestry-MMM\cache\npm,
-     D:\Ancestry-MMM\cache\ms-playwright, D:\Ancestry-MMM\temp,
-     D:\Ancestry-MMM\logs\mcp, D:\Ancestry-MMM\test-artifacts\playwright-mcp
-   ```
+2. **Provision directories**: run `scripts/setup_dev_tooling.ps1` to create
+   all operational directories under `D:\Ancestry-MMM\`. The launcher
+   (`scripts/start_dev_app.ps1`) also creates them automatically on startup.
+   The three scripts (`mcp_paths.ps1`, `setup_dev_tooling.ps1`,
+   `start_dev_app.ps1`, `check_mcp_prereqs.ps1`) all use the same canonical
+   directory list from `scripts/mcp_paths.ps1`.
 3. **Chromium**: installed once via
    `npx -y playwright@1.62.0 install chromium` with
    `PLAYWRIGHT_BROWSERS_PATH` and `npm_config_cache` pointed at
@@ -118,8 +116,8 @@ in place rather than duplicated under `tools\mcp\node\` - it was already off
   explicit user approval in the moment, regardless of what the connected
   token or OAuth grant technically permits.
 - Playwright MCP is configured for local-app testing with an origin
-  allowlist (`--allowed-origins`). **This flag is not a network security
-  boundary** and does not constrain every redirect or request. Isolated
+  allowlist (`--allowed-origins`). **This flag is not a network security boundary**
+  and does not constrain every redirect or request. Isolated
   browser state (`--isolated`) and synthetic demo data only must be used.
   No persistent browser profile or storage state is written outside
   `D:\Ancestry-MMM\test-artifacts\playwright-mcp\`. Credentials or
@@ -134,6 +132,11 @@ in place rather than duplicated under `tools\mcp\node\` - it was already off
   tool returns.
 
 ## Verification
+
+A sanitised, reviewable verification report for 29 July 2026 is at
+[`docs/development/mcp_verification_2026-07-29.md`](mcp_verification_2026-07-29.md).
+It records commit, date, client version, queries performed, results, write
+status and known limitations — without credentials or browser state.
 
 Read-only checks performed for each server (recorded, without secrets, in
 `D:\Ancestry-MMM\logs\mcp\`):
