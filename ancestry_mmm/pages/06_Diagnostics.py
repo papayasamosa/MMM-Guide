@@ -478,6 +478,18 @@ elif current_identity is None:
         "posterior fingerprints) isn't fully available. This shouldn't normally happen once "
         "a model has trained - try recomputing the scorecard, or retrain if the problem persists."
     )
+elif validation_policy_dict is None:
+    st.warning(
+        "No validation policy is configured for this project. Official model "
+        "approval requires a policy-backed readiness evaluation - configure a "
+        "validation policy and evaluate readiness above before approving this model."
+    )
+elif _policy_config_error is not None:
+    st.error(
+        "Model approval is blocked: the configured validation policy is "
+        f"malformed ({_policy_config_error}). Fix the policy configuration "
+        "before approving this model."
+    )
 else:
     with st.form("approve_model_form"):
         approved_by = st.text_input("Approved by (name) *")
@@ -514,60 +526,50 @@ else:
                 st.error(
                     "Enter a name before approving - approval must be attributed to a reviewer."
                 )
+            elif not (validation_readiness and validation_readiness.readiness):
+                # PR 79A (work package K): a validation policy is configured
+                # for this project, so policy-backed approval is the only
+                # official approval path - there is no unbound fallback.
+                # Without an evaluated readiness object there is nothing to
+                # bind the approval to, so approval is blocked rather than
+                # silently creating an unofficial approval.
+                st.error(
+                    "Evaluate readiness against the configured policy above before "
+                    "approving - click 'Evaluate readiness' first."
+                )
             else:
-                # Use policy-backed approval when readiness evidence is available
-                if (
-                    validation_readiness
-                    and validation_readiness.readiness
-                    and _current_policy is not None
-                ):
-                    try:
-                        approval = create_policy_backed_model_approval(
-                            readiness=validation_readiness.readiness,
-                            current_policy=_current_policy,
-                            approved_by=approved_by.strip(),
-                            model_run_id=current_identity.get("model_run_id", ""),
-                            data_fingerprint=current_identity.get(
-                                "data_fingerprint", ""
-                            ),
-                            model_spec_fingerprint=current_identity.get(
-                                "model_spec_fingerprint", ""
-                            ),
-                            posterior_fingerprint=current_identity.get(
-                                "posterior_fingerprint", ""
-                            ),
-                            notes=notes,
-                            known_limitations=known_limitations,
-                        )
-                        set_state("model_approval", approval.to_dict())
-                        st.success(
-                            f"Policy-backed model approved by {approved_by.strip()}."
-                        )
-                    except Exception as e:
-                        st.error(f"Policy-backed approval failed: {e}")
-                        st.info(
-                            "Falling back to standard approval without policy binding."
-                        )
-                        approval = ModelApproval(
-                            approved_by=approved_by.strip(),
-                            notes=notes,
-                            known_limitations=known_limitations,
-                            diagnostics_accepted=diagnostics_accepted,
-                            **current_identity,
-                        )
-                        set_state("model_approval", approval.to_dict())
-                        st.success(f"Model approved by {approved_by.strip()}.")
-                else:
-                    approval = ModelApproval(
+                try:
+                    approval = create_policy_backed_model_approval(
+                        readiness=validation_readiness.readiness,
+                        current_policy=_current_policy,
                         approved_by=approved_by.strip(),
+                        model_run_id=current_identity.get("model_run_id", ""),
+                        data_fingerprint=current_identity.get("data_fingerprint", ""),
+                        model_spec_fingerprint=current_identity.get(
+                            "model_spec_fingerprint", ""
+                        ),
+                        posterior_fingerprint=current_identity.get(
+                            "posterior_fingerprint", ""
+                        ),
                         notes=notes,
                         known_limitations=known_limitations,
                         diagnostics_accepted=diagnostics_accepted,
-                        **current_identity,
                     )
                     set_state("model_approval", approval.to_dict())
-                    st.success(f"Model approved by {approved_by.strip()}.")
-                st.rerun()
+                    st.success(
+                        f"Policy-backed model approved by {approved_by.strip()}."
+                    )
+                    st.rerun()
+                except Exception as e:
+                    # PR 79A (work package K): no fallback to a standard,
+                    # policy-unbound approval - a failed policy-backed
+                    # approval leaves the model unapproved.
+                    st.error(f"Policy-backed approval failed: {e}")
+                    st.info(
+                        "No approval was created. Resolve the issue above (e.g. "
+                        "re-evaluate readiness after fixing failing gates) and "
+                        "try again."
+                    )
 
 st.markdown("---")
 st.markdown("### Out-of-sample accuracy (expanding-window backtest)")
