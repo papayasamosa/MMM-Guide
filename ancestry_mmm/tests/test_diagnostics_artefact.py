@@ -23,9 +23,12 @@ from ancestry_mmm.application.diagnostics_service import (
     DiagnosticsService,
 )
 from ancestry_mmm.application.validation_service import (
+    MalformedArtefactEvidenceError,
     ValidationInput,
     ValidationService,
 )
+from ancestry_mmm.core.model_identity import ModelIdentity
+from ancestry_mmm.core.validation_policy import ThresholdPolicy, ValidationGate
 from ancestry_mmm.core.diagnostics import (
     curve_plausibility_checks as _real_curve_plausibility_checks,
     posterior_predictive_coverage as _real_posterior_predictive_coverage,
@@ -423,6 +426,235 @@ class TestValidationServiceArtefactConsumption:
         )
         assert v_input.diagnostics_artefact is artefact
 
+    # -- PR 79A (WP2): evaluator-ID aliases resolve to the same metric ----
+
+    @pytest.mark.parametrize(
+        "alias,expected",
+        [("rhat", 1.02), ("convergence_rhat", 1.02)],
+    )
+    def test_rhat_aliases_resolve_identically(self, alias, expected):
+        artefact = DiagnosticsArtefact(
+            convergence=DiagnosticSection(
+                status="computed",
+                payload={"max_rhat": 1.02, "min_ess": 400, "has_divergences": False},
+            ),
+        )
+        service = ValidationService()
+        assert service._get_artefact_metric(alias, artefact) == expected
+
+    @pytest.mark.parametrize(
+        "alias,expected",
+        [("ess", 400), ("min_ess", 400), ("convergence_ess", 400)],
+    )
+    def test_ess_aliases_resolve_identically(self, alias, expected):
+        artefact = DiagnosticsArtefact(
+            convergence=DiagnosticSection(
+                status="computed",
+                payload={"max_rhat": 1.02, "min_ess": 400, "has_divergences": False},
+            ),
+        )
+        service = ValidationService()
+        assert service._get_artefact_metric(alias, artefact) == expected
+
+    @pytest.mark.parametrize("alias", ["ppc", "ppc_coverage"])
+    def test_ppc_aliases_resolve_identically(self, alias):
+        artefact = DiagnosticsArtefact(
+            posterior_predictive=DiagnosticSection(
+                status="computed",
+                payload=[{"coverage_pct": 90.0}, {"coverage_pct": 80.0}],
+            ),
+        )
+        service = ValidationService()
+        assert service._get_artefact_metric(alias, artefact) == 85.0
+
+    # -- PR 79A (WP4): malformed 'computed' evidence fails closed, never 0.0 --
+
+    def test_computed_convergence_missing_max_rhat_raises(self):
+        artefact = DiagnosticsArtefact(
+            convergence=DiagnosticSection(
+                status="computed",
+                payload={"min_ess": 400, "has_divergences": False},
+            ),
+        )
+        service = ValidationService()
+        with pytest.raises(MalformedArtefactEvidenceError, match="max_rhat"):
+            service._get_artefact_metric("convergence_rhat", artefact)
+
+    def test_computed_convergence_non_finite_rhat_raises(self):
+        artefact = DiagnosticsArtefact(
+            convergence=DiagnosticSection(
+                status="computed",
+                payload={
+                    "max_rhat": float("nan"),
+                    "min_ess": 400,
+                    "has_divergences": False,
+                },
+            ),
+        )
+        service = ValidationService()
+        with pytest.raises(MalformedArtefactEvidenceError, match="non-finite"):
+            service._get_artefact_metric("convergence_rhat", artefact)
+
+    def test_computed_ppc_missing_coverage_pct_raises(self):
+        artefact = DiagnosticsArtefact(
+            posterior_predictive=DiagnosticSection(
+                status="computed",
+                payload=[{"outcome_id": "fh_new_gsa"}],
+            ),
+        )
+        service = ValidationService()
+        with pytest.raises(MalformedArtefactEvidenceError, match="coverage_pct"):
+            service._get_artefact_metric("ppc_coverage", artefact)
+
+    def test_malformed_evidence_fails_the_gate_without_recomputing(self):
+        """A gate backed by malformed 'computed' evidence must fail closed
+        via _evaluate_gate, not silently fall through to a live
+        recomputation (which could paper over the corruption)."""
+        artefact = DiagnosticsArtefact(
+            artefact_id="artefact-1",
+            schema_version=2,
+            model_identity_fingerprint="",
+            legacy_incomplete=False,
+            convergence=DiagnosticSection(
+                status="computed",
+                payload={"min_ess": 400, "has_divergences": False},  # missing max_rhat
+            ),
+        )
+        policy = ThresholdPolicy(
+            policy_id="p1",
+            version="1.0",
+            scope="all_models",
+            owner="Test",
+            gates=[
+                ValidationGate(
+                    name="convergence_rhat",
+                    description="R-hat",
+                    evaluator_id="convergence_rhat",
+                    acceptable_range=(0.0, 1.01),
+                )
+            ],
+        )
+        service = ValidationService()
+        v_input = ValidationInput(
+            trace=None,
+            policy=policy,
+            diagnostics_artefact=artefact,
+        )
+        result = service.evaluate_readiness(v_input)
+        assert len(result.results) == 1
+        assert result.results[0].status == "fail"
+        assert "Malformed" in result.results[0].message
+
+    # -- PR 79A (WP3): artefact path uses canonical classification ---------
+
+    def test_artefact_value_in_review_band_is_review_not_pass_or_fail(self):
+        artefact = DiagnosticsArtefact(
+            convergence=DiagnosticSection(
+                status="computed",
+                payload={"max_rhat": 1.03, "min_ess": 400, "has_divergences": False},
+            ),
+        )
+        gate = ValidationGate(
+            name="convergence_rhat",
+            description="R-hat",
+            evaluator_id="convergence_rhat",
+            acceptable_range=(0.0, 1.01),
+            review_range=(0.0, 1.05),
+            direction="lower_is_better",
+        )
+        policy = ThresholdPolicy(
+            policy_id="p1",
+            version="1.0",
+            scope="all_models",
+            owner="Test",
+            gates=[gate],
+        )
+        service = ValidationService()
+        result = service.evaluate_readiness(
+            ValidationInput(policy=policy, diagnostics_artefact=artefact)
+        )
+        assert result.results[0].status == "review"
+
+    def test_artefact_boolean_gate_uses_expected_state_not_range(self):
+        artefact = DiagnosticsArtefact(
+            convergence=DiagnosticSection(
+                status="computed",
+                payload={"max_rhat": 1.0, "min_ess": 400, "has_divergences": True},
+            ),
+        )
+        gate = ValidationGate(
+            name="divergences",
+            description="Divergences",
+            evaluator_id="divergences",
+            expected_state=True,  # this policy expects divergences to be present
+        )
+        policy = ThresholdPolicy(
+            policy_id="p1",
+            version="1.0",
+            scope="all_models",
+            owner="Test",
+            gates=[gate],
+        )
+        service = ValidationService()
+        result = service.evaluate_readiness(
+            ValidationInput(policy=policy, diagnostics_artefact=artefact)
+        )
+        # has_divergences=True matches expected_state=True -> pass, even
+        # though a naive lo<=value<=hi range check has no range to apply.
+        assert result.results[0].status == "pass"
+
+    # -- PR 79A (WP6): complete artefact-only validation needs no trace ----
+
+    def test_complete_artefact_validates_without_a_trace(self):
+        identity = ModelIdentity("run-1", "data-1", "spec-1", "post-1")
+        artefact = DiagnosticsArtefact(
+            artefact_id="a1",
+            schema_version=2,
+            model_identity_fingerprint=identity.fingerprint(),
+            legacy_incomplete=False,
+            convergence=DiagnosticSection(
+                status="computed",
+                payload={"max_rhat": 1.0, "min_ess": 400, "has_divergences": False},
+            ),
+            posterior_predictive=DiagnosticSection(
+                status="computed",
+                payload=[{"coverage_pct": 91.0}],
+            ),
+        )
+        policy = ThresholdPolicy(
+            policy_id="p1",
+            version="1.0",
+            scope="all_models",
+            owner="Test",
+            gates=[
+                ValidationGate(
+                    name="convergence_rhat",
+                    description="R-hat",
+                    evaluator_id="convergence_rhat",
+                    acceptable_range=(0.0, 1.01),
+                ),
+                ValidationGate(
+                    name="ppc_coverage",
+                    description="PPC",
+                    evaluator_id="ppc_coverage",
+                    acceptable_range=(85.0, 100.0),
+                ),
+            ],
+        )
+        service = ValidationService()
+        v_input = ValidationInput(
+            trace=None,
+            policy=policy,
+            model_identity=identity,
+            diagnostics_artefact=artefact,
+            model_type="shared",
+        )
+        result = service.evaluate_readiness(v_input)
+        assert not result.errors, result.errors
+        assert [r.status for r in result.results] == ["pass", "pass"]
+        assert result.readiness is not None
+        assert result.readiness.overall_ready is True
+
 
 # =========================================================================
 # DiagnosticsService computes each diagnostic exactly once (PR 79A, WP C)
@@ -442,13 +674,16 @@ class TestDiagnosticsServiceComputesEachSectionOnce:
         trace, frame, meta = _minimal_trace_frame_meta()
         diag_input = DiagnosticsInput(trace=trace, frame=frame, meta=meta)
 
-        with patch(
-            "ancestry_mmm.application.diagnostics_service.posterior_predictive_coverage",
-            wraps=_real_posterior_predictive_coverage,
-        ) as mock_ppc, patch(
-            "ancestry_mmm.application.diagnostics_service.curve_plausibility_checks",
-            wraps=_real_curve_plausibility_checks,
-        ) as mock_plaus:
+        with (
+            patch(
+                "ancestry_mmm.application.diagnostics_service.posterior_predictive_coverage",
+                wraps=_real_posterior_predictive_coverage,
+            ) as mock_ppc,
+            patch(
+                "ancestry_mmm.application.diagnostics_service.curve_plausibility_checks",
+                wraps=_real_curve_plausibility_checks,
+            ) as mock_plaus,
+        ):
             result = DiagnosticsService().evaluate(diag_input)
 
         assert mock_ppc.call_count == 1
@@ -481,7 +716,5 @@ class TestDiagnosticsServiceComputesEachSectionOnce:
         artefact = result.diagnostics_artefact
         assert result.scorecard["convergence"] == artefact.convergence.payload
         assert result.scorecard["in_sample_fit"] == artefact.in_sample_fit.payload
-        assert (
-            result.scorecard["ppc_coverage"] == artefact.posterior_predictive.payload
-        )
+        assert result.scorecard["ppc_coverage"] == artefact.posterior_predictive.payload
         assert result.scorecard["plausibility_flags"] == artefact.plausibility.payload

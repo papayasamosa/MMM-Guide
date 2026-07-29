@@ -304,7 +304,13 @@ st.caption(
 )
 
 validation_policy_dict = get_state("validation_policy")
-validation_readiness = get_state("validation_readiness")
+# PR 79A (WP9): state contract - "validation_service_result" holds the full
+# ValidationService wrapper (readiness object, errors, warnings) for this
+# page's own transient UI messages; "approval_readiness" holds only the
+# serialised (JSON-safe dict) ApprovalReadiness domain object, which is what
+# any other page or persistence layer should read - never the wrapper
+# itself under an "*_readiness" name.
+validation_service_result = get_state("validation_service_result")
 
 # Load policy for later use. A configured policy must deserialize through
 # ThresholdPolicy.from_dict() — a malformed policy is a blocking error, not
@@ -328,17 +334,18 @@ if st.button("Evaluate readiness", type="secondary"):
                 f"evaluated: {_policy_config_error}. Fix the policy "
                 "configuration before evaluating readiness."
             )
+        elif _current_policy is None:
+            # PR 79A (WP7): no zero-gate default policy. A policy with no
+            # gates would trivially report overall_ready=True (nothing to
+            # fail), which is not "ready" - it is "nothing was checked".
+            st.warning(
+                "No validation policy is configured for this project. "
+                "Readiness cannot be evaluated against an empty policy - "
+                "configure a validation policy before evaluating official "
+                "readiness."
+            )
         else:
             policy = _current_policy
-            if policy is None:
-                st.warning("No validation policy configured. Using minimal default.")
-                policy = ThresholdPolicy(
-                    policy_id="default-policy",
-                    version="1.0",
-                    scope="all_models",
-                    gates=[],
-                    owner="System",
-                )
             val_service = ValidationService()
             val_input = ValidationInput(
                 trace=trace,
@@ -350,11 +357,11 @@ if st.button("Evaluate readiness", type="secondary"):
                 model_identity=current_model_identity,
             )
             val_result = val_service.evaluate_readiness(val_input)
-            set_state("validation_readiness", val_result)
-            set_state("validation_result", val_result)
+            set_state("validation_service_result", val_result)
+            set_state("approval_readiness", val_result.readiness_dict)
 
-if validation_readiness:
-    rd = validation_readiness.readiness
+if validation_service_result:
+    rd = validation_service_result.readiness
     if rd:
         ready_icon = "✅" if rd.overall_ready else "❌"
         st.markdown(
@@ -377,8 +384,8 @@ if validation_readiness:
             for w in rd.waivers_applied:
                 st.write(f"  - Waiver `{w.waiver_id}` for gate `{w.gate_name}`")
 
-    if validation_readiness.errors:
-        for e in validation_readiness.errors:
+    if validation_service_result.errors:
+        for e in validation_service_result.errors:
             st.error(e)
 
 st.markdown("---")
@@ -526,7 +533,9 @@ else:
                 st.error(
                     "Enter a name before approving - approval must be attributed to a reviewer."
                 )
-            elif not (validation_readiness and validation_readiness.readiness):
+            elif not (
+                validation_service_result and validation_service_result.readiness
+            ):
                 # PR 79A (work package K): a validation policy is configured
                 # for this project, so policy-backed approval is the only
                 # official approval path - there is no unbound fallback.
@@ -540,7 +549,7 @@ else:
             else:
                 try:
                     approval = create_policy_backed_model_approval(
-                        readiness=validation_readiness.readiness,
+                        readiness=validation_service_result.readiness,
                         current_policy=_current_policy,
                         approved_by=approved_by.strip(),
                         model_run_id=current_identity.get("model_run_id", ""),

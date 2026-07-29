@@ -446,15 +446,19 @@ class DiagnosticsService:
         fit_records: List[Dict[str, Any]] = []
         try:
             if diag_input.model_type == "market_specific":
-                fit_params = extract_market_specific_posterior_params(
+                market_fit_params = extract_market_specific_posterior_params(
                     diag_input.trace, diag_input.meta
                 )
                 fit_df = in_sample_fit_market_specific(
-                    diag_input.frame, diag_input.meta, fit_params
+                    diag_input.frame, diag_input.meta, market_fit_params
                 )
             else:
-                fit_params = extract_posterior_params(diag_input.trace, diag_input.meta)
-                fit_df = in_sample_fit(diag_input.frame, diag_input.meta, fit_params)
+                shared_fit_params = extract_posterior_params(
+                    diag_input.trace, diag_input.meta
+                )
+                fit_df = in_sample_fit(
+                    diag_input.frame, diag_input.meta, shared_fit_params
+                )
             fit_records = fit_df.to_dict(orient="records")
             fit_sec = DiagnosticSection(
                 status="computed",

@@ -171,6 +171,26 @@ def test_approval_blocked_without_validation_policy():
     assert at.session_state["model_approval"] is None
 
 
+def test_readiness_blocked_without_validation_policy():
+    """PR 79A (WP7): clicking 'Evaluate readiness' with no policy configured
+    must not silently evaluate against a zero-gate default policy (which
+    would trivially report overall_ready=True) - it must warn and leave
+    validation_readiness unset."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_fully_identified_model(at)
+    at.run()
+    compute_button = next(b for b in at.button if b.label == "Compute scorecard")
+    compute_button.click().run()
+    readiness_button = next(b for b in at.button if b.label == "Evaluate readiness")
+    readiness_button.click().run()
+    assert not at.exception, f"page raised: {at.exception}"
+    assert any(
+        "No validation policy is configured" in (w.value or "") for w in at.warning
+    )
+    assert "validation_readiness" not in at.session_state or (
+        at.session_state["validation_readiness"] is None
+    )
+
 
 def test_approval_blocked_with_malformed_validation_policy():
     at = AppTest.from_file(str(PAGE), default_timeout=60)
@@ -195,3 +215,60 @@ def test_approval_blocked_with_malformed_validation_policy():
     )
     assert at.session_state["model_approval"] is None
 
+
+def test_passing_evidence_creates_policy_backed_approval_end_to_end():
+    """PR 79A (WP10): the full happy path - a valid policy, readiness that
+    evaluates to ready, and a submitted approval form must produce a real
+    policy-backed ModelApproval (validation_policy_id set, bound to the
+    current model identity) with no 'falling back' message anywhere."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_fully_identified_model(at)
+    # A single boolean gate that is deterministically satisfied by this
+    # fixture's trace (sample_stats.diverging is all-False).
+    at.session_state["validation_policy"] = {
+        "policy_id": "policy-1",
+        "version": "1.0",
+        "scope": "all_models",
+        "owner": "Test",
+        "approval_date": "2026-01-01T00:00:00+00:00",
+        "gates": [
+            {
+                "name": "divergences",
+                "description": "No divergences",
+                "evaluator_id": "divergences",
+                "expected_state": False,
+            }
+        ],
+    }
+    at.run()
+
+    compute_button = next(b for b in at.button if b.label == "Compute scorecard")
+    compute_button.click().run()
+    assert not at.exception, f"page raised after computing scorecard: {at.exception}"
+
+    readiness_button = next(b for b in at.button if b.label == "Evaluate readiness")
+    readiness_button.click().run()
+    assert not at.exception, f"page raised after evaluating readiness: {at.exception}"
+    assert at.session_state["approval_readiness"]["overall_ready"] is True
+
+    approved_by_input = next(
+        t for t in at.text_input if t.label == "Approved by (name) *"
+    )
+    approved_by_input.set_value("Test Reviewer").run()
+    approve_button = next(
+        b for b in at.button if b.label == "Approve this model for planning"
+    )
+    approve_button.click().run()
+    assert not at.exception, f"page raised after approving: {at.exception}"
+
+    approval = at.session_state["model_approval"]
+    assert approval is not None
+    assert approval["validation_policy_id"] == "policy-1"
+    assert approval["approved_by"] == "Test Reviewer"
+    # The page reruns (st.rerun()) right after a successful approval, so the
+    # transient "Policy-backed model approved" message is replaced by the
+    # persistent "Approved by ..." display in the final captured state.
+    assert any("Approved by" in (s.value or "") for s in at.success)
+    assert not any("Falling back" in (i.value or "") for i in at.info)
+    assert not any("Falling back" in (e.value or "") for e in at.error)
+    assert not any("Policy-backed approval failed" in (e.value or "") for e in at.error)
