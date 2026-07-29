@@ -141,14 +141,14 @@ class ValidationScope:
         Returns (True, "") if applicable, or (False, reason) if not.
         """
         if self.model_types and model_type not in self.model_types:
-            return False, (
-                f"Model type '{model_type}' not in scope {self.model_types}"
-            )
+            return False, (f"Model type '{model_type}' not in scope {self.model_types}")
         if self.markets and market is not None and market not in self.markets:
-            return False, (
-                f"Market '{market}' not in scope {self.markets}"
-            )
-        if self.intended_uses and intended_use is not None and intended_use not in self.intended_uses:
+            return False, (f"Market '{market}' not in scope {self.markets}")
+        if (
+            self.intended_uses
+            and intended_use is not None
+            and intended_use not in self.intended_uses
+        ):
             return False, (
                 f"Intended use '{intended_use}' not in scope {self.intended_uses}"
             )
@@ -914,9 +914,7 @@ class ApprovalReadiness:
     gate_applicability: tuple[tuple[str, bool, Optional[str]], ...] = field(
         default_factory=tuple
     )
-    lifecycle_issues: tuple[PolicyLifecycleIssue, ...] = field(
-        default_factory=tuple
-    )
+    lifecycle_issues: tuple[PolicyLifecycleIssue, ...] = field(default_factory=tuple)
 
     def fingerprint(self) -> str:
         """Deterministic SHA-256 fingerprint, delegating to versioned method.
@@ -1302,7 +1300,10 @@ def required_evidence_errors(
         errors.append("policy_fingerprint does not match context policy.")
     if result.gate_fingerprint != gate.fingerprint():
         errors.append("gate_fingerprint does not match gate definition.")
-    if result.diagnostic_artefact_fingerprint != context.diagnostic_artefact_fingerprint:
+    if (
+        result.diagnostic_artefact_fingerprint
+        != context.diagnostic_artefact_fingerprint
+    ):
         errors.append("diagnostic_artefact_fingerprint does not match context.")
     if result.artefact_id != context.diagnostic_artefact_id:
         errors.append(
@@ -1517,7 +1518,9 @@ def evaluate_approval_readiness(
 
         # PR 65A: Strict evidence check for schema v3
         is_stale = not result.matches_evidence(
-            evidence_context=evidence_context, gate=gate, strict=True,
+            evidence_context=evidence_context,
+            gate=gate,
+            strict=True,
         )
 
         if is_stale:
