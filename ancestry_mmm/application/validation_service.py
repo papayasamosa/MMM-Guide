@@ -53,7 +53,7 @@ class ValidationInput:
     credible_mass: float = 0.9
     diagnostic_artefact_id: Optional[str] = None
     diagnostic_artefact_fingerprint: Optional[str] = None
-    model_type: str = "all_models"
+    model_type: Optional[str] = None
     market: Optional[str] = None
     intended_use: str = "model_approval"
 
@@ -111,6 +111,14 @@ class ValidationService:
 
         if v_input.trace is None:
             errors.append("No posterior trace provided for validation.")
+            return ValidationServiceResult(errors=errors)
+
+        # PR 65A: Official path requires explicit model type
+        if v_input.model_identity is not None and v_input.model_type is None:
+            errors.append(
+                "Official validation requires an explicit model_type "
+                "('shared' or 'market_specific')."
+            )
             return ValidationServiceResult(errors=errors)
 
         # --- PR 62B: Check policy config before any evaluation ---

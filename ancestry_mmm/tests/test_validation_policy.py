@@ -46,12 +46,21 @@ def _make_result(
     value: float | None = None,
     message: str = "",
     policy: "ThresholdPolicy | None" = None,
+    gate: "ValidationGate | None" = None,
 ) -> ValidationResult:
-    """Helper to build a ValidationResult with identity fields."""
+    """Helper to build a ValidationResult with v3-ready evidence fields.
+
+
+    If ``gate`` is not provided, looks up the gate by name from the policy
+    to compute the gate fingerprint.
+    """
     if policy is None:
         policy = _DEFAULT_POLICY
+    if gate is None and gate_name:
+        gate = policy.get_gate(gate_name)
+    gf = gate.fingerprint() if gate else ""
     return ValidationResult(
-        gate_name=gate_name,
+        gate_name=gate_name or (gate.name if gate else ""),
         status=status,
         value=value,
         message=message or f"{gate_name}={value}",
@@ -61,6 +70,11 @@ def _make_result(
         posterior_fingerprint="post-ghi",
         policy_id=policy.policy_id,
         policy_version=policy.version,
+        policy_fingerprint=policy.fingerprint(),
+        model_identity_fingerprint=_DEFAULT_IDENTITY.fingerprint(),
+        gate_fingerprint=gf,
+        diagnostic_artefact_fingerprint="diag-fp-001",
+        artefact_id="diag-001",
     )
 
 
@@ -85,8 +99,8 @@ def _eval_readiness(
     policy,
     identity,
     *,
-    diagnostic_artefact_id="",
-    diagnostic_artefact_fingerprint="",
+    diagnostic_artefact_id="diag-001",
+    diagnostic_artefact_fingerprint="diag-fp-001",
     waivers=None,
     as_of=None,
     ctx=None,
