@@ -10,17 +10,112 @@ Covers:
 
 import uuid
 from datetime import datetime, timezone
+from unittest.mock import patch
 
+import numpy as np
 import pytest
+import arviz as az
 
 from ancestry_mmm.application.diagnostics_service import (
     DiagnosticSection,
     DiagnosticsArtefact,
+    DiagnosticsInput,
+    DiagnosticsService,
 )
 from ancestry_mmm.application.validation_service import (
     ValidationInput,
     ValidationService,
 )
+from ancestry_mmm.core.diagnostics import (
+    curve_plausibility_checks as _real_curve_plausibility_checks,
+    posterior_predictive_coverage as _real_posterior_predictive_coverage,
+)
+from ancestry_mmm.core.hierarchical_model import FHModelMeta
+from ancestry_mmm.core.pathways import resolve_pathway_masks
+
+
+def _minimal_trace_frame_meta():
+    """A minimal, single-outcome, single-channel real trace/frame/meta
+    triple - enough to exercise DiagnosticsService.evaluate() end to end
+    without mocking arviz/numpy internals."""
+    rng = np.random.default_rng(11)
+    n_obs, n_chain, n_draw = 16, 2, 20
+    oids = ["fh_new_gsa"]
+    chs = ["TV"]
+
+    Y = rng.uniform(5, 30, size=(n_obs, 1))
+    trace = az.from_dict(
+        posterior={
+            "mu": np.maximum(
+                Y[None, None, :, 0] + rng.normal(0, 0.5, size=(n_chain, n_draw, n_obs)),
+                0.1,
+            )[..., None],
+            "alpha": np.full((n_chain, n_draw, 1), 8.0),
+            "decay_rate": np.full((n_chain, n_draw, 1), 0.5),
+            "hill_K": np.ones((n_chain, n_draw, 1)),
+            "hill_S": np.full((n_chain, n_draw, 1), 4.0),
+            "beta": np.ones((n_chain, n_draw, 1, 1)),
+            "intercept": np.zeros((n_chain, n_draw, 1)),
+            "trend_coef": np.zeros((n_chain, n_draw, 1)),
+            "promo_coef": np.zeros((n_chain, n_draw, 1)),
+            "market_offset": np.zeros((n_chain, n_draw, 1, 1)),
+            "gamma_fourier": np.zeros((n_chain, n_draw, 4, 1)),
+        },
+        coords={
+            "obs": list(range(n_obs)),
+            "outcome": oids,
+            "channel": chs,
+            "market": ["UK"],
+            "fourier": list(range(4)),
+        },
+        dims={
+            "mu": ["obs", "outcome"],
+            "alpha": ["outcome"],
+            "decay_rate": ["channel"],
+            "hill_K": ["channel"],
+            "hill_S": ["channel"],
+            "beta": ["outcome", "channel"],
+            "intercept": ["outcome"],
+            "trend_coef": ["outcome"],
+            "promo_coef": ["outcome"],
+            "market_offset": ["market", "outcome"],
+            "gamma_fourier": ["fourier", "outcome"],
+        },
+        sample_stats={"diverging": np.zeros((n_chain, n_draw), dtype=bool)},
+    )
+
+    meta = FHModelMeta(
+        markets=["UK"],
+        outcome_ids=oids,
+        channels=chs,
+        dna_channels=[],
+        dna_channel_idx=[],
+        non_dna_idx=[0],
+        dna_outcome_id=oids[0],
+        dna_lag_weeks=1,
+        unpooled_markets=[],
+        control_names=[],
+        pathway_masks=resolve_pathway_masks(
+            oids,
+            chs,
+            [],
+            dna_channel_idx=[],
+            dna_outcome_id=oids[0],
+            direct_dna_outcome_ids=[],
+            dna_lag_weeks=1,
+        ),
+    )
+
+    frame = {
+        "Y": Y,
+        "X_media": rng.uniform(0, 100, size=(n_obs, 1)),
+        "market_bounds": [(0, n_obs)],
+        "market_idx": np.zeros(n_obs, dtype=int),
+        "promo": np.zeros((n_obs, 1)),
+        "trend": np.arange(n_obs, dtype=float),
+        "fourier": np.zeros((n_obs, 4)),
+    }
+    return trace, frame, meta
 
 
 # =========================================================================
@@ -327,3 +422,66 @@ class TestValidationServiceArtefactConsumption:
             diagnostics_artefact=artefact,
         )
         assert v_input.diagnostics_artefact is artefact
+
+
+# =========================================================================
+# DiagnosticsService computes each diagnostic exactly once (PR 79A, WP C)
+# =========================================================================
+
+
+class TestDiagnosticsServiceComputesEachSectionOnce:
+    """Before this fix, DiagnosticsService.evaluate() called
+    compute_scorecard() (which internally recomputes convergence, PPC and
+    plausibility) for the in_sample_fit section, *and* separately called
+    posterior_predictive_coverage()/curve_plausibility_checks() again for
+    their own sections - so PPC and plausibility were each computed twice,
+    and the in_sample_fit section's payload was the whole nested scorecard
+    dict rather than fit-only rows."""
+
+    def test_ppc_and_plausibility_each_computed_exactly_once(self):
+        trace, frame, meta = _minimal_trace_frame_meta()
+        diag_input = DiagnosticsInput(trace=trace, frame=frame, meta=meta)
+
+        with patch(
+            "ancestry_mmm.application.diagnostics_service.posterior_predictive_coverage",
+            wraps=_real_posterior_predictive_coverage,
+        ) as mock_ppc, patch(
+            "ancestry_mmm.application.diagnostics_service.curve_plausibility_checks",
+            wraps=_real_curve_plausibility_checks,
+        ) as mock_plaus:
+            result = DiagnosticsService().evaluate(diag_input)
+
+        assert mock_ppc.call_count == 1
+        assert mock_plaus.call_count == 1
+        assert not result.errors, result.errors
+
+    def test_in_sample_fit_section_contains_only_fit_rows(self):
+        trace, frame, meta = _minimal_trace_frame_meta()
+        diag_input = DiagnosticsInput(trace=trace, frame=frame, meta=meta)
+        result = DiagnosticsService().evaluate(diag_input)
+
+        fit_section = result.diagnostics_artefact.in_sample_fit
+        assert fit_section.status == "computed"
+        # A fit row has exactly the in_sample_fit() columns - no nested
+        # "convergence"/"ppc_coverage"/"plausibility_flags" keys leaking in
+        # from a bundled compute_scorecard() payload.
+        assert set(fit_section.payload[0].keys()) == {
+            "outcome_id",
+            "r_squared",
+            "mape_pct",
+            "actual_mean",
+            "predicted_mean",
+        }
+
+    def test_displayed_scorecard_matches_artefact_exactly(self):
+        trace, frame, meta = _minimal_trace_frame_meta()
+        diag_input = DiagnosticsInput(trace=trace, frame=frame, meta=meta)
+        result = DiagnosticsService().evaluate(diag_input)
+
+        artefact = result.diagnostics_artefact
+        assert result.scorecard["convergence"] == artefact.convergence.payload
+        assert result.scorecard["in_sample_fit"] == artefact.in_sample_fit.payload
+        assert (
+            result.scorecard["ppc_coverage"] == artefact.posterior_predictive.payload
+        )
+        assert result.scorecard["plausibility_flags"] == artefact.plausibility.payload

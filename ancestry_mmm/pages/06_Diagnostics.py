@@ -217,10 +217,10 @@ if scorecard:
     st.markdown("### Convergence")
     conv = scorecard["convergence"]
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Max R-hat", f"{conv['rhat_max']:.3f}", help="Should be < 1.01")
+    c1.metric("Max R-hat", f"{conv['max_rhat']:.3f}", help="Should be < 1.01")
     c2.metric(
         "Min ESS",
-        format_number(round(conv["ess_min"])),
+        format_number(round(conv["min_ess"])),
         help="Effective sample size; higher is better",
     )
     c3.metric("Divergences", format_number(conv["divergences"]))
