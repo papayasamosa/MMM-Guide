@@ -11,7 +11,14 @@
     This script is pure data — it does not create or modify anything.
 #>
 
-$script:DriveRoot = "D:\Ancestry-MMM"
+# Default local root.  Override via MMM_DEV_ROOT for CI or isolated testing
+# (e.g. $env:MMM_DEV_ROOT = Join-Path $env:RUNNER_TEMP "Ancestry-MMM").
+# Production or normal local setup should not silently use C:.
+$script:DriveRoot = if ($env:MMM_DEV_ROOT) {
+    $env:MMM_DEV_ROOT
+} else {
+    "D:\Ancestry-MMM"
+}
 
 # ── Operational directories (must exist for day-to-day development) ──
 $script:OperationalDirs = @(

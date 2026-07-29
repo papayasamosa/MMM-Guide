@@ -28,7 +28,7 @@
 | Query | Library ID | Result |
 |---|---|---|
 | Resolve Playwright MCP configuration + browser matching | `/microsoft/playwright-mcp` | Confirmed `--allowed-origins` advisory, install-browser command, version pinning guidance |
-| Resolve Context7 MCP package + version | `/upstash/context7` | Confirmed v3.2.4 package name and dependencies |
+| Resolve Context7 MCP package + version | `/upstash/context7` | Confirmed v3.2.4 package was latest; active config pins v3.2.5. Exact v3.2.5 compatibility not independently verified. |
 | Playwright MCP browser installation details | `/microsoft/playwright-mcp` | Confirmed `install-browser chrome-for-testing` command and chromium-1232 |
 | **Write calls made** | | **None** |
 
@@ -62,7 +62,7 @@
 | MCP | Configured | Authenticated | Live verified | Access mode |
 |---|---|---|---|---|
 | GitHub | ✓ | ✓ (OAuth via Copilot) | ✓ | Read-only, no write tool calls |
-| Context7 | ✓ (v3.2.5 pinned) | — (unauthenticated) | ✓ | Read-only doc lookups |
+| Context7 | ✓ (v3.2.5 pinned) | — (unauthenticated) | ✓ (connectivity); exact 3.2.5 not independently verified | Read-only doc lookups; version lookup showed v3.2.4 as latest, configured version is 3.2.5 |
 | Playwright | ✓ (v0.0.78 pinned) | N/A | ✓ | Local-app testing only, origin allowlist (not a security boundary) |
 | Hugging Face | Documented, not connected | Pending user authentication | Not verified | Read-only search/documentation only when connected |
 
