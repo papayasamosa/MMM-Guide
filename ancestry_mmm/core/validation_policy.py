@@ -472,6 +472,68 @@ class ValidationGate:
         ).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize this gate to a JSON-safe dict.
+
+        The canonical serialization used by ``ThresholdPolicy.to_dict()``
+        and by project persistence. Round-trips via ``from_dict``.
+        """
+        return {
+            "name": self.name,
+            "description": self.description,
+            "evaluator_id": self.evaluator_id,
+            "scope": self.scope,
+            "acceptable_range": list(self.acceptable_range)
+            if self.acceptable_range is not None
+            else None,
+            "review_range": list(self.review_range)
+            if self.review_range is not None
+            else None,
+            "direction": self.direction,
+            "units": self.units,
+            "blocking": self.blocking,
+            "waivable": self.waivable,
+            "required": self.required,
+            "expected_state": self.expected_state,
+        }
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "ValidationGate":
+        """Deserialize a gate from a dict produced by ``to_dict``.
+
+        This is the only supported way to reconstruct a ``ValidationGate``
+        from persisted or session-state data — callers must not construct
+        gates from raw dicts by hand. Missing required fields raise
+        ``ValueError`` with a clear message rather than silently defaulting;
+        invalid field combinations (bad direction, inverted review band,
+        etc.) raise via ``__post_init__``.
+        """
+        try:
+            acceptable_range = d.get("acceptable_range")
+            review_range = d.get("review_range")
+            return cls(
+                name=d["name"],
+                description=d["description"],
+                evaluator_id=d.get("evaluator_id", ""),
+                scope=d.get("scope", "all_models"),
+                acceptable_range=tuple(acceptable_range)
+                if acceptable_range is not None
+                else None,
+                review_range=tuple(review_range)
+                if review_range is not None
+                else None,
+                direction=d.get("direction", "lower_is_better"),
+                units=d.get("units", ""),
+                blocking=d.get("blocking", True),
+                waivable=d.get("waivable", False),
+                required=d.get("required", True),
+                expected_state=d.get("expected_state"),
+            )
+        except KeyError as exc:
+            raise ValueError(
+                f"Malformed ValidationGate dict: missing required field {exc}"
+            ) from exc
+
 
 @dataclass(frozen=True)
 class ThresholdPolicy:
@@ -582,6 +644,59 @@ class ThresholdPolicy:
             payload, sort_keys=True, separators=(",", ":"), default=str
         ).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize this policy to a JSON-safe dict.
+
+        The canonical serialization for persistence and session state.
+        Round-trips via ``from_dict``.
+        """
+        return {
+            "policy_id": self.policy_id,
+            "version": self.version,
+            "scope": self.scope,
+            "owner": self.owner,
+            "approval_date": self.approval_date.isoformat()
+            if self.approval_date
+            else None,
+            "expiry": self.expiry.isoformat() if self.expiry else None,
+            "supersedes": self.supersedes,
+            "superseded_by": self.superseded_by,
+            "gates": [g.to_dict() for g in self.gates],
+        }
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "ThresholdPolicy":
+        """Deserialize a policy from a dict produced by ``to_dict``.
+
+        This is the only supported way to reconstruct a ``ThresholdPolicy``
+        from persisted or session-state data — callers must not construct
+        ``ThresholdPolicy`` directly from raw gate dicts. A malformed policy
+        (missing required fields, duplicate gate names, malformed gates)
+        raises ``ValueError`` rather than silently producing an empty or
+        partial policy.
+        """
+        try:
+            gates = [ValidationGate.from_dict(g) for g in d.get("gates", [])]
+            approval_date_raw = d.get("approval_date")
+            expiry_raw = d.get("expiry")
+            return cls(
+                policy_id=d["policy_id"],
+                version=d["version"],
+                scope=d["scope"],
+                gates=gates,
+                owner=d.get("owner", ""),
+                approval_date=datetime.fromisoformat(approval_date_raw)
+                if approval_date_raw
+                else datetime.now(timezone.utc),
+                expiry=datetime.fromisoformat(expiry_raw) if expiry_raw else None,
+                supersedes=d.get("supersedes"),
+                superseded_by=d.get("superseded_by"),
+            )
+        except KeyError as exc:
+            raise ValueError(
+                f"Malformed ThresholdPolicy dict: missing required field {exc}"
+            ) from exc
 
 
 VALIDATION_STATUS_VALUES = ("pass", "review", "fail")
@@ -2079,12 +2194,7 @@ def _evaluate_divergences(
     has_div = False
     if hasattr(trace, "sample_stats") and "diverging" in trace.sample_stats:
         has_div = bool(trace.sample_stats["diverging"].values.any())
-    # Boolean gate: use expected_state if set, else pass when no divergences
-    expected = getattr(gate, "expected_state", None)
-    if expected is not None:
-        status = "pass" if has_div == expected else "fail"
-    else:
-        status = "pass" if not has_div else "fail"
+    status = classify_boolean_gate(has_div, gate)
     return ValidationResult(
         gate_name=gate.name,
         status=status,
@@ -2213,6 +2323,73 @@ register_evaluator(
 )(_evaluate_ppc)
 
 
+def _evaluate_backtest_mape(
+    gate: ValidationGate,
+    trace: Any,
+    frame: Any | None,
+    meta: Any | None,
+    credible_mass: float,
+) -> ValidationResult:
+    """Fail-closed placeholder for backtest MAPE.
+
+    Expanding-window backtesting requires a raw chronological DataFrame, a
+    ``ModelSpec``, and a caller-supplied fold-fitting function — none of
+    which are part of the standard ``(gate, trace, frame, meta,
+    credible_mass)`` evaluator signature. This evaluator exists only so
+    ``validate_gate_config``/``get_evaluator`` recognise ``backtest_mape``
+    as a valid evaluator ID (letting policies configure the gate at all);
+    it is expected to be satisfied from a precomputed ``DiagnosticsArtefact``
+    section via ``ValidationService``. If evaluation ever reaches this
+    function directly, it means no usable artefact evidence was available,
+    so it fails closed rather than fabricating a result.
+    """
+    return ValidationResult(
+        gate_name=gate.name,
+        status="fail",
+        message=(
+            "Backtest MAPE requires precomputed diagnostics-artefact evidence; "
+            "it cannot be evaluated live from trace/frame/meta alone."
+        ),
+    )
+
+
+register_evaluator(
+    "backtest_mape",
+    EvaluatorMeta(
+        evaluator_id="backtest_mape",
+        output_type="numeric",
+        units="%",
+        requires_threshold=True,
+        required_inputs=(),
+        is_deterministic=False,
+        description=(
+            "Expanding-window backtest mean absolute percentage error. "
+            "Lower is better. Resolved from a diagnostics artefact; not "
+            "computable live from trace/frame/meta."
+        ),
+    ),
+)(_evaluate_backtest_mape)
+
+
+# Canonical evaluator-ID -> artefact-section-key aliases. Policy gates may
+# use any evaluator ID on the left; ``ValidationService._get_artefact_metric``
+# normalizes through this table before dispatching, so an artefact-backed
+# gate never silently falls back to live recomputation just because the
+# policy used a synonym for the metric. Every registered evaluator ID must
+# have an entry here (enforced by test_validation_policy.py).
+ARTEFACT_METRIC_ALIASES: Dict[str, str] = {
+    "rhat": "convergence_rhat",
+    "convergence_rhat": "convergence_rhat",
+    "ess": "convergence_ess",
+    "min_ess": "convergence_ess",
+    "convergence_ess": "convergence_ess",
+    "divergences": "divergences",
+    "ppc": "ppc_coverage",
+    "ppc_coverage": "ppc_coverage",
+    "backtest_mape": "backtest_mape",
+}
+
+
 # ---------------------------------------------------------------------------
 # Numeric gate classification (shared by evaluators and validation service)
 # ---------------------------------------------------------------------------
@@ -2263,6 +2440,27 @@ def _classify_numeric_gate(value: float, gate: ValidationGate) -> str:
             if value >= rlo:
                 return "review"
         return "fail"
+
+
+# Public alias — the canonical numeric pass/review/fail classifier. Any
+# caller classifying a numeric gate value (live evaluators, artefact-backed
+# validation) must use this function so status semantics never diverge
+# between the two paths.
+classify_numeric_gate = _classify_numeric_gate
+
+
+def classify_boolean_gate(value: bool, gate: "ValidationGate") -> str:
+    """Classify a boolean value against a gate's ``expected_state``.
+
+    Mirrors the semantics used by ``_evaluate_divergences``: when
+    ``expected_state`` is set, the gate passes iff ``value == expected_state``;
+    otherwise it passes iff ``value`` is falsy (the common "no problem
+    detected" convention, e.g. divergences).
+    """
+    expected = gate.expected_state
+    if expected is not None:
+        return "pass" if value == expected else "fail"
+    return "pass" if not value else "fail"
 
 
 # ---------------------------------------------------------------------------

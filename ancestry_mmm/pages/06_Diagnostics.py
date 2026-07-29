@@ -1,6 +1,7 @@
 """Page 6: model scorecard - convergence, in-sample fit, posterior predictive coverage, plausibility flags, out-of-sample backtest."""
 
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -47,6 +48,7 @@ from ancestry_mmm.application.validation_service import (
 from ancestry_mmm.core.validation_policy import (
     ThresholdPolicy,
 )
+from ancestry_mmm.core.model_identity import ModelIdentity
 from ancestry_mmm.core.fingerprint import (
     fingerprint_dataframe,
     fingerprint_model_spec,
@@ -137,6 +139,57 @@ if spec_dict:
                 "on the Structure page. Re-run Model Training to pick up the change."
             )
 
+posterior_params = get_state("posterior_params")
+model_spec_dict = get_state("model_spec")
+prior_config = get_state("prior_config") or {}
+dna_lag_weeks = get_state("dna_lag_weeks", 4)
+model_run_id = get_state("model_run_id")
+activity_items = get_state("activity_definitions") or []
+activity_definitions = [ActivityDefinition.from_dict(item) for item in activity_items]
+
+# PR 79A (work package B): the current model run's identity is constructed
+# once, here, and reused as this single object for diagnostics, validation
+# readiness and model approval below - it must never be recalculated with
+# different inputs later on this page, or diagnostics/readiness/approval
+# can silently drift apart on what they each think "the current model" is.
+current_model_identity: "ModelIdentity | None" = None
+if model_run_id and posterior_params is not None and model_spec_dict is not None:
+    current_model_identity = ModelIdentity(
+        model_run_id=model_run_id,
+        data_fingerprint=fingerprint_dataframe(frame["df"]),
+        model_spec_fingerprint=fingerprint_model_spec(
+            model_spec_dict,
+            prior_config,
+            dna_lag_weeks,
+            model_type=model_type,
+            pipeline_steps=get_state("pipeline_steps") or [],
+            market_spec_config=get_state("market_spec_config"),
+            direct_dna_outcome_ids=meta.direct_dna_outcome_ids
+            if meta is not None
+            else None,
+            outcome_catalogue=outcome_catalogue_fingerprint_payload(
+                meta.outcome_catalogue_at_fit
+            )
+            if meta is not None
+            else None,
+            funnel_links=get_state("funnel_links"),
+            media_outcome_pathways=pathway_catalogue_fingerprint_payload(
+                meta.pathway_catalogue_at_fit
+            )
+            if meta is not None
+            else None,
+            activity_fit_fingerprint=(
+                activity_fit_fingerprint(activity_definitions)
+                if activity_definitions
+                else None
+            ),
+        ),
+        posterior_fingerprint=fingerprint_posterior(posterior_params),
+    )
+# Dict view of the same identity object (never recomputed independently)
+# for the model-approval section below, which binds approvals by keyword.
+current_identity = asdict(current_model_identity) if current_model_identity else None
+
 st.markdown("---")
 if st.button("Compute scorecard", type="primary"):
     with st.spinner("Computing diagnostics..."):
@@ -146,6 +199,7 @@ if st.button("Compute scorecard", type="primary"):
             frame=frame,
             meta=meta,
             model_type=model_type,
+            model_identity=current_model_identity,
         )
         diag_result = diag_service.evaluate(diag_input)
         scorecard = diag_result.scorecard
@@ -252,26 +306,28 @@ st.caption(
 validation_policy_dict = get_state("validation_policy")
 validation_readiness = get_state("validation_readiness")
 
-# Load policy for later use
+# Load policy for later use. A configured policy must deserialize through
+# ThresholdPolicy.from_dict() — a malformed policy is a blocking error, not
+# a silent downgrade to an empty policy (an empty policy would pass every
+# gate by having none to evaluate).
 _current_policy = None
+_policy_config_error: str | None = None
 if validation_policy_dict and isinstance(validation_policy_dict, dict):
     try:
-        from ancestry_mmm.core.validation_policy import ThresholdPolicy as TP
-
-        _current_policy = TP(
-            policy_id=validation_policy_dict.get("policy_id", "default-policy"),
-            version=validation_policy_dict.get("version", "1.0"),
-            scope=validation_policy_dict.get("scope", "all_models"),
-            gates=validation_policy_dict.get("gates", []),
-            owner=validation_policy_dict.get("owner", "System"),
-        )
-    except Exception:
-        _current_policy = None
+        _current_policy = ThresholdPolicy.from_dict(validation_policy_dict)
+    except ValueError as exc:
+        _policy_config_error = str(exc)
 
 if st.button("Evaluate readiness", type="secondary"):
     with st.spinner("Evaluating policy gates..."):
         if diag_artefact is None:
             st.error("Compute the scorecard first.")
+        elif _policy_config_error is not None:
+            st.error(
+                "The configured validation policy is malformed and cannot be "
+                f"evaluated: {_policy_config_error}. Fix the policy "
+                "configuration before evaluating readiness."
+            )
         else:
             policy = _current_policy
             if policy is None:
@@ -291,6 +347,7 @@ if st.button("Evaluate readiness", type="secondary"):
                 policy=policy,
                 diagnostics_artefact=diag_artefact,
                 model_type=model_type,
+                model_identity=current_model_identity,
             )
             val_result = val_service.evaluate_readiness(val_input)
             set_state("validation_readiness", val_result)
@@ -309,15 +366,15 @@ if validation_readiness:
         if rd.config_errors:
             for ce in rd.config_errors:
                 st.error(f"Config error: {ce}")
-        if rd.results:
+        if rd.gate_results:
             st.markdown("#### Gate results")
-            for r in rd.results:
+            for r in rd.gate_results:
                 gate_icon = {"pass": "✅", "fail": "❌", "review": "🔍", "skip": "➖"}
                 icon = gate_icon.get(r.status, "❓")
                 st.write(f"{icon} **{r.gate_name}**: {r.status} (value: {r.value})")
-        if rd.waivers:
+        if rd.waivers_applied:
             st.markdown("#### Waivers")
-            for w in rd.waivers:
+            for w in rd.waivers_applied:
                 st.write(f"  - Waiver `{w.waiver_id}` for gate `{w.gate_name}`")
 
     if validation_readiness.errors:
@@ -329,13 +386,6 @@ st.markdown("### Model approval")
 st.caption(FIELD_HELP["approval"])
 render_glossary(["Prior", "Posterior", "Approval"])
 
-posterior_params = get_state("posterior_params")
-model_spec_dict = get_state("model_spec")
-prior_config = get_state("prior_config") or {}
-dna_lag_weeks = get_state("dna_lag_weeks", 4)
-model_run_id = get_state("model_run_id")
-activity_items = get_state("activity_definitions") or []
-activity_definitions = [ActivityDefinition.from_dict(item) for item in activity_items]
 activity_governance_errors = []
 if not activity_definitions:
     activity_governance_errors.append("No activity definitions are saved.")
@@ -364,41 +414,6 @@ elif meta is not None:
                 f"{activity_market} has unapproved activities {unapproved}"
             )
 activity_governance_ready = not activity_governance_errors
-
-current_identity = None
-if model_run_id and posterior_params is not None and model_spec_dict is not None:
-    current_identity = {
-        "model_run_id": model_run_id,
-        "data_fingerprint": fingerprint_dataframe(frame["df"]),
-        "model_spec_fingerprint": fingerprint_model_spec(
-            model_spec_dict,
-            prior_config,
-            dna_lag_weeks,
-            model_type=model_type,
-            pipeline_steps=get_state("pipeline_steps") or [],
-            market_spec_config=get_state("market_spec_config"),
-            direct_dna_outcome_ids=meta.direct_dna_outcome_ids
-            if meta is not None
-            else None,
-            outcome_catalogue=outcome_catalogue_fingerprint_payload(
-                meta.outcome_catalogue_at_fit
-            )
-            if meta is not None
-            else None,
-            funnel_links=get_state("funnel_links"),
-            media_outcome_pathways=pathway_catalogue_fingerprint_payload(
-                meta.pathway_catalogue_at_fit
-            )
-            if meta is not None
-            else None,
-            activity_fit_fingerprint=(
-                activity_fit_fingerprint(activity_definitions)
-                if activity_definitions
-                else None
-            ),
-        ),
-        "posterior_fingerprint": fingerprint_posterior(posterior_params),
-    }
 
 approval_dict = get_state("model_approval")
 if approval_dict and not activity_governance_ready:

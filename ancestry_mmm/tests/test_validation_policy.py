@@ -2145,3 +2145,100 @@ class TestCreatePolicyBackedModelApproval:
         fp1 = fingerprint_model_approval(approval)
         fp2 = fingerprint_model_approval(approval)
         assert fp1 == fp2
+
+
+# ---------------------------------------------------------------------------
+# ValidationGate / ThresholdPolicy serialization (PR 79A, work package A)
+# ---------------------------------------------------------------------------
+
+
+class TestValidationGateSerialization:
+    def test_round_trip_preserves_fingerprint(self):
+        gate = ValidationGate(
+            name="convergence_rhat",
+            description="Gelman-Rubin R-hat",
+            evaluator_id="convergence_rhat",
+            acceptable_range=(0.0, 1.01),
+            review_range=(0.0, 1.05),
+            direction="lower_is_better",
+            units="R-hat",
+            blocking=True,
+            waivable=False,
+            required=True,
+        )
+        restored = ValidationGate.from_dict(gate.to_dict())
+        assert restored.fingerprint() == gate.fingerprint()
+        assert restored.name == gate.name
+        assert restored.acceptable_range == gate.acceptable_range
+        assert restored.review_range == gate.review_range
+
+    def test_round_trip_boolean_gate(self):
+        gate = ValidationGate(
+            name="divergences",
+            description="No divergences",
+            evaluator_id="divergences",
+            expected_state=False,
+        )
+        restored = ValidationGate.from_dict(gate.to_dict())
+        assert restored.expected_state is False
+        assert restored.fingerprint() == gate.fingerprint()
+
+    def test_from_dict_missing_required_field_raises(self):
+        with pytest.raises(ValueError, match="Malformed ValidationGate"):
+            ValidationGate.from_dict({"description": "no name field"})
+
+
+class TestThresholdPolicySerialization:
+    def _sample_policy(self) -> ThresholdPolicy:
+        return ThresholdPolicy(
+            policy_id="val-pol-serde",
+            version="1.0.0",
+            scope="all_models",
+            owner="Test Owner",
+            gates=[
+                ValidationGate(
+                    name="convergence_rhat",
+                    description="R-hat",
+                    evaluator_id="convergence_rhat",
+                    acceptable_range=(0.0, 1.01),
+                ),
+                ValidationGate(
+                    name="divergences",
+                    description="No divergences",
+                    evaluator_id="divergences",
+                    expected_state=False,
+                ),
+            ],
+        )
+
+    def test_round_trip_preserves_fingerprint(self):
+        policy = self._sample_policy()
+        restored = ThresholdPolicy.from_dict(policy.to_dict())
+        assert restored.fingerprint() == policy.fingerprint()
+        assert restored.policy_id == policy.policy_id
+        assert [g.name for g in restored.gates] == [g.name for g in policy.gates]
+
+    def test_from_dict_missing_policy_id_raises(self):
+        with pytest.raises(ValueError, match="Malformed ThresholdPolicy"):
+            ThresholdPolicy.from_dict({"version": "1.0", "scope": "all_models"})
+
+    def test_from_dict_malformed_gate_raises(self):
+        malformed = self._sample_policy().to_dict()
+        del malformed["gates"][0]["name"]
+        with pytest.raises(ValueError, match="Malformed ValidationGate"):
+            ThresholdPolicy.from_dict(malformed)
+
+    def test_from_dict_duplicate_gate_names_raises(self):
+        # Simulates the exact page-level bug this fixes: a hand-built
+        # gates list (e.g. two gates sharing a name) must be rejected, not
+        # silently accepted or converted into an empty policy.
+        dup = self._sample_policy().to_dict()
+        dup["gates"][1]["name"] = dup["gates"][0]["name"]
+        with pytest.raises(ValueError, match="duplicate names"):
+            ThresholdPolicy.from_dict(dup)
+
+    def test_from_dict_missing_owner_raises(self):
+        policy_dict = self._sample_policy().to_dict()
+        policy_dict["owner"] = ""
+        with pytest.raises(ValueError, match="owner must be non-blank"):
+            ThresholdPolicy.from_dict(policy_dict)
