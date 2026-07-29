@@ -41,7 +41,7 @@ from .market_specific_predict import FHMarketSpecificPosteriorParams
 from .predict import FHPosteriorParams
 
 if TYPE_CHECKING:
-    from .validation_policy import ThresholdPolicy
+    from .validation_policy import ApprovalReadiness, ThresholdPolicy
 
 # docs/curve_bank.md's planned enum, plus "Shared" (this codebase's addition -
 # see docs/decision_log.md): a Model A curve has no market-specific evidence
@@ -241,6 +241,7 @@ def make_entries(
     evidence_tiers: Optional[Dict[str, Dict[str, str]]] = None,
     currency_by_market: Optional[Dict[str, str]] = None,
     notes: str = "",
+    approval_readiness: Optional["ApprovalReadiness"] = None,
     current_policy: Optional["ThresholdPolicy"] = None,
 ) -> List[CurveBankEntry]:
     """
@@ -276,6 +277,7 @@ def make_entries(
         data_fingerprint=data_fingerprint,
         model_spec_fingerprint=model_spec_fingerprint,
         posterior_fingerprint=posterior_fingerprint,
+        approval_readiness=approval_readiness,
         current_policy=current_policy,
     )
 
