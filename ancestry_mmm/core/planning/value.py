@@ -378,6 +378,135 @@ class ScenarioGovernanceDependencies:
 
 
 # ---------------------------------------------------------------------------
+# Adstock state (starting and terminal)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class AdstockState:
+    """Starting and terminal adstock states for scenario planning.
+
+    PR 72F: The starting adstock is the media stock carried into the
+    planning window from prior spend. The terminal adstock is the stock
+    remaining at the end, which can be passed to the next planning period.
+    """
+
+    channel_adstock_start: tuple[tuple[str, float], ...] = ()
+    channel_adstock_terminal: tuple[tuple[str, float], ...] = ()
+    as_of_date: str = ""
+
+    def fingerprint(self) -> str:
+        raw = json.dumps(
+            {
+                "channel_adstock_start": tuple(sorted(self.channel_adstock_start)),
+                "channel_adstock_terminal": tuple(
+                    sorted(self.channel_adstock_terminal)
+                ),
+                "as_of_date": self.as_of_date,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(raw).hexdigest()
+
+    def to_dict(self) -> dict:
+        return {
+            "channel_adstock_start": list(self.channel_adstock_start),
+            "channel_adstock_terminal": list(self.channel_adstock_terminal),
+            "as_of_date": self.as_of_date,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "AdstockState":
+        return cls(
+            channel_adstock_start=tuple(
+                tuple(x) for x in d.get("channel_adstock_start", [])
+            ),
+            channel_adstock_terminal=tuple(
+                tuple(x) for x in d.get("channel_adstock_terminal", [])
+            ),
+            as_of_date=d.get("as_of_date", ""),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Future assumptions (cost, FX, external controls)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class FutureAssumptions:
+    """Versioned future assumptions for scenario planning.
+
+    PR 72F: Captures cost-per-unit, FX rates, and external control
+    forecasts that a scenario depends on. When these change, the
+    scenario becomes stale.
+    """
+
+    cost_assumptions: tuple[tuple[str, str, float], ...] = ()
+    fx_assumptions: tuple[tuple[str, str, float], ...] = ()
+    external_forecasts: tuple[tuple[str, str, float], ...] = ()
+    version: str = ""
+    label: str = ""
+
+    def fingerprint(self) -> str:
+        raw = json.dumps(
+            {
+                "cost_assumptions": tuple(sorted(self.cost_assumptions)),
+                "fx_assumptions": tuple(sorted(self.fx_assumptions)),
+                "external_forecasts": tuple(sorted(self.external_forecasts)),
+                "version": self.version,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(raw).hexdigest()
+
+    def to_dict(self) -> dict:
+        return {
+            "cost_assumptions": list(self.cost_assumptions),
+            "fx_assumptions": list(self.fx_assumptions),
+            "external_forecasts": list(self.external_forecasts),
+            "version": self.version,
+            "label": self.label,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "FutureAssumptions":
+        return cls(
+            cost_assumptions=tuple(tuple(x) for x in d.get("cost_assumptions", [])),
+            fx_assumptions=tuple(tuple(x) for x in d.get("fx_assumptions", [])),
+            external_forecasts=tuple(tuple(x) for x in d.get("external_forecasts", [])),
+            version=d.get("version", ""),
+            label=d.get("label", ""),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Scenario staleness
+# ---------------------------------------------------------------------------
+
+
+def check_scenario_staleness(
+    scenario_fingerprint: str,
+    current_assumptions_fingerprint: str,
+) -> tuple[bool, str]:
+    """Check whether a scenario is stale relative to current assumptions.
+
+    Returns ``(is_stale, reason)``. A scenario is stale when the
+    assumptions fingerprint used at scenario creation differs from the
+    current assumptions fingerprint.
+    """
+    if not scenario_fingerprint:
+        return True, "No scenario fingerprint recorded."
+    if not current_assumptions_fingerprint:
+        return True, "No current assumptions fingerprint for comparison."
+    if scenario_fingerprint != current_assumptions_fingerprint:
+        return True, "Assumptions have changed since this scenario was created."
+    return False, "Scenario is current."
+
+
+# ---------------------------------------------------------------------------
 # Scenario evaluation result
 # ---------------------------------------------------------------------------
 
@@ -398,6 +527,9 @@ class ScenarioEvaluationResult:
     cost_mapping_fingerprint: str | None = None
     counterfactual_policy_fingerprint: str = ""
     economics_coverage: dict | None = None
+    adstock_state: AdstockState | None = None
+    future_assumptions: FutureAssumptions | None = None
+    assumptions_fingerprint: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -417,6 +549,13 @@ class ScenarioEvaluationResult:
             "cost_mapping_fingerprint": self.cost_mapping_fingerprint,
             "counterfactual_policy_fingerprint": self.counterfactual_policy_fingerprint,
             "economics_coverage": self.economics_coverage,
+            "adstock_state": self.adstock_state.to_dict()
+            if self.adstock_state
+            else None,
+            "future_assumptions": self.future_assumptions.to_dict()
+            if self.future_assumptions
+            else None,
+            "assumptions_fingerprint": self.assumptions_fingerprint,
         }
 
 
