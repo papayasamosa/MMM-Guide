@@ -33,6 +33,7 @@ from ancestry_mmm.core.market_specific_diagnostics import (
     curve_plausibility_checks_market_specific,
 )
 from ancestry_mmm.core.model_identity import ModelIdentity
+from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.predict import FHPosteriorParams, extract_posterior_params
 from ancestry_mmm.core.market_specific_predict import (
     FHMarketSpecificPosteriorParams,
@@ -324,8 +325,10 @@ class DiagnosticsArtefact:
 class DiagnosticsInput:
     """Typed input for diagnostics evaluation.
 
-    PR 72B: Includes explicit data and spec fields for backtest so the
-    service does not pass an empty DataFrame or FHModelMeta as ModelSpec.
+    PR 72B/PR 80A: Includes explicit data and spec fields for backtest so the
+    service does not pass an empty DataFrame or FHModelMeta (which has no
+    ``date_col``) as the ``ModelSpec`` that ``expanding_window_backtest``
+    requires.
     """
 
     trace: az.InferenceData
@@ -344,6 +347,7 @@ class DiagnosticsInput:
     min_train_frac: float = 0.6
     # Canonical data for backtest: raw chronological DataFrame + model spec
     raw_model_dataframe: Optional[pd.DataFrame] = None
+    raw_model_spec: Optional[ModelSpec] = None
 
 
 @dataclass
@@ -551,11 +555,21 @@ class DiagnosticsService:
                     payload=None,
                     error="Backtest requested but no raw DataFrame available.",
                 )
+            elif diag_input.raw_model_spec is None:
+                bt_sec = DiagnosticSection(
+                    status="failed",
+                    payload=None,
+                    error=(
+                        "Backtest requested but no ModelSpec available "
+                        "(raw_model_spec is required; FHModelMeta has no "
+                        "date_col and cannot substitute for it)."
+                    ),
+                )
             else:
                 try:
                     backtest_results = expanding_window_backtest(
                         bt_df,
-                        diag_input.meta,
+                        diag_input.raw_model_spec,
                         diag_input.fit_fold_fn,
                         n_folds=diag_input.backtest_folds,
                         min_train_frac=diag_input.min_train_frac,

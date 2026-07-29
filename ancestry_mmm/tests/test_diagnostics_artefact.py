@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from unittest.mock import patch
 
 import numpy as np
+import pandas as pd
 import pytest
 import arviz as az
 
@@ -28,6 +29,7 @@ from ancestry_mmm.application.validation_service import (
     ValidationService,
 )
 from ancestry_mmm.core.model_identity import ModelIdentity
+from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.validation_policy import ThresholdPolicy, ValidationGate
 from ancestry_mmm.core.diagnostics import (
     curve_plausibility_checks as _real_curve_plausibility_checks,
@@ -718,3 +720,71 @@ class TestDiagnosticsServiceComputesEachSectionOnce:
         assert result.scorecard["in_sample_fit"] == artefact.in_sample_fit.payload
         assert result.scorecard["ppc_coverage"] == artefact.posterior_predictive.payload
         assert result.scorecard["plausibility_flags"] == artefact.plausibility.payload
+
+
+# =========================================================================
+# Backtest ModelSpec contract (PR 80A)
+# =========================================================================
+
+
+class TestBacktestRequiresRealModelSpec:
+    """Before this fix, the backtest section passed ``diag_input.meta``
+    (an FHModelMeta, which has no ``date_col``) to
+    ``expanding_window_backtest`` as its ``spec`` argument. That call always
+    raised AttributeError, silently swallowed into a generic "failed"
+    section - so the backtest feature never worked and never told anyone
+    why. DiagnosticsInput now has an explicit ``raw_model_spec: ModelSpec``
+    field that must be supplied for a backtest to run at all."""
+
+    @staticmethod
+    def _bt_dataframe():
+        dates = pd.date_range("2024-01-01", periods=20, freq="W")
+        return pd.DataFrame(
+            {
+                "date": dates,
+                "market": ["UK"] * len(dates),
+                "spend": np.arange(len(dates), dtype=float),
+                "gsa": np.arange(len(dates), dtype=float) + 10.0,
+            }
+        )
+
+    @staticmethod
+    def _fit_fold_fn(train_df, test_df):
+        return {"fh_new_gsa": 0.8}, {"fh_new_gsa": 12.5}
+
+    def test_backtest_without_raw_model_spec_fails_closed_with_clear_error(self):
+        trace, frame, meta = _minimal_trace_frame_meta()
+        diag_input = DiagnosticsInput(
+            trace=trace,
+            frame=frame,
+            meta=meta,
+            backtest_folds=1,
+            fit_fold_fn=self._fit_fold_fn,
+            raw_model_dataframe=self._bt_dataframe(),
+        )
+        result = DiagnosticsService().evaluate(diag_input)
+
+        bt_sec = result.diagnostics_artefact.backtest
+        assert bt_sec.status == "failed"
+        assert "raw_model_spec is required" in bt_sec.error
+
+    def test_backtest_with_raw_model_spec_computes(self):
+        trace, frame, meta = _minimal_trace_frame_meta()
+        spec = ModelSpec(date_col="date", market_col="market")
+        diag_input = DiagnosticsInput(
+            trace=trace,
+            frame=frame,
+            meta=meta,
+            backtest_folds=1,
+            fit_fold_fn=self._fit_fold_fn,
+            raw_model_dataframe=self._bt_dataframe(),
+            raw_model_spec=spec,
+        )
+        result = DiagnosticsService().evaluate(diag_input)
+
+        bt_sec = result.diagnostics_artefact.backtest
+        assert bt_sec.status == "computed", bt_sec.error
+        assert bt_sec.payload
+        assert bt_sec.payload[0]["outcome_id"] == "fh_new_gsa"
+        assert result.backtest_results is not None
+        assert not result.backtest_results.empty
