@@ -10,6 +10,7 @@ valid artefact is provided.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -17,12 +18,15 @@ from typing import Any, Dict, List, Optional
 import arviz as az
 
 from ancestry_mmm.core.validation_policy import (
+    ARTEFACT_METRIC_ALIASES,
     ApprovalReadiness,
     ThresholdPolicy,
     ValidationEvidenceContext,
     ValidationGate,
     ValidationResult,
     ValidationWaiverReference,
+    classify_boolean_gate,
+    classify_numeric_gate,
     evaluate_approval_readiness,
     evaluate_legacy_readiness,
     get_evaluator,
@@ -31,10 +35,18 @@ from ancestry_mmm.core.validation_policy import (
     validate_policy_config,
 )
 from ancestry_mmm.core.model_identity import ModelIdentity
-from ancestry_mmm.application.diagnostics_service import (
-    DiagnosticsArtefact,
-    DiagnosticSection,
-)
+from ancestry_mmm.application.diagnostics_service import DiagnosticsArtefact
+
+
+class MalformedArtefactEvidenceError(Exception):
+    """A diagnostics-artefact section claims ``status="computed"`` but is
+    missing a required key or holds a non-finite/wrong-typed value.
+
+    This is a data-integrity problem, not "this metric isn't in the
+    artefact" - callers must fail the gate closed rather than falling back
+    to live recalculation, since a value of ``0.0`` (or any other silent
+    default) could make corrupt evidence look like a passing metric.
+    """
 
 
 @dataclass
@@ -91,55 +103,125 @@ class ValidationService:
         self._default_policy = default_policy
 
     @staticmethod
+    def _require_finite(value: Any, *, context: str) -> float:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise MalformedArtefactEvidenceError(
+                f"{context} is not a finite number: {value!r}"
+            )
+        numeric_value: float = float(value)
+        if not math.isfinite(numeric_value):
+            raise MalformedArtefactEvidenceError(
+                f"{context} is non-finite: {numeric_value!r}"
+            )
+        return numeric_value
+
+    @staticmethod
     def _get_artefact_metric(
         evaluator_id: str, artefact: DiagnosticsArtefact
     ) -> Optional[float]:
         """Read a gate metric from the diagnostics artefact.
 
-        Returns the numeric value or None if the section is not available
-        or not in ``computed`` status. Unknown evaluator IDs return None
-        (fail closed).
+        ``evaluator_id`` is normalised through ``ARTEFACT_METRIC_ALIASES``
+        first, so any evaluator ID a policy uses (``rhat``, ``ess``,
+        ``min_ess``, ``ppc``, ...) resolves to the same canonical artefact
+        section a synonym would - a gate never silently falls back to live
+        recomputation just because the policy used a different alias for
+        the same metric.
+
+        Returns the numeric value, or ``None`` if the section is genuinely
+        not available (unknown evaluator ID, or section status is not
+        ``"computed"`` - e.g. ``not_computed``/``failed``/``not_applicable``,
+        which is a legitimate "not evaluated" state, not corruption).
+
+        Raises ``MalformedArtefactEvidenceError`` if the section claims
+        ``status="computed"`` but is missing the key this metric needs, or
+        the value is not a finite number - never substitutes a default
+        (e.g. ``0.0``) for missing/invalid evidence.
         """
         if artefact.schema_version < 2 or artefact.legacy_incomplete:
             return None
-        section: Optional[DiagnosticSection] = None
-        if evaluator_id == "convergence_rhat":
+        canonical_id = ARTEFACT_METRIC_ALIASES.get(evaluator_id)
+        if canonical_id is None:
+            return None
+
+        if canonical_id in ("convergence_rhat", "convergence_ess", "divergences"):
             section = artefact.convergence
-            if section.status == "computed" and isinstance(section.payload, dict):
-                rhat_val: float = section.payload.get("max_rhat", 0.0)
-                return rhat_val
-        elif evaluator_id == "convergence_ess":
-            section = artefact.convergence
-            if section.status == "computed" and isinstance(section.payload, dict):
-                ess_val: float = section.payload.get("min_ess", 0.0)
-                return ess_val
-        elif evaluator_id == "divergences":
-            section = artefact.convergence
-            if section.status == "computed" and isinstance(section.payload, dict):
-                has_div = section.payload.get("has_divergences", False)
-                return 1.0 if has_div else 0.0
-        elif evaluator_id == "ppc_coverage":
+            if section.status != "computed":
+                return None
+            if not isinstance(section.payload, dict):
+                raise MalformedArtefactEvidenceError(
+                    "Convergence section is 'computed' but its payload is not a dict."
+                )
+            if canonical_id == "convergence_rhat":
+                if "max_rhat" not in section.payload:
+                    raise MalformedArtefactEvidenceError(
+                        "Convergence section is 'computed' but missing 'max_rhat'."
+                    )
+                return ValidationService._require_finite(
+                    section.payload["max_rhat"], context="convergence.max_rhat"
+                )
+            if canonical_id == "convergence_ess":
+                if "min_ess" not in section.payload:
+                    raise MalformedArtefactEvidenceError(
+                        "Convergence section is 'computed' but missing 'min_ess'."
+                    )
+                return ValidationService._require_finite(
+                    section.payload["min_ess"], context="convergence.min_ess"
+                )
+            # canonical_id == "divergences"
+            if "has_divergences" not in section.payload:
+                raise MalformedArtefactEvidenceError(
+                    "Convergence section is 'computed' but missing 'has_divergences'."
+                )
+            has_div = section.payload["has_divergences"]
+            if not isinstance(has_div, bool):
+                raise MalformedArtefactEvidenceError(
+                    f"convergence.has_divergences is not a bool: {has_div!r}"
+                )
+            return 1.0 if has_div else 0.0
+
+        if canonical_id == "ppc_coverage":
             section = artefact.posterior_predictive
-            if section.status == "computed" and isinstance(section.payload, list):
-                values = [
-                    r.get("coverage_pct")
-                    for r in section.payload
-                    if r.get("coverage_pct") is not None
-                ]
-                if values:
-                    return float(sum(values)) / len(values)
-            return None
-        elif evaluator_id == "backtest_mape":
+            if section.status != "computed":
+                return None
+            if not isinstance(section.payload, list) or not section.payload:
+                raise MalformedArtefactEvidenceError(
+                    "PPC section is 'computed' but has no rows."
+                )
+            values = []
+            for row in section.payload:
+                if not isinstance(row, dict) or "coverage_pct" not in row:
+                    raise MalformedArtefactEvidenceError(
+                        "PPC row is 'computed' but missing 'coverage_pct'."
+                    )
+                values.append(
+                    ValidationService._require_finite(
+                        row["coverage_pct"], context="posterior_predictive.coverage_pct"
+                    )
+                )
+            return sum(values) / len(values)
+
+        if canonical_id == "backtest_mape":
             section = artefact.backtest
-            if section.status == "computed" and isinstance(section.payload, list):
-                values = [
-                    r.get("mape_pct")
-                    for r in section.payload
-                    if r.get("mape_pct") is not None
-                ]
-                if values:
-                    return float(sum(values)) / len(values)
-            return None
+            if section.status != "computed":
+                return None
+            if not isinstance(section.payload, list) or not section.payload:
+                raise MalformedArtefactEvidenceError(
+                    "Backtest section is 'computed' but has no rows."
+                )
+            values = []
+            for row in section.payload:
+                if not isinstance(row, dict) or "mape_pct" not in row:
+                    raise MalformedArtefactEvidenceError(
+                        "Backtest row is 'computed' but missing 'mape_pct'."
+                    )
+                values.append(
+                    ValidationService._require_finite(
+                        row["mape_pct"], context="backtest.mape_pct"
+                    )
+                )
+            return sum(values) / len(values)
+
         return None
 
     def evaluate_readiness(self, v_input: ValidationInput) -> ValidationServiceResult:
@@ -166,9 +248,13 @@ class ValidationService:
             errors.append("No validation policy provided and no default configured.")
             return ValidationServiceResult(errors=errors)
 
-        if v_input.trace is None:
-            errors.append("No posterior trace provided for validation.")
-            return ValidationServiceResult(errors=errors)
+        # PR 79A (WP6): no unconditional trace requirement here - a complete,
+        # identity-matching schema-v2 artefact can satisfy every gate in a
+        # policy without a trace at all. Each gate's own evaluator declares
+        # which of trace/frame/meta it actually needs (_evaluate_gate below),
+        # so a gate that cannot be resolved from the artefact and has no live
+        # inputs available fails individually and closed, rather than the
+        # whole request being rejected up front.
 
         # PR 65A: Official path requires explicit model type.
         # Narrow the Optional[str] to str after the guard for mypy.
@@ -237,6 +323,12 @@ class ValidationService:
             and artefact.schema_version >= 2
             and not artefact.legacy_incomplete
         )
+        # PR 79A (WP5): a genuine identity mismatch is not "fall back to
+        # live evaluation" - it means the evidence on hand cannot be trusted
+        # at all, so no gate is evaluated (live or from the artefact) and no
+        # approval can result. This is distinct from "no artefact was
+        # supplied", which still permits ordinary live evaluation.
+        artefact_mismatch = False
         if use_artefact:
             # Narrow type for mypy
             assert artefact is not None
@@ -246,9 +338,11 @@ class ValidationService:
             if identity_fp and artefact.model_identity_fingerprint != identity_fp:
                 errors.append(
                     "Diagnostics artefact model identity fingerprint does not "
-                    "match the current model identity."
+                    "match the current model identity. Evidence is stale: no "
+                    "gate was evaluated (live or from the artefact) and no "
+                    "approval can be created from this readiness result."
                 )
-                # Fall back to trace/frame/meta for safety
+                artefact_mismatch = True
                 use_artefact = False
             else:
                 warnings.append(
@@ -262,6 +356,49 @@ class ValidationService:
             v_input.model_identity.fingerprint() if v_input.model_identity else ""
         )
         diag_fp = v_input.diagnostic_artefact_fingerprint or ""
+
+        if artefact_mismatch and v_input.model_identity is not None:
+            # Record which (rejected) artefact was mismatched, purely as an
+            # audit identifier - not trusted as evidence, since every gate
+            # result below is empty regardless of what the artefact claims.
+            assert artefact is not None
+            mismatched_artefact_id = artefact.artefact_id or "mismatched-artefact"
+            mismatched_artefact_fp = artefact.fingerprint()
+            try:
+                evidence_ctx = ValidationEvidenceContext(
+                    model_identity=v_input.model_identity,
+                    policy=policy,
+                    diagnostic_artefact_id=mismatched_artefact_id,
+                    diagnostic_artefact_fingerprint=mismatched_artefact_fp,
+                    model_type=model_type,
+                    market=v_input.market,
+                    intended_use=v_input.intended_use,
+                )
+                # Empty results: every applicable required gate is reported
+                # as missing, so overall_ready is False without evaluating
+                # (live or artefact-backed) a single gate.
+                readiness = evaluate_approval_readiness(
+                    [],
+                    policy,
+                    v_input.model_identity,
+                    diagnostic_artefact_id=mismatched_artefact_id,
+                    diagnostic_artefact_fingerprint=mismatched_artefact_fp,
+                    waivers=v_input.waivers,
+                    as_of=v_input.as_of,
+                    evidence_context=evidence_ctx,
+                )
+                readiness_dict = readiness_to_dict(readiness)
+            except Exception as exc:
+                errors.append(f"Readiness evaluation failed: {exc}")
+                readiness = None
+                readiness_dict = None
+            return ValidationServiceResult(
+                readiness=readiness,
+                readiness_dict=readiness_dict,
+                results=[],
+                errors=errors,
+                warnings=warnings,
+            )
 
         # --- Evaluate each gate with identity binding ---
         # `use_artefact` was resolved above (identity match verified); a
@@ -400,25 +537,40 @@ class ValidationService:
                 message="; ".join(config_errors),
             )
 
+        # Look up the evaluator once - its registered output_type ("numeric"
+        # vs "boolean") is used to classify the value with the exact same
+        # semantics whether the value came from the artefact or a live
+        # recomputation, so the two paths can never classify differently.
+        entry = get_evaluator(evaluator_id)
+        output_type = entry[0].output_type if entry is not None else "numeric"
+
         if usable_artefact is not None:
-            metric_value = self._get_artefact_metric(evaluator_id, usable_artefact)
+            try:
+                metric_value = self._get_artefact_metric(evaluator_id, usable_artefact)
+            except MalformedArtefactEvidenceError as exc:
+                return ValidationResult(
+                    gate_name=gate.name,
+                    status="fail",
+                    message=(
+                        f"Malformed diagnostics-artefact evidence for "
+                        f"'{evaluator_id}': {exc}"
+                    ),
+                )
             if metric_value is not None:
-                # Value read from artefact — determine pass/fail by applying
-                # gate acceptable_range (low, high).
-                gate_status: str = "pass"
-                if gate.acceptable_range is not None:
-                    lo, hi = gate.acceptable_range
-                    gate_status = "pass" if lo <= metric_value <= hi else "fail"
+                gate_status = (
+                    classify_boolean_gate(bool(metric_value), gate)
+                    if output_type == "boolean"
+                    else classify_numeric_gate(metric_value, gate)
+                )
                 return ValidationResult(
                     gate_name=gate.name,
                     status=gate_status,
                     value=metric_value,
                     message=f"Read from diagnostics artefact ({evaluator_id}={metric_value})",
                 )
-            # Metric not in artefact — fall through to evaluator registry
+            # Metric not in artefact (genuinely not computed) — fall through
+            # to the live evaluator registry.
 
-        # Look up evaluator in registry
-        entry = get_evaluator(evaluator_id)
         if entry is None:
             return ValidationResult(
                 gate_name=gate.name,

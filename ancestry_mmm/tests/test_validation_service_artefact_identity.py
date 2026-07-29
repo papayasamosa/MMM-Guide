@@ -77,13 +77,13 @@ class TestArtefactIdentityMismatchFailsClosed:
         assert any(
             "does not match the current model identity" in e for e in result.errors
         )
-        assert len(result.results) == 1
-        gate_result = result.results[0]
-        # Fell through to the live evaluator (fails closed), not the
-        # artefact's mape_pct=5.0, which would have passed the (0, 10) gate.
-        assert gate_result.status == "fail"
-        assert gate_result.value is None
-        assert "cannot be evaluated live" in gate_result.message
+        # PR 79A (WP5): a mismatch stops *all* gate evaluation - not just
+        # the artefact read for this gate - so no live recalculation is
+        # attempted either, and no gate result of any kind is produced.
+        assert result.results == []
+        assert result.readiness is not None
+        assert result.readiness.overall_ready is False
+        assert "backtest_mape" in result.readiness.missing_required_gates
 
     def test_matching_artefact_is_read_for_gate_value(self):
         """Sanity check: when identity matches, the artefact value is used

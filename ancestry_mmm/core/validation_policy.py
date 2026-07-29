@@ -519,9 +519,7 @@ class ValidationGate:
                 acceptable_range=tuple(acceptable_range)
                 if acceptable_range is not None
                 else None,
-                review_range=tuple(review_range)
-                if review_range is not None
-                else None,
+                review_range=tuple(review_range) if review_range is not None else None,
                 direction=d.get("direction", "lower_is_better"),
                 units=d.get("units", ""),
                 blocking=d.get("blocking", True),
@@ -675,10 +673,16 @@ class ThresholdPolicy:
         (missing required fields, duplicate gate names, malformed gates)
         raises ``ValueError`` rather than silently producing an empty or
         partial policy.
+
+        ``approval_date`` is required, not defaulted to "now": a policy is
+        re-deserialized from the same stored dict on every call (e.g. every
+        Streamlit script rerun), and defaulting a missing timestamp to the
+        current wall-clock time would make ``fingerprint()`` different on
+        every call — breaking any workflow that computes readiness against
+        one reconstructed policy and later binds an approval to another.
         """
         try:
             gates = [ValidationGate.from_dict(g) for g in d.get("gates", [])]
-            approval_date_raw = d.get("approval_date")
             expiry_raw = d.get("expiry")
             return cls(
                 policy_id=d["policy_id"],
@@ -686,9 +690,7 @@ class ThresholdPolicy:
                 scope=d["scope"],
                 gates=gates,
                 owner=d.get("owner", ""),
-                approval_date=datetime.fromisoformat(approval_date_raw)
-                if approval_date_raw
-                else datetime.now(timezone.utc),
+                approval_date=datetime.fromisoformat(d["approval_date"]),
                 expiry=datetime.fromisoformat(expiry_raw) if expiry_raw else None,
                 supersedes=d.get("supersedes"),
                 superseded_by=d.get("superseded_by"),

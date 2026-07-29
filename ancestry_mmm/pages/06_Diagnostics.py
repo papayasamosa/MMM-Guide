@@ -217,10 +217,10 @@ if scorecard:
     st.markdown("### Convergence")
     conv = scorecard["convergence"]
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Max R-hat", f"{conv['rhat_max']:.3f}", help="Should be < 1.01")
+    c1.metric("Max R-hat", f"{conv['max_rhat']:.3f}", help="Should be < 1.01")
     c2.metric(
         "Min ESS",
-        format_number(round(conv["ess_min"])),
+        format_number(round(conv["min_ess"])),
         help="Effective sample size; higher is better",
     )
     c3.metric("Divergences", format_number(conv["divergences"]))
@@ -304,7 +304,13 @@ st.caption(
 )
 
 validation_policy_dict = get_state("validation_policy")
-validation_readiness = get_state("validation_readiness")
+# PR 79A (WP9): state contract - "validation_service_result" holds the full
+# ValidationService wrapper (readiness object, errors, warnings) for this
+# page's own transient UI messages; "approval_readiness" holds only the
+# serialised (JSON-safe dict) ApprovalReadiness domain object, which is what
+# any other page or persistence layer should read - never the wrapper
+# itself under an "*_readiness" name.
+validation_service_result = get_state("validation_service_result")
 
 # Load policy for later use. A configured policy must deserialize through
 # ThresholdPolicy.from_dict() — a malformed policy is a blocking error, not
@@ -328,17 +334,18 @@ if st.button("Evaluate readiness", type="secondary"):
                 f"evaluated: {_policy_config_error}. Fix the policy "
                 "configuration before evaluating readiness."
             )
+        elif _current_policy is None:
+            # PR 79A (WP7): no zero-gate default policy. A policy with no
+            # gates would trivially report overall_ready=True (nothing to
+            # fail), which is not "ready" - it is "nothing was checked".
+            st.warning(
+                "No validation policy is configured for this project. "
+                "Readiness cannot be evaluated against an empty policy - "
+                "configure a validation policy before evaluating official "
+                "readiness."
+            )
         else:
             policy = _current_policy
-            if policy is None:
-                st.warning("No validation policy configured. Using minimal default.")
-                policy = ThresholdPolicy(
-                    policy_id="default-policy",
-                    version="1.0",
-                    scope="all_models",
-                    gates=[],
-                    owner="System",
-                )
             val_service = ValidationService()
             val_input = ValidationInput(
                 trace=trace,
@@ -350,11 +357,11 @@ if st.button("Evaluate readiness", type="secondary"):
                 model_identity=current_model_identity,
             )
             val_result = val_service.evaluate_readiness(val_input)
-            set_state("validation_readiness", val_result)
-            set_state("validation_result", val_result)
+            set_state("validation_service_result", val_result)
+            set_state("approval_readiness", val_result.readiness_dict)
 
-if validation_readiness:
-    rd = validation_readiness.readiness
+if validation_service_result:
+    rd = validation_service_result.readiness
     if rd:
         ready_icon = "✅" if rd.overall_ready else "❌"
         st.markdown(
@@ -377,8 +384,8 @@ if validation_readiness:
             for w in rd.waivers_applied:
                 st.write(f"  - Waiver `{w.waiver_id}` for gate `{w.gate_name}`")
 
-    if validation_readiness.errors:
-        for e in validation_readiness.errors:
+    if validation_service_result.errors:
+        for e in validation_service_result.errors:
             st.error(e)
 
 st.markdown("---")
@@ -478,6 +485,18 @@ elif current_identity is None:
         "posterior fingerprints) isn't fully available. This shouldn't normally happen once "
         "a model has trained - try recomputing the scorecard, or retrain if the problem persists."
     )
+elif validation_policy_dict is None:
+    st.warning(
+        "No validation policy is configured for this project. Official model "
+        "approval requires a policy-backed readiness evaluation - configure a "
+        "validation policy and evaluate readiness above before approving this model."
+    )
+elif _policy_config_error is not None:
+    st.error(
+        "Model approval is blocked: the configured validation policy is "
+        f"malformed ({_policy_config_error}). Fix the policy configuration "
+        "before approving this model."
+    )
 else:
     with st.form("approve_model_form"):
         approved_by = st.text_input("Approved by (name) *")
@@ -514,60 +533,52 @@ else:
                 st.error(
                     "Enter a name before approving - approval must be attributed to a reviewer."
                 )
+            elif not (
+                validation_service_result and validation_service_result.readiness
+            ):
+                # PR 79A (work package K): a validation policy is configured
+                # for this project, so policy-backed approval is the only
+                # official approval path - there is no unbound fallback.
+                # Without an evaluated readiness object there is nothing to
+                # bind the approval to, so approval is blocked rather than
+                # silently creating an unofficial approval.
+                st.error(
+                    "Evaluate readiness against the configured policy above before "
+                    "approving - click 'Evaluate readiness' first."
+                )
             else:
-                # Use policy-backed approval when readiness evidence is available
-                if (
-                    validation_readiness
-                    and validation_readiness.readiness
-                    and _current_policy is not None
-                ):
-                    try:
-                        approval = create_policy_backed_model_approval(
-                            readiness=validation_readiness.readiness,
-                            current_policy=_current_policy,
-                            approved_by=approved_by.strip(),
-                            model_run_id=current_identity.get("model_run_id", ""),
-                            data_fingerprint=current_identity.get(
-                                "data_fingerprint", ""
-                            ),
-                            model_spec_fingerprint=current_identity.get(
-                                "model_spec_fingerprint", ""
-                            ),
-                            posterior_fingerprint=current_identity.get(
-                                "posterior_fingerprint", ""
-                            ),
-                            notes=notes,
-                            known_limitations=known_limitations,
-                        )
-                        set_state("model_approval", approval.to_dict())
-                        st.success(
-                            f"Policy-backed model approved by {approved_by.strip()}."
-                        )
-                    except Exception as e:
-                        st.error(f"Policy-backed approval failed: {e}")
-                        st.info(
-                            "Falling back to standard approval without policy binding."
-                        )
-                        approval = ModelApproval(
-                            approved_by=approved_by.strip(),
-                            notes=notes,
-                            known_limitations=known_limitations,
-                            diagnostics_accepted=diagnostics_accepted,
-                            **current_identity,
-                        )
-                        set_state("model_approval", approval.to_dict())
-                        st.success(f"Model approved by {approved_by.strip()}.")
-                else:
-                    approval = ModelApproval(
+                try:
+                    approval = create_policy_backed_model_approval(
+                        readiness=validation_service_result.readiness,
+                        current_policy=_current_policy,
                         approved_by=approved_by.strip(),
+                        model_run_id=current_identity.get("model_run_id", ""),
+                        data_fingerprint=current_identity.get("data_fingerprint", ""),
+                        model_spec_fingerprint=current_identity.get(
+                            "model_spec_fingerprint", ""
+                        ),
+                        posterior_fingerprint=current_identity.get(
+                            "posterior_fingerprint", ""
+                        ),
                         notes=notes,
                         known_limitations=known_limitations,
                         diagnostics_accepted=diagnostics_accepted,
-                        **current_identity,
                     )
                     set_state("model_approval", approval.to_dict())
-                    st.success(f"Model approved by {approved_by.strip()}.")
-                st.rerun()
+                    st.success(
+                        f"Policy-backed model approved by {approved_by.strip()}."
+                    )
+                    st.rerun()
+                except Exception as e:
+                    # PR 79A (work package K): no fallback to a standard,
+                    # policy-unbound approval - a failed policy-backed
+                    # approval leaves the model unapproved.
+                    st.error(f"Policy-backed approval failed: {e}")
+                    st.info(
+                        "No approval was created. Resolve the issue above (e.g. "
+                        "re-evaluate readiness after fixing failing gates) and "
+                        "try again."
+                    )
 
 st.markdown("---")
 st.markdown("### Out-of-sample accuracy (expanding-window backtest)")

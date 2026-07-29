@@ -23,18 +23,22 @@ import arviz as az
 
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
 from ancestry_mmm.core.diagnostics import (
-    compute_scorecard,
+    in_sample_fit,
     posterior_predictive_coverage,
     curve_plausibility_checks,
     expanding_window_backtest,
 )
 from ancestry_mmm.core.market_specific_diagnostics import (
-    compute_scorecard_market_specific,
+    in_sample_fit_market_specific,
     curve_plausibility_checks_market_specific,
 )
 from ancestry_mmm.core.model_identity import ModelIdentity
-from ancestry_mmm.core.predict import FHPosteriorParams
-from ancestry_mmm.core.market_specific_predict import FHMarketSpecificPosteriorParams
+from ancestry_mmm.core.schema import ModelSpec
+from ancestry_mmm.core.predict import FHPosteriorParams, extract_posterior_params
+from ancestry_mmm.core.market_specific_predict import (
+    FHMarketSpecificPosteriorParams,
+    extract_market_specific_posterior_params,
+)
 
 # ---------------------------------------------------------------------------
 # Section status
@@ -321,8 +325,10 @@ class DiagnosticsArtefact:
 class DiagnosticsInput:
     """Typed input for diagnostics evaluation.
 
-    PR 72B: Includes explicit data and spec fields for backtest so the
-    service does not pass an empty DataFrame or FHModelMeta as ModelSpec.
+    PR 72B/PR 80A: Includes explicit data and spec fields for backtest so the
+    service does not pass an empty DataFrame or FHModelMeta (which has no
+    ``date_col``) as the ``ModelSpec`` that ``expanding_window_backtest``
+    requires.
     """
 
     trace: az.InferenceData
@@ -341,6 +347,7 @@ class DiagnosticsInput:
     min_train_frac: float = 0.6
     # Canonical data for backtest: raw chronological DataFrame + model spec
     raw_model_dataframe: Optional[pd.DataFrame] = None
+    raw_model_spec: Optional[ModelSpec] = None
 
 
 @dataclass
@@ -399,49 +406,70 @@ class DiagnosticsService:
                 errors=errors,
             )
 
-        # --- 1. Convergence ---
+        # --- 1. Convergence (single authoritative calculation) ---
         convergence_sec: DiagnosticSection
         try:
-            max_rhat, min_ess, has_div = self._check_convergence(diag_input.trace)
+            max_rhat, min_ess, divergence_count = self._check_convergence(
+                diag_input.trace
+            )
+            has_div = divergence_count > 0
+            # Same convergence formula as the (now removed) duplicate check
+            # previously embedded in compute_scorecard()/DiagnosticsResult.
+            # convergence_ok - not a new/invented threshold.
+            converged = max_rhat < 1.05 and min_ess > 200 and not has_div
+            convergence_payload = {
+                "max_rhat": max_rhat,
+                "min_ess": min_ess,
+                "has_divergences": has_div,
+                "divergences": divergence_count,
+                "converged": converged,
+            }
             convergence_sec = DiagnosticSection(
                 status="computed",
-                payload={
-                    "max_rhat": max_rhat,
-                    "min_ess": min_ess,
-                    "has_divergences": has_div,
-                },
+                payload=convergence_payload,
             )
         except Exception as exc:
             errors.append(f"Convergence check failed: {exc}")
             max_rhat, min_ess, has_div = float("nan"), float("nan"), True
+            divergence_count, converged = 0, False
+            convergence_payload = {
+                "max_rhat": max_rhat,
+                "min_ess": min_ess,
+                "has_divergences": has_div,
+                "divergences": divergence_count,
+                "converged": converged,
+            }
             convergence_sec = DiagnosticSection(
                 status="failed", payload=None, error=str(exc)
             )
 
-        # --- 2. In-sample fit (scorecard) ---
+        # --- 2. In-sample fit (single authoritative calculation - does not
+        # recompute convergence/PPC/plausibility the way compute_scorecard()
+        # does internally) ---
         fit_sec: DiagnosticSection
+        fit_records: List[Dict[str, Any]] = []
         try:
             if diag_input.model_type == "market_specific":
-                scorecard = compute_scorecard_market_specific(
-                    diag_input.trace,
-                    diag_input.frame,
-                    diag_input.meta,
-                    roi_bounds=diag_input.roi_bounds,
+                market_fit_params = extract_market_specific_posterior_params(
+                    diag_input.trace, diag_input.meta
+                )
+                fit_df = in_sample_fit_market_specific(
+                    diag_input.frame, diag_input.meta, market_fit_params
                 )
             else:
-                scorecard = compute_scorecard(
-                    diag_input.trace,
-                    diag_input.frame,
-                    diag_input.meta,
-                    roi_bounds=diag_input.roi_bounds,
+                shared_fit_params = extract_posterior_params(
+                    diag_input.trace, diag_input.meta
                 )
+                fit_df = in_sample_fit(
+                    diag_input.frame, diag_input.meta, shared_fit_params
+                )
+            fit_records = fit_df.to_dict(orient="records")
             fit_sec = DiagnosticSection(
                 status="computed",
-                payload=scorecard,
+                payload=fit_records,
             )
         except Exception as exc:
-            errors.append(f"Scorecard computation failed: {exc}")
-            scorecard = {}
+            errors.append(f"In-sample fit computation failed: {exc}")
             fit_sec = DiagnosticSection(status="failed", payload=None, error=str(exc))
 
         # --- 3. PPC coverage (single authoritative calculation) ---
@@ -467,6 +495,7 @@ class DiagnosticsService:
 
         # --- 4. Curve plausibility (single authoritative calculation) ---
         plaus_sec: DiagnosticSection
+        plausibility: List[Dict[str, str]] = []
         try:
             if diag_input.model_type == "market_specific":
                 plausibility = curve_plausibility_checks_market_specific(
@@ -526,11 +555,21 @@ class DiagnosticsService:
                     payload=None,
                     error="Backtest requested but no raw DataFrame available.",
                 )
+            elif diag_input.raw_model_spec is None:
+                bt_sec = DiagnosticSection(
+                    status="failed",
+                    payload=None,
+                    error=(
+                        "Backtest requested but no ModelSpec available "
+                        "(raw_model_spec is required; FHModelMeta has no "
+                        "date_col and cannot substitute for it)."
+                    ),
+                )
             else:
                 try:
                     backtest_results = expanding_window_backtest(
                         bt_df,
-                        diag_input.meta,
+                        diag_input.raw_model_spec,
                         diag_input.fit_fold_fn,
                         n_folds=diag_input.backtest_folds,
                         min_train_frac=diag_input.min_train_frac,
@@ -582,6 +621,18 @@ class DiagnosticsService:
             legacy_incomplete=False,
         )
 
+        # Assemble the displayed scorecard from the same canonical sections
+        # computed above - never a separate compute_scorecard() call, so the
+        # displayed values and the artefact's values can never diverge.
+        scorecard = {
+            "convergence": convergence_payload,
+            "in_sample_fit": fit_records,
+            "ppc_coverage": ppc_details.to_dict(orient="records")
+            if ppc_details is not None
+            else [],
+            "plausibility_flags": plausibility,
+        }
+
         return DiagnosticsResult(
             scorecard=scorecard,
             max_rhat=max_rhat,
@@ -597,8 +648,11 @@ class DiagnosticsService:
         )
 
     @staticmethod
-    def _check_convergence(trace: az.InferenceData) -> tuple[float, float, bool]:
-        """Extract raw convergence metrics from the trace."""
+    def _check_convergence(trace: az.InferenceData) -> tuple[float, float, int]:
+        """Extract raw convergence metrics from the trace: max R-hat, min
+        ESS, and the divergence count (0 if no divergences or no
+        sample_stats) - the single authoritative convergence calculation
+        reused for both the artefact and the displayed scorecard."""
         rhat = az.rhat(trace, var_names=["mu", "beta", "hill_K", "alpha"])
         ess = az.ess(trace, var_names=["mu", "beta", "hill_K", "alpha"])
 
@@ -612,8 +666,8 @@ class DiagnosticsService:
             if hasattr(var_data, "values"):
                 min_ess = min(min_ess, float(var_data.values.min()))
 
-        has_div = False
+        divergence_count = 0
         if hasattr(trace, "sample_stats") and "diverging" in trace.sample_stats:
-            has_div = bool(trace.sample_stats["diverging"].values.any())
+            divergence_count = int(trace.sample_stats["diverging"].values.sum())
 
-        return max_rhat, min_ess, has_div
+        return max_rhat, min_ess, divergence_count

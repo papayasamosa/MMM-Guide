@@ -10,17 +10,117 @@ Covers:
 
 import uuid
 from datetime import datetime, timezone
+from unittest.mock import patch
 
+import numpy as np
+import pandas as pd
 import pytest
+import arviz as az
 
 from ancestry_mmm.application.diagnostics_service import (
     DiagnosticSection,
     DiagnosticsArtefact,
+    DiagnosticsInput,
+    DiagnosticsService,
 )
 from ancestry_mmm.application.validation_service import (
+    MalformedArtefactEvidenceError,
     ValidationInput,
     ValidationService,
 )
+from ancestry_mmm.core.model_identity import ModelIdentity
+from ancestry_mmm.core.schema import ModelSpec
+from ancestry_mmm.core.validation_policy import ThresholdPolicy, ValidationGate
+from ancestry_mmm.core.diagnostics import (
+    curve_plausibility_checks as _real_curve_plausibility_checks,
+    posterior_predictive_coverage as _real_posterior_predictive_coverage,
+)
+from ancestry_mmm.core.hierarchical_model import FHModelMeta
+from ancestry_mmm.core.pathways import resolve_pathway_masks
+
+
+def _minimal_trace_frame_meta():
+    """A minimal, single-outcome, single-channel real trace/frame/meta
+    triple - enough to exercise DiagnosticsService.evaluate() end to end
+    without mocking arviz/numpy internals."""
+    rng = np.random.default_rng(11)
+    n_obs, n_chain, n_draw = 16, 2, 20
+    oids = ["fh_new_gsa"]
+    chs = ["TV"]
+
+    Y = rng.uniform(5, 30, size=(n_obs, 1))
+    trace = az.from_dict(
+        posterior={
+            "mu": np.maximum(
+                Y[None, None, :, 0] + rng.normal(0, 0.5, size=(n_chain, n_draw, n_obs)),
+                0.1,
+            )[..., None],
+            "alpha": np.full((n_chain, n_draw, 1), 8.0),
+            "decay_rate": np.full((n_chain, n_draw, 1), 0.5),
+            "hill_K": np.ones((n_chain, n_draw, 1)),
+            "hill_S": np.full((n_chain, n_draw, 1), 4.0),
+            "beta": np.ones((n_chain, n_draw, 1, 1)),
+            "intercept": np.zeros((n_chain, n_draw, 1)),
+            "trend_coef": np.zeros((n_chain, n_draw, 1)),
+            "promo_coef": np.zeros((n_chain, n_draw, 1)),
+            "market_offset": np.zeros((n_chain, n_draw, 1, 1)),
+            "gamma_fourier": np.zeros((n_chain, n_draw, 4, 1)),
+        },
+        coords={
+            "obs": list(range(n_obs)),
+            "outcome": oids,
+            "channel": chs,
+            "market": ["UK"],
+            "fourier": list(range(4)),
+        },
+        dims={
+            "mu": ["obs", "outcome"],
+            "alpha": ["outcome"],
+            "decay_rate": ["channel"],
+            "hill_K": ["channel"],
+            "hill_S": ["channel"],
+            "beta": ["outcome", "channel"],
+            "intercept": ["outcome"],
+            "trend_coef": ["outcome"],
+            "promo_coef": ["outcome"],
+            "market_offset": ["market", "outcome"],
+            "gamma_fourier": ["fourier", "outcome"],
+        },
+        sample_stats={"diverging": np.zeros((n_chain, n_draw), dtype=bool)},
+    )
+
+    meta = FHModelMeta(
+        markets=["UK"],
+        outcome_ids=oids,
+        channels=chs,
+        dna_channels=[],
+        dna_channel_idx=[],
+        non_dna_idx=[0],
+        dna_outcome_id=oids[0],
+        dna_lag_weeks=1,
+        unpooled_markets=[],
+        control_names=[],
+        pathway_masks=resolve_pathway_masks(
+            oids,
+            chs,
+            [],
+            dna_channel_idx=[],
+            dna_outcome_id=oids[0],
+            direct_dna_outcome_ids=[],
+            dna_lag_weeks=1,
+        ),
+    )
+
+    frame = {
+        "Y": Y,
+        "X_media": rng.uniform(0, 100, size=(n_obs, 1)),
+        "market_bounds": [(0, n_obs)],
+        "market_idx": np.zeros(n_obs, dtype=int),
+        "promo": np.zeros((n_obs, 1)),
+        "trend": np.arange(n_obs, dtype=float),
+        "fourier": np.zeros((n_obs, 4)),
+    }
+    return trace, frame, meta
 
 
 # =========================================================================
@@ -327,3 +427,364 @@ class TestValidationServiceArtefactConsumption:
             diagnostics_artefact=artefact,
         )
         assert v_input.diagnostics_artefact is artefact
+
+    # -- PR 79A (WP2): evaluator-ID aliases resolve to the same metric ----
+
+    @pytest.mark.parametrize(
+        "alias,expected",
+        [("rhat", 1.02), ("convergence_rhat", 1.02)],
+    )
+    def test_rhat_aliases_resolve_identically(self, alias, expected):
+        artefact = DiagnosticsArtefact(
+            convergence=DiagnosticSection(
+                status="computed",
+                payload={"max_rhat": 1.02, "min_ess": 400, "has_divergences": False},
+            ),
+        )
+        service = ValidationService()
+        assert service._get_artefact_metric(alias, artefact) == expected
+
+    @pytest.mark.parametrize(
+        "alias,expected",
+        [("ess", 400), ("min_ess", 400), ("convergence_ess", 400)],
+    )
+    def test_ess_aliases_resolve_identically(self, alias, expected):
+        artefact = DiagnosticsArtefact(
+            convergence=DiagnosticSection(
+                status="computed",
+                payload={"max_rhat": 1.02, "min_ess": 400, "has_divergences": False},
+            ),
+        )
+        service = ValidationService()
+        assert service._get_artefact_metric(alias, artefact) == expected
+
+    @pytest.mark.parametrize("alias", ["ppc", "ppc_coverage"])
+    def test_ppc_aliases_resolve_identically(self, alias):
+        artefact = DiagnosticsArtefact(
+            posterior_predictive=DiagnosticSection(
+                status="computed",
+                payload=[{"coverage_pct": 90.0}, {"coverage_pct": 80.0}],
+            ),
+        )
+        service = ValidationService()
+        assert service._get_artefact_metric(alias, artefact) == 85.0
+
+    # -- PR 79A (WP4): malformed 'computed' evidence fails closed, never 0.0 --
+
+    def test_computed_convergence_missing_max_rhat_raises(self):
+        artefact = DiagnosticsArtefact(
+            convergence=DiagnosticSection(
+                status="computed",
+                payload={"min_ess": 400, "has_divergences": False},
+            ),
+        )
+        service = ValidationService()
+        with pytest.raises(MalformedArtefactEvidenceError, match="max_rhat"):
+            service._get_artefact_metric("convergence_rhat", artefact)
+
+    def test_computed_convergence_non_finite_rhat_raises(self):
+        artefact = DiagnosticsArtefact(
+            convergence=DiagnosticSection(
+                status="computed",
+                payload={
+                    "max_rhat": float("nan"),
+                    "min_ess": 400,
+                    "has_divergences": False,
+                },
+            ),
+        )
+        service = ValidationService()
+        with pytest.raises(MalformedArtefactEvidenceError, match="non-finite"):
+            service._get_artefact_metric("convergence_rhat", artefact)
+
+    def test_computed_ppc_missing_coverage_pct_raises(self):
+        artefact = DiagnosticsArtefact(
+            posterior_predictive=DiagnosticSection(
+                status="computed",
+                payload=[{"outcome_id": "fh_new_gsa"}],
+            ),
+        )
+        service = ValidationService()
+        with pytest.raises(MalformedArtefactEvidenceError, match="coverage_pct"):
+            service._get_artefact_metric("ppc_coverage", artefact)
+
+    def test_malformed_evidence_fails_the_gate_without_recomputing(self):
+        """A gate backed by malformed 'computed' evidence must fail closed
+        via _evaluate_gate, not silently fall through to a live
+        recomputation (which could paper over the corruption)."""
+        artefact = DiagnosticsArtefact(
+            artefact_id="artefact-1",
+            schema_version=2,
+            model_identity_fingerprint="",
+            legacy_incomplete=False,
+            convergence=DiagnosticSection(
+                status="computed",
+                payload={"min_ess": 400, "has_divergences": False},  # missing max_rhat
+            ),
+        )
+        policy = ThresholdPolicy(
+            policy_id="p1",
+            version="1.0",
+            scope="all_models",
+            owner="Test",
+            gates=[
+                ValidationGate(
+                    name="convergence_rhat",
+                    description="R-hat",
+                    evaluator_id="convergence_rhat",
+                    acceptable_range=(0.0, 1.01),
+                )
+            ],
+        )
+        service = ValidationService()
+        v_input = ValidationInput(
+            trace=None,
+            policy=policy,
+            diagnostics_artefact=artefact,
+        )
+        result = service.evaluate_readiness(v_input)
+        assert len(result.results) == 1
+        assert result.results[0].status == "fail"
+        assert "Malformed" in result.results[0].message
+
+    # -- PR 79A (WP3): artefact path uses canonical classification ---------
+
+    def test_artefact_value_in_review_band_is_review_not_pass_or_fail(self):
+        artefact = DiagnosticsArtefact(
+            convergence=DiagnosticSection(
+                status="computed",
+                payload={"max_rhat": 1.03, "min_ess": 400, "has_divergences": False},
+            ),
+        )
+        gate = ValidationGate(
+            name="convergence_rhat",
+            description="R-hat",
+            evaluator_id="convergence_rhat",
+            acceptable_range=(0.0, 1.01),
+            review_range=(0.0, 1.05),
+            direction="lower_is_better",
+        )
+        policy = ThresholdPolicy(
+            policy_id="p1",
+            version="1.0",
+            scope="all_models",
+            owner="Test",
+            gates=[gate],
+        )
+        service = ValidationService()
+        result = service.evaluate_readiness(
+            ValidationInput(policy=policy, diagnostics_artefact=artefact)
+        )
+        assert result.results[0].status == "review"
+
+    def test_artefact_boolean_gate_uses_expected_state_not_range(self):
+        artefact = DiagnosticsArtefact(
+            convergence=DiagnosticSection(
+                status="computed",
+                payload={"max_rhat": 1.0, "min_ess": 400, "has_divergences": True},
+            ),
+        )
+        gate = ValidationGate(
+            name="divergences",
+            description="Divergences",
+            evaluator_id="divergences",
+            expected_state=True,  # this policy expects divergences to be present
+        )
+        policy = ThresholdPolicy(
+            policy_id="p1",
+            version="1.0",
+            scope="all_models",
+            owner="Test",
+            gates=[gate],
+        )
+        service = ValidationService()
+        result = service.evaluate_readiness(
+            ValidationInput(policy=policy, diagnostics_artefact=artefact)
+        )
+        # has_divergences=True matches expected_state=True -> pass, even
+        # though a naive lo<=value<=hi range check has no range to apply.
+        assert result.results[0].status == "pass"
+
+    # -- PR 79A (WP6): complete artefact-only validation needs no trace ----
+
+    def test_complete_artefact_validates_without_a_trace(self):
+        identity = ModelIdentity("run-1", "data-1", "spec-1", "post-1")
+        artefact = DiagnosticsArtefact(
+            artefact_id="a1",
+            schema_version=2,
+            model_identity_fingerprint=identity.fingerprint(),
+            legacy_incomplete=False,
+            convergence=DiagnosticSection(
+                status="computed",
+                payload={"max_rhat": 1.0, "min_ess": 400, "has_divergences": False},
+            ),
+            posterior_predictive=DiagnosticSection(
+                status="computed",
+                payload=[{"coverage_pct": 91.0}],
+            ),
+        )
+        policy = ThresholdPolicy(
+            policy_id="p1",
+            version="1.0",
+            scope="all_models",
+            owner="Test",
+            gates=[
+                ValidationGate(
+                    name="convergence_rhat",
+                    description="R-hat",
+                    evaluator_id="convergence_rhat",
+                    acceptable_range=(0.0, 1.01),
+                ),
+                ValidationGate(
+                    name="ppc_coverage",
+                    description="PPC",
+                    evaluator_id="ppc_coverage",
+                    acceptable_range=(85.0, 100.0),
+                ),
+            ],
+        )
+        service = ValidationService()
+        v_input = ValidationInput(
+            trace=None,
+            policy=policy,
+            model_identity=identity,
+            diagnostics_artefact=artefact,
+            model_type="shared",
+        )
+        result = service.evaluate_readiness(v_input)
+        assert not result.errors, result.errors
+        assert [r.status for r in result.results] == ["pass", "pass"]
+        assert result.readiness is not None
+        assert result.readiness.overall_ready is True
+
+
+# =========================================================================
+# DiagnosticsService computes each diagnostic exactly once (PR 79A, WP C)
+# =========================================================================
+
+
+class TestDiagnosticsServiceComputesEachSectionOnce:
+    """Before this fix, DiagnosticsService.evaluate() called
+    compute_scorecard() (which internally recomputes convergence, PPC and
+    plausibility) for the in_sample_fit section, *and* separately called
+    posterior_predictive_coverage()/curve_plausibility_checks() again for
+    their own sections - so PPC and plausibility were each computed twice,
+    and the in_sample_fit section's payload was the whole nested scorecard
+    dict rather than fit-only rows."""
+
+    def test_ppc_and_plausibility_each_computed_exactly_once(self):
+        trace, frame, meta = _minimal_trace_frame_meta()
+        diag_input = DiagnosticsInput(trace=trace, frame=frame, meta=meta)
+
+        with (
+            patch(
+                "ancestry_mmm.application.diagnostics_service.posterior_predictive_coverage",
+                wraps=_real_posterior_predictive_coverage,
+            ) as mock_ppc,
+            patch(
+                "ancestry_mmm.application.diagnostics_service.curve_plausibility_checks",
+                wraps=_real_curve_plausibility_checks,
+            ) as mock_plaus,
+        ):
+            result = DiagnosticsService().evaluate(diag_input)
+
+        assert mock_ppc.call_count == 1
+        assert mock_plaus.call_count == 1
+        assert not result.errors, result.errors
+
+    def test_in_sample_fit_section_contains_only_fit_rows(self):
+        trace, frame, meta = _minimal_trace_frame_meta()
+        diag_input = DiagnosticsInput(trace=trace, frame=frame, meta=meta)
+        result = DiagnosticsService().evaluate(diag_input)
+
+        fit_section = result.diagnostics_artefact.in_sample_fit
+        assert fit_section.status == "computed"
+        # A fit row has exactly the in_sample_fit() columns - no nested
+        # "convergence"/"ppc_coverage"/"plausibility_flags" keys leaking in
+        # from a bundled compute_scorecard() payload.
+        assert set(fit_section.payload[0].keys()) == {
+            "outcome_id",
+            "r_squared",
+            "mape_pct",
+            "actual_mean",
+            "predicted_mean",
+        }
+
+    def test_displayed_scorecard_matches_artefact_exactly(self):
+        trace, frame, meta = _minimal_trace_frame_meta()
+        diag_input = DiagnosticsInput(trace=trace, frame=frame, meta=meta)
+        result = DiagnosticsService().evaluate(diag_input)
+
+        artefact = result.diagnostics_artefact
+        assert result.scorecard["convergence"] == artefact.convergence.payload
+        assert result.scorecard["in_sample_fit"] == artefact.in_sample_fit.payload
+        assert result.scorecard["ppc_coverage"] == artefact.posterior_predictive.payload
+        assert result.scorecard["plausibility_flags"] == artefact.plausibility.payload
+
+
+# =========================================================================
+# Backtest ModelSpec contract (PR 80A)
+# =========================================================================
+
+
+class TestBacktestRequiresRealModelSpec:
+    """Before this fix, the backtest section passed ``diag_input.meta``
+    (an FHModelMeta, which has no ``date_col``) to
+    ``expanding_window_backtest`` as its ``spec`` argument. That call always
+    raised AttributeError, silently swallowed into a generic "failed"
+    section - so the backtest feature never worked and never told anyone
+    why. DiagnosticsInput now has an explicit ``raw_model_spec: ModelSpec``
+    field that must be supplied for a backtest to run at all."""
+
+    @staticmethod
+    def _bt_dataframe():
+        dates = pd.date_range("2024-01-01", periods=20, freq="W")
+        return pd.DataFrame(
+            {
+                "date": dates,
+                "market": ["UK"] * len(dates),
+                "spend": np.arange(len(dates), dtype=float),
+                "gsa": np.arange(len(dates), dtype=float) + 10.0,
+            }
+        )
+
+    @staticmethod
+    def _fit_fold_fn(train_df, test_df):
+        return {"fh_new_gsa": 0.8}, {"fh_new_gsa": 12.5}
+
+    def test_backtest_without_raw_model_spec_fails_closed_with_clear_error(self):
+        trace, frame, meta = _minimal_trace_frame_meta()
+        diag_input = DiagnosticsInput(
+            trace=trace,
+            frame=frame,
+            meta=meta,
+            backtest_folds=1,
+            fit_fold_fn=self._fit_fold_fn,
+            raw_model_dataframe=self._bt_dataframe(),
+        )
+        result = DiagnosticsService().evaluate(diag_input)
+
+        bt_sec = result.diagnostics_artefact.backtest
+        assert bt_sec.status == "failed"
+        assert "raw_model_spec is required" in bt_sec.error
+
+    def test_backtest_with_raw_model_spec_computes(self):
+        trace, frame, meta = _minimal_trace_frame_meta()
+        spec = ModelSpec(date_col="date", market_col="market")
+        diag_input = DiagnosticsInput(
+            trace=trace,
+            frame=frame,
+            meta=meta,
+            backtest_folds=1,
+            fit_fold_fn=self._fit_fold_fn,
+            raw_model_dataframe=self._bt_dataframe(),
+            raw_model_spec=spec,
+        )
+        result = DiagnosticsService().evaluate(diag_input)
+
+        bt_sec = result.diagnostics_artefact.backtest
+        assert bt_sec.status == "computed", bt_sec.error
+        assert bt_sec.payload
+        assert bt_sec.payload[0]["outcome_id"] == "fh_new_gsa"
+        assert result.backtest_results is not None
+        assert not result.backtest_results.empty
