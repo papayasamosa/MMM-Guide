@@ -31,7 +31,7 @@ import time
 import uuid
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 import pandas as pd
 
@@ -39,6 +39,9 @@ from .approval import ModelApproval, require_matching_approval
 from .hierarchical_model import FHModelMeta
 from .market_specific_predict import FHMarketSpecificPosteriorParams
 from .predict import FHPosteriorParams
+
+if TYPE_CHECKING:
+    from .validation_policy import ThresholdPolicy
 
 # docs/curve_bank.md's planned enum, plus "Shared" (this codebase's addition -
 # see docs/decision_log.md): a Model A curve has no market-specific evidence
@@ -238,6 +241,7 @@ def make_entries(
     evidence_tiers: Optional[Dict[str, Dict[str, str]]] = None,
     currency_by_market: Optional[Dict[str, str]] = None,
     notes: str = "",
+    current_policy: Optional["ThresholdPolicy"] = None,
 ) -> List[CurveBankEntry]:
     """
     Build this run's full set of curve bank entries: one per (channel,
@@ -272,6 +276,7 @@ def make_entries(
         data_fingerprint=data_fingerprint,
         model_spec_fingerprint=model_spec_fingerprint,
         posterior_fingerprint=posterior_fingerprint,
+        current_policy=current_policy,
     )
 
     shared_fields: Dict[str, Any] = {

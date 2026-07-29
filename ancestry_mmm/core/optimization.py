@@ -59,7 +59,7 @@ from typing import (
 )
 
 if TYPE_CHECKING:
-    from .validation_policy import ApprovalReadiness
+    from .validation_policy import ApprovalReadiness, ThresholdPolicy
 
 import numpy as np
 import pandas as pd
@@ -2273,6 +2273,7 @@ def evaluate_scenario(
     governance_mode: str = "official",
     nbt_completeness_metadata: Optional[dict] = None,
     approval_readiness: Optional["ApprovalReadiness"] = None,
+    current_policy: Optional["ThresholdPolicy"] = None,
 ) -> pd.DataFrame:
     """Evaluate total and incremental outcomes under governed activity scopes.
 
@@ -2306,6 +2307,7 @@ def evaluate_scenario(
         model_spec_fingerprint=model_spec_fingerprint,
         posterior_fingerprint=posterior_fingerprint,
         approval_readiness=approval_readiness,
+        current_policy=current_policy,
     )
     # --- Outcome-approval gate ---
     if governance_mode == "official":
@@ -3127,6 +3129,7 @@ def optimize_scenario(
     value_mapping: Optional["OutcomeValueMapping"] = None,
     currency_context: Optional["CurrencyContext"] = None,
     approval_readiness: Optional["ApprovalReadiness"] = None,
+    current_policy: Optional["ThresholdPolicy"] = None,
 ) -> Dict:
     """
     Optimise a spend plan. `constraints=None` (or empty) + conserve_total_budget=True
@@ -3160,6 +3163,7 @@ def optimize_scenario(
         model_spec_fingerprint=model_spec_fingerprint,
         posterior_fingerprint=posterior_fingerprint,
         approval_readiness=approval_readiness,
+        current_policy=current_policy,
     )
     # G2A.7a.10: when value_mapping is given, it is the single authoritative
     # value source - used for objective resolution, the SLSQP objective

@@ -296,31 +296,60 @@ def require_matching_approval(
                 f"match current model identity fingerprint '{_expected_fp}'."
             )
 
-        # PR 62B: Check schema version — must be >= 2 for policy-backed
-        if approval_readiness.schema_version < 2:
+        # PR 66A: Schema v3 required for policy-backed official use.
+        # Schema v0/v1: legacy unverified, never official.
+        # Schema v2: loadable and fingerprint-compatible, but not valid
+        # for newly created policy-backed approvals. Existing continuation
+        # requires explicit migration policy.
+        if approval_readiness.schema_version < 3:
+            _sv = approval_readiness.schema_version
             raise ValidationPolicyBlockedError(
-                f"Readiness artefact has schema version "
-                f"{approval_readiness.schema_version} which predates "
-                f"PR 62B evidence enforcement (v2+ required). "
-                "Re-evaluate readiness with the current policy."
+                f"Readiness artefact has schema version {_sv}. "
+                f"Policy-backed official approval requires schema v3+. "
+                f"Re-evaluate readiness with the current policy."
             )
 
-        # PR 64A: Verify policy is still active (not expired, not superseded)
-        if current_policy is not None:
-            from .validation_policy import ThresholdPolicy as _TP
+        # PR 66A: Current policy is now mandatory for policy-backed use.
+        # The readiness fingerprint alone is insufficient — the caller must
+        # provide the live policy object to verify it is still active and
+        # matches what was evaluated.
+        if current_policy is None:
+            raise ValidationPolicyBlockedError(
+                "Current validation policy must be provided for "
+                "policy-backed official approval. "
+                "Call require_matching_approval with current_policy=<policy>."
+            )
+        from .validation_policy import ThresholdPolicy as _TP
 
-            if not isinstance(current_policy, _TP):
-                raise ValidationPolicyBlockedError(
-                    "current_policy must be a valid ThresholdPolicy object."
-                )
-            if not current_policy.is_active():
-                raise ValidationPolicyBlockedError(
-                    f"Validation policy '{current_policy.policy_id}' "
-                    f"version '{current_policy.version}' is no longer active. "
-                    f"Expired: {current_policy.is_expired()}, "
-                    f"Superseded: {bool(current_policy.superseded_by)}. "
-                    "A new readiness evaluation is required."
-                )
+        if not isinstance(current_policy, _TP):
+            raise ValidationPolicyBlockedError(
+                "current_policy must be a valid ThresholdPolicy object."
+            )
+        if current_policy.policy_id != approval_readiness.policy_id:
+            raise ValidationPolicyBlockedError(
+                f"Current policy ID '{current_policy.policy_id}' does not "
+                f"match readiness policy ID "
+                f"'{approval_readiness.policy_id}'."
+            )
+        if current_policy.version != approval_readiness.policy_version:
+            raise ValidationPolicyBlockedError(
+                f"Current policy version '{current_policy.version}' does not "
+                f"match readiness policy version "
+                f"'{approval_readiness.policy_version}'."
+            )
+        if current_policy.fingerprint() != approval_readiness.policy_fingerprint:
+            raise ValidationPolicyBlockedError(
+                "Current policy fingerprint does not match "
+                "readiness policy fingerprint."
+            )
+        if not current_policy.is_active():
+            raise ValidationPolicyBlockedError(
+                f"Validation policy '{current_policy.policy_id}' "
+                f"version '{current_policy.version}' is no longer active. "
+                f"Expired: {current_policy.is_expired()}, "
+                f"Superseded: {bool(current_policy.superseded_by)}. "
+                "A new readiness evaluation with a current policy is required."
+            )
 
     return approval
 
@@ -348,3 +377,111 @@ def fingerprint_model_approval(approval: ModelApproval) -> str:
         default=str,
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def create_policy_backed_model_approval(
+    *,
+    approved_by: str,
+    readiness: "ApprovalReadiness",
+    current_policy: "ThresholdPolicy",
+    model_run_id: str,
+    data_fingerprint: str,
+    model_spec_fingerprint: str,
+    posterior_fingerprint: str,
+    run_label: str = "",
+    notes: str = "",
+    known_limitations: str = "",
+    diagnostics_accepted: Optional[List[str]] = None,
+) -> ModelApproval:
+    """Create a policy-backed ModelApproval requiring schema-v3 readiness.
+
+    PR 66A: This is the only supported path for creating new official
+    policy-backed approvals. Direct dataclass construction with
+    ``validation_policy_id`` set is not sufficient — this function
+    enforces:
+
+    - readiness schema version >= 3
+    - current_policy is active (not expired, not superseded)
+    - current_policy identity matches readiness bindings
+    - model identity matches the current model
+
+    Parameters
+    ----------
+    approved_by : str
+        Person who approved the model.
+    readiness : ApprovalReadiness
+        Schema-v3 readiness artefact with overall_ready=True.
+    current_policy : ThresholdPolicy
+        The live policy object (not just the stored fingerprint).
+    model_run_id, data_fingerprint, model_spec_fingerprint,
+    posterior_fingerprint : str
+        Current model identity fields.
+    run_label, notes, known_limitations : str
+        Optional human-readable metadata.
+    diagnostics_accepted : list[str] | None
+        Diagnostics sections the approver reviewed.
+
+    Returns
+    -------
+    ModelApproval
+        A fully populated policy-backed approval bound to the readiness
+        artefact and current policy.
+
+    Raises
+    ------
+    ValidationPolicyBlockedError
+        If readiness is not schema v3 or current_policy is inactive
+        or does not match the readiness bindings.
+    """
+    if readiness.schema_version < 3:
+        raise ValidationPolicyBlockedError(
+            f"Cannot create policy-backed approval from readiness schema "
+            f"version {readiness.schema_version}. Schema v3+ is required. "
+            "Re-evaluate readiness with the current policy."
+        )
+    if not readiness.overall_ready:
+        _parts: list[str] = []
+        if readiness.config_errors:
+            _parts.append(f"{len(readiness.config_errors)} config error(s)")
+        if readiness.blocking_failures:
+            _parts.append(f"{len(readiness.blocking_failures)} blocking failure(s)")
+        if readiness.missing_required_gates:
+            _parts.append(
+                f"{len(readiness.missing_required_gates)} missing required gate(s)"
+            )
+        if readiness.lifecycle_issues:
+            _parts.append(f"{len(readiness.lifecycle_issues)} lifecycle issue(s)")
+        raise ValidationPolicyBlockedError(
+            f"Cannot create policy-backed approval: readiness is not ready. "
+            f"Details: {'; '.join(_parts)}."
+        )
+    if current_policy is None:
+        raise ValidationPolicyBlockedError(
+            "A current validation policy object is required to create a "
+            "policy-backed approval."
+        )
+    if not current_policy.is_active():
+        raise ValidationPolicyBlockedError(
+            f"Policy '{current_policy.policy_id}' version "
+            f"'{current_policy.version}' is not active. "
+            f"Expired: {current_policy.is_expired()}, "
+            f"Superseded: {bool(current_policy.superseded_by)}."
+        )
+
+    approval = ModelApproval(
+        approved_by=approved_by,
+        run_label=run_label,
+        notes=notes,
+        known_limitations=known_limitations,
+        diagnostics_accepted=diagnostics_accepted or [],
+        model_run_id=model_run_id,
+        data_fingerprint=data_fingerprint,
+        model_spec_fingerprint=model_spec_fingerprint,
+        posterior_fingerprint=posterior_fingerprint,
+        validation_policy_id=current_policy.policy_id,
+        validation_policy_version=current_policy.version,
+        validation_policy_fingerprint=current_policy.fingerprint(),
+        readiness_artefact_id=readiness.readiness_artefact_id,
+        readiness_fingerprint=readiness.fingerprint(),
+    )
+    return approval
