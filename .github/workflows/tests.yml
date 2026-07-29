@@ -108,13 +108,15 @@ jobs:
         run: |
           $workspace = $env:GITHUB_WORKSPACE
           $ciRoot = $env:MMM_DEV_ROOT
-          $job = $null
+          $proc = $null
           try {
-            $job = Start-Job -ScriptBlock {
-              $env:MMM_DEV_ROOT = $using:ciRoot
-              Set-Location $using:workspace
-              powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start_dev_app.ps1
-            }
+            # Start Streamlit via Start-Process -PassThru (without
+            # -NoNewWindow so the child is detached and can be killed).
+            # The process inherits PATH (including uv) from this session.
+            $proc = Start-Process -FilePath powershell.exe `
+              -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File scripts\start_dev_app.ps1" `
+              -WorkingDirectory $workspace `
+              -PassThru
             # Poll for readiness (bounded retries)
             $ready = $false
             for ($i = 0; $i -lt 30; $i++) {
@@ -127,11 +129,11 @@ jobs:
             if (-not $ready) { throw "Streamlit did not become ready within 90 seconds" }
             Write-Host "Streamlit responded: HTTP 200"
           } finally {
-            # Guaranteed cleanup
-            if ($job) {
-              Stop-Job $job -ErrorAction SilentlyContinue
-              Receive-Job $job -ErrorAction SilentlyContinue
-              Remove-Job $job -Force -ErrorAction SilentlyContinue
+            # Guaranteed cleanup: kill the process tree
+            if ($proc -and -not $proc.HasExited) {
+              Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+              # Also kill any child processes holding port 8501
+              Get-Process | Where-Object { $_.ProcessName -like "*python*" } | Stop-Process -Force -ErrorAction SilentlyContinue
             }
             Start-Sleep 5
             $portInUse = Get-NetTCPConnection -LocalPort 8501 -State Listen -ErrorAction SilentlyContinue
