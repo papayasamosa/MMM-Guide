@@ -6,8 +6,15 @@
     Creates operational directories under D:\Ancestry-MMM\ that are needed
     by launcher, checker, npm cache, Playwright browsers and test artefacts.
 
+    By default creates only operational paths. Supply -IncludeOptional to
+    also create optional/reserved directories (tools\mcp, secrets).
+
     Never creates secrets, tokens, or credentials. Never writes to C:.
 #>
+
+param(
+    [switch]$IncludeOptional
+)
 
 $ErrorActionPreference = "Stop"
 
@@ -17,16 +24,18 @@ $ErrorActionPreference = "Stop"
 Write-Host "Creating operational directories under $DriveRoot ..." -ForegroundColor Cyan
 foreach ($p in $OperationalPaths) {
     New-Item -ItemType Directory -Force -Path $p | Out-Null
-    Write-Host "  [✓] $p"
+    Write-Host "  [OK] $p"
 }
 
-Write-Host "Optional/reserved directories (created only if they don't exist):" -ForegroundColor Cyan
-foreach ($p in $OptionalPaths) {
-    if (-not (Test-Path $p)) {
-        New-Item -ItemType Directory -Force -Path $p | Out-Null
-        Write-Host "  [i] $p (created)"
-    } else {
-        Write-Host "  [ ] $p (already exists)"
+if ($IncludeOptional) {
+    Write-Host "Optional/reserved directories:" -ForegroundColor Cyan
+    foreach ($p in $OptionalPaths) {
+        if (-not (Test-Path $p)) {
+            New-Item -ItemType Directory -Force -Path $p | Out-Null
+            Write-Host "  [i] $p (created)"
+        } else {
+            Write-Host "  [ ] $p (already exists)"
+        }
     }
 }
 

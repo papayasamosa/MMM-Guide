@@ -21,7 +21,7 @@ VERIFICATION_REPORT = (
 )
 
 
-# ── Helper ──
+# -- Helper --
 
 
 def _read_text(path: Path) -> str:
@@ -33,7 +33,7 @@ def _ps1_read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8").replace("\r\n", "\n")
 
 
-# ── MCP package pinning ──
+# -- MCP package pinning --
 
 
 class TestMcpPackagesArePinned:
@@ -83,7 +83,7 @@ class TestMcpPackagesArePinned:
         assert len(parts) == 3, f"Version {version} is not semver"
 
 
-# ── Launcher contract (uv, not .venv) ──
+# -- Launcher contract (uv, not .venv) --
 
 
 class TestStartDevAppUsesUv:
@@ -114,7 +114,7 @@ class TestStartDevAppUsesUv:
         )
 
 
-# ── Checker contract (uv, canonical paths) ──
+# -- Checker contract (uv, canonical paths) --
 
 
 class TestCheckMcpPrereqsUsesUv:
@@ -138,7 +138,7 @@ class TestCheckMcpPrereqsUsesUv:
         )
 
 
-# ── Directory contract consistency ──
+# -- Directory contract consistency --
 
 
 class TestDirectoryContractConsistency:
@@ -167,7 +167,7 @@ class TestDirectoryContractConsistency:
         assert "$OperationalPaths" in content
 
 
-# ── Documentation wording ──
+# -- Documentation wording --
 
 
 class TestDocumentationWording:
@@ -195,10 +195,10 @@ class TestDocumentationWording:
         )
 
 
-# ── Verification report exists ──
+# -- Verification report exists --
 
 
-# ── Checker contract (no npm@latest) ──
+# -- Checker contract (no npm@latest) --
 
 
 class TestCheckerDoesNotUseNpmLatest:
@@ -225,7 +225,7 @@ class TestCheckerDoesNotUseNpmLatest:
         )
 
 
-# ── MCP paths MMM_DEV_ROOT override ──
+# -- MCP paths MMM_DEV_ROOT override --
 
 
 class TestMcpPathsHasDevRootOverride:
@@ -244,7 +244,7 @@ class TestMcpPathsHasDevRootOverride:
         )
 
 
-# ── CI workflow ──
+# -- CI workflow --
 
 
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "tests.yml"
@@ -288,7 +288,108 @@ class TestWindowsToolingJob:
         )
 
 
-# ── Verification report ──
+# -- PowerShell encoding (ASCII-only) --
+
+
+class TestPowerShellScriptsAreAscii:
+    """All .ps1 scripts must be ASCII-only for Windows PowerShell 5.1 compatibility."""
+
+    def test_all_ps1_files_are_ascii(self):
+        """Every PowerShell script contains only ASCII characters."""
+        for path in [MCP_PATHS, START_DEV_APP, CHECK_PREREQS, SETUP_TOOLING]:
+            content = path.read_bytes()
+            non_ascii = [i for i, b in enumerate(content) if b > 127]
+            assert len(non_ascii) == 0, (
+                f"{path.name} has non-ASCII bytes at positions: {non_ascii[:20]}"
+            )
+
+
+# -- CI workflow correctness --
+
+
+class TestCiWorkflowFix:
+    """CI workflow must not use $using:github.workspace and must have finally."""
+
+    def test_no_using_github_workspace(self):
+        content = _read_text(CI_WORKFLOW)
+        assert "$using:github.workspace" not in content, (
+            "CI workflow uses invalid $using:github.workspace"
+        )
+
+    def test_workflow_has_parser_check(self):
+        content = _read_text(CI_WORKFLOW)
+        assert "ParseFile" in content or "parse" in content.lower(), (
+            "CI workflow missing PowerShell parser check"
+        )
+
+    def test_workflow_has_finally_block(self):
+        content = _read_text(CI_WORKFLOW)
+        assert "finally" in content, "CI workflow missing finally block for cleanup"
+
+    def test_cleanup_failure_exits_nonzero(self):
+        content = _read_text(CI_WORKFLOW)
+        assert "exit 1" in content or "exit 1" in content, (
+            "CI workflow does not fail on cleanup failure"
+        )
+
+    def test_workflow_uses_env_github_workspace(self):
+        content = _read_text(CI_WORKFLOW)
+        assert "$env:GITHUB_WORKSPACE" in content, (
+            "CI workflow does not use $env:GITHUB_WORKSPACE"
+        )
+
+
+# -- Checker npm cache validation --
+
+
+class TestCheckerNpmCacheValidation:
+    """Checker must compare npm cache against configured root, not hard-coded D:."""
+
+    def test_checker_does_not_use_startswith_d(self):
+        content = _ps1_read_text(CHECK_PREREQS)
+        assert 'StartsWith("D:")' not in content, (
+            "Checker uses hard-coded StartsWith D: check"
+        )
+
+    def test_checker_compares_with_npmcachepath(self):
+        content = _ps1_read_text(CHECK_PREREQS)
+        assert "NpmCachePath" in content, "Checker does not reference NpmCachePath"
+
+    def test_checker_uses_path_compare(self):
+        content = _ps1_read_text(CHECK_PREREQS)
+        assert "GetFullPath" in content, (
+            "Checker does not use GetFullPath for path comparison"
+        )
+
+    def test_checker_label_not_hardcoded_d(self):
+        content = _ps1_read_text(CHECK_PREREQS)
+        # The label should say "matches configured root" not "on D:"
+        assert "matches configured root" in content, (
+            "Checker label does not say 'matches configured root'"
+        )
+
+
+# -- Setup optional directories --
+
+
+class TestSetupOptionalDirectories:
+    """Setup must require -IncludeOptional for optional/reserved dirs."""
+
+    def test_setup_has_includeswitch(self):
+        content = _ps1_read_text(SETUP_TOOLING)
+        assert "IncludeOptional" in content, (
+            "setup_dev_tooling.ps1 has no -IncludeOptional switch"
+        )
+
+    def test_setup_does_not_create_optional_by_default(self):
+        content = _ps1_read_text(SETUP_TOOLING)
+        # The optional directory creation block should be inside if ($IncludeOptional)
+        assert "if ($IncludeOptional)" in content, (
+            "setup_dev_tooling.ps1 creates optional dirs unconditionally"
+        )
+
+
+# -- Verification report --
 
 
 class TestVerificationReport:

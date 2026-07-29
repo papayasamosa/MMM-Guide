@@ -3,7 +3,7 @@ Starts the Streamlit dev server on localhost only, for use by Playwright MCP
 verification and manual testing. Keeps caches/temp/logs on D:\Ancestry-MMM.
 
 Uses `uv run` (not a hard-coded .venv path) so it works with any uv-managed
-environment — fresh checkout, UV_PROJECT_ENVIRONMENT override, etc.
+environment - fresh checkout, UV_PROJECT_ENVIRONMENT override, etc.
 #>
 
 $ErrorActionPreference = "Stop"
@@ -21,7 +21,7 @@ $logFile = Join-Path $LogsPath "streamlit-dev.log"
 # uv
 $uv = Get-Command uv -ErrorAction SilentlyContinue
 if (-not $uv) {
-    Write-Host "uv not found on PATH — cannot start Streamlit." -ForegroundColor Red
+    Write-Host "uv not found on PATH - cannot start Streamlit." -ForegroundColor Red
     Write-Host "Install uv (https://docs.astral.sh/uv/) and ensure it is on PATH." -ForegroundColor Yellow
     exit 1
 }
@@ -36,7 +36,7 @@ $env:TMP                      = $TempPath
 $port = 8501
 $portInUse = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
 if ($portInUse) {
-    Write-Host "Port $port is already in use — stop the existing process or pick a different port." -ForegroundColor Red
+    Write-Host "Port $port is already in use - stop the existing process or pick a different port." -ForegroundColor Red
     exit 1
 }
 

@@ -4,7 +4,7 @@ This document describes four Model Context Protocol (MCP) integrations
 configured for the **coding environment**, not the product. They give a
 coding LLM (Claude Code, or another MCP-capable client) live access to
 repository/PR state, version-accurate library documentation, a real browser
-against the running Streamlit app, and Hugging Face search — during
+against the running Streamlit app, and Hugging Face search - during
 development only.
 
 **They are not part of MMM-Guide.** They are not Python dependencies, are
@@ -48,13 +48,13 @@ set the `MMM_DEV_ROOT` environment variable to override the root path (e.g.
 
 ```text
 D:\Ancestry-MMM\
-├── tools\mcp\                      # reserved for any future local MCP binaries
-├── cache\npm\                      # npm_config_cache
-├── cache\ms-playwright\            # PLAYWRIGHT_BROWSERS_PATH (Chromium only)
-├── temp\                           # TEMP/TMP for MCP server processes
-├── secrets\                        # optional local token/env files, never committed
-├── test-artifacts\playwright-mcp\  # Playwright MCP --output-dir (screenshots, traces)
-└── logs\mcp\                       # verification logs, dev app log
+|-- tools\mcp\                      # reserved for any future local MCP binaries
+|-- cache\npm\                      # npm_config_cache
+|-- cache\ms-playwright\            # PLAYWRIGHT_BROWSERS_PATH (Chromium only)
+|-- temp\                           # TEMP/TMP for MCP server processes
+|-- secrets\                        # optional local token/env files, never committed
+|-- test-artifacts\playwright-mcp\  # Playwright MCP --output-dir (screenshots, traces)
+|-- logs\mcp\                       # verification logs, dev app log
 ```
 
 Node.js itself (v24, already installed at `D:\Programs\node.exe`) was left
@@ -138,7 +138,7 @@ in place rather than duplicated under `tools\mcp\node\` - it was already off
 A sanitised, reviewable verification report for 29 July 2026 is at
 [`docs/development/mcp_verification_2026-07-29.md`](mcp_verification_2026-07-29.md).
 It records commit, date, client version, queries performed, results, write
-status and known limitations — without credentials or browser state.
+status and known limitations - without credentials or browser state.
 
 Read-only checks performed for each server (recorded, without secrets, in
 `D:\Ancestry-MMM\logs\mcp\`):
@@ -166,9 +166,9 @@ must complete - these are not steps a coding agent can complete unattended.
 
 | MCP | Configured | Authenticated | Live verified | Access mode |
 |---|---:|---:|---:|---|
-| GitHub | ✓ | ✓ (OAuth via Copilot) | ✓ | Read-only, no write tool calls |
-| Context7 | ✓ (v3.2.5 pinned) | — (unauthenticated) | ✓ | Read-only doc lookups |
-| Playwright | ✓ (v0.0.78 pinned) | N/A | ✓ | Local-app testing only, origin allowlist (not a security boundary) |
+| GitHub | v | v (OAuth via Copilot) | v | Read-only, no write tool calls |
+| Context7 | v (v3.2.5 pinned) | - (unauthenticated) | v | Read-only doc lookups |
+| Playwright | v (v0.0.78 pinned) | N/A | v | Local-app testing only, origin allowlist (not a security boundary) |
 | Hugging Face | Documented, not connected | Pending user authentication | Not verified | Read-only search/documentation only when connected |
 
 *Date: 29 July 2026. Client: Claude Code (VS Code native extension).*
@@ -202,7 +202,7 @@ pinned to exact versions in `.mcp.json` and this documentation. To upgrade:
 4. rerun the Playwright verification journey
    (see [Verification](#verification));
 5. commit the version change.
-6. do not allow automatic package drift — no `@latest` or `@next` in
+6. do not allow automatic package drift - no `@latest` or `@next` in
    committed configuration.
 
 ## Removal
