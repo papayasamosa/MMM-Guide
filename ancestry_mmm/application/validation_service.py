@@ -106,11 +106,13 @@ class ValidationService:
         if evaluator_id == "convergence_rhat":
             section = artefact.convergence
             if section.status == "computed" and isinstance(section.payload, dict):
-                return section.payload.get("max_rhat")
+                rhat_val: float = section.payload.get("max_rhat", 0.0)
+                return rhat_val
         elif evaluator_id == "convergence_ess":
             section = artefact.convergence
             if section.status == "computed" and isinstance(section.payload, dict):
-                return section.payload.get("min_ess")
+                ess_val: float = section.payload.get("min_ess", 0.0)
+                return ess_val
         elif evaluator_id == "divergences":
             section = artefact.convergence
             if section.status == "computed" and isinstance(section.payload, dict):
@@ -125,7 +127,7 @@ class ValidationService:
                     if r.get("coverage_pct") is not None
                 ]
                 if values:
-                    return sum(values) / len(values)
+                    return float(sum(values)) / len(values)
             return None
         elif evaluator_id == "backtest_mape":
             section = artefact.backtest
@@ -136,7 +138,7 @@ class ValidationService:
                     if r.get("mape_pct") is not None
                 ]
                 if values:
-                    return sum(values) / len(values)
+                    return float(sum(values)) / len(values)
             return None
         return None
 
@@ -236,6 +238,8 @@ class ValidationService:
             and not artefact.legacy_incomplete
         )
         if use_artefact:
+            # Narrow type for mypy
+            assert artefact is not None
             identity_fp = (
                 v_input.model_identity.fingerprint() if v_input.model_identity else ""
             )
@@ -392,12 +396,12 @@ class ValidationService:
         ):
             metric_value = self._get_artefact_metric(evaluator_id, artefact)
             if metric_value is not None:
-                # Value read from artefact — determine pass/fail by applying gate threshold
-                threshold = gate.get_value()
-                if threshold is not None:
-                    gate_status = "pass" if metric_value <= threshold else "fail"
-                else:
-                    gate_status = "pass"
+                # Value read from artefact — determine pass/fail by applying
+                # gate acceptable_range (low, high).
+                gate_status: str = "pass"
+                if gate.acceptable_range is not None:
+                    lo, hi = gate.acceptable_range
+                    gate_status = "pass" if lo <= metric_value <= hi else "fail"
                 return ValidationResult(
                     gate_name=gate.name,
                     status=gate_status,
