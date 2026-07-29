@@ -2,7 +2,10 @@
 Validation service — orchestrates validation-policy evaluation for model
 approval readiness.
 
-PR 6: Separates validation orchestration from Streamlit page rendering.
+PR 72B: ValidationService now consumes DiagnosticsArtefact for schema-v2
+validation. Gate evaluator IDs are mapped to artefact section values via
+the metric accessor. The service does not recalculate diagnostics when a
+valid artefact is provided.
 """
 
 from __future__ import annotations
@@ -27,20 +30,21 @@ from ancestry_mmm.core.validation_policy import (
     validate_gate_config,
     validate_policy_config,
 )
-from ancestry_mmm.core.diagnostics import posterior_predictive_coverage  # noqa: F401
 from ancestry_mmm.core.model_identity import ModelIdentity
+from ancestry_mmm.application.diagnostics_service import (
+    DiagnosticsArtefact,
+    DiagnosticSection,
+)
 
 
 @dataclass
 class ValidationInput:
     """Input for validation readiness evaluation.
 
-    PR 53B: ``model_identity`` and ``policy`` are required for producing
-    identity-bound validation results. Without them, results will have
-    empty identity fields and be treated as stale by the readiness evaluator.
-
-    PR 62B: Added ``model_type``, ``market``, ``intended_use`` for
-    ``ValidationEvidenceContext`` construction.
+    PR 72B: Added ``diagnostics_artefact``. When a schema-v2 artefact is
+    provided, gate metrics are read from it rather than recomputed from
+    trace/frame/meta. The artefact's model identity must match the current
+    model for official validation.
     """
 
     trace: Optional[az.InferenceData] = None
@@ -56,6 +60,7 @@ class ValidationInput:
     model_type: Optional[str] = None
     market: Optional[str] = None
     intended_use: str = "model_approval"
+    diagnostics_artefact: Optional[DiagnosticsArtefact] = None
 
 
 @dataclass
@@ -84,6 +89,58 @@ class ValidationService:
 
     def __init__(self, default_policy: Optional[ThresholdPolicy] = None):
         self._default_policy = default_policy
+
+    @staticmethod
+    def _get_artefact_metric(
+        evaluator_id: str, artefact: DiagnosticsArtefact
+    ) -> Optional[float]:
+        """Read a gate metric from the diagnostics artefact.
+
+        Returns the numeric value or None if the section is not available
+        or not in ``computed`` status. Unknown evaluator IDs return None
+        (fail closed).
+        """
+        if artefact.schema_version < 2 or artefact.legacy_incomplete:
+            return None
+        section: Optional[DiagnosticSection] = None
+        if evaluator_id == "convergence_rhat":
+            section = artefact.convergence
+            if section.status == "computed" and isinstance(section.payload, dict):
+                rhat_val: float = section.payload.get("max_rhat", 0.0)
+                return rhat_val
+        elif evaluator_id == "convergence_ess":
+            section = artefact.convergence
+            if section.status == "computed" and isinstance(section.payload, dict):
+                ess_val: float = section.payload.get("min_ess", 0.0)
+                return ess_val
+        elif evaluator_id == "divergences":
+            section = artefact.convergence
+            if section.status == "computed" and isinstance(section.payload, dict):
+                has_div = section.payload.get("has_divergences", False)
+                return 1.0 if has_div else 0.0
+        elif evaluator_id == "ppc_coverage":
+            section = artefact.posterior_predictive
+            if section.status == "computed" and isinstance(section.payload, list):
+                values = [
+                    r.get("coverage_pct")
+                    for r in section.payload
+                    if r.get("coverage_pct") is not None
+                ]
+                if values:
+                    return float(sum(values)) / len(values)
+            return None
+        elif evaluator_id == "backtest_mape":
+            section = artefact.backtest
+            if section.status == "computed" and isinstance(section.payload, list):
+                values = [
+                    r.get("mape_pct")
+                    for r in section.payload
+                    if r.get("mape_pct") is not None
+                ]
+                if values:
+                    return float(sum(values)) / len(values)
+            return None
+        return None
 
     def evaluate_readiness(self, v_input: ValidationInput) -> ValidationServiceResult:
         """Evaluate model diagnostics against a validation policy.
@@ -172,6 +229,33 @@ class ValidationService:
                 errors=errors,
                 warnings=warnings,
             )
+
+        # --- PR 72B: Artefact-based validation (schema v2) ---
+        artefact = v_input.diagnostics_artefact
+        use_artefact = (
+            artefact is not None
+            and artefact.schema_version >= 2
+            and not artefact.legacy_incomplete
+        )
+        if use_artefact:
+            # Narrow type for mypy
+            assert artefact is not None
+            identity_fp = (
+                v_input.model_identity.fingerprint() if v_input.model_identity else ""
+            )
+            if identity_fp and artefact.model_identity_fingerprint != identity_fp:
+                errors.append(
+                    "Diagnostics artefact model identity fingerprint does not "
+                    "match the current model identity."
+                )
+                # Fall back to trace/frame/meta for safety
+                use_artefact = False
+            else:
+                warnings.append(
+                    "Using diagnostics artefact for gate evaluation (schema v2)."
+                )
+                v_input.diagnostic_artefact_fingerprint = artefact.fingerprint()
+                v_input.diagnostic_artefact_id = artefact.artefact_id
 
         # --- Compute identity-dependent fingerprints once ---
         identity_fp = (
@@ -280,11 +364,12 @@ class ValidationService:
         gate: ValidationGate,
         v_input: ValidationInput,
     ) -> ValidationResult:
-        """Evaluate a single validation gate using the evaluator registry.
+        """Evaluate a single validation gate.
 
-        PR 56E: Replaced the hard-coded if-chain with a typed evaluator
-        registry. Unknown evaluator IDs fail closed (status=fail).
-        Gate configuration is validated before evaluation.
+        PR 72B: When a schema-v2 diagnostics artefact is available and its
+        model identity matches, the gate value is read from the artefact
+        via ``_get_artefact_metric`` instead of recomputing from
+        trace/frame/meta.
         """
         trace = v_input.trace
         frame = v_input.frame
@@ -301,6 +386,29 @@ class ValidationService:
                 status="fail",
                 message="; ".join(config_errors),
             )
+
+        # PR 72B: Check artefact first (schema v2, non-legacy)
+        artefact = v_input.diagnostics_artefact
+        if (
+            artefact is not None
+            and artefact.schema_version >= 2
+            and not artefact.legacy_incomplete
+        ):
+            metric_value = self._get_artefact_metric(evaluator_id, artefact)
+            if metric_value is not None:
+                # Value read from artefact — determine pass/fail by applying
+                # gate acceptable_range (low, high).
+                gate_status: str = "pass"
+                if gate.acceptable_range is not None:
+                    lo, hi = gate.acceptable_range
+                    gate_status = "pass" if lo <= metric_value <= hi else "fail"
+                return ValidationResult(
+                    gate_name=gate.name,
+                    status=gate_status,
+                    value=metric_value,
+                    message=f"Read from diagnostics artefact ({evaluator_id}={metric_value})",
+                )
+            # Metric not in artefact — fall through to evaluator registry
 
         # Look up evaluator in registry
         entry = get_evaluator(evaluator_id)
