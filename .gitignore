@@ -84,3 +84,18 @@ next-env.d.ts
 # Ancestry FH MMM - generated project data (curve bank runs, exports)
 ancestry_mmm/.curve_bank_store/
 ancestry_mmm/.project_exports/
+
+# MCP dev tooling - local overrides and secrets never belong in the repo.
+# .mcp.json itself IS committed deliberately (see docs/development/
+# mcp_development_tooling.md) - it holds no secrets: GitHub uses OAuth,
+# Context7 runs unauthenticated, Playwright needs no credentials.
+.env.mcp
+mcp.local.json
+*.mcp.local.json
+config/mcp/*.local.json
+config/mcp/*.env
+!config/mcp/*.env.example
+test-artifacts/playwright-mcp/
+logs/mcp/
+playwright/.auth/
+storage-state.json

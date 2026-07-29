@@ -1,0 +1,75 @@
+{
+  "_comment_placeholders": [
+    "This file is illustrative only. JSON has no comment syntax, so explanations",
+    "live in docs/development/mcp_development_tooling.md and in this array,",
+    "which your MCP client will ignore as an unused key. Do not copy this file",
+    "in as an active config without reading that doc first. Client schemas",
+    "differ (Claude Code, VS Code + Copilot, Cursor, Codex CLI, ...), so adapt",
+    "the shape to whichever client you actually use.",
+    "",
+    "github: uses the official remote GitHub MCP server over OAuth. No token",
+    "  is stored here. Your client will prompt for a browser login on first use.",
+    "  If your client/account cannot do remote OAuth, switch to the local",
+    "  github-mcp-server binary with a fine-grained, read-only PAT supplied via",
+    "  GITHUB_PERSONAL_ACCESS_TOKEN in an untracked env file (see mcp.env.example).",
+    "",
+    "context7: CONTEXT7_API_KEY is optional. Omit it to use Context7",
+    "  unauthenticated at a lower rate limit, or set it from an untracked env",
+    "  file — never as a literal value in this file or on a command line.",
+    "",
+    "playwright: --output-dir and PLAYWRIGHT_BROWSERS_PATH must point under",
+    "  your D-drive (or equivalent non-C) tooling root. --allowed-origins",
+    "  restricts navigation to your local Streamlit dev server.",
+    "",
+    "huggingface: do not hand-write this entry. Generate it from",
+    "  https://huggingface.co/settings/mcp while logged in, select your coding",
+    "  client, and paste the exact snippet it produces."
+  ],
+  "mcpServers": {
+    "github": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp/"
+    },
+    "context7": {
+      "command": "cmd",
+      "args": ["/c", "npx", "-y", "@upstash/context7-mcp@latest"],
+      "env": {
+        "CONTEXT7_API_KEY": "${CONTEXT7_API_KEY}",
+        "npm_config_cache": "D:\\Ancestry-MMM\\cache\\npm"
+      }
+    },
+    "playwright": {
+      "command": "cmd",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "@playwright/mcp@latest",
+        "--isolated",
+        "--headless",
+        "--browser",
+        "chromium",
+        "--block-service-workers",
+        "--test-id-attribute",
+        "data-testid",
+        "--timeout-action",
+        "10000",
+        "--timeout-navigation",
+        "60000",
+        "--allowed-origins",
+        "http://localhost:8501;http://127.0.0.1:8501",
+        "--output-dir",
+        "D:\\Ancestry-MMM\\test-artifacts\\playwright-mcp"
+      ],
+      "env": {
+        "PLAYWRIGHT_BROWSERS_PATH": "D:\\Ancestry-MMM\\cache\\ms-playwright",
+        "npm_config_cache": "D:\\Ancestry-MMM\\cache\\npm",
+        "TEMP": "D:\\Ancestry-MMM\\temp",
+        "TMP": "D:\\Ancestry-MMM\\temp"
+      }
+    },
+    "huggingface": {
+      "_comment": "PLACEHOLDER ONLY - replace with the exact snippet from https://huggingface.co/settings/mcp for your client"
+    }
+  }
+}

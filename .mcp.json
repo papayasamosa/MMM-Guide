@@ -1,0 +1,45 @@
+{
+  "mcpServers": {
+    "github": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp/"
+    },
+    "context7": {
+      "command": "cmd",
+      "args": ["/c", "npx", "-y", "@upstash/context7-mcp@latest"],
+      "env": {
+        "npm_config_cache": "D:\\Ancestry-MMM\\cache\\npm"
+      }
+    },
+    "playwright": {
+      "command": "cmd",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "@playwright/mcp@latest",
+        "--isolated",
+        "--headless",
+        "--browser",
+        "chromium",
+        "--block-service-workers",
+        "--test-id-attribute",
+        "data-testid",
+        "--timeout-action",
+        "10000",
+        "--timeout-navigation",
+        "60000",
+        "--allowed-origins",
+        "http://localhost:8501;http://127.0.0.1:8501",
+        "--output-dir",
+        "D:\\Ancestry-MMM\\test-artifacts\\playwright-mcp"
+      ],
+      "env": {
+        "PLAYWRIGHT_BROWSERS_PATH": "D:\\Ancestry-MMM\\cache\\ms-playwright",
+        "npm_config_cache": "D:\\Ancestry-MMM\\cache\\npm",
+        "TEMP": "D:\\Ancestry-MMM\\temp",
+        "TMP": "D:\\Ancestry-MMM\\temp"
+      }
+    }
+  }
+}
