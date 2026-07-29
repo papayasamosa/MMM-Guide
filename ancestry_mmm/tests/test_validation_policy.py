@@ -25,15 +25,6 @@ from ancestry_mmm.core.validation_policy import (
 # Default ModelIdentity matching _make_result's identity fields
 _DEFAULT_IDENTITY = ModelIdentity("run-123", "data-abc", "spec-def", "post-ghi")
 
-# Shared default policy for test consistency
-_DEFAULT_POLICY = ThresholdPolicy(
-    policy_id="val-pol-001",
-    version="1.0.0",
-    scope="test",
-    owner="Test Owner",
-    approval_date=datetime(2026, 7, 1, tzinfo=timezone.utc),
-)
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -41,26 +32,30 @@ _DEFAULT_POLICY = ThresholdPolicy(
 
 
 def _make_result(
+    *,
+    policy: "ThresholdPolicy",
     gate_name: str,
     status: str = "pass",
     value: float | None = None,
     message: str = "",
-    policy: "ThresholdPolicy | None" = None,
-    gate: "ValidationGate | None" = None,
 ) -> ValidationResult:
     """Helper to build a ValidationResult with v3-ready evidence fields.
 
+    ``policy`` is required — the default-policy-without-gates pattern was
+    removed in PR 66A because it produced blank gate fingerprints that
+    fail strict schema-v3 evidence matching.
 
-    If ``gate`` is not provided, looks up the gate by name from the policy
-    to compute the gate fingerprint.
+    Raises ``ValueError`` if ``gate_name`` is not found in the policy.
     """
-    if policy is None:
-        policy = _DEFAULT_POLICY
-    if gate is None and gate_name:
-        gate = policy.get_gate(gate_name)
-    gf = gate.fingerprint() if gate else ""
+    gate = policy.get_gate(gate_name)
+    if gate is None:
+        raise ValueError(
+            f"Gate '{gate_name}' not found in policy '{policy.policy_id}'. "
+            "All test results must reference an existing gate."
+        )
+    gf = gate.fingerprint()
     return ValidationResult(
-        gate_name=gate_name or (gate.name if gate else ""),
+        gate_name=gate_name,
         status=status,
         value=value,
         message=message or f"{gate_name}={value}",
@@ -78,12 +73,10 @@ def _make_result(
     )
 
 
-def _make_context(policy=None, identity=None) -> ValidationEvidenceContext:
+def _make_context(*, policy, identity=None) -> ValidationEvidenceContext:
     """Helper to build a default ValidationEvidenceContext for tests."""
     if identity is None:
         identity = _DEFAULT_IDENTITY
-    if policy is None:
-        policy = _DEFAULT_POLICY
     return ValidationEvidenceContext(
         model_identity=identity,
         policy=policy,
@@ -394,10 +387,34 @@ class TestApprovalReadinessEvaluation:
     def test_matching_successful_readiness_passes(self, sample_policy):
         """All required gates pass -> overall_ready is True."""
         results = [
-            _make_result("convergence_rhat", "pass", 1.02, "Converged"),
-            _make_result("ppc_coverage", "pass", 85.0, "Coverage OK"),
-            _make_result("backtest_mape", "pass", 20.0, "MAPE OK"),
-            _make_result("divergences", "pass", 0, "No divergences"),
+            _make_result(
+                policy=sample_policy,
+                gate_name="convergence_rhat",
+                status="pass",
+                value=1.02,
+                message="Converged",
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="ppc_coverage",
+                status="pass",
+                value=85.0,
+                message="Coverage OK",
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="backtest_mape",
+                status="pass",
+                value=20.0,
+                message="MAPE OK",
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="divergences",
+                status="pass",
+                value=0,
+                message="No divergences",
+            ),
         ]
         readiness = _eval_readiness(results, sample_policy, _DEFAULT_IDENTITY)
         assert readiness.overall_ready is True
@@ -408,10 +425,22 @@ class TestApprovalReadinessEvaluation:
     def test_missing_required_gate_blocks(self, sample_policy):
         """A required gate with no result blocks official approval."""
         results = [
-            _make_result("convergence_rhat", "pass", 1.02),
+            _make_result(
+                policy=sample_policy,
+                gate_name="convergence_rhat",
+                status="pass",
+                value=1.02,
+            ),
             # ppc_coverage missing — but it's required
-            _make_result("backtest_mape", "pass", 20.0),
-            _make_result("divergences", "pass", 0),
+            _make_result(
+                policy=sample_policy,
+                gate_name="backtest_mape",
+                status="pass",
+                value=20.0,
+            ),
+            _make_result(
+                policy=sample_policy, gate_name="divergences", status="pass", value=0
+            ),
         ]
         readiness = _eval_readiness(results, sample_policy, _DEFAULT_IDENTITY)
         assert readiness.overall_ready is False
@@ -420,10 +449,28 @@ class TestApprovalReadinessEvaluation:
     def test_failed_blocking_gate_blocks(self, sample_policy):
         """A blocking gate that fails blocks official approval."""
         results = [
-            _make_result("convergence_rhat", "fail", 1.2, "R-hat too high"),
-            _make_result("ppc_coverage", "pass", 85.0),
-            _make_result("backtest_mape", "pass", 20.0),
-            _make_result("divergences", "pass", 0),
+            _make_result(
+                policy=sample_policy,
+                gate_name="convergence_rhat",
+                status="fail",
+                value=1.2,
+                message="R-hat too high",
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="ppc_coverage",
+                status="pass",
+                value=85.0,
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="backtest_mape",
+                status="pass",
+                value=20.0,
+            ),
+            _make_result(
+                policy=sample_policy, gate_name="divergences", status="pass", value=0
+            ),
         ]
         readiness = _eval_readiness(results, sample_policy, _DEFAULT_IDENTITY)
         assert readiness.overall_ready is False
@@ -433,11 +480,29 @@ class TestApprovalReadinessEvaluation:
     def test_review_only_gate_does_not_block(self, sample_policy):
         """A non-blocking failing (review) gate is a review item, not a blocker."""
         results = [
-            _make_result("convergence_rhat", "pass", 1.02),
-            _make_result("ppc_coverage", "pass", 85.0),
+            _make_result(
+                policy=sample_policy,
+                gate_name="convergence_rhat",
+                status="pass",
+                value=1.02,
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="ppc_coverage",
+                status="pass",
+                value=85.0,
+            ),
             # backtest_mape is non-blocking and gets review status
-            _make_result("backtest_mape", "review", 35.0, "MAPE elevated"),
-            _make_result("divergences", "pass", 0),
+            _make_result(
+                policy=sample_policy,
+                gate_name="backtest_mape",
+                status="review",
+                value=35.0,
+                message="MAPE elevated",
+            ),
+            _make_result(
+                policy=sample_policy, gate_name="divergences", status="pass", value=0
+            ),
         ]
         readiness = _eval_readiness(results, sample_policy, _DEFAULT_IDENTITY)
         assert readiness.overall_ready is True  # review doesn't block
@@ -448,7 +513,12 @@ class TestApprovalReadinessEvaluation:
     def test_expired_policy_blocks(self, expired_policy):
         """An expired policy makes overall_ready False."""
         results = [
-            _make_result("convergence_rhat", "pass", 1.02),
+            _make_result(
+                policy=expired_policy,
+                gate_name="convergence_rhat",
+                status="pass",
+                value=1.02,
+            ),
         ]
         as_of = datetime(2026, 7, 1, tzinfo=timezone.utc)
         readiness = _eval_readiness(
@@ -472,9 +542,21 @@ class TestApprovalReadinessEvaluation:
         )
         results = [
             stale,
-            _make_result("ppc_coverage", "pass", 85.0),
-            _make_result("backtest_mape", "pass", 20.0),
-            _make_result("divergences", "pass", 0),
+            _make_result(
+                policy=sample_policy,
+                gate_name="ppc_coverage",
+                status="pass",
+                value=85.0,
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="backtest_mape",
+                status="pass",
+                value=20.0,
+            ),
+            _make_result(
+                policy=sample_policy, gate_name="divergences", status="pass", value=0
+            ),
         ]
         readiness = _eval_readiness(results, sample_policy, _DEFAULT_IDENTITY)
         # A stale result is treated as missing — convergence_rhat is required
@@ -484,11 +566,29 @@ class TestApprovalReadinessEvaluation:
     def test_approved_waiver_unblocks(self, sample_policy):
         """A failing waivable gate unblocked by an approved waiver."""
         results = [
-            _make_result("convergence_rhat", "pass", 1.02),
+            _make_result(
+                policy=sample_policy,
+                gate_name="convergence_rhat",
+                status="pass",
+                value=1.02,
+            ),
             # ppc_coverage is waivable and fails
-            _make_result("ppc_coverage", "fail", 65.0, "Coverage below target"),
-            _make_result("backtest_mape", "pass", 20.0),
-            _make_result("divergences", "pass", 0),
+            _make_result(
+                policy=sample_policy,
+                gate_name="ppc_coverage",
+                status="fail",
+                value=65.0,
+                message="Coverage below target",
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="backtest_mape",
+                status="pass",
+                value=20.0,
+            ),
+            _make_result(
+                policy=sample_policy, gate_name="divergences", status="pass", value=0
+            ),
         ]
         ppc_gate = sample_policy.get_gate("ppc_coverage")
         assert ppc_gate is not None
@@ -515,10 +615,27 @@ class TestApprovalReadinessEvaluation:
     def test_non_waivable_failure_still_blocks(self, sample_policy):
         """A non-waivable gate that fails cannot be unblocked by a waiver."""
         results = [
-            _make_result("convergence_rhat", "fail", 1.2),
-            _make_result("ppc_coverage", "pass", 85.0),
-            _make_result("backtest_mape", "pass", 20.0),
-            _make_result("divergences", "pass", 0),
+            _make_result(
+                policy=sample_policy,
+                gate_name="convergence_rhat",
+                status="fail",
+                value=1.2,
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="ppc_coverage",
+                status="pass",
+                value=85.0,
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="backtest_mape",
+                status="pass",
+                value=20.0,
+            ),
+            _make_result(
+                policy=sample_policy, gate_name="divergences", status="pass", value=0
+            ),
         ]
         waivers = [
             ValidationWaiverReference(
@@ -539,10 +656,31 @@ class TestApprovalReadinessEvaluation:
     def test_multiple_blocking_failures_reported(self, sample_policy):
         """Multiple failing blocking gates are all reported."""
         results = [
-            _make_result("convergence_rhat", "fail", 1.2),
-            _make_result("ppc_coverage", "fail", 50.0),
-            _make_result("backtest_mape", "pass", 20.0),
-            _make_result("divergences", "fail", 5, "Divergences found"),
+            _make_result(
+                policy=sample_policy,
+                gate_name="convergence_rhat",
+                status="fail",
+                value=1.2,
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="ppc_coverage",
+                status="fail",
+                value=50.0,
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="backtest_mape",
+                status="pass",
+                value=20.0,
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="divergences",
+                status="fail",
+                value=5,
+                message="Divergences found",
+            ),
         ]
         readiness = _eval_readiness(results, sample_policy, _DEFAULT_IDENTITY)
         assert readiness.overall_ready is False
@@ -560,10 +698,27 @@ class TestApprovalReadinessEvaluation:
     def test_expired_waiver_does_not_unblock(self, sample_policy):
         """An expired waiver must not unblock a failing gate."""
         results = [
-            _make_result("convergence_rhat", "pass", 1.02),
-            _make_result("ppc_coverage", "fail", 65.0),
-            _make_result("backtest_mape", "pass", 20.0),
-            _make_result("divergences", "pass", 0),
+            _make_result(
+                policy=sample_policy,
+                gate_name="convergence_rhat",
+                status="pass",
+                value=1.02,
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="ppc_coverage",
+                status="fail",
+                value=65.0,
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="backtest_mape",
+                status="pass",
+                value=20.0,
+            ),
+            _make_result(
+                policy=sample_policy, gate_name="divergences", status="pass", value=0
+            ),
         ]
         waivers = [
             ValidationWaiverReference(
@@ -615,6 +770,11 @@ class TestApprovalReadinessEvaluation:
                 posterior_fingerprint="post-ghi",
                 policy_id="pol-scope",
                 policy_version="1.0",
+                policy_fingerprint=policy.fingerprint(),
+                gate_fingerprint=gate.fingerprint(),
+                model_identity_fingerprint=_DEFAULT_IDENTITY.fingerprint(),
+                diagnostic_artefact_fingerprint="diag-fp-001",
+                artefact_id="diag-001",
             ),
         ]
         readiness = _eval_readiness(results, policy, _DEFAULT_IDENTITY)
@@ -656,6 +816,11 @@ class TestApprovalReadinessEvaluation:
                 posterior_fingerprint="post-ghi",
                 policy_id="pol-review",
                 policy_version="1.0",
+                policy_fingerprint=policy.fingerprint(),
+                gate_fingerprint=gate.fingerprint(),
+                model_identity_fingerprint=_DEFAULT_IDENTITY.fingerprint(),
+                diagnostic_artefact_fingerprint="diag-fp-001",
+                artefact_id="diag-001",
             ),
         ]
         readiness = _eval_readiness(results, policy, _DEFAULT_IDENTITY)
@@ -672,10 +837,27 @@ class TestApprovalReadinessEvaluation:
 class TestReadinessToDict:
     def test_returns_dict_with_expected_keys(self, sample_policy):
         results = [
-            _make_result("convergence_rhat", "pass", 1.02),
-            _make_result("ppc_coverage", "pass", 85.0),
-            _make_result("backtest_mape", "pass", 20.0),
-            _make_result("divergences", "pass", 0),
+            _make_result(
+                policy=sample_policy,
+                gate_name="convergence_rhat",
+                status="pass",
+                value=1.02,
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="ppc_coverage",
+                status="pass",
+                value=85.0,
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="backtest_mape",
+                status="pass",
+                value=20.0,
+            ),
+            _make_result(
+                policy=sample_policy, gate_name="divergences", status="pass", value=0
+            ),
         ]
         readiness = _eval_readiness(results, sample_policy, _DEFAULT_IDENTITY)
         d = readiness_to_dict(readiness)
@@ -686,10 +868,28 @@ class TestReadinessToDict:
 
     def test_round_trip_blocking_failures(self, sample_policy):
         results = [
-            _make_result("convergence_rhat", "fail", 1.2, "Too high"),
-            _make_result("ppc_coverage", "pass", 85.0),
-            _make_result("backtest_mape", "pass", 20.0),
-            _make_result("divergences", "pass", 0),
+            _make_result(
+                policy=sample_policy,
+                gate_name="convergence_rhat",
+                status="fail",
+                value=1.2,
+                message="Too high",
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="ppc_coverage",
+                status="pass",
+                value=85.0,
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="backtest_mape",
+                status="pass",
+                value=20.0,
+            ),
+            _make_result(
+                policy=sample_policy, gate_name="divergences", status="pass", value=0
+            ),
         ]
         readiness = _eval_readiness(results, sample_policy, _DEFAULT_IDENTITY)
         d = readiness_to_dict(readiness)
@@ -699,10 +899,27 @@ class TestReadinessToDict:
 
     def test_waivers_appear_in_dict(self, sample_policy):
         results = [
-            _make_result("convergence_rhat", "pass", 1.02),
-            _make_result("ppc_coverage", "fail", 60.0),
-            _make_result("backtest_mape", "pass", 20.0),
-            _make_result("divergences", "pass", 0),
+            _make_result(
+                policy=sample_policy,
+                gate_name="convergence_rhat",
+                status="pass",
+                value=1.02,
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="ppc_coverage",
+                status="fail",
+                value=60.0,
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="backtest_mape",
+                status="pass",
+                value=20.0,
+            ),
+            _make_result(
+                policy=sample_policy, gate_name="divergences", status="pass", value=0
+            ),
         ]
         ppc_gate = sample_policy.get_gate("ppc_coverage")
         assert ppc_gate is not None
@@ -954,16 +1171,36 @@ class TestDuplicateAndUnknownGateRejection:
 
     def test_duplicate_result_gate_names_raises(self, sample_policy):
         results = [
-            _make_result("convergence_rhat", "pass", 1.02),
-            _make_result("convergence_rhat", "pass", 1.02),  # duplicate
+            _make_result(
+                policy=sample_policy,
+                gate_name="convergence_rhat",
+                status="pass",
+                value=1.02,
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="convergence_rhat",
+                status="pass",
+                value=1.02,
+            ),  # duplicate
         ]
         with pytest.raises(ValueError, match="Duplicate result gate names"):
             _eval_readiness(results, sample_policy, _DEFAULT_IDENTITY)
 
     def test_duplicate_waiver_gate_names_raises(self, sample_policy):
         results = [
-            _make_result("convergence_rhat", "pass", 1.02),
-            _make_result("ppc_coverage", "fail", 60.0),
+            _make_result(
+                policy=sample_policy,
+                gate_name="convergence_rhat",
+                status="pass",
+                value=1.02,
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="ppc_coverage",
+                status="fail",
+                value=60.0,
+            ),
         ]
         waivers = [
             ValidationWaiverReference(
@@ -985,15 +1222,33 @@ class TestDuplicateAndUnknownGateRejection:
             _eval_readiness(results, sample_policy, _DEFAULT_IDENTITY, waivers=waivers)
 
     def test_unknown_result_gate_raises(self, sample_policy):
+        # Use a raw ValidationResult (not _make_result) to bypass the gate-lookup guard
+        from ancestry_mmm.core.validation_policy import ValidationResult as _VR
+
         results = [
-            _make_result("nonexistent_gate", "pass", 1.0),
+            _VR(
+                gate_name="nonexistent_gate",
+                status="pass",
+                value=1.0,
+                model_run_id="run-123",
+                data_fingerprint="data-abc",
+                model_spec_fingerprint="spec-def",
+                posterior_fingerprint="post-ghi",
+                policy_id=sample_policy.policy_id,
+                policy_version=sample_policy.version,
+            ),
         ]
         with pytest.raises(ValueError, match="not present in policy"):
             _eval_readiness(results, sample_policy, _DEFAULT_IDENTITY)
 
     def test_unknown_waiver_gate_raises(self, sample_policy):
         results = [
-            _make_result("convergence_rhat", "pass", 1.02),
+            _make_result(
+                policy=sample_policy,
+                gate_name="convergence_rhat",
+                status="pass",
+                value=1.02,
+            ),
         ]
         waivers = [
             ValidationWaiverReference(
@@ -1009,8 +1264,18 @@ class TestDuplicateAndUnknownGateRejection:
 
     def test_multiple_active_waivers_for_same_gate_raises(self, sample_policy):
         results = [
-            _make_result("convergence_rhat", "pass", 1.02),
-            _make_result("ppc_coverage", "fail", 60.0),
+            _make_result(
+                policy=sample_policy,
+                gate_name="convergence_rhat",
+                status="pass",
+                value=1.02,
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="ppc_coverage",
+                status="fail",
+                value=60.0,
+            ),
         ]
         waivers = [
             ValidationWaiverReference(
@@ -1209,3 +1474,352 @@ class TestScopeMatcher:
         result = filter_applicable_gates(sample_policy, scope)
         for gate, applicable, reason in result:
             assert applicable is True
+
+
+# ---------------------------------------------------------------------------
+# PR 66A: Lifecycle issues, schema-v2 golden fixture, create_policy_backed
+# ---------------------------------------------------------------------------
+
+
+class TestPolicyLifecycleIssues:
+    """PR 66A: Lifecycle issues are populated for expired/superseded policies."""
+
+    def test_lifecycle_issues_expired(self, expired_policy):
+        """An expired policy records a lifecycle issue."""
+        results = [
+            _make_result(
+                policy=expired_policy,
+                gate_name="convergence_rhat",
+                status="pass",
+                value=1.02,
+            ),
+        ]
+        as_of = datetime(2026, 7, 1, tzinfo=timezone.utc)
+        readiness = _eval_readiness(
+            results, expired_policy, _DEFAULT_IDENTITY, as_of=as_of
+        )
+        assert len(readiness.lifecycle_issues) >= 1
+        assert any(li.status == "expired" for li in readiness.lifecycle_issues)
+
+    def test_lifecycle_issues_superseded(self, convergence_gate):
+        """A superseded policy records a lifecycle issue."""
+        policy = ThresholdPolicy(
+            policy_id="val-pol-superseded",
+            version="1.0",
+            scope="all_models",
+            gates=[convergence_gate],
+            owner="Modelling Team",
+            approval_date=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            superseded_by="val-pol-002",
+        )
+        results = [
+            _make_result(
+                policy=policy, gate_name="convergence_rhat", status="pass", value=1.02
+            ),
+        ]
+        readiness = _eval_readiness(results, policy, _DEFAULT_IDENTITY)
+        assert len(readiness.lifecycle_issues) >= 1
+        assert any(li.status == "superseded" for li in readiness.lifecycle_issues)
+
+    def test_lifecycle_issues_both(self, convergence_gate):
+        """An expired AND superseded policy records both issues."""
+        policy = ThresholdPolicy(
+            policy_id="val-pol-both",
+            version="1.0",
+            scope="all_models",
+            gates=[convergence_gate],
+            owner="Modelling Team",
+            approval_date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            expiry=datetime(2025, 6, 1, tzinfo=timezone.utc),
+            superseded_by="val-pol-003",
+        )
+        results = [
+            _make_result(
+                policy=policy, gate_name="convergence_rhat", status="pass", value=1.02
+            ),
+        ]
+        as_of = datetime(2026, 7, 1, tzinfo=timezone.utc)
+        readiness = _eval_readiness(results, policy, _DEFAULT_IDENTITY, as_of=as_of)
+        statuses = {li.status for li in readiness.lifecycle_issues}
+        assert "expired" in statuses
+        assert "superseded" in statuses
+
+    def test_overall_ready_false_when_lifecycle_blocks(self, expired_policy):
+        """overall_ready is False when lifecycle issues exist (expired policy)."""
+        results = [
+            _make_result(
+                policy=expired_policy,
+                gate_name="convergence_rhat",
+                status="pass",
+                value=1.02,
+            ),
+        ]
+        as_of = datetime(2026, 7, 1, tzinfo=timezone.utc)
+        readiness = _eval_readiness(
+            results, expired_policy, _DEFAULT_IDENTITY, as_of=as_of
+        )
+        assert readiness.overall_ready is False
+
+
+class TestSchemaV2GoldenFixture:
+    """PR 66A: Schema-v2 fingerprint backward compatibility."""
+
+    def test_schema_v2_fingerprint_includes_scope_fields(self, sample_policy):
+        """V2 fingerprint must include model_type, market, intended_use etc."""
+        results = [
+            _make_result(
+                policy=sample_policy,
+                gate_name="convergence_rhat",
+                status="pass",
+                value=1.02,
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="ppc_coverage",
+                status="pass",
+                value=85.0,
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="backtest_mape",
+                status="pass",
+                value=20.0,
+            ),
+            _make_result(
+                policy=sample_policy, gate_name="divergences", status="pass", value=0
+            ),
+        ]
+        readiness = _eval_readiness(results, sample_policy, _DEFAULT_IDENTITY)
+        # Force schema v2 for fingerprint test
+        v2_readiness = ApprovalReadiness(
+            readiness_artefact_id=readiness.readiness_artefact_id,
+            policy_id=readiness.policy_id,
+            policy_version=readiness.policy_version,
+            policy_fingerprint=readiness.policy_fingerprint,
+            model_identity_fingerprint=readiness.model_identity_fingerprint,
+            diagnostic_artefact_id=readiness.diagnostic_artefact_id,
+            diagnostic_artefact_fingerprint=readiness.diagnostic_artefact_fingerprint,
+            gate_results=readiness.gate_results,
+            blocking_failures=readiness.blocking_failures,
+            review_items=readiness.review_items,
+            passes=readiness.passes,
+            missing_required_gates=readiness.missing_required_gates,
+            waivers_applied=readiness.waivers_applied,
+            evaluated_at=readiness.evaluated_at,
+            overall_ready=readiness.overall_ready,
+            schema_version=2,
+            config_errors=readiness.config_errors,
+            model_type=readiness.model_type,
+            market=readiness.market,
+            intended_use=readiness.intended_use,
+            scope_context_fingerprint=readiness.scope_context_fingerprint,
+            gate_applicability=readiness.gate_applicability,
+        )
+        fp = v2_readiness.fingerprint()
+        assert isinstance(fp, str)
+        assert len(fp) == 64  # SHA-256 hex digest
+        # The fingerprint must be deterministic
+        fp2 = v2_readiness.fingerprint()
+        assert fp == fp2
+
+
+class TestCreatePolicyBackedModelApproval:
+    """PR 66A: create_policy_backed_model_approval enforces schema v3."""
+
+    def test_requires_schema_v3(self, sample_policy):
+        """Creating a policy-backed approval from schema v2 readiness is rejected."""
+        from ancestry_mmm.core.approval import (
+            create_policy_backed_model_approval,
+            ValidationPolicyBlockedError,
+        )
+
+        results = [
+            _make_result(
+                policy=sample_policy,
+                gate_name="convergence_rhat",
+                status="pass",
+                value=1.02,
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="ppc_coverage",
+                status="pass",
+                value=85.0,
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="backtest_mape",
+                status="pass",
+                value=20.0,
+            ),
+            _make_result(
+                policy=sample_policy, gate_name="divergences", status="pass", value=0
+            ),
+        ]
+        readiness = _eval_readiness(results, sample_policy, _DEFAULT_IDENTITY)
+        # Force schema v2 by constructing directly with schema_version=2
+        v2_readiness = ApprovalReadiness(
+            readiness_artefact_id=readiness.readiness_artefact_id,
+            policy_id=readiness.policy_id,
+            policy_version=readiness.policy_version,
+            policy_fingerprint=readiness.policy_fingerprint,
+            model_identity_fingerprint=readiness.model_identity_fingerprint,
+            diagnostic_artefact_id=readiness.diagnostic_artefact_id,
+            diagnostic_artefact_fingerprint=readiness.diagnostic_artefact_fingerprint,
+            gate_results=readiness.gate_results,
+            blocking_failures=readiness.blocking_failures,
+            review_items=readiness.review_items,
+            passes=readiness.passes,
+            missing_required_gates=readiness.missing_required_gates,
+            waivers_applied=readiness.waivers_applied,
+            evaluated_at=readiness.evaluated_at,
+            overall_ready=readiness.overall_ready,
+            schema_version=2,
+            config_errors=readiness.config_errors,
+            model_type=readiness.model_type,
+            market=readiness.market,
+            intended_use=readiness.intended_use,
+            scope_context_fingerprint=readiness.scope_context_fingerprint,
+            gate_applicability=readiness.gate_applicability,
+            lifecycle_issues=readiness.lifecycle_issues,
+        )
+        with pytest.raises(ValidationPolicyBlockedError, match="Schema v3"):
+            create_policy_backed_model_approval(
+                approved_by="Reviewer A",
+                readiness=v2_readiness,
+                current_policy=sample_policy,
+                model_run_id="run-123",
+                data_fingerprint="data-abc",
+                model_spec_fingerprint="spec-def",
+                posterior_fingerprint="post-ghi",
+            )
+
+    def test_requires_overall_ready(self, sample_policy):
+        """Creating a policy-backed approval from unready readiness is rejected."""
+        from ancestry_mmm.core.approval import (
+            create_policy_backed_model_approval,
+            ValidationPolicyBlockedError,
+        )
+
+        # Readiness with a failing gate
+        results = [
+            _make_result(
+                policy=sample_policy,
+                gate_name="convergence_rhat",
+                status="fail",
+                value=1.2,
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="ppc_coverage",
+                status="pass",
+                value=85.0,
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="backtest_mape",
+                status="pass",
+                value=20.0,
+            ),
+            _make_result(
+                policy=sample_policy, gate_name="divergences", status="pass", value=0
+            ),
+        ]
+        readiness = _eval_readiness(results, sample_policy, _DEFAULT_IDENTITY)
+        with pytest.raises(ValidationPolicyBlockedError, match="not ready"):
+            create_policy_backed_model_approval(
+                approved_by="Reviewer A",
+                readiness=readiness,
+                current_policy=sample_policy,
+                model_run_id="run-123",
+                data_fingerprint="data-abc",
+                model_spec_fingerprint="spec-def",
+                posterior_fingerprint="post-ghi",
+            )
+
+    def test_requires_active_current_policy(self, expired_policy):
+        """Creating a policy-backed approval with inactive policy is rejected."""
+        from ancestry_mmm.core.approval import (
+            create_policy_backed_model_approval,
+            ValidationPolicyBlockedError,
+        )
+
+        # Need a passing readiness with the expired policy
+        results = [
+            _make_result(
+                policy=expired_policy,
+                gate_name="convergence_rhat",
+                status="pass",
+                value=1.02,
+            ),
+        ]
+        as_of = datetime(2026, 5, 1, tzinfo=timezone.utc)  # Before expiry
+        readiness = _eval_readiness(
+            results, expired_policy, _DEFAULT_IDENTITY, as_of=as_of
+        )
+        # readiness should be schema v3 and overall_ready
+        assert readiness.schema_version >= 3
+        # But current_policy is expired
+        with pytest.raises(ValidationPolicyBlockedError, match="not active"):
+            create_policy_backed_model_approval(
+                approved_by="Reviewer A",
+                readiness=readiness,
+                current_policy=expired_policy,
+                model_run_id="run-123",
+                data_fingerprint="data-abc",
+                model_spec_fingerprint="spec-def",
+                posterior_fingerprint="post-ghi",
+            )
+
+    def test_successful_creation(self, sample_policy):
+        """A fully passing schema-v3 readiness creates a valid policy-backed approval."""
+        from ancestry_mmm.core.approval import (
+            create_policy_backed_model_approval,
+            fingerprint_model_approval,
+        )
+
+        results = [
+            _make_result(
+                policy=sample_policy,
+                gate_name="convergence_rhat",
+                status="pass",
+                value=1.02,
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="ppc_coverage",
+                status="pass",
+                value=85.0,
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="backtest_mape",
+                status="pass",
+                value=20.0,
+            ),
+            _make_result(
+                policy=sample_policy, gate_name="divergences", status="pass", value=0
+            ),
+        ]
+        readiness = _eval_readiness(results, sample_policy, _DEFAULT_IDENTITY)
+        approval = create_policy_backed_model_approval(
+            approved_by="Reviewer A",
+            readiness=readiness,
+            current_policy=sample_policy,
+            model_run_id="run-123",
+            data_fingerprint="data-abc",
+            model_spec_fingerprint="spec-def",
+            posterior_fingerprint="post-ghi",
+            run_label="Test run",
+            notes="Approved for testing",
+        )
+        assert approval.validation_policy_id == "val-pol-001"
+        assert approval.validation_policy_version == "1.0.0"
+        assert approval.validation_policy_fingerprint == sample_policy.fingerprint()
+        assert approval.readiness_artefact_id == readiness.readiness_artefact_id
+        assert approval.readiness_fingerprint == readiness.fingerprint()
+        assert approval.is_model_bound()
+        # Verify the fingerprint is deterministic
+        fp1 = fingerprint_model_approval(approval)
+        fp2 = fingerprint_model_approval(approval)
+        assert fp1 == fp2

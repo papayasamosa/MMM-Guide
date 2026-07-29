@@ -21,13 +21,16 @@ posterior draws, then summarized.
 from __future__ import annotations
 
 import warnings
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 import arviz as az
 import numpy as np
 import pandas as pd
 
 from .hierarchical_model import FHModelMeta
+
+if TYPE_CHECKING:
+    from .validation_policy import ThresholdPolicy
 from .market_specific_predict import (
     extract_market_specific_posterior_params,
     generate_market_channel_curve,
@@ -331,6 +334,7 @@ def evaluate_scenario_with_uncertainty(
     operation: str = "planning",
     nbt_completeness_metadata: Optional[dict] = None,
     value_mapping: Optional[OutcomeValueMapping] = None,
+    current_policy: Optional["ThresholdPolicy"] = None,
 ) -> Dict[str, object]:
     """
     Per-draw scenario evaluation: `core.optimization.evaluate_scenario` run
@@ -376,6 +380,7 @@ def evaluate_scenario_with_uncertainty(
             data_fingerprint=data_fingerprint,
             model_spec_fingerprint=model_spec_fingerprint,
             posterior_fingerprint=posterior_fingerprint,
+            current_policy=current_policy,
         )
         if planning_objective is None:
             from .outcome_approval import OutcomeApprovalBlockedError

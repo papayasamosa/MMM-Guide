@@ -238,6 +238,7 @@ class TestValidationPolicyIntegration:
             scope="test",
             gates=[TestValidationPolicyIntegration._make_gate()],
             owner="Test Owner",
+            approval_date=datetime(2026, 1, 1, tzinfo=timezone.utc),
         )
 
     @staticmethod
@@ -252,6 +253,8 @@ class TestValidationPolicyIntegration:
         from ancestry_mmm.core.model_identity import ModelIdentity as _MI
 
         policy = TestValidationPolicyIntegration._make_policy(policy_id, version)
+        gate = policy.get_gate("convergence_rhat")
+        assert gate is not None
         results = [
             ValidationResult(
                 gate_name="convergence_rhat",
@@ -264,6 +267,13 @@ class TestValidationPolicyIntegration:
                 posterior_fingerprint="post-ghi",
                 policy_id=policy_id,
                 policy_version=version,
+                policy_fingerprint=policy.fingerprint(),
+                gate_fingerprint=gate.fingerprint(),
+                model_identity_fingerprint=_MI(
+                    "run-123", "data-abc", "spec-def", "post-ghi"
+                ).fingerprint(),
+                diagnostic_artefact_fingerprint="diag-fp-001",
+                artefact_id="diag-001",
             )
         ]
         return _eval_readiness(
@@ -286,10 +296,12 @@ class TestValidationPolicyIntegration:
     def test_policy_bound_approval_passes_with_readiness(self):
         readiness = self._make_readiness()
         approval = self._make_policy_approval(readiness)
+        policy = self._make_policy()
         result = require_matching_approval(
             approval,
             **IDENTITY,
             approval_readiness=readiness,
+            current_policy=policy,
         )
         assert result is approval
 
@@ -305,6 +317,7 @@ class TestValidationPolicyIntegration:
         passing = self._make_readiness()
         approval = self._make_policy_approval(passing)
         failing = self._make_readiness(status="fail")
+        policy = self._make_policy()
         from ancestry_mmm.core.approval import ValidationPolicyBlockedError
 
         with pytest.raises(ValidationPolicyBlockedError):
@@ -312,6 +325,7 @@ class TestValidationPolicyIntegration:
                 approval,
                 **IDENTITY,
                 approval_readiness=failing,
+                current_policy=policy,
             )
 
     def test_non_policy_approval_ignores_readiness(self):

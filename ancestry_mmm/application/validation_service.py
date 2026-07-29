@@ -113,13 +113,19 @@ class ValidationService:
             errors.append("No posterior trace provided for validation.")
             return ValidationServiceResult(errors=errors)
 
-        # PR 65A: Official path requires explicit model type
-        if v_input.model_identity is not None and v_input.model_type is None:
-            errors.append(
-                "Official validation requires an explicit model_type "
-                "('shared' or 'market_specific')."
-            )
-            return ValidationServiceResult(errors=errors)
+        # PR 65A: Official path requires explicit model type.
+        # Narrow the Optional[str] to str after the guard for mypy.
+        model_type: str
+        if v_input.model_identity is not None:
+            if v_input.model_type is None:
+                errors.append(
+                    "Official validation requires an explicit model_type "
+                    "('shared' or 'market_specific')."
+                )
+                return ValidationServiceResult(errors=errors)
+            model_type = v_input.model_type
+        else:
+            model_type = v_input.model_type or "shared"
 
         # --- PR 62B: Check policy config before any evaluation ---
         policy_config_errors = validate_policy_config(policy)
@@ -135,7 +141,7 @@ class ValidationService:
                         diagnostic_artefact_id=v_input.diagnostic_artefact_id or "",
                         diagnostic_artefact_fingerprint=v_input.diagnostic_artefact_fingerprint
                         or "",
-                        model_type=v_input.model_type,
+                        model_type=model_type,
                         market=v_input.market,
                         intended_use=v_input.intended_use,
                     )
@@ -241,7 +247,7 @@ class ValidationService:
                     policy=policy,
                     diagnostic_artefact_id=v_input.diagnostic_artefact_id or "",
                     diagnostic_artefact_fingerprint=diag_fp,
-                    model_type=v_input.model_type,
+                    model_type=model_type,
                     market=v_input.market,
                     intended_use=v_input.intended_use,
                 )

@@ -973,7 +973,13 @@ class ApprovalReadiness:
         return hashlib.sha256(encoded).hexdigest()
 
     def _fingerprint_v2(self) -> str:
-        """Schema-v2 fingerprint (evidence-bound, pre-scope)."""
+        """Schema-v2 fingerprint (full scope context, matching PR 64A layout).
+
+        Includes model_type, market, intended_use, scope_context_fingerprint,
+        and gate_applicability — these were part of the original v2 readiness
+        dataclass introduced in PR 64A and must be fingerprinted for
+        backward-compatible hash verification.
+        """
         payload = {
             "readiness_artefact_id": self.readiness_artefact_id,
             "policy_id": self.policy_id,
@@ -995,6 +1001,11 @@ class ApprovalReadiness:
             "overall_ready": self.overall_ready,
             "schema_version": 2,
             "config_errors": sorted(self.config_errors),
+            "model_type": self.model_type,
+            "market": self.market,
+            "intended_use": self.intended_use,
+            "scope_context_fingerprint": self.scope_context_fingerprint,
+            "gate_applicability": sorted(self.gate_applicability, key=lambda x: x[0]),
         }
         encoded = json.dumps(
             payload, sort_keys=True, separators=(",", ":"), default=str
@@ -1575,6 +1586,32 @@ def evaluate_approval_readiness(
         and len(missing_required_gates) == 0
     )
 
+    # PR 66A: Populate lifecycle issues — one per applicable reason.
+    if policy.is_expired(as_of=as_of):
+        lifecycle_issues.append(
+            PolicyLifecycleIssue(
+                status="expired",
+                message=(
+                    f"Validation policy '{policy.policy_id}' version "
+                    f"'{policy.version}' expired on "
+                    f"{policy.expiry.isoformat() if policy.expiry else 'unknown'}. "
+                    f"Re-evaluate readiness with a current policy."
+                ),
+            )
+        )
+    if policy.superseded_by:
+        lifecycle_issues.append(
+            PolicyLifecycleIssue(
+                status="superseded",
+                message=(
+                    f"Validation policy '{policy.policy_id}' version "
+                    f"'{policy.version}' has been superseded by "
+                    f"'{policy.superseded_by}'. "
+                    f"Re-evaluate readiness with the superseding policy."
+                ),
+            )
+        )
+
     # PR 65A: Compute scope context fingerprint
     scope_fp_input = f"{evidence_context.model_type}|{evidence_context.market or ''}|{evidence_context.intended_use}"
     scope_context_fingerprint = hashlib.sha256(
@@ -1901,6 +1938,12 @@ def validate_policy_config(policy: ThresholdPolicy) -> list[str]:
 @dataclass(frozen=True)
 class ValidationScopeContext:
     """Typed scope for matching gates against operational context.
+
+    .. deprecated::
+       Use ``ValidationScope`` instead. ``ValidationScopeContext`` is
+       retained for backward compatibility and will be removed in a
+       future PR. The ``ValidationScope`` class provides the same
+       functionality with a cleaner interface.
 
     PR 62B: Every gate must be:
     - applicable and evaluated, or

@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Literal, Optional, Sequence
 
 if TYPE_CHECKING:
-    from .validation_policy import ApprovalReadiness
+    from .validation_policy import ApprovalReadiness, ThresholdPolicy
 
 from .approval import ModelApproval, fingerprint_model_approval
 from .hierarchical_model import FHModelMeta
@@ -79,6 +79,7 @@ def resolve_planning_governance(
     outcome_approvals: Sequence[OutcomeApproval],
     nbt_completeness_metadata: dict | NetBillthroughCompletenessMetadata | None = None,
     approval_readiness: Optional["ApprovalReadiness"] = None,
+    current_policy: Optional["ThresholdPolicy"] = None,
 ) -> ResolvedPlanningGovernance:
     """Resolve planning governance exactly once for a given operation.
 
@@ -117,6 +118,7 @@ def resolve_planning_governance(
         model_spec_fingerprint=model_spec_fingerprint,
         posterior_fingerprint=posterior_fingerprint,
         approval_readiness=approval_readiness,
+        current_policy=current_policy,
     )
 
     catalogue_by_id = get_catalogue(meta)
