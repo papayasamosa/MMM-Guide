@@ -56,23 +56,25 @@ $browsersPath = Join-Path $DriveRoot "cache\ms-playwright"
 $chromiumPresent = (Test-Path $browsersPath) -and ((Get-ChildItem $browsersPath -Directory -Filter "chromium-*" -ErrorAction SilentlyContinue).Count -gt 0)
 Test-Check "Chromium installed under D:" $chromiumPresent "path: $browsersPath"
 
-# 7. Streamlit importable via the project's uv environment
-if ($uv) {
+# 7. Streamlit importable via the project's venv Python
+$venvPython = Join-Path $repoRoot ".venv\Scripts\python.exe"
+if (Test-Path $venvPython) {
     Push-Location $repoRoot
     try {
-        & uv run python -c "import streamlit" | Out-Null
-        Test-Check "Streamlit importable (uv run)" ($LASTEXITCODE -eq 0) "uv run python -c 'import streamlit'"
+        & $venvPython -c "import streamlit" 2>&1 | Out-Null
+        Test-Check "Streamlit importable (venv)" ($LASTEXITCODE -eq 0) "$venvPython -c 'import streamlit'"
     } finally {
         Pop-Location
     }
 } else {
-    Test-Check "Streamlit importable (uv run)" $false "skipped - uv not found"
+    Test-Check "Streamlit importable (venv)" $false "skipped - $venvPython not found"
 }
 
 # 8. Required D-drive directories exist
 $requiredDirs = @(
     "tools\mcp", "cache\npm", "cache\ms-playwright",
-    "secrets", "test-artifacts\playwright-mcp", "logs\mcp"
+    "temp", "secrets", "test-artifacts\playwright-mcp",
+    "logs\mcp"
 )
 foreach ($d in $requiredDirs) {
     $full = Join-Path $DriveRoot $d

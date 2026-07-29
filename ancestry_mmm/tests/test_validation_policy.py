@@ -1427,8 +1427,8 @@ class TestMalformedPolicyConfig:
 
 
 class TestLifecycleOnConfigError:
-    """PR 67A: lifecycle issues must be populated even when config errors
-    trigger the early return path."""
+    """PR 67A + 69A: lifecycle issues must be populated exactly once even
+    when config errors trigger the early return path."""
 
     def _make_bad_policy(self, **overrides) -> ThresholdPolicy:
         gate = ValidationGate(
@@ -1448,26 +1448,28 @@ class TestLifecycleOnConfigError:
         return ThresholdPolicy(**kwargs)
 
     def test_config_error_plus_expired(self):
-        """A malformed AND expired policy records both in readiness."""
+        """Invalid config + expired = exactly one expired issue (no duplication)."""
         policy = self._make_bad_policy(
             expiry=datetime(2025, 6, 1, tzinfo=timezone.utc),
         )
         as_of = datetime(2026, 7, 1, tzinfo=timezone.utc)
         readiness = _eval_readiness([], policy, _DEFAULT_IDENTITY, as_of=as_of)
         assert len(readiness.config_errors) > 0
-        assert len(readiness.lifecycle_issues) >= 1
-        assert any(li.status == "expired" for li in readiness.lifecycle_issues)
+        assert len(readiness.lifecycle_issues) == 1
+        assert readiness.lifecycle_issues[0].status == "expired"
+        assert "Re-evaluate readiness" in readiness.lifecycle_issues[0].message
 
     def test_config_error_plus_superseded(self):
-        """A malformed AND superseded policy records both in readiness."""
+        """Invalid config + superseded = exactly one superseded issue."""
         policy = self._make_bad_policy(superseded_by="pol-v2")
         readiness = _eval_readiness([], policy, _DEFAULT_IDENTITY)
         assert len(readiness.config_errors) > 0
-        assert len(readiness.lifecycle_issues) >= 1
-        assert any(li.status == "superseded" for li in readiness.lifecycle_issues)
+        assert len(readiness.lifecycle_issues) == 1
+        assert readiness.lifecycle_issues[0].status == "superseded"
+        assert "Re-evaluate readiness" in readiness.lifecycle_issues[0].message
 
     def test_config_error_plus_expired_and_superseded(self):
-        """A malformed, expired AND superseded policy records all three."""
+        """Invalid config + expired + superseded = exactly two issues (one each)."""
         policy = self._make_bad_policy(
             expiry=datetime(2025, 6, 1, tzinfo=timezone.utc),
             superseded_by="pol-v2",
@@ -1475,9 +1477,14 @@ class TestLifecycleOnConfigError:
         as_of = datetime(2026, 7, 1, tzinfo=timezone.utc)
         readiness = _eval_readiness([], policy, _DEFAULT_IDENTITY, as_of=as_of)
         assert len(readiness.config_errors) > 0
-        statuses = {li.status for li in readiness.lifecycle_issues}
-        assert "expired" in statuses
-        assert "superseded" in statuses
+        assert len(readiness.lifecycle_issues) == 2
+        assert readiness.lifecycle_issues[0].status == "expired"
+        assert readiness.lifecycle_issues[1].status == "superseded"
+        # Stable ordering
+        assert [li.status for li in readiness.lifecycle_issues] == [
+            "expired",
+            "superseded",
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -1682,10 +1689,10 @@ class TestScopeMatcher:
 
 
 class TestPolicyLifecycleIssues:
-    """PR 66A: Lifecycle issues are populated for expired/superseded policies."""
+    """PR 66A + 69A: Lifecycle issues are populated exactly once per condition."""
 
     def test_lifecycle_issues_expired(self, expired_policy):
-        """An expired policy records a lifecycle issue."""
+        """An expired policy produces exactly one expired issue."""
         results = [
             _make_result(
                 policy=expired_policy,
@@ -1698,11 +1705,13 @@ class TestPolicyLifecycleIssues:
         readiness = _eval_readiness(
             results, expired_policy, _DEFAULT_IDENTITY, as_of=as_of
         )
-        assert len(readiness.lifecycle_issues) >= 1
-        assert any(li.status == "expired" for li in readiness.lifecycle_issues)
+        # Exactly one issue, status=expired — no duplication
+        assert len(readiness.lifecycle_issues) == 1
+        assert readiness.lifecycle_issues[0].status == "expired"
+        assert "Re-evaluate readiness" in readiness.lifecycle_issues[0].message
 
     def test_lifecycle_issues_superseded(self, convergence_gate):
-        """A superseded policy records a lifecycle issue."""
+        """A superseded policy produces exactly one superseded issue."""
         policy = ThresholdPolicy(
             policy_id="val-pol-superseded",
             version="1.0",
@@ -1718,11 +1727,13 @@ class TestPolicyLifecycleIssues:
             ),
         ]
         readiness = _eval_readiness(results, policy, _DEFAULT_IDENTITY)
-        assert len(readiness.lifecycle_issues) >= 1
-        assert any(li.status == "superseded" for li in readiness.lifecycle_issues)
+        # Exactly one issue, status=superseded — no duplication
+        assert len(readiness.lifecycle_issues) == 1
+        assert readiness.lifecycle_issues[0].status == "superseded"
+        assert "Re-evaluate readiness" in readiness.lifecycle_issues[0].message
 
     def test_lifecycle_issues_both(self, convergence_gate):
-        """An expired AND superseded policy records both issues."""
+        """An expired AND superseded policy produces exactly two issues (one each)."""
         policy = ThresholdPolicy(
             policy_id="val-pol-both",
             version="1.0",
@@ -1740,9 +1751,13 @@ class TestPolicyLifecycleIssues:
         ]
         as_of = datetime(2026, 7, 1, tzinfo=timezone.utc)
         readiness = _eval_readiness(results, policy, _DEFAULT_IDENTITY, as_of=as_of)
-        statuses = {li.status for li in readiness.lifecycle_issues}
-        assert "expired" in statuses
-        assert "superseded" in statuses
+        # Exactly two issues — one expired, one superseded
+        assert len(readiness.lifecycle_issues) == 2
+        assert readiness.lifecycle_issues[0].status == "expired"
+        assert readiness.lifecycle_issues[1].status == "superseded"
+        # Stable ordering: expired before superseded
+        statuses = [li.status for li in readiness.lifecycle_issues]
+        assert statuses == ["expired", "superseded"]
 
     def test_overall_ready_false_when_lifecycle_blocks(self, expired_policy):
         """overall_ready is False when lifecycle issues exist (expired policy)."""
@@ -1759,6 +1774,113 @@ class TestPolicyLifecycleIssues:
             results, expired_policy, _DEFAULT_IDENTITY, as_of=as_of
         )
         assert readiness.overall_ready is False
+
+    def test_lifecycle_round_trip_preserves_list(self, expired_policy):
+        """Schema-v3 round trip preserves the exact lifecycle_issues list."""
+        results = [
+            _make_result(
+                policy=expired_policy,
+                gate_name="convergence_rhat",
+                status="pass",
+                value=1.02,
+            ),
+        ]
+        as_of = datetime(2026, 7, 1, tzinfo=timezone.utc)
+        readiness = _eval_readiness(
+            results, expired_policy, _DEFAULT_IDENTITY, as_of=as_of
+        )
+        d = readiness_to_dict(readiness)
+        restored = ApprovalReadiness.from_dict(d)
+        assert len(restored.lifecycle_issues) == len(readiness.lifecycle_issues)
+        for original, restored_li in zip(
+            readiness.lifecycle_issues, restored.lifecycle_issues
+        ):
+            assert original.status == restored_li.status
+            assert original.message == restored_li.message
+
+    def test_lifecycle_fingerprint_deterministic(self, expired_policy):
+        """Lifecycle issues produce a deterministic readiness fingerprint
+        (same object, repeated call)."""
+        results = [
+            _make_result(
+                policy=expired_policy,
+                gate_name="convergence_rhat",
+                status="pass",
+                value=1.02,
+            ),
+        ]
+        as_of = datetime(2026, 7, 1, tzinfo=timezone.utc)
+        readiness = _eval_readiness(
+            results, expired_policy, _DEFAULT_IDENTITY, as_of=as_of
+        )
+        fp1 = readiness.fingerprint()
+        fp2 = readiness.fingerprint()
+        assert fp1 == fp2
+
+    def test_lifecycle_message_structure_consistent_across_paths(
+        self, convergence_gate
+    ):
+        """Config-error and normal paths produce the same message structure."""
+        # Normal path — valid config, expired + superseded
+        normal_policy = ThresholdPolicy(
+            policy_id="val-pol-msg-normal",
+            version="1.0",
+            scope="all_models",
+            gates=[convergence_gate],
+            owner="Modelling Team",
+            approval_date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            expiry=datetime(2025, 6, 1, tzinfo=timezone.utc),
+            superseded_by="val-pol-002",
+        )
+        normal_results = [
+            _make_result(
+                policy=normal_policy,
+                gate_name="convergence_rhat",
+                status="pass",
+                value=1.02,
+            ),
+        ]
+        as_of = datetime(2026, 7, 1, tzinfo=timezone.utc)
+        normal_readiness = _eval_readiness(
+            normal_results, normal_policy, _DEFAULT_IDENTITY, as_of=as_of
+        )
+
+        # Config-error path — bad gate, expired + superseded
+        bad_gate = ValidationGate(
+            name="unknown_evaluator_gate",
+            description="No evaluator",
+            acceptable_range=(0.0, 1.0),
+        )
+        error_policy = ThresholdPolicy(
+            policy_id="val-pol-msg-error",
+            version="1.0",
+            scope="test",
+            gates=[bad_gate],
+            owner="Test",
+            approval_date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            expiry=datetime(2025, 6, 1, tzinfo=timezone.utc),
+            superseded_by="val-pol-002",
+        )
+        error_readiness = _eval_readiness(
+            [], error_policy, _DEFAULT_IDENTITY, as_of=as_of
+        )
+
+        # Same number of issues, same statuses, same message pattern
+        assert len(normal_readiness.lifecycle_issues) == len(
+            error_readiness.lifecycle_issues
+        )
+        for n_li, e_li in zip(
+            normal_readiness.lifecycle_issues, error_readiness.lifecycle_issues
+        ):
+            assert n_li.status == e_li.status
+            # Messages follow the same pattern structure
+            assert ("expired on" in n_li.message) == ("expired on" in e_li.message)
+            assert ("superseded by" in n_li.message) == (
+                "superseded by" in e_li.message
+            )
+            assert ("Re-evaluate readiness" in n_li.message) == (
+                "Re-evaluate readiness" in e_li.message
+            )
 
 
 class TestSchemaV2GoldenFixture:

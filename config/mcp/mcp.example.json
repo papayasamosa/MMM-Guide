@@ -19,7 +19,8 @@
     "",
     "playwright: --output-dir and PLAYWRIGHT_BROWSERS_PATH must point under",
     "  your D-drive (or equivalent non-C) tooling root. --allowed-origins",
-    "  restricts navigation to your local Streamlit dev server.",
+    "  is an origin allowlist for navigation convenience, not a network",
+    "  security boundary; it does not constrain every redirect or request.",
     "",
     "huggingface: do not hand-write this entry. Generate it from",
     "  https://huggingface.co/settings/mcp while logged in, select your coding",
@@ -32,7 +33,7 @@
     },
     "context7": {
       "command": "cmd",
-      "args": ["/c", "npx", "-y", "@upstash/context7-mcp@latest"],
+      "args": ["/c", "npx", "-y", "@upstash/context7-mcp@3.2.5"],
       "env": {
         "CONTEXT7_API_KEY": "${CONTEXT7_API_KEY}",
         "npm_config_cache": "D:\\Ancestry-MMM\\cache\\npm"
@@ -44,7 +45,7 @@
         "/c",
         "npx",
         "-y",
-        "@playwright/mcp@latest",
+        "@playwright/mcp@0.0.78",
         "--isolated",
         "--headless",
         "--browser",

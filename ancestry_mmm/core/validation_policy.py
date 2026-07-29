@@ -1402,6 +1402,8 @@ def evaluate_approval_readiness(
     waivers = waivers or []
 
     # --- PR 67A: Populate lifecycle issues before any return path ---
+    # These are the ONLY place lifecycle issues are created. The normal-path
+    # list is initialised from this same source; no second append block follows.
     lifecycle_issues_before_gates: list[PolicyLifecycleIssue] = []
     if policy.is_expired(as_of=as_of):
         lifecycle_issues_before_gates.append(
@@ -1410,7 +1412,8 @@ def evaluate_approval_readiness(
                 message=(
                     f"Validation policy '{policy.policy_id}' version "
                     f"'{policy.version}' expired on "
-                    f"{policy.expiry.isoformat() if policy.expiry else 'unknown'}."
+                    f"{policy.expiry.isoformat() if policy.expiry else 'unknown'}. "
+                    f"Re-evaluate readiness with a current policy."
                 ),
             )
         )
@@ -1421,7 +1424,8 @@ def evaluate_approval_readiness(
                 message=(
                     f"Validation policy '{policy.policy_id}' version "
                     f"'{policy.version}' has been superseded by "
-                    f"'{policy.superseded_by}'."
+                    f"'{policy.superseded_by}'. "
+                    f"Re-evaluate readiness with the superseding policy."
                 ),
             )
         )
@@ -1611,32 +1615,6 @@ def evaluate_approval_readiness(
         and len(blocking_failures) == 0
         and len(missing_required_gates) == 0
     )
-
-    # PR 66A: Populate lifecycle issues — one per applicable reason.
-    if policy.is_expired(as_of=as_of):
-        lifecycle_issues.append(
-            PolicyLifecycleIssue(
-                status="expired",
-                message=(
-                    f"Validation policy '{policy.policy_id}' version "
-                    f"'{policy.version}' expired on "
-                    f"{policy.expiry.isoformat() if policy.expiry else 'unknown'}. "
-                    f"Re-evaluate readiness with a current policy."
-                ),
-            )
-        )
-    if policy.superseded_by:
-        lifecycle_issues.append(
-            PolicyLifecycleIssue(
-                status="superseded",
-                message=(
-                    f"Validation policy '{policy.policy_id}' version "
-                    f"'{policy.version}' has been superseded by "
-                    f"'{policy.superseded_by}'. "
-                    f"Re-evaluate readiness with the superseding policy."
-                ),
-            )
-        )
 
     # PR 65A: Compute scope context fingerprint
     scope_fp_input = f"{evidence_context.model_type}|{evidence_context.market or ''}|{evidence_context.intended_use}"
