@@ -42,7 +42,9 @@ to that client's own schema - do not assume `.mcp.json` is universal.
 
 All local installs, caches, browser binaries, and generated artefacts live
 under `D:\Ancestry-MMM\`, never on `C:`, alongside this project's existing
-D-drive convention for its Python/uv environment:
+D-drive convention for its Python/uv environment. For CI or isolated testing,
+set the `MMM_DEV_ROOT` environment variable to override the root path (e.g.
+`$env:MMM_DEV_ROOT = Join-Path $env:RUNNER_TEMP "Ancestry-MMM"`).
 
 ```text
 D:\Ancestry-MMM\

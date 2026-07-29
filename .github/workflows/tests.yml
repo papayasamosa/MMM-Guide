@@ -40,6 +40,74 @@ jobs:
           uv run python -c "import ancestry_mmm.core.persistence"
           uv run python -c "import ancestry_mmm.core.model_identity"
 
+  # ── Windows dev-tooling integration ───────────────────────────────
+  # Executes the PowerShell setup and checker scripts on Windows,
+  # then starts Streamlit via the launcher and health-checks it.
+  windows-tooling:
+    name: Windows tooling
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: uv sync --locked
+      - name: Set CI root and create temp tooling directory
+        run: |
+          $ciRoot = Join-Path $env:RUNNER_TEMP "Ancestry-MMM"
+          "MMM_DEV_ROOT=$ciRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "CI root: $ciRoot"
+      - name: Run setup script
+        run: powershell -ExecutionPolicy Bypass -File scripts/setup_dev_tooling.ps1
+      - name: Verify operational directories exist
+        run: |
+          $ciRoot = $env:MMM_DEV_ROOT
+          foreach ($d in @("cache\npm","cache\ms-playwright","temp","test-artifacts\playwright-mcp","logs\mcp")) {
+            $full = Join-Path $ciRoot $d
+            if (Test-Path $full) { Write-Host "[OK] $full" } else { Write-Host "[FAIL] $full"; exit 1 }
+          }
+      - name: Install Chromium for CI
+        run: |
+          $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $env:MMM_DEV_ROOT "cache\ms-playwright"
+          $env:npm_config_cache = Join-Path $env:MMM_DEV_ROOT "cache\npm"
+          npx -y playwright@1.62.0 install chromium 2>&1
+      - name: Run prerequisite checker
+        run: powershell -ExecutionPolicy Bypass -File scripts/check_mcp_prereqs.ps1
+      - name: Start Streamlit via launcher (background)
+        run: |
+          $job = Start-Job -ScriptBlock {
+            $env:MMM_DEV_ROOT = $using:env:MMM_DEV_ROOT
+            Set-Location $using:github.workspace
+            powershell -ExecutionPolicy Bypass -File scripts/start_dev_app.ps1
+          }
+          Start-Sleep 30
+          # Health check
+          try {
+            $response = Invoke-WebRequest -Uri "http://127.0.0.1:8501" -UseBasicParsing -TimeoutSec 10
+            if ($response.StatusCode -eq 200) { Write-Host "Streamlit responded: HTTP 200" } else { throw "HTTP $($response.StatusCode)" }
+          } catch {
+            Write-Host "Streamlit health check failed: $_" -ForegroundColor Red
+            Stop-Job $job
+            Remove-Job $job -Force
+            exit 1
+          }
+          # Cleanup
+          Stop-Job $job
+          Remove-Job $job -Force
+          Start-Sleep 5
+          $portInUse = Get-NetTCPConnection -LocalPort 8501 -State Listen -ErrorAction SilentlyContinue
+          if ($portInUse) { Write-Host "Port 8501 still in use after cleanup" -ForegroundColor Yellow } else { Write-Host "Port 8501 free" }
+        timeout-minutes: 5
+
   # ── Python 3.11 unit/integration ──────────────────────────────────
   py311-tests:
     name: Python 3.11 tests

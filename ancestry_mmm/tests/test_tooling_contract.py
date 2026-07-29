@@ -198,6 +198,99 @@ class TestDocumentationWording:
 # ── Verification report exists ──
 
 
+# ── Checker contract (no npm@latest) ──
+
+
+class TestCheckerDoesNotUseNpmLatest:
+    """The prerequisite checker must use the installed npm, not npx npm@latest."""
+
+    def test_no_npm_at_latest_in_checker(self):
+        content = _ps1_read_text(CHECK_PREREQS)
+        # The checker must use the installed npm executable, not
+        # npx --yes npm@latest which introduces registry drift.
+        # Comments may mention the old pattern as a warning; check that
+        # no active command line contains "npm@latest" outside a comment.
+        for line in content.split("\n"):
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            assert "npm@latest" not in stripped, (
+                f"Non-comment line contains npm@latest: {stripped}"
+            )
+
+    def test_checker_uses_npm_directly(self):
+        content = _ps1_read_text(CHECK_PREREQS)
+        assert "npm config" in content, (
+            "check_mcp_prereqs.ps1 does not use npm config directly"
+        )
+
+
+# ── MCP paths MMM_DEV_ROOT override ──
+
+
+class TestMcpPathsHasDevRootOverride:
+    """mcp_paths.ps1 must support MMM_DEV_ROOT override for CI."""
+
+    def test_mcp_paths_has_mmm_dev_root_check(self):
+        content = _ps1_read_text(MCP_PATHS)
+        assert "MMM_DEV_ROOT" in content, (
+            "mcp_paths.ps1 does not reference MMM_DEV_ROOT"
+        )
+
+    def test_mcp_paths_falls_back_to_d(self):
+        content = _ps1_read_text(MCP_PATHS)
+        assert "D:\\Ancestry-MMM" in content, (
+            "mcp_paths.ps1 does not default to D:\\Ancestry-MMM"
+        )
+
+
+# ── CI workflow ──
+
+
+CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "tests.yml"
+
+
+class TestWindowsToolingJob:
+    """The CI workflow must have a Windows tooling job."""
+
+    def test_windows_tooling_job_exists(self):
+        content = _read_text(CI_WORKFLOW)
+        assert "windows-tooling:" in content, "CI workflow missing windows-tooling job"
+
+    def test_windows_tooling_runs_on_windows(self):
+        content = _read_text(CI_WORKFLOW)
+        assert "windows-latest" in content or "windows-2022" in content, (
+            "CI windows-tooling job does not run on windows-latest"
+        )
+
+    def test_windows_tooling_invokes_setup(self):
+        content = _read_text(CI_WORKFLOW)
+        assert "setup_dev_tooling.ps1" in content, (
+            "CI windows-tooling job does not call setup_dev_tooling.ps1"
+        )
+
+    def test_windows_tooling_invokes_checker(self):
+        content = _read_text(CI_WORKFLOW)
+        assert "check_mcp_prereqs.ps1" in content, (
+            "CI windows-tooling job does not call check_mcp_prereqs.ps1"
+        )
+
+    def test_windows_tooling_health_checks_streamlit(self):
+        content = _read_text(CI_WORKFLOW)
+        assert (
+            "Invoke-WebRequest" in content or "curl" in content or "HTTP 200" in content
+        ), "CI windows-tooling job does not health-check Streamlit"
+
+    def test_windows_tooling_sets_mmm_dev_root(self):
+        content = _read_text(CI_WORKFLOW)
+        assert "MMM_DEV_ROOT" in content, (
+            "CI windows-tooling job does not set MMM_DEV_ROOT"
+        )
+
+
+# ── Verification report ──
+
+
 class TestVerificationReport:
     """A sanitised verification report must exist and contain expected sections."""
 

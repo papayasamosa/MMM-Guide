@@ -37,18 +37,28 @@ if ($node) {
     Test-Check "Node.js >= 18" $false "node not found on PATH"
 }
 
-# 3. npx
+# 3. npm (use the installed executable, not npx --yes npm@latest which
+#    introduces registry drift and a network round trip).
+$npm = Get-Command npm -ErrorAction SilentlyContinue
+if ($npm) {
+    $npmVersion = (& npm --version) -replace "^v", ""
+    Test-Check "npm available" $true "found v$npmVersion at $($npm.Source)"
+} else {
+    Test-Check "npm available" $false "npm not found on PATH"
+}
+
+# 4. npx
 $npx = Get-Command npx -ErrorAction SilentlyContinue
 Test-Check "npx available" ($null -ne $npx) $(if ($npx) { $npx.Source } else { "npx not found on PATH" })
 
-# 4. npm cache resolves under D
-if ($node) {
+# 5. npm cache resolves under D (use the installed npm, not npm@latest)
+if ($npm) {
     $env:npm_config_cache = $NpmCachePath
-    $npmCache = (& npx --yes npm@latest config get cache 2>$null | Select-Object -Last 1)
+    $npmCache = (& npm config get cache 2>$null | Select-Object -Last 1)
     $onD = $npmCache -and ($npmCache.Trim().ToUpper().StartsWith("D:"))
     Test-Check "npm cache on D:" $onD "resolved: $npmCache"
 } else {
-    Test-Check "npm cache on D:" $false "skipped - node not found"
+    Test-Check "npm cache on D:" $false "skipped - npm not found"
 }
 
 # 5. uv
