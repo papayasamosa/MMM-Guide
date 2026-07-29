@@ -26,13 +26,27 @@ from ancestry_mmm.components import (
     render_glossary,
     render_drift_status,
 )
-from ancestry_mmm.core.approval import ModelApproval
+from ancestry_mmm.core.approval import (
+    ModelApproval,
+    create_policy_backed_model_approval,
+)
 from ancestry_mmm.core.activities import (
     ActivityDefinition,
     activity_by_model_input,
     activity_fit_fingerprint,
 )
-from ancestry_mmm.core.diagnostics import compute_scorecard, expanding_window_backtest
+from ancestry_mmm.core.diagnostics import expanding_window_backtest
+from ancestry_mmm.application.diagnostics_service import (
+    DiagnosticsService,
+    DiagnosticsInput,
+)
+from ancestry_mmm.application.validation_service import (
+    ValidationService,
+    ValidationInput,
+)
+from ancestry_mmm.core.validation_policy import (
+    ThresholdPolicy,
+)
 from ancestry_mmm.core.fingerprint import (
     fingerprint_dataframe,
     fingerprint_model_spec,
@@ -62,9 +76,6 @@ from ancestry_mmm.core.predict import extract_posterior_params, predict_mu
 from ancestry_mmm.core.market_specific_predict import (
     extract_market_specific_posterior_params,
     predict_mu_market_specific,
-)
-from ancestry_mmm.core.market_specific_diagnostics import (
-    compute_scorecard_market_specific,
 )
 from ancestry_mmm.data import prepare_fh_modeling_frame
 
@@ -129,12 +140,23 @@ if spec_dict:
 st.markdown("---")
 if st.button("Compute scorecard", type="primary"):
     with st.spinner("Computing diagnostics..."):
-        scorecard = (
-            compute_scorecard_market_specific(trace, frame, meta)
-            if model_type == "market_specific"
-            else compute_scorecard(trace, frame, meta)
+        diag_service = DiagnosticsService()
+        diag_input = DiagnosticsInput(
+            trace=trace,
+            frame=frame,
+            meta=meta,
+            model_type=model_type,
         )
-    set_state("scorecard", scorecard)
+        diag_result = diag_service.evaluate(diag_input)
+        scorecard = diag_result.scorecard
+        set_state("scorecard", scorecard)
+        set_state("diagnostics_artefact", diag_result.diagnostics_artefact)
+        set_state("diag_result", diag_result)
+    st.success("Scorecard computed.")
+
+# Retrieve artefact for governance display
+diag_artefact = get_state("diagnostics_artefact")
+diag_result = get_state("diag_result")
 
 scorecard = get_state("scorecard")
 if scorecard:
@@ -219,6 +241,88 @@ if scorecard:
             width="stretch",
             column_config=dataframe_column_config(stability_df),
         )
+
+st.markdown("---")
+st.markdown("### Validation readiness")
+st.caption(
+    "Evaluate diagnostics against a validation policy. This shows which gates pass, "
+    "fail, or need review — and the overall approval readiness state."
+)
+
+validation_policy_dict = get_state("validation_policy")
+validation_readiness = get_state("validation_readiness")
+
+# Load policy for later use
+_current_policy = None
+if validation_policy_dict and isinstance(validation_policy_dict, dict):
+    try:
+        from ancestry_mmm.core.validation_policy import ThresholdPolicy as TP
+
+        _current_policy = TP(
+            policy_id=validation_policy_dict.get("policy_id", "default-policy"),
+            version=validation_policy_dict.get("version", "1.0"),
+            scope=validation_policy_dict.get("scope", "all_models"),
+            gates=validation_policy_dict.get("gates", []),
+            owner=validation_policy_dict.get("owner", "System"),
+        )
+    except Exception:
+        _current_policy = None
+
+if st.button("Evaluate readiness", type="secondary"):
+    with st.spinner("Evaluating policy gates..."):
+        if diag_artefact is None:
+            st.error("Compute the scorecard first.")
+        else:
+            policy = _current_policy
+            if policy is None:
+                st.warning("No validation policy configured. Using minimal default.")
+                policy = ThresholdPolicy(
+                    policy_id="default-policy",
+                    version="1.0",
+                    scope="all_models",
+                    gates=[],
+                    owner="System",
+                )
+            val_service = ValidationService()
+            val_input = ValidationInput(
+                trace=trace,
+                frame=frame,
+                meta=meta,
+                policy=policy,
+                diagnostics_artefact=diag_artefact,
+                model_type=model_type,
+            )
+            val_result = val_service.evaluate_readiness(val_input)
+            set_state("validation_readiness", val_result)
+            set_state("validation_result", val_result)
+
+if validation_readiness:
+    rd = validation_readiness.readiness
+    if rd:
+        ready_icon = "✅" if rd.overall_ready else "❌"
+        st.markdown(
+            f"### {ready_icon} Overall readiness: **{'Ready' if rd.overall_ready else 'Not ready'}**"
+        )
+        if rd.lifecycle_issues:
+            for li in rd.lifecycle_issues:
+                st.warning(f"Policy lifecycle: **{li.status}** — {li.message}")
+        if rd.config_errors:
+            for ce in rd.config_errors:
+                st.error(f"Config error: {ce}")
+        if rd.results:
+            st.markdown("#### Gate results")
+            for r in rd.results:
+                gate_icon = {"pass": "✅", "fail": "❌", "review": "🔍", "skip": "➖"}
+                icon = gate_icon.get(r.status, "❓")
+                st.write(f"{icon} **{r.gate_name}**: {r.status} (value: {r.value})")
+        if rd.waivers:
+            st.markdown("#### Waivers")
+            for w in rd.waivers:
+                st.write(f"  - Waiver `{w.waiver_id}` for gate `{w.gate_name}`")
+
+    if validation_readiness.errors:
+        for e in validation_readiness.errors:
+            st.error(e)
 
 st.markdown("---")
 st.markdown("### Model approval")
@@ -396,15 +500,58 @@ else:
                     "Enter a name before approving - approval must be attributed to a reviewer."
                 )
             else:
-                approval = ModelApproval(
-                    approved_by=approved_by.strip(),
-                    notes=notes,
-                    known_limitations=known_limitations,
-                    diagnostics_accepted=diagnostics_accepted,
-                    **current_identity,
-                )
-                set_state("model_approval", approval.to_dict())
-                st.success(f"Model approved by {approved_by.strip()}.")
+                # Use policy-backed approval when readiness evidence is available
+                if (
+                    validation_readiness
+                    and validation_readiness.readiness
+                    and _current_policy is not None
+                ):
+                    try:
+                        approval = create_policy_backed_model_approval(
+                            readiness=validation_readiness.readiness,
+                            current_policy=_current_policy,
+                            approved_by=approved_by.strip(),
+                            model_run_id=current_identity.get("model_run_id", ""),
+                            data_fingerprint=current_identity.get(
+                                "data_fingerprint", ""
+                            ),
+                            model_spec_fingerprint=current_identity.get(
+                                "model_spec_fingerprint", ""
+                            ),
+                            posterior_fingerprint=current_identity.get(
+                                "posterior_fingerprint", ""
+                            ),
+                            notes=notes,
+                            known_limitations=known_limitations,
+                        )
+                        set_state("model_approval", approval.to_dict())
+                        st.success(
+                            f"Policy-backed model approved by {approved_by.strip()}."
+                        )
+                    except Exception as e:
+                        st.error(f"Policy-backed approval failed: {e}")
+                        st.info(
+                            "Falling back to standard approval without policy binding."
+                        )
+                        approval = ModelApproval(
+                            approved_by=approved_by.strip(),
+                            notes=notes,
+                            known_limitations=known_limitations,
+                            diagnostics_accepted=diagnostics_accepted,
+                            **current_identity,
+                        )
+                        set_state("model_approval", approval.to_dict())
+                        st.success(f"Model approved by {approved_by.strip()}.")
+                else:
+                    approval = ModelApproval(
+                        approved_by=approved_by.strip(),
+                        notes=notes,
+                        known_limitations=known_limitations,
+                        diagnostics_accepted=diagnostics_accepted,
+                        **current_identity,
+                    )
+                    set_state("model_approval", approval.to_dict())
+                    st.success(f"Model approved by {approved_by.strip()}.")
                 st.rerun()
 
 st.markdown("---")
