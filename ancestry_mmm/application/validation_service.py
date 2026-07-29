@@ -264,9 +264,14 @@ class ValidationService:
         diag_fp = v_input.diagnostic_artefact_fingerprint or ""
 
         # --- Evaluate each gate with identity binding ---
+        # `use_artefact` was resolved above (identity match verified); a
+        # mismatched or otherwise unusable artefact is passed as None here
+        # so gate evaluation can never fall back to reading stale artefact
+        # values on its own.
+        usable_artefact = artefact if use_artefact else None
         for gate in policy.gates:
             try:
-                result = self._evaluate_gate(gate, v_input)
+                result = self._evaluate_gate(gate, v_input, usable_artefact)
                 # Bind identity fields from the input
                 if v_input.model_identity is not None:
                     result = ValidationResult(
@@ -363,6 +368,7 @@ class ValidationService:
         self,
         gate: ValidationGate,
         v_input: ValidationInput,
+        usable_artefact: Optional[DiagnosticsArtefact],
     ) -> ValidationResult:
         """Evaluate a single validation gate.
 
@@ -370,6 +376,13 @@ class ValidationService:
         model identity matches, the gate value is read from the artefact
         via ``_get_artefact_metric`` instead of recomputing from
         trace/frame/meta.
+
+        ``usable_artefact`` is the identity-verified artefact resolved by
+        ``evaluate_readiness`` — it is ``None`` whenever the artefact is
+        missing, legacy, or its model identity fingerprint does not match
+        the current model, so this method never re-derives artefact
+        usability from ``v_input.diagnostics_artefact`` on its own and can
+        never silently fall back to a stale artefact.
         """
         trace = v_input.trace
         frame = v_input.frame
@@ -387,14 +400,8 @@ class ValidationService:
                 message="; ".join(config_errors),
             )
 
-        # PR 72B: Check artefact first (schema v2, non-legacy)
-        artefact = v_input.diagnostics_artefact
-        if (
-            artefact is not None
-            and artefact.schema_version >= 2
-            and not artefact.legacy_incomplete
-        ):
-            metric_value = self._get_artefact_metric(evaluator_id, artefact)
+        if usable_artefact is not None:
+            metric_value = self._get_artefact_metric(evaluator_id, usable_artefact)
             if metric_value is not None:
                 # Value read from artefact — determine pass/fail by applying
                 # gate acceptable_range (low, high).
