@@ -1401,6 +1401,31 @@ def evaluate_approval_readiness(
     as_of = as_of or datetime.now(timezone.utc)
     waivers = waivers or []
 
+    # --- PR 67A: Populate lifecycle issues before any return path ---
+    lifecycle_issues_before_gates: list[PolicyLifecycleIssue] = []
+    if policy.is_expired(as_of=as_of):
+        lifecycle_issues_before_gates.append(
+            PolicyLifecycleIssue(
+                status="expired",
+                message=(
+                    f"Validation policy '{policy.policy_id}' version "
+                    f"'{policy.version}' expired on "
+                    f"{policy.expiry.isoformat() if policy.expiry else 'unknown'}."
+                ),
+            )
+        )
+    if policy.superseded_by:
+        lifecycle_issues_before_gates.append(
+            PolicyLifecycleIssue(
+                status="superseded",
+                message=(
+                    f"Validation policy '{policy.policy_id}' version "
+                    f"'{policy.version}' has been superseded by "
+                    f"'{policy.superseded_by}'."
+                ),
+            )
+        )
+
     # --- PR 62B: Validate policy configuration before any gate evaluation ---
     config_errors = validate_policy_config(policy)
     if config_errors:
@@ -1430,6 +1455,7 @@ def evaluate_approval_readiness(
             market=evidence_context.market,
             intended_use=evidence_context.intended_use,
             scope_context_fingerprint=scope_fp,
+            lifecycle_issues=tuple(lifecycle_issues_before_gates),
         )
 
     # --- PR 62B: Reject ambiguous input ---
@@ -1491,7 +1517,7 @@ def evaluate_approval_readiness(
     waived_failures: List[ValidationResult] = []
     missing_required_gates: List[str] = []
     applicable_decisions: List[GateApplicability] = []
-    lifecycle_issues: List[PolicyLifecycleIssue] = []
+    lifecycle_issues: List[PolicyLifecycleIssue] = list(lifecycle_issues_before_gates)
 
     # Compute identity fingerprint once
     identity_fp = current_model_identity.fingerprint()

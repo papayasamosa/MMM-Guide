@@ -30,7 +30,7 @@ import pandas as pd
 from .hierarchical_model import FHModelMeta
 
 if TYPE_CHECKING:
-    from .validation_policy import ThresholdPolicy
+    from .validation_policy import ApprovalReadiness, ThresholdPolicy
 from .market_specific_predict import (
     extract_market_specific_posterior_params,
     generate_market_channel_curve,
@@ -334,6 +334,7 @@ def evaluate_scenario_with_uncertainty(
     operation: str = "planning",
     nbt_completeness_metadata: Optional[dict] = None,
     value_mapping: Optional[OutcomeValueMapping] = None,
+    approval_readiness: Optional["ApprovalReadiness"] = None,
     current_policy: Optional["ThresholdPolicy"] = None,
 ) -> Dict[str, object]:
     """
@@ -380,6 +381,7 @@ def evaluate_scenario_with_uncertainty(
             data_fingerprint=data_fingerprint,
             model_spec_fingerprint=model_spec_fingerprint,
             posterior_fingerprint=posterior_fingerprint,
+            approval_readiness=approval_readiness,
             current_policy=current_policy,
         )
         if planning_objective is None:
@@ -408,6 +410,8 @@ def evaluate_scenario_with_uncertainty(
             meta=meta,
             outcome_approvals=outcome_approvals,
             nbt_completeness_metadata=nbt_completeness_metadata,
+            approval_readiness=approval_readiness,
+            current_policy=current_policy,
         )
 
     extract_fn = (

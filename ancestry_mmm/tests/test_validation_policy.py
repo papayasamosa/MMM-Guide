@@ -1421,6 +1421,206 @@ class TestMalformedPolicyConfig:
         assert len(readiness.waivers_applied) == 0
 
 
+# ---------------------------------------------------------------------------
+# PR 67A: Lifecycle issues on config-error early return
+# ---------------------------------------------------------------------------
+
+
+class TestLifecycleOnConfigError:
+    """PR 67A: lifecycle issues must be populated even when config errors
+    trigger the early return path."""
+
+    def _make_bad_policy(self, **overrides) -> ThresholdPolicy:
+        gate = ValidationGate(
+            name="unknown_evaluator_gate",
+            description="No evaluator",
+            acceptable_range=(0.0, 1.0),
+        )
+        kwargs = dict(
+            policy_id="pol-bad",
+            version="1.0",
+            scope="test",
+            gates=[gate],
+            owner="Test",
+            approval_date=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        kwargs.update(overrides)
+        return ThresholdPolicy(**kwargs)
+
+    def test_config_error_plus_expired(self):
+        """A malformed AND expired policy records both in readiness."""
+        policy = self._make_bad_policy(
+            expiry=datetime(2025, 6, 1, tzinfo=timezone.utc),
+        )
+        as_of = datetime(2026, 7, 1, tzinfo=timezone.utc)
+        readiness = _eval_readiness([], policy, _DEFAULT_IDENTITY, as_of=as_of)
+        assert len(readiness.config_errors) > 0
+        assert len(readiness.lifecycle_issues) >= 1
+        assert any(li.status == "expired" for li in readiness.lifecycle_issues)
+
+    def test_config_error_plus_superseded(self):
+        """A malformed AND superseded policy records both in readiness."""
+        policy = self._make_bad_policy(superseded_by="pol-v2")
+        readiness = _eval_readiness([], policy, _DEFAULT_IDENTITY)
+        assert len(readiness.config_errors) > 0
+        assert len(readiness.lifecycle_issues) >= 1
+        assert any(li.status == "superseded" for li in readiness.lifecycle_issues)
+
+    def test_config_error_plus_expired_and_superseded(self):
+        """A malformed, expired AND superseded policy records all three."""
+        policy = self._make_bad_policy(
+            expiry=datetime(2025, 6, 1, tzinfo=timezone.utc),
+            superseded_by="pol-v2",
+        )
+        as_of = datetime(2026, 7, 1, tzinfo=timezone.utc)
+        readiness = _eval_readiness([], policy, _DEFAULT_IDENTITY, as_of=as_of)
+        assert len(readiness.config_errors) > 0
+        statuses = {li.status for li in readiness.lifecycle_issues}
+        assert "expired" in statuses
+        assert "superseded" in statuses
+
+
+# ---------------------------------------------------------------------------
+# PR 67A: Approval factory binding validation
+# ---------------------------------------------------------------------------
+
+
+class TestApprovalFactoryBindings:
+    """create_policy_backed_model_approval must reject mismatched bindings."""
+
+    def test_matching_bindings_creates_approval(self, sample_policy):
+        from ancestry_mmm.core.approval import (
+            create_policy_backed_model_approval,
+        )
+
+        results = [
+            _make_result(
+                policy=sample_policy,
+                gate_name="convergence_rhat",
+                status="pass",
+                value=1.02,
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="ppc_coverage",
+                status="pass",
+                value=85.0,
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="backtest_mape",
+                status="pass",
+                value=20.0,
+            ),
+            _make_result(
+                policy=sample_policy, gate_name="divergences", status="pass", value=0
+            ),
+        ]
+        readiness = _eval_readiness(results, sample_policy, _DEFAULT_IDENTITY)
+        approval = create_policy_backed_model_approval(
+            approved_by="Reviewer A",
+            readiness=readiness,
+            current_policy=sample_policy,
+            model_run_id="run-123",
+            data_fingerprint="data-abc",
+            model_spec_fingerprint="spec-def",
+            posterior_fingerprint="post-ghi",
+        )
+        assert approval.validation_policy_id == "val-pol-001"
+
+    def test_mismatched_policy_id_fails(self, sample_policy):
+        from ancestry_mmm.core.approval import (
+            create_policy_backed_model_approval,
+            ValidationPolicyBlockedError,
+        )
+
+        # Build a fully passing readiness
+        results_all = [
+            _make_result(
+                policy=sample_policy,
+                gate_name="convergence_rhat",
+                status="pass",
+                value=1.02,
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="ppc_coverage",
+                status="pass",
+                value=85.0,
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="backtest_mape",
+                status="pass",
+                value=20.0,
+            ),
+            _make_result(
+                policy=sample_policy, gate_name="divergences", status="pass", value=0
+            ),
+        ]
+        readiness = _eval_readiness(results_all, sample_policy, _DEFAULT_IDENTITY)
+        # Use a different policy — same shape but different ID
+        wrong_policy = ThresholdPolicy(
+            policy_id="wrong-pol",
+            version="1.0.0",
+            scope="test",
+            gates=sample_policy.gates,
+            owner="Test",
+            approval_date=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        with pytest.raises(ValidationPolicyBlockedError, match="policy_id"):
+            create_policy_backed_model_approval(
+                approved_by="Reviewer A",
+                readiness=readiness,
+                current_policy=wrong_policy,
+                model_run_id="run-123",
+                data_fingerprint="data-abc",
+                model_spec_fingerprint="spec-def",
+                posterior_fingerprint="post-ghi",
+            )
+
+    def test_mismatched_model_identity_fails(self, sample_policy):
+        from ancestry_mmm.core.approval import (
+            create_policy_backed_model_approval,
+            ValidationPolicyBlockedError,
+        )
+
+        results_all = [
+            _make_result(
+                policy=sample_policy,
+                gate_name="convergence_rhat",
+                status="pass",
+                value=1.02,
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="ppc_coverage",
+                status="pass",
+                value=85.0,
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="backtest_mape",
+                status="pass",
+                value=20.0,
+            ),
+            _make_result(
+                policy=sample_policy, gate_name="divergences", status="pass", value=0
+            ),
+        ]
+        readiness = _eval_readiness(results_all, sample_policy, _DEFAULT_IDENTITY)
+        with pytest.raises(ValidationPolicyBlockedError, match="model_identity"):
+            create_policy_backed_model_approval(
+                approved_by="Reviewer A",
+                readiness=readiness,
+                current_policy=sample_policy,
+                model_run_id="different-run",
+                data_fingerprint="different-data",
+                model_spec_fingerprint="spec-def",
+                posterior_fingerprint="post-ghi",
+            )
+
+
 class TestScopeMatcher:
     """PR 62B: Operational scope matcher."""
 

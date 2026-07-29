@@ -2413,6 +2413,7 @@ def evaluate_manual_scenario(
     value_mapping: Optional["OutcomeValueMapping"] = None,
     currency_context: Optional["CurrencyContext"] = None,
     approval_readiness: Optional["ApprovalReadiness"] = None,
+    current_policy: Optional["ThresholdPolicy"] = None,
 ) -> ScenarioEvaluationResult:
     """Trusted manual scenario evaluation service (G2A.7a.5).
 
@@ -2459,6 +2460,7 @@ def evaluate_manual_scenario(
             outcome_approvals=outcome_approvals or [],
             nbt_completeness_metadata=nbt_completeness_metadata,
             approval_readiness=approval_readiness,
+            current_policy=current_policy,
         )
         # Build governance dependencies from resolved proof
         governance_deps = ScenarioGovernanceDependencies(
@@ -3310,6 +3312,7 @@ def optimize_scenario(
             outcome_approvals=outcome_approvals or [],
             nbt_completeness_metadata=nbt_completeness_metadata,
             approval_readiness=approval_readiness,
+            current_policy=current_policy,
         )
 
     current_spend = _flatten(current_spend_plan, months, channels)
@@ -3547,6 +3550,9 @@ def optimize_scenario(
             governance_mode=governance_mode,
             operation="optimisation",
             nbt_completeness_metadata=nbt_completeness_metadata,
+            value_mapping=value_mapping,
+            approval_readiness=approval_readiness,
+            current_policy=current_policy,
         )
 
     return {

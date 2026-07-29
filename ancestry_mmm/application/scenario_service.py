@@ -31,7 +31,7 @@ from ancestry_mmm.core.planning.value import (
     PlanningObjective,
     ScenarioEvaluationResult,
 )
-from ancestry_mmm.core.validation_policy import ApprovalReadiness
+from ancestry_mmm.core.validation_policy import ApprovalReadiness, ThresholdPolicy
 from ancestry_mmm.core.outcome_approval import OutcomeApproval
 
 AnyPosteriorParams = Union[FHPosteriorParams, FHMarketSpecificPosteriorParams]
@@ -71,6 +71,7 @@ class ManualScenarioInput:
     value_mapping: Optional[OutcomeValueMapping] = None
     currency_context: Optional[CurrencyContext] = None
     approval_readiness: Optional[ApprovalReadiness] = None
+    current_policy: Optional[ThresholdPolicy] = None
 
 
 @dataclass
@@ -116,6 +117,7 @@ class OptimisationInput:
     value_mapping: Optional[OutcomeValueMapping] = None
     currency_context: Optional[CurrencyContext] = None
     approval_readiness: Optional[ApprovalReadiness] = None
+    current_policy: Optional[ThresholdPolicy] = None
 
 
 @dataclass
@@ -196,6 +198,7 @@ class ScenarioService:
                 value_mapping=sc_input.value_mapping,
                 currency_context=sc_input.currency_context,
                 approval_readiness=sc_input.approval_readiness,
+                current_policy=sc_input.current_policy,
             )
         except Exception as exc:
             errors.append(f"Manual scenario evaluation failed: {exc}")
@@ -270,6 +273,7 @@ class ScenarioService:
                 value_mapping=opt_input.value_mapping,
                 currency_context=opt_input.currency_context,
                 approval_readiness=opt_input.approval_readiness,
+                current_policy=opt_input.current_policy,
             )
         except Exception as exc:
             errors.append(f"Optimisation failed: {exc}")

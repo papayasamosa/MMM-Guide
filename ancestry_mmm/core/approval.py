@@ -468,6 +468,49 @@ def create_policy_backed_model_approval(
             f"Superseded: {bool(current_policy.superseded_by)}."
         )
 
+    # PR 67A: Verify readiness-policy-model bindings before creating approval.
+    from .model_identity import ModelIdentity as _ModelIdentity
+
+    _expected_model_fp = _ModelIdentity(
+        model_run_id=model_run_id,
+        data_fingerprint=data_fingerprint,
+        model_spec_fingerprint=model_spec_fingerprint,
+        posterior_fingerprint=posterior_fingerprint,
+    ).fingerprint()
+
+    _bind_errors: list[str] = []
+    if readiness.policy_id != current_policy.policy_id:
+        _bind_errors.append(
+            f"readiness policy_id '{readiness.policy_id}' != "
+            f"current_policy policy_id '{current_policy.policy_id}'"
+        )
+    if readiness.policy_version != current_policy.version:
+        _bind_errors.append(
+            f"readiness policy_version '{readiness.policy_version}' != "
+            f"current_policy version '{current_policy.version}'"
+        )
+    if readiness.policy_fingerprint != current_policy.fingerprint():
+        _bind_errors.append(
+            "readiness policy_fingerprint != current_policy fingerprint"
+        )
+    if readiness.model_identity_fingerprint != _expected_model_fp:
+        _bind_errors.append(
+            f"readiness model_identity_fingerprint "
+            f"'{readiness.model_identity_fingerprint}' != "
+            f"expected '{_expected_model_fp}'"
+        )
+    if not readiness.readiness_artefact_id:
+        _bind_errors.append("readiness readiness_artefact_id is blank")
+    if not readiness.diagnostic_artefact_id:
+        _bind_errors.append("readiness diagnostic_artefact_id is blank")
+    if not readiness.diagnostic_artefact_fingerprint:
+        _bind_errors.append("readiness diagnostic_artefact_fingerprint is blank")
+    if _bind_errors:
+        raise ValidationPolicyBlockedError(
+            "Cannot create policy-backed approval: readiness bindings "
+            f"validation failed: {'; '.join(_bind_errors)}."
+        )
+
     approval = ModelApproval(
         approved_by=approved_by,
         run_label=run_label,
