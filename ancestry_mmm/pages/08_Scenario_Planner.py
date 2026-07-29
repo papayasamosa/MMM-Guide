@@ -545,6 +545,8 @@ scenario_governance_kwargs = dict(
     outcome_approvals=outcome_approvals,
     governance_mode=governance_mode,
     nbt_completeness_metadata=nbt_completeness_metadata,
+    approval_readiness=get_state("validation_readiness"),
+    current_policy=get_state("current_policy"),
 )
 cost_as_of_by_month = {
     month: f"{month}-01" if len(month) == 7 else month for month in months
