@@ -6,7 +6,7 @@
     },
     "context7": {
       "command": "cmd",
-      "args": ["/c", "npx", "-y", "@upstash/context7-mcp@latest"],
+      "args": ["/c", "npx", "-y", "@upstash/context7-mcp@3.2.5"],
       "env": {
         "npm_config_cache": "D:\\Ancestry-MMM\\cache\\npm"
       }
@@ -17,7 +17,7 @@
         "/c",
         "npx",
         "-y",
-        "@playwright/mcp@latest",
+        "@playwright/mcp@0.0.78",
         "--isolated",
         "--headless",
         "--browser",

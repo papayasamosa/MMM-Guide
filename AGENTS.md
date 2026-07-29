@@ -383,7 +383,9 @@ Usage rules:
 - **Playwright MCP**: after any material Streamlit UI or workflow change,
   use it to exercise the affected journey in the running app (accessibility
   tree, console, failed requests). Complements `pytest`/Streamlit `AppTest`;
-  never replaces them. Localhost only.
+  never replaces them. Configured with an origin allowlist for local-app
+  testing — this flag is not a network security boundary and does not
+  constrain every redirect or request. Use synthetic demo data only.
 - **Hugging Face MCP**: use only when a task specifically concerns Hugging
   Face models, datasets, Spaces, papers, Jobs, or documentation - mainly
   Chronos-2/forecasting research. Never introduces a Hugging Face model,

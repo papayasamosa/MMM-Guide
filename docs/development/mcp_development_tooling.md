@@ -49,6 +49,7 @@ D:\Ancestry-MMM\
 ├── tools\mcp\                      # reserved for any future local MCP binaries
 ├── cache\npm\                      # npm_config_cache
 ├── cache\ms-playwright\            # PLAYWRIGHT_BROWSERS_PATH (Chromium only)
+├── temp\                           # TEMP/TMP for MCP server processes
 ├── secrets\                        # optional local token/env files, never committed
 ├── test-artifacts\playwright-mcp\  # Playwright MCP --output-dir (screenshots, traces)
 └── logs\mcp\                       # verification logs, dev app log
@@ -63,20 +64,28 @@ in place rather than duplicated under `tools\mcp\node\` - it was already off
 1. **Prerequisites**: Node 18+ (`node --version`), `npx`, `uv`. Run
    `scripts/check_mcp_prereqs.ps1` to confirm all of the above resolve
    correctly and that D-drive paths are in effect.
-2. **Chromium**: installed once via
-   `npx -y playwright@latest install chromium` with
+2. **Provision directories**: `scripts/start_dev_app.ps1` creates required
+   directories (including `D:\Ancestry-MMM\temp`) on startup. For a one-time
+   setup you can also create them manually:
+   ```powershell
+   $null = New-Item -ItemType Directory -Force D:\Ancestry-MMM\cache\npm,
+     D:\Ancestry-MMM\cache\ms-playwright, D:\Ancestry-MMM\temp,
+     D:\Ancestry-MMM\logs\mcp, D:\Ancestry-MMM\test-artifacts\playwright-mcp
+   ```
+3. **Chromium**: installed once via
+   `npx -y playwright@1.62.0 install chromium` with
    `PLAYWRIGHT_BROWSERS_PATH` and `npm_config_cache` pointed at
    `D:\Ancestry-MMM\`. Only Chromium is installed - Firefox/WebKit are not
    needed unless cross-browser testing is explicitly required.
-3. **`.mcp.json`** (repo root, committed): configures `github`, `context7`,
+4. **`.mcp.json`** (repo root, committed): configures `github`, `context7`,
    and `playwright`. See [Authentication](#authentication) for why no
    secrets appear in this file.
-4. **Hugging Face**: not pre-wired, because its exact client configuration
+5. **Hugging Face**: not pre-wired, because its exact client configuration
    must come from the user's own logged-in session at
    <https://huggingface.co/settings/mcp> (select the coding client there and
    copy the generated snippet). Add it to `.mcp.json` verbatim once
    obtained - never hand-write it.
-5. **Reload required**: any change to `.mcp.json` (including adding the HF
+6. **Reload required**: any change to `.mcp.json` (including adding the HF
    entry) requires reloading/restarting the Claude Code session before the
    new or changed server is available as callable tools.
 
@@ -108,9 +117,13 @@ in place rather than duplicated under `tools\mcp\node\` - it was already off
   (creating/editing issues, PRs, comments, workflow dispatches) runs without
   explicit user approval in the moment, regardless of what the connected
   token or OAuth grant technically permits.
-- Playwright MCP is restricted to `http://localhost:8501` and
-  `http://127.0.0.1:8501` via `--allowed-origins`; unrestricted file access
-  and disabling the sandbox are never enabled.
+- Playwright MCP is configured for local-app testing with an origin
+  allowlist (`--allowed-origins`). **This flag is not a network security
+  boundary** and does not constrain every redirect or request. Isolated
+  browser state (`--isolated`) and synthetic demo data only must be used.
+  No persistent browser profile or storage state is written outside
+  `D:\Ancestry-MMM\test-artifacts\playwright-mcp\`. Credentials or
+  commercially sensitive data are never entered in Playwright sessions.
 - Hugging Face MCP is search/documentation only. No Job, Space, paid
   inference call, upload, or download of model weights runs without
   separate, explicit approval. Real Ancestry data, credentials, or
@@ -144,6 +157,17 @@ Live connection for all four requires a session reload after `.mcp.json`
 changes, plus (for GitHub and Hugging Face) an interactive login the user
 must complete - these are not steps a coding agent can complete unattended.
 
+## Verification status
+
+| MCP | Configured | Authenticated | Live verified | Access mode |
+|---|---:|---:|---:|---|
+| GitHub | ✓ | ✓ (OAuth via Copilot) | ✓ | Read-only, no write tool calls |
+| Context7 | ✓ (v3.2.5 pinned) | — (unauthenticated) | ✓ | Read-only doc lookups |
+| Playwright | ✓ (v0.0.78 pinned) | N/A | ✓ | Local-app testing only, origin allowlist (not a security boundary) |
+| Hugging Face | Documented, not connected | Pending user authentication | Not verified | Read-only search/documentation only when connected |
+
+*Date: 29 July 2026. Client: Claude Code (VS Code native extension).*
+
 ## Troubleshooting
 
 - **`npx` not found**: confirm `D:\Programs` (or wherever Node is installed)
@@ -153,12 +177,28 @@ must complete - these are not steps a coding agent can complete unattended.
   spawns the MCP server subprocess (set in `.mcp.json`'s `env` block, not
   just your interactive shell).
 - **Playwright can't find a browser**: re-run
-  `npx -y playwright@latest install chromium` with
+  `npx -y playwright@1.62.0 install chromium` with
   `PLAYWRIGHT_BROWSERS_PATH` pointed at `D:\Ancestry-MMM\cache\ms-playwright`.
 - **GitHub tool calls fail with 401/403**: OAuth grant may have expired or
   Copilot access lapsed; reconnect through the client's MCP management UI.
 - **Hugging Face server missing**: it isn't pre-wired; generate its config
   from huggingface.co/settings/mcp and add it to `.mcp.json`, then reload.
+
+## Version pinning policy
+
+MCP packages (`@playwright/mcp`, `@upstash/context7-mcp`, `playwright`) are
+pinned to exact versions in `.mcp.json` and this documentation. To upgrade:
+
+1. update the pinned package version in `.mcp.json` and
+   `config/mcp/mcp.example.json`;
+2. reinstall matching Chromium:
+   `npx -y playwright@<NEW_VERSION> install chromium`;
+3. rerun `scripts/check_mcp_prereqs.ps1`;
+4. rerun the Playwright verification journey
+   (see [Verification](#verification));
+5. commit the version change.
+6. do not allow automatic package drift — no `@latest` or `@next` in
+   committed configuration.
 
 ## Removal
 
@@ -178,7 +218,8 @@ product requirement - this setup does not create one.
 ## Limitations
 
 - Hugging Face MCP configuration cannot be generated or verified without the
-  user completing an interactive browser login.
+  user completing an interactive browser login. Status: **documented, not
+  connected, not verified**.
 - GitHub MCP OAuth likewise requires an interactive consent step the first
   time a tool call is made.
 - Newly added or edited MCP servers are not available as callable tools
