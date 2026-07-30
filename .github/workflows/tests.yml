@@ -144,6 +144,59 @@ jobs:
             Write-Host "Port 8501 free."
           }
         timeout-minutes: 5
+      - name: Repoint MMM_DEV_ROOT to a guaranteed D:-drive path for Graphify
+        run: |
+          $graphifyRoot = "D:\Ancestry-MMM-Graphify-CI"
+          "MMM_DEV_ROOT=$graphifyRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "Graphify CI root: $graphifyRoot"
+      - name: Install Graphify (D-drive isolated uv tool)
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup_graphify.ps1
+      - name: Verify Graphify installed only under D:-drive paths
+        run: |
+          $root = $env:MMM_DEV_ROOT
+          foreach ($rel in @("tools\uv\tools", "tools\uv\bin", "cache\uv")) {
+            $full = Join-Path $root $rel
+            if (-not (Test-Path $full)) { Write-Error "$full missing"; exit 1 }
+            if (-not $full.StartsWith("D:", [System.StringComparison]::OrdinalIgnoreCase)) {
+              Write-Error "$full is not on D:"; exit 1
+            }
+          }
+          $legacyBin = Join-Path $env:USERPROFILE ".local\bin\graphify-mcp.exe"
+          if (Test-Path $legacyBin) {
+            Write-Error "Graphify was installed under %USERPROFILE%\.local - D-drive isolation violated."
+            exit 1
+          }
+          Write-Host "Graphify install confirmed D-drive-only; no %USERPROFILE%\.local install present."
+      - name: Run Graphify prerequisite checker
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check_graphify_prereqs.ps1
+      - name: Graphify checker must reject a C-drive tool root
+        run: |
+          $env:MMM_DEV_ROOT = "C:\Ancestry-MMM-Should-Fail"
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check_graphify_prereqs.ps1
+          if ($LASTEXITCODE -eq 0) {
+            Write-Error "Checker incorrectly passed against a C: root"
+            exit 1
+          }
+          Write-Host "Checker correctly rejected a C:-drive root (exit $LASTEXITCODE)."
+      - name: Graphify launcher must reject a missing graph
+        run: |
+          # graphify-out/graph.json does not exist on a fresh checkout - the
+          # launcher must fail closed rather than hang or partially start.
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_graphify_mcp.ps1
+          if ($LASTEXITCODE -eq 0) {
+            Write-Error "Launcher incorrectly succeeded with no graph present"
+            exit 1
+          }
+          Write-Host "Launcher correctly rejected the missing graph (exit $LASTEXITCODE)."
+      - name: Graphify launcher must reject a C-drive tool-bin override
+        run: |
+          $env:UV_TOOL_BIN_DIR = "C:\Ancestry-MMM-Should-Fail\tools\uv\bin"
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_graphify_mcp.ps1
+          if ($LASTEXITCODE -eq 0) {
+            Write-Error "Launcher incorrectly succeeded with UV_TOOL_BIN_DIR pointed off D:"
+            exit 1
+          }
+          Write-Host "Launcher correctly rejected the escaping UV_TOOL_BIN_DIR (exit $LASTEXITCODE)."
 
   # -- Python 3.11 unit/integration ----------------------------------
   py311-tests:

@@ -42,8 +42,14 @@
       }
     },
     "graphify-project": {
-      "command": "graphify-mcp",
-      "args": ["graphify-out/graph.json"]
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "scripts/run_graphify_mcp.ps1"
+      ]
     }
   }
 }
