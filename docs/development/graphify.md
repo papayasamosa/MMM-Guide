@@ -27,25 +27,48 @@ development-time tool only: not a Python dependency, never imported by
 
 Installed as an isolated developer tool via `uv tool install`, matching the
 convention this repo already uses for keeping dev tooling out of the
-production dependency set (`pyproject.toml` / `uv.lock` are untouched):
+production dependency set (`pyproject.toml` / `uv.lock` are untouched) -
+and, per this repo's mandatory D-drive storage rule, entirely under
+`D:\Ancestry-MMM\` rather than `%USERPROFILE%\.local\bin` or any other
+`C:`-drive or default user-profile location:
 
 ```powershell
-uv tool install "graphifyy[mcp]"
-uv tool update-shell   # persists ~/.local/bin (graphify, graphify-mcp) on PATH
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\setup_graphify.ps1
 ```
+
+This script (not a bare `uv tool install`) is the supported install path. It:
+
+1. sets `UV_TOOL_DIR`, `UV_TOOL_BIN_DIR`, `UV_CACHE_DIR`, `TEMP`, and `TMP`
+   to `D:\Ancestry-MMM\...` paths before invoking `uv`;
+2. runs the pinned, forced install:
+   ```powershell
+   uv tool install --force "graphifyy[mcp]==0.9.30"
+   ```
+3. does **not** run `uv tool update-shell` - Graphify is never added to the
+   ambient user `PATH`. `scripts\run_graphify_mcp.ps1` (see
+   [MCP server](#mcp-server)) resolves the exact D-drive executable
+   directly instead, so nothing depends on shell PATH state;
+4. verifies the resolved executables exist and are on `D:` before reporting
+   success.
+
+Run `scripts\check_graphify_prereqs.ps1` at any time afterwards to
+re-verify the install (read-only, makes no changes) - it fails clearly if
+`MMM_DEV_ROOT` resolves off `D:`, matching the same drive check enforced by
+the launcher.
 
 | Field | Value |
 |---|---|
 | Package (PyPI) | `graphifyy` (double-y - not `graphify`) |
-| Installed version | `0.9.30` |
+| Installed version | `0.9.30` (pinned in `scripts\graphify_paths.ps1`) |
 | CLI command | `graphify` |
 | MCP server command | `graphify-mcp` (equivalent to `python -m graphify.serve`) |
-| Install method | `uv tool install` (isolated; not in `pyproject.toml`/`uv.lock`) |
-| Executable location | `%USERPROFILE%\.local\bin\graphify(.exe)` / `graphify-mcp(.exe)` |
+| Install method | `scripts\setup_graphify.ps1` -> `uv tool install --force` (isolated; not in `pyproject.toml`/`uv.lock`) |
+| Executable location | `D:\Ancestry-MMM\tools\uv\bin\graphify(.exe)` / `graphify-mcp(.exe)` (override the root via `MMM_DEV_ROOT`) |
 | Supported Python | >=3.10 (repo pins 3.11-3.12; no conflict, since it's an isolated tool env, not the project venv) |
 
-A new terminal or VS Code window is required after `uv tool update-shell`
-for `graphify`/`graphify-mcp` to resolve without a full path.
+No shell restart or PATH change is required or used: `graphify`/`graphify-mcp`
+are invoked by their full `D:\Ancestry-MMM\...` path, by the launcher script
+or manually, never resolved via PATH.
 
 ### Discrepancy from the public docs
 
@@ -106,21 +129,48 @@ and visualisation. Both are cheap - run after any meaningful restructuring
 
 ## MCP server
 
-```bash
-graphify-mcp graphify-out/graph.json          # stdio (default) - what .mcp.json uses
-graphify-mcp graphify-out/graph.json --transport http --port 8765   # only if a client needs HTTP
+`.mcp.json` never invokes `graphify-mcp` directly (that would depend on an
+ambient `PATH` entry, which this repo's D-drive rule forbids relying on).
+It calls the repository launcher instead, which resolves the exact
+`D:\Ancestry-MMM\tools\uv\bin\graphify-mcp.exe` and fails clearly rather
+than falling back to PATH or partially starting:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run_graphify_mcp.ps1
 ```
 
+Equivalent manual invocation (same executable, resolved the same way the
+launcher does):
+
+```bash
+D:\Ancestry-MMM\tools\uv\bin\graphify-mcp.exe graphify-out/graph.json   # stdio (default) - what the launcher/.mcp.json use
+D:\Ancestry-MMM\tools\uv\bin\graphify-mcp.exe graphify-out/graph.json --transport http --port 8765   # only if a client needs HTTP
+```
+
+The launcher (`scripts\run_graphify_mcp.ps1`) fails with a clear, non-zero
+exit before starting anything when:
+
+- `MMM_DEV_ROOT` (or the `D:\Ancestry-MMM` default) does not resolve to a
+  `D:`-drive path;
+- the resolved tool-bin directory (`UV_TOOL_BIN_DIR`, or the default) falls
+  outside that root - e.g. a stray ambient override pointing at
+  `%USERPROFILE%\.local\bin` or an unrelated machine-wide tool directory;
+- `graphify-mcp.exe` is not present at the resolved location (install not
+  yet run, or run against a different root);
+- `graphify-out/graph.json` is absent (nothing to serve - run
+  [Building the graph](#building-the-graph) first).
+
 - **Transport**: stdio is used here. It needs no persistently running
-  process - the client (Claude Code) spawns `graphify-mcp` itself per
-  session and tears it down when the session ends, matching how the
-  existing `context7`/`playwright` entries in `.mcp.json` work. There is no
-  standing background service to start, stop, or forget about.
+  process - the client (Claude Code) spawns the launcher (which spawns
+  `graphify-mcp`) itself per session and tears it down when the session
+  ends, matching how the existing `context7`/`playwright` entries in
+  `.mcp.json` work. There is no standing background service to start,
+  stop, or forget about.
 - If a client that only supports Streamable HTTP is added later, start it
-  manually with `--transport http`; it binds to `127.0.0.1` by default
-  (`--host` to change - do not bind `0.0.0.0` without a specific reason) and
-  needs an explicit stop (`Ctrl+C` or killing the process) since nothing
-  manages it automatically.
+  manually with `--transport http` against the resolved executable path
+  above; it binds to `127.0.0.1` by default (`--host` to change - do not
+  bind `0.0.0.0` without a specific reason) and needs an explicit stop
+  (`Ctrl+C` or killing the process) since nothing manages it automatically.
 
 ## Configured VS Code clients
 
@@ -141,17 +191,24 @@ tooling).
 
 ```json
 "graphify-project": {
-  "command": "graphify-mcp",
-  "args": ["graphify-out/graph.json"]
+  "command": "powershell",
+  "args": [
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    "scripts/run_graphify_mcp.ps1"
+  ]
 }
 ```
 
-No absolute path: `graphify-mcp` resolves via `PATH` (see
-[Installation](#installation)) and the graph path is repo-relative, so this
-entry is portable across machines that have Graphify installed the same
-way - unlike a hard-coded `C:\Users\<name>\...` path, which would break for
-any other developer and violates the "no machine-specific paths" rule this
-repo already follows for its other MCP entries.
+No absolute path and no ambient `PATH` dependency: the launcher script is
+repo-relative (portable across machines - unlike a hard-coded
+`C:\Users\<name>\...` path, which would break for any other developer and
+violates the "no machine-specific paths" rule this repo already follows for
+its other MCP entries) and resolves the exact D-drive executable itself
+(see [MCP server](#mcp-server)), rather than depending on `graphify-mcp`
+being on `PATH`.
 
 **Reload required**: like the other three servers, a change to `.mcp.json`
 only takes effect after reloading/restarting the Claude Code session.
@@ -166,14 +223,19 @@ already there):
 
 ```toml
 [mcp_servers.graphify-project]
-command = "graphify-mcp"
-args = ["graphify-out/graph.json"]
-cwd = "D:\\App Projects\\MMM-Guide"
+command = "powershell"
+args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/run_graphify_mcp.ps1"]
+cwd = "D:\\Ancestry-MMM\\repos\\MMM-Guide"
 ```
 
 `cwd` is required here (unlike `.mcp.json`) because Codex's config isn't
-scoped to one project - without it, `graphify-out/graph.json` wouldn't
-resolve relative to this repo. Restart the Codex extension/session after
+scoped to one project - without it, `scripts/run_graphify_mcp.ps1` and
+`graphify-out/graph.json` wouldn't resolve relative to this repo. Use the
+repository's canonical D-drive checkout path
+(`D:\Ancestry-MMM\repos\MMM-Guide`), not a machine-specific location such
+as the original `D:\App Projects\MMM-Guide` this repo was previously
+checked out to - adjust to your actual checkout path if it differs.
+Restart the Codex extension/session after
 editing.
 
 ## Verifying MCP tool availability
@@ -191,12 +253,16 @@ editing.
 4. Switching models inside the same MCP-capable client (e.g. changing which
    model Claude Code or Copilot Chat is using) does **not** require
    reconnecting MCP or rebuilding the graph - the extension owns the MCP
-   session; the model is just who gets to call the tools it exposes.
+   session; the model is just who gets to call the tools it exposes. A
+   model can only call `graphify-project` tools when its *coding client*
+   both supports MCP and has this server configured and connected - MCP
+   access is a property of the client, not of any specific model.
 
-If `graphify-mcp` isn't found after a reload, PATH wasn't picked up yet -
-close and reopen VS Code fully (not just reload window), or run `uv tool
-update-shell` again and start a fresh terminal to confirm it resolves there
-first.
+If the `graphify-project` tools aren't listed after a reload, run
+`scripts\check_graphify_prereqs.ps1` first to confirm the D-drive install
+resolves correctly, then close and reopen VS Code fully (not just reload
+window). This is unrelated to `PATH`: the launcher never depends on
+`graphify-mcp` being on `PATH`, so a PATH change alone will not fix it.
 
 ## Exclusions
 
@@ -265,9 +331,16 @@ review which backend/model you're sending code summaries to first.
 
 ## Troubleshooting
 
-- **`graphify`/`graphify-mcp` not found**: PATH wasn't updated in the
-  current shell/VS Code session - run `uv tool update-shell`, then open a
-  new terminal or fully restart VS Code.
+- **`graphify`/`graphify-mcp` not found**: run
+  `scripts\check_graphify_prereqs.ps1` to see exactly which D-drive path
+  and executable are missing, then (re)run `scripts\setup_graphify.ps1`.
+  There is no PATH step to retry - neither script relies on `PATH`, so
+  restarting a terminal alone will not fix a missing install.
+- **Launcher fails with "resolves outside the configured D-drive root"**:
+  an ambient environment variable (`UV_TOOL_BIN_DIR`, or `MMM_DEV_ROOT`
+  itself) is pointing somewhere other than `D:\Ancestry-MMM\...` - often a
+  machine-wide convention from another project. Unset it or correct it
+  before launching; the launcher deliberately refuses to guess.
 - **MCP server not listed after adding to `.mcp.json`**: Claude Code only
   picks up `.mcp.json` changes on reload/restart, same as the other three
   servers (see `mcp_development_tooling.md`).
@@ -284,16 +357,23 @@ review which backend/model you're sending code summaries to first.
 ## Uninstall / rollback
 
 ```powershell
-graphify uninstall --purge   # removes any registered client integrations and graphify-out/
-uv tool uninstall graphifyy  # removes the isolated tool install
+# Same D-drive env vars setup_graphify.ps1 uses, so uv targets the
+# isolated D-drive install rather than any default location:
+$env:MMM_DEV_ROOT = "D:\Ancestry-MMM"          # or your configured root
+$env:UV_TOOL_DIR = "$env:MMM_DEV_ROOT\tools\uv\tools"
+$env:UV_TOOL_BIN_DIR = "$env:MMM_DEV_ROOT\tools\uv\bin"
+D:\Ancestry-MMM\tools\uv\bin\graphify.exe uninstall --purge   # removes any registered client integrations and graphify-out/
+uv tool uninstall graphifyy                                   # removes the isolated tool install
 ```
 
 To fully remove the repo-side integration: delete the `graphify-project`
-entry from `.mcp.json`, delete `.graphifyignore`, remove the "Graphify
-repository map" section and the Graphify bullet/sentence from `AGENTS.md`,
-delete this file, and remove the `graphify-out/` line from `.gitignore`.
-Nothing under `graphify-out/` is committed, so there is nothing else to
-clean up in git history.
+entry from `.mcp.json`, delete `scripts\graphify_paths.ps1`,
+`scripts\setup_graphify.ps1`, `scripts\check_graphify_prereqs.ps1`, and
+`scripts\run_graphify_mcp.ps1`, delete `.graphifyignore`, remove the
+"Graphify repository map" section and the Graphify bullet/sentence from
+`AGENTS.md`, delete this file, and remove the `graphify-out/` line from
+`.gitignore`. Nothing under `graphify-out/` is committed, so there is
+nothing else to clean up in git history.
 
 ## Product boundary
 
