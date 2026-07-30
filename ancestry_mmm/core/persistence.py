@@ -870,7 +870,7 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
                 )
             else:
                 current_data_fp, current_spec_fp, current_posterior_fp = (
-                    _current_model_identity_fingerprints(imported, reconstructed)
+                    current_model_identity_fingerprints(imported, reconstructed)
                 )
                 raw_approval = imported.get("model_approval")
                 if not raw_approval:
@@ -1119,7 +1119,7 @@ def reconstruct_model_state(imported: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
-def _current_model_identity_fingerprints(
+def current_model_identity_fingerprints(
     imported: Dict[str, Any],
     reconstructed: Dict[str, Any],
 ) -> Tuple[str, str, str]:
@@ -1222,7 +1222,7 @@ def verify_imported_approval(
             "The model must be reviewed and approved again."
         )
 
-    data_fp, spec_fp, posterior_fp = _current_model_identity_fingerprints(
+    data_fp, spec_fp, posterior_fp = current_model_identity_fingerprints(
         imported, reconstructed
     )
     current_run_id = imported.get("model_run_id") or approval.model_run_id

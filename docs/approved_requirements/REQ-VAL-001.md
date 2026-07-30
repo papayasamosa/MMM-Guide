@@ -32,6 +32,19 @@ falls back to a live recomputation for a metric the artefact lacks. This
 resolves the "optionally reference a policy" language below in favour of a
 firm requirement for anything created going forward.
 
+PR 82D: the governance evidence chain (``validation_policy``,
+``diagnostics_artefact``, ``validation_results``, ``approval_readiness``)
+now round-trips through the project export/import bundle
+(``core/persistence.py``, ``application/project_service.py``,
+``pages/09_Project_Export.py``). The policy and diagnostics artefact are
+restored as-is on import (they remain valid evidence on their own); the
+readiness proof binding them to a specific model identity is only restored
+if ``application.project_service.verify_imported_readiness`` confirms it
+still matches the imported policy, diagnostics artefact, and reconstructed
+model identity fingerprints - never trusted blindly, mirroring how
+``core.persistence.verify_imported_approval`` already treats an imported
+``model_approval``.
+
 ## Requirement
 
 ### 1. Policy objects
@@ -90,6 +103,9 @@ existing governance rules such as outcome approval).
 - ``ancestry_mmm/core/optimization.py`` (import readiness check)
 - ``ancestry_mmm/pages/06_Diagnostics.py`` (display readiness)
 - ``ancestry_mmm/pages/07_Results_Curve_Bank.py`` (approval gate update)
+- ``ancestry_mmm/core/persistence.py`` (export/import the evidence chain)
+- ``ancestry_mmm/application/project_service.py`` (verify imported readiness)
+- ``ancestry_mmm/pages/09_Project_Export.py`` (wire export/import restoration)
 
 ## Required tests
 
@@ -107,6 +123,10 @@ existing governance rules such as outcome approval).
 - A policy, model-identity, or diagnostics-artefact fingerprint change
   invalidates a previously evaluated readiness and any approval bound to it
   (PR 82B).
+- A project bundle's governance evidence chain round-trips through export
+  and import; an imported readiness is restored only when it still matches
+  the imported policy, diagnostics artefact, and reconstructed model
+  identity (PR 82D).
 
 ## Migration impact
 
