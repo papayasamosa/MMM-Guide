@@ -27,7 +27,12 @@ from ancestry_mmm.components import (
     render_glossary,
     render_drift_status,
 )
-from ancestry_mmm.core.approval import ApprovalMismatchError, ModelApproval
+from ancestry_mmm.core.approval import (
+    ApprovalMismatchError,
+    ModelApproval,
+    ValidationPolicyBlockedError,
+    require_matching_approval,
+)
 from ancestry_mmm.core.activities import (
     ActivityDefinition,
     activity_by_model_input,
@@ -59,10 +64,8 @@ from ancestry_mmm.core.optimization import (
     ScenarioGovernanceDependencies,
     SpendConstraint,
     compare_scenarios,
-    evaluate_manual_scenario,
     governance_deps_from_optimizer_result,
     monthly_economics_table,
-    optimize_scenario,
     resolve_planning_objective,
     scenario_to_dict,
     seed_monetary_and_quantity_defaults,
@@ -80,6 +83,12 @@ from ancestry_mmm.core.scenario_governance import (
     CounterfactualPolicy,
     ScenarioPlan,
     classify_activity_plan,
+)
+from ancestry_mmm.core.validation_policy import ApprovalReadiness, ThresholdPolicy
+from ancestry_mmm.application.scenario_service import (
+    ManualScenarioInput,
+    OptimisationInput,
+    ScenarioService,
 )
 from ancestry_mmm.data.preprocessor import create_fourier_features_from_calendar
 
@@ -165,12 +174,47 @@ if model_run_id and spec_dict is not None:
         "posterior_fingerprint": fingerprint_posterior(params),
     }
 
+# PR 82C: validation_policy / approval_readiness are the sole policy/
+# readiness state keys (matching pages/06_Diagnostics.py) - rehydrated once,
+# here, through the canonical domain deserialisers (ThresholdPolicy.from_dict
+# / ApprovalReadiness.from_dict) and reused as these same two objects for
+# the approval gate below AND every planning/uncertainty call further down
+# the page, so official planning can never end up proving governance against
+# two different resolved policy/readiness objects in the same rerun.
+validation_policy_dict = get_state("validation_policy")
+current_policy: ThresholdPolicy | None = None
+if validation_policy_dict and isinstance(validation_policy_dict, dict):
+    try:
+        current_policy = ThresholdPolicy.from_dict(validation_policy_dict)
+    except ValueError:
+        current_policy = None
+
+approval_readiness_dict = get_state("approval_readiness")
+current_readiness: ApprovalReadiness | None = None
+if approval_readiness_dict and isinstance(approval_readiness_dict, dict):
+    current_readiness = ApprovalReadiness.from_dict(approval_readiness_dict)
+
 approval_dict = get_state("model_approval")
-approval_matches_current = (
-    approval_dict is not None
-    and current_identity is not None
-    and ModelApproval.from_dict(approval_dict).matches_current_model(**current_identity)
-)
+# PR 82C: require_matching_approval (already used by curve_bank/optimization
+# to gate real use of an approval) re-verifies the FULL chain - model
+# identity AND, for policy-backed approvals, that the bound readiness still
+# exists, is still overall_ready, and its policy/model-identity fingerprints
+# still match the current policy and model - not just model identity alone.
+# A missing, stale, expired, or mismatched policy/readiness is rejected
+# here, up front, rather than surfacing deep inside a planning call.
+approval_invalid_reason: str | None = None
+approval_matches_current = False
+if approval_dict is not None and current_identity is not None:
+    try:
+        require_matching_approval(
+            ModelApproval.from_dict(approval_dict),
+            approval_readiness=current_readiness,
+            current_policy=current_policy,
+            **current_identity,
+        )
+        approval_matches_current = True
+    except (ApprovalMismatchError, ValidationPolicyBlockedError) as exc:
+        approval_invalid_reason = str(exc)
 
 st.markdown("---")
 if not approval_dict:
@@ -183,9 +227,11 @@ if not approval_dict:
     st.stop()
 if not approval_matches_current:
     st.warning(
-        "This model's approval no longer matches the current fitted model (the data, "
-        "specification, posterior, or run have changed since it was approved) - the model must "
-        "be reviewed and approved again on Diagnostics before planning scenarios."
+        "This model's approval no longer matches the current fitted model, policy, or "
+        "readiness evidence"
+        + (f": {approval_invalid_reason}" if approval_invalid_reason else "")
+        + " - the model must be reviewed and approved again on Diagnostics before "
+        "planning scenarios."
     )
     if st.button("Go to Diagnostics", key="stale_approval_diagnostics"):
         st.switch_page("pages/06_Diagnostics.py")
@@ -541,12 +587,16 @@ if governance_mode == "exploratory":
 # every consumer below sees the same rerun's selection - separate from
 # identity_kwargs (model identity only) so no call ever receives
 # governance_mode twice.
+# PR 82C: approval_readiness/current_policy reuse the exact same
+# current_readiness/current_policy objects rehydrated once above for the
+# approval gate - the single governance proof for this rerun, shared by the
+# gate, manual evaluation, both optimiser modes, and posterior uncertainty.
 scenario_governance_kwargs = dict(
     outcome_approvals=outcome_approvals,
     governance_mode=governance_mode,
     nbt_completeness_metadata=nbt_completeness_metadata,
-    approval_readiness=get_state("validation_readiness"),
-    current_policy=get_state("current_policy"),
+    approval_readiness=current_readiness,
+    current_policy=current_policy,
 )
 cost_as_of_by_month = {
     month: f"{month}-01" if len(month) == 7 else month for month in months
@@ -727,15 +777,17 @@ tab_manual, tab_constrained, tab_unconstrained = st.tabs(
 
 with tab_manual:
     st.markdown("Predicted outcomes for the spend plan as edited above.")
-    try:
-        # G2A.7a.5: use evaluate_manual_scenario which returns ScenarioEvaluationResult
-        manual_result = evaluate_manual_scenario(
-            spend_plan,
-            market,
-            meta,
-            params,
-            reference_context_by_month,
-            ltv,
+    # PR 82C: routed through ScenarioService.evaluate_manual() with a typed
+    # ManualScenarioInput - the page no longer calls evaluate_manual_scenario()
+    # directly.
+    manual_service_result = ScenarioService().evaluate_manual(
+        ManualScenarioInput(
+            market=market,
+            spend_plan=spend_plan,
+            meta=meta,
+            params=params,
+            reference_context_by_month=reference_context_by_month,
+            ltv=ltv,
             planning_objective=planning_objective,
             activity_definitions=activity_definitions or None,
             scenario_plan=scenario_plan,
@@ -749,10 +801,13 @@ with tab_manual:
             **identity_kwargs,
             **scenario_governance_kwargs,
         )
-        predicted = manual_result.predicted
-    except (ApprovalMismatchError, ValueError, PlanningGovernanceError) as e:
-        st.error(f"Cannot evaluate this scenario: {e}")
+    )
+    if manual_service_result.errors:
+        for _err in manual_service_result.errors:
+            st.error(f"Cannot evaluate this scenario: {_err}")
         st.stop()
+    manual_result = manual_service_result.evaluation
+    predicted = manual_result.predicted
     st.dataframe(
         predicted, width="stretch", column_config=dataframe_column_config(predicted)
     )
@@ -1017,16 +1072,19 @@ with tab_constrained:
             result = None
         else:
             with st.spinner("Optimising..."):
-                try:
-                    result = optimize_scenario(
-                        spend_plan,
-                        months,
-                        meta.channels,
-                        market,
-                        meta,
-                        params,
-                        reference_context_by_month,
-                        ltv,
+                # PR 82C: routed through ScenarioService.optimise() with a
+                # typed OptimisationInput - the page no longer calls
+                # optimize_scenario() directly.
+                opt_service_result = ScenarioService().optimise(
+                    OptimisationInput(
+                        current_spend_plan=spend_plan,
+                        months=months,
+                        channels=meta.channels,
+                        market=market,
+                        meta=meta,
+                        params=params,
+                        reference_context_by_month=reference_context_by_month,
+                        ltv=ltv,
                         objective=objective if planning_objective is None else None,
                         planning_objective=optimisation_objective,
                         constraints=st.session_state["scenario_constraints"],
@@ -1044,13 +1102,13 @@ with tab_constrained:
                         **identity_kwargs,
                         **scenario_governance_kwargs,
                     )
-                except (
-                    ApprovalMismatchError,
-                    ValueError,
-                    PlanningGovernanceError,
-                ) as e:
-                    st.error(f"Cannot run optimisation: {e}")
+                )
+                if opt_service_result.errors:
+                    for _err in opt_service_result.errors:
+                        st.error(f"Cannot run optimisation: {_err}")
                     result = None
+                else:
+                    result = opt_service_result.optimisation_result
             if result is not None:
                 if not result["success"]:
                     st.warning(f"Optimiser did not fully converge: {result['message']}")
@@ -1173,16 +1231,19 @@ with tab_unconstrained:
             result = None
         else:
             with st.spinner("Optimising..."):
-                try:
-                    result = optimize_scenario(
-                        spend_plan,
-                        months,
-                        meta.channels,
-                        market,
-                        meta,
-                        params,
-                        reference_context_by_month,
-                        ltv,
+                # PR 82C: routed through ScenarioService.optimise() with a
+                # typed OptimisationInput - the page no longer calls
+                # optimize_scenario() directly.
+                opt_service_result = ScenarioService().optimise(
+                    OptimisationInput(
+                        current_spend_plan=spend_plan,
+                        months=months,
+                        channels=meta.channels,
+                        market=market,
+                        meta=meta,
+                        params=params,
+                        reference_context_by_month=reference_context_by_month,
+                        ltv=ltv,
                         objective=objective if planning_objective is None else None,
                         planning_objective=optimisation_objective,
                         constraints=[],
@@ -1200,13 +1261,13 @@ with tab_unconstrained:
                         **identity_kwargs,
                         **scenario_governance_kwargs,
                     )
-                except (
-                    ApprovalMismatchError,
-                    ValueError,
-                    PlanningGovernanceError,
-                ) as e:
-                    st.error(f"Cannot run optimisation: {e}")
+                )
+                if opt_service_result.errors:
+                    for _err in opt_service_result.errors:
+                        st.error(f"Cannot run optimisation: {_err}")
                     result = None
+                else:
+                    result = opt_service_result.optimisation_result
             if result is not None:
                 st.session_state["unconstrained_result"] = result
 

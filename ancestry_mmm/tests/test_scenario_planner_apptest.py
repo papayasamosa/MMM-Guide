@@ -20,13 +20,17 @@ import pytest
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
-from ancestry_mmm.core.approval import ModelApproval
+from ancestry_mmm.core.approval import (
+    ModelApproval,
+    create_policy_backed_model_approval,
+)
 from ancestry_mmm.core.fingerprint import (
     fingerprint_dataframe,
     fingerprint_model_spec,
     fingerprint_posterior,
 )
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
+from ancestry_mmm.core.model_identity import ModelIdentity
 from ancestry_mmm.core.outcome_approval import (
     OutcomeApproval,
     fingerprint_outcome_definition,
@@ -41,6 +45,14 @@ from ancestry_mmm.core.outcomes import (
 from ancestry_mmm.core.pathways import pathway_catalogue_fingerprint_payload
 from ancestry_mmm.core.predict import extract_posterior_params
 from ancestry_mmm.core.schema import ModelSpec
+from ancestry_mmm.core.validation_policy import (
+    ApprovalReadiness,
+    ThresholdPolicy,
+    ValidationEvidenceContext,
+    ValidationGate,
+    ValidationResult,
+    evaluate_approval_readiness,
+)
 from ancestry_mmm.data.preprocessor import prepare_fh_modeling_frame
 
 st.page_link = lambda *a, **k: None
@@ -334,3 +346,232 @@ def test_non_target_outcome_in_another_currency_does_not_block():
     )
     warnings_text = [w.value for w in at.warning]
     assert not any("value mapping" in (w or "") for w in warnings_text), warnings_text
+
+
+# ---------------------------------------------------------------------------
+# PR 82C: ScenarioService routing, canonical state keys, governance-proof
+# invalidation
+# ---------------------------------------------------------------------------
+
+
+def _policy_backed_governance(
+    model_run_id: str, data_fp: str, spec_fp: str, posterior_fp: str
+) -> tuple[ThresholdPolicy, ApprovalReadiness, ModelApproval]:
+    """Build a matching (policy, readiness, approval) triple for the given
+    model identity - the readiness is hand-built via
+    evaluate_approval_readiness with a single trivially-passing gate
+    (mirroring test_validation_policy.py's pattern), so this needs no real
+    diagnostics computation."""
+    identity = ModelIdentity(
+        model_run_id=model_run_id,
+        data_fingerprint=data_fp,
+        model_spec_fingerprint=spec_fp,
+        posterior_fingerprint=posterior_fp,
+    )
+    gate = ValidationGate(
+        name="divergences",
+        description="No divergences",
+        evaluator_id="divergences",
+        expected_state=False,
+    )
+    policy = ThresholdPolicy(
+        policy_id="scenario-planner-policy",
+        version="1.0",
+        scope="all_models",
+        owner="Test",
+        gates=[gate],
+    )
+    result = ValidationResult(
+        gate_name="divergences",
+        status="pass",
+        value=0,
+        message="No divergences",
+        model_run_id=model_run_id,
+        data_fingerprint=data_fp,
+        model_spec_fingerprint=spec_fp,
+        posterior_fingerprint=posterior_fp,
+        policy_id=policy.policy_id,
+        policy_version=policy.version,
+        policy_fingerprint=policy.fingerprint(),
+        model_identity_fingerprint=identity.fingerprint(),
+        gate_fingerprint=gate.fingerprint(),
+        diagnostic_artefact_fingerprint="diag-fp-scenario-planner",
+        artefact_id="diag-scenario-planner",
+    )
+    ctx = ValidationEvidenceContext(
+        model_identity=identity,
+        policy=policy,
+        diagnostic_artefact_id="diag-scenario-planner",
+        diagnostic_artefact_fingerprint="diag-fp-scenario-planner",
+        model_type="shared",
+        intended_use="model_approval",
+    )
+    readiness = evaluate_approval_readiness(
+        [result],
+        policy,
+        identity,
+        diagnostic_artefact_id="diag-scenario-planner",
+        diagnostic_artefact_fingerprint="diag-fp-scenario-planner",
+        evidence_context=ctx,
+    )
+    approval = create_policy_backed_model_approval(
+        approved_by="Jane Analyst",
+        readiness=readiness,
+        current_policy=policy,
+        model_run_id=model_run_id,
+        data_fingerprint=data_fp,
+        model_spec_fingerprint=spec_fp,
+        posterior_fingerprint=posterior_fp,
+    )
+    return policy, readiness, approval
+
+
+def _seed_official_governance_state(
+    at: AppTest, *, value_currency: str = "GBP"
+) -> None:
+    """Seed the same consistent fitted model as _seed_consistent_session_state,
+    but replace the legacy (policy-unbound) approval with a real policy-backed
+    triple: model_approval, validation_policy and approval_readiness all bound
+    to the exact same model identity and to each other."""
+    _seed_consistent_session_state(at, value_currency=value_currency)
+    legacy_approval_dict = at.session_state["model_approval"]
+    policy, readiness, approval = _policy_backed_governance(
+        legacy_approval_dict["model_run_id"],
+        legacy_approval_dict["data_fingerprint"],
+        legacy_approval_dict["model_spec_fingerprint"],
+        legacy_approval_dict["posterior_fingerprint"],
+    )
+    at.session_state["model_approval"] = approval.to_dict()
+    at.session_state["validation_policy"] = policy.to_dict()
+    at.session_state["approval_readiness"] = readiness.to_dict()
+
+
+def test_official_manual_scenario_succeeds_with_matching_policy_readiness_approval():
+    """A policy-backed approval whose bound readiness/policy fingerprints
+    all still match the current model must pass the approval gate and let
+    the manual tab evaluate normally through ScenarioService."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_official_governance_state(at)
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    # Reaching the manual tab's predicted-outcomes table means the approval
+    # gate did not st.stop() the page.
+    assert not any(
+        "no longer matches the current fitted model" in (w.value or "")
+        for w in at.warning
+    )
+    assert any(
+        "Predicted outcomes for the spend plan" in (m.value or "") for m in at.markdown
+    )
+
+
+def test_official_scenario_blocked_with_missing_readiness():
+    """A policy-backed approval with no matching approval_readiness in
+    session state must block the whole page (require_matching_approval
+    raises "no readiness assessment was provided") rather than let planning
+    proceed ungoverned."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_official_governance_state(at)
+    at.session_state["approval_readiness"] = None
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    assert any(
+        "no longer matches the current fitted model, policy, or readiness evidence"
+        in (w.value or "")
+        for w in at.warning
+    )
+    # The page st.stop()s at the gate - the plan-setup UI further down must
+    # never render.
+    assert not any(r.label == "Market *" for r in at.selectbox)
+
+
+def test_official_scenario_blocked_with_policy_mismatch():
+    """A policy-backed approval whose bound readiness was evaluated against
+    a different policy than the one currently configured must block the
+    whole page - a policy edit since approval must not silently continue to
+    authorise planning."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_official_governance_state(at)
+    mismatched_policy = dict(at.session_state["validation_policy"])
+    mismatched_policy["version"] = "2.0"  # same policy_id, different fingerprint
+    at.session_state["validation_policy"] = mismatched_policy
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    assert any(
+        "no longer matches the current fitted model, policy, or readiness evidence"
+        in (w.value or "")
+        for w in at.warning
+    )
+    assert not any(r.label == "Market *" for r in at.selectbox)
+
+
+def test_page_reads_no_deprecated_state_keys():
+    """PR 82C: validation_policy / approval_readiness are the sole policy/
+    readiness state keys - the deprecated validation_readiness /
+    (bare) current_policy state-key reads must be fully gone."""
+    source = "\n".join(
+        line
+        for line in PAGE.read_text(encoding="utf-8").split("\n")
+        if not line.strip().startswith("#")
+    )
+    assert 'get_state("validation_readiness")' not in source
+    assert 'get_state("current_policy")' not in source
+
+
+def test_page_never_calls_core_planning_functions_directly():
+    """PR 82C: manual evaluation and both optimiser modes are routed through
+    ScenarioService - the page must not call evaluate_manual_scenario() or
+    optimize_scenario() directly any more."""
+    source = "\n".join(
+        line
+        for line in PAGE.read_text(encoding="utf-8").split("\n")
+        if not line.strip().startswith("#")
+    )
+    assert "evaluate_manual_scenario(" not in source
+    assert "optimize_scenario(" not in source
+
+
+def test_page_resolves_policy_and_readiness_exactly_once():
+    """PR 82C: one governance proof (current_policy/current_readiness) is
+    resolved once and reused by the approval gate, manual evaluation, both
+    optimiser modes, and posterior uncertainty - never re-derived
+    independently for different calls in the same rerun."""
+    source = PAGE.read_text(encoding="utf-8")
+    assert source.count("ThresholdPolicy.from_dict(") == 1
+    assert source.count("ApprovalReadiness.from_dict(") == 1
+    # The same scenario_governance_kwargs dict (built from current_policy/
+    # current_readiness) must be spread into every planning/uncertainty call.
+    assert source.count("**scenario_governance_kwargs") == 4
+
+
+def test_exploratory_result_invalidated_when_switched_back_to_official():
+    """Exploratory-mode results must never silently be displayed/saved under
+    an official label once governance mode changes - a cached optimisation
+    result computed in exploratory mode is invalidated the moment the radio
+    is switched to official, exercising the pre-existing governance_mode
+    mismatch guard through the now-service-routed optimisation path."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_official_governance_state(at)
+    at.run()
+    governance_radio = next(r for r in at.radio if r.label == "Governance mode")
+    governance_radio.set_value("exploratory").run()
+    assert not at.exception, f"page raised: {at.exception}"
+    assert any("Exploratory mode" in (w.value or "") for w in at.warning), (
+        "exploratory mode must be visibly labelled"
+    )
+
+    run_button = next(b for b in at.button if b.label == "Run unconstrained benchmark")
+    run_button.click().run()
+    assert not at.exception, f"page raised after exploratory run: {at.exception}"
+    assert at.session_state["unconstrained_result"] is not None
+    assert at.session_state["unconstrained_result"]["governance_mode"] == "exploratory"
+
+    # Switch back to official without re-running - the cached exploratory
+    # result must be invalidated, never silently redisplayed as official.
+    governance_radio.set_value("official").run()
+    assert not at.exception, f"page raised: {at.exception}"
+    assert at.session_state["unconstrained_result"] is None
+    assert any(
+        "Governance mode changed since this result was computed" in (i.value or "")
+        for i in at.info
+    )
