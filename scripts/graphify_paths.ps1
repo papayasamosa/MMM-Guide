@@ -57,6 +57,16 @@ function Test-GraphifyPathOnDDrive {
 .SYNOPSIS
     Returns $true only if $Path resolves inside $Root (no escape via ..,
     a differently-rooted override, or a relative path).
+
+.DESCRIPTION
+    PR 88C: containment is exact - $Path must equal $Root, or start with
+    $Root plus a directory separator. A bare string-prefix check (the
+    previous implementation) is not sufficient: "D:\Ancestry-MMM-Evil"
+    starts with the substring "D:\Ancestry-MMM" even though it is a
+    completely different, sibling directory. Requiring the separator
+    immediately after the root closes that gap, and rejects every other
+    sibling-prefix shape (D:\Ancestry-MMM2, D:\Ancestry-MMMSomethingElse)
+    the same way.
 #>
 function Test-GraphifyPathUnderRoot {
     param(
@@ -65,5 +75,11 @@ function Test-GraphifyPathUnderRoot {
     )
     $fullPath = [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
     $fullRoot = [System.IO.Path]::GetFullPath($Root).TrimEnd('\')
-    return $fullPath.StartsWith($fullRoot, [System.StringComparison]::OrdinalIgnoreCase)
+    if ([StringComparer]::OrdinalIgnoreCase.Equals($fullPath, $fullRoot)) {
+        return $true
+    }
+    return $fullPath.StartsWith(
+        $fullRoot + [System.IO.Path]::DirectorySeparatorChar,
+        [System.StringComparison]::OrdinalIgnoreCase
+    )
 }
