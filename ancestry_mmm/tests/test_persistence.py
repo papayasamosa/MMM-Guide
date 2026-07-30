@@ -26,6 +26,7 @@ from ancestry_mmm.core.market_config import (
 )
 from ancestry_mmm.core.optimization import SpendConstraint, evaluate_scenario
 from ancestry_mmm.core.outcomes import DNA, FAMILY_HISTORY, OutcomeDefinition
+from ancestry_mmm.core.planning import CURRENT_PLANNING_EVALUATION_SEMANTICS
 from ancestry_mmm.core.pathways import (
     ResolvedPathwayComponent,
     ResolvedPathwayMasks,
@@ -342,9 +343,10 @@ def test_export_then_import_reproduces_scenarios_and_constraints(
     # G2A.7a.10: a legacy "value" objective with no governed currency on
     # record must not be migrated with an invented placeholder currency
     # (the old "UNSPECIFIED" behaviour this test used to assert) - it stays
-    # loadable but unverified instead. schema_version reaches 3 because the
-    # scenario also predates the governance_dependencies block.
-    assert restored_scenario["schema_version"] == 3
+    # loadable but unverified instead. schema_version reaches 4 (PR 88B:
+    # bumped from 3) because the scenario also predates the
+    # governance_dependencies block and planning_semantics_fingerprint.
+    assert restored_scenario["schema_version"] == 4
     assert restored_scenario["_migrated_from_schema"] == 1
     assert restored_scenario["objective"] == "value"
     assert restored_scenario["planning_objective"] is None
@@ -1988,7 +1990,11 @@ class TestScenariosCheckpointOfficialResumability:
             },
             "artefact_kind": "manual_scenario",
             "governance_mode": "official",
-            "schema_version": 3,
+            # PR 88B: bumped from 3 to 4 - schema 4 requires
+            # governance_dependencies.planning_semantics_fingerprint for an
+            # official scenario to be "current" rather than
+            # "legacy_unverified".
+            "schema_version": 4,
             "governance_dependencies": {
                 "model_run_id": model_run_id,
                 "model_approval_fingerprint": model_approval_fingerprint,
@@ -2011,6 +2017,9 @@ class TestScenariosCheckpointOfficialResumability:
                 "cost_mapping_fingerprint": None,
                 "counterfactual_policy_fingerprint": counterfactual_fp or None,
                 "nbt_completeness_fingerprint": None,
+                "planning_semantics_fingerprint": (
+                    CURRENT_PLANNING_EVALUATION_SEMANTICS.fingerprint()
+                ),
             },
         }
 

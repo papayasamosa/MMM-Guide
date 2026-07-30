@@ -22,7 +22,9 @@ from __future__ import annotations
 from .value import (
     AdstockState,
     CurrencyContext,
+    CURRENT_PLANNING_EVALUATION_SEMANTICS,
     OutcomeValueMapping,
+    PlanningEvaluationSemantics,
     PlanningObjective,
     ResolvedOutcomeAuthorisation,
     ResolvedPlanningGovernance,
@@ -38,7 +40,9 @@ from .value import (
 __all__ = [
     "AdstockState",
     "CurrencyContext",
+    "CURRENT_PLANNING_EVALUATION_SEMANTICS",
     "OutcomeValueMapping",
+    "PlanningEvaluationSemantics",
     "PlanningObjective",
     "ResolvedOutcomeAuthorisation",
     "ResolvedPlanningGovernance",

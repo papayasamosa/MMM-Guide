@@ -17,6 +17,7 @@ from ancestry_mmm.core.approval import ModelApproval, fingerprint_model_approval
 from ancestry_mmm.core.net_billthrough import NetBillthroughCompletenessMetadata
 from ancestry_mmm.core.optimization import (
     ARTEFACT_KIND_REQUIRED_USE,
+    CURRENT_PLANNING_EVALUATION_SEMANTICS,
     CurrencyContext,
     OutcomeValueMapping,
     PlanningObjective,
@@ -298,11 +299,16 @@ class TestContextCompleteness:
             ),
             nbt_completeness_fingerprint=None,
             counterfactual_policy_fingerprint="fp-counterfactual",
+            planning_semantics_fingerprint=(
+                CURRENT_PLANNING_EVALUATION_SEMANTICS.fingerprint()
+            ),
         )
         scenario = {
             "name": "test",
             "governance_mode": "official",
-            "schema_version": 3,
+            # PR 88B: schema 4 - a genuinely "current" scenario must also
+            # carry a matching planning_semantics_fingerprint.
+            "schema_version": 4,
             "artefact_kind": "manual_scenario",
             "governance_dependencies": deps.to_dict(),
         }
@@ -580,11 +586,16 @@ class TestNbtCompleteness:
             ),
             nbt_completeness_fingerprint=None,
             counterfactual_policy_fingerprint="fp-counterfactual",
+            planning_semantics_fingerprint=(
+                CURRENT_PLANNING_EVALUATION_SEMANTICS.fingerprint()
+            ),
         )
         scenario = {
             "name": "test",
             "governance_mode": "official",
-            "schema_version": 3,
+            # PR 88B: schema 4 - a genuinely "current" scenario must also
+            # carry a matching planning_semantics_fingerprint.
+            "schema_version": 4,
             "artefact_kind": "manual_scenario",
             "governance_dependencies": deps.to_dict(),
         }
