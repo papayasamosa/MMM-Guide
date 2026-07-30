@@ -13,6 +13,7 @@ from ancestry_mmm.utils import (
     init_session_state,
     get_state,
     set_state,
+    invalidate_governance_evidence,
     format_date,
     format_number,
     dataframe_column_config,
@@ -48,8 +49,8 @@ from ancestry_mmm.application.validation_service import (
     ValidationInput,
 )
 from ancestry_mmm.core.validation_policy import (
-    ApprovalReadiness,
-    ThresholdPolicy,
+    load_approval_readiness,
+    load_threshold_policy,
     readiness_matches_current_evidence,
 )
 from ancestry_mmm.core.model_identity import ModelIdentity
@@ -204,6 +205,10 @@ if st.button("Compute scorecard", type="primary"):
         set_state("scorecard", scorecard)
         set_state("diagnostics_artefact", diag_result.diagnostics_artefact)
         set_state("diag_result", diag_result)
+        # PR 88A: a freshly computed artefact invalidates any readiness/
+        # approval evaluated against the previous one, in the same action -
+        # not left for the next rerun's staleness check to catch.
+        invalidate_governance_evidence()
     st.success("Scorecard computed.")
 
 # Retrieve artefact for governance display
@@ -328,14 +333,11 @@ validation_service_result = get_state("validation_service_result")
 # Load policy for later use. A configured policy must deserialize through
 # ThresholdPolicy.from_dict() — a malformed policy is a blocking error, not
 # a silent downgrade to an empty policy (an empty policy would pass every
-# gate by having none to evaluate).
-_current_policy = None
-_policy_config_error: str | None = None
-if validation_policy_dict and isinstance(validation_policy_dict, dict):
-    try:
-        _current_policy = ThresholdPolicy.from_dict(validation_policy_dict)
-    except ValueError as exc:
-        _policy_config_error = str(exc)
+# gate by having none to evaluate). PR 88A: routed through the shared
+# fail-closed loader (also used by Curve Bank, Scenario Planner, and Project
+# Import) so a malformed policy is handled identically everywhere - never an
+# uncaught TypeError/KeyError/AttributeError crashing the page.
+_current_policy, _policy_config_error = load_threshold_policy(validation_policy_dict)
 
 # PR 82B: a stored readiness may no longer reflect the current policy,
 # model identity, or diagnostics artefact - the policy could have been
@@ -346,12 +348,18 @@ if validation_policy_dict and isinstance(validation_policy_dict, dict):
 # rather than left for the user to notice it's out of date.
 approval_readiness_dict = get_state("approval_readiness")
 if approval_readiness_dict:
+    # PR 88A: fail-closed - a malformed stored readiness is treated as
+    # absent (never current) rather than crashing the page.
+    _stored_readiness_obj, _stored_readiness_error = load_approval_readiness(
+        approval_readiness_dict
+    )
     _evidence_current = (
-        diag_artefact is not None
+        _stored_readiness_error is None
+        and diag_artefact is not None
         and _current_policy is not None
         and current_model_identity is not None
         and readiness_matches_current_evidence(
-            ApprovalReadiness.from_dict(approval_readiness_dict),
+            _stored_readiness_obj,
             policy_fingerprint=_current_policy.fingerprint(),
             model_identity_fingerprint=current_model_identity.fingerprint(),
             diagnostic_artefact_fingerprint=diag_artefact.fingerprint(),
@@ -405,6 +413,12 @@ if st.button("Evaluate readiness", type="secondary"):
             val_result = val_service.evaluate_readiness(val_input)
             set_state("validation_service_result", val_result)
             set_state("approval_readiness", val_result.readiness_dict)
+            # PR 88A: persist the full per-gate evidence list this readiness
+            # was evaluated from - previously only the aggregate
+            # approval_readiness dict was ever written to session state, so
+            # a project bundle's validation_results was always None even
+            # after a real "Evaluate readiness" click.
+            set_state("validation_results", [r.to_dict() for r in val_result.results])
 
 if validation_service_result:
     rd = validation_service_result.readiness
@@ -484,10 +498,8 @@ if approval_dict and not activity_governance_ready:
 # This is strictly stronger than (and replaces) a bare matches_current_model()
 # check, so an approval can no longer be displayed as valid here while it
 # would actually be rejected downstream by curve-bank/planning governance.
-_approval_readiness_obj = None
 _approval_readiness_dict_now = get_state("approval_readiness")
-if _approval_readiness_dict_now:
-    _approval_readiness_obj = ApprovalReadiness.from_dict(_approval_readiness_dict_now)
+_approval_readiness_obj, _ = load_approval_readiness(_approval_readiness_dict_now)
 
 approval_matches_current = False
 approval_invalid_reason: str | None = None
@@ -750,11 +762,13 @@ if st.button("Run backtest"):
         set_state("diagnostics_artefact", updated_artefact)
         diag_artefact = updated_artefact
         # The artefact's fingerprint has changed - any previously evaluated
-        # readiness/approval no longer matches it and must not keep being
-        # displayed as current (mirrors the staleness check above; cleared
-        # immediately here rather than waiting for the next rerun).
-        set_state("approval_readiness", None)
-        set_state("validation_service_result", None)
+        # readiness, validation results, and approval no longer match it and
+        # must not keep being displayed/trusted as current (mirrors the
+        # staleness check above; cleared immediately here, in the same
+        # action, rather than waiting for the next rerun's mismatch check to
+        # catch it - PR 88A: this previously left model_approval and
+        # validation_results stale for one extra rerun).
+        invalidate_governance_evidence()
         if updated_artefact.backtest.status == "computed":
             # Legacy mirror for the project-export bundle (PR 82D wires
             # diagnostics_artefact into export directly) - not the

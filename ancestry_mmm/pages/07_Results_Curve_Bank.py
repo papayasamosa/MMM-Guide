@@ -31,7 +31,10 @@ from ancestry_mmm.core.approval import (
     ValidationPolicyBlockedError,
     require_matching_approval,
 )
-from ancestry_mmm.core.validation_policy import ApprovalReadiness, ThresholdPolicy
+from ancestry_mmm.core.validation_policy import (
+    load_approval_readiness,
+    load_threshold_policy,
+)
 from ancestry_mmm.core.activities import ActivityDefinition, activity_fit_fingerprint
 from ancestry_mmm.core.fingerprint import (
     fingerprint_dataframe,
@@ -644,18 +647,27 @@ if model_run_id and spec_dict is not None:
         "posterior_fingerprint": fingerprint_posterior(params),
     }
 
-current_policy: ThresholdPolicy | None = None
+# PR 88A: routed through the shared fail-closed loaders (also used by
+# Diagnostics, Scenario Planner, and Project Import) - a malformed policy or
+# stored readiness is reported and treated as absent, never left to raise an
+# uncaught TypeError/KeyError/AttributeError out of this page.
 _validation_policy_dict = get_state("validation_policy")
-if _validation_policy_dict and isinstance(_validation_policy_dict, dict):
-    try:
-        current_policy = ThresholdPolicy.from_dict(_validation_policy_dict)
-    except ValueError:
-        current_policy = None
+current_policy, _policy_config_error = load_threshold_policy(_validation_policy_dict)
+if _policy_config_error:
+    st.warning(
+        "The configured validation policy is malformed and cannot be used: "
+        f"{_policy_config_error}"
+    )
 
-current_readiness: ApprovalReadiness | None = None
 _approval_readiness_dict = get_state("approval_readiness")
-if _approval_readiness_dict:
-    current_readiness = ApprovalReadiness.from_dict(_approval_readiness_dict)
+current_readiness, _readiness_config_error = load_approval_readiness(
+    _approval_readiness_dict
+)
+if _readiness_config_error:
+    st.warning(
+        f"The stored approval readiness is malformed and cannot be used: "
+        f"{_readiness_config_error}"
+    )
 
 # PR 82F: require_matching_approval (already enforced by cb.make_entries
 # itself) re-verifies the FULL chain - model identity AND, for

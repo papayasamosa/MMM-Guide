@@ -33,6 +33,11 @@ from ancestry_mmm.core.persistence import (
     audit_project_resumability,
 )
 from ancestry_mmm.application.project_service import verify_imported_readiness
+from ancestry_mmm.application.diagnostics_service import DiagnosticsArtefact
+from ancestry_mmm.core.validation_policy import (
+    load_approval_readiness,
+    load_threshold_policy,
+)
 from ancestry_mmm.core.curve_bank import load_all_entries, entries_to_dataframe
 from ancestry_mmm.core.attribution import (
     compute_shapley_contributions,
@@ -82,6 +87,19 @@ set_state("project_notes", project_notes)
 if st.button("Build export bundle", type="primary"):
     PROJECT_EXPORT_ROOT.mkdir(parents=True, exist_ok=True)
     output_path = PROJECT_EXPORT_ROOT / f"{project_name}.zip"
+    # PR 88A: "diagnostics_artefact" in session state is always a
+    # DiagnosticsArtefact domain object (or None) - see pages/06_Diagnostics.py
+    # and reconstruct_model_state() below. This is the one explicit
+    # conversion boundary to a JSON-safe dict for export; it must never be
+    # handed to export_project()/json.dumps() as the raw object (that would
+    # serialize through json.dumps's default=str fallback as an opaque
+    # string, not structured JSON).
+    _diagnostics_artefact_obj = get_state("diagnostics_artefact")
+    _diagnostics_artefact_dict = (
+        _diagnostics_artefact_obj.to_dict()
+        if _diagnostics_artefact_obj is not None
+        else None
+    )
     with st.spinner("Building bundle..."):
         export_project(
             output_path,
@@ -140,7 +158,7 @@ if st.button("Build export bundle", type="primary"):
             # PR 82B (policy + diagnostics artefact + readiness proof) so a
             # re-imported project doesn't lose its official-mode evidence.
             validation_policy=get_state("validation_policy"),
-            diagnostics_artefact=get_state("diagnostics_artefact"),
+            diagnostics_artefact=_diagnostics_artefact_dict,
             validation_results=get_state("validation_results"),
             approval_readiness=get_state("approval_readiness"),
         )
@@ -327,28 +345,67 @@ if uploaded_zip is not None and st.button("Import bundle"):
         ):
             st.caption(outcome_governance_warning)
 
-        verified_approval, message = verify_imported_approval(imported, reconstructed)
-        set_state(
-            "model_approval", verified_approval.to_dict() if verified_approval else None
-        )
-        (st.success if verified_approval else st.warning)(message)
+        # PR 82D/88A: restore the governance evidence chain established in
+        # PR 82B. The policy and diagnostics artefact are restored as
+        # independent evidence (useful on their own, e.g. to re-evaluate a
+        # fresh readiness): the policy dict as-is (every page rehydrates it
+        # fresh via the shared fail-closed loader below), and the
+        # diagnostics artefact rehydrated through DiagnosticsArtefact.
+        # from_dict() - never left as the raw imported dict, which pages/06
+        # would then crash on the moment it called e.g. `.identification`
+        # on what would actually be a plain dict.
+        raw_policy_dict = imported.get("validation_policy")
+        set_state("validation_policy", raw_policy_dict)
+        imported_policy, policy_load_error = load_threshold_policy(raw_policy_dict)
+        if policy_load_error:
+            st.warning(
+                "Imported validation policy is malformed and cannot be used: "
+                f"{policy_load_error}"
+            )
 
-        # PR 82D: restore the governance evidence chain established in
-        # PR 82B. The policy and diagnostics artefact are restored as-is
-        # (they are independent evidence, useful on their own e.g. to
-        # re-evaluate a fresh readiness); the readiness proof binding them
-        # to a specific model identity is only restored if it verifiably
-        # still matches the imported policy, diagnostics artefact, and
-        # reconstructed model - never trusted blindly, mirroring how
-        # model_approval is verified above.
-        set_state("validation_policy", imported.get("validation_policy"))
-        set_state("diagnostics_artefact", imported.get("diagnostics_artefact"))
+        raw_diagnostics_artefact_dict = imported.get("diagnostics_artefact")
+        imported_diagnostics_artefact = None
+        if raw_diagnostics_artefact_dict is not None:
+            try:
+                imported_diagnostics_artefact = DiagnosticsArtefact.from_dict(
+                    raw_diagnostics_artefact_dict
+                )
+            except (TypeError, ValueError, KeyError, AttributeError) as exc:
+                st.warning(
+                    f"Imported diagnostics artefact was malformed and discarded: {exc}"
+                )
+        set_state("diagnostics_artefact", imported_diagnostics_artefact)
         set_state("validation_results", imported.get("validation_results"))
+
+        # The readiness proof binding policy + diagnostics artefact to a
+        # specific model identity is only restored if it verifiably still
+        # matches the imported policy, diagnostics artefact, and
+        # reconstructed model - never trusted blindly, mirroring how
+        # model_approval is verified below.
         verified_readiness, readiness_message = verify_imported_readiness(
             imported, reconstructed
         )
         set_state("approval_readiness", verified_readiness)
         (st.success if verified_readiness else st.warning)(readiness_message)
+        verified_readiness_obj, _ = load_approval_readiness(verified_readiness)
+
+        # PR 88A: a policy-backed approval is only restored as current
+        # official authority when the FULL chain checks out - model identity
+        # AND (for a policy-backed approval) an active current_policy plus
+        # an overall_ready, fingerprint-matching readiness - not model
+        # identity alone. Previously this was verified against identity only,
+        # so a policy-backed approval could come back "verified" even though
+        # its readiness was just rejected above as unverified.
+        verified_approval, message = verify_imported_approval(
+            imported,
+            reconstructed,
+            current_policy=imported_policy,
+            approval_readiness=verified_readiness_obj,
+        )
+        set_state(
+            "model_approval", verified_approval.to_dict() if verified_approval else None
+        )
+        (st.success if verified_approval else st.warning)(message)
 
         if imported["trace"] is not None and reconstructed["frame"] is None:
             st.info(

@@ -935,6 +935,71 @@ class ValidationResult:
 
         return True
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize this result to a JSON-safe dict.
+
+        PR 88A: the canonical serialization for persistence (project export's
+        top-level ``validation_results``) and session state - round-trips via
+        ``from_dict``. Mirrors ``ApprovalReadiness``'s internal
+        ``gate_results``/``blocking_failures``/etc. serialization exactly
+        (this is now the single implementation both use).
+        """
+        return {
+            "gate_name": self.gate_name,
+            "status": self.status,
+            "value": self.value,
+            "message": self.message,
+            "artefact_id": self.artefact_id,
+            "evaluated_at": self.evaluated_at.isoformat(),
+            "model_run_id": self.model_run_id,
+            "data_fingerprint": self.data_fingerprint,
+            "model_spec_fingerprint": self.model_spec_fingerprint,
+            "posterior_fingerprint": self.posterior_fingerprint,
+            "policy_id": self.policy_id,
+            "policy_version": self.policy_version,
+            "policy_fingerprint": self.policy_fingerprint,
+            "gate_fingerprint": self.gate_fingerprint,
+            "model_identity_fingerprint": self.model_identity_fingerprint,
+            "diagnostic_artefact_fingerprint": self.diagnostic_artefact_fingerprint,
+        }
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "ValidationResult":
+        """Deserialize a result from a dict produced by ``to_dict``.
+
+        Missing required field or wrong-typed ``status`` raises ``ValueError``
+        (via ``__post_init__``) or ``KeyError`` rather than silently
+        producing a partial/incorrect result.
+        """
+        kwargs: Dict[str, Any] = {}
+        known = {
+            "gate_name",
+            "status",
+            "value",
+            "message",
+            "artefact_id",
+            "model_run_id",
+            "data_fingerprint",
+            "model_spec_fingerprint",
+            "posterior_fingerprint",
+            "policy_id",
+            "policy_version",
+            "policy_fingerprint",
+            "gate_fingerprint",
+            "model_identity_fingerprint",
+            "diagnostic_artefact_fingerprint",
+        }
+        for k in known:
+            if k in d:
+                kwargs[k] = d[k]
+        if "evaluated_at" in d:
+            kwargs["evaluated_at"] = (
+                datetime.fromisoformat(d["evaluated_at"])
+                if isinstance(d["evaluated_at"], str)
+                else d["evaluated_at"]
+            )
+        return cls(**kwargs)
+
 
 @dataclass(frozen=True)
 class ApprovalReadiness:
@@ -1295,56 +1360,21 @@ class ApprovalReadiness:
 
 
 def _result_to_dict(r: ValidationResult) -> dict:
-    """Convert a ValidationResult to a plain dict."""
-    return {
-        "gate_name": r.gate_name,
-        "status": r.status,
-        "value": r.value,
-        "message": r.message,
-        "artefact_id": r.artefact_id,
-        "evaluated_at": r.evaluated_at.isoformat(),
-        "model_run_id": r.model_run_id,
-        "data_fingerprint": r.data_fingerprint,
-        "model_spec_fingerprint": r.model_spec_fingerprint,
-        "posterior_fingerprint": r.posterior_fingerprint,
-        "policy_id": r.policy_id,
-        "policy_version": r.policy_version,
-        "policy_fingerprint": r.policy_fingerprint,
-        "gate_fingerprint": r.gate_fingerprint,
-        "model_identity_fingerprint": r.model_identity_fingerprint,
-        "diagnostic_artefact_fingerprint": r.diagnostic_artefact_fingerprint,
-    }
+    """Convert a ValidationResult to a plain dict.
+
+    PR 88A: delegates to ``ValidationResult.to_dict()``, the now-public
+    canonical serialization also used to persist the top-level
+    ``validation_results`` evidence list.
+    """
+    return r.to_dict()
 
 
 def _result_from_dict(d: dict) -> ValidationResult:
-    """Restore a ValidationResult from a dict."""
-    kwargs: dict[str, Any] = {}
-    known = {
-        "gate_name",
-        "status",
-        "value",
-        "message",
-        "artefact_id",
-        "model_run_id",
-        "data_fingerprint",
-        "model_spec_fingerprint",
-        "posterior_fingerprint",
-        "policy_id",
-        "policy_version",
-        "policy_fingerprint",
-        "gate_fingerprint",
-        "model_identity_fingerprint",
-        "diagnostic_artefact_fingerprint",
-    }
-    for k in known:
-        if k in d:
-            kwargs[k] = d[k]
-    if "evaluated_at" in d:
-        if isinstance(d["evaluated_at"], str):
-            kwargs["evaluated_at"] = datetime.fromisoformat(d["evaluated_at"])
-        else:
-            kwargs["evaluated_at"] = d["evaluated_at"]
-    return ValidationResult(**kwargs)
+    """Restore a ValidationResult from a dict.
+
+    PR 88A: delegates to ``ValidationResult.from_dict()``.
+    """
+    return ValidationResult.from_dict(d)
 
 
 # ---------------------------------------------------------------------------
@@ -2500,3 +2530,76 @@ def readiness_matches_current_evidence(
         and readiness.model_identity_fingerprint == model_identity_fingerprint
         and readiness.diagnostic_artefact_fingerprint == diagnostic_artefact_fingerprint
     )
+
+
+# ---------------------------------------------------------------------------
+# PR 88A: shared fail-closed loaders
+# ---------------------------------------------------------------------------
+#
+# Diagnostics, Scenario Planner, Curve Bank, and Project Import each need to
+# turn a session-state/imported dict into a ThresholdPolicy/ApprovalReadiness
+# without ever crashing the page on malformed data. Before this, each page
+# had its own inline ``try/except ValueError`` around ``ThresholdPolicy.
+# from_dict`` (missing the TypeError/KeyError/AttributeError a non-dict or
+# structurally-wrong dict can also raise), and two of the three pages called
+# ``ApprovalReadiness.from_dict`` with no exception handling at all - a
+# malformed stored/imported readiness would crash the page before the
+# fail-closed governance gate ever ran. These two functions are the single
+# place that decides "policy/readiness dict -> object or None", so every
+# caller fails the same way: never an exception, never an empty object
+# silently standing in for a real one.
+
+
+def load_threshold_policy(
+    policy_dict: Optional[dict],
+) -> tuple[Optional[ThresholdPolicy], Optional[str]]:
+    """Fail-closed ``ThresholdPolicy`` loader shared by every page/service
+    that deserializes a configured or imported policy dict.
+
+    Returns ``(policy, None)`` when ``policy_dict`` is ``None`` (no policy
+    configured - not an error) or deserializes cleanly. Returns
+    ``(None, error_message)`` for anything else - wrong type, or any of the
+    ``ValueError``/``TypeError``/``KeyError``/``AttributeError`` a malformed
+    dict can raise out of ``ThresholdPolicy.from_dict``/``ValidationGate.
+    from_dict`` - never raises, and never falls back to an empty
+    ``ThresholdPolicy`` (which would trivially pass every gate by having none
+    to evaluate).
+    """
+    if policy_dict is None:
+        return None, None
+    if not isinstance(policy_dict, dict):
+        return None, (
+            "Configured validation policy is malformed: expected an object, "
+            f"got {type(policy_dict).__name__}."
+        )
+    try:
+        return ThresholdPolicy.from_dict(policy_dict), None
+    except (ValueError, TypeError, KeyError, AttributeError) as exc:
+        return (
+            None,
+            f"Configured validation policy is malformed and cannot be used: {exc}",
+        )
+
+
+def load_approval_readiness(
+    readiness_dict: Optional[dict],
+) -> tuple[Optional[ApprovalReadiness], Optional[str]]:
+    """Fail-closed ``ApprovalReadiness`` loader, mirroring
+    ``load_threshold_policy`` above for the other governance-evidence object
+    pages rehydrate from a dict every rerun.
+
+    Returns ``(readiness, None)`` when ``readiness_dict`` is ``None`` (none
+    stored - not an error) or deserializes cleanly. Returns
+    ``(None, error_message)`` otherwise - never raises.
+    """
+    if readiness_dict is None:
+        return None, None
+    if not isinstance(readiness_dict, dict):
+        return None, (
+            "Stored approval readiness is malformed: expected an object, "
+            f"got {type(readiness_dict).__name__}."
+        )
+    try:
+        return ApprovalReadiness.from_dict(readiness_dict), None
+    except (ValueError, TypeError, KeyError, AttributeError) as exc:
+        return None, f"Stored approval readiness is malformed and cannot be used: {exc}"
