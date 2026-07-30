@@ -25,7 +25,13 @@ from ancestry_mmm.components import (
     render_empty_state,
     render_drift_status,
 )
-from ancestry_mmm.core.approval import ApprovalMismatchError, ModelApproval
+from ancestry_mmm.core.approval import (
+    ApprovalMismatchError,
+    ModelApproval,
+    ValidationPolicyBlockedError,
+    require_matching_approval,
+)
+from ancestry_mmm.core.validation_policy import ApprovalReadiness, ThresholdPolicy
 from ancestry_mmm.core.activities import ActivityDefinition, activity_fit_fingerprint
 from ancestry_mmm.core.fingerprint import (
     fingerprint_dataframe,
@@ -638,11 +644,41 @@ if model_run_id and spec_dict is not None:
         "posterior_fingerprint": fingerprint_posterior(params),
     }
 
-approval_matches_current = (
-    approval_dict is not None
-    and current_identity is not None
-    and ModelApproval.from_dict(approval_dict).matches_current_model(**current_identity)
-)
+current_policy: ThresholdPolicy | None = None
+_validation_policy_dict = get_state("validation_policy")
+if _validation_policy_dict and isinstance(_validation_policy_dict, dict):
+    try:
+        current_policy = ThresholdPolicy.from_dict(_validation_policy_dict)
+    except ValueError:
+        current_policy = None
+
+current_readiness: ApprovalReadiness | None = None
+_approval_readiness_dict = get_state("approval_readiness")
+if _approval_readiness_dict:
+    current_readiness = ApprovalReadiness.from_dict(_approval_readiness_dict)
+
+# PR 82F: require_matching_approval (already enforced by cb.make_entries
+# itself) re-verifies the FULL chain - model identity AND, for
+# policy-backed approvals, that the bound readiness still exists, is
+# still overall_ready, and its policy/model-identity fingerprints still
+# match the current policy and model - not just model identity alone.
+# This is strictly stronger than (and replaces) the bare
+# matches_current_model() check this page used before, so an approval can
+# no longer be displayed as valid here while cb.make_entries would
+# actually reject it below (matching the PR 82B fix on Diagnostics).
+approval_matches_current = False
+approval_invalid_reason: str | None = None
+if approval_dict is not None and current_identity is not None:
+    try:
+        require_matching_approval(
+            ModelApproval.from_dict(approval_dict),
+            approval_readiness=current_readiness,
+            current_policy=current_policy,
+            **current_identity,
+        )
+        approval_matches_current = True
+    except (ApprovalMismatchError, ValidationPolicyBlockedError) as exc:
+        approval_invalid_reason = str(exc)
 
 if not approval_dict:
     st.markdown("---")
@@ -655,9 +691,11 @@ if not approval_dict:
 elif not approval_matches_current:
     st.markdown("---")
     render_empty_state(
-        "This model's approval no longer matches the current fitted model (the data, "
-        "specification, posterior, or run have changed since it was approved). Saving to the "
-        "curve bank is blocked until it's reviewed and approved again.",
+        "This model's approval no longer matches the current fitted model, policy, or "
+        "readiness evidence (the data, specification, posterior, or run have changed since "
+        "it was approved, or the bound policy/readiness has drifted)"
+        + (f": {approval_invalid_reason}" if approval_invalid_reason else "")
+        + ". Saving to the curve bank is blocked until it's reviewed and approved again.",
         button_label="Go to Diagnostics",
         target_key="diagnostics",
     )
@@ -697,6 +735,8 @@ else:
                     evidence_tiers=evidence_tiers,
                     currency_by_market=currency_by_market,
                     notes=notes,
+                    approval_readiness=current_readiness,
+                    current_policy=current_policy,
                     **current_identity,
                 )
                 media_unit_info = {}
@@ -732,9 +772,11 @@ else:
                     approval,
                     model_type=model_type,
                     notes=notes,
+                    approval_readiness=current_readiness,
+                    current_policy=current_policy,
                     **current_identity,
                 )
-        except ApprovalMismatchError as e:
+        except (ApprovalMismatchError, ValidationPolicyBlockedError) as e:
             st.error(f"Could not save to the curve bank: {e}")
         else:
             paths = cb.save_entries(curve_bank_dir(), entries)
