@@ -335,6 +335,39 @@ def test_policy_mismatch_blocks_save_instead_of_crashing():
     )
 
 
+def test_malformed_policy_does_not_crash_curve_bank_page():
+    """PR 88A: a validation_policy dict whose 'gates' value isn't a list
+    (e.g. corrupted session state) previously raised an uncaught TypeError
+    out of ThresholdPolicy.from_dict's own ValidationGate.from_dict() call
+    (iterating over a string's characters) - this page's inline handler
+    only caught ValueError. Must now be reported and treated as no-policy,
+    never crash the page."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_consistent_session_state(at)
+    at.session_state["validation_policy"] = {
+        "policy_id": "bad",
+        "version": "1.0",
+        "scope": "all_models",
+        "owner": "Test",
+        "approval_date": "2026-01-01T00:00:00+00:00",
+        "gates": "not-a-list",
+    }
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+
+
+def test_malformed_readiness_does_not_crash_curve_bank_page():
+    """A stored approval_readiness dict that fails to deserialize (here,
+    'gate_results' isn't a list of gate-result dicts) must not crash the
+    page - ApprovalReadiness.from_dict() was previously called here with no
+    exception handling at all."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_consistent_session_state(at)
+    at.session_state["approval_readiness"] = {"gate_results": "not-a-list"}
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+
+
 def test_page_no_longer_uses_bare_matches_current_model_for_display_gate():
     """PR 82F: the page's own approval-validity gate must go through
     require_matching_approval (which also verifies policy/readiness

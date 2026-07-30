@@ -45,7 +45,7 @@ import tempfile
 import zipfile
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Tuple
 
 import pandas as pd
 import arviz as az
@@ -53,9 +53,13 @@ import arviz as az
 from .approval import (
     ApprovalMismatchError,
     ModelApproval,
+    ValidationPolicyBlockedError,
     fingerprint_model_approval,
     require_matching_approval,
 )
+
+if TYPE_CHECKING:
+    from .validation_policy import ApprovalReadiness, ThresholdPolicy
 from .activities import ActivityDefinition, activity_fit_fingerprint
 from .fingerprint import (
     fingerprint_dataframe,
@@ -1189,6 +1193,9 @@ def current_model_identity_fingerprints(
 def verify_imported_approval(
     imported: Dict[str, Any],
     reconstructed: Dict[str, Any],
+    *,
+    current_policy: Optional["ThresholdPolicy"] = None,
+    approval_readiness: Optional["ApprovalReadiness"] = None,
 ) -> Tuple[Optional[ModelApproval], str]:
     """
     Decide whether an imported project's approval is still valid against its
@@ -1200,6 +1207,19 @@ def verify_imported_approval(
 
     `imported` is an import_project() result; `reconstructed` is a
     reconstruct_model_state(imported) result.
+
+    PR 88A: `current_policy`/`approval_readiness` should be the caller's
+    already-verified policy and readiness for this same bundle (e.g. from
+    `application.project_service.verify_imported_readiness`) - passed
+    through to `require_matching_approval` so a *policy-backed* approval is
+    checked against the full chain (policy active, readiness overall_ready,
+    every fingerprint binding matches), not model identity alone. Previously
+    this function only checked `matches_current_model()`, so a policy-backed
+    approval whose readiness had just been rejected as unverified could
+    still come back "verified" here on identity alone. Both parameters
+    default to `None`, which preserves the original identity-only behaviour
+    for legacy/unbound approvals (`require_matching_approval` only consults
+    them when the approval itself references a `validation_policy_id`).
     """
     approval_dict = imported.get("model_approval")
     if approval_dict is None:
@@ -1227,20 +1247,32 @@ def verify_imported_approval(
     )
     current_run_id = imported.get("model_run_id") or approval.model_run_id
 
-    if approval.matches_current_model(
-        model_run_id=current_run_id,
-        data_fingerprint=data_fp,
-        model_spec_fingerprint=spec_fp,
-        posterior_fingerprint=posterior_fp,
-    ):
-        return (
+    try:
+        require_matching_approval(
             approval,
-            f"Imported approval verified: matches the imported model artefacts (approved by {approval.approved_by}).",
+            model_run_id=current_run_id,
+            data_fingerprint=data_fp,
+            model_spec_fingerprint=spec_fp,
+            posterior_fingerprint=posterior_fp,
+            approval_readiness=approval_readiness,
+            current_policy=current_policy,
+        )
+    except ApprovalMismatchError:
+        return None, (
+            "The imported approval does not match the imported model artefacts (data, "
+            "specification, or posterior differ) - the model must be reviewed and approved again."
+        )
+    except ValidationPolicyBlockedError as exc:
+        return None, (
+            "The imported approval is policy-backed, but its validation policy or "
+            f"readiness evidence is not currently valid: {exc} The bundle's technical "
+            "artefacts remain loadable, but this approval cannot be treated as current "
+            "official authority until the model is reviewed and approved again."
         )
 
-    return None, (
-        "The imported approval does not match the imported model artefacts (data, "
-        "specification, or posterior differ) - the model must be reviewed and approved again."
+    return (
+        approval,
+        f"Imported approval verified: matches the imported model artefacts (approved by {approval.approved_by}).",
     )
 
 

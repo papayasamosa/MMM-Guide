@@ -84,7 +84,10 @@ from ancestry_mmm.core.scenario_governance import (
     ScenarioPlan,
     classify_activity_plan,
 )
-from ancestry_mmm.core.validation_policy import ApprovalReadiness, ThresholdPolicy
+from ancestry_mmm.core.validation_policy import (
+    load_approval_readiness,
+    load_threshold_policy,
+)
 from ancestry_mmm.application.scenario_service import (
     ManualScenarioInput,
     OptimisationInput,
@@ -176,23 +179,30 @@ if model_run_id and spec_dict is not None:
 
 # PR 82C: validation_policy / approval_readiness are the sole policy/
 # readiness state keys (matching pages/06_Diagnostics.py) - rehydrated once,
-# here, through the canonical domain deserialisers (ThresholdPolicy.from_dict
-# / ApprovalReadiness.from_dict) and reused as these same two objects for
-# the approval gate below AND every planning/uncertainty call further down
-# the page, so official planning can never end up proving governance against
-# two different resolved policy/readiness objects in the same rerun.
+# here, through the shared fail-closed loaders (PR 88A: also used by
+# Diagnostics, Curve Bank, and Project Import) and reused as these same two
+# objects for the approval gate below AND every planning/uncertainty call
+# further down the page, so official planning can never end up proving
+# governance against two different resolved policy/readiness objects in the
+# same rerun, and a malformed policy/readiness is reported rather than
+# crashing the page.
 validation_policy_dict = get_state("validation_policy")
-current_policy: ThresholdPolicy | None = None
-if validation_policy_dict and isinstance(validation_policy_dict, dict):
-    try:
-        current_policy = ThresholdPolicy.from_dict(validation_policy_dict)
-    except ValueError:
-        current_policy = None
+current_policy, _policy_config_error = load_threshold_policy(validation_policy_dict)
+if _policy_config_error:
+    st.warning(
+        "The configured validation policy is malformed and cannot be used: "
+        f"{_policy_config_error}"
+    )
 
 approval_readiness_dict = get_state("approval_readiness")
-current_readiness: ApprovalReadiness | None = None
-if approval_readiness_dict and isinstance(approval_readiness_dict, dict):
-    current_readiness = ApprovalReadiness.from_dict(approval_readiness_dict)
+current_readiness, _readiness_config_error = load_approval_readiness(
+    approval_readiness_dict
+)
+if _readiness_config_error:
+    st.warning(
+        f"The stored approval readiness is malformed and cannot be used: "
+        f"{_readiness_config_error}"
+    )
 
 approval_dict = get_state("model_approval")
 # PR 82C: require_matching_approval (already used by curve_bank/optimization

@@ -161,6 +161,29 @@ def clear_model_state() -> None:
     st.session_state["model_trained"] = False
 
 
+def invalidate_governance_evidence() -> None:
+    """Clear the four keys that represent evidence/approval evaluated
+    against a specific diagnostics artefact/policy/model-identity
+    combination: ``validation_results``, ``approval_readiness``,
+    ``validation_service_result``, ``model_approval``.
+
+    Narrower than ``clear_model_state()`` - deliberately does NOT touch
+    ``diagnostics_artefact`` itself (the caller just replaced or is about to
+    replace it), nor the trace/frame/posterior/model_run_id artefacts a full
+    retrain would invalidate. Call this in the same action that recomputes
+    the scorecard, replaces the diagnostics artefact via a backtest, or
+    otherwise changes what evidence the four cleared keys were bound to -
+    a stale approval or readiness must never survive to the next rerun.
+    """
+    for key in (
+        "validation_results",
+        "approval_readiness",
+        "validation_service_result",
+        "model_approval",
+    ):
+        st.session_state[key] = None
+
+
 def get_workflow_progress() -> "tuple[int, int]":
     """Get current workflow progress (current_step, total_steps).
 

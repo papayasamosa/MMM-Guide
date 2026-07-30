@@ -505,6 +505,39 @@ def test_official_scenario_blocked_with_policy_mismatch():
     assert not any(r.label == "Market *" for r in at.selectbox)
 
 
+def test_malformed_policy_does_not_crash_scenario_planner_page():
+    """PR 88A: a validation_policy dict whose 'gates' value isn't a list
+    (e.g. corrupted session state) previously raised an uncaught TypeError
+    out of ThresholdPolicy.from_dict's own ValidationGate.from_dict() call
+    (iterating over a string's characters) - this page's inline handler
+    only caught ValueError. Must now be reported and treated as no-policy,
+    never crash the page."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_consistent_session_state(at, value_currency="GBP")
+    at.session_state["validation_policy"] = {
+        "policy_id": "bad",
+        "version": "1.0",
+        "scope": "all_models",
+        "owner": "Test",
+        "approval_date": "2026-01-01T00:00:00+00:00",
+        "gates": "not-a-list",
+    }
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+
+
+def test_malformed_readiness_does_not_crash_scenario_planner_page():
+    """A stored approval_readiness dict that fails to deserialize (here,
+    'gate_results' isn't a list of gate-result dicts) must not crash the
+    page. This page's isinstance(dict) guard alone is not enough - the
+    value here passes isinstance(dict) but still fails to deserialize."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_consistent_session_state(at, value_currency="GBP")
+    at.session_state["approval_readiness"] = {"gate_results": "not-a-list"}
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+
+
 def test_page_reads_no_deprecated_state_keys():
     """PR 82C: validation_policy / approval_readiness are the sole policy/
     readiness state keys - the deprecated validation_readiness /
@@ -535,10 +568,18 @@ def test_page_resolves_policy_and_readiness_exactly_once():
     """PR 82C: one governance proof (current_policy/current_readiness) is
     resolved once and reused by the approval gate, manual evaluation, both
     optimiser modes, and posterior uncertainty - never re-derived
-    independently for different calls in the same rerun."""
+    independently for different calls in the same rerun.
+
+    PR 88A: resolution now goes through the shared fail-closed loaders
+    (load_threshold_policy/load_approval_readiness) rather than calling
+    ThresholdPolicy.from_dict()/ApprovalReadiness.from_dict() directly - the
+    "exactly once" invariant this test protects is unchanged, just via the
+    new call site."""
     source = PAGE.read_text(encoding="utf-8")
-    assert source.count("ThresholdPolicy.from_dict(") == 1
-    assert source.count("ApprovalReadiness.from_dict(") == 1
+    assert source.count("load_threshold_policy(") == 1
+    assert source.count("load_approval_readiness(") == 1
+    assert "ThresholdPolicy.from_dict(" not in source
+    assert "ApprovalReadiness.from_dict(" not in source
     # The same scenario_governance_kwargs dict (built from current_policy/
     # current_readiness) must be spread into every planning/uncertainty call.
     assert source.count("**scenario_governance_kwargs") == 4

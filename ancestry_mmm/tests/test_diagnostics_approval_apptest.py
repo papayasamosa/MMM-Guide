@@ -198,6 +198,48 @@ def test_readiness_blocked_without_validation_policy():
     )
 
 
+def test_approval_blocked_with_non_valueerror_malformed_policy():
+    """PR 88A: the page's old inline handler only caught ValueError around
+    ThresholdPolicy.from_dict() - a policy dict whose 'gates' isn't a list
+    (e.g. a string, from corrupted session state or a bad import) raises a
+    TypeError instead (ValidationGate.from_dict() indexing a single
+    character of the string), which used to crash the page with an
+    uncaught exception before the fail-closed gate ever ran. Must now be
+    reported and treated as malformed, never crash."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_fully_identified_model(at)
+    at.session_state["validation_policy"] = {
+        "policy_id": "bad-policy-type-error",
+        "version": "1.0",
+        "scope": "all_models",
+        "owner": "Test",
+        "approval_date": "2026-01-01T00:00:00+00:00",
+        "gates": "not-a-list",
+    }
+    at.run()
+    compute_button = next(b for b in at.button if b.label == "Compute scorecard")
+    compute_button.click().run()
+    assert not at.exception, f"page raised after computing scorecard: {at.exception}"
+    assert any(
+        "malformed" in (e.value or "") and "approval is blocked" in (e.value or "")
+        for e in at.error
+    )
+    assert at.session_state["model_approval"] is None
+
+
+def test_malformed_stored_readiness_does_not_crash_page():
+    """A stored approval_readiness dict that fails to deserialize (here,
+    'gate_results' isn't a list of gate-result dicts, so ValidationResult.
+    from_dict raises a TypeError constructing the required gate_name field)
+    must not crash the page - ApprovalReadiness.from_dict() was previously
+    called here with no exception handling at all."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_fully_identified_model(at)
+    at.session_state["approval_readiness"] = {"gate_results": "not-a-list"}
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+
+
 def test_approval_blocked_with_malformed_validation_policy():
     at = AppTest.from_file(str(PAGE), default_timeout=60)
     _seed_fully_identified_model(at)
@@ -511,3 +553,143 @@ def test_policy_change_invalidates_previously_evaluated_readiness_and_approval()
         in (w.value or "")
         for w in at.warning
     )
+
+
+# ---------------------------------------------------------------------------
+# PR 88A: governance evidence serialization and invalidation
+# ---------------------------------------------------------------------------
+
+
+def test_evaluate_readiness_persists_validation_results():
+    """Before this fix, 'validation_results' was never written by this page
+    (only the aggregate 'approval_readiness' dict was) - a project bundle's
+    validation_results parameter was always None even right after a real
+    'Evaluate readiness' click. Clicking it must now persist the full
+    per-gate evidence list, using ValidationResult's own to_dict()."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_fully_identified_model(at)
+    at.session_state["validation_policy"] = _minimal_gate_policy(
+        policy_id="policy-validation-results",
+        gates=[
+            {
+                "name": "divergences",
+                "description": "No divergences",
+                "evaluator_id": "divergences",
+                "expected_state": False,
+            }
+        ],
+    )
+    at.run()
+    compute_button = next(b for b in at.button if b.label == "Compute scorecard")
+    compute_button.click().run()
+    readiness_button = next(b for b in at.button if b.label == "Evaluate readiness")
+    readiness_button.click().run()
+
+    assert not at.exception, f"page raised: {at.exception}"
+    validation_results = at.session_state["validation_results"]
+    assert validation_results, "validation_results was not populated"
+    assert all(isinstance(r, dict) for r in validation_results)
+    assert {r["gate_name"] for r in validation_results} == {"divergences"}
+    assert validation_results[0]["status"] == "pass"
+    assert len(validation_results) == len(
+        at.session_state["approval_readiness"]["gate_results"]
+    )
+
+
+def test_scorecard_recompute_immediately_clears_prior_governance_evidence():
+    """Recomputing the scorecard produces a brand new diagnostics artefact -
+    any readiness/validation-results/approval evaluated against the previous
+    artefact must be cleared in the same action, not left stale until the
+    next rerun's mismatch check happens to catch it."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_fully_identified_model(at)
+    at.session_state["validation_policy"] = _minimal_gate_policy(
+        policy_id="policy-recompute-clear",
+        gates=[
+            {
+                "name": "divergences",
+                "description": "No divergences",
+                "evaluator_id": "divergences",
+                "expected_state": False,
+            }
+        ],
+    )
+    at.run()
+    compute_button = next(b for b in at.button if b.label == "Compute scorecard")
+    compute_button.click().run()
+    readiness_button = next(b for b in at.button if b.label == "Evaluate readiness")
+    readiness_button.click().run()
+    approved_by_input = next(
+        t for t in at.text_input if t.label == "Approved by (name) *"
+    )
+    approved_by_input.set_value("Test Reviewer").run()
+    approve_button = next(
+        b for b in at.button if b.label == "Approve this model for planning"
+    )
+    approve_button.click().run()
+    assert at.session_state["model_approval"] is not None
+    assert at.session_state["validation_results"]
+
+    compute_button = next(b for b in at.button if b.label == "Compute scorecard")
+    compute_button.click().run()
+
+    assert not at.exception, f"page raised: {at.exception}"
+    assert at.session_state["model_approval"] is None
+    assert at.session_state["validation_results"] is None
+    assert at.session_state["approval_readiness"] is None
+    assert at.session_state["validation_service_result"] is None
+
+
+def test_backtest_failure_immediately_clears_approval_and_validation_results():
+    """PR 88A: before this fix, a backtest completing (or failing) cleared
+    only approval_readiness/validation_service_result in the same action -
+    model_approval and validation_results were left stale for one extra
+    rerun (only cleared indirectly, the next time require_matching_approval
+    happened to be re-evaluated). Triggers the backtest's failure path
+    (no transformed_data seeded, so expanding_window_backtest raises
+    immediately) since that is deterministic and fast - the fix clears all
+    four governance-evidence keys unconditionally, before branching on
+    whether the backtest itself succeeded."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_fully_identified_model(at)
+    at.session_state["validation_policy"] = _minimal_gate_policy(
+        policy_id="policy-backtest-clear",
+        gates=[
+            {
+                "name": "divergences",
+                "description": "No divergences",
+                "evaluator_id": "divergences",
+                "expected_state": False,
+            }
+        ],
+    )
+    at.run()
+    compute_button = next(b for b in at.button if b.label == "Compute scorecard")
+    compute_button.click().run()
+    readiness_button = next(b for b in at.button if b.label == "Evaluate readiness")
+    readiness_button.click().run()
+    approved_by_input = next(
+        t for t in at.text_input if t.label == "Approved by (name) *"
+    )
+    approved_by_input.set_value("Test Reviewer").run()
+    approve_button = next(
+        b for b in at.button if b.label == "Approve this model for planning"
+    )
+    approve_button.click().run()
+    assert at.session_state["model_approval"] is not None
+    assert at.session_state["validation_results"]
+    assert at.session_state["approval_readiness"] is not None
+
+    # No "transformed_data" seeded - expanding_window_backtest raises
+    # immediately (df[spec.date_col] on None), so DiagnosticsService.
+    # run_backtest() catches it and returns a "failed" backtest section -
+    # exercising the invalidation path without a real (slow) model refit.
+    backtest_button = next(b for b in at.button if b.label == "Run backtest")
+    backtest_button.click().run()
+
+    assert not at.exception, f"page raised: {at.exception}"
+    assert any("Backtest failed" in (e.value or "") for e in at.error)
+    assert at.session_state["model_approval"] is None
+    assert at.session_state["validation_results"] is None
+    assert at.session_state["approval_readiness"] is None
+    assert at.session_state["validation_service_result"] is None

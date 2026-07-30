@@ -19,6 +19,7 @@ from ancestry_mmm.application.project_service import (
     ProjectService,
     verify_imported_readiness,
 )
+from ancestry_mmm.core.approval import create_policy_backed_model_approval
 from ancestry_mmm.core.fingerprint import (
     fingerprint_dataframe,
     fingerprint_model_spec,
@@ -30,10 +31,12 @@ from ancestry_mmm.core.persistence import (
     export_project,
     import_project,
     reconstruct_model_state,
+    verify_imported_approval,
 )
 from ancestry_mmm.core.predict import extract_posterior_params
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.validation_policy import (
+    ApprovalReadiness,
     ThresholdPolicy,
     ValidationEvidenceContext,
     evaluate_approval_readiness,
@@ -198,6 +201,150 @@ def governed_project(meta, trace):
         validation_results=[],
         approval_readiness=readiness.to_dict(),
     )
+
+
+@pytest.fixture
+def governed_project_with_approval(governed_project):
+    """``governed_project`` extended with a policy-backed ``model_approval``
+    bound to the exact same policy/readiness/model identity - the full
+    evidence chain PR 88A's import-time restoration must verify as a whole,
+    not policy/readiness/approval independently."""
+    identity = ModelIdentity(
+        model_run_id=governed_project["model_run_id"],
+        data_fingerprint=fingerprint_dataframe(
+            prepare_fh_modeling_frame(
+                governed_project["transformed_data"],
+                ModelSpec.from_dict(governed_project["model_spec"]),
+            )["df"]
+        ),
+        model_spec_fingerprint=fingerprint_model_spec(
+            governed_project["model_spec"],
+            governed_project["prior_config"],
+            governed_project["dna_lag_weeks"],
+            direct_dna_outcome_ids=governed_project[
+                "model_meta"
+            ].direct_dna_outcome_ids,
+        ),
+        posterior_fingerprint=fingerprint_posterior(
+            extract_posterior_params(
+                governed_project["trace"], governed_project["model_meta"]
+            )
+        ),
+    )
+    policy = ThresholdPolicy.from_dict(governed_project["validation_policy"])
+    readiness = ApprovalReadiness.from_dict(governed_project["approval_readiness"])
+    approval = create_policy_backed_model_approval(
+        approved_by="Jane Analyst",
+        readiness=readiness,
+        current_policy=policy,
+        model_run_id=identity.model_run_id,
+        data_fingerprint=identity.data_fingerprint,
+        model_spec_fingerprint=identity.model_spec_fingerprint,
+        posterior_fingerprint=identity.posterior_fingerprint,
+    )
+    project = dict(governed_project)
+    project["model_approval"] = approval.to_dict()
+    return project
+
+
+class TestImportedApprovalChainRestoration:
+    """PR 88A: a policy-backed ``model_approval`` must not be restored as
+    current official authority when its bound readiness is rejected as
+    unverified. Before this fix, ``verify_imported_approval`` only checked
+    model identity (``matches_current_model``) - a policy-backed approval
+    whose readiness had just been rejected by ``verify_imported_readiness``
+    (evaluated completely independently) could still come back "verified"
+    on identity alone."""
+
+    def test_valid_bundle_restores_the_complete_chain(
+        self, tmp_path, governed_project_with_approval
+    ):
+        output_path = export_project(
+            tmp_path / "bundle.zip", **governed_project_with_approval
+        )
+        imported = import_project(output_path)
+        reconstructed = reconstruct_model_state(imported)
+
+        verified_readiness_dict, readiness_message = verify_imported_readiness(
+            imported, reconstructed
+        )
+        assert verified_readiness_dict is not None, readiness_message
+        current_policy = ThresholdPolicy.from_dict(imported["validation_policy"])
+        readiness_obj = ApprovalReadiness.from_dict(verified_readiness_dict)
+
+        approval, approval_message = verify_imported_approval(
+            imported,
+            reconstructed,
+            current_policy=current_policy,
+            approval_readiness=readiness_obj,
+        )
+        assert approval is not None, approval_message
+        assert approval.validation_policy_id == current_policy.policy_id
+
+    def test_rejected_readiness_blocks_policy_backed_approval_restoration(
+        self, tmp_path, governed_project_with_approval
+    ):
+        output_path = export_project(
+            tmp_path / "bundle.zip", **governed_project_with_approval
+        )
+        imported = import_project(output_path)
+        # Simulate the diagnostics artefact having drifted since the
+        # readiness was evaluated (e.g. a backtest updated it) - readiness
+        # verification must now reject it.
+        imported["diagnostics_artefact"]["market_scope"] = "US"
+        reconstructed = reconstruct_model_state(imported)
+
+        verified_readiness_dict, readiness_message = verify_imported_readiness(
+            imported, reconstructed
+        )
+        assert verified_readiness_dict is None, (
+            "test setup should have made readiness verification fail"
+        )
+        current_policy = ThresholdPolicy.from_dict(imported["validation_policy"])
+
+        # This mirrors exactly what pages/09_Project_Export.py now passes:
+        # the (rejected -> None) verified readiness, never the raw imported
+        # dict, and never skipping the check just because identity matches.
+        approval, approval_message = verify_imported_approval(
+            imported,
+            reconstructed,
+            current_policy=current_policy,
+            approval_readiness=None,
+        )
+        assert approval is None
+        assert "policy-backed" in approval_message.lower()
+        assert "readiness" in approval_message.lower()
+
+
+class TestDiagnosticsArtefactStructuredPersistence:
+    """PR 88A part A: DiagnosticsArtefact must round-trip through export as
+    structured JSON, never as an opaque string from json.dumps's default=str
+    fallback (which is what happens if the raw domain object - rather than
+    its .to_dict() - reaches export_project()), and must be restored via
+    DiagnosticsArtefact.from_dict() on import, not left as a raw dict."""
+
+    def test_diagnostics_artefact_round_trips_as_structured_json(
+        self, tmp_path, governed_project
+    ):
+        output_path = export_project(tmp_path / "bundle.zip", **governed_project)
+        imported = import_project(output_path)
+
+        # Structured JSON with directly addressable fields - not a single
+        # opaque string (json.dumps(<object>, default=str) would produce a
+        # str, and json.loads() of that bundle entry would then also be a
+        # str, never a dict).
+        assert isinstance(imported["diagnostics_artefact"], dict)
+        assert imported["diagnostics_artefact"]["artefact_id"] == "artefact-1"
+        assert imported["diagnostics_artefact"]["model_type"] == "shared"
+
+        rehydrated = DiagnosticsArtefact.from_dict(imported["diagnostics_artefact"])
+        original = DiagnosticsArtefact.from_dict(
+            governed_project["diagnostics_artefact"]
+        )
+        assert rehydrated.fingerprint() == original.fingerprint()
+        # The object a page relies on for attribute access (e.g.
+        # `.identification.status`), not a plain dict.
+        assert rehydrated.identification.status == "not_computed"
 
 
 class TestProjectExportInputGovernanceFields:
