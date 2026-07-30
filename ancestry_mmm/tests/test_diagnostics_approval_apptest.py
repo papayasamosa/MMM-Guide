@@ -20,6 +20,12 @@ from streamlit.testing.v1 import AppTest
 
 from ancestry_mmm.core.activities import ActivityDefinition
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
+from ancestry_mmm.core.identification_diagnostics import (
+    channel_spend_correlation_matrix,
+    design_matrix_condition_number,
+    identification_report,
+    posterior_coefficient_stability,
+)
 from ancestry_mmm.core.pathways import resolve_pathway_masks
 from ancestry_mmm.core.schema import ModelSpec
 
@@ -272,3 +278,236 @@ def test_passing_evidence_creates_policy_backed_approval_end_to_end():
     assert not any("Falling back" in (i.value or "") for i in at.info)
     assert not any("Falling back" in (e.value or "") for e in at.error)
     assert not any("Policy-backed approval failed" in (e.value or "") for e in at.error)
+
+
+# ---------------------------------------------------------------------------
+# PR 82B: canonical diagnostics evidence and state invalidation
+# ---------------------------------------------------------------------------
+
+
+class TestPageNeverRecomputesDiagnosticsDirectly:
+    """Identification, correlation matrix, condition number and coefficient
+    stability must be computed exactly once, by DiagnosticsService - the
+    page renders artefact evidence only. Source-inspection is the most
+    direct proof there is no second, independent computation path left on
+    the page that could diverge from the artefact."""
+
+    def test_page_does_not_call_identification_functions_directly(self):
+        # Comment lines may legitimately *mention* these function names
+        # (e.g. explaining what the page no longer does) - only reject an
+        # actual call appearing in real code.
+        source = "\n".join(
+            line
+            for line in PAGE.read_text(encoding="utf-8").split("\n")
+            if not line.strip().startswith("#")
+        )
+        for forbidden in (
+            "identification_report(",
+            "channel_spend_correlation_matrix(",
+            "design_matrix_condition_number(",
+            "posterior_coefficient_stability(",
+            "expanding_window_backtest(",
+        ):
+            assert forbidden not in source, (
+                f"06_Diagnostics.py still calls {forbidden} directly - it must "
+                "read from diag_artefact / route through DiagnosticsService instead."
+            )
+
+
+def test_page_artefact_identification_evidence_matches_direct_computation():
+    """The artefact stored in session state after 'Compute scorecard' must
+    equal what calling the underlying functions directly on the exact same
+    (deterministically seeded) trace/frame/meta would produce - proving the
+    page's displayed evidence can never diverge from a second, independent
+    computation, since there no longer is one."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_fully_identified_model(at)
+    at.run()
+    compute_button = next(b for b in at.button if b.label == "Compute scorecard")
+    compute_button.click().run()
+    assert not at.exception, f"page raised: {at.exception}"
+
+    artefact = at.session_state["diagnostics_artefact"]
+    trace, frame, meta = _trace_frame_meta()  # same seed -> identical inputs
+    expected_flags = identification_report(frame, meta, trace)
+    expected_corr = channel_spend_correlation_matrix(frame, meta)
+    expected_cond = design_matrix_condition_number(frame)
+    expected_stability = posterior_coefficient_stability(trace, meta)
+
+    assert artefact.identification.status == "computed", artefact.identification.error
+    assert artefact.identification.payload["flags"] == expected_flags
+    assert artefact.identification.payload["condition_number"] == expected_cond
+    reconstructed_corr = pd.DataFrame(
+        artefact.identification.payload["correlation_matrix"]
+    ).T
+    assert set(reconstructed_corr.columns) == set(expected_corr.columns)
+    assert np.allclose(
+        reconstructed_corr.loc[expected_corr.index, expected_corr.columns].values,
+        expected_corr.values,
+    )
+
+    assert artefact.coefficient_stability.status == "computed", (
+        artefact.coefficient_stability.error
+    )
+    assert artefact.coefficient_stability.payload == expected_stability.to_dict(
+        orient="records"
+    )
+
+
+def _minimal_gate_policy(*, policy_id: str, gates: list, **overrides) -> dict:
+    policy = {
+        "policy_id": policy_id,
+        "version": "1.0",
+        "scope": "all_models",
+        "owner": "Test",
+        "approval_date": "2026-01-01T00:00:00+00:00",
+        "gates": gates,
+    }
+    policy.update(overrides)
+    return policy
+
+
+def test_failing_gate_blocks_readiness_and_approval():
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_fully_identified_model(at)
+    at.session_state["validation_policy"] = _minimal_gate_policy(
+        policy_id="failing-policy",
+        gates=[
+            {
+                # This fixture's trace has no divergences, so requiring
+                # divergences=True is deliberately unattainable.
+                "name": "divergences",
+                "description": "Divergences required (deliberately unattainable)",
+                "evaluator_id": "divergences",
+                "expected_state": True,
+            }
+        ],
+    )
+    at.run()
+    compute_button = next(b for b in at.button if b.label == "Compute scorecard")
+    compute_button.click().run()
+    readiness_button = next(b for b in at.button if b.label == "Evaluate readiness")
+    readiness_button.click().run()
+
+    assert not at.exception, f"page raised: {at.exception}"
+    assert at.session_state["approval_readiness"]["overall_ready"] is False
+    assert at.session_state["model_approval"] is None
+
+
+def test_expired_policy_blocks_readiness_and_approval():
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_fully_identified_model(at)
+    at.session_state["validation_policy"] = _minimal_gate_policy(
+        policy_id="expired-policy",
+        approval_date="2020-01-01T00:00:00+00:00",
+        expiry="2020-06-01T00:00:00+00:00",
+        gates=[
+            {
+                "name": "divergences",
+                "description": "No divergences",
+                "evaluator_id": "divergences",
+                "expected_state": False,
+            }
+        ],
+    )
+    at.run()
+    compute_button = next(b for b in at.button if b.label == "Compute scorecard")
+    compute_button.click().run()
+    readiness_button = next(b for b in at.button if b.label == "Evaluate readiness")
+    readiness_button.click().run()
+
+    assert not at.exception, f"page raised: {at.exception}"
+    assert at.session_state["approval_readiness"]["overall_ready"] is False
+    assert at.session_state["model_approval"] is None
+
+
+def test_backtest_required_gate_blocks_before_backtest_runs():
+    """A policy gate needing backtest_mape must fail closed under the
+    official canonical-evidence mode before any backtest has been run - the
+    artefact's backtest section is 'not_computed' immediately after
+    'Compute scorecard', and official mode must not silently fall back to a
+    live recomputation to satisfy it."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_fully_identified_model(at)
+    at.session_state["validation_policy"] = _minimal_gate_policy(
+        policy_id="backtest-required-policy",
+        gates=[
+            {
+                "name": "backtest_mape",
+                "description": "Backtest MAPE",
+                "evaluator_id": "backtest_mape",
+                "acceptable_range": [0.0, 10.0],
+                "direction": "lower_is_better",
+            }
+        ],
+    )
+    at.run()
+    compute_button = next(b for b in at.button if b.label == "Compute scorecard")
+    compute_button.click().run()
+    assert at.session_state["diagnostics_artefact"].backtest.status == "not_computed"
+
+    readiness_button = next(b for b in at.button if b.label == "Evaluate readiness")
+    readiness_button.click().run()
+
+    assert not at.exception, f"page raised: {at.exception}"
+    assert at.session_state["approval_readiness"]["overall_ready"] is False
+    assert any(
+        "not present in the canonical diagnostics artefact" in r["message"]
+        for r in at.session_state["approval_readiness"]["gate_results"]
+    )
+    assert at.session_state["model_approval"] is None
+
+
+def test_policy_change_invalidates_previously_evaluated_readiness_and_approval():
+    """PR 82B: editing the validation policy after readiness/approval were
+    granted must invalidate both automatically on the next page load - not
+    leave them displayed as still current until someone happens to
+    re-evaluate."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_fully_identified_model(at)
+    policy_v1 = _minimal_gate_policy(
+        policy_id="policy-stale-test",
+        gates=[
+            {
+                "name": "divergences",
+                "description": "No divergences",
+                "evaluator_id": "divergences",
+                "expected_state": False,
+            }
+        ],
+    )
+    at.session_state["validation_policy"] = dict(policy_v1)
+    at.run()
+
+    compute_button = next(b for b in at.button if b.label == "Compute scorecard")
+    compute_button.click().run()
+    readiness_button = next(b for b in at.button if b.label == "Evaluate readiness")
+    readiness_button.click().run()
+    assert at.session_state["approval_readiness"]["overall_ready"] is True
+
+    approved_by_input = next(
+        t for t in at.text_input if t.label == "Approved by (name) *"
+    )
+    approved_by_input.set_value("Test Reviewer").run()
+    approve_button = next(
+        b for b in at.button if b.label == "Approve this model for planning"
+    )
+    approve_button.click().run()
+    assert at.session_state["model_approval"] is not None
+
+    # Simulate a policy edit since the approval was granted (version bump -
+    # same policy_id, different fingerprint).
+    policy_v2 = dict(policy_v1)
+    policy_v2["version"] = "2.0"
+    at.session_state["validation_policy"] = policy_v2
+    at.run()
+
+    assert not at.exception, f"page raised after policy change: {at.exception}"
+    assert at.session_state["approval_readiness"] is None
+    assert any("no longer matches" in (i.value or "") for i in at.info)
+    assert at.session_state["model_approval"] is None
+    assert any(
+        "no longer matches the current model, policy, or readiness evidence"
+        in (w.value or "")
+        for w in at.warning
+    )

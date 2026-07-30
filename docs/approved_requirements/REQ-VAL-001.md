@@ -15,9 +15,22 @@ evaluator registry (PR 56E) uses a typed, pluggable pattern in
 ``core/validation_policy.py`` with registered evaluators for R-hat, ESS,
 divergences, and PPC coverage. Fallback thresholds have been removed in favour
 of policy-supplied thresholds. ``require_matching_approval`` (PR 56C) verifies
-policy and readiness fingerprint binding. The DiagnosticsService (PR 56F)
-produces a fingerprinted DiagnosticsArtefact. Validation and readiness are
-displayed via the Diagnostics page.
+policy and readiness fingerprint binding. The DiagnosticsService (PR 56F,
+extended PR 82B to also compute identification/coefficient-stability
+evidence) produces a fingerprinted DiagnosticsArtefact. Validation and
+readiness are displayed via the Diagnostics page.
+
+PR 79A/PR 82B: new official (policy-backed) model approvals require active
+policy binding - ``create_policy_backed_model_approval`` is the only
+approval-creation path used by the Diagnostics page, and it rejects an
+inactive policy, a readiness that is not ``overall_ready``, or any
+fingerprint mismatch between the policy, the readiness, and the current
+model identity. ``ValidationService``'s ``official_canonical`` evidence mode
+(PR 82B) additionally guarantees that a policy-backed approval's readiness
+was evaluated entirely from the canonical diagnostics artefact - it never
+falls back to a live recomputation for a metric the artefact lacks. This
+resolves the "optionally reference a policy" language below in favour of a
+firm requirement for anything created going forward.
 
 ## Requirement
 
@@ -88,18 +101,32 @@ existing governance rules such as outcome approval).
 - Approved waiver unblocks.
 - Non-waivable failure still blocks after waiver attempt.
 - Matching successful readiness passes.
+- Official (``official_canonical``) evidence mode fails a gate closed when
+  its metric is missing from an otherwise-valid artefact, rather than
+  recomputing it live (PR 82B).
+- A policy, model-identity, or diagnostics-artefact fingerprint change
+  invalidates a previously evaluated readiness and any approval bound to it
+  (PR 82B).
 
 ## Migration impact
 
-None. Existing approvals remain valid (they were created without policy
-binding). Forward: new approvals should optionally reference a policy ID.
+Legacy approvals created before policy binding was required (empty
+``validation_policy_id``) remain loadable and are still matched against the
+current model by ``require_matching_approval`` on identity alone - they are
+not deleted or silently rejected. They are not, however, treated as
+equivalent to a current policy-backed approval: they carry no policy or
+readiness fingerprint proof, so nothing downstream can verify what evidence
+(if any) they were granted against. Forward: every new official approval
+must reference an active policy and a matching, ``overall_ready`` readiness
+- there is no unbound approval path for newly created approvals.
 
 ## Unresolved decisions
 
-- Whether to require policy binding for all new approvals immediately or only
-  when explicitly configured.
 - Default policy thresholds: these will be suggested but must be approved by
   the modelling lead before becoming authoritative.
+- Whether/how a legacy unbound approval can be "upgraded" to policy-backed
+  status without a full re-approval (currently: it cannot - re-approval
+  through the policy-backed path is required to gain fingerprint proof).
 
 ## Owner
 

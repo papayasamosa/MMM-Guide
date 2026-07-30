@@ -6,6 +6,12 @@ PR 72B: ValidationService now consumes DiagnosticsArtefact for schema-v2
 validation. Gate evaluator IDs are mapped to artefact section values via
 the metric accessor. The service does not recalculate diagnostics when a
 valid artefact is provided.
+
+PR 82B: ``ValidationInput.evidence_mode`` makes that "does not recalculate"
+guarantee explicit and total for official use. ``"official_canonical"``
+never invokes a live evaluator - any gate whose metric is not present in
+a valid artefact fails closed. ``"live_exploratory"`` (default) preserves
+the artefact-first/live-fallback behaviour for exploratory review.
 """
 
 from __future__ import annotations
@@ -13,7 +19,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 import arviz as az
 
@@ -73,6 +79,16 @@ class ValidationInput:
     market: Optional[str] = None
     intended_use: str = "model_approval"
     diagnostics_artefact: Optional[DiagnosticsArtefact] = None
+    # PR 82B: "official_canonical" (used for policy-backed model approval)
+    # never reads a live evaluator - a gate whose metric is not present in
+    # a valid, identity-matching artefact fails closed instead of silently
+    # recomputing it live, so official evidence never mixes persisted and
+    # recomputed values. "live_exploratory" (default) preserves the prior
+    # behaviour: artefact-first, falling through to a live evaluator when
+    # the artefact genuinely does not have the metric.
+    evidence_mode: Literal["official_canonical", "live_exploratory"] = (
+        "live_exploratory"
+    )
 
 
 @dataclass
@@ -544,6 +560,59 @@ class ValidationService:
         entry = get_evaluator(evaluator_id)
         output_type = entry[0].output_type if entry is not None else "numeric"
 
+        # PR 82B: official canonical-evidence mode never touches the live
+        # evaluator registry, in either direction - no usable artefact at
+        # all, or a usable artefact that is missing this specific metric,
+        # both fail the gate closed rather than mixing in a recomputed
+        # value. This is a hard branch, not a fallthrough guard, so it can
+        # never accidentally share code paths with the live/exploratory
+        # branch below.
+        if v_input.evidence_mode == "official_canonical":
+            if usable_artefact is None:
+                return ValidationResult(
+                    gate_name=gate.name,
+                    status="fail",
+                    message=(
+                        "Official canonical-evidence mode requires a valid, "
+                        "identity-matching diagnostics artefact; none is "
+                        "available for this gate."
+                    ),
+                )
+            try:
+                metric_value = self._get_artefact_metric(evaluator_id, usable_artefact)
+            except MalformedArtefactEvidenceError as exc:
+                return ValidationResult(
+                    gate_name=gate.name,
+                    status="fail",
+                    message=(
+                        f"Malformed diagnostics-artefact evidence for "
+                        f"'{evaluator_id}': {exc}"
+                    ),
+                )
+            if metric_value is None:
+                return ValidationResult(
+                    gate_name=gate.name,
+                    status="fail",
+                    message=(
+                        f"Required evidence '{evaluator_id}' is not present "
+                        "in the canonical diagnostics artefact. Official "
+                        "canonical-evidence mode does not recompute missing "
+                        "evidence live."
+                    ),
+                )
+            gate_status = (
+                classify_boolean_gate(bool(metric_value), gate)
+                if output_type == "boolean"
+                else classify_numeric_gate(metric_value, gate)
+            )
+            return ValidationResult(
+                gate_name=gate.name,
+                status=gate_status,
+                value=metric_value,
+                message=f"Read from diagnostics artefact ({evaluator_id}={metric_value})",
+            )
+
+        # --- live_exploratory (default): artefact-first, live fallback ---
         if usable_artefact is not None:
             try:
                 metric_value = self._get_artefact_metric(evaluator_id, usable_artefact)

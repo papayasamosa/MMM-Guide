@@ -11,6 +11,7 @@ recomputing them.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import uuid
@@ -31,6 +32,12 @@ from ancestry_mmm.core.diagnostics import (
 from ancestry_mmm.core.market_specific_diagnostics import (
     in_sample_fit_market_specific,
     curve_plausibility_checks_market_specific,
+)
+from ancestry_mmm.core.identification_diagnostics import (
+    channel_spend_correlation_matrix,
+    design_matrix_condition_number,
+    identification_report,
+    posterior_coefficient_stability,
 )
 from ancestry_mmm.core.model_identity import ModelIdentity
 from ancestry_mmm.core.schema import ModelSpec
@@ -524,19 +531,58 @@ class DiagnosticsService:
             warnings.append(f"Plausibility checks failed: {exc}")
             plaus_sec = DiagnosticSection(status="failed", payload=None, error=str(exc))
 
-        # --- 5. Identification (not computed by default) ---
-        ident_sec = DiagnosticSection(
-            status="not_computed",
-            payload=None,
-            error="Identification not requested. Call identification_diagnostics() separately.",
-        )
+        # --- 5. Identification: correlation matrix, condition number and
+        # the combined flag report (single authoritative calculation - the
+        # only place these three signals are computed; a leave-one-channel-
+        # out refit sensitivity check is not included here, since it needs
+        # a full model refit per channel and has no place in a single-pass
+        # evaluate() call) ---
+        ident_sec: DiagnosticSection
+        try:
+            corr_df = channel_spend_correlation_matrix(
+                diag_input.frame, diag_input.meta
+            )
+            condition_number = design_matrix_condition_number(diag_input.frame)
+            id_flags = identification_report(
+                diag_input.frame, diag_input.meta, diag_input.trace
+            )
+            for flag in id_flags:
+                warnings.append(
+                    f"[{flag.get('level', 'info')}] "
+                    f"{flag.get('channel', '?')}: {flag.get('message', '')}"
+                )
+            ident_sec = DiagnosticSection(
+                status="computed",
+                payload={
+                    "flags": id_flags,
+                    "correlation_matrix": json.loads(corr_df.to_json(orient="index")),
+                    # Stored as a JSON-safe string when infinite (a
+                    # deliberate, meaningful value for a degenerate design
+                    # matrix - see design_matrix_condition_number's
+                    # docstring - not an error to hide), matching how it is
+                    # already displayed.
+                    "condition_number": condition_number
+                    if condition_number != float("inf")
+                    else "inf",
+                },
+            )
+        except Exception as exc:
+            errors.append(f"Identification diagnostics failed: {exc}")
+            ident_sec = DiagnosticSection(status="failed", payload=None, error=str(exc))
 
-        # --- 6. Coefficient stability (not computed by default) ---
-        stab_sec = DiagnosticSection(
-            status="not_computed",
-            payload=None,
-            error="Coefficient stability not requested. Call posterior_coefficient_stability() separately.",
-        )
+        # --- 6. Coefficient stability (single authoritative calculation) ---
+        stab_sec: DiagnosticSection
+        try:
+            stability_df = posterior_coefficient_stability(
+                diag_input.trace, diag_input.meta
+            )
+            stab_sec = DiagnosticSection(
+                status="computed",
+                payload=stability_df.to_dict(orient="records"),
+            )
+        except Exception as exc:
+            errors.append(f"Coefficient stability computation failed: {exc}")
+            stab_sec = DiagnosticSection(status="failed", payload=None, error=str(exc))
 
         # --- 7. Backtest ---
         bt_sec: DiagnosticSection
@@ -646,6 +692,42 @@ class DiagnosticsService:
             diagnostics_version="2.0.0",
             diagnostics_artefact=artefact,
         )
+
+    def run_backtest(
+        self,
+        artefact: DiagnosticsArtefact,
+        *,
+        raw_model_dataframe: pd.DataFrame,
+        raw_model_spec: ModelSpec,
+        fit_fold_fn: Callable,
+        n_folds: int,
+        min_train_frac: float = 0.6,
+    ) -> DiagnosticsArtefact:
+        """Run an expanding-window backtest and return a new artefact with
+        only the ``backtest`` section replaced.
+
+        PR 82B: a pure, immutable update path for the canonical artefact -
+        every other already-computed section (convergence, fit, PPC,
+        plausibility, identification, coefficient stability) is carried
+        over unchanged, never recomputed. Callers must re-evaluate
+        readiness against the returned artefact, since its fingerprint
+        changes whenever the backtest section changes.
+        """
+        try:
+            backtest_results = expanding_window_backtest(
+                raw_model_dataframe,
+                raw_model_spec,
+                fit_fold_fn,
+                n_folds=n_folds,
+                min_train_frac=min_train_frac,
+            )
+            bt_sec = DiagnosticSection(
+                status="computed",
+                payload=backtest_results.to_dict(orient="records"),
+            )
+        except Exception as exc:
+            bt_sec = DiagnosticSection(status="failed", payload=None, error=str(exc))
+        return dataclasses.replace(artefact, backtest=bt_sec)
 
     @staticmethod
     def _check_convergence(trace: az.InferenceData) -> tuple[float, float, int]:

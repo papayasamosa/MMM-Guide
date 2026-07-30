@@ -19,6 +19,7 @@ from ancestry_mmm.core.validation_policy import (
     ValidationWaiverReference,
     evaluate_approval_readiness,
     filter_applicable_gates,
+    readiness_matches_current_evidence,
     readiness_to_dict,
 )
 
@@ -2242,3 +2243,82 @@ class TestThresholdPolicySerialization:
         policy_dict["owner"] = ""
         with pytest.raises(ValueError, match="owner must be non-blank"):
             ThresholdPolicy.from_dict(policy_dict)
+
+
+# ---------------------------------------------------------------------------
+# readiness_matches_current_evidence (PR 82B)
+# ---------------------------------------------------------------------------
+
+
+class TestReadinessMatchesCurrentEvidence:
+    """A stored ApprovalReadiness must be recognised as stale the moment
+    any one of the three fingerprints it was evaluated against - policy,
+    model identity, diagnostics artefact - no longer matches the caller's
+    current values. This is what the Diagnostics page uses to invalidate
+    readiness/approval automatically rather than leaving stale evidence
+    displayed as current."""
+
+    def _readiness(self, sample_policy) -> ApprovalReadiness:
+        results = [
+            _make_result(
+                policy=sample_policy,
+                gate_name="convergence_rhat",
+                status="pass",
+                value=1.02,
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="ppc_coverage",
+                status="pass",
+                value=85.0,
+            ),
+            _make_result(
+                policy=sample_policy,
+                gate_name="backtest_mape",
+                status="pass",
+                value=20.0,
+            ),
+            _make_result(
+                policy=sample_policy, gate_name="divergences", status="pass", value=0
+            ),
+        ]
+        return _eval_readiness(results, sample_policy, _DEFAULT_IDENTITY)
+
+    def test_matches_when_all_three_fingerprints_are_current(self, sample_policy):
+        readiness = self._readiness(sample_policy)
+        assert readiness_matches_current_evidence(
+            readiness,
+            policy_fingerprint=readiness.policy_fingerprint,
+            model_identity_fingerprint=readiness.model_identity_fingerprint,
+            diagnostic_artefact_fingerprint=readiness.diagnostic_artefact_fingerprint,
+        )
+
+    def test_stale_when_policy_fingerprint_differs(self, sample_policy):
+        """E.g. the policy was edited since readiness was evaluated."""
+        readiness = self._readiness(sample_policy)
+        assert not readiness_matches_current_evidence(
+            readiness,
+            policy_fingerprint="a-different-policy-fingerprint",
+            model_identity_fingerprint=readiness.model_identity_fingerprint,
+            diagnostic_artefact_fingerprint=readiness.diagnostic_artefact_fingerprint,
+        )
+
+    def test_stale_when_model_identity_fingerprint_differs(self, sample_policy):
+        """E.g. the model was retrained since readiness was evaluated."""
+        readiness = self._readiness(sample_policy)
+        assert not readiness_matches_current_evidence(
+            readiness,
+            policy_fingerprint=readiness.policy_fingerprint,
+            model_identity_fingerprint="a-different-model-identity-fingerprint",
+            diagnostic_artefact_fingerprint=readiness.diagnostic_artefact_fingerprint,
+        )
+
+    def test_stale_when_diagnostic_artefact_fingerprint_differs(self, sample_policy):
+        """E.g. a backtest just replaced the artefact's backtest section."""
+        readiness = self._readiness(sample_policy)
+        assert not readiness_matches_current_evidence(
+            readiness,
+            policy_fingerprint=readiness.policy_fingerprint,
+            model_identity_fingerprint=readiness.model_identity_fingerprint,
+            diagnostic_artefact_fingerprint="a-different-artefact-fingerprint",
+        )

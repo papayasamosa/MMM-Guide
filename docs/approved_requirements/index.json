@@ -176,7 +176,10 @@
         "ancestry_mmm/tests/test_validation_policy.py::TestApprovalReadinessEvaluation::test_stale_validation_artefact_blocks",
         "ancestry_mmm/tests/test_validation_policy.py::TestApprovalReadinessEvaluation::test_approved_waiver_unblocks",
         "ancestry_mmm/tests/test_validation_policy.py::TestApprovalReadinessEvaluation::test_non_waivable_failure_still_blocks",
-        "ancestry_mmm/tests/test_validation_policy.py::TestApprovalReadinessEvaluation::test_matching_successful_readiness_passes"
+        "ancestry_mmm/tests/test_validation_policy.py::TestApprovalReadinessEvaluation::test_matching_successful_readiness_passes",
+        "ancestry_mmm/tests/test_validation_policy.py::TestReadinessMatchesCurrentEvidence::test_stale_when_policy_fingerprint_differs",
+        "ancestry_mmm/tests/test_validation_service_artefact_identity.py::TestOfficialCanonicalEvidenceModeFailsClosed::test_official_mode_fails_gate_closed_when_metric_missing_from_artefact",
+        "ancestry_mmm/tests/test_diagnostics_approval_apptest.py::test_policy_change_invalidates_previously_evaluated_readiness_and_approval"
       ]
     }
   ]

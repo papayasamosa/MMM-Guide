@@ -28,15 +28,17 @@ from ancestry_mmm.components import (
     render_drift_status,
 )
 from ancestry_mmm.core.approval import (
+    ApprovalMismatchError,
     ModelApproval,
+    ValidationPolicyBlockedError,
     create_policy_backed_model_approval,
+    require_matching_approval,
 )
 from ancestry_mmm.core.activities import (
     ActivityDefinition,
     activity_by_model_input,
     activity_fit_fingerprint,
 )
-from ancestry_mmm.core.diagnostics import expanding_window_backtest
 from ancestry_mmm.application.diagnostics_service import (
     DiagnosticsService,
     DiagnosticsInput,
@@ -46,7 +48,9 @@ from ancestry_mmm.application.validation_service import (
     ValidationInput,
 )
 from ancestry_mmm.core.validation_policy import (
+    ApprovalReadiness,
     ThresholdPolicy,
+    readiness_matches_current_evidence,
 )
 from ancestry_mmm.core.model_identity import ModelIdentity
 from ancestry_mmm.core.fingerprint import (
@@ -55,12 +59,6 @@ from ancestry_mmm.core.fingerprint import (
     fingerprint_posterior,
 )
 from ancestry_mmm.core.funnel import FunnelLink, funnel_coherence_diagnostics
-from ancestry_mmm.core.identification_diagnostics import (
-    channel_spend_correlation_matrix,
-    design_matrix_condition_number,
-    identification_report,
-    posterior_coefficient_stability,
-)
 from ancestry_mmm.core.outcomes import (
     outcome_catalogue_fingerprint_payload,
     resolve_outcome_definitions,
@@ -265,36 +263,51 @@ if scorecard:
         "here (it needs a full model refit per channel, too slow for an interactive page); the three "
         "signals below need no refit."
     )
-    id_flags = identification_report(frame, meta, trace)
-    if not id_flags:
-        st.info("No multicollinearity or weak-identification flags raised.")
+    # PR 82B: rendered from the canonical artefact section only - the page
+    # never calls identification_report()/channel_spend_correlation_matrix()/
+    # design_matrix_condition_number()/posterior_coefficient_stability()
+    # directly, so displayed evidence and artefact evidence can never
+    # diverge (DiagnosticsService computes each of these exactly once).
+    ident_section = diag_artefact.identification if diag_artefact else None
+    if ident_section is None or ident_section.status == "not_computed":
+        st.info("Not computed. Click 'Compute scorecard' above.")
+    elif ident_section.status == "failed":
+        st.error(f"Identification diagnostics failed: {ident_section.error}")
     else:
-        for f in id_flags:
-            (st.error if f["level"] == "error" else st.warning)(
-                f"**{f['channel']}**: {f['message']}"
+        id_flags = ident_section.payload["flags"]
+        if not id_flags:
+            st.info("No multicollinearity or weak-identification flags raised.")
+        else:
+            for f in id_flags:
+                (st.error if f["level"] == "error" else st.warning)(
+                    f"**{f['channel']}**: {f['message']}"
+                )
+
+        with st.expander("Channel spend correlation matrix"):
+            corr_df = pd.DataFrame(ident_section.payload["correlation_matrix"]).T
+            st.dataframe(
+                corr_df, width="stretch", column_config=dataframe_column_config(corr_df)
             )
 
-    with st.expander("Channel spend correlation matrix"):
-        corr_df = channel_spend_correlation_matrix(frame, meta)
-        st.dataframe(
-            corr_df, width="stretch", column_config=dataframe_column_config(corr_df)
-        )
-
-    with st.expander(
-        "Design matrix condition number & posterior coefficient stability"
-    ):
-        cond = design_matrix_condition_number(frame)
-        st.metric(
-            "Condition number",
-            f"{cond:,.1f}" if cond != float("inf") else "inf",
-            help="Elevated above ~30, severe above ~100 - the standard econometric rule-of-thumb thresholds.",
-        )
-        stability_df = posterior_coefficient_stability(trace, meta)
-        st.dataframe(
-            stability_df,
-            width="stretch",
-            column_config=dataframe_column_config(stability_df),
-        )
+        with st.expander(
+            "Design matrix condition number & posterior coefficient stability"
+        ):
+            cond = ident_section.payload["condition_number"]
+            st.metric(
+                "Condition number",
+                f"{cond:,.1f}" if isinstance(cond, (int, float)) else str(cond),
+                help="Elevated above ~30, severe above ~100 - the standard econometric rule-of-thumb thresholds.",
+            )
+            stab_section = diag_artefact.coefficient_stability
+            if stab_section.status == "computed":
+                stability_df = pd.DataFrame(stab_section.payload)
+                st.dataframe(
+                    stability_df,
+                    width="stretch",
+                    column_config=dataframe_column_config(stability_df),
+                )
+            elif stab_section.status == "failed":
+                st.error(f"Coefficient stability failed: {stab_section.error}")
 
 st.markdown("---")
 st.markdown("### Validation readiness")
@@ -323,6 +336,35 @@ if validation_policy_dict and isinstance(validation_policy_dict, dict):
         _current_policy = ThresholdPolicy.from_dict(validation_policy_dict)
     except ValueError as exc:
         _policy_config_error = str(exc)
+
+# PR 82B: a stored readiness may no longer reflect the current policy,
+# model identity, or diagnostics artefact - the policy could have been
+# edited, the model retrained without going through clear_model_state()
+# (e.g. a fresh page load after a project import), or a backtest could
+# have just replaced the artefact's backtest section. Stale readiness must
+# never keep being displayed or relied on as current; it is cleared here
+# rather than left for the user to notice it's out of date.
+approval_readiness_dict = get_state("approval_readiness")
+if approval_readiness_dict:
+    _evidence_current = (
+        diag_artefact is not None
+        and _current_policy is not None
+        and current_model_identity is not None
+        and readiness_matches_current_evidence(
+            ApprovalReadiness.from_dict(approval_readiness_dict),
+            policy_fingerprint=_current_policy.fingerprint(),
+            model_identity_fingerprint=current_model_identity.fingerprint(),
+            diagnostic_artefact_fingerprint=diag_artefact.fingerprint(),
+        )
+    )
+    if not _evidence_current:
+        set_state("approval_readiness", None)
+        set_state("validation_service_result", None)
+        validation_service_result = None
+        st.info(
+            "Previously evaluated readiness no longer matches the current policy, "
+            "model, or diagnostics evidence - click 'Evaluate readiness' again."
+        )
 
 if st.button("Evaluate readiness", type="secondary"):
     with st.spinner("Evaluating policy gates..."):
@@ -355,6 +397,10 @@ if st.button("Evaluate readiness", type="secondary"):
                 diagnostics_artefact=diag_artefact,
                 model_type=model_type,
                 model_identity=current_model_identity,
+                # PR 82B: readiness evaluated here feeds policy-backed model
+                # approval below - official evidence only, never a live
+                # recomputation standing in for missing canonical evidence.
+                evidence_mode="official_canonical",
             )
             val_result = val_service.evaluate_readiness(val_input)
             set_state("validation_service_result", val_result)
@@ -430,17 +476,39 @@ if approval_dict and not activity_governance_ready:
         "The previous model approval was invalidated because required activity "
         "and causal-role governance is incomplete."
     )
-approval_matches_current = (
-    approval_dict is not None
-    and current_identity is not None
-    and ModelApproval.from_dict(approval_dict).matches_current_model(**current_identity)
-)
+# PR 82B: require_matching_approval (already used by curve_bank/optimization
+# to gate real use of an approval) re-verifies the FULL chain - model
+# identity AND, for policy-backed approvals, that the bound readiness still
+# exists, is still overall_ready, and its policy/model-identity fingerprints
+# still match the current policy and model - not just model identity alone.
+# This is strictly stronger than (and replaces) a bare matches_current_model()
+# check, so an approval can no longer be displayed as valid here while it
+# would actually be rejected downstream by curve-bank/planning governance.
+_approval_readiness_obj = None
+_approval_readiness_dict_now = get_state("approval_readiness")
+if _approval_readiness_dict_now:
+    _approval_readiness_obj = ApprovalReadiness.from_dict(_approval_readiness_dict_now)
+
+approval_matches_current = False
+approval_invalid_reason: str | None = None
+if approval_dict is not None and current_identity is not None:
+    try:
+        require_matching_approval(
+            ModelApproval.from_dict(approval_dict),
+            approval_readiness=_approval_readiness_obj,
+            current_policy=_current_policy,
+            **current_identity,
+        )
+        approval_matches_current = True
+    except (ApprovalMismatchError, ValidationPolicyBlockedError) as exc:
+        approval_invalid_reason = str(exc)
 
 if approval_dict and not approval_matches_current:
     st.warning(
-        "An approval exists in this session, but it no longer matches the current model "
-        "(it was granted for a different run, or the data/specification/posterior have "
-        "changed since) - it has been invalidated. Review and approve again below."
+        "An approval exists in this session, but it no longer matches the current model, "
+        "policy, or readiness evidence"
+        + (f": {approval_invalid_reason}" if approval_invalid_reason else "")
+        + " - it has been invalidated. Review and approve again below."
     )
     set_state("model_approval", None)
     approval_dict = None
@@ -601,78 +669,116 @@ fold_draws = c3.number_input(
 )
 
 if st.button("Run backtest"):
-    spec = ModelSpec.from_dict(get_state("model_spec"))
-    df = get_state("transformed_data")
-    prior_config = get_state("prior_config")
-    dna_lag_weeks = get_state("dna_lag_weeks", 4)
+    if diag_artefact is None:
+        st.error("Compute the scorecard first.")
+    else:
+        spec = ModelSpec.from_dict(get_state("model_spec"))
+        df = get_state("transformed_data")
+        prior_config = get_state("prior_config")
+        dna_lag_weeks = get_state("dna_lag_weeks", 4)
 
-    def fit_fold(train_df, test_df):
-        train_frame = prepare_fh_modeling_frame(train_df, spec)
-        if model_type == "market_specific" and len(train_frame["markets"]) >= 2:
-            fold_model, fold_meta = build_fh_market_specific_model(
-                train_frame,
-                spec,
-                dna_lag_weeks=dna_lag_weeks,
-                prior_config=prior_config,
-                dna_outcome_id=spec.fh_dna_cross_sell_outcome_id,
+        def fit_fold(train_df, test_df):
+            train_frame = prepare_fh_modeling_frame(train_df, spec)
+            if model_type == "market_specific" and len(train_frame["markets"]) >= 2:
+                fold_model, fold_meta = build_fh_market_specific_model(
+                    train_frame,
+                    spec,
+                    dna_lag_weeks=dna_lag_weeks,
+                    prior_config=prior_config,
+                    dna_outcome_id=spec.fh_dna_cross_sell_outcome_id,
+                )
+            else:
+                fold_model, fold_meta = build_fh_hierarchical_model(
+                    train_frame,
+                    spec,
+                    dna_lag_weeks=dna_lag_weeks,
+                    prior_config=prior_config,
+                    dna_outcome_id=spec.fh_dna_cross_sell_outcome_id,
+                )
+            fold_trace = fit_model(
+                fold_model,
+                draws=int(fold_draws),
+                tune=int(fold_draws),
+                chains=2,
+                cores=1,
+                target_accept=0.9,
+            )
+
+            test_frame = prepare_fh_modeling_frame(test_df, spec)
+            if model_type == "market_specific" and len(train_frame["markets"]) >= 2:
+                fold_params = extract_market_specific_posterior_params(
+                    fold_trace, fold_meta
+                )
+                mu_test = predict_mu_market_specific(test_frame, fold_meta, fold_params)
+            else:
+                fold_params = extract_posterior_params(fold_trace, fold_meta)
+                mu_test = predict_mu(test_frame, fold_meta, fold_params)
+
+            r2_by_seg, mape_by_seg = {}, {}
+            for i, oid in enumerate(fold_meta.outcome_ids):
+                actual, pred = test_frame["Y"][:, i], mu_test[:, i]
+                ss_res = ((actual - pred) ** 2).sum()
+                ss_tot = ((actual - actual.mean()) ** 2).sum()
+                r2_by_seg[oid] = (
+                    float(1 - ss_res / ss_tot) if ss_tot > 0 else float("nan")
+                )
+                mask = actual != 0
+                mape_by_seg[oid] = (
+                    float(
+                        (abs((actual[mask] - pred[mask]) / actual[mask])).mean() * 100
+                    )
+                    if mask.any()
+                    else float("nan")
+                )
+            return r2_by_seg, mape_by_seg
+
+        with st.spinner(
+            f"Running {n_folds}-fold backtest (this refits the model per fold)..."
+        ):
+            # PR 82B: routed through DiagnosticsService.run_backtest() - a
+            # pure update that replaces only the artefact's backtest
+            # section, never recomputing convergence/fit/PPC/plausibility/
+            # identification/coefficient-stability.
+            updated_artefact = DiagnosticsService().run_backtest(
+                diag_artefact,
+                raw_model_dataframe=df,
+                raw_model_spec=spec,
+                fit_fold_fn=fit_fold,
+                n_folds=int(n_folds),
+                min_train_frac=min_train_frac,
+            )
+        set_state("diagnostics_artefact", updated_artefact)
+        diag_artefact = updated_artefact
+        # The artefact's fingerprint has changed - any previously evaluated
+        # readiness/approval no longer matches it and must not keep being
+        # displayed as current (mirrors the staleness check above; cleared
+        # immediately here rather than waiting for the next rerun).
+        set_state("approval_readiness", None)
+        set_state("validation_service_result", None)
+        if updated_artefact.backtest.status == "computed":
+            # Legacy mirror for the project-export bundle (PR 82D wires
+            # diagnostics_artefact into export directly) - not the
+            # canonical evidence source, which is the artefact above.
+            set_state(
+                "backtest_results", pd.DataFrame(updated_artefact.backtest.payload)
+            )
+            st.success(
+                "Backtest complete - diagnostics artefact updated. "
+                "Click 'Evaluate readiness' above to re-evaluate against the new evidence."
             )
         else:
-            fold_model, fold_meta = build_fh_hierarchical_model(
-                train_frame,
-                spec,
-                dna_lag_weeks=dna_lag_weeks,
-                prior_config=prior_config,
-                dna_outcome_id=spec.fh_dna_cross_sell_outcome_id,
-            )
-        fold_trace = fit_model(
-            fold_model,
-            draws=int(fold_draws),
-            tune=int(fold_draws),
-            chains=2,
-            cores=1,
-            target_accept=0.9,
-        )
+            st.error(f"Backtest failed: {updated_artefact.backtest.error}")
 
-        test_frame = prepare_fh_modeling_frame(test_df, spec)
-        if model_type == "market_specific" and len(train_frame["markets"]) >= 2:
-            fold_params = extract_market_specific_posterior_params(
-                fold_trace, fold_meta
-            )
-            mu_test = predict_mu_market_specific(test_frame, fold_meta, fold_params)
-        else:
-            fold_params = extract_posterior_params(fold_trace, fold_meta)
-            mu_test = predict_mu(test_frame, fold_meta, fold_params)
-
-        r2_by_seg, mape_by_seg = {}, {}
-        for i, oid in enumerate(fold_meta.outcome_ids):
-            actual, pred = test_frame["Y"][:, i], mu_test[:, i]
-            ss_res = ((actual - pred) ** 2).sum()
-            ss_tot = ((actual - actual.mean()) ** 2).sum()
-            r2_by_seg[oid] = float(1 - ss_res / ss_tot) if ss_tot > 0 else float("nan")
-            mask = actual != 0
-            mape_by_seg[oid] = (
-                float((abs((actual[mask] - pred[mask]) / actual[mask])).mean() * 100)
-                if mask.any()
-                else float("nan")
-            )
-        return r2_by_seg, mape_by_seg
-
-    with st.spinner(
-        f"Running {n_folds}-fold backtest (this refits the model per fold)..."
-    ):
-        results = expanding_window_backtest(
-            df, spec, fit_fold, n_folds=int(n_folds), min_train_frac=min_train_frac
-        )
-    set_state("backtest_results", results)
-    st.success("Backtest complete.")
-
-backtest_results = get_state("backtest_results")
-if backtest_results is not None and not backtest_results.empty:
+backtest_section = diag_artefact.backtest if diag_artefact else None
+if backtest_section is not None and backtest_section.status == "computed":
+    backtest_df = pd.DataFrame(backtest_section.payload)
     st.dataframe(
-        backtest_results,
+        backtest_df,
         width="stretch",
-        column_config=dataframe_column_config(backtest_results),
+        column_config=dataframe_column_config(backtest_df),
     )
+elif backtest_section is not None and backtest_section.status == "failed":
+    st.error(f"Backtest failed: {backtest_section.error}")
 
 st.markdown("---")
 st.markdown("### Funnel-coherence diagnostics")

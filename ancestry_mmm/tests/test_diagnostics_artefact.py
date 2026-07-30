@@ -35,6 +35,12 @@ from ancestry_mmm.core.diagnostics import (
     curve_plausibility_checks as _real_curve_plausibility_checks,
     posterior_predictive_coverage as _real_posterior_predictive_coverage,
 )
+from ancestry_mmm.core.identification_diagnostics import (
+    channel_spend_correlation_matrix as _real_channel_spend_correlation_matrix,
+    design_matrix_condition_number as _real_design_matrix_condition_number,
+    identification_report as _real_identification_report,
+    posterior_coefficient_stability as _real_posterior_coefficient_stability,
+)
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
 from ancestry_mmm.core.pathways import resolve_pathway_masks
 
@@ -721,6 +727,73 @@ class TestDiagnosticsServiceComputesEachSectionOnce:
         assert result.scorecard["ppc_coverage"] == artefact.posterior_predictive.payload
         assert result.scorecard["plausibility_flags"] == artefact.plausibility.payload
 
+    def test_identification_diagnostics_each_computed_exactly_once(self):
+        """PR 82B: identification, correlation matrix, condition number and
+        coefficient stability were previously computed directly by the
+        Diagnostics page (never by DiagnosticsService, always "not_computed"
+        in the artefact). Each of the four underlying functions must now be
+        called exactly once by evaluate() - never twice (e.g. once inside
+        identification_report() and again separately for display), and
+        never by the page."""
+        trace, frame, meta = _minimal_trace_frame_meta()
+        diag_input = DiagnosticsInput(trace=trace, frame=frame, meta=meta)
+
+        with (
+            patch(
+                "ancestry_mmm.application.diagnostics_service.channel_spend_correlation_matrix",
+                wraps=_real_channel_spend_correlation_matrix,
+            ) as mock_corr,
+            patch(
+                "ancestry_mmm.application.diagnostics_service.design_matrix_condition_number",
+                wraps=_real_design_matrix_condition_number,
+            ) as mock_cond,
+            patch(
+                "ancestry_mmm.application.diagnostics_service.identification_report",
+                wraps=_real_identification_report,
+            ) as mock_report,
+            patch(
+                "ancestry_mmm.application.diagnostics_service.posterior_coefficient_stability",
+                wraps=_real_posterior_coefficient_stability,
+            ) as mock_stability,
+        ):
+            result = DiagnosticsService().evaluate(diag_input)
+
+        assert mock_corr.call_count == 1
+        assert mock_cond.call_count == 1
+        assert mock_report.call_count == 1
+        assert mock_stability.call_count == 1
+        assert not result.errors, result.errors
+
+    def test_identification_section_is_computed_with_full_payload(self):
+        trace, frame, meta = _minimal_trace_frame_meta()
+        diag_input = DiagnosticsInput(trace=trace, frame=frame, meta=meta)
+        result = DiagnosticsService().evaluate(diag_input)
+
+        ident = result.diagnostics_artefact.identification
+        assert ident.status == "computed", ident.error
+        assert set(ident.payload.keys()) == {
+            "flags",
+            "correlation_matrix",
+            "condition_number",
+        }
+        assert "TV" in ident.payload["correlation_matrix"]
+
+    def test_coefficient_stability_section_is_computed_with_full_payload(self):
+        trace, frame, meta = _minimal_trace_frame_meta()
+        diag_input = DiagnosticsInput(trace=trace, frame=frame, meta=meta)
+        result = DiagnosticsService().evaluate(diag_input)
+
+        stability = result.diagnostics_artefact.coefficient_stability
+        assert stability.status == "computed", stability.error
+        assert stability.payload
+        assert set(stability.payload[0].keys()) == {
+            "outcome_id",
+            "channel",
+            "beta_mean",
+            "beta_std",
+            "coefficient_of_variation",
+        }
+
 
 # =========================================================================
 # Backtest ModelSpec contract (PR 80A)
@@ -788,3 +861,115 @@ class TestBacktestRequiresRealModelSpec:
         assert bt_sec.payload[0]["outcome_id"] == "fh_new_gsa"
         assert result.backtest_results is not None
         assert not result.backtest_results.empty
+
+
+# =========================================================================
+# DiagnosticsService.run_backtest() - pure artefact update (PR 82B)
+# =========================================================================
+
+
+class TestRunBacktestUpdatesArtefactImmutably:
+    """The Diagnostics page previously ran expanding_window_backtest()
+    directly and stored a separate, untracked backtest_results state key -
+    the canonical artefact was never updated, so readiness could keep
+    reporting evidence from before the backtest ran. run_backtest() must
+    instead return a new artefact with only the backtest section replaced,
+    every other already-computed section carried over byte-for-byte, and a
+    fingerprint that changes as a result."""
+
+    @staticmethod
+    def _bt_dataframe():
+        dates = pd.date_range("2024-01-01", periods=20, freq="W")
+        return pd.DataFrame(
+            {
+                "date": dates,
+                "market": ["UK"] * len(dates),
+                "spend": np.arange(len(dates), dtype=float),
+                "gsa": np.arange(len(dates), dtype=float) + 10.0,
+            }
+        )
+
+    @staticmethod
+    def _fit_fold_fn(train_df, test_df):
+        return {"fh_new_gsa": 0.8}, {"fh_new_gsa": 12.5}
+
+    def _base_artefact(self):
+        trace, frame, meta = _minimal_trace_frame_meta()
+        diag_input = DiagnosticsInput(trace=trace, frame=frame, meta=meta)
+        return DiagnosticsService().evaluate(diag_input).diagnostics_artefact
+
+    def test_backtest_section_updated_other_sections_unchanged(self):
+        base = self._base_artefact()
+        assert base.backtest.status == "not_computed"
+
+        updated = DiagnosticsService().run_backtest(
+            base,
+            raw_model_dataframe=self._bt_dataframe(),
+            raw_model_spec=ModelSpec(date_col="date", market_col="market"),
+            fit_fold_fn=self._fit_fold_fn,
+            n_folds=1,
+        )
+
+        assert updated.backtest.status == "computed", updated.backtest.error
+        assert updated.backtest.payload[0]["outcome_id"] == "fh_new_gsa"
+        # Every other section is the exact same object/value - never
+        # recomputed by run_backtest().
+        assert updated.convergence == base.convergence
+        assert updated.in_sample_fit == base.in_sample_fit
+        assert updated.posterior_predictive == base.posterior_predictive
+        assert updated.plausibility == base.plausibility
+        assert updated.identification == base.identification
+        assert updated.coefficient_stability == base.coefficient_stability
+        assert updated.artefact_id == base.artefact_id
+        assert updated.model_identity_fingerprint == base.model_identity_fingerprint
+
+    def test_backtest_update_changes_fingerprint(self):
+        base = self._base_artefact()
+        updated = DiagnosticsService().run_backtest(
+            base,
+            raw_model_dataframe=self._bt_dataframe(),
+            raw_model_spec=ModelSpec(date_col="date", market_col="market"),
+            fit_fold_fn=self._fit_fold_fn,
+            n_folds=1,
+        )
+        assert updated.fingerprint() != base.fingerprint()
+
+    def test_backtest_update_does_not_recompute_unrelated_diagnostics(self):
+        base = self._base_artefact()
+        with (
+            patch(
+                "ancestry_mmm.application.diagnostics_service.posterior_predictive_coverage",
+                wraps=_real_posterior_predictive_coverage,
+            ) as mock_ppc,
+            patch(
+                "ancestry_mmm.application.diagnostics_service.identification_report",
+                wraps=_real_identification_report,
+            ) as mock_report,
+        ):
+            DiagnosticsService().run_backtest(
+                base,
+                raw_model_dataframe=self._bt_dataframe(),
+                raw_model_spec=ModelSpec(date_col="date", market_col="market"),
+                fit_fold_fn=self._fit_fold_fn,
+                n_folds=1,
+            )
+        assert mock_ppc.call_count == 0
+        assert mock_report.call_count == 0
+
+    def test_backtest_failure_replaces_section_with_failed_status(self):
+        base = self._base_artefact()
+
+        def _raising_fit_fold_fn(train_df, test_df):
+            raise RuntimeError("fold fit exploded")
+
+        updated = DiagnosticsService().run_backtest(
+            base,
+            raw_model_dataframe=self._bt_dataframe(),
+            raw_model_spec=ModelSpec(date_col="date", market_col="market"),
+            fit_fold_fn=_raising_fit_fold_fn,
+            n_folds=1,
+        )
+        assert updated.backtest.status == "failed"
+        assert "fold fit exploded" in updated.backtest.error
+        # Unrelated sections still carried over unchanged even on failure.
+        assert updated.convergence == base.convergence
