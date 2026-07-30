@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 import arviz as az
@@ -57,6 +57,10 @@ class ProjectExportInput:
     monetary_spend_support: Optional[List[dict]] = None
     activity_definitions: Optional[List[dict]] = None
     outcome_approvals: Optional[List[dict]] = None
+    validation_policy: Optional[dict] = None
+    diagnostics_artefact: Optional[dict] = None
+    validation_results: Optional[List[dict]] = None
+    approval_readiness: Optional[dict] = None
     include_excel: bool = False
     excel_sheets: Optional[Dict[str, Optional[pd.DataFrame]]] = None
     excel_output_path: Optional[str] = None
@@ -151,6 +155,10 @@ class ProjectService:
                 monetary_spend_support=exp_input.monetary_spend_support,
                 activity_definitions=exp_input.activity_definitions,
                 outcome_approvals=exp_input.outcome_approvals,
+                validation_policy=exp_input.validation_policy,
+                diagnostics_artefact=exp_input.diagnostics_artefact,
+                validation_results=exp_input.validation_results,
+                approval_readiness=exp_input.approval_readiness,
             )
         except Exception as exc:
             errors.append(f"Project export failed: {exc}")
@@ -241,3 +249,96 @@ class ProjectService:
             errors=errors,
             resumability=audit,
         )
+
+
+def verify_imported_readiness(
+    imported: Dict[str, Any],
+    reconstructed: Dict[str, Any],
+) -> Tuple[Optional[dict], str]:
+    """Decide whether an imported project's approval readiness evidence
+    (``validation_policy`` + ``diagnostics_artefact`` + ``approval_readiness``)
+    is still internally consistent, i.e. the readiness's own recorded
+    fingerprints actually match the policy, diagnostics artefact, and model
+    identity that were exported alongside it in the same bundle.
+
+    Mirrors ``core.persistence.verify_imported_approval``'s never-trust-
+    silently contract: always returns an explanatory message for the caller
+    to show the user. Returns ``(None, reason)`` when the readiness must NOT
+    be restored as current evidence; ``(readiness_dict, reason)`` when it is
+    verified.
+
+    Lives in the application layer (not ``core.persistence``) because
+    ``DiagnosticsArtefact`` is an application-layer type
+    (``application.diagnostics_service``) that ``core`` must not import.
+    """
+    from ancestry_mmm.application.diagnostics_service import DiagnosticsArtefact
+    from ancestry_mmm.core.model_identity import ModelIdentity
+    from ancestry_mmm.core.persistence import current_model_identity_fingerprints
+    from ancestry_mmm.core.validation_policy import (
+        ApprovalReadiness,
+        ThresholdPolicy,
+        readiness_matches_current_evidence,
+    )
+
+    readiness_dict = imported.get("approval_readiness")
+    if readiness_dict is None:
+        return (
+            None,
+            "No approval readiness evidence was included in this project bundle.",
+        )
+
+    policy_dict = imported.get("validation_policy")
+    artefact_dict = imported.get("diagnostics_artefact")
+    if policy_dict is None or artefact_dict is None:
+        return None, (
+            "The imported readiness evidence is missing its accompanying validation "
+            "policy or diagnostics artefact - treated as unverified. Readiness must "
+            "be re-evaluated."
+        )
+
+    frame = reconstructed.get("frame")
+    posterior_params = reconstructed.get("posterior_params")
+    current_run_id = imported.get("model_run_id")
+    if frame is None or posterior_params is None or not current_run_id:
+        return None, (
+            "Could not reconstruct this project's model artefacts (data, "
+            "specification, posterior, or run ID) well enough to verify its "
+            "readiness evidence - treated as unverified. Readiness must be "
+            "re-evaluated."
+        )
+
+    try:
+        readiness = ApprovalReadiness.from_dict(readiness_dict)
+        policy = ThresholdPolicy.from_dict(policy_dict)
+        artefact = DiagnosticsArtefact.from_dict(artefact_dict)
+    except (TypeError, ValueError, KeyError, AttributeError) as exc:
+        return None, (
+            "The imported readiness evidence, policy, or diagnostics artefact was "
+            f"malformed and was discarded: {exc}"
+        )
+
+    data_fp, spec_fp, posterior_fp = current_model_identity_fingerprints(
+        imported, reconstructed
+    )
+    model_identity_fingerprint = ModelIdentity(
+        model_run_id=current_run_id,
+        data_fingerprint=data_fp,
+        model_spec_fingerprint=spec_fp,
+        posterior_fingerprint=posterior_fp,
+    ).fingerprint()
+
+    if readiness_matches_current_evidence(
+        readiness,
+        policy_fingerprint=policy.fingerprint(),
+        model_identity_fingerprint=model_identity_fingerprint,
+        diagnostic_artefact_fingerprint=artefact.fingerprint(),
+    ):
+        return readiness_dict, (
+            "Imported approval readiness verified: matches the imported policy, "
+            "diagnostics artefact, and model artefacts."
+        )
+
+    return None, (
+        "The imported approval readiness does not match the imported policy, "
+        "diagnostics artefact, or model identity - it must be re-evaluated."
+    )

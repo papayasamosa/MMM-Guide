@@ -162,7 +162,10 @@
         "ancestry_mmm/core/validation_policy.py",
         "ancestry_mmm/core/approval.py",
         "ancestry_mmm/core/diagnostics.py",
-        "ancestry_mmm/core/optimization.py"
+        "ancestry_mmm/core/optimization.py",
+        "ancestry_mmm/core/persistence.py",
+        "ancestry_mmm/application/project_service.py",
+        "ancestry_mmm/pages/09_Project_Export.py"
       ],
       "required_tests": [
         "ancestry_mmm/tests/test_validation_policy.py::TestThresholdPolicyStructure::test_policy_has_required_fields",
@@ -179,7 +182,10 @@
         "ancestry_mmm/tests/test_validation_policy.py::TestApprovalReadinessEvaluation::test_matching_successful_readiness_passes",
         "ancestry_mmm/tests/test_validation_policy.py::TestReadinessMatchesCurrentEvidence::test_stale_when_policy_fingerprint_differs",
         "ancestry_mmm/tests/test_validation_service_artefact_identity.py::TestOfficialCanonicalEvidenceModeFailsClosed::test_official_mode_fails_gate_closed_when_metric_missing_from_artefact",
-        "ancestry_mmm/tests/test_diagnostics_approval_apptest.py::test_policy_change_invalidates_previously_evaluated_readiness_and_approval"
+        "ancestry_mmm/tests/test_diagnostics_approval_apptest.py::test_policy_change_invalidates_previously_evaluated_readiness_and_approval",
+        "ancestry_mmm/tests/test_project_service.py::TestProjectExportInputGovernanceFields::test_export_passes_governance_fields_through_to_the_bundle",
+        "ancestry_mmm/tests/test_project_service.py::TestVerifyImportedReadiness::test_matching_imported_readiness_is_verified",
+        "ancestry_mmm/tests/test_project_service.py::TestVerifyImportedReadiness::test_rejected_when_diagnostics_artefact_since_drifted"
       ]
     }
   ]

@@ -32,6 +32,7 @@ from ancestry_mmm.core.persistence import (
     UnsafeZipEntryError,
     audit_project_resumability,
 )
+from ancestry_mmm.application.project_service import verify_imported_readiness
 from ancestry_mmm.core.curve_bank import load_all_entries, entries_to_dataframe
 from ancestry_mmm.core.attribution import (
     compute_shapley_contributions,
@@ -135,6 +136,13 @@ if st.button("Build export bundle", type="primary"):
             activity_definitions=get_state("activity_definitions") or [],
             # G2A.7a (DEFECT-10): persist outcome approvals in the bundle
             outcome_approvals=get_state("outcome_approvals") or [],
+            # PR 82D: persist the governance evidence chain established in
+            # PR 82B (policy + diagnostics artefact + readiness proof) so a
+            # re-imported project doesn't lose its official-mode evidence.
+            validation_policy=get_state("validation_policy"),
+            diagnostics_artefact=get_state("diagnostics_artefact"),
+            validation_results=get_state("validation_results"),
+            approval_readiness=get_state("approval_readiness"),
         )
     st.success(f"Project bundle built: {output_path}")
     with open(output_path, "rb") as f:
@@ -324,6 +332,23 @@ if uploaded_zip is not None and st.button("Import bundle"):
             "model_approval", verified_approval.to_dict() if verified_approval else None
         )
         (st.success if verified_approval else st.warning)(message)
+
+        # PR 82D: restore the governance evidence chain established in
+        # PR 82B. The policy and diagnostics artefact are restored as-is
+        # (they are independent evidence, useful on their own e.g. to
+        # re-evaluate a fresh readiness); the readiness proof binding them
+        # to a specific model identity is only restored if it verifiably
+        # still matches the imported policy, diagnostics artefact, and
+        # reconstructed model - never trusted blindly, mirroring how
+        # model_approval is verified above.
+        set_state("validation_policy", imported.get("validation_policy"))
+        set_state("diagnostics_artefact", imported.get("diagnostics_artefact"))
+        set_state("validation_results", imported.get("validation_results"))
+        verified_readiness, readiness_message = verify_imported_readiness(
+            imported, reconstructed
+        )
+        set_state("approval_readiness", verified_readiness)
+        (st.success if verified_readiness else st.warning)(readiness_message)
 
         if imported["trace"] is not None and reconstructed["frame"] is None:
             st.info(
