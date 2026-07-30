@@ -207,6 +207,13 @@ jobs:
         run: |
           # A fresh, never-installed D-drive root: the wrapper must fail
           # clearly rather than falling back to an ambient `graphify`.
+          # setup-uv sets its own UV_TOOL_BIN_DIR for the project's uv tool
+          # cache (unrelated to Graphify's isolated D-drive install) -
+          # cleared here so this step genuinely exercises "no executable at
+          # the resolved default location", not an unrelated ambient
+          # override that would also (correctly, but for the wrong tested
+          # reason) be rejected as outside the configured root.
+          Remove-Item Env:\UV_TOOL_BIN_DIR -ErrorAction SilentlyContinue
           $env:MMM_DEV_ROOT = "D:\Ancestry-MMM-CLI-Wrapper-No-Install"
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_graphify_cli.ps1 extract . --code-only
           if ($LASTEXITCODE -eq 0) {
@@ -242,6 +249,14 @@ jobs:
           exit 0
       - name: Build the graph through the CLI wrapper (clean D-drive build)
         run: |
+          # setup-uv sets its own job-wide UV_TOOL_BIN_DIR for the project's
+          # uv tool cache (D:\a\_temp\uv-tool-bin-dir) - unrelated to
+          # Graphify's isolated D-drive install, and outside the configured
+          # Graphify root, so the wrapper (correctly) rejects it. Cleared
+          # here so resolution falls through to the wrapper's own default
+          # (MMM_DEV_ROOT\tools\uv\bin), which is where setup_graphify.ps1
+          # actually installed graphify.exe.
+          Remove-Item Env:\UV_TOOL_BIN_DIR -ErrorAction SilentlyContinue
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_graphify_cli.ps1 extract . --code-only
           if ($LASTEXITCODE -ne 0) { Write-Error "CLI wrapper extract failed (exit $LASTEXITCODE)"; exit 1 }
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_graphify_cli.ps1 cluster-only . --no-label --no-viz
