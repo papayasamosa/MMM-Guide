@@ -68,6 +68,25 @@ def init_session_state():
         # Diagnostics
         "scorecard": None,
         "backtest_results": None,
+        # PR 82B: canonical diagnostics/validation evidence chain, centrally
+        # initialised so every reader can rely on the key existing rather
+        # than falling back to get_state()'s own default=None each time.
+        # "diagnostics_artefact" (application.diagnostics_service.
+        # DiagnosticsArtefact) is the canonical evidence container;
+        # "diag_result" is the full DiagnosticsResult wrapper for this
+        # session's transient UI messages. "validation_policy" is the
+        # configured ThresholdPolicy (as a dict); "validation_results" is
+        # the list of per-gate ValidationResult dicts; "approval_readiness"
+        # is the serialised ApprovalReadiness domain object (the only key
+        # any other page or persistence layer should read for readiness);
+        # "validation_service_result" is the full ValidationServiceResult
+        # wrapper for this session's own transient UI messages.
+        "diagnostics_artefact": None,
+        "diag_result": None,
+        "validation_policy": None,
+        "validation_results": None,
+        "approval_readiness": None,
+        "validation_service_result": None,
         # Model approval gate (core.approval.ModelApproval as a dict) - required
         # before a model's curves can be saved to the curve bank or used to plan
         # scenarios; reset by clear_model_state() whenever the model changes.
@@ -126,6 +145,16 @@ def clear_model_state() -> None:
         # since it identifies a specific fit event, not just "a model exists".
         "model_approval",
         "model_run_id",
+        # PR 82B: diagnostics/validation evidence is bound to the model run
+        # it was computed for - a retrained model must not keep displaying
+        # (or letting readiness/approval trust) evidence for the previous
+        # fit. "validation_policy" is deliberately NOT cleared here - it is
+        # project-level configuration, not derived from any particular fit.
+        "diagnostics_artefact",
+        "diag_result",
+        "validation_results",
+        "approval_readiness",
+        "validation_service_result",
     ]
     for key in model_keys:
         st.session_state[key] = None

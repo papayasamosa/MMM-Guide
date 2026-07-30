@@ -2473,3 +2473,30 @@ def classify_boolean_gate(value: bool, gate: "ValidationGate") -> str:
 def readiness_to_dict(readiness: ApprovalReadiness) -> dict:
     """Convert ApprovalReadiness to a JSON-serialisable dict."""
     return readiness.to_dict()
+
+
+def readiness_matches_current_evidence(
+    readiness: ApprovalReadiness,
+    *,
+    policy_fingerprint: str,
+    model_identity_fingerprint: str,
+    diagnostic_artefact_fingerprint: str,
+) -> bool:
+    """Whether a previously-evaluated ``ApprovalReadiness`` still reflects
+    the current policy, model identity, and diagnostics artefact.
+
+    PR 82B: a readiness object carries the three fingerprints it was
+    evaluated against (``policy_fingerprint``, ``model_identity_fingerprint``,
+    ``diagnostic_artefact_fingerprint``). If any one of those has since
+    drifted - the policy was edited, the model was retrained, or the
+    diagnostics artefact was updated (e.g. by a backtest) - the stored
+    readiness no longer describes the current evidence and must not be
+    displayed or relied on as current authority; a fresh evaluation is
+    required. This is a pure comparison only: callers are responsible for
+    clearing/re-evaluating stale state.
+    """
+    return (
+        readiness.policy_fingerprint == policy_fingerprint
+        and readiness.model_identity_fingerprint == model_identity_fingerprint
+        and readiness.diagnostic_artefact_fingerprint == diagnostic_artefact_fingerprint
+    )
