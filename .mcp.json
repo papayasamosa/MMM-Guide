@@ -40,6 +40,10 @@
         "TEMP": "D:\\Ancestry-MMM\\temp",
         "TMP": "D:\\Ancestry-MMM\\temp"
       }
+    },
+    "graphify-project": {
+      "command": "graphify-mcp",
+      "args": ["graphify-out/graph.json"]
     }
   }
 }
