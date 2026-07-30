@@ -427,7 +427,9 @@ Before broad repository searches or cross-module changes:
    return.
 5. Run the relevant tests and static checks after changes.
 6. Refresh the Graphify graph after meaningful structural changes:
-   `graphify update .` (local AST re-extraction, no LLM calls, no API key).
+   `scripts\run_graphify_cli.ps1 update .` (local AST re-extraction, no LLM
+   calls, no API key) - never a bare `graphify` command; see
+   [`docs/development/graphify.md`](docs/development/graphify.md#the-cli-wrapper).
 7. Never include secrets, raw data, confidential reports, generated model
    artefacts, or private outputs in the graph - see `.graphifyignore`.
 

@@ -19,15 +19,20 @@ GRAPHIFY_PATHS = REPO_ROOT / "scripts" / "graphify_paths.ps1"
 SETUP_GRAPHIFY = REPO_ROOT / "scripts" / "setup_graphify.ps1"
 CHECK_GRAPHIFY_PREREQS = REPO_ROOT / "scripts" / "check_graphify_prereqs.ps1"
 RUN_GRAPHIFY_MCP = REPO_ROOT / "scripts" / "run_graphify_mcp.ps1"
+RUN_GRAPHIFY_CLI = REPO_ROOT / "scripts" / "run_graphify_cli.ps1"
 MCP_JSON = REPO_ROOT / ".mcp.json"
 GRAPHIFY_DOC = REPO_ROOT / "docs" / "development" / "graphify.md"
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "tests.yml"
+GITIGNORE = REPO_ROOT / ".gitignore"
+PYPROJECT = REPO_ROOT / "pyproject.toml"
+UV_LOCK = REPO_ROOT / "uv.lock"
 
 GRAPHIFY_SCRIPTS = [
     GRAPHIFY_PATHS,
     SETUP_GRAPHIFY,
     CHECK_GRAPHIFY_PREREQS,
     RUN_GRAPHIFY_MCP,
+    RUN_GRAPHIFY_CLI,
 ]
 
 # A literal Windows user-profile path: C:\Users\<name>\... with a real
@@ -328,3 +333,172 @@ class TestPyprojectAndLockUntouchedByGraphifyTooling:
             code = _ps1_code_only(path)
             assert "pyproject.toml" not in code
             assert "uv.lock" not in code
+
+    def test_project_dependencies_do_not_reference_graphify(self):
+        """PR 88C: project dependencies remain unchanged - graphifyy is an
+        isolated `uv tool install`, never a pyproject.toml/uv.lock entry."""
+        assert "graphify" not in _read(PYPROJECT).lower()
+        assert "graphify" not in _read(UV_LOCK).lower()
+
+
+# ============================================================================
+# PR 88C: CLI wrapper and path-containment hardening
+# ============================================================================
+
+
+class TestGraphifyPathContainmentIsExact:
+    """PR 88C: Test-GraphifyPathUnderRoot must use exact containment (equal
+    to the root, or nested under it via a directory separator) - not a bare
+    string-prefix match, which would wrongly accept a similarly-named
+    sibling directory such as D:\\Ancestry-MMM-Evil against a configured
+    root of D:\\Ancestry-MMM."""
+
+    def test_function_checks_exact_equality_before_prefix(self):
+        code = _ps1_code_only(GRAPHIFY_PATHS)
+        assert "StringComparer" in code and "Equals" in code, (
+            "Test-GraphifyPathUnderRoot does not check for exact root equality"
+        )
+
+    def test_function_appends_directory_separator_before_startswith(self):
+        code = _ps1_code_only(GRAPHIFY_PATHS)
+        # The old, defective form compared StartsWith($fullRoot, ...) with
+        # no separator appended - reject that shape and require the fixed
+        # one (root + separator) instead.
+        assert "DirectorySeparatorChar" in code, (
+            "Test-GraphifyPathUnderRoot does not append a directory "
+            "separator before the prefix comparison - a bare "
+            "$fullPath.StartsWith($fullRoot) shape would wrongly accept a "
+            "sibling-prefixed directory"
+        )
+
+    def test_bare_unsuffixed_startswith_pattern_is_absent(self):
+        """The specific defective one-liner this PR fixes must not
+        reappear: comparing StartsWith directly against $fullRoot with
+        nothing appended."""
+        code = _ps1_code_only(GRAPHIFY_PATHS)
+        assert (
+            "$fullPath.StartsWith($fullRoot, [System.StringComparison]::OrdinalIgnoreCase)"
+            not in code
+        ), "The unbounded string-prefix containment check has reappeared"
+
+
+class TestRunGraphifyCliWrapperContract:
+    """PR 88C: scripts/run_graphify_cli.ps1 is the required entry point for
+    every graphify build/refresh CLI subcommand."""
+
+    def test_script_exists(self):
+        assert RUN_GRAPHIFY_CLI.exists()
+
+    def test_sources_graphify_paths(self):
+        content = _ps1_read(RUN_GRAPHIFY_CLI)
+        assert "graphify_paths.ps1" in content
+
+    def test_checks_d_drive_root(self):
+        content = _ps1_read(RUN_GRAPHIFY_CLI)
+        assert "Test-GraphifyPathOnDDrive" in content
+
+    def test_checks_effective_bin_dir_under_root(self):
+        content = _ps1_read(RUN_GRAPHIFY_CLI)
+        assert "effectiveBinDir" in content
+        assert "Test-GraphifyPathUnderRoot" in content
+
+    def test_resolves_executable_by_full_path_not_ambient_command(self):
+        content = _ps1_read(RUN_GRAPHIFY_CLI)
+        assert "Get-Command graphify" not in content
+        assert "& $exePath" in content
+
+    def test_checks_executable_exists(self):
+        content = _ps1_read(RUN_GRAPHIFY_CLI)
+        assert "graphify.exe" in content
+        assert "Test-Path $exePath" in content
+
+    def test_requires_at_least_one_argument(self):
+        content = _ps1_read(RUN_GRAPHIFY_CLI)
+        assert "$Arguments.Count -eq 0" in content or "-not $Arguments" in content
+
+    def test_passes_arguments_through(self):
+        content = _ps1_read(RUN_GRAPHIFY_CLI)
+        assert "ValueFromRemainingArguments" in content
+        assert "@Arguments" in content
+
+    def test_propagates_exit_code(self):
+        content = _ps1_read(RUN_GRAPHIFY_CLI)
+        assert "exit $LASTEXITCODE" in content
+
+    def test_owns_temp_for_child_process(self):
+        content = _ps1_read(RUN_GRAPHIFY_CLI)
+        assert "$env:TEMP = $GraphifyTempDir" in content
+        assert "$env:TMP = $GraphifyTempDir" in content
+
+
+class TestGraphifyDocNoBareCommands:
+    """PR 88C: documentation must route every build/refresh instruction
+    through the CLI wrapper, never a bare `graphify` command."""
+
+    _BARE_COMMAND = re.compile(
+        r"^\s*graphify\s+(extract|update|cluster-only)\b", re.MULTILINE
+    )
+
+    def test_doc_fenced_code_blocks_have_no_bare_build_or_refresh_command(self):
+        content = _read(GRAPHIFY_DOC)
+        # Extract fenced code block bodies only (``` ... ```), where an
+        # actual runnable instruction would live - prose elsewhere may
+        # still *name* a subcommand (e.g. contrasting the public docs'
+        # chat-slash-command syntax with the installed CLI's real one).
+        blocks = re.findall(r"```(?:bash|powershell)?\n(.*?)```", content, re.DOTALL)
+        for block in blocks:
+            match = self._BARE_COMMAND.search(block)
+            assert match is None, (
+                f"graphify.md has a bare build/refresh command in a code "
+                f"block: {match.group(0)!r}"
+            )
+
+    def test_doc_references_the_cli_wrapper(self):
+        content = _read(GRAPHIFY_DOC)
+        assert "run_graphify_cli.ps1" in content
+
+    def test_troubleshooting_section_uses_wrapper(self):
+        content = _read(GRAPHIFY_DOC)
+        troubleshooting = content.split("## Troubleshooting", 1)[1]
+        assert "run_graphify_cli.ps1" in troubleshooting
+
+    def test_agents_md_does_not_instruct_a_bare_graphify_command(self):
+        content = _read(REPO_ROOT / "AGENTS.md")
+        for line in content.split("\n"):
+            match = self._BARE_COMMAND.search(line)
+            assert match is None, (
+                f"AGENTS.md instructs a bare graphify command: {match.group(0)!r}"
+            )
+        assert "run_graphify_cli.ps1" in content
+
+
+class TestGraphifyGraphOutputUntracked:
+    """PR 88C: graphify-out/ must remain untracked/gitignored - the build
+    wrapper does not change what gets committed."""
+
+    def test_gitignore_excludes_graphify_out(self):
+        content = _read(GITIGNORE)
+        assert "graphify-out/" in content or "graphify-out" in content
+
+
+class TestGraphifyCiJobCliWrapperCoverage:
+    """PR 88C: the windows-tooling CI job must actually exercise the new
+    CLI wrapper's containment checks and a real build."""
+
+    def test_builds_the_graph_through_the_wrapper(self):
+        content = _read(CI_WORKFLOW)
+        assert "run_graphify_cli.ps1 extract" in content
+        assert "run_graphify_cli.ps1 cluster-only" in content
+
+    def test_tests_sibling_prefix_rejection(self):
+        content = _read(CI_WORKFLOW)
+        assert "sibling-prefix" in content.lower()
+
+    def test_tests_traversal_rejection(self):
+        content = _read(CI_WORKFLOW)
+        assert "traversal" in content.lower()
+
+    def test_tests_missing_executable_rejection_for_cli_wrapper(self):
+        content = _read(CI_WORKFLOW)
+        assert "missing executable" in content.lower()
+        assert "run_graphify_cli.ps1" in content

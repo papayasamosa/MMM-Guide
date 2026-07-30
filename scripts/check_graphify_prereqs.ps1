@@ -65,7 +65,7 @@ Test-Check ".graphifyignore present" (Test-Path $ignoreFile) $ignoreFile
 if (Test-Path $GraphifyGraphJson) {
     Write-Host "[i]    Graph present: $GraphifyGraphJson"
 } else {
-    Write-Host "[i]    Graph not yet built: $GraphifyGraphJson (run 'graphify extract . --code-only' then 'graphify cluster-only . --no-label')"
+    Write-Host "[i]    Graph not yet built: $GraphifyGraphJson (run 'scripts\run_graphify_cli.ps1 extract . --code-only' then 'scripts\run_graphify_cli.ps1 cluster-only . --no-label')"
 }
 
 Write-Host ""

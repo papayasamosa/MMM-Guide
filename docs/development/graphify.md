@@ -86,11 +86,16 @@ disagreed, this document follows the installed CLI.
 ## Building the graph
 
 Two-step build, run from the repo root, both steps local-only (no network
-call, no API key, no LLM):
+call, no API key, no LLM). Both go through
+[`scripts\run_graphify_cli.ps1`](#the-cli-wrapper) - never a bare `graphify`
+command - so the build always resolves the exact D-drive executable this
+repo installed, never an ambient `graphify` on `PATH` (which could be an
+unrelated install, a different pinned version, or belong to another
+project entirely):
 
-```bash
-graphify extract . --code-only
-graphify cluster-only . --no-label
+```powershell
+scripts\run_graphify_cli.ps1 extract . --code-only
+scripts\run_graphify_cli.ps1 cluster-only . --no-label
 ```
 
 - `--code-only`: indexes source code via local tree-sitter AST parsing only;
@@ -117,15 +122,43 @@ Produces `graphify-out/`:
 
 ### Refreshing after structural changes
 
-```bash
-graphify update .
-graphify cluster-only . --no-label
+```powershell
+scripts\run_graphify_cli.ps1 update .
+scripts\run_graphify_cli.ps1 cluster-only . --no-label
 ```
 
 `update` re-extracts only changed/added/deleted files (no LLM, no API key)
 and merges into the existing graph; `cluster-only` regenerates the report
 and visualisation. Both are cheap - run after any meaningful restructuring
 (new modules, moved files, changed call graph), not after every edit.
+
+### The CLI wrapper
+
+`scripts\run_graphify_cli.ps1` (PR 88C) is the required entry point for
+every `graphify` build/refresh subcommand - `extract`, `update`,
+`cluster-only`, or any other CLI subcommand. It never invokes a bare
+`graphify` command (that would depend on an ambient `PATH` entry, which
+this repo's D-drive rule forbids relying on, and could silently pick up an
+unrelated install or a different pinned version). It:
+
+1. resolves the exact D-drive tool-bin directory the same way
+   [`scripts\run_graphify_mcp.ps1`](#mcp-server) does (`UV_TOOL_BIN_DIR` if
+   set, else the default under `MMM_DEV_ROOT`);
+2. rejects the resolved directory if it does not resolve **inside** the
+   configured root - exact containment (equal to the root, or nested under
+   it), not a string-prefix match, so a similarly-named sibling directory
+   (e.g. `D:\Ancestry-MMM-Evil` against a configured root of
+   `D:\Ancestry-MMM`) cannot be selected;
+3. fails clearly (non-zero exit, nothing launched) if the resolved
+   `graphify.exe` is missing;
+4. passes every argument through unchanged to the resolved executable and
+   propagates its exit code unchanged.
+
+```powershell
+scripts\run_graphify_cli.ps1 extract . --code-only
+scripts\run_graphify_cli.ps1 cluster-only . --no-label
+scripts\run_graphify_cli.ps1 update .
+```
 
 ## MCP server
 
@@ -344,9 +377,9 @@ review which backend/model you're sending code summaries to first.
 - **MCP server not listed after adding to `.mcp.json`**: Claude Code only
   picks up `.mcp.json` changes on reload/restart, same as the other three
   servers (see `mcp_development_tooling.md`).
-- **`graphify cluster-only` says "no graph found"**: run `graphify extract .
-  --code-only` first - `cluster-only` operates on an existing `graph.json`,
-  it doesn't build one.
+- **`cluster-only` says "no graph found"**: run
+  `scripts\run_graphify_cli.ps1 extract . --code-only` first - `cluster-only`
+  operates on an existing `graph.json`, it doesn't build one.
 - **Graph looks stale after a refactor**: run the refresh commands in
   [Refreshing after structural changes](#refreshing-after-structural-changes).
   `GRAPH_REPORT.md`'s own "Graph Freshness" section records the commit it

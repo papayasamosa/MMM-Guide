@@ -64,7 +64,7 @@ if (-not (Test-GraphifyPathOnDDrive $exePath)) {
 
 # 4. Graph must exist - nothing to serve otherwise.
 if (-not (Test-Path $GraphifyGraphJson)) {
-    Fail "Graph not found at $GraphifyGraphJson. Run 'graphify extract . --code-only' then 'graphify cluster-only . --no-label' from the repo root first."
+    Fail "Graph not found at $GraphifyGraphJson. Run 'scripts\run_graphify_cli.ps1 extract . --code-only' then 'scripts\run_graphify_cli.ps1 cluster-only . --no-label' from the repo root first."
 }
 
 # All checks passed - hand off to the resolved D-drive executable. This
