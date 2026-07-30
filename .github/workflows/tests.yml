@@ -247,6 +247,90 @@ jobs:
           }
           Write-Host "CLI wrapper correctly rejected the traversal path (exit $LASTEXITCODE)."
           exit 0
+      - name: Graphify CLI wrapper must reject a tool-bin reparse point (junction) targeting the C drive
+        run: |
+          # PR 91A: textual containment (the sibling-prefix/traversal tests
+          # above) cannot detect a directory that is textually under the
+          # configured root but is physically a junction pointing at C: - a
+          # real NTFS reparse point is required to prove the fix.
+          $root = $env:MMM_DEV_ROOT
+          $junctionPath = Join-Path $root "tools\uv\bin-junction-to-c"
+          New-Item -ItemType Junction -Path $junctionPath -Target "C:\Windows" -Force | Out-Null
+          try {
+            $env:UV_TOOL_BIN_DIR = $junctionPath
+            powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_graphify_cli.ps1 extract . --code-only
+            if ($LASTEXITCODE -eq 0) {
+              Write-Error "CLI wrapper incorrectly succeeded with a tool-bin junction physically targeting C:"
+              exit 1
+            }
+            Write-Host "CLI wrapper correctly rejected the reparse-point (junction to C:) tool-bin directory (exit $LASTEXITCODE)."
+          } finally {
+            Remove-Item Env:\UV_TOOL_BIN_DIR -ErrorAction SilentlyContinue
+            # [System.IO.Directory]::Delete (non-recursive) removes only the
+            # junction/reparse point itself - Remove-Item -Recurse on a
+            # junction instead follows it and deletes the TARGET's real
+            # contents, which here would be C:\Windows or the sibling
+            # directory. Never use -Recurse to clean up a junction.
+            [System.IO.Directory]::Delete($junctionPath)
+          }
+      - name: Graphify CLI wrapper must reject a tool-bin reparse point (junction) targeting a D-drive sibling
+        run: |
+          $root = $env:MMM_DEV_ROOT
+          $otherTarget = "D:\Ancestry-MMM-Graphify-CI-Junction-Target"
+          New-Item -ItemType Directory -Path $otherTarget -Force | Out-Null
+          $junctionPath = Join-Path $root "tools\uv\bin-junction-to-other"
+          New-Item -ItemType Junction -Path $junctionPath -Target $otherTarget -Force | Out-Null
+          try {
+            $env:UV_TOOL_BIN_DIR = $junctionPath
+            powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_graphify_cli.ps1 extract . --code-only
+            if ($LASTEXITCODE -eq 0) {
+              Write-Error "CLI wrapper incorrectly succeeded with a tool-bin junction physically targeting a D:-drive sibling"
+              exit 1
+            }
+            Write-Host "CLI wrapper correctly rejected the reparse-point (junction to D:-drive sibling) tool-bin directory (exit $LASTEXITCODE)."
+          } finally {
+            Remove-Item Env:\UV_TOOL_BIN_DIR -ErrorAction SilentlyContinue
+            # [System.IO.Directory]::Delete (non-recursive) removes only the
+            # junction/reparse point itself - Remove-Item -Recurse on a
+            # junction instead follows it and deletes the TARGET's real
+            # contents, which here would be C:\Windows or the sibling
+            # directory. Never use -Recurse to clean up a junction.
+            [System.IO.Directory]::Delete($junctionPath)
+          }
+      - name: Graphify CLI wrapper must reject a reparse-point (symlink) executable
+        run: |
+          # Best-effort: creating a file symbolic link requires
+          # SeCreateSymbolicLinkPrivilege, which may not be held by this
+          # runner's process token even though it runs as Administrator.
+          # If link creation itself fails, this step reports that the
+          # scenario could not be exercised rather than a false pass.
+          $root = $env:MMM_DEV_ROOT
+          $exeReal = Join-Path $root "tools\uv\bin\graphify.exe"
+          $exeBackup = "$exeReal.pr91a-real-backup"
+          $outsideTarget = Join-Path $env:RUNNER_TEMP "graphify-outside-target.exe"
+          Copy-Item $exeReal $outsideTarget -Force
+          Rename-Item $exeReal (Split-Path $exeBackup -Leaf) -Force
+          $linkCreated = $false
+          try {
+            New-Item -ItemType SymbolicLink -Path $exeReal -Target $outsideTarget -ErrorAction Stop | Out-Null
+            $linkCreated = $true
+          } catch {
+            Write-Host "SKIPPED: this runner cannot create file symbolic links ($($_.Exception.Message)) - reparse-point-executable scenario not exercised. Junction-based root/tool-bin coverage above still proves the underlying Test-GraphifyPathHasReparsePoint logic."
+          }
+          try {
+            if ($linkCreated) {
+              powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_graphify_cli.ps1 extract . --code-only
+              if ($LASTEXITCODE -eq 0) {
+                Write-Error "CLI wrapper incorrectly succeeded with a symlinked graphify.exe"
+                exit 1
+              }
+              Write-Host "CLI wrapper correctly rejected the reparse-point (symlink) executable (exit $LASTEXITCODE)."
+            }
+          } finally {
+            Remove-Item $exeReal -Force -ErrorAction SilentlyContinue
+            Rename-Item $exeBackup "graphify.exe" -Force
+            Remove-Item $outsideTarget -Force -ErrorAction SilentlyContinue
+          }
       - name: Build the graph through the CLI wrapper (clean D-drive build)
         run: |
           # setup-uv sets its own job-wide UV_TOOL_BIN_DIR for the project's

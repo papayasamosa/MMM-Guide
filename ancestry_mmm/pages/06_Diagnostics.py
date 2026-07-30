@@ -366,8 +366,13 @@ if approval_readiness_dict:
         )
     )
     if not _evidence_current:
-        set_state("approval_readiness", None)
-        set_state("validation_service_result", None)
+        # PR 91A: previously cleared only approval_readiness and
+        # validation_service_result, leaving validation_results and
+        # model_approval stale - the same gap invalidate_governance_evidence()
+        # was introduced (PR 88A) to close for the compute-scorecard and
+        # run-backtest paths above. Route through the same shared helper so
+        # all four governance-evidence keys are cleared atomically here too.
+        invalidate_governance_evidence()
         validation_service_result = None
         st.info(
             "Previously evaluated readiness no longer matches the current policy, "

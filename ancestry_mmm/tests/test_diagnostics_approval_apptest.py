@@ -240,6 +240,27 @@ def test_malformed_stored_readiness_does_not_crash_page():
     assert not at.exception, f"page raised: {at.exception}"
 
 
+def test_malformed_gate_applicability_readiness_does_not_crash_and_clears_evidence():
+    """PR 91A: the exact defect shape from the brief -
+    {"gate_applicability": [[]]} - previously raised an uncaught IndexError
+    out of ApprovalReadiness.from_dict deep inside load_approval_readiness's
+    call on this page. Must not crash, and (since a malformed stored
+    readiness can never be "current") must invalidate all four governance-
+    evidence keys, not just approval_readiness."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_fully_identified_model(at)
+    at.session_state["approval_readiness"] = {"gate_applicability": [[]]}
+    at.session_state["validation_results"] = [{"gate_name": "stale"}]
+    at.session_state["validation_service_result"] = object()
+    at.session_state["model_approval"] = {"approved_by": "stale-approver"}
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    assert at.session_state["approval_readiness"] is None
+    assert at.session_state["validation_results"] is None
+    assert at.session_state["validation_service_result"] is None
+    assert at.session_state["model_approval"] is None
+
+
 def test_approval_blocked_with_malformed_validation_policy():
     at = AppTest.from_file(str(PAGE), default_timeout=60)
     _seed_fully_identified_model(at)
@@ -537,6 +558,8 @@ def test_policy_change_invalidates_previously_evaluated_readiness_and_approval()
     approve_button.click().run()
     assert at.session_state["model_approval"] is not None
 
+    assert at.session_state["validation_results"]
+
     # Simulate a policy edit since the approval was granted (version bump -
     # same policy_id, different fingerprint).
     policy_v2 = dict(policy_v1)
@@ -548,11 +571,80 @@ def test_policy_change_invalidates_previously_evaluated_readiness_and_approval()
     assert at.session_state["approval_readiness"] is None
     assert any("no longer matches" in (i.value or "") for i in at.info)
     assert at.session_state["model_approval"] is None
-    assert any(
+    # PR 91A: before this fix, the stale-evidence branch only cleared
+    # approval_readiness and validation_service_result directly - it left
+    # validation_results (and, only incidentally, model_approval via a
+    # downstream re-verification) stale. All four governance-evidence keys
+    # must clear together, in the same rerun.
+    assert at.session_state["validation_results"] is None
+    assert at.session_state["validation_service_result"] is None
+    # PR 91A: with model_approval cleared upfront (alongside the other three
+    # keys) by the same invalidate_governance_evidence() call, the page's
+    # separate downstream require_matching_approval re-verification never
+    # sees a still-populated stale approval_dict to reject - so it no
+    # longer emits its own "no longer matches the current model, policy, or
+    # readiness evidence" warning on top of the info message above. That
+    # second warning was a symptom of the incomplete clear (model_approval
+    # surviving long enough to be caught downstream); asserting its absence
+    # here pins the improved, single-message behaviour.
+    assert not any(
         "no longer matches the current model, policy, or readiness evidence"
         in (w.value or "")
         for w in at.warning
     )
+    assert not any(w.value for w in at.success)
+
+
+def test_model_identity_change_invalidates_all_governance_evidence():
+    """The same stale-evidence branch as the policy-change test above, but
+    triggered by the model identity drifting (e.g. a fresh page load after
+    a project import restored a different fitted model) rather than the
+    policy changing. Must clear all four governance-evidence keys, not just
+    approval_readiness/validation_service_result."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_fully_identified_model(at)
+    policy = _minimal_gate_policy(
+        policy_id="policy-identity-stale-test",
+        gates=[
+            {
+                "name": "divergences",
+                "description": "No divergences",
+                "evaluator_id": "divergences",
+                "expected_state": False,
+            }
+        ],
+    )
+    at.session_state["validation_policy"] = dict(policy)
+    at.run()
+
+    compute_button = next(b for b in at.button if b.label == "Compute scorecard")
+    compute_button.click().run()
+    readiness_button = next(b for b in at.button if b.label == "Evaluate readiness")
+    readiness_button.click().run()
+    assert at.session_state["approval_readiness"]["overall_ready"] is True
+
+    approved_by_input = next(
+        t for t in at.text_input if t.label == "Approved by (name) *"
+    )
+    approved_by_input.set_value("Test Reviewer").run()
+    approve_button = next(
+        b for b in at.button if b.label == "Approve this model for planning"
+    )
+    approve_button.click().run()
+    assert at.session_state["model_approval"] is not None
+    assert at.session_state["validation_results"]
+
+    # Simulate the model run identity changing without going through
+    # clear_model_state() (e.g. a fresh page load after a project import
+    # restored a different fitted model's run ID).
+    at.session_state["model_run_id"] = "run-test-DIFFERENT"
+    at.run()
+
+    assert not at.exception, f"page raised after model identity change: {at.exception}"
+    assert at.session_state["approval_readiness"] is None
+    assert at.session_state["model_approval"] is None
+    assert at.session_state["validation_results"] is None
+    assert at.session_state["validation_service_result"] is None
 
 
 # ---------------------------------------------------------------------------

@@ -39,6 +39,13 @@ if (-not (Test-GraphifyPathOnDDrive $GraphifyDriveRoot)) {
     Fail "MMM_DEV_ROOT ($GraphifyDriveRoot) is not on the D: drive. Set MMM_DEV_ROOT to a D:\ path or unset it to use the default D:\Ancestry-MMM."
 }
 
+# 1b. PR 91A: textual containment below cannot detect a reparse point
+#     (junction/symlink) physically escaping the configured root - reject
+#     the root itself if it is one.
+if (Test-GraphifyPathHasReparsePoint $GraphifyDriveRoot $GraphifyDriveRoot) {
+    Fail "Configured root ($GraphifyDriveRoot) is an NTFS junction or symlink - refusing to trust its physical target."
+}
+
 # 2. The tool-bin directory determines which binary gets executed below -
 #    a stray UV_TOOL_BIN_DIR pointing at %USERPROFILE%\.local\bin or any
 #    other location outside the configured root must not be silently
@@ -46,6 +53,14 @@ if (-not (Test-GraphifyPathOnDDrive $GraphifyDriveRoot)) {
 $effectiveBinDir = if ($env:UV_TOOL_BIN_DIR) { $env:UV_TOOL_BIN_DIR } else { $GraphifyToolBinDir }
 if (-not (Test-GraphifyPathUnderRoot $effectiveBinDir $GraphifyDriveRoot)) {
     Fail "UV_TOOL_BIN_DIR ($effectiveBinDir) resolves outside the configured D-drive root ($GraphifyDriveRoot)."
+}
+
+# 2b. PR 91A: reject a tool-bin directory (or any existing parent between
+#     it and the root) that is a reparse point, even though it passed
+#     textual containment above - it may physically target C: or an
+#     unrelated D:-drive install.
+if (Test-GraphifyPathHasReparsePoint $effectiveBinDir $GraphifyDriveRoot) {
+    Fail "Resolved tool-bin path ($effectiveBinDir) contains an NTFS junction or symlink between it and the configured root - refusing to trust its physical target."
 }
 
 # Own TEMP/TMP for the spawned process (matches scripts/start_dev_app.ps1's
@@ -60,6 +75,12 @@ if (-not (Test-Path $exePath)) {
 }
 if (-not (Test-GraphifyPathOnDDrive $exePath)) {
     Fail "Resolved graphify-mcp executable ($exePath) is not on D:."
+}
+
+# 3b. PR 91A: the executable file itself must not be a reparse point
+#     (symlink) whose physical target lies outside the configured root.
+if (Test-GraphifyPathHasReparsePoint $exePath $GraphifyDriveRoot) {
+    Fail "Resolved graphify-mcp executable ($exePath) is an NTFS junction or symlink - refusing to trust its physical target."
 }
 
 # 4. Graph must exist - nothing to serve otherwise.

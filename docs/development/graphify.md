@@ -149,10 +149,20 @@ unrelated install or a different pinned version). It:
    it), not a string-prefix match, so a similarly-named sibling directory
    (e.g. `D:\Ancestry-MMM-Evil` against a configured root of
    `D:\Ancestry-MMM`) cannot be selected;
-3. fails clearly (non-zero exit, nothing launched) if the resolved
+3. rejects the configured root, the resolved tool-bin directory, and the
+   resolved executable if any of them (or an existing directory between
+   them) is an NTFS junction or symlink (PR 91A) - textual containment
+   alone cannot tell that a path sitting under `D:\Ancestry-MMM` is
+   physically a reparse point pointing at `C:\Windows` or an unrelated
+   `D:\Other` install, so every segment is checked for the reparse-point
+   attribute and rejected outright regardless of where it points;
+4. fails clearly (non-zero exit, nothing launched) if the resolved
    `graphify.exe` is missing;
-4. passes every argument through unchanged to the resolved executable and
+5. passes every argument through unchanged to the resolved executable and
    propagates its exit code unchanged.
+
+`scripts\run_graphify_mcp.ps1` applies the identical root/tool-bin/
+executable reparse-point check before launching the MCP server.
 
 ```powershell
 scripts\run_graphify_cli.ps1 extract . --code-only

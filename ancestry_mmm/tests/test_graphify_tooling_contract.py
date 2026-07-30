@@ -502,3 +502,113 @@ class TestGraphifyCiJobCliWrapperCoverage:
         content = _read(CI_WORKFLOW)
         assert "missing executable" in content.lower()
         assert "run_graphify_cli.ps1" in content
+
+
+# ============================================================================
+# PR 91A: reparse-point (junction/symlink) defence
+# ============================================================================
+
+
+class TestGraphifyReparsePointDefenceIsDefined:
+    """PR 91A: Test-GraphifyPathUnderRoot is a purely textual containment
+    check - it cannot detect a directory or file that is textually under
+    the configured root but is actually an NTFS junction/symlink whose
+    physical target lies elsewhere (e.g. C: or a sibling D:-drive install).
+    Test-GraphifyPathHasReparsePoint closes that gap and must be defined in
+    the shared paths module."""
+
+    def test_defines_reparse_point_helper(self):
+        content = _ps1_read(GRAPHIFY_PATHS)
+        assert "function Test-GraphifyPathHasReparsePoint" in content
+
+    def test_helper_checks_the_reparse_point_attribute(self):
+        code = _ps1_code_only(GRAPHIFY_PATHS)
+        assert "[System.IO.FileAttributes]::ReparsePoint" in code
+
+
+class TestRunGraphifyCliWrapperRejectsReparsePoints:
+    """PR 91A: the CLI wrapper must reject a reparse point in the
+    configured root, the effective tool-bin path, and the resolved
+    executable path - not just textual containment."""
+
+    def test_checks_root_for_reparse_point(self):
+        code = _ps1_code_only(RUN_GRAPHIFY_CLI)
+        assert (
+            "Test-GraphifyPathHasReparsePoint $GraphifyDriveRoot $GraphifyDriveRoot"
+            in code
+        )
+
+    def test_checks_effective_bin_dir_for_reparse_point(self):
+        code = _ps1_code_only(RUN_GRAPHIFY_CLI)
+        assert (
+            "Test-GraphifyPathHasReparsePoint $effectiveBinDir $GraphifyDriveRoot"
+            in code
+        )
+
+    def test_checks_executable_for_reparse_point(self):
+        code = _ps1_code_only(RUN_GRAPHIFY_CLI)
+        assert "Test-GraphifyPathHasReparsePoint $exePath $GraphifyDriveRoot" in code
+
+    def test_reparse_point_checks_happen_before_execution(self):
+        content = _ps1_read(RUN_GRAPHIFY_CLI)
+        reparse_idx = content.rindex("Test-GraphifyPathHasReparsePoint")
+        exec_idx = content.index("& $exePath @Arguments")
+        assert reparse_idx < exec_idx, (
+            "run_graphify_cli.ps1 does not verify reparse points before "
+            "handing off to the resolved executable"
+        )
+
+
+class TestRunGraphifyMcpLauncherRejectsReparsePoints:
+    """PR 91A: the MCP launcher must apply the same reparse-point defence
+    as the CLI wrapper, so both entry points enforce the identical rule."""
+
+    def test_checks_root_for_reparse_point(self):
+        code = _ps1_code_only(RUN_GRAPHIFY_MCP)
+        assert (
+            "Test-GraphifyPathHasReparsePoint $GraphifyDriveRoot $GraphifyDriveRoot"
+            in code
+        )
+
+    def test_checks_effective_bin_dir_for_reparse_point(self):
+        code = _ps1_code_only(RUN_GRAPHIFY_MCP)
+        assert (
+            "Test-GraphifyPathHasReparsePoint $effectiveBinDir $GraphifyDriveRoot"
+            in code
+        )
+
+    def test_checks_executable_for_reparse_point(self):
+        code = _ps1_code_only(RUN_GRAPHIFY_MCP)
+        assert "Test-GraphifyPathHasReparsePoint $exePath $GraphifyDriveRoot" in code
+
+    def test_reparse_point_checks_happen_before_execution(self):
+        content = _ps1_read(RUN_GRAPHIFY_MCP)
+        reparse_idx = content.rindex("Test-GraphifyPathHasReparsePoint")
+        exec_idx = content.index("& $exePath $GraphifyGraphJson")
+        assert reparse_idx < exec_idx, (
+            "run_graphify_mcp.ps1 does not verify reparse points before "
+            "handing off to the resolved executable"
+        )
+
+
+class TestGraphifyCiJobReparsePointCoverage:
+    """PR 91A: the windows-tooling CI job must actually exercise the
+    reparse-point defence with real NTFS junctions - source inspection
+    alone cannot prove the physical-containment behaviour."""
+
+    def test_tests_junction_to_c_drive_rejection(self):
+        content = _read(CI_WORKFLOW)
+        assert "junction" in content.lower()
+        assert "New-Item -ItemType Junction" in content
+
+    def test_tests_junction_to_d_drive_sibling_rejection(self):
+        content = _read(CI_WORKFLOW)
+        assert "junction" in content.lower()
+        assert content.lower().count("junction") >= 2, (
+            "expected at least two distinct junction-rejection scenarios "
+            "(target C:, target a D:-drive sibling) in the CI workflow"
+        )
+
+    def test_normal_directory_still_passes_reparse_checks(self):
+        content = _read(CI_WORKFLOW)
+        assert "reparse" in content.lower()

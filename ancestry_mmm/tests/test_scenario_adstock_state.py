@@ -37,6 +37,8 @@ from ancestry_mmm.core.outcome_approval import (
     fingerprint_outcome_definition,
 )
 from ancestry_mmm.core.planning.value import (
+    PLANNING_SEMANTICS_SCHEMA_VERSION,
+    PlanningEvaluationSemantics,
     ScenarioGovernanceDependencies,
     zero_carry_in_adstock_state,
 )
@@ -519,4 +521,129 @@ class TestManualAndOptimisationShareIdenticalSemantics:
         assert (
             manual_result.governance_dependencies.planning_semantics_fingerprint
             == optimizer_result["planning_semantics_fingerprint"]
+        )
+
+
+# ---------------------------------------------------------------------------
+# PR 91A: PlanningEvaluationSemantics payload schema versioning
+# ---------------------------------------------------------------------------
+
+
+class TestPlanningEvaluationSemanticsSchemaVersioning:
+    """PR 91A: PlanningEvaluationSemantics.to_dict()/from_dict() previously
+    had no schema version of their own - prediction_function_version
+    describes the calculation the semantics disclose, not the shape of the
+    serialized payload. schema_version now versions that payload shape
+    explicitly, distinct from both prediction_function_version and a saved
+    scenario's own governance-dependencies schema version (bumped 3 -> 4 in
+    core.scenario_governance when planning_semantics_fingerprint was
+    added)."""
+
+    def _semantics(self, **overrides) -> PlanningEvaluationSemantics:
+        defaults = dict(
+            engine="steady_state_monthly",
+            temporal_resolution="monthly",
+            within_period_media_assumption="constant_to_steady_state",
+            carry_in_state_applicable=False,
+            terminal_state_applicable=False,
+            prediction_function_version="1.0.0",
+        )
+        defaults.update(overrides)
+        return PlanningEvaluationSemantics(**defaults)
+
+    def test_current_round_trip_preserves_schema_version(self):
+        semantics = self._semantics()
+        assert semantics.schema_version == PLANNING_SEMANTICS_SCHEMA_VERSION
+        payload = semantics.to_dict()
+        assert payload["schema_version"] == PLANNING_SEMANTICS_SCHEMA_VERSION
+        restored = PlanningEvaluationSemantics.from_dict(payload)
+        assert restored == semantics
+        assert restored.schema_version == PLANNING_SEMANTICS_SCHEMA_VERSION
+
+    def test_unversioned_legacy_payload_migrates_to_schema_version_1(self):
+        """Every payload written before PR 91A has no schema_version key at
+        all - from_dict must migrate it cleanly rather than raising."""
+        legacy_payload = {
+            "engine": "steady_state_monthly",
+            "temporal_resolution": "monthly",
+            "within_period_media_assumption": "constant_to_steady_state",
+            "carry_in_state_applicable": False,
+            "terminal_state_applicable": False,
+            "prediction_function_version": "1.0.0",
+        }
+        assert "schema_version" not in legacy_payload
+        restored = PlanningEvaluationSemantics.from_dict(legacy_payload)
+        assert restored.schema_version == 1
+        assert restored.engine == "steady_state_monthly"
+        assert restored.prediction_function_version == "1.0.0"
+
+    def test_unsupported_future_schema_version_is_rejected_fail_closed(self):
+        future_payload = self._semantics().to_dict()
+        future_payload["schema_version"] = PLANNING_SEMANTICS_SCHEMA_VERSION + 1
+        with pytest.raises(ValueError, match="schema_version"):
+            PlanningEvaluationSemantics.from_dict(future_payload)
+
+    def test_prediction_function_version_remains_distinct_from_schema_version(self):
+        """Bumping the calculation version must not require, or imply, a
+        payload schema_version bump, and vice versa."""
+        semantics = self._semantics(prediction_function_version="2.0.0")
+        assert semantics.schema_version == PLANNING_SEMANTICS_SCHEMA_VERSION
+        assert semantics.prediction_function_version == "2.0.0"
+        payload = semantics.to_dict()
+        assert payload["prediction_function_version"] == "2.0.0"
+        assert payload["schema_version"] == PLANNING_SEMANTICS_SCHEMA_VERSION
+
+    def test_fingerprint_excludes_schema_version(self):
+        """A legacy-migrated payload (schema_version implicitly -> 1) and an
+        explicitly-versioned one with identical calculation semantics must
+        fingerprint identically - migrating the payload shape alone must
+        not stale a scenario evaluated under an unchanged calculation."""
+        migrated = PlanningEvaluationSemantics.from_dict(
+            {
+                "engine": "steady_state_monthly",
+                "temporal_resolution": "monthly",
+                "within_period_media_assumption": "constant_to_steady_state",
+                "carry_in_state_applicable": False,
+                "terminal_state_applicable": False,
+                "prediction_function_version": "1.0.0",
+            }
+        )
+        explicit = self._semantics()
+        assert migrated.fingerprint() == explicit.fingerprint()
+
+    def test_scenario_governance_dependencies_schema_v4_round_trip_unaffected(
+        self,
+        gsa_meta,
+        params,
+        approval,
+        reference_context,
+        spend_plan,
+        outcome_approval,
+        planning_objective,
+    ):
+        """PR 91A must not disturb the scenario governance-dependencies
+        schema (independently at v4 since PR 88B added
+        planning_semantics_fingerprint) - a manually evaluated scenario's
+        governance_dependencies still round-trips through to_dict/from_dict
+        with a populated planning_semantics_fingerprint."""
+        manual_result = evaluate_manual_scenario(
+            spend_plan,
+            "UK",
+            gsa_meta,
+            params,
+            reference_context,
+            planning_objective=planning_objective,
+            outcome_approvals=[outcome_approval],
+            approval=approval,
+            **IDENTITY,
+        )
+        deps = manual_result.governance_dependencies
+        assert (
+            deps.planning_semantics_fingerprint
+            == CURRENT_PLANNING_EVALUATION_SEMANTICS.fingerprint()
+        )
+        round_tripped = ScenarioGovernanceDependencies.from_dict(deps.to_dict())
+        assert (
+            round_tripped.planning_semantics_fingerprint
+            == deps.planning_semantics_fingerprint
         )
