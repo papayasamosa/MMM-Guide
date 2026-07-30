@@ -19,6 +19,7 @@ from ancestry_mmm.core.validation_policy import (
     ValidationWaiverReference,
     evaluate_approval_readiness,
     filter_applicable_gates,
+    load_approval_readiness,
     readiness_matches_current_evidence,
     readiness_to_dict,
 )
@@ -2322,3 +2323,92 @@ class TestReadinessMatchesCurrentEvidence:
             model_identity_fingerprint=readiness.model_identity_fingerprint,
             diagnostic_artefact_fingerprint="a-different-artefact-fingerprint",
         )
+
+
+# ---------------------------------------------------------------------------
+# PR 91A: load_approval_readiness fail-closed shape handling
+# ---------------------------------------------------------------------------
+
+
+class TestLoadApprovalReadinessFailClosed:
+    """``load_approval_readiness`` is the shared fail-closed boundary used
+    by Diagnostics, Curve Bank, Scenario Planner, and Project Import to turn
+    a stored/imported readiness dict into an ``ApprovalReadiness`` or
+    ``(None, error_message)`` - never a raw exception, and never a
+    silently-empty readiness object."""
+
+    def test_none_input_is_not_an_error(self):
+        readiness, error = load_approval_readiness(None)
+        assert readiness is None
+        assert error is None
+
+    def test_non_dict_input_is_rejected(self):
+        readiness, error = load_approval_readiness("not-a-dict")
+        assert readiness is None
+        assert error is not None
+
+    def test_empty_gate_applicability_entry_does_not_crash(self):
+        """The exact defect shape from the PR 91A brief: an empty list
+        entry inside gate_applicability previously raised an uncaught
+        IndexError out of ApprovalReadiness.from_dict, which
+        load_approval_readiness's except tuple did not catch."""
+        readiness, error = load_approval_readiness({"gate_applicability": [[]]})
+        assert readiness is None
+        assert error is not None
+        assert "gate_applicability" in error or "malformed" in error.lower()
+
+    def test_one_item_gate_applicability_entry_does_not_crash(self):
+        readiness, error = load_approval_readiness(
+            {"gate_applicability": [["only_a_gate_name"]]}
+        )
+        assert readiness is None
+        assert error is not None
+
+    def test_non_sequence_gate_applicability_entry_does_not_crash(self):
+        readiness, error = load_approval_readiness({"gate_applicability": [42]})
+        assert readiness is None
+        assert error is not None
+
+    def test_non_dict_lifecycle_issue_entry_does_not_crash(self):
+        readiness, error = load_approval_readiness({"lifecycle_issues": [[]]})
+        assert readiness is None
+        assert error is not None
+
+    def test_malformed_gate_result_missing_gate_name_does_not_crash(self):
+        readiness, error = load_approval_readiness(
+            {"gate_results": [{"status": "pass"}]}
+        )
+        assert readiness is None
+        assert error is not None
+
+    def test_malformed_waiver_missing_required_field_does_not_crash(self):
+        readiness, error = load_approval_readiness(
+            {"schema_version": 3, "waivers_applied": [{}]}
+        )
+        assert readiness is None
+        assert error is not None
+
+    def test_valid_readiness_round_trips(self, sample_policy):
+        readiness = _eval_readiness(
+            [
+                _make_result(
+                    policy=sample_policy,
+                    gate_name="convergence_rhat",
+                    status="pass",
+                    value=1.01,
+                )
+            ],
+            sample_policy,
+            _DEFAULT_IDENTITY,
+        )
+        loaded, error = load_approval_readiness(readiness.to_dict())
+        assert error is None
+        assert loaded is not None
+        assert loaded.fingerprint() == readiness.fingerprint()
+
+    def test_never_produces_a_partial_readiness_object(self):
+        """A malformed dict must return None, never a trivially-passing
+        empty/partial ApprovalReadiness (which would report overall_ready
+        based on missing evidence rather than blocking on it)."""
+        readiness, error = load_approval_readiness({"gate_applicability": [[]]})
+        assert readiness is None

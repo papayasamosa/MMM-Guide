@@ -484,6 +484,16 @@ def zero_carry_in_adstock_state(
 # Planning evaluation semantics
 # ---------------------------------------------------------------------------
 
+# PR 91A: schema version of PlanningEvaluationSemantics's own serialized
+# payload (its to_dict()/from_dict() shape) - distinct from both
+# ``prediction_function_version`` (which describes the calculation the
+# semantics disclose, e.g. steady_state_outcome_response's behaviour) and
+# a saved scenario's own governance-dependencies schema version (bumped
+# 3 -> 4 in core.scenario_governance when planning_semantics_fingerprint
+# was added). Bump this only when to_dict()/from_dict()'s field shape
+# changes, not when the disclosed calculation changes.
+PLANNING_SEMANTICS_SCHEMA_VERSION = 1
+
 
 @dataclass(frozen=True)
 class PlanningEvaluationSemantics:
@@ -499,6 +509,15 @@ class PlanningEvaluationSemantics:
     response, for every month independently. This object states that
     directly instead of reporting a fabricated value for an inapplicable
     concept.
+
+    PR 91A: added ``schema_version`` (see ``PLANNING_SEMANTICS_SCHEMA_
+    VERSION`` above) so the serialized payload shape is itself versioned,
+    separately from ``prediction_function_version``. ``from_dict()``
+    migrates a legacy payload with no ``schema_version`` key (every payload
+    written before this PR) to schema version 1 - the field shape is
+    unchanged, so no value migration is needed, only the version stamp.
+    A payload declaring a schema version newer than this code supports is
+    rejected fail-closed rather than guessed at.
 
     Parameters
     ----------
@@ -526,6 +545,9 @@ class PlanningEvaluationSemantics:
         describe, so a future change to steady_state_outcome_response's
         calculation (even one that keeps the same engine/resolution/
         assumption labels) can still be distinguished.
+    schema_version : int
+        Version of this object's own serialized payload shape - see
+        ``PLANNING_SEMANTICS_SCHEMA_VERSION``.
     """
 
     engine: str = ""
@@ -534,8 +556,19 @@ class PlanningEvaluationSemantics:
     carry_in_state_applicable: bool = False
     terminal_state_applicable: bool = False
     prediction_function_version: str = ""
+    schema_version: int = PLANNING_SEMANTICS_SCHEMA_VERSION
 
     def fingerprint(self) -> str:
+        """Fingerprint of the disclosed calculation semantics only.
+
+        PR 91A: deliberately excludes ``schema_version`` - the fingerprint
+        identifies what the engine calculates (engine, resolution,
+        within-period assumption, carry-in/terminal applicability,
+        prediction function version), not how this object happens to be
+        serialized. Migrating a legacy unversioned payload to
+        ``schema_version=1`` must not, by itself, stale a scenario that
+        was evaluated under an otherwise-unchanged calculation.
+        """
         raw = json.dumps(
             {
                 "engine": self.engine,
@@ -552,6 +585,7 @@ class PlanningEvaluationSemantics:
 
     def to_dict(self) -> dict:
         return {
+            "schema_version": self.schema_version,
             "engine": self.engine,
             "temporal_resolution": self.temporal_resolution,
             "within_period_media_assumption": self.within_period_media_assumption,
@@ -562,6 +596,28 @@ class PlanningEvaluationSemantics:
 
     @classmethod
     def from_dict(cls, d: dict) -> "PlanningEvaluationSemantics":
+        raw_version = d.get("schema_version")
+        if raw_version is None:
+            # Legacy payload written before PR 91A never had a
+            # schema_version key at all - the field shape is otherwise
+            # identical, so this migrates cleanly to schema_version=1.
+            schema_version = 1
+        else:
+            try:
+                schema_version = int(raw_version)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    "PlanningEvaluationSemantics payload has a non-integer "
+                    f"schema_version: {raw_version!r}."
+                ) from exc
+            if schema_version > PLANNING_SEMANTICS_SCHEMA_VERSION:
+                raise ValueError(
+                    "PlanningEvaluationSemantics payload declares "
+                    f"schema_version={schema_version}, which is newer than "
+                    f"the {PLANNING_SEMANTICS_SCHEMA_VERSION} this code "
+                    "supports. Refusing to load an unsupported future "
+                    "payload rather than guessing at its shape."
+                )
         return cls(
             engine=d.get("engine", ""),
             temporal_resolution=d.get("temporal_resolution", ""),
@@ -569,6 +625,7 @@ class PlanningEvaluationSemantics:
             carry_in_state_applicable=bool(d.get("carry_in_state_applicable", False)),
             terminal_state_applicable=bool(d.get("terminal_state_applicable", False)),
             prediction_function_version=d.get("prediction_function_version", ""),
+            schema_version=schema_version,
         )
 
 

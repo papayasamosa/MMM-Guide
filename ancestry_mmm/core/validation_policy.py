@@ -1342,15 +1342,38 @@ class ApprovalReadiness:
                     for w in d["waivers_applied"]
                 )
         if "gate_applicability" in d and isinstance(d.get("gate_applicability"), list):
-            kwargs["gate_applicability"] = tuple(
-                (item[0], item[1], item[2] if len(item) > 2 else None)
-                for item in d["gate_applicability"]
-            )
+            parsed_applicability: list[tuple[str, bool, Optional[str]]] = []
+            for item in d["gate_applicability"]:
+                # PR 91A: validate shape before indexing - an empty list, a
+                # one-item list, or a non-sequence entry (e.g. from a
+                # malformed {"gate_applicability": [[]]} payload) must raise
+                # a clear ValueError here rather than an uncaught IndexError
+                # further down, which load_approval_readiness's fail-closed
+                # boundary could not previously catch.
+                if not isinstance(item, (list, tuple)) or len(item) < 2:
+                    raise ValueError(
+                        "Malformed ApprovalReadiness dict: gate_applicability "
+                        "entry must be a [gate_name, applicable, reason?] "
+                        f"sequence of at least 2 items, got {item!r}."
+                    )
+                parsed_applicability.append(
+                    (item[0], item[1], item[2] if len(item) > 2 else None)
+                )
+            kwargs["gate_applicability"] = tuple(parsed_applicability)
         if "lifecycle_issues" in d and isinstance(d.get("lifecycle_issues"), list):
-            kwargs["lifecycle_issues"] = tuple(
-                PolicyLifecycleIssue(status=li["status"], message=li.get("message", ""))
-                for li in d["lifecycle_issues"]
-            )
+            parsed_lifecycle_issues: list[PolicyLifecycleIssue] = []
+            for li in d["lifecycle_issues"]:
+                if not isinstance(li, dict):
+                    raise ValueError(
+                        "Malformed ApprovalReadiness dict: lifecycle_issues "
+                        f"entry must be an object, got {li!r}."
+                    )
+                parsed_lifecycle_issues.append(
+                    PolicyLifecycleIssue(
+                        status=li["status"], message=li.get("message", "")
+                    )
+                )
+            kwargs["lifecycle_issues"] = tuple(parsed_lifecycle_issues)
         if "evaluated_at" in d and isinstance(d["evaluated_at"], str):
             kwargs["evaluated_at"] = datetime.fromisoformat(d["evaluated_at"])
         # PR 64A: Missing schema version defaults to 0 (legacy unverified)
@@ -2601,5 +2624,11 @@ def load_approval_readiness(
         )
     try:
         return ApprovalReadiness.from_dict(readiness_dict), None
-    except (ValueError, TypeError, KeyError, AttributeError) as exc:
+    except (ValueError, TypeError, KeyError, AttributeError, IndexError) as exc:
+        # PR 91A: IndexError added - a malformed nested shape (e.g.
+        # {"gate_applicability": [[]]}) is validated explicitly in
+        # ApprovalReadiness.from_dict above and raises ValueError, but this
+        # is the shared fail-closed boundary every page relies on, so it
+        # must not depend solely on every future nested-indexing call site
+        # remembering to validate before it indexes.
         return None, f"Stored approval readiness is malformed and cannot be used: {exc}"

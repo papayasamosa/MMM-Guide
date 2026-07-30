@@ -83,3 +83,68 @@ function Test-GraphifyPathUnderRoot {
         [System.StringComparison]::OrdinalIgnoreCase
     )
 }
+
+<#
+.SYNOPSIS
+    Returns $true if $Path, or any existing ancestor directory between
+    $Root and $Path (inclusive of both), is an NTFS reparse point
+    (junction or symlink).
+
+.DESCRIPTION
+    PR 91A: Test-GraphifyPathUnderRoot is a purely textual containment
+    check - it has no way to know that a directory or file it approved is
+    a junction/symlink whose physical target lies somewhere else entirely
+    (e.g. a junction textually under D:\Ancestry-MMM\tools\uv\bin that
+    physically targets C:\Windows\System32, or a sibling D:\Other
+    install). A path can pass textual containment and still let Graphify
+    execute a binary that does not physically live under the configured
+    D-drive root.
+
+    This walks every path segment from $Path up to $Root and fails
+    closed - returns $true - the moment any segment is a reparse point,
+    regardless of what it points to, rather than attempting to resolve
+    and compare final physical targets (which .NET/PowerShell 5.1 has no
+    single built-in primitive for). Only existing segments are inspected;
+    a missing segment is not a reparse point, it is simply absent -
+    callers report that separately as a clear "not found" failure.
+
+    Callers pass the same $Root used for Test-GraphifyPathUnderRoot, and
+    should call this only after that containment check has already
+    passed, so the walk never has to reason about segments outside the
+    governed root.
+#>
+function Test-GraphifyPathHasReparsePoint {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Root
+    )
+    $fullPath = [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
+    $fullRoot = [System.IO.Path]::GetFullPath($Root).TrimEnd('\')
+
+    $segments = New-Object System.Collections.Generic.List[string]
+    $current = $fullPath
+    while ($true) {
+        $segments.Add($current)
+        if ([StringComparer]::OrdinalIgnoreCase.Equals($current, $fullRoot)) {
+            break
+        }
+        $parent = Split-Path $current -Parent
+        if (-not $parent -or [StringComparer]::OrdinalIgnoreCase.Equals($parent, $current)) {
+            # Walked up to a filesystem root without ever reaching $Root -
+            # $Path is not under $Root at all. Test-GraphifyPathUnderRoot
+            # is responsible for rejecting that; nothing further to check.
+            break
+        }
+        $current = $parent
+    }
+
+    foreach ($segment in $segments) {
+        if (Test-Path -LiteralPath $segment) {
+            $item = Get-Item -LiteralPath $segment -Force
+            if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+                return $true
+            }
+        }
+    }
+    return $false
+}
