@@ -109,6 +109,7 @@ from .scenario_governance import (
 # Note: ObjectiveMissingError is defined locally in this file for
 # backward compatibility (it references PlanningGovernanceError).
 from .planning import (
+    AdstockState,  # noqa: F401 — re-exported for scenario governance callers
     CurrencyContext,
     OutcomeValueMapping,
     PlanningObjective,
@@ -120,6 +121,7 @@ from .planning import (
     ScenarioValidationContext,
     planning_objective_from_legacy,
     validation_context_from_legacy_args,  # noqa: F401 — re-exported for persistence.py
+    zero_carry_in_adstock_state,
 )
 
 WEEKS_PER_MONTH = 365.25 / 12 / 7  # ~4.348
@@ -2441,12 +2443,20 @@ def evaluate_manual_scenario(
     # Resolve governance for official mode
     resolved_gov = None
     governance_deps = None
+    adstock_state = None
 
     if governance_mode == "official":
         if planning_objective is None:
             raise ObjectiveMissingError(
                 "Official manual evaluation requires a PlanningObjective."
             )
+        # PR 82E: discloses the adstock carry-in this scenario actually
+        # used (zero, for every channel — see zero_carry_in_adstock_state's
+        # docstring) as an explicit, fingerprinted governance record.
+        adstock_state = zero_carry_in_adstock_state(
+            meta.channels,
+            as_of_date=max(spend_plan) if spend_plan else "",
+        )
         resolved_gov = resolve_planning_governance(
             operation="planning",
             planning_objective=planning_objective,
@@ -2528,6 +2538,9 @@ def evaluate_manual_scenario(
             model_identity_fingerprint=approval_readiness.model_identity_fingerprint
             if approval_readiness is not None
             else "",
+            adstock_state_fingerprint=adstock_state.fingerprint()
+            if adstock_state is not None
+            else "",
         )
 
     # Call the private numerical function directly.
@@ -2582,6 +2595,10 @@ def evaluate_manual_scenario(
         economics_coverage=dict(economics_cov)
         if isinstance(economics_cov, dict)
         else None,
+        adstock_state=adstock_state,
+        assumptions_fingerprint=adstock_state.fingerprint()
+        if adstock_state is not None
+        else "",
     )
 
 
@@ -3315,6 +3332,15 @@ def optimize_scenario(
             current_policy=current_policy,
         )
 
+    # PR 82E: discloses the adstock carry-in this optimisation actually
+    # used (zero, for every channel) as an explicit, fingerprinted
+    # governance record — see zero_carry_in_adstock_state's docstring.
+    _adstock_state: Optional[AdstockState] = None
+    if governance_mode == "official":
+        _adstock_state = zero_carry_in_adstock_state(
+            channels, as_of_date=max(months) if months else ""
+        )
+
     current_spend = _flatten(current_spend_plan, months, channels)
 
     activity_map = (
@@ -3613,6 +3639,10 @@ def optimize_scenario(
         "_resolved_governance": (
             _resolved_gov.to_dict() if _resolved_gov is not None else None
         ),
+        # PR 82E: adstock carry-in disclosure (see zero_carry_in_adstock_state)
+        "adstock_state_fingerprint": (
+            _adstock_state.fingerprint() if _adstock_state is not None else None
+        ),
     }
 
 
@@ -3861,6 +3891,7 @@ def governance_deps_from_optimizer_result(result: dict) -> dict:
             "counterfactual_policy_fingerprint"
         ),
         "nbt_completeness_fingerprint": nbt_fingerprint,
+        "adstock_state_fingerprint": result.get("adstock_state_fingerprint") or "",
     }
 
 

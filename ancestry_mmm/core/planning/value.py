@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import asdict, dataclass
-from typing import Any, Mapping, Optional, Tuple
+from typing import Any, Iterable, Mapping, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -305,6 +305,8 @@ class ScenarioGovernanceDependencies:
     readiness_fingerprint: str = ""
     diagnostic_artefact_fingerprint: str = ""
     model_identity_fingerprint: str = ""
+    # PR 82E: adstock carry-in state this scenario was evaluated under.
+    adstock_state_fingerprint: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -335,6 +337,7 @@ class ScenarioGovernanceDependencies:
             "readiness_fingerprint": self.readiness_fingerprint,
             "diagnostic_artefact_fingerprint": self.diagnostic_artefact_fingerprint,
             "model_identity_fingerprint": self.model_identity_fingerprint,
+            "adstock_state_fingerprint": self.adstock_state_fingerprint,
         }
 
     @classmethod
@@ -374,6 +377,7 @@ class ScenarioGovernanceDependencies:
                 "diagnostic_artefact_fingerprint", ""
             ),
             model_identity_fingerprint=d.get("model_identity_fingerprint", ""),
+            adstock_state_fingerprint=d.get("adstock_state_fingerprint", ""),
         )
 
 
@@ -427,6 +431,26 @@ class AdstockState:
             ),
             as_of_date=d.get("as_of_date", ""),
         )
+
+
+def zero_carry_in_adstock_state(
+    channels: Iterable[str], as_of_date: str
+) -> AdstockState:
+    """The adstock carry-in every scenario actually starts from today.
+
+    PR 82E: ``geometric_adstock_matrix`` (core.transformations) has no
+    initial-state parameter - every scenario evaluation implicitly starts
+    each channel's adstock at zero, regardless of real recent spend. That
+    was previously an undisclosed fact of the prediction code; this makes
+    it an explicit, fingerprinted governance record instead. It does not
+    change prediction behaviour - carrying in nonzero adstock would be an
+    MMM math change requiring its own approved requirement, not this one.
+    """
+    return AdstockState(
+        channel_adstock_start=tuple((c, 0.0) for c in sorted(channels)),
+        channel_adstock_terminal=(),
+        as_of_date=as_of_date,
+    )
 
 
 # ---------------------------------------------------------------------------

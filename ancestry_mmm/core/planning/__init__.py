@@ -20,6 +20,7 @@ Domain layout:
 from __future__ import annotations
 
 from .value import (
+    AdstockState,
     CurrencyContext,
     OutcomeValueMapping,
     PlanningObjective,
@@ -31,9 +32,11 @@ from .value import (
     ScenarioValidationContext,
     planning_objective_from_legacy,
     validation_context_from_legacy_args,
+    zero_carry_in_adstock_state,
 )
 
 __all__ = [
+    "AdstockState",
     "CurrencyContext",
     "OutcomeValueMapping",
     "PlanningObjective",
@@ -45,4 +48,5 @@ __all__ = [
     "ScenarioValidationContext",
     "planning_objective_from_legacy",
     "validation_context_from_legacy_args",
+    "zero_carry_in_adstock_state",
 ]
