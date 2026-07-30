@@ -1,0 +1,43 @@
+# Graphify exclusions (gitignore-style patterns), layered on top of .gitignore
+# and .git/info/exclude, which Graphify already respects by default.
+#
+# .gitignore already keeps caches, .venv, build artefacts, etc. out of the
+# graph. This file adds exclusions for things that ARE tracked in git for
+# other reasons but must never be fed into the knowledge graph: confidential
+# Ancestry/vendor material, raw data, deprecated code, and large binaries
+# that add no architectural value.
+#
+# See docs/development/graphify.md for the rationale behind each entry.
+
+# Deprecated/superseded code - not part of the current implementation
+archive/
+
+# Confidential Ancestry / vendor material - never graphed, regardless of
+# git-tracked status
+MMM_Complete_Guide_v7.docx
+conjura_mmm_data.csv
+conjura_mmm_data_dictionary.xlsx
+
+# Example notebooks with cell outputs derived from the confidential data
+# above
+mmm_complete_example.ipynb
+mmm_multiplicative_example.ipynb
+
+# Screenshots - large binaries, no architectural value
+docs/screenshots/
+docs/*.png
+
+# Reserved for future secrets/credentials/raw-data conventions, per project
+# security policy, even though none exist in this repo yet
+.env
+.env.*
+secrets/
+credentials/
+data/raw/
+data/private/
+data/confidential/
+model_artifacts/
+checkpoints/
+
+# Graphify's own output must never graph itself
+graphify-out/

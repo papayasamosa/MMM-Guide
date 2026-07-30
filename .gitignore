@@ -88,7 +88,8 @@ ancestry_mmm/.project_exports/
 # MCP dev tooling - local overrides and secrets never belong in the repo.
 # .mcp.json itself IS committed deliberately (see docs/development/
 # mcp_development_tooling.md) - it holds no secrets: GitHub uses OAuth,
-# Context7 runs unauthenticated, Playwright needs no credentials.
+# Context7 runs unauthenticated, Playwright needs no credentials, and the
+# graphify-project entry just launches a local stdio process.
 .env.mcp
 mcp.local.json
 *.mcp.local.json
@@ -99,3 +100,10 @@ test-artifacts/playwright-mcp/
 logs/mcp/
 playwright/.auth/
 storage-state.json
+
+# Graphify - generated knowledge graph, rebuilt locally on demand (see
+# docs/development/graphify.md for the build command and the reasoning
+# behind not committing this directory: rebuild is one command, graph.json/
+# graph.html are large, and community numbering is not stable across
+# rebuilds). .graphifyignore (the exclusion list) IS committed.
+graphify-out/
