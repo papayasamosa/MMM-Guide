@@ -9,6 +9,7 @@ import pytest
 from ancestry_mmm.core.optimization import (
     ARTEFACT_KINDS,
     ARTEFACT_KIND_REQUIRED_USE,
+    CURRENT_PLANNING_EVALUATION_SEMANTICS,
     PlanningObjective,
     PlanningGovernanceError,
     ResolvedOutcomeAuthorisation,
@@ -420,7 +421,8 @@ class TestScenarioSaveAndDependencies:
         assert deps["model_approval_fingerprint"] == "maf1"
         assert deps["planning_objective_fingerprint"] != ""
         assert len(deps["outcome_authorisations"]) == 1
-        assert s["schema_version"] == 3
+        # PR 88B: scenario_to_dict's hardcoded schema version bumped 3 -> 4.
+        assert s["schema_version"] == 4
         assert s["artefact_kind"] == "manual_scenario"
 
     def test_nbt_uses_completeness_record_fingerprint(self):
@@ -638,6 +640,154 @@ class TestLegacyMigration:
         migrated = scenario_from_dict(legacy)
         status = scenario_dependency_status(migrated)
         assert status == "legacy_unverified"
+
+    def test_schema_3_with_only_adstock_state_fingerprint_becomes_legacy_unverified(
+        self,
+    ):
+        """PR 88B: a schema-3 official scenario (PR 82E era - at most an
+        adstock_state_fingerprint, never planning_semantics_fingerprint,
+        which did not exist yet) must not silently remain "current" merely
+        because it has a fully populated governance_dependencies block by
+        the old schema's standards - it predates truthful planning-
+        semantics disclosure entirely."""
+        legacy = {
+            "name": "legacy-schema-3",
+            "market": "UK",
+            "spend_plan": {"2026-07": {"TV": 100.0}},
+            "objective": "fh_gsa",
+            "constraints": [],
+            "governance_mode": "official",
+            "artefact_kind": "manual_scenario",
+            "schema_version": 3,
+            "governance_dependencies": {
+                "model_run_id": "run-1",
+                "model_approval_fingerprint": "maf-1",
+                "data_fingerprint": "d-1",
+                "model_spec_fingerprint": "s-1",
+                "posterior_fingerprint": "p-1",
+                "planning_objective_fingerprint": "obj-1",
+                "outcome_authorisations": [],
+                "adstock_state_fingerprint": "some-adstock-fp",
+            },
+        }
+        migrated = scenario_from_dict(legacy)
+        assert migrated["_migrated_from_schema"] == 3
+        assert (
+            migrated["governance_dependencies"]["planning_semantics_fingerprint"]
+            is None
+        )
+        status = scenario_dependency_status(migrated)
+        assert status == "legacy_unverified"
+        assert status != "current"
+        assert status != "invalid"
+
+    def test_schema_4_missing_planning_semantics_fingerprint_is_legacy_unverified(self):
+        """A hand-built (or otherwise non-standard) schema-4 scenario that
+        is missing planning_semantics_fingerprint reads as legacy_unverified
+        (a provenance gap), not "invalid" - it is not malformed data, it
+        simply predates the disclosure this field represents."""
+        scenario = {
+            "name": "schema-4-no-semantics",
+            "market": "UK",
+            "governance_mode": "official",
+            "artefact_kind": "manual_scenario",
+            "schema_version": 4,
+            "governance_dependencies": {
+                "model_run_id": "run-1",
+                "model_approval_fingerprint": "maf-1",
+                "data_fingerprint": "d-1",
+                "model_spec_fingerprint": "s-1",
+                "posterior_fingerprint": "p-1",
+                "planning_objective_fingerprint": "obj-1",
+                "outcome_authorisations": [],
+            },
+        }
+        status = scenario_dependency_status(
+            scenario,
+            current_model_run_id="run-1",
+            current_data_fingerprint="d-1",
+            current_model_spec_fingerprint="s-1",
+            current_posterior_fingerprint="p-1",
+        )
+        assert status == "legacy_unverified"
+
+    def test_schema_4_with_stale_planning_semantics_fingerprint_is_stale(self):
+        """A schema-4 scenario whose recorded planning_semantics_fingerprint
+        no longer matches the current engine's semantics (e.g. a future
+        sequential engine, or a bumped prediction_function_version) is
+        stale, not silently current."""
+        scenario = {
+            "name": "schema-4-stale-semantics",
+            "market": "UK",
+            "governance_mode": "official",
+            "artefact_kind": "manual_scenario",
+            "schema_version": 4,
+            "governance_dependencies": {
+                "model_run_id": "run-1",
+                "model_approval_fingerprint": "maf-1",
+                "data_fingerprint": "d-1",
+                "model_spec_fingerprint": "s-1",
+                "posterior_fingerprint": "p-1",
+                "planning_objective_fingerprint": "obj-1",
+                "outcome_authorisations": [
+                    {
+                        "outcome_id": "New",
+                        "requested_use": "planning",
+                        "approval_id": "apr-1",
+                        "definition_fingerprint": "def-fp-1",
+                    }
+                ],
+                "planning_semantics_fingerprint": "no-longer-the-current-fingerprint",
+            },
+        }
+        status = scenario_dependency_status(
+            scenario,
+            current_model_run_id="run-1",
+            current_data_fingerprint="d-1",
+            current_model_spec_fingerprint="s-1",
+            current_posterior_fingerprint="p-1",
+        )
+        assert status == "stale"
+
+    def test_schema_4_with_current_planning_semantics_fingerprint_is_current(self):
+        """The positive case: a schema-4 scenario whose recorded
+        planning_semantics_fingerprint matches the current engine, with
+        every other dependency also matching, is current - proving schema 4
+        is reachable, not just a permanent block."""
+        scenario = {
+            "name": "schema-4-current",
+            "market": "UK",
+            "governance_mode": "official",
+            "artefact_kind": "manual_scenario",
+            "schema_version": 4,
+            "governance_dependencies": {
+                "model_run_id": "run-1",
+                "model_approval_fingerprint": "maf-1",
+                "data_fingerprint": "d-1",
+                "model_spec_fingerprint": "s-1",
+                "posterior_fingerprint": "p-1",
+                "planning_objective_fingerprint": "obj-1",
+                "outcome_authorisations": [
+                    {
+                        "outcome_id": "New",
+                        "requested_use": "planning",
+                        "approval_id": "apr-1",
+                        "definition_fingerprint": "def-fp-1",
+                    }
+                ],
+                "planning_semantics_fingerprint": (
+                    CURRENT_PLANNING_EVALUATION_SEMANTICS.fingerprint()
+                ),
+            },
+        }
+        status = scenario_dependency_status(
+            scenario,
+            current_model_run_id="run-1",
+            current_data_fingerprint="d-1",
+            current_model_spec_fingerprint="s-1",
+            current_posterior_fingerprint="p-1",
+        )
+        assert status == "current"
 
 
 # ============================================================================

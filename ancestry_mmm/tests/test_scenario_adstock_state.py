@@ -1,12 +1,18 @@
-"""Tests for PR 82E: adstock carry-in disclosure.
+"""Tests for PR 82E's adstock carry-in disclosure, and PR 88B's replacement
+of it with truthful planning-evaluation-semantics disclosure.
 
 ``zero_carry_in_adstock_state`` makes an existing, previously-undisclosed
 fact of the prediction code (every scenario starts each channel's adstock
 at zero — ``geometric_adstock_matrix`` has no initial-state parameter)
-into an explicit, fingerprinted governance record on official-mode
-``evaluate_manual_scenario``/``optimize_scenario`` calls. No prediction
-math changes: the fingerprint is a disclosure of existing behaviour, not
-a new input to it.
+into an explicit, fingerprinted governance record. The function and
+``AdstockState`` are preserved for a future sequential planning engine, but
+PR 88B stops calling them from ``evaluate_manual_scenario``/
+``optimize_scenario``'s steady-state official-mode governance evidence:
+disclosing "zero carry-in" implied a carry-in concept steady-state
+evaluation does not actually model (no time-stepped simulation). The
+replacement, ``PlanningEvaluationSemantics``, states the engine's actual
+temporal semantics directly instead. No prediction math changes in either
+PR: both are disclosures of existing behaviour, not new inputs to it.
 """
 
 import numpy as np
@@ -15,6 +21,7 @@ import pytest
 from ancestry_mmm.core.approval import ModelApproval
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
 from ancestry_mmm.core.optimization import (
+    CURRENT_PLANNING_EVALUATION_SEMANTICS,
     PlanningObjective,
     evaluate_manual_scenario,
     governance_deps_from_optimizer_result,
@@ -30,7 +37,6 @@ from ancestry_mmm.core.outcome_approval import (
     fingerprint_outcome_definition,
 )
 from ancestry_mmm.core.planning.value import (
-    AdstockState,
     ScenarioGovernanceDependencies,
     zero_carry_in_adstock_state,
 )
@@ -231,8 +237,14 @@ def planning_objective() -> PlanningObjective:
     )
 
 
-class TestEvaluateManualScenarioAdstockDisclosure:
-    def test_official_mode_populates_adstock_state(
+class TestEvaluateManualScenarioAdstockDisclosureDeprecated:
+    """PR 88B: evaluate_manual_scenario no longer populates the PR 82E
+    adstock disclosure fields for steady-state evaluation - they mis-
+    characterised the calculation as having a carry-in concept it does not
+    model. See TestEvaluateManualScenarioPlanningSemanticsDisclosure below
+    for the replacement."""
+
+    def test_official_mode_no_longer_populates_adstock_state(
         self,
         gsa_meta,
         params,
@@ -253,14 +265,9 @@ class TestEvaluateManualScenarioAdstockDisclosure:
             approval=approval,
             **IDENTITY,
         )
-        assert isinstance(result.adstock_state, AdstockState)
-        expected = zero_carry_in_adstock_state(gsa_meta.channels, as_of_date="2024-01")
-        assert result.adstock_state.fingerprint() == expected.fingerprint()
-        assert result.assumptions_fingerprint == expected.fingerprint()
-        assert (
-            result.governance_dependencies.adstock_state_fingerprint
-            == expected.fingerprint()
-        )
+        assert result.adstock_state is None
+        assert result.assumptions_fingerprint == ""
+        assert result.governance_dependencies.adstock_state_fingerprint == ""
 
     def test_exploratory_mode_leaves_adstock_state_unset(
         self,
@@ -287,8 +294,12 @@ class TestEvaluateManualScenarioAdstockDisclosure:
         assert result.governance_dependencies is None
 
 
-class TestOptimizeScenarioAdstockDisclosure:
-    def test_official_mode_populates_adstock_state_fingerprint(
+class TestOptimizeScenarioAdstockDisclosureDeprecated:
+    """PR 88B: optimize_scenario no longer populates adstock_state_
+    fingerprint - see TestOptimizeScenarioPlanningSemanticsDisclosure
+    below for the replacement."""
+
+    def test_official_mode_no_longer_populates_adstock_state_fingerprint(
         self,
         gsa_meta,
         params,
@@ -312,10 +323,9 @@ class TestOptimizeScenarioAdstockDisclosure:
             artefact_kind="unconstrained_benchmark",
             **IDENTITY,
         )
-        expected = zero_carry_in_adstock_state(["TV_Brand"], as_of_date="2024-01")
-        assert result["adstock_state_fingerprint"] == expected.fingerprint()
+        assert result.get("adstock_state_fingerprint") is None
         deps = governance_deps_from_optimizer_result(result)
-        assert deps["adstock_state_fingerprint"] == expected.fingerprint()
+        assert deps["adstock_state_fingerprint"] == ""
 
     def test_exploratory_mode_leaves_adstock_state_fingerprint_none(
         self,
@@ -340,4 +350,173 @@ class TestOptimizeScenarioAdstockDisclosure:
             artefact_kind="unconstrained_benchmark",
             **IDENTITY,
         )
-        assert result["adstock_state_fingerprint"] is None
+        assert result.get("adstock_state_fingerprint") is None
+
+
+class TestEvaluateManualScenarioPlanningSemanticsDisclosure:
+    """PR 88B: evaluate_manual_scenario discloses PlanningEvaluationSemantics
+    (truthful engine/temporal/carry-in-applicability facts) in place of the
+    deprecated adstock-state disclosure."""
+
+    def test_official_mode_populates_planning_semantics(
+        self,
+        gsa_meta,
+        params,
+        approval,
+        reference_context,
+        spend_plan,
+        outcome_approval,
+        planning_objective,
+    ):
+        result = evaluate_manual_scenario(
+            spend_plan,
+            "UK",
+            gsa_meta,
+            params,
+            reference_context,
+            planning_objective=planning_objective,
+            outcome_approvals=[outcome_approval],
+            approval=approval,
+            **IDENTITY,
+        )
+        assert result.planning_semantics == CURRENT_PLANNING_EVALUATION_SEMANTICS
+        assert result.planning_semantics.engine == "steady_state_monthly"
+        assert result.planning_semantics.carry_in_state_applicable is False
+        assert result.planning_semantics.terminal_state_applicable is False
+        assert (
+            result.governance_dependencies.planning_semantics_fingerprint
+            == CURRENT_PLANNING_EVALUATION_SEMANTICS.fingerprint()
+        )
+
+    def test_exploratory_mode_leaves_planning_semantics_unset(
+        self,
+        gsa_meta,
+        params,
+        approval,
+        reference_context,
+        spend_plan,
+        planning_objective,
+    ):
+        result = evaluate_manual_scenario(
+            spend_plan,
+            "UK",
+            gsa_meta,
+            params,
+            reference_context,
+            planning_objective=planning_objective,
+            approval=approval,
+            governance_mode="exploratory",
+            **IDENTITY,
+        )
+        assert result.planning_semantics is None
+
+
+class TestOptimizeScenarioPlanningSemanticsDisclosure:
+    """PR 88B: optimize_scenario discloses the same PlanningEvaluationSemantics
+    as evaluate_manual_scenario."""
+
+    def test_official_mode_populates_planning_semantics_fingerprint(
+        self,
+        gsa_meta,
+        params,
+        approval,
+        reference_context,
+        spend_plan,
+        outcome_approval,
+        planning_objective,
+    ):
+        result = optimize_scenario(
+            spend_plan,
+            ["2024-01"],
+            ["TV_Brand"],
+            "UK",
+            gsa_meta,
+            params,
+            reference_context,
+            planning_objective=planning_objective,
+            outcome_approvals=[outcome_approval],
+            approval=approval,
+            artefact_kind="unconstrained_benchmark",
+            **IDENTITY,
+        )
+        assert (
+            result["planning_semantics_fingerprint"]
+            == CURRENT_PLANNING_EVALUATION_SEMANTICS.fingerprint()
+        )
+        deps = governance_deps_from_optimizer_result(result)
+        assert (
+            deps["planning_semantics_fingerprint"]
+            == CURRENT_PLANNING_EVALUATION_SEMANTICS.fingerprint()
+        )
+
+    def test_exploratory_mode_leaves_planning_semantics_fingerprint_none(
+        self,
+        gsa_meta,
+        params,
+        approval,
+        reference_context,
+        spend_plan,
+        planning_objective,
+    ):
+        result = optimize_scenario(
+            spend_plan,
+            ["2024-01"],
+            ["TV_Brand"],
+            "UK",
+            gsa_meta,
+            params,
+            reference_context,
+            planning_objective=planning_objective,
+            approval=approval,
+            governance_mode="exploratory",
+            artefact_kind="unconstrained_benchmark",
+            **IDENTITY,
+        )
+        assert result["planning_semantics_fingerprint"] is None
+
+
+class TestManualAndOptimisationShareIdenticalSemantics:
+    """PR 88B requirement: manual evaluation and optimisation must disclose
+    the exact same planning semantics - a scenario saved from either entry
+    point must be interchangeable evidence, never two different "current"
+    definitions of what the engine does."""
+
+    def test_manual_and_optimizer_fingerprints_match(
+        self,
+        gsa_meta,
+        params,
+        approval,
+        reference_context,
+        spend_plan,
+        outcome_approval,
+        planning_objective,
+    ):
+        manual_result = evaluate_manual_scenario(
+            spend_plan,
+            "UK",
+            gsa_meta,
+            params,
+            reference_context,
+            planning_objective=planning_objective,
+            outcome_approvals=[outcome_approval],
+            approval=approval,
+            **IDENTITY,
+        )
+        optimizer_result = optimize_scenario(
+            spend_plan,
+            ["2024-01"],
+            ["TV_Brand"],
+            "UK",
+            gsa_meta,
+            params,
+            reference_context,
+            planning_objective=planning_objective,
+            outcome_approvals=[outcome_approval],
+            approval=approval,
+            artefact_kind="unconstrained_benchmark",
+            **IDENTITY,
+        )
+        assert (
+            manual_result.governance_dependencies.planning_semantics_fingerprint
+            == optimizer_result["planning_semantics_fingerprint"]
+        )

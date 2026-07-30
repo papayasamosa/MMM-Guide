@@ -306,7 +306,24 @@ class ScenarioGovernanceDependencies:
     diagnostic_artefact_fingerprint: str = ""
     model_identity_fingerprint: str = ""
     # PR 82E: adstock carry-in state this scenario was evaluated under.
+    # PR 88B: deprecated for steady-state evaluation - the steady-state
+    # engine has no carry-in/terminal-state concept at all (no sequential
+    # simulation), so disclosing "zero carry-in" as evidence mischaracterised
+    # the calculation as having a carry-in concept it does not model. Kept
+    # only so pre-88B official scenarios (schema_version < 4) still
+    # deserialize; no longer populated by evaluate_manual_scenario/
+    # optimize_scenario. See ``planning_semantics_fingerprint`` below, which
+    # replaces it as the truthful, actively-validated disclosure.
     adstock_state_fingerprint: str = ""
+    # PR 88B: fingerprint of the PlanningEvaluationSemantics this scenario
+    # was evaluated under - truthfully states the engine, temporal
+    # resolution, within-period media assumption, and whether carry-in/
+    # terminal adstock state apply at all. Unlike adstock_state_fingerprint,
+    # this IS an actively validated dependency (see
+    # validate_scenario_dependencies) - a scenario missing it, or whose
+    # value no longer matches the current semantics, is not officially
+    # current.
+    planning_semantics_fingerprint: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -338,6 +355,7 @@ class ScenarioGovernanceDependencies:
             "diagnostic_artefact_fingerprint": self.diagnostic_artefact_fingerprint,
             "model_identity_fingerprint": self.model_identity_fingerprint,
             "adstock_state_fingerprint": self.adstock_state_fingerprint,
+            "planning_semantics_fingerprint": self.planning_semantics_fingerprint,
         }
 
     @classmethod
@@ -378,6 +396,7 @@ class ScenarioGovernanceDependencies:
             ),
             model_identity_fingerprint=d.get("model_identity_fingerprint", ""),
             adstock_state_fingerprint=d.get("adstock_state_fingerprint", ""),
+            planning_semantics_fingerprint=d.get("planning_semantics_fingerprint", ""),
         )
 
 
@@ -445,12 +464,130 @@ def zero_carry_in_adstock_state(
     it an explicit, fingerprinted governance record instead. It does not
     change prediction behaviour - carrying in nonzero adstock would be an
     MMM math change requiring its own approved requirement, not this one.
+
+    PR 88B: no longer called by ``evaluate_manual_scenario``/
+    ``optimize_scenario`` for steady-state official governance evidence -
+    see ``PlanningEvaluationSemantics`` below. The steady-state engine has
+    no sequential simulation at all, so "the carry-in is zero" is not a
+    fact about the calculation; it's a fact about a concept (carry-in) the
+    calculation does not model. Kept, with ``AdstockState``, for a future
+    sequential planning engine that actually has starting/terminal stock.
     """
     return AdstockState(
         channel_adstock_start=tuple((c, 0.0) for c in sorted(channels)),
         channel_adstock_terminal=(),
         as_of_date=as_of_date,
     )
+
+
+# ---------------------------------------------------------------------------
+# Planning evaluation semantics
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PlanningEvaluationSemantics:
+    """Truthful, machine-checkable disclosure of what the planning engine
+    that produced a scenario actually calculates.
+
+    PR 88B: replaces ``AdstockState``/``zero_carry_in_adstock_state`` as the
+    steady-state engine's official governance disclosure. Those disclosed a
+    "zero carry-in", which implies a carry-in concept the steady-state
+    engine does not model at all (no time-stepped simulation - see
+    ``core.predict.steady_state_outcome_response``): spend held constant at
+    a level is assumed to have already converged to its steady-state
+    response, for every month independently. This object states that
+    directly instead of reporting a fabricated value for an inapplicable
+    concept.
+
+    Parameters
+    ----------
+    engine : str
+        Which prediction engine evaluated this scenario, e.g.
+        ``"steady_state_monthly"``.
+    temporal_resolution : str
+        The time granularity the engine operates at, e.g. ``"monthly"``.
+    within_period_media_assumption : str
+        What the engine assumes media has done within one period, e.g.
+        ``"constant_to_steady_state"`` (spend held constant long enough to
+        reach the converged response - see root AGENTS.md's steady-state-
+        versus-sequential rule: this must never be read as a 0-3 month or
+        3-12 month response).
+    carry_in_state_applicable : bool
+        Whether a starting adstock/carry-in state is part of this engine's
+        calculation at all. ``False`` for steady state - there is nothing
+        to disclose a value for, so no value (zero or otherwise) is
+        reported as if it were meaningful.
+    terminal_state_applicable : bool
+        Whether a terminal (end-of-window) adstock state is produced by
+        this engine. ``False`` for steady state, for the same reason.
+    prediction_function_version : str
+        Version marker for the prediction function these semantics
+        describe, so a future change to steady_state_outcome_response's
+        calculation (even one that keeps the same engine/resolution/
+        assumption labels) can still be distinguished.
+    """
+
+    engine: str = ""
+    temporal_resolution: str = ""
+    within_period_media_assumption: str = ""
+    carry_in_state_applicable: bool = False
+    terminal_state_applicable: bool = False
+    prediction_function_version: str = ""
+
+    def fingerprint(self) -> str:
+        raw = json.dumps(
+            {
+                "engine": self.engine,
+                "temporal_resolution": self.temporal_resolution,
+                "within_period_media_assumption": self.within_period_media_assumption,
+                "carry_in_state_applicable": self.carry_in_state_applicable,
+                "terminal_state_applicable": self.terminal_state_applicable,
+                "prediction_function_version": self.prediction_function_version,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(raw).hexdigest()
+
+    def to_dict(self) -> dict:
+        return {
+            "engine": self.engine,
+            "temporal_resolution": self.temporal_resolution,
+            "within_period_media_assumption": self.within_period_media_assumption,
+            "carry_in_state_applicable": self.carry_in_state_applicable,
+            "terminal_state_applicable": self.terminal_state_applicable,
+            "prediction_function_version": self.prediction_function_version,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "PlanningEvaluationSemantics":
+        return cls(
+            engine=d.get("engine", ""),
+            temporal_resolution=d.get("temporal_resolution", ""),
+            within_period_media_assumption=d.get("within_period_media_assumption", ""),
+            carry_in_state_applicable=bool(d.get("carry_in_state_applicable", False)),
+            terminal_state_applicable=bool(d.get("terminal_state_applicable", False)),
+            prediction_function_version=d.get("prediction_function_version", ""),
+        )
+
+
+# The current (and, until a sequential engine exists, only) planning engine's
+# truthful semantics - the single source every official evaluation stamps
+# onto its governance dependencies, and the single value
+# validate_scenario_dependencies compares a saved scenario's recorded
+# fingerprint against. Bump prediction_function_version (which changes the
+# fingerprint) when steady_state_outcome_response's calculation changes in a
+# way that should stale previously-saved official scenarios even though the
+# engine/resolution/assumption labels stay the same.
+CURRENT_PLANNING_EVALUATION_SEMANTICS = PlanningEvaluationSemantics(
+    engine="steady_state_monthly",
+    temporal_resolution="monthly",
+    within_period_media_assumption="constant_to_steady_state",
+    carry_in_state_applicable=False,
+    terminal_state_applicable=False,
+    prediction_function_version="1.0.0",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -551,9 +688,15 @@ class ScenarioEvaluationResult:
     cost_mapping_fingerprint: str | None = None
     counterfactual_policy_fingerprint: str = ""
     economics_coverage: dict | None = None
+    # PR 88B: deprecated for steady-state evaluation - no longer populated
+    # by evaluate_manual_scenario (see PlanningEvaluationSemantics below).
+    # Kept for a future sequential engine and for reading pre-88B results.
     adstock_state: AdstockState | None = None
-    future_assumptions: FutureAssumptions | None = None
     assumptions_fingerprint: str = ""
+    future_assumptions: FutureAssumptions | None = None
+    # PR 88B: the actual planning-engine semantics this scenario was
+    # evaluated under - see PlanningEvaluationSemantics.
+    planning_semantics: "PlanningEvaluationSemantics | None" = None
 
     def to_dict(self) -> dict:
         return {
@@ -580,6 +723,9 @@ class ScenarioEvaluationResult:
             if self.future_assumptions
             else None,
             "assumptions_fingerprint": self.assumptions_fingerprint,
+            "planning_semantics": self.planning_semantics.to_dict()
+            if self.planning_semantics
+            else None,
         }
 
 

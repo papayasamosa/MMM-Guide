@@ -111,7 +111,9 @@ from .scenario_governance import (
 from .planning import (
     AdstockState,  # noqa: F401 — re-exported for scenario governance callers
     CurrencyContext,
+    CURRENT_PLANNING_EVALUATION_SEMANTICS,
     OutcomeValueMapping,
+    PlanningEvaluationSemantics,  # noqa: F401 — re-exported for scenario governance callers
     PlanningObjective,
     ResolvedOutcomeAuthorisation,  # noqa: F401 — re-exported for planning_governance.py
     ResolvedPlanningGovernance,
@@ -121,7 +123,7 @@ from .planning import (
     ScenarioValidationContext,
     planning_objective_from_legacy,
     validation_context_from_legacy_args,  # noqa: F401 — re-exported for persistence.py
-    zero_carry_in_adstock_state,
+    zero_carry_in_adstock_state,  # noqa: F401 — re-exported for scenario governance callers
 )
 
 WEEKS_PER_MONTH = 365.25 / 12 / 7  # ~4.348
@@ -485,8 +487,9 @@ def validate_scenario_dependencies(
         return issues
 
     # G2A.7a.4: check _migrated_from_schema — a migrated record with
-    # null fields is legacy_unverified, never current.
-    if migrated_from is not None and migrated_from < 3:
+    # null fields is legacy_unverified, never current. PR 88B: threshold
+    # bumped from 3 to 4 — schema 4 added planning_semantics_fingerprint.
+    if migrated_from is not None and migrated_from < 4:
         issues.append(
             ScenarioDependencyIssue(
                 artefact_id=scenario.get("name", "<unknown>"),
@@ -510,6 +513,25 @@ def validate_scenario_dependencies(
                     "dependency tracking. Migration by adding null fields does "
                     "not produce 'current' status — re-save with explicit "
                     "governance dependencies."
+                ),
+            )
+        )
+        return issues
+
+    # PR 88B: schema 3 scenarios have governance dependency tracking but
+    # predate planning-semantics disclosure entirely (at most PR 82E's
+    # adstock_state_fingerprint, which mischaracterised a steady-state
+    # calculation as having a carry-in concept it does not model) - loadable,
+    # but never officially current.
+    if schema_ver < 4:
+        issues.append(
+            ScenarioDependencyIssue(
+                artefact_id=scenario.get("name", "<unknown>"),
+                issue_type="legacy_unverified",
+                detail=(
+                    f"Scenario schema version {schema_ver} predates truthful "
+                    "planning-evaluation-semantics disclosure (PR 88B). "
+                    "Re-save to record the current planning semantics."
                 ),
             )
         )
@@ -688,6 +710,37 @@ def validate_scenario_dependencies(
                     detail="Planning objective fingerprint has changed.",
                 )
             )
+
+    # PR 88B: planning-evaluation-semantics fingerprint. Unlike the
+    # (deprecated for steady-state) adstock_state_fingerprint, this IS an
+    # actively validated dependency. A schema >= 4 scenario missing it is
+    # legacy_unverified (it predates truthful semantics disclosure just as
+    # much as a schema < 4 one would, e.g. one built through the legacy
+    # inline-dict path in scenario_to_dict) rather than "invalid" - a
+    # missing disclosure is a provenance gap, not malformed data. A
+    # mismatched fingerprint (a future sequential engine, or a changed
+    # prediction_function_version) is stale.
+    saved_semantics_fp = deps.get("planning_semantics_fingerprint")
+    if not saved_semantics_fp:
+        issues.append(
+            ScenarioDependencyIssue(
+                artefact_id=scenario.get("name", "<unknown>"),
+                issue_type="legacy_unverified",
+                detail=(
+                    "Governance dependency 'planning_semantics_fingerprint' is "
+                    "missing - scenario predates truthful planning-evaluation-"
+                    "semantics disclosure (PR 88B)."
+                ),
+            )
+        )
+    elif saved_semantics_fp != CURRENT_PLANNING_EVALUATION_SEMANTICS.fingerprint():
+        issues.append(
+            ScenarioDependencyIssue(
+                artefact_id=scenario.get("name", "<unknown>"),
+                issue_type="stale",
+                detail="Planning evaluation semantics have changed since this scenario was created.",
+            )
+        )
 
     # Activity and cost fingerprints (only relevant for specific uses)
     saved_act_fp = deps.get("activity_definitions_fingerprint")
@@ -1122,9 +1175,10 @@ def scenario_dependency_status(
     so legacy scenarios without explicit ``official`` mode still return
     ``legacy_unverified`` rather than ``exploratory``."""
     # Check for legacy migration first — a migrated record is never
-    # exploratory even if governance_mode is missing.
+    # exploratory even if governance_mode is missing. PR 88B: threshold
+    # bumped from 3 to 4 alongside validate_scenario_dependencies above.
     migrated_from = scenario.get("_migrated_from_schema")
-    if migrated_from is not None and migrated_from < 3:
+    if migrated_from is not None and migrated_from < 4:
         return "legacy_unverified"
     governance_mode = scenario.get("governance_mode", "exploratory")
     if governance_mode != "official":
@@ -2443,20 +2497,20 @@ def evaluate_manual_scenario(
     # Resolve governance for official mode
     resolved_gov = None
     governance_deps = None
-    adstock_state = None
+    planning_semantics = None
 
     if governance_mode == "official":
         if planning_objective is None:
             raise ObjectiveMissingError(
                 "Official manual evaluation requires a PlanningObjective."
             )
-        # PR 82E: discloses the adstock carry-in this scenario actually
-        # used (zero, for every channel — see zero_carry_in_adstock_state's
-        # docstring) as an explicit, fingerprinted governance record.
-        adstock_state = zero_carry_in_adstock_state(
-            meta.channels,
-            as_of_date=max(spend_plan) if spend_plan else "",
-        )
+        # PR 88B: discloses the actual planning-engine semantics this
+        # scenario was evaluated under (steady-state monthly, no carry-in/
+        # terminal adstock state) as an explicit, fingerprinted governance
+        # record - replaces PR 82E's zero_carry_in_adstock_state disclosure,
+        # which implied a carry-in concept steady-state evaluation does not
+        # actually model. See PlanningEvaluationSemantics.
+        planning_semantics = CURRENT_PLANNING_EVALUATION_SEMANTICS
         resolved_gov = resolve_planning_governance(
             operation="planning",
             planning_objective=planning_objective,
@@ -2538,8 +2592,8 @@ def evaluate_manual_scenario(
             model_identity_fingerprint=approval_readiness.model_identity_fingerprint
             if approval_readiness is not None
             else "",
-            adstock_state_fingerprint=adstock_state.fingerprint()
-            if adstock_state is not None
+            planning_semantics_fingerprint=planning_semantics.fingerprint()
+            if planning_semantics is not None
             else "",
         )
 
@@ -2595,10 +2649,7 @@ def evaluate_manual_scenario(
         economics_coverage=dict(economics_cov)
         if isinstance(economics_cov, dict)
         else None,
-        adstock_state=adstock_state,
-        assumptions_fingerprint=adstock_state.fingerprint()
-        if adstock_state is not None
-        else "",
+        planning_semantics=planning_semantics,
     )
 
 
@@ -3332,14 +3383,13 @@ def optimize_scenario(
             current_policy=current_policy,
         )
 
-    # PR 82E: discloses the adstock carry-in this optimisation actually
-    # used (zero, for every channel) as an explicit, fingerprinted
-    # governance record — see zero_carry_in_adstock_state's docstring.
-    _adstock_state: Optional[AdstockState] = None
+    # PR 88B: discloses the actual planning-engine semantics this
+    # optimisation was evaluated under - replaces PR 82E's
+    # zero_carry_in_adstock_state disclosure (see PlanningEvaluationSemantics
+    # and evaluate_manual_scenario's identical block above).
+    _planning_semantics: Optional[PlanningEvaluationSemantics] = None
     if governance_mode == "official":
-        _adstock_state = zero_carry_in_adstock_state(
-            channels, as_of_date=max(months) if months else ""
-        )
+        _planning_semantics = CURRENT_PLANNING_EVALUATION_SEMANTICS
 
     current_spend = _flatten(current_spend_plan, months, channels)
 
@@ -3639,9 +3689,13 @@ def optimize_scenario(
         "_resolved_governance": (
             _resolved_gov.to_dict() if _resolved_gov is not None else None
         ),
-        # PR 82E: adstock carry-in disclosure (see zero_carry_in_adstock_state)
-        "adstock_state_fingerprint": (
-            _adstock_state.fingerprint() if _adstock_state is not None else None
+        # PR 88B: planning-evaluation-semantics disclosure (see
+        # PlanningEvaluationSemantics) - replaces PR 82E's adstock_state_
+        # fingerprint disclosure for steady-state evaluation.
+        "planning_semantics_fingerprint": (
+            _planning_semantics.fingerprint()
+            if _planning_semantics is not None
+            else None
         ),
     }
 
@@ -3715,6 +3769,11 @@ def scenario_to_dict(
                 else None
             ),
             "nbt_completeness_fingerprint": nbt_completeness_fingerprint,
+            # PR 88B: this legacy inline-dict path has no way to know the
+            # planning semantics a caller evaluated under - left unset
+            # (never fabricated), so such a scenario correctly reads as
+            # legacy_unverified rather than falsely "current".
+            "planning_semantics_fingerprint": None,
         }
 
     # G2A.7a.10 (brief section 13): a new official artefact must state its
@@ -3756,7 +3815,11 @@ def scenario_to_dict(
         "governance_mode": governance_mode,
         "governance_dependencies": governance_deps,
         "artefact_kind": resolved_kind,
-        "schema_version": 3,
+        # PR 88B: bumped from 3 to 4 - schema 4 requires
+        # governance_dependencies.planning_semantics_fingerprint for an
+        # official scenario to be current (see validate_scenario_dependencies
+        # and scenario_from_dict's migration below).
+        "schema_version": 4,
     }
 
 
@@ -3814,6 +3877,19 @@ def scenario_from_dict(d: dict) -> dict:
             "nbt_completeness_fingerprint": None,
         }
         d["schema_version"] = max(schema_ver, 3)
+    # PR 88B: migrate schema < 4 — add a null planning_semantics_fingerprint
+    # and bump the schema version. A schema-3 scenario (with only PR 82E's
+    # adstock_state_fingerprint, if anything) is loadable here but must not
+    # read as "current": it predates the truthful planning-semantics
+    # disclosure entirely, so there is nothing to compare against the
+    # current engine's semantics fingerprint. See
+    # validate_scenario_dependencies.
+    deps_block = d.get("governance_dependencies") or {}
+    if "planning_semantics_fingerprint" not in deps_block:
+        deps_block = dict(deps_block)
+        deps_block["planning_semantics_fingerprint"] = None
+        d["governance_dependencies"] = deps_block
+        d["schema_version"] = max(schema_ver, d.get("schema_version", schema_ver), 4)
     # G2A.7a.4: migrate artefact_kind from legacy scenarios
     if "artefact_kind" not in d:
         # Legacy: infer from constraints — but then mark as migrated
@@ -3826,8 +3902,11 @@ def scenario_from_dict(d: dict) -> dict:
             schema_ver,
         )
     # A migrated scenario retains its original schema version for staleness
-    # detection — adding null fields does not make it "current".
-    if schema_ver < 3:
+    # detection — adding null fields does not make it "current". PR 88B:
+    # bumped from 3 to 4 — every pre-88B official scenario (schema 1-3)
+    # predates planning-semantics disclosure and must migrate to
+    # legacy_unverified, not silently remain "current".
+    if schema_ver < 4:
         d["_migrated_from_schema"] = schema_ver
     d["constraints"] = [SpendConstraint.from_dict(c) for c in d.get("constraints", [])]
     return d
@@ -3891,7 +3970,15 @@ def governance_deps_from_optimizer_result(result: dict) -> dict:
             "counterfactual_policy_fingerprint"
         ),
         "nbt_completeness_fingerprint": nbt_fingerprint,
+        # PR 88B: adstock_state_fingerprint is deprecated for steady-state -
+        # a result dict from optimize_scenario no longer sets it (this key
+        # only remains populated for reading a stale in-memory result built
+        # before this PR). planning_semantics_fingerprint is the current,
+        # actively-validated disclosure.
         "adstock_state_fingerprint": result.get("adstock_state_fingerprint") or "",
+        "planning_semantics_fingerprint": (
+            result.get("planning_semantics_fingerprint") or ""
+        ),
     }
 
 
