@@ -177,7 +177,9 @@ jobs:
             Write-Error "Checker incorrectly passed against a C: root"
             exit 1
           }
-          Write-Host "Checker correctly rejected a C:-drive root (exit $LASTEXITCODE)."
+          $rejectedExitCode = $LASTEXITCODE
+          Write-Host "Checker correctly rejected a C:-drive root (exit $rejectedExitCode)."
+          exit 0
       - name: Graphify launcher must reject a missing graph
         run: |
           # graphify-out/graph.json does not exist on a fresh checkout - the
@@ -187,7 +189,9 @@ jobs:
             Write-Error "Launcher incorrectly succeeded with no graph present"
             exit 1
           }
-          Write-Host "Launcher correctly rejected the missing graph (exit $LASTEXITCODE)."
+          $rejectedExitCode = $LASTEXITCODE
+          Write-Host "Launcher correctly rejected the missing graph (exit $rejectedExitCode)."
+          exit 0
       - name: Graphify launcher must reject a C-drive tool-bin override
         run: |
           $env:UV_TOOL_BIN_DIR = "C:\Ancestry-MMM-Should-Fail\tools\uv\bin"
@@ -196,7 +200,9 @@ jobs:
             Write-Error "Launcher incorrectly succeeded with UV_TOOL_BIN_DIR pointed off D:"
             exit 1
           }
-          Write-Host "Launcher correctly rejected the escaping UV_TOOL_BIN_DIR (exit $LASTEXITCODE)."
+          $rejectedExitCode = $LASTEXITCODE
+          Write-Host "Launcher correctly rejected the escaping UV_TOOL_BIN_DIR (exit $rejectedExitCode)."
+          exit 0
 
   # -- Python 3.11 unit/integration ----------------------------------
   py311-tests:
