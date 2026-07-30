@@ -647,3 +647,51 @@ class TestPlanningEvaluationSemanticsSchemaVersioning:
             round_tripped.planning_semantics_fingerprint
             == deps.planning_semantics_fingerprint
         )
+
+    def test_current_semantics_fingerprint_is_pinned(self):
+        """PR 92A is an encoding-only fix to schema_version validation - it
+        must not change what the calculation fingerprint hashes. Pinning the
+        literal value guards against an accidental change to fingerprint()'s
+        included fields alongside the schema_version validation fix."""
+        assert (
+            CURRENT_PLANNING_EVALUATION_SEMANTICS.fingerprint()
+            == "41b0bbcd57f067a39319d62aebb12ce815e289569eb51a598741baeef0099497"
+        )
+
+    # PR 92A: non-mapping payloads must be rejected outright by from_dict -
+    # none of these can be interpreted as a legacy or current payload shape.
+    # `{}` is deliberately excluded here: it IS a mapping, and exercises the
+    # legacy-migration path (covered by
+    # test_unversioned_legacy_payload_migrates_to_schema_version_1-style
+    # absent-key behaviour), not the non-mapping rejection path.
+    @pytest.mark.parametrize(
+        "payload", [1.5, True, False, "1", "01", None, 0, -1, 2, []]
+    )
+    def test_from_dict_rejects_non_mapping_payload(self, payload):
+        with pytest.raises((TypeError, ValueError)):
+            PlanningEvaluationSemantics.from_dict(payload)
+
+    # PR 92A: each of these, as the schema_version field of an otherwise
+    # valid payload, must be rejected. `None` here is the explicit-null
+    # case (key present, value None) - distinct from a genuinely absent key,
+    # which migrates instead of raising.
+    @pytest.mark.parametrize(
+        "raw_version", [1.5, True, False, "1", "01", None, 0, -1, 2]
+    )
+    def test_from_dict_rejects_invalid_schema_version_field(self, raw_version):
+        payload = self._semantics().to_dict()
+        payload["schema_version"] = raw_version
+        assert "schema_version" in payload
+        with pytest.raises(ValueError, match="schema_version"):
+            PlanningEvaluationSemantics.from_dict(payload)
+
+    @pytest.mark.parametrize("invalid_schema_version", [0, True, 2, -1])
+    def test_direct_construction_rejects_invalid_schema_version(
+        self, invalid_schema_version
+    ):
+        with pytest.raises(ValueError, match="schema_version"):
+            self._semantics(schema_version=invalid_schema_version)
+
+    def test_direct_construction_with_current_schema_version_succeeds(self):
+        semantics = self._semantics(schema_version=PLANNING_SEMANTICS_SCHEMA_VERSION)
+        assert semantics.schema_version == PLANNING_SEMANTICS_SCHEMA_VERSION

@@ -494,6 +494,42 @@ def zero_carry_in_adstock_state(
 # changes, not when the disclosed calculation changes.
 PLANNING_SEMANTICS_SCHEMA_VERSION = 1
 
+# PR 92A: the set of schema_version values from_dict()/__post_init__ accept.
+# Distinct from PLANNING_SEMANTICS_SCHEMA_VERSION (the version this code
+# writes) so a future version can be added here as "readable but not the
+# current write version" without conflating the two.
+_SUPPORTED_PLANNING_SEMANTICS_SCHEMA_VERSIONS = frozenset({1})
+
+
+def _validate_planning_semantics_schema_version(value: Any) -> int:
+    """Strictly validate a ``PlanningEvaluationSemantics.schema_version``.
+
+    PR 92A: ``int(raw_version)`` silently coerced floats, bools, and numeric
+    strings, and accepted zero/negative integers. ``type(value) is not int``
+    (rather than ``isinstance``) is required to reject ``bool``, which is a
+    subclass of ``int`` in Python and would otherwise pass an ``isinstance``
+    check."""
+    if type(value) is not int:
+        raise ValueError(
+            "PlanningEvaluationSemantics schema_version must be an actual "
+            f"int, got {value!r} ({type(value).__name__})."
+        )
+    if value > PLANNING_SEMANTICS_SCHEMA_VERSION:
+        raise ValueError(
+            "PlanningEvaluationSemantics payload declares "
+            f"schema_version={value}, which is newer than the "
+            f"{PLANNING_SEMANTICS_SCHEMA_VERSION} this code supports. "
+            "Refusing to load an unsupported future payload rather than "
+            "guessing at its shape."
+        )
+    if value not in _SUPPORTED_PLANNING_SEMANTICS_SCHEMA_VERSIONS:
+        raise ValueError(
+            f"PlanningEvaluationSemantics schema_version={value} is not a "
+            "supported schema version "
+            f"({sorted(_SUPPORTED_PLANNING_SEMANTICS_SCHEMA_VERSIONS)})."
+        )
+    return value
+
 
 @dataclass(frozen=True)
 class PlanningEvaluationSemantics:
@@ -518,6 +554,15 @@ class PlanningEvaluationSemantics:
     unchanged, so no value migration is needed, only the version stamp.
     A payload declaring a schema version newer than this code supports is
     rejected fail-closed rather than guessed at.
+
+    PR 92A: ``from_dict`` now requires an actual mapping, distinguishes a
+    genuinely absent ``schema_version`` key (legacy migration) from an
+    explicitly present ``null`` (malformed, rejected), and validates the
+    field strictly (real ``int``, not ``bool``/``float``/numeric-string,
+    positive, and a supported version) instead of coercing it with
+    ``int(...)``. ``__post_init__`` enforces the same invariant on direct
+    construction, so a ``PlanningEvaluationSemantics`` cannot be built, let
+    alone serialized, with an invalid ``schema_version``.
 
     Parameters
     ----------
@@ -558,6 +603,9 @@ class PlanningEvaluationSemantics:
     prediction_function_version: str = ""
     schema_version: int = PLANNING_SEMANTICS_SCHEMA_VERSION
 
+    def __post_init__(self) -> None:
+        _validate_planning_semantics_schema_version(self.schema_version)
+
     def fingerprint(self) -> str:
         """Fingerprint of the disclosed calculation semantics only.
 
@@ -595,29 +643,23 @@ class PlanningEvaluationSemantics:
         }
 
     @classmethod
-    def from_dict(cls, d: dict) -> "PlanningEvaluationSemantics":
-        raw_version = d.get("schema_version")
-        if raw_version is None:
+    def from_dict(cls, d: Any) -> "PlanningEvaluationSemantics":
+        if not isinstance(d, Mapping):
+            raise TypeError(
+                "PlanningEvaluationSemantics.from_dict requires a mapping, "
+                f"got {type(d).__name__}."
+            )
+        if "schema_version" not in d:
             # Legacy payload written before PR 91A never had a
             # schema_version key at all - the field shape is otherwise
             # identical, so this migrates cleanly to schema_version=1.
+            # An explicitly present `null` is NOT this case - it falls
+            # through to strict validation below and is rejected.
             schema_version = 1
         else:
-            try:
-                schema_version = int(raw_version)
-            except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    "PlanningEvaluationSemantics payload has a non-integer "
-                    f"schema_version: {raw_version!r}."
-                ) from exc
-            if schema_version > PLANNING_SEMANTICS_SCHEMA_VERSION:
-                raise ValueError(
-                    "PlanningEvaluationSemantics payload declares "
-                    f"schema_version={schema_version}, which is newer than "
-                    f"the {PLANNING_SEMANTICS_SCHEMA_VERSION} this code "
-                    "supports. Refusing to load an unsupported future "
-                    "payload rather than guessing at its shape."
-                )
+            schema_version = _validate_planning_semantics_schema_version(
+                d["schema_version"]
+            )
         return cls(
             engine=d.get("engine", ""),
             temporal_resolution=d.get("temporal_resolution", ""),
