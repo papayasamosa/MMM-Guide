@@ -3,6 +3,12 @@
 **Status:** draft — not yet approved for implementation. This record does not authorize any
 code change; it is a proposal for human review.
 **Decision date:** proposed 2026-07-31; pending human approval.
+**Revision:** PR 94A (this record) corrects the PR 93A draft in response to the five
+post-merge review findings on `papayasamosa/MMM-Guide#93` (see
+`docs/curve_authority_gap_analysis.md`, section "PR 93 review findings") and additional
+defects identified during that re-review. Correcting the draft does **not** approve it; it
+remains draft until the human decisions in the "Human approval checklist" section are
+explicitly approved by the user.
 
 ## Decision
 
@@ -26,8 +32,15 @@ compared architecture options this decision is drawn from.
 - **Official response curve** — an evaluated, posterior-draw response curve, produced by the
   single authoritative calculation path (`core.canonical_curves.generate_canonical_curve_draws`
   or its successor), whose persisted artifact carries a complete, verifiable governance chain
-  (Governance chain, below) and is eligible for at least one of the publication/use categories
-  in `core.outcome_approval.OUTCOME_USES`.
+  (Governance chain, below) **and a current, matching outcome approval for
+  `curve_publication`** (`core.outcome_approval.OUTCOME_USES`, verified against the current
+  live approval state at the time of creation and revalidated at every later official use).
+  Being eligible for a diagnostic or fitting use (`model_fit`, `technical_reporting`) does
+  **not** make a curve official; official status is a distinct, separately granted property
+  that is never implied by a diagnostic use alone. Every downstream use
+  (`headline_reporting`, `planning`, `optimisation`, `external_distribution`,
+  `technical_reporting`) remains independently gated and is never granted automatically by
+  `curve_publication`.
 - **Exploratory curve** — any curve — whether from the canonical calculation in
   `governance_mode="exploratory"` or from the point-estimate generators
   (`core.predict.generate_channel_curve`, `core.market_specific_predict.generate_market_channel_curve`)
@@ -52,9 +65,15 @@ compared architecture options this decision is drawn from.
 - **Channel-total curve** — the full incremental response for one channel, summed across
   every simultaneous component (direct + cross-product/halo).
 - **Component curve** — one decomposed piece of a channel-total curve
-  (`component_type`), allocated by incremental-eta share; reconciles exactly back to the
-  channel-total curve; carries no cost/CPA/ROI unless an explicit `ComponentCostAllocation`
-  exists.
+  (`component_type`), allocated to components by a **named, versioned, persisted, and tested
+  component-allocation convention** (the current implementation uses incremental-eta share;
+  see `component_response_allocation_method="incremental_eta_share"` in
+  `core.canonical_curves`). Under a nonlinear inverse link, eta-share allocation is a
+  reconciliation convention, not a uniquely identified causal decomposition of outcome-scale
+  response; component rows must never be described as uniquely identified causal direct or
+  halo effects. A component curve reconciles back to the channel-total curve under the
+  approved convention and carries no cost/CPA/ROI unless an explicit
+  `ComponentCostAllocation` exists.
 - **Portfolio curve** — a whole-plan marginal-economics view requiring an explicit
   `portfolio_path_id` and `PortfolioPerturbation` allocation direction; never an implicit or
   default aggregation across channels.
@@ -65,7 +84,7 @@ compared architecture options this decision is drawn from.
 - **Sequential curve** — a curve that evolves the model's dynamic (carry-in/adstock) state
   week over week rather than holding it at a steady-state reference. Not implemented by
   either curve system today; explicitly out of scope for this requirement and deferred to the
-  PR 94A/94B governed-future-assumptions work named in the task brief. Defined here only so
+  governed-future-assumptions work named in the task brief (PR 96A/96B). Defined here only so
   that a future curve can be unambiguously labelled steady-state or sequential and never left
   ambiguous.
 - **Reference context** — the complete, explicit, persisted set of assumptions
@@ -89,8 +108,8 @@ compared architecture options this decision is drawn from.
 The repository has one authoritative calculation path for producing new official response
 curves: `core.canonical_curves.generate_canonical_curve_draws` (and its aggregation/summary
 functions), invoked exclusively through a new application-service governance layer (scoped in
-PR 93B/93C, not this record). No other function may produce an artifact labelled or persisted
-as an official response curve.
+follow-on PR 95A/95B, not this record). No other function may produce an artifact labelled or
+persisted as an official response curve.
 
 `core.curve_bank.CurveBankEntry` and the point-estimate generators
 (`core.predict.generate_channel_curve`, `core.market_specific_predict.generate_market_channel_curve`)
@@ -108,17 +127,26 @@ incremental_response = mu(selected input, explicit reference context)
                       - mu(counterfactual input, same explicit reference context)
 ```
 
-- The full outcome-scale prediction function must be used (`mu = exp(eta)`), never a
-  log-scale proxy.
+- **General rule:** business response must be calculated through the fitted model's
+  **approved inverse link** — the full outcome-scale prediction function — never a log-scale
+  proxy. The rule is stated in terms of the approved inverse link so that it remains
+  outcome-agnostic; it must not hard-code one model family's link as a permanent
+  cross-model invariant.
+- **Current model family (not a permanent invariant):** the fitted count models use a log
+  link, so for them the approved inverse link is `mu = exp(eta)`. Any future approved outcome
+  model with a different link uses its own approved inverse link; this record does not
+  authorise one and does not treat `exp` as universal.
 - The log-scale media/eta contribution (`beta × pathway_strength × Hill(media input)`,
   stored as `media_eta_contribution`) must be kept separate from, and never presented as, an
-  incremental outcome count.
+  incremental outcome count, for every link.
 - Draw-level calculation must occur before any posterior summarization
   (`aggregate_curve_draws`/`summarize_curve_draws` consume the draws DataFrame as input; they
   must never precede it).
-- Direct, cross-product (halo), and channel-total response must reconcile exactly (component
-  rows sum to the channel total by construction, via eta-share allocation) or within an
-  explicitly tested, documented tolerance.
+- Direct, cross-product (halo), and channel-total response must reconcile exactly under the
+  approved, versioned component-allocation convention (currently incremental-eta share; see
+  Definitions) or within an explicitly tested, documented tolerance. Reconciliation under
+  the convention is not, by itself, a claim of a unique causal decomposition of
+  outcome-scale response.
 
 Any future change to this mathematical contract is out of scope for this record and requires
 its own reviewed requirement.
@@ -136,14 +164,37 @@ axis, steady-state or sequential semantics
 
 - No implicit zero, historical mean, or unstated default may substitute for an explicit
   reference-context field.
-- `core.canonical_curves.CurveReferenceContext` already covers market, trend, Fourier
-  seasonality, promotions, controls, outcome controls, other-channel media input,
-  counterfactual value/axis, mode, and reference period. Two fields must be added or
-  explicitly bound by the new application-service layer, since `CurveReferenceContext` itself
-  does not carry them: **model/posterior identity** (currently only a separate
-  `model_run_id` argument to `generate_canonical_curve_draws`, not part of the context object
-  or its persisted metadata) and an explicit **outcome definition + version** binding
-  (currently resolved elsewhere in the pipeline, not stamped onto the reference context).
+- **Corrected current-state claim:** `core.canonical_curves.CurveReferenceContext` carries
+  market, trend, Fourier seasonality, promotions, controls, outcome controls, other-channel
+  media input, counterfactual value/axis, mode, and reference period, and its
+  `__post_init__` validates the *values that are present* (finite, non-negative, enum
+  checks). It does **not** verify that every fitted promotion, common-control,
+  outcome-control, Fourier, market, and other-channel input is represented — an empty or
+  partial mapping is accepted, and `steady_state_outcome_response`
+  (`core.predict`, L425-488) silently substitutes defaults (`trend→1.0`,
+  `fourier→zeros`, `promo→0.0`, `controls→0.0`, `outcome_controls→0.0`) for missing keys.
+  The existence of the context class is therefore **not** complete reference-context
+  coverage; completeness is a separate, required validation (below).
+- **Draft proposed requirement (complete coverage):**
+  1. The official application service must validate reference-context keys against the exact
+     fitted model metadata and parameter structure before any official curve is generated.
+  2. Every fitted promotion, common control, outcome-specific control, Fourier term, market,
+     and other-channel input must be covered by the reference context.
+  3. A zero is allowed only when it is explicitly persisted as a governed value or covered by
+     an explicitly governed omission policy — never as the by-product of a silent
+     `.get(key, 0.0)` default.
+  4. Missing keys must fail closed before curve generation.
+  5. Extra unknown keys must fail or be surfaced as a schema mismatch, not silently ignored.
+  6. Context fingerprints must bind both key names and values (a context with the same values
+     under a different key set is a different context).
+  7. Future acceptance tests must cover missing, extra, partial, and explicitly-zero context
+     values (see Testing requirements).
+- Two fields must be added or explicitly bound by the new application-service layer, since
+  `CurveReferenceContext` itself does not carry them: **model/posterior identity** (currently
+  only a separate `model_run_id` argument to `generate_canonical_curve_draws`, not part of
+  the context object or its persisted metadata) and an explicit **outcome definition +
+  version** binding (currently resolved elsewhere in the pipeline, not stamped onto the
+  reference context).
 - Every row must be labelled steady-state or sequential; today this is unconditionally
   `"steady_state"` (see Definitions), which is correct only because sequential does not yet
   exist — this label must remain explicit, not silently hardcoded, once sequential curves are
@@ -161,12 +212,23 @@ support period, extrapolation status
 - Hill K must never be used as observed support (already true; keep true).
 - Missing support must not be fabricated (already true — missing support yields `NaN` fields
   and `SUPPORT_MISSING` status, never invented numbers).
-- **Gap to close:** missing or incomplete support currently produces `NaN` economics fields
-  but does not itself set an explicit "official planning eligibility" flag consumed
-  downstream by planning/optimisation gates. The new application-service layer must derive
-  and persist an explicit `planning_eligible: bool` (or equivalent) computed from support
-  completeness, so that missing support blocks official planning eligibility structurally,
-  not only by producing `NaN` values a downstream caller might not check.
+- **Current implemented behaviour (corrected from the PR 93A draft):** a planning-support
+  flag **already exists**. Every canonical draw row already carries
+  `planning_support_eligible` (computed as `observed_support_status == SUPPORT_AVAILABLE`)
+  and `planning_blocked_reason` (`""` when eligible, else `"observed_support_missing"`); the
+  repository's own `test_missing_support_is_unknown_and_blocks_planning`
+  (`ancestry_mmm/tests/test_canonical_curves.py`) verifies that missing support makes the
+  field false. Missing support therefore does **not** need a new flag.
+- **Known implementation gap (the real gap):** downstream enforcement is incomplete — no
+  planning or optimisation consumer currently reads `planning_support_eligible`/
+  `planning_blocked_reason`. The official application service and every planning and
+  optimisation consumer must enforce the existing `planning_support_eligible` value, and
+  must require a non-empty `planning_blocked_reason` whenever eligibility is false.
+- **Draft proposed requirement:** do **not** introduce a duplicate `planning_eligible` field
+  (or equivalent) unless a later approved migration explicitly replaces the existing
+  contract. Aggregation and persistence must preserve the strictest eligibility state across
+  component rows and posterior draws (any row/draw ineligible ⇒ aggregated result
+  ineligible).
 
 ## Media-input and monetary rules
 
@@ -199,6 +261,12 @@ support period, extrapolation status
   `average_cpa`/`marginal_cpa` are distinct fields with distinct status flags).
 - The counterfactual scope (zero vs. nonzero) must be recorded (already true:
   `average_cpa_scope` distinguishes this per `docs/canonical_curves.md`).
+- **Channel-total economics remain authoritative** regardless of whether a component
+  allocation convention is available. Component allocation is a reporting decomposition and
+  must never substitute for, or override, channel-total counterfactual response and
+  channel-level CPA/ROI. A separate approved method (and separate approval) is required
+  before any component row may be labelled a causal direct, indirect, mediated, or
+  constrained effect.
 
 ## Governance chain
 
@@ -207,19 +275,31 @@ evidence for:
 
 ```text
 ModelIdentity, ModelApproval, ThresholdPolicy, ApprovalReadiness, DiagnosticsArtefact,
-approved outcome definition and allowed use, approved activity definitions, pathway
-governance, cost mapping (when monetary), currency and FX (when monetary or multi-market),
-reference context, support, curve generator version
+approved outcome definition and a current, matching outcome approval for curve_publication,
+approved activity definitions, pathway governance, cost mapping (when monetary), currency
+and FX (when monetary or multi-market), reference context, support, curve generator version
 ```
 
+- **Official status requires `curve_publication`:** an artifact may be classified as an
+  official response curve only when there is a current, matching outcome approval for
+  `curve_publication` (active, fingerprint-matching, in scope, and valid as a record),
+  verified at creation time against the live approval state and revalidated at every later
+  official use. `model_fit` or `technical_reporting` approval alone never creates official
+  status, because those uses cover fitting and diagnostic evidence, not publication
+  authority.
+- **`curve_publication` is not a proxy for downstream use:** it authorises the artifact's
+  existence and publication as an official curve; it does **not** automatically grant
+  `planning`, `optimisation`, `headline_reporting`, or `external_distribution`. Each of
+  those uses remains independently gated on its own current, matching approval and any
+  additional governance the use requires.
 - **Gap to close (the central finding of this record):** as of this review,
   `generate_canonical_curve_draws(governance_mode="official")` does not reference
   `ModelApproval`, `ThresholdPolicy`, `ApprovalReadiness`, or `DiagnosticsArtefact` at all,
   and its one activity-approval check is skipped entirely whenever the caller omits the
   `activity_definitions` argument — the default call produces an "official" curve with no
   activity-governance check performed. **Omitting an optional argument must never bypass an
-  official governance gate.** The new application-service layer (PR 93B/93C) must make every
-  element of this chain a required input for an official curve, verified before
+  official governance gate.** The new application-service layer (follow-on PR 95A/95B) must
+  make every element of this chain a required input for an official curve, verified before
   `generate_canonical_curve_draws` is invoked, not an optional pass-through.
 - Cost mapping and currency/FX are already unconditionally required when applicable (see
   Media-input and monetary rules) — this is the one part of the current chain that already
@@ -227,7 +307,7 @@ reference context, support, curve generator version
 - Curve generator version: the current export stamps a module-level schema string
   (`"G2A.2-1"`) and `CurveReferenceContext`/`MediaInputSupport`/`MonetarySpendSupport` each
   carry their own field-level `schema_version`, but no single per-artifact "curve generator
-  version" ties calculation logic version to the persisted rows. The new schema (PR 93B) must
+  version" ties calculation logic version to the persisted rows. The new schema (PR 95A) must
   add this.
 - Exploratory generation must remain structurally and visibly non-official: the new
   application-service layer must return a distinctly-typed result (or an unambiguous,
@@ -249,10 +329,18 @@ Required for the new official artifact:
   rather than only-present-when-`activity_rows`-non-empty).
 - Migrations and round-trip tests: **gap to close** — `core.canonical_curves` currently has
   no import/round-trip function at all (export-only). The new schema must add one.
-- The official artifact must be able to re-prove its evidence chain without relying on
-  mutable live session state — i.e., the persisted fingerprints/metadata must be sufficient
-  on their own, not dependent on re-querying a live `ModelApproval`/`ThresholdPolicy` object
-  that could have since changed.
+- **Historical artifact integrity (reproducibility):** the persisted artifact must carry
+  immutable evidence proving what was true when it was created — see "Historical artifact
+  integrity and current official-use authorization" below. This makes the artifact
+  reproducible without re-querying mutable live session state.
+- **Current official-use authorization is separate:** historical integrity is not proof that
+  the artifact is currently authorised. At every later official use, the system must
+  revalidate the artifact against current governance state (current threshold policy,
+  current outcome approval for the requested use, current activity approval, current
+  staleness, revocation/expiry, and the requested reporting/planning/optimisation/
+  distribution use). A historically valid artifact may become stale, expired, revoked, or
+  ineligible for a specific use.
+- Context fingerprints must bind both key names and values (see Reference-context contract).
 - Unknown future fields or schema versions must not be silently discarded. **Gap to close:**
   `CurveBankEntry.from_dict()` currently filters to `{f for f in cls.__dataclass_fields__}`
   and silently drops unrecognized keys (`ancestry_mmm/core/curve_bank.py` L115-126) — the new
@@ -266,29 +354,99 @@ Required for the new official artifact:
   `ancestry_mmm/application/validation_service.py::MalformedArtefactEvidenceError` — fail the
   gate closed and surface an auditable result, never a silent skip.
 
-## Legacy migration
+## Historical artifact integrity and current official-use authorization
 
-- **Pre-Phase-3a run-level curve files** — already correctly expanded and labelled
-  `curve_status = CURVE_STATUS_LEGACY` / `legacy_format = True` by
-  `curve_bank._expand_legacy_entry()`. This behavior is retained; it must continue to label
-  fabricated-default numeric fields (missing values defaulted to `0.0`) as legacy, never as a
-  verified estimate.
-- **Current `CurveBankEntry` parameter records** — remain loadable and usable for their
-  existing purposes (Single source of authority, above); must never be presented as an
-  official evaluated curve under this contract.
-- **Canonical exports created before the full approval chain exists** (i.e., anything
-  produced by `generate_canonical_curve_draws(governance_mode="official")` before PR 93C
-  closes the activity-governance-by-omission gap) — must be re-classified, on migration, as
-  `legacy_unapproved`, reusing the status value already defined in
-  `core.outcome_approval.OUTCOME_APPROVAL_STATUSES` (L104-111), rather than a new bespoke
-  label. They must not become "official" through missing-field defaults or through the mere
-  fact that `governance_mode="official"` was passed at the time.
-- **Saved exploratory curves** — remain loadable and clearly labelled exploratory; never
-  auto-promoted to official status by any later change to defaults.
+Two distinct validations are required. They answer different questions and neither implies
+or rewrites the other.
+
+### Historical artifact integrity (reproducibility)
+
+The persisted artifact must contain immutable evidence proving what was true **when it was
+created**:
+
+```text
+model identity
+approval snapshot and fingerprint
+threshold-policy snapshot and fingerprint
+readiness snapshot and fingerprint
+diagnostics snapshot and fingerprint
+outcome definition and approval snapshot
+activity and pathway governance snapshot
+context, support, cost, currency, and generator versions
+creation timestamp
+```
+
+This is what makes the artifact re-provable without consulting mutable live session state. It
+is necessary for historical reproducibility and auditing.
+
+### Current official-use authorization
+
+At every later official use, the system must also validate the artifact against **current**
+governance state, including:
+
+```text
+current threshold policy
+current outcome approval and the requested use
+current activity approval
+current model or artifact staleness rules
+current revocation or expiry state
+requested reporting, planning, optimisation, or distribution use
+```
+
+The existing repository pattern for current-use outcome validation is
+`core.outcome_approval` (`is_active`, `require_outcome_approval`,
+`find_matching_outcome_approval`) and `core.approval.require_matching_approval` for
+model-level approval/readiness/policy binding; the official service must apply the same
+live-state discipline to curve artifacts.
+
+### Rules
+
+1. Historical integrity does not imply current authorization.
+2. Current authorization does not rewrite historical evidence.
+3. A historically valid artifact may become stale, expired, revoked, or ineligible for a
+   specific use.
+4. The use-time gate must fail closed when current governance cannot be resolved.
+5. Persist both creation-time evidence status and current-use status as separate concepts
+   (see Artifact status and lifecycle).
+
+## Artifact status and lifecycle (separate from outcome-approval status)
+
+**Current implemented behaviour:** `legacy_unapproved` is a value of
+`OUTCOME_APPROVAL_STATUSES` (`core.outcome_approval`, L104-111) and describes the status of an
+*outcome approval record* (e.g. created by `legacy_unapproved_approval()` on legacy bundle
+import). The curve-bank side labels pre-Phase-3a run-level files with `curve_status =
+CURVE_STATUS_LEGACY` / `legacy_format = True`, which is a curve-format/evidence label, not an
+outcome-approval status.
+
+**Draft proposed requirement (do not conflate the two vocabularies):**
+
+1. Do not assume an outcome-approval status (such as `legacy_unapproved`) is automatically the
+   correct artifact-lifecycle vocabulary. Artifact status and outcome-approval status are
+   separate concepts and must not be collapsed into one enum.
+2. Define or propose separate, explicitly named concepts for:
+   - **artifact format and migration status** — e.g. legacy format, current schema version,
+     migrated;
+   - **historical evidence integrity** — the immutable creation-time snapshot is complete
+     and internally consistent (see "Historical artifact integrity and current official-use
+     authorization");
+   - **current authorization status** — whether the artifact is currently authorised for
+     official use against live governance (may be authorised, stale, expired, revoked,
+     ineligible);
+   - **requested-use eligibility** — the specific use (reporting, planning, optimisation,
+     distribution) currently being requested.
+3. The exact artifact-status vocabulary requires human approval before implementation; this
+   record stays draft on this point until then.
+4. This PR does **not** add a new production status enum. It only records the required
+   separation.
+5. Legacy bundle loadability must be preserved: pre-existing `CurveBankEntry` parameter
+   records and pre-Phase-3a run-level curve files remain loadable and usable for their
+   existing purposes, and canonical exports created before the full approval chain exists must
+   never become "official" through missing-field defaults or through the mere fact that
+   `governance_mode="official"` was passed at the time.
 
 ## Publication and use
 
-Separate eligibility must be defined and enforced, per curve, for each use already defined in
+Eligibility must be defined and enforced separately for each use already defined in
 `core.outcome_approval.OUTCOME_USES`:
 
 ```text
@@ -296,17 +454,30 @@ model_fit, technical_reporting, headline_reporting, curve_publication, planning,
 optimisation, value_layer, external_distribution
 ```
 
-A curve being computed does not make it eligible for every use. Official eligibility for each
-use must be derived from the governance chain (above), not asserted by the caller. Exploratory
-curves are never eligible for any use beyond `model_fit`/`technical_reporting`-style internal
-diagnostics without first being regenerated through the authoritative official path.
+- **Official status requires `curve_publication`.** An artifact is classified as an official
+  response curve only with a current, matching outcome approval for `curve_publication`
+  (see Governance chain).
+- **Every downstream use stays independently gated.** `headline_reporting`, `planning`,
+  `optimisation`, `external_distribution`, and `technical_reporting` each require their own
+  current, matching approval for that specific use, plus any additional governance that use
+  requires. `curve_publication` must not automatically grant `planning` or `optimisation`
+  (or any other downstream use).
+- **Diagnostic uses never create official status.** `model_fit` or `technical_reporting`
+  approval alone does not make a curve official.
+- **Exploratory and diagnostic rendering remains separately allowed** where the existing use
+  policy permits it (e.g. `model_fit`/`technical_reporting`-style internal diagnostics).
+  Exploratory curves are never eligible for `curve_publication`, `headline_reporting`,
+  `planning`, `optimisation`, `value_layer`, or `external_distribution` without first being
+  regenerated through the authoritative official path.
+- A curve being computed does not make it eligible for any use. Eligibility is derived from
+  the governance chain (above), not asserted by the caller.
 
 ## Testing requirements (for the follow-on implementation PRs, not this record)
 
-The following future test coverage must be identified by the PR 93B/93C/93D/93E
-implementation plans before it is added to `docs/approved_requirements/index.json`'s
-`required_tests`. This record deliberately does not create test node IDs for
-not-yet-written code, per the requirements-index conformance test
+The following future test coverage must be identified by the follow-on implementation plans
+(PR 94B approval; PR 95A-95F schema, service, governance, revalidation, migration, and UI
+work; PR 96A/96B future assumptions) before it is added to
+`docs/approved_requirements/index.json`'s `required_tests`. This record deliberately does\nnot create test node IDs for not-yet-written code, per the requirements-index conformance\ntest
 (`ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable`),
 which requires every listed node to be real and collectable.
 
@@ -314,12 +485,19 @@ Required future coverage areas:
 
 ```text
 shared model curves; market-specific curves; model-input curves; monetary curves;
-multi-market FX; reference contexts; counterfactuals; support and extrapolation;
-component reconciliation; channel economics; posterior aggregation;
-approval-chain mismatch (official curve blocked when any governance element is missing,
-including when activity_definitions is omitted entirely); legacy migration
-(legacy_unapproved classification); malformed-file audit (no silent skip);
-UI exploratory-vs-official labelling; project export and import (round-trip)
+multi-market FX; reference contexts (including missing, extra, partial, and explicitly-zero
+context values — acceptance tests required by the Reference-context contract);
+counterfactuals; support and extrapolation; planning_support_eligible downstream enforcement
+(planning/optimisation consumers blocked when eligibility is false, with a non-empty
+planning_blocked_reason; aggregation/persistence preserving the strictest eligibility state);
+component reconciliation under the approved allocation convention; channel economics;
+posterior aggregation; approval-chain mismatch (official curve blocked when any governance
+element is missing, including when activity_definitions is omitted entirely and when a
+curve_publication approval is missing or stale); current-use revalidation (a historically
+valid artifact blocked once current governance is stale/expired/revoked); historical
+artifact-integrity round-trip; artifact status and outcome-approval status kept separate;
+malformed-file audit (no silent skip); UI exploratory-vs-official labelling; project export
+and import (round-trip)
 ```
 
 ## Owner
@@ -344,3 +522,39 @@ the governance gap documented in the maintainer's own description of
 `governance_mode="official"` gate (activity/cost-mapping only, no `ModelApproval` binding at
 all) is a larger, more ambiguous redesign question ... noted as a remaining limitation, not
 addressed here."* Full supporting evidence: `docs/curve_authority_gap_analysis.md`.
+
+PR 94A (this record) revises this draft to address the five review findings added to
+`papayasamosa/MMM-Guide#93` after its merge (official status requires `curve_publication`;
+approved inverse link rather than universal `exp`; complete reference-context coverage;
+reuse of the existing `planning_support_eligible` field; separation of historical
+reproducibility from current-use authorization) and the additional defects identified during
+re-review (eta-share allocation is a versioned convention, not a unique causal decomposition;
+artifact status is separate from outcome-approval status; overstated current-state claims
+corrected). This revision is a correction of the draft, not an approval.
+
+## Human approval checklist (unresolved decisions)
+
+The coding agent cannot approve these; the user must decide. The requirement stays `draft`
+until each is explicitly approved.
+
+1. **Confirm `curve_publication` is mandatory for official artifact status** (Work package A:
+   official status requires a current, matching outcome approval for `curve_publication`;
+   downstream uses stay separately gated; diagnostic uses never create official status).
+2. **Confirm Option B remains the preferred architecture** (from
+   `docs/curve_authority_gap_analysis.md`): `CurveBankEntry` remains a parameter-snapshot
+   registry; a separate canonical evaluated artifact becomes the official curve.
+3. **Approve the component-allocation convention or require a different method.**
+   Currently the implementation uses incremental-eta share
+   (`component_response_allocation_method="incremental_eta_share"`). Decision: keep
+   eta-share as an explicitly approved reporting convention, adopt Shapley, adopt explicit
+   counterfactual component decomposition, or require a separate approved causal method —
+   the method must be named, versioned, persisted, and tested.
+4. **Approve the artifact lifecycle and current-use status vocabulary** (Work package G:
+   artifact format/migration status, historical evidence integrity, current authorization
+   status, requested-use eligibility — kept separate from `OUTCOME_APPROVAL_STATUSES`).
+5. **Confirm whether exploratory monetary curves must always require approved cost
+   mappings or may use explicitly labelled draft assumptions.**
+6. **Confirm which current uses require revalidation and which historical exports may
+   remain viewable after approval expiry** (Work package E: current-use authorization is
+   revalidated at each official use; historical evidence is preserved but does not imply
+   current authorization).

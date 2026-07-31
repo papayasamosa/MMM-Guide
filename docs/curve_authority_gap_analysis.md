@@ -4,13 +4,65 @@ Status: analysis supporting `docs/approved_requirements/REQ-CURVE-001.md` (draft
 document does not itself approve an implementation; it is the evidence base the human
 reviewer uses to approve or amend REQ-CURVE-001.
 
-Reviewed at `main` commit `b4436af8ca76afdba495ce255bb9b71ed25ca895` (PR #92 merged; no open
-pull requests at review time). Locked dependency versions (`pyproject.toml`): `pymc==5.28.5`,
-`pymc-marketing==0.19.2` (Python 3.11) / `0.19.4` (Python 3.12), `arviz==0.23.4`,
-`pandas>=2.0.0`.
+Reviewed at `main` commit `877add6cac7016ae285980936207643a3bb3de48` (PR #93 merged; no open
+pull requests at review time). The PR 93A draft received five review findings after its merge
+(section "PR 93 review findings" below); PR 94A revises both this analysis and the draft
+requirement to address them. Locked dependency versions (`pyproject.toml`):
+`pymc==5.28.5`, `pymc-marketing==0.19.2` (Python 3.11) / `0.19.4` (Python 3.12),
+`arviz==0.23.4`, `pandas>=2.0.0`.
 
 No MMM equation, prior, likelihood, adstock, saturation, attribution, curve calculation, or
-optimiser mathematical changes are proposed or made by this document or by PR 93A.
+optimiser mathematical changes are proposed or made by this document or by PR 93A / PR 94A.
+
+---
+
+## PR 93 review findings and how PR 94A addresses them
+
+The five findings below were posted by the automated reviewer on `papayasamosa/MMM-Guide#93`
+after the PR was merged (`877add6`). They are reproduced here so the reader can verify that
+PR 94A actually addresses each one; REQ-CURVE-001 remains `draft`.
+
+1. **P1 — Require curve-publication approval for official status.** `OUTCOME_USES` includes
+   `model_fit` and `technical_reporting` (diagnostic/fitting uses), so the draft's "eligible
+   for at least one" definition let a curve approved only for model fitting count as
+   official. **PR 94A:** official status now requires a current, matching outcome approval
+   for `curve_publication`; every downstream use stays independently gated; `model_fit`/
+   `technical_reporting` alone never create official status (REQ-CURVE-001, Definitions,
+   Governance chain, Publication and use).
+2. **P2 — Apply the model's approved inverse link.** The draft's universal `mu = exp(eta)`
+   would force the wrong scale for any future non-log-link outcome model. **PR 94A:** the
+   general rule is now the fitted model's approved inverse link; `exp(eta)` is stated as the
+   current count-model family only, not a permanent cross-model invariant (Mathematical
+   contract).
+3. **P1 — Validate complete reference contexts before publication.**
+   `CurveReferenceContext.__post_init__` accepts empty/partial mappings and
+   `steady_state_outcome_response` silently substitutes `0.0`, so the class does not already
+   satisfy the no-implicit-zero contract. **PR 94A:** the current-state claim is corrected,
+   and a complete-coverage requirement is added (validate keys against fitted model
+   metadata/parameter structure; every fitted promo/control/outcome-control/Fourier/market/
+   other-channel input covered; explicit governed zeros only; missing keys fail closed; extra
+   keys surfaced; fingerprints bind keys and values; acceptance tests for missing/extra/
+   partial/explicit-zero contexts).
+4. **P2 — Reuse the existing planning-support gate.** The draft claimed a
+   `planning_eligible` flag was missing, but `canonical_curves.py` already writes
+   `planning_support_eligible` and `planning_blocked_reason` on every draw and
+   `test_missing_support_is_unknown_and_blocks_planning` verifies the behaviour. **PR 94A:**
+   the draft no longer proposes a duplicate field; the actual gap (downstream enforcement by
+   planning/optimisation consumers) is what the requirement now states.
+5. **P1 — Revalidate mutable approvals when an artifact is used.** Self-contained
+   fingerprints prove only historical internal consistency; they cannot detect later
+   expiry/revocation/supersession. **PR 94A:** the requirement now separates historical
+   artifact integrity (immutable creation-time snapshot) from current official-use
+   authorization (revalidation against live governance at every official use), with a
+   fail-closed use-time gate.
+
+PR 94A also corrects defects found during re-review beyond the five threads: eta-share
+component allocation is labelled a versioned reconciliation convention, not a unique causal
+decomposition (Work package F); artifact status is separated from outcome-approval status
+rather than reusing `legacy_unapproved` as an artifact label (Work package G); and
+overstated current-state claims are corrected with explicit current-implemented-behaviour /
+approved-invariant / draft-proposed-requirement / known-implementation-gap /
+future-capability labels (Work package H).
 
 ---
 
@@ -86,7 +138,16 @@ name `export_canonical_curve_bank`).
   outcome controls, other-channel media input, counterfactual value/axis type, context mode,
   and reference period, with `__post_init__` validation (L168-189: finite/non-negative
   checks, `mode`/`counterfactual_axis_type` enum checks). `.to_dict()` stamps
-  `"schema_version": 2` (L202-223).
+  `"schema_version": 2` (L202-223). **Completeness caveat (PR 94A correction):**
+  `__post_init__` validates the values that are *present*; it does **not** verify that every
+  fitted promotion, common-control, outcome-control, Fourier, market, and other-channel
+  input is represented. Empty or partial mappings are accepted, and
+  `core.predict.steady_state_outcome_response` (L425-488) silently substitutes defaults for
+  missing keys (`trend→1.0`, `fourier→zeros`, `promo→0.0`, `controls→0.0`,
+  `outcome_controls→0.0`), so the existence of `CurveReferenceContext` is not by itself
+  complete reference-context coverage — the draft's "already covers" wording overstated the
+  current state. PR 94A adds a separate completeness requirement (missing keys fail closed,
+  explicit governed zeros only, extra keys surfaced).
 - `_normalise_support()` (L312-460) type-checks `MediaInputSupport` vs `MonetarySpendSupport`
   per `curve_type` and raises `TypeError` on a mismatch. **Hill K is never used as observed
   support** (confirmed by exhaustive grep — `hill_K` is read only for saturation math).
@@ -193,11 +254,11 @@ name `export_canonical_curve_bank`).
 | Reference context | Not present at all | Required, validated (`CurveReferenceContext.__post_init__`) |
 | Counterfactual | Not present at all | Required (`counterfactual_value`/`counterfactual_axis_type`, defaulted but always present and persisted) |
 | Observed support | Not present | Typed, validated, never fabricated; missing → `NaN` + `SUPPORT_MISSING` status |
-| Planning support | Not present | Present as a distinct optional range |
+| Planning support | Not present | Present as a distinct optional range; every draw also carries `planning_support_eligible` (true only when observed support is available) and `planning_blocked_reason` (L1723-1726), but **no downstream planning/optimisation consumer reads them yet** — enforcement is the actual gap |
 | Media-input specification | `input_type`/`unit_type` fields exist but are not independently validated against `MediaInputSpec` | `MediaInputSpec`/`MediaInputSupport` typed and validated |
 | Cost mapping | Not referenced by `curve_bank.py` (handled separately for media-unit entries via `core.media_units`) | **Required unconditionally** for monetary curves, in both governance modes |
 | Currency/FX | `currency`/`cost_per_unit` fields exist on `CurveBankEntry` but are not independently validated | **Required** for multi-market monetary curves (ISO codes, FX as-of date, resolvable rate) |
-| Planning semantics | Not present | Not present (deferred to PR 94A/94B per the roadmap) |
+| Planning semantics | Not present | Not present (deferred to the governed future-assumptions work, PR 96A/96B per the roadmap) |
 | Uncertainty | Not on the stored entry; available only via the separate `core/uncertainty.py` opt-in re-run | Draw-level by construction |
 | Extrapolation status | Not present | Present via support status (`is_extrapolated`, per `docs/canonical_curves.md` L91) |
 
@@ -254,11 +315,11 @@ sole calculation path for new official curves, and introduce a new
 |---|---|
 | Mathematical correctness | Strong — inherits the already-correct draw-level, context/counterfactual contract |
 | Outcome-scale interpretation | Strong — already enforced by `_predict`/`_economic_values` |
-| Governance completeness | Strong, but only *after* this PR's follow-on work (PR 93B/93C) closes the current gap — not automatic from Option A alone |
+| Governance completeness | Strong, but only *after* the follow-on work (PR 95A/95B) closes the current gap — not automatic from Option A alone |
 | Auditability | Strong — fingerprints (`activity_definitions_fingerprint`, `monetary_governance_fingerprint`) already exist and can be made unconditional |
 | Backward compatibility | Requires an explicit legacy-migration story (Section 7) since `CurveBankEntry` records must not silently become "official" under the new contract |
 | Schema migration | New work required — no row-level schema version exists across the whole export today, and no import/round-trip path exists at all |
-| UI migration | Largest lift — `07_Results_Curve_Bank.py` currently uses neither `canonical_curves` nor an application service; a full UI migration is required (PR 93D) |
+| UI migration | Largest lift — `07_Results_Curve_Bank.py` currently uses neither `canonical_curves` nor an application service; a full UI migration is required (PR 95E) |
 | Future sequential planning | Compatible — `CurveReferenceContext` already has a `mode` field; sequential is additive, not a redesign |
 | Multi-market currency | Strong — already enforced | 
 | Media-input vs monetary units | Strong — already enforced via `curve_type`/`MediaInputSpec` |
@@ -327,13 +388,14 @@ through a new application-service governance layer.
 - **Calculation source of truth:** `ancestry_mmm/core/canonical_curves.py`
   (`generate_canonical_curve_draws` → `aggregate_curve_draws`/`summarize_curve_draws`). No
   change to its mathematical contract is proposed here.
-- **Application-service boundary:** a new module (naming TBD in PR 93B, e.g.
+- **Application-service boundary:** a new module (naming TBD in PR 95A, e.g.
   `ancestry_mmm/application/curve_service.py`, mirroring the existing
   `diagnostics_service.py`/`validation_service.py`/`project_service.py` pattern) that
-  *requires* — not merely accepts — the full governance chain listed in Section 3 before
-  calling `generate_canonical_curve_draws`, and that makes the current activity-approval
-  check unconditional for official monetary curves rather than skippable by omitting
-  `activity_definitions`.
+  *requires* — not merely accepts — the full governance chain listed in Section 3
+  (including a current `curve_publication` outcome approval and complete reference
+  contexts) before calling `generate_canonical_curve_draws`, and that makes the current
+  activity-approval check unconditional for official monetary curves rather than skippable
+  by omitting `activity_definitions`.
 - **Persisted official artifact:** a new, versioned type (not `CurveBankEntry`), replacing or
   extending `export_canonical_curve_bank`'s current write-only Parquet+JSON export with a
   format that has a real row/artifact-level schema version, round-trip import, and audited
@@ -348,10 +410,20 @@ through a new application-service governance layer.
   structurally distinct, non-persistable (or distinctly-typed) result — not the same
   DataFrame schema silently relabelled, so a UI or downstream consumer cannot mistake one for
   the other by inspecting only a string field.
-- **Publication eligibility:** gated per Section 3's governance chain and reusing the
-  existing `OUTCOME_USES` vocabulary already defined in `ancestry_mmm/core/outcome_approval.py`
-  (`curve_publication`, `planning`, `optimisation`, `headline_reporting`, `technical_reporting`,
-  `external_distribution`) rather than inventing a parallel vocabulary.
+- **Publication eligibility:** official status requires a current, matching outcome approval
+  for `curve_publication` (PR 94A correction for review finding 1); every downstream use
+  (`planning`, `optimisation`, `headline_reporting`, `technical_reporting`,
+  `external_distribution`) is independently gated on its own current, matching approval.
+  Reuses the existing `OUTCOME_USES` vocabulary already defined in
+  `ancestry_mmm/core/outcome_approval.py` rather than inventing a parallel vocabulary.
+- **Planning-support enforcement:** the official service and every planning/optimisation
+  consumer must enforce the existing `planning_support_eligible` value and a non-empty
+  `planning_blocked_reason` when ineligible; no duplicate `planning_eligible` field is
+  introduced (PR 94A correction for review finding 4).
+- **Artifact status is separate from outcome-approval status:** the new artifact keeps its
+  own lifecycle vocabulary (format/migration status, historical evidence integrity, current
+  authorization status, requested-use eligibility) and does not reuse `legacy_unapproved` as
+  an artifact label (PR 94A correction, Work package G).
 
 Option B is chosen over Option A specifically because Option A's wording ("make
 `canonical_curves` authoritative... introduce an application service") does not by itself
@@ -368,38 +440,43 @@ permanent as part of the recommendation itself, at no extra implementation cost 
 ## 7. Migration sequence
 
 This document does not implement any of the following; it records the staged sequence for
-human review, matching the follow-on PRs already named in the task brief (93B-93G).
+human review, matching the follow-on PRs named in the task brief after PR 94A (the corrected
+plan supersedes the earlier PR 93B-93G numbering; PR 93B was never merged to `main`).
 
-1. **PR 93B** — Define the new official-artifact schema (versioned, JSON-safe metadata,
+0. **PR 94A (this PR)** — Correct the draft requirement and this analysis; the requirement
+   stays `draft`. No code, schema, persistence, or UI change.
+1. **PR 94B** — After the user explicitly approves REQ-CURVE-001 and its human-decided
+   options, approve the requirement (change `status` to `approved_for_implementation`) and
+   register the implementation acceptance tests named in the requirement's Testing
+   requirements section.
+2. **PR 95A** — Define the new official-artifact schema (versioned, JSON-safe metadata,
    portable draw/summary tables, deterministic fingerprints, round-trip import, migration
-   hooks) and the new application-service module. No behavior change to any existing
+   hooks) and the new `CurveService` application boundary. No behavior change to any existing
    generator yet.
-2. **PR 93C** — Route `generate_canonical_curve_draws` calls for official curves exclusively
-   through the new service; make the activity-approval check unconditional (not
-   omission-skippable) for official monetary curves; bind `ModelApproval`/`ThresholdPolicy`/
-   `ApprovalReadiness`/`DiagnosticsArtefact` checks into the service. Existing direct callers
-   of `generate_canonical_curve_draws` (tests, any exploratory tooling) continue to work
-   unchanged in `governance_mode="exploratory"`.
-3. **PR 93D** — Migrate `07_Results_Curve_Bank.py` (or a new page) to render the new official
+3. **PR 95B** — Route `generate_canonical_curve_draws` calls for official curves exclusively
+   through the service; require the full governance chain including a current `curve_publication`
+   outcome approval; make the activity-approval check unconditional (not omission-skippable)
+   for official monetary curves; require complete reference contexts (missing keys fail
+   closed, explicit governed zeros only); enforce `planning_support_eligible` downstream.
+4. **PR 95C** — Add current-use revalidation and artifact staleness checks: at every official
+   use, revalidate against current threshold policy, current outcome approval for the
+   requested use, current activity approval, staleness, and revocation/expiry (Historical
+   artifact integrity vs. current official-use authorization).
+5. **PR 95D** — Add canonical artifact import, migration, and malformed-file audit (no
+   silent `continue`), preserving legacy bundle loadability; keep artifact status separate
+   from outcome-approval status per the human-approved vocabulary from Work package G.
+6. **PR 95E** — Migrate `07_Results_Curve_Bank.py` (or a new page) to render the new official
    artifact for governed views, while the existing point-estimate `generate_channel_curve`/
    `generate_market_channel_curve` viewer remains available and explicitly labelled
-   exploratory/legacy per `AGENTS.md`'s existing "Required labels" rules (L34-53).
-4. **PR 93E** — Migrate persistence: add the malformed-file audit path (replacing
-   `load_all_entries()`'s silent `continue`), and classify every pre-existing `CurveBankEntry`
-   and any canonical export produced before PR 93C as `legacy_unapproved` (reusing the
-   existing `outcome_approval.py` vocabulary, L104-111) rather than inventing a new label —
-   loadable, displayable, but never presented as eligible for official use without
-   revalidation.
-5. **PR 93F** — Add full curve authorization and provenance fingerprints (extending
-   `activity_definitions_fingerprint`/`monetary_governance_fingerprint` to also bind
-   `ModelApproval`/`ApprovalReadiness`/`DiagnosticsArtefact` identity, and making fingerprint
-   presence unconditional rather than only-when-`activity_rows`-non-empty).
-6. **PR 93G** — Retire *official* use of `generate_channel_curve`/`generate_market_channel_curve`
-   (i.e., stop offering them as a path to a governed official artifact) while keeping them
-   available for exploratory/legacy display, satisfying the requirement that legacy bundles
-   remain loadable without being treated as current official artifacts.
+   exploratory/legacy.
+7. **PR 95F** — Retain legacy parameter snapshots (`CurveBankEntry`) but remove any
+   official-curve labelling from them; they remain loadable and usable for calibration
+   tracking and evidence-tier display, never presented as current official artifacts.
+8. **PR 96A/96B** — Draft and implement governed future-assumption requirements (including
+   sequential curves) and scenario persistence.
+9. **PR 97A** — Hardening: strengthen coverage, warnings, typing, browser E2E, and Bayesian
+   recovery.
 
-Sequential planning (PR 94A/94B) and downstream planning/optimisation/forecasting work
-(capacity-constrained Search, Chronos-2, full-funnel mediator simulation, real UK/AU/CA data)
-are explicitly out of scope until this governance and persistence sequence is approved and
-merged, per the task brief.
+Downstream planning/optimisation/forecasting work (capacity-constrained Search, Chronos-2,
+full-funnel mediator simulation, real UK/AU/CA data) is explicitly out of scope until this
+governance and persistence sequence is approved and merged, per the task brief.
