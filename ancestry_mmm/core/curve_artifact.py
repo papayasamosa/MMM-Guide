@@ -23,10 +23,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Mapping, Tuple
+from typing import Dict, List, Mapping, Tuple
 
 import pandas as pd
 
@@ -100,6 +100,15 @@ class CurveArtifactError(Exception):
     Following the repository's existing pattern
     (``MalformedArtefactEvidenceError``), a missing, malformed, tampered, or
     unknown-version artifact raises this error; it is never silently skipped.
+    """
+
+
+class CurveArtifactUnsupportedSchemaError(CurveArtifactError):
+    """A curve artifact uses a schema version this loader cannot migrate.
+
+    Distinct from a generic malformed file: an unsupported schema version is
+    a forward-compatibility failure and is audited as such (never silently
+    discarded).
     """
 
 
@@ -353,7 +362,7 @@ def migrate_curve_artifact_metadata(
     version = payload.get("schema_version")
     if version == CURVE_ARTIFACT_SCHEMA_VERSION:
         return dict(payload)
-    raise CurveArtifactError(
+    raise CurveArtifactUnsupportedSchemaError(
         f"Unsupported curve artifact schema_version {version!r}; supported: "
         f"{CURVE_ARTIFACT_SCHEMA_VERSION}"
     )
@@ -484,3 +493,200 @@ def read_curve_artifact(directory: Path) -> CurveArtifact:
 
     verify_curve_artifact_fingerprints(metadata)
     return CurveArtifact(metadata=metadata, draws=draws, summaries=summaries)
+
+
+# ---------------------------------------------------------------------------
+# Store-level import, migration, and malformed-file audit (PR 95D)
+# ---------------------------------------------------------------------------
+#
+# A *store* is a directory whose immediate subdirectories each contain one
+# official curve artifact (the same layout `write_curve_artifact` produces),
+# or a directory that is itself a single artifact. Loading a store never
+# silently skips a file: every artifact directory appears in an audit entry,
+# and the loader fails closed by default.
+
+
+class CurveArtifactStoreError(CurveArtifactError):
+    """Fail-closed error raised when a store contains malformed or
+    unsupported artifacts (the audit is attached to the message)."""
+
+
+@dataclass(frozen=True)
+class CurveArtifactAuditEntry:
+    """One artifact directory's load result.
+
+    ``status`` is one of ``"loaded"``, ``"malformed"``, or
+    ``"unsupported_schema"``; ``error`` carries the reason for anything
+    other than ``"loaded"`` so nothing disappears silently.
+    """
+
+    artifact_dir: Path
+    status: str
+    error: str = ""
+
+
+@dataclass(frozen=True)
+class CurveArtifactStoreLoadResult:
+    """Result of loading a whole store: every artifact plus its audit trail."""
+
+    loaded: Tuple[CurveArtifact, ...] = ()
+    audit: Tuple[CurveArtifactAuditEntry, ...] = ()
+
+    @property
+    def malformed(self) -> Tuple[CurveArtifactAuditEntry, ...]:
+        return tuple(entry for entry in self.audit if entry.status != "loaded")
+
+
+@dataclass(frozen=True)
+class CurveArtifactMigrationEntry:
+    """One artifact directory's migration result."""
+
+    artifact_dir: Path
+    migrated: bool
+    schema_version: int
+    error: str = ""
+
+
+@dataclass(frozen=True)
+class CurveArtifactMigrationResult:
+    """Result of migrating a whole store (per-artifact audit)."""
+
+    entries: Tuple[CurveArtifactMigrationEntry, ...] = ()
+
+    @property
+    def migrated_entries(self) -> Tuple[CurveArtifactMigrationEntry, ...]:
+        return tuple(e for e in self.entries if e.migrated and not e.error)
+
+    @property
+    def failed(self) -> Tuple[CurveArtifactMigrationEntry, ...]:
+        return tuple(e for e in self.entries if e.error)
+
+    @property
+    def migrated_count(self) -> int:
+        return len(self.migrated_entries)
+
+
+def _iter_artifact_dirs(directory: Path) -> List[Path]:
+    """Yield artifact directories: the store root when it is itself an
+    artifact, plus every immediate subdirectory that contains an artifact
+    metadata file (sorted for determinism)."""
+    if (directory / CURVE_ARTIFACT_METADATA_FILENAME).exists():
+        yield directory
+    for child in sorted(path for path in directory.iterdir() if path.is_dir()):
+        if (child / CURVE_ARTIFACT_METADATA_FILENAME).exists():
+            yield child
+
+
+def load_curve_artifact_store(
+    directory: Path,
+    *,
+    raise_on_malformed: bool = True,
+) -> CurveArtifactStoreLoadResult:
+    """Load every official curve artifact under ``directory``.
+
+    Every artifact directory is audited as ``"loaded"``, ``"malformed"``, or
+    ``"unsupported_schema"`` — never silently skipped. When
+    ``raise_on_malformed`` (default), any malformed or unsupported artifact
+    raises ``CurveArtifactStoreError`` (fail closed); otherwise the result
+    carries the audit for the caller to inspect.
+    """
+    directory = Path(directory)
+    if not directory.is_dir():
+        return CurveArtifactStoreLoadResult()
+    loaded: List[CurveArtifact] = []
+    audit: List[CurveArtifactAuditEntry] = []
+    for artifact_dir in _iter_artifact_dirs(directory):
+        try:
+            loaded.append(read_curve_artifact(artifact_dir))
+            audit.append(
+                CurveArtifactAuditEntry(artifact_dir=artifact_dir, status="loaded")
+            )
+        except CurveArtifactUnsupportedSchemaError as exc:
+            audit.append(
+                CurveArtifactAuditEntry(
+                    artifact_dir=artifact_dir,
+                    status="unsupported_schema",
+                    error=str(exc),
+                )
+            )
+        except CurveArtifactError as exc:
+            audit.append(
+                CurveArtifactAuditEntry(
+                    artifact_dir=artifact_dir,
+                    status="malformed",
+                    error=str(exc),
+                )
+            )
+    result = CurveArtifactStoreLoadResult(loaded=tuple(loaded), audit=tuple(audit))
+    if raise_on_malformed and result.malformed:
+        raise CurveArtifactStoreError(
+            f"{len(result.malformed)} curve artifact(s) failed to load: "
+            f"{[entry.error for entry in result.malformed]}"
+        )
+    return result
+
+
+def migrate_curve_artifact_store(
+    directory: Path,
+    *,
+    dry_run: bool = False,
+    raise_on_error: bool = True,
+) -> CurveArtifactMigrationResult:
+    """Apply the schema migration hook to every artifact in a store.
+
+    Each artifact is loaded (the metadata migration hook runs during load),
+    and any artifact whose format migrated (``legacy`` → ``migrated``,
+    REQ-CURVE-001 approved decision 4) is rewritten with recomputed
+    fingerprints. Unsupported schema versions fail closed. ``dry_run``
+    reports what would change without writing.
+    """
+    directory = Path(directory)
+    if not directory.is_dir():
+        return CurveArtifactMigrationResult()
+    entries: List[CurveArtifactMigrationEntry] = []
+    for artifact_dir in _iter_artifact_dirs(directory):
+        try:
+            artifact = read_curve_artifact(artifact_dir)
+        except CurveArtifactError as exc:
+            entries.append(
+                CurveArtifactMigrationEntry(
+                    artifact_dir=artifact_dir,
+                    migrated=False,
+                    schema_version=0,
+                    error=str(exc),
+                )
+            )
+            continue
+        metadata = artifact.metadata
+        new_format_status = (
+            "migrated" if metadata.format_status == "legacy" else metadata.format_status
+        )
+        needs_rewrite = new_format_status != metadata.format_status
+        if needs_rewrite and not dry_run:
+            migrated_metadata = replace(metadata, format_status=new_format_status)
+            migrated_metadata = replace(
+                migrated_metadata,
+                fingerprints=dict(
+                    compute_curve_artifact_fingerprints(migrated_metadata)
+                ),
+            )
+            write_curve_artifact(
+                artifact_dir,
+                metadata=migrated_metadata,
+                draws=artifact.draws,
+                summaries=artifact.summaries,
+            )
+        entries.append(
+            CurveArtifactMigrationEntry(
+                artifact_dir=artifact_dir,
+                migrated=needs_rewrite,
+                schema_version=metadata.schema_version,
+            )
+        )
+    result = CurveArtifactMigrationResult(tuple(entries))
+    if raise_on_error and result.failed:
+        raise CurveArtifactStoreError(
+            f"{len(result.failed)} curve artifact(s) failed to migrate: "
+            f"{[entry.error for entry in result.failed]}"
+        )
+    return result

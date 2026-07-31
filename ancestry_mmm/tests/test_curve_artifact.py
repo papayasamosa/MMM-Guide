@@ -28,9 +28,14 @@ from ancestry_mmm.core.curve_artifact import (
     CurveArtifact,
     CurveArtifactError,
     CurveArtifactMetadata,
+    CurveArtifactMigrationResult,
+    CurveArtifactStoreError,
+    CurveArtifactStoreLoadResult,
     compute_curve_artifact_fingerprints,
     fingerprint_curve_artifact_payload,
+    load_curve_artifact_store,
     migrate_curve_artifact_metadata,
+    migrate_curve_artifact_store,
     read_curve_artifact,
     verify_curve_artifact_fingerprints,
     write_curve_artifact,
@@ -382,3 +387,133 @@ class TestArtifactStatusSeparation:
         assert "legacy_unapproved" not in CURVE_ARTIFACT_FORMAT_STATUSES
         assert "expired" not in CURVE_CURRENT_AUTHORIZATION_STATUSES
         assert "stale" not in CURVE_CURRENT_AUTHORIZATION_STATUSES
+
+
+# ---------------------------------------------------------------------------
+# PR 95D: store-level import, migration, and malformed-file audit
+# ---------------------------------------------------------------------------
+
+
+class TestStoreImportMigrationAudit:
+    @staticmethod
+    def _write_artifact(directory, artifact_id, **metadata_overrides):
+        target = directory / artifact_id
+        target.mkdir(parents=True, exist_ok=True)
+        metadata = _metadata(artifact_id=artifact_id, **metadata_overrides)
+        write_curve_artifact(
+            target, metadata=metadata, draws=_draws(), summaries=_summaries()
+        )
+        return target
+
+    @staticmethod
+    def _write_corrupted_metadata(directory, artifact_id):
+        target = directory / artifact_id
+        target.mkdir(parents=True, exist_ok=True)
+        (target / CURVE_ARTIFACT_METADATA_FILENAME).write_text(
+            "{not valid json", encoding="utf-8"
+        )
+        _draws().to_parquet(target / "curve_artifact_draws.parquet", index=False)
+        _summaries().to_parquet(
+            target / "curve_artifact_summaries.parquet", index=False
+        )
+        return target
+
+    @staticmethod
+    def _write_unsupported_schema(directory, artifact_id):
+        target = directory / artifact_id
+        target.mkdir(parents=True, exist_ok=True)
+        payload = _metadata().to_dict()
+        payload["schema_version"] = 99
+        envelope = {
+            "schema_version": 99,
+            "metadata": payload,
+            "draws_fingerprint": "x",
+            "summaries_fingerprint": "y",
+        }
+        (target / CURVE_ARTIFACT_METADATA_FILENAME).write_text(
+            json.dumps(envelope), encoding="utf-8"
+        )
+        _draws().to_parquet(target / "curve_artifact_draws.parquet", index=False)
+        _summaries().to_parquet(
+            target / "curve_artifact_summaries.parquet", index=False
+        )
+        return target
+
+    def test_missing_store_is_empty(self, tmp_path):
+        result = load_curve_artifact_store(tmp_path / "does-not-exist")
+        assert isinstance(result, CurveArtifactStoreLoadResult)
+        assert result.loaded == ()
+        assert result.audit == ()
+
+    def test_loads_multiple_artifacts_with_audit(self, tmp_path):
+        self._write_artifact(tmp_path, "art-a")
+        self._write_artifact(tmp_path, "art-b")
+        result = load_curve_artifact_store(tmp_path)
+        assert len(result.loaded) == 2
+        assert len(result.audit) == 2
+        assert all(entry.status == "loaded" for entry in result.audit)
+        assert {entry.artifact_dir.name for entry in result.audit} == {"art-a", "art-b"}
+
+    def test_store_roundtrip_preserves_artifacts(self, tmp_path):
+        self._write_artifact(tmp_path, "art-a")
+        result = load_curve_artifact_store(tmp_path)
+        assert result.loaded[0].metadata.artifact_id == "art-a"
+        assert not result.loaded[0].draws.empty
+
+    def test_single_artifact_directory_is_a_store(self, tmp_path):
+        self._write_artifact(tmp_path, "art-a")  # artifact dir itself is the store
+        result = load_curve_artifact_store(tmp_path / "art-a")
+        assert len(result.loaded) == 1
+        assert result.loaded[0].metadata.artifact_id == "art-a"
+
+    def test_malformed_artifact_is_audited_and_fails_closed(self, tmp_path):
+        self._write_artifact(tmp_path, "art-good")
+        self._write_corrupted_metadata(tmp_path, "art-bad")
+        with pytest.raises(CurveArtifactStoreError, match="failed to load"):
+            load_curve_artifact_store(tmp_path)
+
+    def test_malformed_artifact_audit_inspectable_without_raising(self, tmp_path):
+        self._write_artifact(tmp_path, "art-good")
+        self._write_corrupted_metadata(tmp_path, "art-bad")
+        result = load_curve_artifact_store(tmp_path, raise_on_malformed=False)
+        assert len(result.loaded) == 1
+        malformed = result.malformed
+        assert len(malformed) == 1
+        assert malformed[0].artifact_dir.name == "art-bad"
+        assert malformed[0].status == "malformed"
+        assert malformed[0].error  # the reason is never hidden
+
+    def test_unsupported_schema_is_audited_as_unsupported(self, tmp_path):
+        self._write_unsupported_schema(tmp_path, "art-future")
+        result = load_curve_artifact_store(tmp_path, raise_on_malformed=False)
+        assert result.malformed[0].status == "unsupported_schema"
+        assert "schema_version" in result.malformed[0].error
+
+    def test_migration_dry_run_reports_legacy_stamp_without_writing(self, tmp_path):
+        target = self._write_artifact(tmp_path, "art-legacy", format_status="legacy")
+        result = migrate_curve_artifact_store(tmp_path, dry_run=True)
+        assert isinstance(result, CurveArtifactMigrationResult)
+        assert result.migrated_count == 1
+        assert result.failed == ()
+        # dry run must not rewrite the persisted metadata
+        assert read_curve_artifact(target).metadata.format_status == "legacy"
+
+    def test_migration_rewrites_legacy_format_and_reloads(self, tmp_path):
+        target = self._write_artifact(tmp_path, "art-legacy", format_status="legacy")
+        result = migrate_curve_artifact_store(tmp_path)
+        assert result.migrated_count == 1
+        migrated = read_curve_artifact(target)
+        assert migrated.metadata.format_status == "migrated"
+        # fingerprints were recomputed and verify on reload (fail closed)
+        assert migrated.draws.equals(_draws())
+
+    def test_migration_fails_closed_on_unsupported_schema(self, tmp_path):
+        self._write_unsupported_schema(tmp_path, "art-future")
+        with pytest.raises(CurveArtifactStoreError, match="failed to migrate"):
+            migrate_curve_artifact_store(tmp_path)
+
+    def test_migration_identity_for_current_format(self, tmp_path):
+        self._write_artifact(tmp_path, "art-current")
+        result = migrate_curve_artifact_store(tmp_path)
+        assert result.migrated_count == 0
+        assert result.failed == ()
