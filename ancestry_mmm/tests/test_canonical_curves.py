@@ -1,3 +1,4 @@
+import dataclasses
 import json
 
 import arviz as az
@@ -14,6 +15,7 @@ from ancestry_mmm.core.canonical_curves import (
     ComponentCostAllocation,
     CurveReferenceContext,
     PortfolioPerturbation,
+    ReferenceContextIncompleteError,
     aggregate_curve_draws,
     aggregate_portfolio_marginal,
     canonical_governance_views,
@@ -23,6 +25,7 @@ from ancestry_mmm.core.canonical_curves import (
     reference_context_from_model_frame,
     summarize_curve_draws,
     support_from_model_frame,
+    validate_reference_context_completeness,
 )
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
 from ancestry_mmm.core.media_costs import (
@@ -1023,3 +1026,122 @@ def test_reference_context_migrates_legacy_spend_names():
     assert restored.other_channel_media_input == {"TV": 10.0}
     assert restored.counterfactual_value == 2.0
     assert "other_channel_spend" not in restored.to_dict()
+
+
+# ---------------------------------------------------------------------------
+# REQ-CURVE-001: reference-context completeness (PR 95B)
+# ---------------------------------------------------------------------------
+
+
+class TestReferenceContextCompleteness:
+    """REQ-CURVE-001 reference-context contract: every fitted promotion, common
+    control, outcome-specific control, Fourier term, market, and other-channel
+    input must be covered; missing keys fail closed; extra unknown keys are
+    surfaced as a schema mismatch; a zero is allowed only as an explicit
+    persisted value."""
+
+    @staticmethod
+    def _params(meta):
+        return extract_posterior_params(_trace(), meta)
+
+    def test_complete_context_passes(self, meta):
+        params = self._params(meta)
+        for context in _contexts().values():
+            validate_reference_context_completeness(context, meta, params)
+
+    def test_missing_promo_outcome_fails(self, meta):
+        context = _contexts()["UK"]
+        missing = dataclasses.replace(
+            context,
+            promo={k: v for k, v in context.promo.items() if k != "dna_kit"},
+        )
+        with pytest.raises(ReferenceContextIncompleteError, match="promo.*missing"):
+            validate_reference_context_completeness(missing, meta, self._params(meta))
+
+    def test_extra_promo_key_fails(self, meta):
+        base = _contexts()["UK"]
+        context = dataclasses.replace(base, promo={**base.promo, "not_an_outcome": 0.0})
+        with pytest.raises(
+            ReferenceContextIncompleteError, match="promo.*extra unknown"
+        ):
+            validate_reference_context_completeness(context, meta, self._params(meta))
+
+    def test_missing_common_control_fails(self, meta):
+        context = dataclasses.replace(_contexts()["UK"], controls={})
+        with pytest.raises(ReferenceContextIncompleteError, match="controls.*missing"):
+            validate_reference_context_completeness(context, meta, self._params(meta))
+
+    def test_extra_control_fails(self, meta):
+        context = dataclasses.replace(
+            _contexts()["UK"], controls={"macro": 0.4, "unemployment": 1.0}
+        )
+        with pytest.raises(
+            ReferenceContextIncompleteError, match="controls.*extra unknown"
+        ):
+            validate_reference_context_completeness(context, meta, self._params(meta))
+
+    def test_missing_other_channel_input_fails(self, meta):
+        context = dataclasses.replace(
+            _contexts()["UK"], other_channel_media_input={"TV": 20.0}
+        )
+        with pytest.raises(
+            ReferenceContextIncompleteError,
+            match="other_channel_media_input.*missing",
+        ):
+            validate_reference_context_completeness(context, meta, self._params(meta))
+
+    def test_extra_other_channel_input_fails(self, meta):
+        context = dataclasses.replace(
+            _contexts()["UK"],
+            other_channel_media_input={"TV": 20.0, "DNA": 30.0, "Radio": 5.0},
+        )
+        with pytest.raises(
+            ReferenceContextIncompleteError,
+            match="other_channel_media_input.*extra unknown",
+        ):
+            validate_reference_context_completeness(context, meta, self._params(meta))
+
+    def test_wrong_market_fails(self, meta):
+        context = dataclasses.replace(_contexts()["UK"], market="FR")
+        with pytest.raises(ReferenceContextIncompleteError, match="market"):
+            validate_reference_context_completeness(context, meta, self._params(meta))
+
+    def test_wrong_fourier_length_fails(self, meta):
+        context = dataclasses.replace(_contexts()["UK"], fourier=(0.25, 0.5))
+        with pytest.raises(ReferenceContextIncompleteError, match="fourier"):
+            validate_reference_context_completeness(context, meta, self._params(meta))
+
+    def test_outcome_controls_extra_outcome_key_fails(self, meta):
+        context = dataclasses.replace(
+            _contexts()["UK"], outcome_controls={"fh_new": {}}
+        )
+        with pytest.raises(
+            ReferenceContextIncompleteError,
+            match="outcome_controls.*extra unknown outcome",
+        ):
+            validate_reference_context_completeness(context, meta, self._params(meta))
+
+    def test_outcome_controls_missing_fitted_control_fails(self, meta):
+        params = dataclasses.replace(
+            self._params(meta),
+            outcome_control_coef={"fh_new": {"unemployment": 0.5}},
+        )
+        context = dataclasses.replace(
+            _contexts()["UK"], outcome_controls={"fh_new": {}}
+        )
+        with pytest.raises(
+            ReferenceContextIncompleteError,
+            match=r"outcome_controls\[fh_new\].*missing",
+        ):
+            validate_reference_context_completeness(context, meta, params)
+
+    def test_outcome_controls_explicit_zero_passes(self, meta):
+        params = dataclasses.replace(
+            self._params(meta),
+            outcome_control_coef={"fh_new": {"unemployment": 0.5}},
+        )
+        context = dataclasses.replace(
+            _contexts()["UK"], outcome_controls={"fh_new": {"unemployment": 0.0}}
+        )
+        # an explicit zero is a persisted governed value, not a silent default
+        validate_reference_context_completeness(context, meta, params)
