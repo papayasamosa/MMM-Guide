@@ -27,7 +27,7 @@ isn't built yet.
 - **Approval** - a reviewer's sign-off on a specific fitted model, required before it can be used
   for planning; invalidated automatically the moment the data, specification, or posterior it was
   approved against changes.
-- **Curve Bank** - a versioned store of an approved model's response curves and segment parameters.
+- **Curve Bank** - a versioned store of an approved model's fitted parameter snapshots (Hill/decay/beta point estimates) for calibration tracking and evidence-tier display; parameter snapshots, never presented as official response curves.
 
 ## Market-specific redesign terms
 

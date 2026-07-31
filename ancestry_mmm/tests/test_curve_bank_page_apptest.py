@@ -320,7 +320,8 @@ def test_official_approval_with_matching_policy_and_readiness_allows_save():
     at.run()
     assert not at.exception, f"page raised: {at.exception}"
     assert any(
-        "will record this approval on every curve saved" in (c.value or "")
+        "will record this approval on every curve entry (fitted parameter snapshot) saved"
+        in (c.value or "")
         for c in at.caption
     )
     assert not any(
@@ -433,6 +434,27 @@ def test_both_make_entries_calls_thread_readiness_and_policy():
     assert source.count("approval_readiness=current_readiness") == 4
     assert source.count("current_policy=current_policy") == 3
     assert "ValidationPolicyBlockedError" in source
+
+
+def test_curve_bank_section_labels_entries_as_parameter_snapshots_not_official():
+    """PR 95F (REQ-CURVE-001): the page must present legacy curve bank entries
+    as fitted parameter snapshots (the required qualifier) and must never
+    attach 'official' labelling to the legacy curve bank itself - official
+    rendering is confined to the 'Official curve artifacts' section."""
+    source = "\n".join(
+        line
+        for line in PAGE.read_text(encoding="utf-8").split("\n")
+        if not line.strip().startswith("#")
+    )
+    # Section caption under "## Curve bank" carries the qualifier.
+    assert "fitted parameter snapshots" in source
+    # The save flow labels what is saved as a fitted parameter snapshot.
+    assert "every curve entry (fitted parameter snapshot) saved" in source
+    # The legacy curve bank is never called official.
+    assert "official curve bank" not in source
+    # The qualifier caption points to the official section as the only
+    # official rendering path.
+    assert "'Official curve artifacts' section." in source
 
 
 # ---------------------------------------------------------------------------
