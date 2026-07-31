@@ -13,9 +13,9 @@ check entirely. This module does not reference `ModelApproval`,
 into this module; it still uses `core.predict.generate_channel_curve`,
 `core.market_specific_predict.generate_market_channel_curve`, and
 `core.curve_bank.CurveBankEntry`. See
-`docs/curve_authority_gap_analysis.md` and the draft
-`docs/approved_requirements/REQ-CURVE-001.md` for the plan to close this gap
-before any UI migration is attempted.
+`docs/curve_authority_gap_analysis.md` and
+`docs/approved_requirements/REQ-CURVE-001.md` (approved for implementation)
+for the plan to close this gap before any UI migration is attempted.
 
 ## Response definition
 

@@ -190,7 +190,7 @@
     },
     {
       "requirement_id": "REQ-CURVE-001",
-      "status": "draft",
+      "status": "approved_for_implementation",
       "record_path": "docs/approved_requirements/REQ-CURVE-001.md",
       "affected_modules": [
         "ancestry_mmm/core/canonical_curves.py",

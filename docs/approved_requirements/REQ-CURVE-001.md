@@ -1,8 +1,7 @@
 # REQ-CURVE-001: Official response curve authority and evidence contract
 
-**Status:** draft — not yet approved for implementation. This record does not authorize any
-code change; it is a proposal for human review.
-**Decision date:** proposed 2026-07-31; pending human approval.
+**Status:** approved for implementation
+**Decision date:** 2026-07-31
 
 ## Decision
 
