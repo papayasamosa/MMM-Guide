@@ -10,6 +10,7 @@ from .config import (
     SUPPORTED_FILE_TYPES,
     CURVE_BANK_ROOT,
     PROJECT_EXPORT_ROOT,
+    CURVE_ARTIFACT_ROOT,
 )
 from .session_state import (
     init_session_state,
@@ -19,6 +20,7 @@ from .session_state import (
     clear_model_state,
     invalidate_governance_evidence,
     curve_bank_dir,
+    curve_artifact_store_dir,
     get_workflow_progress,
     is_step_complete,
 )
@@ -54,6 +56,7 @@ __all__ = [
     "SUPPORTED_FILE_TYPES",
     "CURVE_BANK_ROOT",
     "PROJECT_EXPORT_ROOT",
+    "CURVE_ARTIFACT_ROOT",
     "init_session_state",
     "get_state",
     "set_state",
@@ -61,6 +64,7 @@ __all__ = [
     "clear_model_state",
     "invalidate_governance_evidence",
     "curve_bank_dir",
+    "curve_artifact_store_dir",
     "get_workflow_progress",
     "is_step_complete",
     "DATE_COLUMN_FORMAT",

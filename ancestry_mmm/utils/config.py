@@ -55,6 +55,10 @@ DEFAULT_DNA_LAG_WEEKS = 4
 CURVE_BANK_ROOT = Path(__file__).parent.parent / ".curve_bank_store"
 PROJECT_EXPORT_ROOT = Path(__file__).parent.parent / ".project_exports"
 
+# Official curve artifact store (REQ-CURVE-001, PR 95E) - per-project,
+# not committed to the repo, see .gitignore.
+CURVE_ARTIFACT_ROOT = Path(__file__).parent.parent / ".curve_artifact_store"
+
 # Budget optimization defaults
 OPTIMIZATION_DEFAULTS = {
     "min_budget_pct": 0.10,
