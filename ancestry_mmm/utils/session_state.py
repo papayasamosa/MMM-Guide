@@ -9,6 +9,7 @@ from .config import (
     DEFAULT_DNA_LAG_WEEKS,
     DEFAULT_PARAMS,
     CURVE_BANK_ROOT,
+    CURVE_ARTIFACT_ROOT,
 )
 
 
@@ -126,6 +127,12 @@ def curve_bank_dir() -> Path:
     """Per-project curve bank directory (created on first write)."""
     name = get_state("project_name", "default")
     return CURVE_BANK_ROOT / name
+
+
+def curve_artifact_store_dir() -> Path:
+    """Per-project official curve artifact store directory (created on first write)."""
+    name = get_state("project_name", "default")
+    return CURVE_ARTIFACT_ROOT / name
 
 
 def clear_model_state() -> None:

@@ -19,8 +19,10 @@ the real page end-to-end.
 """
 
 from pathlib import Path
+from typing import Sequence
 
 import arviz as az
+import dataclasses
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -30,6 +32,12 @@ from ancestry_mmm.core.approval import (
     ModelApproval,
     create_policy_backed_model_approval,
 )
+from ancestry_mmm.core.activities import ActivityDefinition, activity_fit_fingerprint
+from ancestry_mmm.core.curve_artifact import (
+    CurveArtifactMetadata,
+    compute_curve_artifact_fingerprints,
+    write_curve_artifact,
+)
 from ancestry_mmm.core.fingerprint import (
     fingerprint_dataframe,
     fingerprint_model_spec,
@@ -37,6 +45,10 @@ from ancestry_mmm.core.fingerprint import (
 )
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
 from ancestry_mmm.core.model_identity import ModelIdentity
+from ancestry_mmm.core.outcome_approval import (
+    OutcomeApproval,
+    fingerprint_outcome_definition,
+)
 from ancestry_mmm.core.outcomes import (
     FAMILY_HISTORY,
     METRIC_KEY_FH_GSA,
@@ -131,9 +143,16 @@ def _trace(meta: FHModelMeta, n_fourier: int = 6, chains: int = 2, draws: int = 
     return az.from_dict(posterior=posterior, coords=coords, dims=dims)
 
 
-def _seed_consistent_session_state(at: AppTest) -> None:
+def _seed_consistent_session_state(
+    at: AppTest, *, activities: Sequence[ActivityDefinition] | None = None
+) -> None:
     """A real fitted model whose legacy approval's identity fingerprints
-    match exactly how the page itself recomputes "current_identity"."""
+    match exactly how the page itself recomputes "current_identity".
+
+    When ``activities`` is provided they are stored in session state and
+    their fit fingerprint is included in the approval's spec fingerprint -
+    exactly like the page's current_identity recomputation (PR 95E needs
+    approved activities for the official artifact section)."""
     meta = _meta()
     trace = _trace(meta)
     transformed_data = pd.DataFrame(
@@ -158,6 +177,7 @@ def _seed_consistent_session_state(at: AppTest) -> None:
     posterior_params = extract_posterior_params(trace, meta)
 
     model_run_id = "run-curve-bank-apptest"
+    activity_definitions = list(activities or [])
     approval = ModelApproval(
         approved_by="Jane Analyst",
         model_run_id=model_run_id,
@@ -177,7 +197,11 @@ def _seed_consistent_session_state(at: AppTest) -> None:
             media_outcome_pathways=pathway_catalogue_fingerprint_payload(
                 meta.pathway_catalogue_at_fit
             ),
-            activity_fit_fingerprint=None,
+            activity_fit_fingerprint=(
+                activity_fit_fingerprint(activity_definitions)
+                if activity_definitions
+                else None
+            ),
         ),
         posterior_fingerprint=fingerprint_posterior(posterior_params),
     )
@@ -195,7 +219,9 @@ def _seed_consistent_session_state(at: AppTest) -> None:
     at.session_state["outcome_definitions"] = [
         o.to_dict() for o in meta.outcome_catalogue_at_fit
     ]
-    at.session_state["activity_definitions"] = []
+    at.session_state["activity_definitions"] = [
+        a.to_dict() for a in activity_definitions
+    ]
 
 
 def _policy_backed_governance(model_run_id, data_fp, spec_fp, posterior_fp):
@@ -265,8 +291,9 @@ def _policy_backed_governance(model_run_id, data_fp, spec_fp, posterior_fp):
     return policy, readiness, approval
 
 
-def _seed_official_governance_state(at: AppTest) -> None:
-    _seed_consistent_session_state(at)
+def _upgrade_to_policy_backed(at: AppTest) -> None:
+    """Rebuild the already-seeded legacy model approval into a matching
+    (policy, readiness, approval) triple without touching any other state."""
     legacy_approval_dict = at.session_state["model_approval"]
     policy, readiness, approval = _policy_backed_governance(
         legacy_approval_dict["model_run_id"],
@@ -277,6 +304,11 @@ def _seed_official_governance_state(at: AppTest) -> None:
     at.session_state["model_approval"] = approval.to_dict()
     at.session_state["validation_policy"] = policy.to_dict()
     at.session_state["approval_readiness"] = readiness.to_dict()
+
+
+def _seed_official_governance_state(at: AppTest) -> None:
+    _seed_consistent_session_state(at)
+    _upgrade_to_policy_backed(at)
 
 
 def test_official_approval_with_matching_policy_and_readiness_allows_save():
@@ -395,8 +427,185 @@ def test_both_make_entries_calls_thread_readiness_and_policy():
         if not line.strip().startswith("#")
     )
     assert source.count("cb.make_entries(") == 2
-    # 3 = the display-gate require_matching_approval() call + both
-    # cb.make_entries() call sites.
-    assert source.count("approval_readiness=current_readiness") == 3
+    # 4 = the display-gate require_matching_approval() call + both
+    # cb.make_entries() call sites + the PR 95E official-artifact governance
+    # construction (which also threads readiness evidence to the service).
+    assert source.count("approval_readiness=current_readiness") == 4
     assert source.count("current_policy=current_policy") == 3
     assert "ValidationPolicyBlockedError" in source
+
+
+# ---------------------------------------------------------------------------
+# PR 95E: the "Official curve artifacts" section (REQ-CURVE-001 UI wiring)
+# ---------------------------------------------------------------------------
+#
+# The page renders the governed official curve artifact store through the
+# fail-closed store loader and revalidates every artifact against *current*
+# governance via CurveService.authorize_use() before displaying it. The
+# store root is patched to a pytest tmp_path so the AppTest never touches
+# the real `.curve_artifact_store` directory.
+
+
+def _patch_store_root(monkeypatch, tmp_path) -> Path:
+    """Point the page's per-project store root at a throwaway directory."""
+    import ancestry_mmm.utils.session_state as ss
+
+    monkeypatch.setattr(ss, "CURVE_ARTIFACT_ROOT", Path(tmp_path))
+    return Path(tmp_path)
+
+
+def _official_activity_dict() -> dict:
+    """One approved activity matching the seeded fitted model (TV_Brand)."""
+    return ActivityDefinition(
+        activity_id="tv-paid",
+        channel="TV_Brand",
+        activity_ownership="paid",
+        model_role="intervention",
+        economic_treatment="paid_media_cost",
+        planning_eligibility="optimisable",
+        source="media plan",
+        approval_status="approved",
+        approved_by="reviewer",
+        approved_at="2026-01-01",
+    ).to_dict()
+
+
+def _write_official_artifact(store_dir: Path, approval_dict: dict) -> None:
+    """Write one loadable official artifact whose identity snapshot matches
+    the seeded model approval (and therefore the page's current_identity)."""
+    metadata = CurveArtifactMetadata(
+        artifact_id="art-official-1",
+        creation_timestamp="2026-07-01T00:00:00+00:00",
+        model_identity_snapshot={
+            "model_run_id": approval_dict["model_run_id"],
+            "data_fingerprint": approval_dict["data_fingerprint"],
+            "model_spec_fingerprint": approval_dict["model_spec_fingerprint"],
+            "posterior_fingerprint": approval_dict["posterior_fingerprint"],
+        },
+        outcome_definition_snapshot={
+            "outcome_id": "New",
+            "definition_version": "1.0",
+        },
+    )
+    metadata = dataclasses.replace(
+        metadata,
+        fingerprints=dict(compute_curve_artifact_fingerprints(metadata)),
+    )
+    draws = pd.DataFrame(
+        {
+            "model_run_id": [approval_dict["model_run_id"]] * 4,
+            "reference_context_id": ["ref-official"] * 4,
+            "market": ["UK"] * 4,
+            "product": ["Family History"] * 4,
+            "segment": ["New"] * 4,
+            "outcome_id": ["New"] * 4,
+            "metric_key": ["GSA"] * 4,
+            "channel": ["TV_Brand"] * 4,
+            "component_type": ["media"] * 4,
+            "pathway_role": ["direct"] * 4,
+            "spend_point": [0.0, 100.0, 200.0, 300.0],
+            "local_spend": [0.0, 100.0, 200.0, 300.0],
+            "incremental_response": [0.0, 2.0, 3.0, 3.5],
+            "planning_support_eligible": [True] * 4,
+            "planning_blocked_reason": [""] * 4,
+        }
+    )
+    summaries = draws.drop(
+        columns=[
+            "local_spend",
+            "incremental_response",
+            "planning_support_eligible",
+            "planning_blocked_reason",
+        ]
+    )
+    write_curve_artifact(store_dir, metadata=metadata, draws=draws, summaries=summaries)
+
+
+def _seed_official_artifact_governance(at: AppTest) -> None:
+    """Full current governance for the official section: policy-backed model
+    approval (with the activity fit fingerprint, matching the page's
+    current_identity recomputation), a matching outcome approval, and
+    approved activities."""
+    _seed_consistent_session_state(
+        at, activities=[ActivityDefinition.from_dict(_official_activity_dict())]
+    )
+    _upgrade_to_policy_backed(at)
+    at.session_state["project_name"] = "test-project"
+    outcome_def = _meta().outcome_catalogue_at_fit[0]
+    at.session_state["outcome_approvals"] = [
+        OutcomeApproval(
+            approval_id="apr-official-1",
+            outcome_id="New",
+            definition_fingerprint=fingerprint_outcome_definition(outcome_def),
+            status="approved",
+            allowed_uses=("curve_publication", "headline_reporting"),
+            approved_by="Jane Analyst",
+            approved_at="2026-01-01",
+        ).to_dict()
+    ]
+
+
+def test_official_curve_artifact_renders_when_authorized(monkeypatch, tmp_path):
+    """A fully governed store artifact (matching current identity, outcome,
+    outcome approval, activities) must render as an official curve after
+    authorize_use() revalidation - not be blocked or crashed."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_official_artifact_governance(at)
+    _patch_store_root(monkeypatch, tmp_path)
+    _write_official_artifact(
+        Path(tmp_path) / "test-project", at.session_state["model_approval"]
+    )
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    assert any(
+        "governed official response-curve artifact store" in (c.value or "")
+        for c in at.caption
+    )
+    assert any("art-official-1" in str(df.value) for df in at.dataframe)
+    # The legacy viewers must stay labelled exploratory, not official.
+    assert any(
+        "Exploratory / legacy (point estimates)" in (c.value or "") for c in at.caption
+    )
+
+
+def test_official_section_empty_store_shows_info(monkeypatch, tmp_path):
+    """An empty (or missing) store directory must show the informational
+    empty state, never an exception or a silent section."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_official_artifact_governance(at)
+    _patch_store_root(monkeypatch, tmp_path)
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    assert any("No official curve artifacts exist" in (i.value or "") for i in at.info)
+
+
+def test_official_artifact_blocked_without_outcome_approval(monkeypatch, tmp_path):
+    """When current outcome approval is missing, the artifact must be shown
+    as blocked (governance cannot be resolved) - fail closed, never rendered
+    as an official curve."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_official_artifact_governance(at)
+    at.session_state["outcome_approvals"] = []
+    _patch_store_root(monkeypatch, tmp_path)
+    _write_official_artifact(
+        Path(tmp_path) / "test-project", at.session_state["model_approval"]
+    )
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    assert any("cannot be resolved" in (w.value or "") for w in at.warning)
+
+
+def test_official_section_reports_malformed_artifact(monkeypatch, tmp_path):
+    """A malformed artifact directory must surface in the audit warning
+    (never silently skipped) while the page keeps running."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_official_artifact_governance(at)
+    _patch_store_root(monkeypatch, tmp_path)
+    bad_dir = Path(tmp_path) / "test-project" / "bad-artifact"
+    bad_dir.mkdir(parents=True)
+    (bad_dir / "curve_artifact_metadata.json").write_text(
+        "{not valid json", encoding="utf-8"
+    )
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    assert any("malformed or unsupported" in (w.value or "") for w in at.warning)

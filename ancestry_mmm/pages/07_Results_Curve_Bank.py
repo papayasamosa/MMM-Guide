@@ -13,6 +13,7 @@ from ancestry_mmm.utils import (
     get_state,
     set_state,
     curve_bank_dir,
+    curve_artifact_store_dir,
     dataframe_column_config,
     format_date,
     FIELD_HELP,
@@ -36,6 +37,17 @@ from ancestry_mmm.core.validation_policy import (
     load_threshold_policy,
 )
 from ancestry_mmm.core.activities import ActivityDefinition, activity_fit_fingerprint
+from ancestry_mmm.core.curve_artifact import (
+    CurveArtifactError,
+    load_curve_artifact_store,
+)
+from ancestry_mmm.core.model_identity import ModelIdentity
+from ancestry_mmm.core.outcome_approval import OutcomeApproval
+from ancestry_mmm.application.curve_service import (
+    CurveGovernanceError,
+    CurveService,
+    OfficialCurveGovernance,
+)
 from ancestry_mmm.core.fingerprint import (
     fingerprint_dataframe,
     fingerprint_model_spec,
@@ -276,6 +288,237 @@ def _render_media_unit_section(
             st.metric("Modelled response (DNA kits)", f"{dna_response:,.1f}")
 
 
+# --- Official curve artifacts (REQ-CURVE-001 / PR 95E) -----------------------
+# Rendering helpers for the governed official curve artifact store. Every
+# artifact is revalidated against *current* governance before display; an
+# artifact that cannot be resolved or authorized is shown as blocked, never
+# rendered as an official curve (fail closed).
+
+_CURVE_SERVICE = CurveService()
+
+
+def _official_artifact_governance(
+    artifact,
+    current_identity,
+    approval_dict,
+    current_policy,
+    current_readiness,
+    activity_definitions,
+    outcome_definitions,
+    outcome_approvals,
+):
+    """Resolve current governance for one official artifact.
+
+    Returns an OfficialCurveGovernance when every required element is
+    resolvable, else None (the artifact is then shown as blocked, never
+    rendered as an official curve).
+    """
+    snapshot = artifact.metadata.outcome_definition_snapshot or {}
+    outcome_id = snapshot.get("outcome_id")
+    if not current_identity or not approval_dict or not outcome_definitions:
+        return None
+    outcome = next((o for o in outcome_definitions if o.outcome_id == outcome_id), None)
+    approval = next((a for a in outcome_approvals if a.outcome_id == outcome_id), None)
+    if outcome is None or approval is None:
+        return None
+    return OfficialCurveGovernance(
+        model_identity=ModelIdentity(**current_identity),
+        model_approval=ModelApproval.from_dict(approval_dict),
+        outcome_definition=outcome,
+        outcome_approval=approval,
+        threshold_policy=current_policy,
+        approval_readiness=current_readiness,
+        activity_definitions=activity_definitions,
+    )
+
+
+def _render_official_artifact_curves(artifact):
+    """Render the mean incremental-response curves for one official artifact."""
+    draws = artifact.draws
+    x_col = next(
+        (
+            c
+            for c in (
+                "local_spend",
+                "reporting_currency_spend",
+                "media_input",
+                "spend_point",
+            )
+            if c in draws.columns
+        ),
+        None,
+    )
+    if (
+        draws.empty
+        or "incremental_response" not in draws.columns
+        or "market" not in draws.columns
+        or "channel" not in draws.columns
+        or x_col is None
+    ):
+        st.caption(
+            "This artifact does not carry plottable incremental-response curves "
+            "(missing market/channel/spend/response columns)."
+        )
+        return
+    for (market, channel), group in draws.groupby(["market", "channel"]):
+        mean = (
+            group.groupby(x_col, observed=True)["incremental_response"]
+            .mean()
+            .sort_index()
+        )
+        st.plotly_chart(
+            create_response_curve(
+                mean.index.to_numpy(dtype=float),
+                mean.to_numpy(dtype=float),
+                f"Official curve - {market} / {channel}",
+            ),
+            width="stretch",
+        )
+
+
+def _render_official_artifact(
+    artifact,
+    current_identity,
+    approval_dict,
+    current_policy,
+    current_readiness,
+    activity_definitions,
+    outcome_definitions,
+    outcome_approvals,
+):
+    """Render one official artifact, revalidated against current governance."""
+    md = artifact.metadata
+    st.markdown(f"#### Artifact `{md.artifact_id}`")
+    governance = _official_artifact_governance(
+        artifact,
+        current_identity,
+        approval_dict,
+        current_policy,
+        current_readiness,
+        activity_definitions,
+        outcome_definitions,
+        outcome_approvals,
+    )
+    if governance is None:
+        st.warning(
+            "Current governance for this artifact cannot be resolved (missing "
+            "current model identity, model approval, or a matching current outcome "
+            "approval). It is **not** displayed as an official curve (fail closed)."
+        )
+        return
+    try:
+        authorization = _CURVE_SERVICE.authorize_use(
+            artifact, "headline_reporting", current_governance=governance
+        )
+    except CurveGovernanceError as exc:
+        st.warning(f"Not currently authorized for headline reporting: {exc}")
+        return
+    if not authorization.authorized:
+        st.warning(
+            f"Not currently authorized for headline reporting: {authorization.reason}"
+        )
+        return
+    planning_support = (
+        bool(artifact.draws["planning_support_eligible"].all())
+        if (
+            not artifact.draws.empty
+            and "planning_support_eligible" in artifact.draws.columns
+        )
+        else "n/a"
+    )
+    meta_df = pd.DataFrame(
+        [
+            {
+                "artifact_id": md.artifact_id,
+                "created": md.creation_timestamp,
+                "schema_version": md.schema_version,
+                "outcome": (md.outcome_definition_snapshot or {}).get("outcome_id"),
+                "reference_context_id": (md.reference_context_snapshot or {}).get(
+                    "reference_context_id"
+                ),
+                "format_status": md.format_status,
+                "historical_integrity": md.historical_integrity,
+                "current_authorization": (authorization.current_authorization_status),
+                "requested_use_eligibility": (authorization.requested_use_eligibility),
+                "planning_support_eligible": planning_support,
+            }
+        ]
+    )
+    st.dataframe(
+        meta_df,
+        width="stretch",
+        column_config=dataframe_column_config(meta_df),
+    )
+    _render_official_artifact_curves(artifact)
+
+
+def _render_official_artifact_section(
+    current_identity,
+    approval_dict,
+    current_policy,
+    current_readiness,
+    activity_definitions,
+    outcome_definitions,
+    outcome_approvals,
+):
+    """Render the official curve artifact store section (fail closed)."""
+    st.markdown("---")
+    st.markdown("## Official curve artifacts")
+    st.caption(
+        "The governed official response-curve artifact store (REQ-CURVE-001). "
+        "Each artifact is revalidated against current governance at display time "
+        "(curve_publication approval, current model, outcome, and activities). "
+        "Legacy point-estimate curves remain available in the exploratory viewers "
+        "below and in the curve bank."
+    )
+    store_dir = curve_artifact_store_dir()
+    try:
+        load_result = load_curve_artifact_store(store_dir, raise_on_malformed=False)
+    except CurveArtifactError as exc:
+        st.warning(f"Official curve artifact store could not be read: {exc}")
+        return
+    if load_result.malformed:
+        st.warning(
+            f"{len(load_result.malformed)} malformed or unsupported official "
+            "curve artifact(s) were found and are reported below - they are "
+            "never silently skipped."
+        )
+        with st.expander("Show malformed-artifact audit"):
+            audit_df = pd.DataFrame(
+                [
+                    {
+                        "artifact_dir": str(e.artifact_dir),
+                        "status": e.status,
+                        "error": e.error,
+                    }
+                    for e in load_result.malformed
+                ]
+            )
+            st.dataframe(
+                audit_df,
+                width="stretch",
+                column_config=dataframe_column_config(audit_df),
+            )
+    if not load_result.loaded:
+        st.info(
+            "No official curve artifacts exist for this project yet. Official "
+            "curves are produced through the governance-enforcing CurveService "
+            f"and stored in `{store_dir}`."
+        )
+        return
+    for artifact in load_result.loaded:
+        _render_official_artifact(
+            artifact,
+            current_identity,
+            approval_dict,
+            current_policy,
+            current_readiness,
+            activity_definitions,
+            outcome_definitions,
+            outcome_approvals,
+        )
+
+
 trace = get_state("trace")
 frame = get_state("frame")
 meta = get_state("model_meta")
@@ -391,8 +634,10 @@ if model_type == "market_specific":
     st.markdown("---")
     st.markdown("### Market-specific channel curve viewer")
     st.caption(
-        "Spend -> incremental response for one market and channel, per segment and overall "
-        "(overall = sum of segment responses)."
+        "Exploratory / legacy (point estimates): spend -> incremental response for one "
+        "market and channel, per segment and overall (overall = sum of segment responses). "
+        "These curves are not part of the governed official artifact store - use the "
+        "Official curve artifacts section for governed curves."
     )
     c1, c2 = st.columns(2)
     viewer_market = c1.selectbox("Market", meta.markets)
@@ -518,9 +763,11 @@ else:
     st.markdown("---")
     st.markdown("### Channel curve viewer")
     st.caption(
-        "Spend -> incremental response for one channel, per segment and overall (overall = sum of "
-        "segment responses) - the same curve every market uses, since it's shared across markets in "
-        "this model structure."
+        "Exploratory / legacy (point estimates): spend -> incremental response for one "
+        "channel, per segment and overall (overall = sum of segment responses) - the same "
+        "curve every market uses, since it's shared across markets in this model structure. "
+        "These curves are not part of the governed official artifact store - use the "
+        "Official curve artifacts section for governed curves."
     )
     viewer_channel = st.selectbox("Channel", meta.channels)
 
@@ -796,6 +1043,21 @@ else:
             st.success(
                 f"Saved {len(entries)} curve bank entries to {curve_bank_dir()}."
             )
+
+# Official curve artifacts (REQ-CURVE-001 / PR 95E) - rendered after the
+# legacy curve bank save block so that current_identity / current_policy /
+# current_readiness are already available; the section itself is fail-closed.
+_render_official_artifact_section(
+    current_identity,
+    approval_dict,
+    current_policy,
+    current_readiness,
+    activity_definitions,
+    resolve_outcome_definitions(
+        get_state("outcome_definitions"), spec.segment_outcomes, spec.segment_ltv
+    ),
+    [OutcomeApproval.from_dict(d) for d in (get_state("outcome_approvals") or [])],
+)
 
 entries = cb.load_all_entries(curve_bank_dir())
 if entries:
