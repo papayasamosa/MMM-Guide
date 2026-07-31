@@ -4,6 +4,34 @@ Format: Date, Decision, Reason, Alternatives considered, Impact, Owner, Status.
 
 ---
 
+**Date:** 2026-07-31
+**Decision:** Approve REQ-CURVE-001 (official response curve authority and evidence contract)
+for implementation, with: `curve_publication` approval mandatory for official artifact
+status (downstream uses independently gated); Option B architecture (`CurveBankEntry` stays
+a parameter-snapshot registry; a separate canonical evaluated artifact becomes the official
+curve); incremental-eta share retained as an explicitly approved, versioned component
+reporting convention (not a causal decomposition); a four-concept artifact lifecycle /
+current-use status vocabulary separate from `OUTCOME_APPROVAL_STATUSES`; approved cost
+mappings required for all monetary curves including exploratory; and current-use
+revalidation for every official use while historical exports remain loadable/viewable but
+labelled not-current.
+**Reason:** The PR 93A draft was corrected by PR 94A (PR #95) to address all five post-merge
+review findings on #93 and additional defects; the corrected requirement defines the
+governance and evidence contract for official response curves without changing any
+mathematics or existing behaviour. Approval authorises the follow-on implementation sequence
+(PR 95A-95F, then 96A/96B, 97A).
+**Alternatives considered:** Options A and C from `docs/curve_authority_gap_analysis.md`
+(rejected in favour of Option B); Shapley and explicit-counterfactual component
+decompositions (deferred — a separate approved causal method is still required before any
+component row may be labelled a causal effect); reusing `OUTCOME_APPROVAL_STATUSES` as an
+artifact-status vocabulary (rejected — kept separate).
+**Impact:** REQ-CURVE-001 status changes to `approved_for_implementation` in
+`docs/approved_requirements/index.json`; currently-implemented invariant tests are
+registered as `required_tests`; no application or modelling code changes in this decision.
+**Owner:** Product / Analytics + Platform engineering.
+**Status:** Accepted (PR 94B).
+---
+
 **Date:** 2026-07-20
 **Decision:** Reject one fully shared channel curve across all markets as the model's end state.
 **Reason:** Countries differ in population, addressable audience, brand penetration, channel

@@ -1,14 +1,15 @@
 # REQ-CURVE-001: Official response curve authority and evidence contract
 
-**Status:** draft — not yet approved for implementation. This record does not authorize any
-code change; it is a proposal for human review.
-**Decision date:** proposed 2026-07-31; pending human approval.
-**Revision:** PR 94A (this record) corrects the PR 93A draft in response to the five
-post-merge review findings on `papayasamosa/MMM-Guide#93` (see
-`docs/curve_authority_gap_analysis.md`, section "PR 93 review findings") and additional
-defects identified during that re-review. Correcting the draft does **not** approve it; it
-remains draft until the human decisions in the "Human approval checklist" section are
-explicitly approved by the user.
+**Status:** approved for implementation (approved 2026-07-31 via PR 94B).
+**Decision date:** approved 2026-07-31.
+**Revision history:**
+- PR 93A created this record as a draft (merged as PR #93, commit `877add6`).
+- PR 94A corrected the draft in response to the five post-merge review findings on
+  `papayasamosa/MMM-Guide#93` and additional defects identified during re-review (merged as
+  PR #95, commit `ccd0dcf`); the record stayed `draft` through PR 94A.
+- PR 94B (this record) records the approval of the corrected requirement and of the human
+  decisions in the "Approved decisions" section, and registers the currently-implemented
+  acceptance tests in `docs/approved_requirements/index.json`.
 
 ## Decision
 
@@ -472,12 +473,19 @@ optimisation, value_layer, external_distribution
 - A curve being computed does not make it eligible for any use. Eligibility is derived from
   the governance chain (above), not asserted by the caller.
 
-## Testing requirements (for the follow-on implementation PRs, not this record)
+## Testing requirements
 
-The following future test coverage must be identified by the follow-on implementation plans
-(PR 94B approval; PR 95A-95F schema, service, governance, revalidation, migration, and UI
-work; PR 96A/96B future assumptions) before it is added to
-`docs/approved_requirements/index.json`'s `required_tests`. This record deliberately does\nnot create test node IDs for not-yet-written code, per the requirements-index conformance\ntest
+**Registered now (PR 94B):** the currently-implemented invariant tests that REQ-CURVE-001
+locks in are registered in `docs/approved_requirements/index.json`'s `required_tests` (see
+the index entry). These are real, collectable nodes in `ancestry_mmm/tests/test_canonical_curves.py`.
+
+**Future coverage (must not be registered until the code exists):** the acceptance tests for
+not-yet-written code (official artifact schema, CurveService, complete reference-context
+validation, `planning_support_eligible` downstream enforcement, current-use revalidation,
+etc.) must be created by the PR 95A-95F implementation plans and only then added to
+`docs/approved_requirements/index.json`'s `required_tests`. This record deliberately does
+not create test node IDs for not-yet-written code, per the requirements-index conformance
+test
 (`ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable`),
 which requires every listed node to be real and collectable.
 
@@ -532,29 +540,41 @@ re-review (eta-share allocation is a versioned convention, not a unique causal d
 artifact status is separate from outcome-approval status; overstated current-state claims
 corrected). This revision is a correction of the draft, not an approval.
 
-## Human approval checklist (unresolved decisions)
+PR 94B (this record) records the approval of the corrected requirement and the approved
+decisions below (2026-07-31) and registers the currently-implemented acceptance tests in the
+requirements index. Approval does not change any substantive content of the PR 94A corrected
+draft; it authorises the follow-on implementation work (PR 95A-95F, then 96A/96B, 97A).
 
-The coding agent cannot approve these; the user must decide. The requirement stays `draft`
-until each is explicitly approved.
+## Approved decisions
 
-1. **Confirm `curve_publication` is mandatory for official artifact status** (Work package A:
-   official status requires a current, matching outcome approval for `curve_publication`;
-   downstream uses stay separately gated; diagnostic uses never create official status).
-2. **Confirm Option B remains the preferred architecture** (from
-   `docs/curve_authority_gap_analysis.md`): `CurveBankEntry` remains a parameter-snapshot
-   registry; a separate canonical evaluated artifact becomes the official curve.
-3. **Approve the component-allocation convention or require a different method.**
-   Currently the implementation uses incremental-eta share
-   (`component_response_allocation_method="incremental_eta_share"`). Decision: keep
-   eta-share as an explicitly approved reporting convention, adopt Shapley, adopt explicit
-   counterfactual component decomposition, or require a separate approved causal method —
-   the method must be named, versioned, persisted, and tested.
-4. **Approve the artifact lifecycle and current-use status vocabulary** (Work package G:
-   artifact format/migration status, historical evidence integrity, current authorization
-   status, requested-use eligibility — kept separate from `OUTCOME_APPROVAL_STATUSES`).
-5. **Confirm whether exploratory monetary curves must always require approved cost
-   mappings or may use explicitly labelled draft assumptions.**
-6. **Confirm which current uses require revalidation and which historical exports may
-   remain viewable after approval expiry** (Work package E: current-use authorization is
-   revalidated at each official use; historical evidence is preserved but does not imply
-   current authorization).
+Approved 2026-07-31 via PR 94B. The decisions follow the positions recorded in the PR 94A
+corrected draft; each is recorded here for traceability.
+
+1. **`curve_publication` is mandatory for official artifact status.** Official status
+   requires a current, matching outcome approval for `curve_publication`; downstream uses
+   (headline reporting, planning, optimisation, external distribution, technical reporting)
+   stay separately gated; `model_fit`/`technical_reporting` alone never create official
+   status; exploratory/diagnostic rendering remains allowed per the existing use policy.
+2. **Option B remains the preferred architecture** (`docs/curve_authority_gap_analysis.md`):
+   `CurveBankEntry` remains a fitted-parameter snapshot registry; a separate canonical
+   evaluated artifact becomes the official curve.
+3. **Component-allocation convention:** incremental-eta share
+   (`component_response_allocation_method="incremental_eta_share"`) is approved as the
+   current **reporting decomposition convention** — named, versioned, persisted, and tested
+   — and is **not** labelled a unique causal decomposition. Channel-total economics remain
+   authoritative. A separate approved method (and separate approval) is still required before
+   any component row may be labelled a causal direct, indirect, mediated, or constrained
+   effect. Shapley and explicit-counterfactual component decompositions remain available as
+   future alternatives, each requiring its own approval.
+4. **Artifact lifecycle / current-use status vocabulary** (Work package G): four separate
+   concepts — artifact format and migration status; historical evidence integrity; current
+   authorization status; requested-use eligibility — kept distinct from
+   `OUTCOME_APPROVAL_STATUSES`. No production status enum is added by this record; the
+   vocabulary is realised by the follow-on implementation (PR 95D) against these concepts.
+5. **Exploratory monetary curves always require approved cost mappings.** A monetary curve
+   — official or exploratory — requires a resolved, effective `MediaCostMapping`;
+   explicitly labelled draft cost assumptions are not used for monetary curves.
+6. **Revalidation scope:** every official use (reporting, planning, optimisation,
+   distribution) is revalidated against current governance at the time of use. Historical
+   exports remain loadable and viewable after approval expiry/revocation but are clearly
+   labelled not-current/stale and are never eligible for official use without revalidation.
