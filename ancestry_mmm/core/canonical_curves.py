@@ -19,7 +19,7 @@ import re
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import arviz as az
 import numpy as np
@@ -307,6 +307,103 @@ class ComponentCostAllocation:
 
 def _is_iso_currency(value: Optional[str]) -> bool:
     return bool(value and ISO_CURRENCY.fullmatch(value))
+
+
+class ReferenceContextIncompleteError(ValueError):
+    """Raised when a ``CurveReferenceContext`` does not cover the fitted model.
+
+    REQ-CURVE-001 reference-context contract: every fitted promotion, common
+    control, outcome-specific control, Fourier term, market, and other-channel
+    input must be covered; a zero is allowed only as an explicitly persisted
+    value; missing keys fail closed; extra unknown keys are surfaced as a
+    schema mismatch rather than silently ignored.
+    """
+
+
+def _check_key_coverage(
+    present: Mapping[str, object],
+    fitted_keys: set,
+    label: str,
+    issues: List[str],
+) -> None:
+    """Append missing and extra-key issues for one context mapping."""
+    present_keys = set(present)
+    missing = sorted(fitted_keys - present_keys)
+    if missing:
+        issues.append(f"{label} is missing fitted key(s): {missing}")
+    extra = sorted(present_keys - fitted_keys)
+    if extra:
+        issues.append(
+            f"{label} has extra unknown key(s): {extra} (fitted: {sorted(fitted_keys)})"
+        )
+
+
+def validate_reference_context_completeness(
+    context: "CurveReferenceContext",
+    meta: FHModelMeta,
+    params: Any,
+) -> None:
+    """Validate a reference context against the exact fitted model structure.
+
+    ``params`` must expose ``promo_coef``, ``control_coef``,
+    ``outcome_control_coef``, and ``gamma_fourier`` keyed as in
+    ``FHPosteriorParams`` / ``FHMarketSpecificPosteriorParams`` (both satisfy
+    this shape). Raises ``ReferenceContextIncompleteError`` listing every
+    missing key, extra unknown key, and Fourier/market dimension mismatch.
+
+    This is the REQ-CURVE-001 completeness check the official application
+    service applies before official curve generation; the low-level generator
+    itself keeps its existing lenient behaviour.
+    """
+    issues: List[str] = []
+
+    if context.market not in meta.markets:
+        issues.append(
+            f"market '{context.market}' is not in the fitted markets {sorted(meta.markets)}"
+        )
+
+    # other-channel media input must cover exactly the fitted channels
+    _check_key_coverage(
+        context.other_channel_media_input,
+        set(meta.channels),
+        "other_channel_media_input",
+        issues,
+    )
+
+    # promo must cover exactly the fitted promo-coefficient outcomes
+    _check_key_coverage(context.promo, set(params.promo_coef), "promo", issues)
+
+    # common controls must cover exactly the fitted controls
+    _check_key_coverage(context.controls, set(params.control_coef), "controls", issues)
+
+    # outcome-specific controls: for each fitted outcome, cover exactly its
+    # fitted control names; extra outcome keys are surfaced as a mismatch.
+    for outcome_id, fitted_names in params.outcome_control_coef.items():
+        present = context.outcome_controls.get(outcome_id, {})
+        _check_key_coverage(
+            present,
+            set(fitted_names),
+            f"outcome_controls[{outcome_id}]",
+            issues,
+        )
+    extra_outcomes = set(context.outcome_controls) - set(params.outcome_control_coef)
+    if extra_outcomes:
+        issues.append(
+            "outcome_controls has extra unknown outcome key(s): "
+            f"{sorted(extra_outcomes)} (fitted: {sorted(params.outcome_control_coef)})"
+        )
+
+    # Fourier dimension must match the fitted gamma for every outcome
+    for outcome_id, gamma in params.gamma_fourier.items():
+        fitted_n = len(np.atleast_1d(gamma))
+        if len(context.fourier) != fitted_n:
+            issues.append(
+                f"fourier length {len(context.fourier)} != fitted length {fitted_n} "
+                f"for outcome '{outcome_id}'"
+            )
+
+    if issues:
+        raise ReferenceContextIncompleteError("; ".join(issues))
 
 
 def _normalise_support(
