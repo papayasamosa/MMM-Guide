@@ -17,6 +17,17 @@ into this module; it still uses `core.predict.generate_channel_curve`,
 `docs/approved_requirements/REQ-CURVE-001.md` (approved for implementation)
 for the plan to close this gap before any UI migration is attempted.
 
+**PR 93B update:** `ancestry_mmm/application/curve_service.py` (see
+`docs/curve_service.md`) now provides the governed official path described in
+REQ-CURVE-001, layered on top of this module without changing it —
+`generate_canonical_curve_draws` itself is unchanged and remains directly
+callable, ungated, for exploratory/test use. Producing an artifact through
+`CurveService.generate_official_curve` (not calling this module directly)
+is what makes a curve officially governed; nothing about this module's own
+`governance_mode="official"` gate has changed. `07_Results_Curve_Bank.py`
+still does not consume either path — UI migration is separate, later,
+approved work (PR 93D).
+
 ## Response definition
 
 The model uses a log link:

@@ -197,9 +197,34 @@
         "ancestry_mmm/core/curve_bank.py",
         "ancestry_mmm/core/outcome_approval.py",
         "ancestry_mmm/pages/07_Results_Curve_Bank.py",
-        "ancestry_mmm/components/charts.py"
+        "ancestry_mmm/components/charts.py",
+        "ancestry_mmm/application/curve_service.py"
       ],
-      "required_tests": []
+      "required_tests": [
+        "ancestry_mmm/tests/test_curve_service.py::TestGovernanceEvidenceIsStructurallyRequired::test_omitting_activity_definitions_is_a_type_error",
+        "ancestry_mmm/tests/test_curve_service.py::TestGovernanceEvidenceIsStructurallyRequired::test_omitting_any_governance_field_is_a_type_error",
+        "ancestry_mmm/tests/test_curve_service.py::TestGovernanceContentValidation::test_full_valid_chain_succeeds",
+        "ancestry_mmm/tests/test_curve_service.py::TestGovernanceContentValidation::test_mismatched_model_approval_raises",
+        "ancestry_mmm/tests/test_curve_service.py::TestGovernanceContentValidation::test_model_approval_not_policy_backed_raises",
+        "ancestry_mmm/tests/test_curve_service.py::TestGovernanceContentValidation::test_stale_readiness_raises",
+        "ancestry_mmm/tests/test_curve_service.py::TestGovernanceContentValidation::test_diagnostics_artefact_identity_mismatch_raises",
+        "ancestry_mmm/tests/test_curve_service.py::TestGovernanceContentValidation::test_legacy_incomplete_diagnostics_artefact_raises",
+        "ancestry_mmm/tests/test_curve_service.py::TestGovernanceContentValidation::test_missing_outcome_approval_raises",
+        "ancestry_mmm/tests/test_curve_service.py::TestGovernanceContentValidation::test_outcome_approval_missing_curve_publication_use_raises",
+        "ancestry_mmm/tests/test_curve_service.py::TestGovernanceContentValidation::test_one_unapproved_activity_among_channels_blocks",
+        "ancestry_mmm/tests/test_curve_service.py::TestGovernanceContentValidation::test_passing_governance_mode_directly_is_rejected",
+        "ancestry_mmm/tests/test_curve_service.py::TestExploratoryCurve::test_no_governance_evidence_required",
+        "ancestry_mmm/tests/test_curve_service.py::TestExploratoryCurve::test_exploratory_result_is_a_different_type_than_official",
+        "ancestry_mmm/tests/test_curve_service.py::TestPlanningEligible::test_complete_support_is_eligible",
+        "ancestry_mmm/tests/test_curve_service.py::TestPlanningEligible::test_missing_support_is_not_eligible_and_not_fabricated",
+        "ancestry_mmm/tests/test_curve_service.py::TestPersistenceRoundTrip::test_export_then_import_reproduces_the_artifact",
+        "ancestry_mmm/tests/test_curve_service.py::TestPersistenceRoundTrip::test_newer_schema_version_on_import_raises_cleanly",
+        "ancestry_mmm/tests/test_curve_service.py::TestPersistenceRoundTrip::test_malformed_manifest_raises_not_silent",
+        "ancestry_mmm/tests/test_curve_service.py::TestPersistenceRoundTrip::test_missing_files_raises_not_silent",
+        "ancestry_mmm/tests/test_curve_service.py::TestPersistenceRoundTrip::test_unknown_future_manifest_field_is_preserved_through_round_trip",
+        "ancestry_mmm/tests/test_curve_service.py::TestLoadAllCurveArtifacts::test_one_good_and_one_malformed_produces_one_artifact_and_one_audit_entry",
+        "ancestry_mmm/tests/test_curve_service.py::TestLoadAllCurveArtifacts::test_missing_directory_returns_empty_not_an_error"
+      ]
     }
   ]
 }
