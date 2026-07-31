@@ -3,6 +3,20 @@
 `core.canonical_curves` is the non-UI source of truth for posterior curves,
 economics, governance views, reconciliation, and curve exports.
 
+**Current governance status (as of PR 93A):** `governance_mode="official"` on
+`generate_canonical_curve_draws` currently gates only one thing — approved
+`ActivityDefinition`s for a monetary curve — and only when the caller
+explicitly supplies `activity_definitions`; omitting that argument skips the
+check entirely. This module does not reference `ModelApproval`,
+`ThresholdPolicy`, `ApprovalReadiness`, or `DiagnosticsArtefact` at all.
+`ancestry_mmm/pages/07_Results_Curve_Bank.py` (the current UI) does not call
+into this module; it still uses `core.predict.generate_channel_curve`,
+`core.market_specific_predict.generate_market_channel_curve`, and
+`core.curve_bank.CurveBankEntry`. See
+`docs/curve_authority_gap_analysis.md` and the draft
+`docs/approved_requirements/REQ-CURVE-001.md` for the plan to close this gap
+before any UI migration is attempted.
+
 ## Response definition
 
 The model uses a log link:
