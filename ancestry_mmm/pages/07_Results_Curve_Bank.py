@@ -853,7 +853,14 @@ else:
 st.markdown("---")
 st.markdown("## Curve bank")
 st.caption(FIELD_HELP["curve_bank"])
-
+st.caption(
+    "Curve bank entries are **fitted parameter snapshots** (Hill/decay/beta "
+    "point estimates for one market/channel/segment), not evaluated curves. "
+    "They remain loadable and usable for calibration tracking and "
+    "evidence-tier display, but are never presented as current official "
+    "response curves - official curves are rendered only in the "
+    "'Official curve artifacts' section."
+)
 approval_dict = get_state("model_approval")
 model_run_id = get_state("model_run_id")
 prior_config = get_state("prior_config") or {}
@@ -961,7 +968,7 @@ elif not approval_matches_current:
 else:
     approval = ModelApproval.from_dict(approval_dict)
     st.caption(
-        f"Model approved by **{approval.approved_by}** - saving to the curve bank will record this approval on every curve saved."
+        f"Model approved by **{approval.approved_by}** - saving to the curve bank will record this approval on every curve entry (fitted parameter snapshot) saved."
     )
 
     c1, c2 = st.columns(2)

@@ -22,6 +22,16 @@ from_dict` detects the old shape and expands it into per-curve records
 marked `legacy_format=True`, `curve_status="Legacy"`, `market=None` (the old
 format predates market-specific curves entirely). Nothing on disk is
 dropped or silently reinterpreted.
+
+Every entry is a **fitted parameter snapshot** (REQ-CURVE-001): a small set
+of Hill/decay/beta point estimates for one (market, channel,
+segment-or-overall). It is not an evaluated response curve, and must never
+be described, labelled, or presented as an official response curve. The
+curve bank remains loadable and usable for calibration tracking and
+evidence-tier display; official evaluated curves are produced only through
+the canonical artifact path (`core.canonical_curves` + the application
+`CurveService`) and rendered in the page's "Official curve artifacts"
+section.
 """
 
 from __future__ import annotations
@@ -59,6 +69,13 @@ OVERALL = "Overall"
 
 @dataclass
 class CurveBankEntry:
+    """A fitted parameter snapshot for one (market, channel, segment-or-overall).
+
+    Hill/decay/beta point estimates kept for calibration tracking and
+    evidence-tier display. A parameter snapshot, not an evaluated curve -
+    never presented as an official response curve (REQ-CURVE-001).
+    """
+
     entry_id: str
     created_at: float
     run_label: str

@@ -4,7 +4,10 @@ granted for.
 
 The guide this build follows is explicit: "A high R-squared must not
 automatically mean the model is accepted... Only an approved model should
-populate the official curve bank and planning defaults." An approval that
+populate the curve bank and planning defaults." The curve bank is a
+fitted-parameter-snapshot registry (`core.curve_bank.CurveBankEntry`), not
+an official evaluated curve (REQ-CURVE-001), so this gate exists to keep
+even that snapshot registry free of unapproved or stale runs. An approval that
 merely *exists* is not enough on its own: if the model is retrained, the
 data changes, the specification (structure or priors) changes, or the
 posterior is recalculated, an approval granted for the *previous* model run

@@ -154,7 +154,9 @@ FIELD_HELP = {
     "dna_halo_lag": "The DNA halo lag is the extra delay, beyond normal media carryover, before DNA-targeted media affects other segments.",
     "ltv": "Lifetime value (LTV) is the long-run value of one acquisition, used to weight outcomes when planning for value rather than raw volume.",
     "priors": "Priors are the model's starting assumptions about each parameter before seeing the data; fitting updates them using the data.",
-    "curve_bank": "The curve bank stores a versioned, traceable snapshot of an approved model's response curves and segment parameters.",
+    "curve_bank": "The curve bank stores versioned, traceable fitted parameter snapshots "
+    "(Hill/decay/beta point estimates) for calibration tracking and evidence-tier "
+    "display - never presented as official evaluated curves.",
     "approval": "Approval binds a named reviewer's sign-off to this exact fitted model - it becomes invalid the moment the data, specification or posterior changes.",
     "fixed_spend": "A fixed spend cell is excluded from optimisation and kept at its current value.",
     "locked_cells": "Locked cells are spend values the optimiser must not change, e.g. already-committed bookings.",
@@ -177,7 +179,7 @@ GLOSSARY = {
     "Scenario": "A specific spend plan and its predicted outcomes, saved for comparison.",
     "Constraint": "A rule the optimiser must respect when proposing a spend plan, e.g. a locked cell or spend floor.",
     "Approval": "A reviewer's sign-off on a specific fitted model, required before it can be used for planning.",
-    "Curve Bank": "A versioned store of an approved model's response curves and segment parameters.",
+    "Curve Bank": "A versioned store of an approved model's fitted parameter snapshots (Hill/decay/beta point estimates) for calibration tracking and evidence-tier display; parameter snapshots, never presented as official response curves.",
     "Market-specific curve": "A response curve estimated separately for one market, rather than shared across all markets.",
     "Shrinkage": "How far a market's estimate is pulled toward the shared distribution - larger in weak-data markets, smaller in strong-data markets.",
     "Model comparison": "Fitting more than one candidate model structure and comparing their diagnostics before choosing which to trust.",

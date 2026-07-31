@@ -13,12 +13,22 @@ store below remains supported for the current UI and legacy bundles.
 
 ## Today (Phase 3a - built)
 
-Each curve bank entry (`core.curve_bank.CurveBankEntry`) is one *curve* - a
-(market, channel, segment-or-overall) combination - not one model run:
+Each curve bank entry (`core.curve_bank.CurveBankEntry`) is one *fitted
+parameter snapshot* - a (market, channel, segment-or-overall) combination -
+not one model run:
 
 ```
 model_run_id, market, channel, segment_or_overall, curve_status, input_type, currency, unit_type
 ```
+
+> **Labelling (REQ-CURVE-001):** curve bank entries are *fitted parameter
+> snapshots* (Hill/decay/beta point estimates), not evaluated response
+> curves. They remain loadable and usable for calibration tracking and
+> evidence-tier display, but are never presented as current official
+> response curves. Official evaluated curves are produced only through the
+> canonical artifact path (`core.canonical_curves` + the application
+> `CurveService`) and rendered in the page's "Official curve artifacts"
+> section.
 
 Since PR E, the field name `segment_or_overall` is kept as-is (it is a persisted, exported field -
 renaming it would ripple through every page that reads or filters curve bank JSON), but its

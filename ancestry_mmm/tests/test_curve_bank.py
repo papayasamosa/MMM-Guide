@@ -1,3 +1,6 @@
+import importlib.util
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -774,3 +777,59 @@ class TestMakeMediaUnitEntries:
         mirrored = make_media_unit_entries(entries, media_unit_info)
         assert all(e.market == "UK" and e.channel == "TV_Brand" for e in mirrored)
         assert len(mirrored) == 3  # 2 segments + overall, for UK/TV_Brand only
+
+
+# ---------------------------------------------------------------------------
+# PR 95F: legacy curve bank entries are fitted parameter snapshots, never
+# presented as official curves (REQ-CURVE-001 "Fitted parameter snapshot")
+# ---------------------------------------------------------------------------
+
+
+def _module_source(module_name: str) -> str:
+    module_path = Path(importlib.util.find_spec(module_name).origin)
+    return module_path.read_text(encoding="utf-8")
+
+
+class TestParameterSnapshotLabelling:
+    def test_curve_bank_entry_docstring_carries_parameter_snapshot_qualifier(self):
+        """REQ-CURVE-001: a CurveBankEntry is a 'fitted parameter snapshot' -
+        a small set of Hill/decay/beta point estimates, not an evaluated curve.
+        The class docstring must carry the qualifier and the explicit
+        prohibition on official presentation."""
+        import inspect
+
+        doc = inspect.getdoc(CurveBankEntry)
+        assert doc is not None
+        assert "fitted parameter snapshot" in doc
+        assert "not an evaluated curve" in doc
+        assert "never presented as an official response curve" in doc
+
+    def test_curve_bank_module_docstring_carries_parameter_snapshot_qualifier(self):
+        source = _module_source("ancestry_mmm.core.curve_bank")
+        assert "fitted parameter snapshot" in source
+        assert "never presented as an official response curve" in source
+        # The registry itself must never be labelled 'official'.
+        assert "official curve bank" not in source
+
+    def test_approval_module_does_not_label_curve_bank_official(self):
+        """PR 95F: core/approval.py previously described the curve bank as the
+        'official curve bank'. The curve bank is a parameter-snapshot registry,
+        not an official evaluated curve, so that label must be gone."""
+        source = _module_source("ancestry_mmm.core.approval")
+        assert "official curve bank" not in source
+
+    def test_field_help_describes_curve_bank_as_parameter_snapshots(self):
+        from ancestry_mmm.utils.display import FIELD_HELP
+
+        help_text = FIELD_HELP["curve_bank"]
+        assert "fitted parameter snapshots" in help_text
+        assert "never presented as official evaluated curves" in help_text
+        assert "official curve bank" not in help_text
+
+    def test_glossary_describes_curve_bank_as_parameter_snapshots(self):
+        from ancestry_mmm.utils.display import GLOSSARY
+
+        text = GLOSSARY["Curve Bank"]
+        assert "fitted parameter snapshots" in text
+        assert "never presented as official response curves" in text
+        assert "official curve bank" not in text
