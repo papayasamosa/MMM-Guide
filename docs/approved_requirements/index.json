@@ -190,7 +190,7 @@
     },
     {
       "requirement_id": "REQ-CURVE-001",
-      "status": "draft",
+      "status": "approved_for_implementation",
       "record_path": "docs/approved_requirements/REQ-CURVE-001.md",
       "affected_modules": [
         "ancestry_mmm/core/canonical_curves.py",
@@ -199,7 +199,23 @@
         "ancestry_mmm/pages/07_Results_Curve_Bank.py",
         "ancestry_mmm/components/charts.py"
       ],
-      "required_tests": []
+      "required_tests": [
+        "ancestry_mmm/tests/test_canonical_curves.py::test_contract_uses_outcome_scale_counterfactuals",
+        "ancestry_mmm/tests/test_canonical_curves.py::test_matches_normal_prediction_function_exactly",
+        "ancestry_mmm/tests/test_canonical_curves.py::test_direct_plus_halo_decomposition_and_no_component_cpa",
+        "ancestry_mmm/tests/test_canonical_curves.py::test_explicit_component_cost_allocation_enables_component_economics",
+        "ancestry_mmm/tests/test_canonical_curves.py::test_channel_nbt_economics_count_spend_once",
+        "ancestry_mmm/tests/test_canonical_curves.py::test_missing_support_is_unknown_and_blocks_planning",
+        "ancestry_mmm/tests/test_canonical_curves.py::test_multi_market_currency_governance_and_conversion",
+        "ancestry_mmm/tests/test_canonical_curves.py::test_uncertainty_summary_aggregates_draws_before_summary",
+        "ancestry_mmm/tests/test_canonical_curves.py::test_model_input_curve_is_available_without_cost_economics",
+        "ancestry_mmm/tests/test_canonical_curves.py::test_monetary_curve_maps_spend_and_stores_chain_rule_derivatives",
+        "ancestry_mmm/tests/test_canonical_curves.py::test_monetary_curve_is_blocked_without_approved_mapping",
+        "ancestry_mmm/tests/test_canonical_curves.py::test_monetary_curve_is_blocked_in_official_mode_without_approved_activity_governance",
+        "ancestry_mmm/tests/test_canonical_curves.py::test_monetary_curve_succeeds_in_exploratory_mode_without_approved_activity_governance",
+        "ancestry_mmm/tests/test_canonical_curves.py::test_reference_context_migrates_legacy_spend_names",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable"
+      ]
     }
   ]
 }
