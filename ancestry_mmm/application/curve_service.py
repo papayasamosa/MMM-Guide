@@ -16,10 +16,13 @@ service and enforces the REQ-CURVE-001 creation-time contract:
   state across all component rows and posterior draws is preserved, and the
   enforcement contract for planning/optimisation use is exposed.
 
-Still wired by later PRs (per REQ-CURVE-001 / the approved migration
+PR 95C adds the current-use revalidation gate: ``authorize_use`` revalidates
+an existing artifact against live governance at every official use —
+historical artifact integrity does not imply current authorization.
+
+Still wired by a later PR (per REQ-CURVE-001 / the approved migration
 sequence):
 
-- ``authorize_use`` — PR 95C (current-use revalidation and staleness);
 - store-level import/migration/malformed-file audit — PR 95D.
 
 No behaviour change to existing generators: the low-level
@@ -30,6 +33,7 @@ unchanged; the service is the new official entry point on top of it.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Mapping, Optional, Sequence, Tuple
 
 import arviz as az
@@ -47,6 +51,13 @@ from ancestry_mmm.core.canonical_curves import (
     ReferenceContextIncompleteError,
     generate_canonical_curve_draws,
     validate_reference_context_completeness,
+)
+from ancestry_mmm.core.curve_artifact import (
+    CURVE_CURRENT_AUTHORIZATION_STATUSES,
+    CURVE_USE_ELIGIBILITY_STATUSES,
+    CurveArtifact,
+    CurveArtifactError,
+    verify_curve_artifact_fingerprints,
 )
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
 from ancestry_mmm.core.market_specific_predict import (
@@ -86,6 +97,40 @@ class CurveReferenceContextIncompleteError(CurveGovernanceError):
 
 class CurvePlanningIneligibleError(CurveGovernanceError):
     """Official planning/optimisation use blocked by missing planning support."""
+
+
+class CurveUseNotAuthorizedError(CurveGovernanceError):
+    """Official use of a curve artifact is not currently authorised.
+
+    Raised by the use-time gate (``CurveService.authorize_use``) — fail
+    closed whenever current governance cannot be resolved or any
+    revalidation check fails.
+    """
+
+
+@dataclass(frozen=True)
+class CurveUseAuthorization:
+    """Result of a current-use revalidation (REQ-CURVE-001).
+
+    ``current_authorization_status`` and ``requested_use_eligibility`` use
+    the artifact lifecycle vocabulary (``core.curve_artifact``), which is
+    deliberately separate from ``OUTCOME_APPROVAL_STATUSES``.
+    """
+
+    authorized: bool
+    requested_use: str
+    current_authorization_status: str
+    requested_use_eligibility: str
+    reason: str = ""
+
+    def __post_init__(self) -> None:
+        if (
+            self.current_authorization_status
+            not in CURVE_CURRENT_AUTHORIZATION_STATUSES
+        ):
+            raise ValueError("invalid current_authorization_status")
+        if self.requested_use_eligibility not in CURVE_USE_ELIGIBILITY_STATUSES:
+            raise ValueError("invalid requested_use_eligibility")
 
 
 @dataclass(frozen=True)
@@ -280,15 +325,135 @@ class CurveService:
         return eligible
 
     def authorize_use(
-        self, artifact: object, requested_use: str, **current_governance: object
-    ) -> bool:
-        """PR 95C wiring point: current-use revalidation for an existing artifact.
+        self,
+        artifact: CurveArtifact,
+        requested_use: str,
+        *,
+        current_governance: OfficialCurveGovernance,
+        staleness_cutoff: Optional[str] = None,
+    ) -> CurveUseAuthorization:
+        """Revalidate an artifact against current governance for a requested use.
 
-        PR 95A defines the boundary only. Historical artifact integrity does
-        not imply current authorization; this method will revalidate the
-        artifact against live governance at every official use (PR 95C).
+        REQ-CURVE-001 current official-use authorization: historical artifact
+        integrity does not imply current authorization. This is the use-time
+        gate, evaluated at every official use:
+
+        1. re-verify the artifact's historical integrity (chain fingerprints);
+        2. the artifact's model identity must match the current model, and the
+           current model approval chain (identity/policy/readiness) must pass;
+        3. the artifact's outcome definition must still match the current
+           outcome definition (not stale), and a current, matching outcome
+           approval must allow the requested use;
+        4. current activity definitions must be resolvable and approved;
+        5. planning/optimisation uses additionally enforce
+           ``planning_support_eligible`` on the artifact's draws;
+        6. when ``staleness_cutoff`` is provided, an artifact created before
+           it is not currently authorised.
+
+        Raises ``CurveUseNotAuthorizedError`` (fail closed) when any check
+        fails or current governance cannot be resolved. Never rewrites the
+        artifact's historical evidence.
         """
-        raise NotImplementedError(
-            "authorize_use is the PR 95C current-use revalidation point; PR 95A "
-            "defines the boundary only."
+        # 1. Historical integrity (immutable evidence must still verify)
+        try:
+            verify_curve_artifact_fingerprints(artifact.metadata)
+        except CurveArtifactError as exc:
+            raise CurveUseNotAuthorizedError(
+                f"Artifact historical integrity is not intact: {exc}"
+            ) from exc
+
+        identity = current_governance.model_identity
+        identity_snapshot = artifact.metadata.model_identity_snapshot
+        if not (
+            identity_snapshot.get("model_run_id") == identity.model_run_id
+            and identity_snapshot.get("data_fingerprint") == identity.data_fingerprint
+            and identity_snapshot.get("model_spec_fingerprint")
+            == identity.model_spec_fingerprint
+            and identity_snapshot.get("posterior_fingerprint")
+            == identity.posterior_fingerprint
+        ):
+            raise CurveUseNotAuthorizedError(
+                "Artifact model identity does not match the current model "
+                "(the artifact is stale for the current model)."
+            )
+
+        # 2. Current model approval chain (identity, policy, readiness)
+        try:
+            require_matching_approval(
+                current_governance.model_approval,
+                model_run_id=identity.model_run_id,
+                data_fingerprint=identity.data_fingerprint,
+                model_spec_fingerprint=identity.model_spec_fingerprint,
+                posterior_fingerprint=identity.posterior_fingerprint,
+                approval_readiness=current_governance.approval_readiness,
+                current_policy=current_governance.threshold_policy,
+            )
+        except (ApprovalMismatchError, ValidationPolicyBlockedError) as exc:
+            raise CurveUseNotAuthorizedError(str(exc)) from exc
+
+        # 3. Outcome definition not stale + current approval allows the
+        #    requested use (the current approval is authoritative; the
+        #    artifact's snapshot is historical evidence, never rewritten).
+        definition_snapshot = artifact.metadata.outcome_definition_snapshot
+        current_outcome = current_governance.outcome_definition
+        if definition_snapshot.get("outcome_id") != current_outcome.outcome_id:
+            raise CurveUseNotAuthorizedError(
+                "Artifact outcome does not match the current outcome definition."
+            )
+        if (
+            definition_snapshot.get("definition_version")
+            != current_outcome.definition_version
+        ):
+            raise CurveUseNotAuthorizedError(
+                "Artifact outcome definition has changed since creation (stale)."
+            )
+        try:
+            require_outcome_approval(
+                current_outcome,
+                current_governance.outcome_approval,
+                requested_use,
+            )
+        except OutcomeApprovalBlockedError as exc:
+            raise CurveUseNotAuthorizedError(str(exc)) from exc
+
+        # 4. Current activity governance must be resolvable and approved
+        activities = current_governance.activity_definitions
+        if not activities:
+            raise CurveUseNotAuthorizedError(
+                "Current activity definitions are unavailable; current governance "
+                "cannot be resolved (fail closed)."
+            )
+        unapproved = sorted(
+            a.activity_id for a in activities if a.approval_status != "approved"
+        )
+        if unapproved:
+            raise CurveUseNotAuthorizedError(
+                f"Current activity definitions are not approved: {unapproved}"
+            )
+
+        # 5. Planning/optimisation uses enforce planning support on the draws
+        if requested_use in {"planning", "optimisation"}:
+            self.enforce_planning_support(artifact.draws, requested_use=requested_use)
+
+        # 6. Staleness cutoff
+        if staleness_cutoff is not None:
+            try:
+                created = datetime.fromisoformat(
+                    artifact.metadata.creation_timestamp.replace("Z", "+00:00")
+                )
+                cutoff = datetime.fromisoformat(staleness_cutoff.replace("Z", "+00:00"))
+            except (ValueError, TypeError, AttributeError) as exc:
+                raise CurveUseNotAuthorizedError(
+                    f"Cannot resolve staleness_cutoff {staleness_cutoff!r}: {exc}"
+                ) from exc
+            if created < cutoff:
+                raise CurveUseNotAuthorizedError(
+                    f"Artifact predates staleness cutoff {staleness_cutoff}."
+                )
+
+        return CurveUseAuthorization(
+            authorized=True,
+            requested_use=requested_use,
+            current_authorization_status="authorized",
+            requested_use_eligibility="eligible",
         )

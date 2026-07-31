@@ -23,6 +23,11 @@ import pytest
 from ancestry_mmm.core.approval import ModelApproval
 from ancestry_mmm.core.activities import ActivityDefinition
 from ancestry_mmm.core.canonical_curves import CurveReferenceContext
+from ancestry_mmm.core.curve_artifact import (
+    CurveArtifact,
+    CurveArtifactMetadata,
+    compute_curve_artifact_fingerprints,
+)
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
 from ancestry_mmm.core.media_costs import MediaInputSpec, MediaInputSupport
 from ancestry_mmm.core.model_identity import ModelIdentity
@@ -44,6 +49,8 @@ from ancestry_mmm.application.curve_service import (
     CurvePublicationApprovalError,
     CurveReferenceContextIncompleteError,
     CurveService,
+    CurveUseAuthorization,
+    CurveUseNotAuthorizedError,
     OfficialCurveGovernance,
 )
 
@@ -422,15 +429,190 @@ class TestValidateOfficialGovernance:
 
 
 # ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# Boundary wiring points (current-use revalidation is deferred to PR 95C)
+# PR 95C: current-use revalidation (authorize_use)
 # ---------------------------------------------------------------------------
 
 
-class TestBoundaryWiringPoints:
-    def test_current_use_revalidation_is_deferred_to_pr95c(self):
-        with pytest.raises(NotImplementedError, match="PR 95C"):
-            CurveService().authorize_use(object(), "planning")
+def _artifact(planning_eligible=True, **metadata_overrides):
+    """A CurveArtifact whose historical snapshot matches the test governance."""
+    base = CurveArtifactMetadata(
+        artifact_id="art-1",
+        creation_timestamp="2026-07-01T00:00:00+00:00",
+        model_identity_snapshot=dict(IDENTITY),
+        approval_snapshot={"approval_id": "apr-1", "status": "approved"},
+        outcome_definition_snapshot={
+            "outcome_id": "fh_new_gsa",
+            "definition_version": "1.0",
+        },
+        outcome_approval_snapshot={
+            "approval_id": "apr-o1",
+            "allowed_uses": ["curve_publication"],
+        },
+        activity_governance_snapshot={"activities": ["tv-paid", "dna-paid"]},
+    )
+    metadata = dataclasses.replace(base, **metadata_overrides)
+    if "fingerprints" not in metadata_overrides:
+        metadata = dataclasses.replace(
+            metadata, fingerprints=dict(compute_curve_artifact_fingerprints(metadata))
+        )
+    draws = pd.DataFrame(
+        {
+            "planning_support_eligible": [planning_eligible],
+            "planning_blocked_reason": [
+                "" if planning_eligible else "observed_support_missing"
+            ],
+        }
+    )
+    return CurveArtifact(metadata=metadata, draws=draws, summaries=pd.DataFrame())
+
+
+class TestAuthorizeUse:
+    @staticmethod
+    def _governance_for_use(
+        allowed_uses=("curve_publication", "headline_reporting"),
+        **overrides,
+    ):
+        return _governance(
+            outcome_approval=_outcome_approval(allowed_uses=allowed_uses),
+            **overrides,
+        )
+
+    def test_authorizes_current_use(self):
+        result = CurveService().authorize_use(
+            _artifact(),
+            "headline_reporting",
+            current_governance=self._governance_for_use(),
+        )
+        assert isinstance(result, CurveUseAuthorization)
+        assert result.authorized
+        assert result.current_authorization_status == "authorized"
+        assert result.requested_use_eligibility == "eligible"
+
+    def test_authorizes_planning_use_when_eligible(self):
+        governance = self._governance_for_use(
+            allowed_uses=("curve_publication", "planning")
+        )
+        result = CurveService().authorize_use(
+            _artifact(), "planning", current_governance=governance
+        )
+        assert result.authorized
+
+    def test_blocks_when_artifact_model_is_stale(self):
+        artifact = _artifact(
+            model_identity_snapshot={**IDENTITY, "model_run_id": "run-OLD"}
+        )
+        with pytest.raises(CurveUseNotAuthorizedError, match="stale"):
+            CurveService().authorize_use(
+                artifact,
+                "headline_reporting",
+                current_governance=self._governance_for_use(),
+            )
+
+    def test_blocks_when_current_model_approval_mismatched(self):
+        governance = _governance(
+            model_approval=_model_approval(posterior_fingerprint="wrong-post"),
+            outcome_approval=_outcome_approval(
+                allowed_uses=("curve_publication", "headline_reporting")
+            ),
+        )
+        with pytest.raises(CurveUseNotAuthorizedError, match="does not match"):
+            CurveService().authorize_use(
+                _artifact(), "headline_reporting", current_governance=governance
+            )
+
+    def test_blocks_when_outcome_definition_changed(self):
+        artifact = _artifact(
+            outcome_definition_snapshot={
+                "outcome_id": "fh_new_gsa",
+                "definition_version": "0.9",
+            }
+        )
+        with pytest.raises(CurveUseNotAuthorizedError, match="changed since creation"):
+            CurveService().authorize_use(
+                artifact,
+                "headline_reporting",
+                current_governance=self._governance_for_use(),
+            )
+
+    def test_blocks_when_requested_use_not_approved(self):
+        governance = self._governance_for_use(allowed_uses=("curve_publication",))
+        with pytest.raises(CurveUseNotAuthorizedError, match="planning"):
+            CurveService().authorize_use(
+                _artifact(), "planning", current_governance=governance
+            )
+
+    def test_blocks_planning_when_support_missing(self):
+        governance = self._governance_for_use(
+            allowed_uses=("curve_publication", "planning")
+        )
+        with pytest.raises(CurvePlanningIneligibleError, match="planning"):
+            CurveService().authorize_use(
+                _artifact(planning_eligible=False),
+                "planning",
+                current_governance=governance,
+            )
+
+    def test_blocks_when_activity_governance_unavailable(self):
+        governance = _governance(
+            activity_definitions=None,
+            outcome_approval=_outcome_approval(
+                allowed_uses=("curve_publication", "headline_reporting")
+            ),
+        )
+        with pytest.raises(CurveUseNotAuthorizedError, match="cannot be resolved"):
+            CurveService().authorize_use(
+                _artifact(), "headline_reporting", current_governance=governance
+            )
+
+    def test_blocks_when_current_activities_unapproved(self):
+        draft = dataclasses.replace(_activity(), approval_status="draft")
+        governance = _governance(
+            activity_definitions=[draft],
+            outcome_approval=_outcome_approval(
+                allowed_uses=("curve_publication", "headline_reporting")
+            ),
+        )
+        with pytest.raises(CurveUseNotAuthorizedError, match="not approved"):
+            CurveService().authorize_use(
+                _artifact(), "headline_reporting", current_governance=governance
+            )
+
+    def test_blocks_when_predates_staleness_cutoff(self):
+        with pytest.raises(CurveUseNotAuthorizedError, match="predates"):
+            CurveService().authorize_use(
+                _artifact(),
+                "headline_reporting",
+                current_governance=self._governance_for_use(),
+                staleness_cutoff="2026-12-31T00:00:00+00:00",
+            )
+
+    def test_blocks_when_historical_integrity_tampered(self):
+        artifact = _artifact()
+        tampered = dataclasses.replace(
+            artifact,
+            metadata=dataclasses.replace(
+                artifact.metadata,
+                approval_snapshot={
+                    **artifact.metadata.approval_snapshot,
+                    "status": "rejected",
+                },
+            ),
+        )
+        with pytest.raises(CurveUseNotAuthorizedError, match="integrity"):
+            CurveService().authorize_use(
+                tampered,
+                "headline_reporting",
+                current_governance=self._governance_for_use(),
+            )
+
+    def test_blocks_when_bad_staleness_cutoff(self):
+        with pytest.raises(CurveUseNotAuthorizedError, match="Cannot resolve"):
+            CurveService().authorize_use(
+                _artifact(),
+                "headline_reporting",
+                current_governance=self._governance_for_use(),
+                staleness_cutoff="not-a-date",
+            )
 
 
 # ---------------------------------------------------------------------------
