@@ -187,6 +187,19 @@
         "ancestry_mmm/tests/test_project_service.py::TestVerifyImportedReadiness::test_matching_imported_readiness_is_verified",
         "ancestry_mmm/tests/test_project_service.py::TestVerifyImportedReadiness::test_rejected_when_diagnostics_artefact_since_drifted"
       ]
+    },
+    {
+      "requirement_id": "REQ-CURVE-001",
+      "status": "draft",
+      "record_path": "docs/approved_requirements/REQ-CURVE-001.md",
+      "affected_modules": [
+        "ancestry_mmm/core/canonical_curves.py",
+        "ancestry_mmm/core/curve_bank.py",
+        "ancestry_mmm/core/outcome_approval.py",
+        "ancestry_mmm/pages/07_Results_Curve_Bank.py",
+        "ancestry_mmm/components/charts.py"
+      ],
+      "required_tests": []
     }
   ]
 }
