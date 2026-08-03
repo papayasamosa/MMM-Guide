@@ -165,6 +165,12 @@ class TestBuildReportSectionsEmptyState:
         assert "No curves" in curve_bank.paragraphs[0]
         assert "No scenarios" in scenarios_section.paragraphs[0]
 
+    def test_no_official_curve_artifact_rows_says_so(self, spec):
+        sections = build_report_sections(spec=spec)
+        official = next(s for s in sections if s.title == "Official curve artifacts")
+        assert "No official curve artifacts" in official.paragraphs[0]
+        assert official.table is None
+
     def test_renders_without_error_in_the_fully_empty_state(self):
         sections = build_report_sections(spec=None)
         md = render_markdown("empty-project", sections)
@@ -213,6 +219,29 @@ class TestBuildReportSectionsFullState:
         scenarios_section = next(s for s in sections if s.title == "Scenarios")
         assert scenarios_section.table is not None
         assert "manual-uk" in scenarios_section.table["scenario"].tolist()
+
+    def test_official_curve_artifacts_section_renders_resolved_rows(self, spec):
+        rows = [
+            {
+                "artifact_id": "art-1",
+                "created": "2026-08-01T00:00:00+00:00",
+                "schema_version": 1,
+                "outcome": "fh_new_gsa",
+                "reference_context_id": "recent",
+                "format_status": "current",
+                "historical_integrity": "intact",
+                "current_authorization": "authorized",
+                "requested_use_eligibility": "eligible",
+                "planning_support_eligible": True,
+                "reason": "",
+            }
+        ]
+        sections = build_report_sections(spec=spec, official_curve_artifact_rows=rows)
+        official = next(s for s in sections if s.title == "Official curve artifacts")
+        assert "1 official curve artifact" in official.paragraphs[0]
+        assert official.table is not None
+        assert list(official.table["artifact_id"]) == ["art-1"]
+        assert "current_authorization" in official.table.columns
 
 
 class TestOutcomesSection:

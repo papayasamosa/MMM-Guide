@@ -36,6 +36,7 @@ class ProjectExportInput:
     trace: Optional[az.InferenceData]
     scenarios: List[dict]
     curve_bank_source_dir: Optional[str] = None
+    curve_artifact_store_source_dir: Optional[str] = None
     model_approval: Optional[dict] = None
     model_run_id: Optional[str] = None
     model_meta: Optional[FHModelMeta] = None
@@ -115,10 +116,16 @@ class ProjectService:
             errors.append(f"Invalid output path: {exc}")
             return ProjectServiceResult(success=False, errors=errors)
 
-        # Resolve curve_bank_source_dir to Path if provided
+        # Resolve curve_bank_source_dir / curve_artifact_store_source_dir to
+        # Path if provided
         cb_path = (
             Path(exp_input.curve_bank_source_dir)
             if exp_input.curve_bank_source_dir
+            else None
+        )
+        curve_artifact_store_path = (
+            Path(exp_input.curve_artifact_store_source_dir)
+            if exp_input.curve_artifact_store_source_dir
             else None
         )
 
@@ -134,6 +141,7 @@ class ProjectService:
                 exp_input.trace,
                 exp_input.scenarios,
                 curve_bank_source_dir=cb_path,
+                curve_artifact_store_source_dir=curve_artifact_store_path,
                 model_approval=exp_input.model_approval,
                 model_run_id=exp_input.model_run_id,
                 model_meta=exp_input.model_meta,

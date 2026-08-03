@@ -66,6 +66,7 @@ from .fingerprint import (
     fingerprint_model_spec,
     fingerprint_posterior,
 )
+from .curve_artifact import load_curve_artifact_store
 from .hierarchical_model import FHModelMeta
 from .outcomes import outcome_catalogue_fingerprint_payload
 from .pathways import pathway_catalogue_fingerprint_payload
@@ -73,7 +74,7 @@ from .predict import extract_posterior_params
 from .schema import ModelSpec
 from .optimization import SpendConstraint
 
-PROJECT_BUNDLE_SCHEMA_VERSION = 8
+PROJECT_BUNDLE_SCHEMA_VERSION = 9
 PROJECT_APP_VERSION = "0.1.0"
 
 
@@ -136,6 +137,7 @@ def export_project(
     trace: Optional[az.InferenceData],
     scenarios: List[dict],
     curve_bank_source_dir: Optional[Path] = None,
+    curve_artifact_store_source_dir: Optional[Path] = None,
     model_approval: Optional[dict] = None,
     model_run_id: Optional[str] = None,
     model_meta: Optional[FHModelMeta] = None,
@@ -320,6 +322,12 @@ def export_project(
         if curve_bank_source_dir is not None and Path(curve_bank_source_dir).exists():
             shutil.copytree(curve_bank_source_dir, tmp / "curve_bank")
 
+        if (
+            curve_artifact_store_source_dir is not None
+            and Path(curve_artifact_store_source_dir).exists()
+        ):
+            shutil.copytree(curve_artifact_store_source_dir, tmp / "curve_artifacts")
+
         manifest = {
             "schema_version": PROJECT_BUNDLE_SCHEMA_VERSION,
             "app_version": PROJECT_APP_VERSION,
@@ -331,6 +339,7 @@ def export_project(
                 "posterior": trace is not None,
                 "diagnostics": bool(diagnostics),
                 "curves": (tmp / "curve_bank").exists(),
+                "official_curve_artifacts": (tmp / "curve_artifacts").exists(),
                 "approval": model_approval is not None,
                 "outcome_approvals": outcome_approvals is not None
                 and bool(outcome_approvals),
@@ -406,6 +415,13 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         "model_comparison_candidates": [],
         "migration_review": None,
         "curve_bank_binary_files": {},
+        # PR 96B: official curve artifact store subtree - text (metadata
+        # JSON) and binary (draws/summaries Parquet) files, keyed by path
+        # relative to the store root (mirrors curve_bank_files/
+        # curve_bank_binary_files above). Empty for bundles exported before
+        # this PR or with no official artifacts yet - not an error.
+        "curve_artifact_files": {},
+        "curve_artifact_binary_files": {},
         # G2A.7 (REQ-OUT-002): outcome approvals - None for legacy bundles
         # (no approvals on file). Imported bundles without this file get
         # legacy_unapproved status for every outcome, never implicit approval.
@@ -583,6 +599,17 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
                 for f in curve_bank_path.rglob("*")
                 if f.is_file() and f.suffix.lower() != ".json"
             }
+        curve_artifact_path = tmp / "curve_artifacts"
+        if curve_artifact_path.exists():
+            result["curve_artifact_files"] = {
+                str(f.relative_to(curve_artifact_path)): f.read_text()
+                for f in curve_artifact_path.rglob("*.json")
+            }
+            result["curve_artifact_binary_files"] = {
+                str(f.relative_to(curve_artifact_path)): f.read_bytes()
+                for f in curve_artifact_path.rglob("*")
+                if f.is_file() and f.suffix.lower() != ".json"
+            }
         diagnostics_path = tmp / "diagnostics"
         if diagnostics_path.exists():
             for path in diagnostics_path.glob("*.json"):
@@ -674,6 +701,35 @@ def resolve_imported_outcome_approvals(
     return legacy_records, warnings
 
 
+def _count_loaded_curve_artifacts(imported: Dict[str, Any]) -> int:
+    """How many official curve artifacts round-trip cleanly from an
+    imported bundle's ``curve_artifact_files``/``curve_artifact_binary_files``.
+
+    Materialises the imported files into a fresh temp directory and reuses
+    ``load_curve_artifact_store``'s existing fingerprint verification and
+    per-artifact audit (REQ-CURVE-001) rather than a second, bundle-level
+    checksum mechanism - a store that fails to reload here fails the same
+    way it would in the live app. A malformed-only store (0 loaded) must
+    not satisfy the ``official_curves`` checkpoint (PR 96B).
+    """
+    text_files = imported.get("curve_artifact_files") or {}
+    binary_files = imported.get("curve_artifact_binary_files") or {}
+    if not text_files and not binary_files:
+        return 0
+    with tempfile.TemporaryDirectory() as tmp_str:
+        tmp = Path(tmp_str)
+        for rel_path, contents in text_files.items():
+            target = tmp / Path(rel_path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(contents)
+        for rel_path, binary_contents in binary_files.items():
+            target = tmp / Path(rel_path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(binary_contents)
+        result = load_curve_artifact_store(tmp, raise_on_malformed=False)
+        return len(result.loaded)
+
+
 def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
     """Audit whether an imported bundle can resume its declared checkpoint.
 
@@ -682,10 +738,13 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
     checkpoint actually represented by the bundle.
     """
     manifest = imported.get("manifest") or {}
+    loaded_curve_artifact_count = _count_loaded_curve_artifacts(imported)
     declared = manifest.get("workflow_checkpoint")
     if not declared or declared == "unknown":
         if imported.get("scenarios"):
             declared = "scenarios"
+        elif loaded_curve_artifact_count > 0:
+            declared = "official_curves"
         elif imported.get("curve_bank_files") or imported.get(
             "curve_bank_binary_files"
         ):
@@ -728,6 +787,21 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
             "model_approval",
             "curve_bank_files",
         ],
+        # PR 96B: a distinct, stricter checkpoint from "curves" - reached
+        # only via at least one artifact from the governed official curve
+        # artifact store (CurveService.create_official_artifact), never via
+        # the legacy CurveBankEntry parameter-snapshot registry alone. See
+        # `present()`'s "curve_artifact_files" case below and
+        # `_count_loaded_curve_artifacts`.
+        "official_curves": [
+            "raw_sources",
+            "transformed_data",
+            "model_spec",
+            "trace",
+            "model_meta",
+            "model_approval",
+            "curve_artifact_files",
+        ],
         "scenarios": [
             "raw_sources",
             "transformed_data",
@@ -743,6 +817,8 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
         value = imported.get(key)
         if key == "curve_bank_files":
             return bool(value or imported.get("curve_bank_binary_files"))
+        if key == "curve_artifact_files":
+            return loaded_curve_artifact_count > 0
         if key == "trace":
             return value is not None
         if key in {"transformed_data", "model_spec", "model_meta", "model_approval"}:
@@ -775,7 +851,7 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
     officially_resumable = not missing
     outcome_governance_warnings: List[str] = []
     official_blocking_reasons: List[dict] = []
-    if declared in {"approved", "curves", "scenarios"}:
+    if declared in {"approved", "curves", "official_curves", "scenarios"}:
         approvals, _ = resolve_imported_outcome_approvals(imported)
         from .outcome_approval import OutcomeApproval
 

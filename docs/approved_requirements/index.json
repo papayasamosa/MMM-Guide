@@ -195,8 +195,14 @@
       "affected_modules": [
         "ancestry_mmm/core/canonical_curves.py",
         "ancestry_mmm/core/curve_bank.py",
+        "ancestry_mmm/core/curve_artifact.py",
         "ancestry_mmm/core/outcome_approval.py",
+        "ancestry_mmm/core/persistence.py",
+        "ancestry_mmm/core/report.py",
+        "ancestry_mmm/application/curve_service.py",
+        "ancestry_mmm/application/project_service.py",
         "ancestry_mmm/pages/07_Results_Curve_Bank.py",
+        "ancestry_mmm/pages/09_Project_Export.py",
         "ancestry_mmm/components/charts.py"
       ],
       "required_tests": [
@@ -214,6 +220,27 @@
         "ancestry_mmm/tests/test_canonical_curves.py::test_monetary_curve_is_blocked_in_official_mode_without_approved_activity_governance",
         "ancestry_mmm/tests/test_canonical_curves.py::test_monetary_curve_succeeds_in_exploratory_mode_without_approved_activity_governance",
         "ancestry_mmm/tests/test_canonical_curves.py::test_reference_context_migrates_legacy_spend_names",
+        "ancestry_mmm/tests/test_persistence.py::TestSafeExtractZip::test_rejects_traversal_entry_inside_curve_artifacts_subtree",
+        "ancestry_mmm/tests/test_persistence.py::test_bundle_manifest_reports_official_curve_artifacts_presence",
+        "ancestry_mmm/tests/test_persistence.py::test_export_then_import_official_curve_artifact_store_clean_environment_round_trip",
+        "ancestry_mmm/tests/test_persistence.py::test_official_curve_artifact_import_audit_reports_malformed_entries",
+        "ancestry_mmm/tests/test_persistence.py::test_end_to_end_resume_at_official_curves_checkpoint",
+        "ancestry_mmm/tests/test_persistence.py::test_legacy_curve_bank_alone_never_satisfies_official_curves_checkpoint",
+        "ancestry_mmm/tests/test_persistence.py::test_malformed_only_official_artifact_store_never_satisfies_checkpoint",
+        "ancestry_mmm/tests/test_curve_service.py::TestResolveCurrentGovernance::test_complete_evidence_resolves_a_usable_governance",
+        "ancestry_mmm/tests/test_curve_service.py::TestResolveCurrentGovernance::test_missing_current_identity_returns_none",
+        "ancestry_mmm/tests/test_curve_service.py::TestResolveCurrentGovernance::test_missing_approval_dict_returns_none",
+        "ancestry_mmm/tests/test_curve_service.py::TestResolveCurrentGovernance::test_no_outcome_definitions_returns_none",
+        "ancestry_mmm/tests/test_curve_service.py::TestResolveCurrentGovernance::test_no_matching_outcome_definition_returns_none",
+        "ancestry_mmm/tests/test_curve_service.py::TestResolveCurrentGovernance::test_no_matching_outcome_approval_returns_none",
+        "ancestry_mmm/tests/test_curve_service.py::TestResolveCurrentGovernance::test_missing_policy_readiness_diagnostics_still_resolves_but_fails_authorize_use",
+        "ancestry_mmm/tests/test_report.py::TestBuildReportSectionsEmptyState::test_no_official_curve_artifact_rows_says_so",
+        "ancestry_mmm/tests/test_report.py::TestBuildReportSectionsFullState::test_official_curve_artifacts_section_renders_resolved_rows",
+        "ancestry_mmm/tests/test_project_service.py::TestProjectExportInputCurveArtifactStore::test_export_passes_curve_artifact_store_through_to_the_bundle",
+        "ancestry_mmm/tests/test_project_service.py::TestProjectExportInputCurveArtifactStore::test_export_omits_curve_artifact_store_when_none",
+        "ancestry_mmm/tests/test_curve_bank_page_apptest.py::test_both_make_entries_calls_thread_readiness_and_policy",
+        "ancestry_mmm/tests/test_project_export_page_apptest.py::test_export_reaches_official_curves_checkpoint_with_a_loaded_artifact",
+        "ancestry_mmm/tests/test_project_export_page_apptest.py::test_export_falls_back_to_legacy_curves_checkpoint_without_official_artifacts",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable"
       ]
     }

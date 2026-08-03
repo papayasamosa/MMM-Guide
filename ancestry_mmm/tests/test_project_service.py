@@ -6,6 +6,7 @@ never trusted unless it verifiably still matches the imported policy,
 diagnostics artefact, and reconstructed model identity.
 """
 
+import dataclasses
 from datetime import datetime, timezone
 
 import arviz as az
@@ -20,6 +21,11 @@ from ancestry_mmm.application.project_service import (
     verify_imported_readiness,
 )
 from ancestry_mmm.core.approval import create_policy_backed_model_approval
+from ancestry_mmm.core.curve_artifact import (
+    CurveArtifactMetadata,
+    compute_curve_artifact_fingerprints,
+    write_curve_artifact,
+)
 from ancestry_mmm.core.fingerprint import (
     fingerprint_dataframe,
     fingerprint_model_spec,
@@ -384,6 +390,99 @@ class TestProjectExportInputGovernanceFields:
         assert imported["diagnostics_artefact"] is None
         assert imported["validation_results"] is None
         assert imported["approval_readiness"] is None
+
+
+class TestProjectExportInputCurveArtifactStore:
+    """PR 96B: curve_artifact_store_source_dir - a new ProjectExportInput
+    field mirroring the pre-existing curve_bank_source_dir, threaded
+    through ProjectService.export() to export_project()."""
+
+    @staticmethod
+    def _write_minimal_artifact(directory):
+        metadata = CurveArtifactMetadata(
+            artifact_id="art-1",
+            creation_timestamp="2026-08-01T00:00:00+00:00",
+            model_identity_snapshot={"model_run_id": "run-1"},
+        )
+        metadata = dataclasses.replace(
+            metadata,
+            fingerprints=dict(compute_curve_artifact_fingerprints(metadata)),
+        )
+        draws = pd.DataFrame(
+            [
+                {
+                    "model_run_id": "run-1",
+                    "reference_context_id": "ctx-1",
+                    "market": "UK",
+                    "product": "fh",
+                    "segment": "New",
+                    "outcome_id": "fh_new_gsa",
+                    "metric_key": "fh_gsa",
+                    "channel": "TV",
+                    "component_type": "direct",
+                    "pathway_role": "primary",
+                    "spend_point": 0,
+                    "posterior_draw": 0,
+                    "incremental_response": 1.0,
+                }
+            ]
+        )
+        summaries = pd.DataFrame(
+            [
+                {
+                    "model_run_id": "run-1",
+                    "reference_context_id": "ctx-1",
+                    "market": "UK",
+                    "product": "fh",
+                    "segment": "New",
+                    "outcome_id": "fh_new_gsa",
+                    "metric_key": "fh_gsa",
+                    "channel": "TV",
+                    "component_type": "direct",
+                    "pathway_role": "primary",
+                    "spend_point": 0,
+                    "incremental_response": 1.0,
+                }
+            ]
+        )
+        write_curve_artifact(
+            directory, metadata=metadata, draws=draws, summaries=summaries
+        )
+
+    def test_export_passes_curve_artifact_store_through_to_the_bundle(
+        self, tmp_path, governed_project
+    ):
+        store_dir = tmp_path / "artifact-store"
+        self._write_minimal_artifact(store_dir / "art-1")
+        project = dict(governed_project)
+        project["curve_artifact_store_source_dir"] = str(store_dir)
+        exp_input = ProjectExportInput(
+            output_path=str(tmp_path / "bundle.zip"),
+            **project,
+        )
+        result = ProjectService().export(exp_input)
+
+        assert result.success, result.errors
+        imported = import_project(result.actual_export_path)
+        assert imported["manifest"]["contains"]["official_curve_artifacts"] is True
+        assert any(
+            key.endswith("curve_artifact_metadata.json")
+            for key in imported["curve_artifact_files"]
+        )
+
+    def test_export_omits_curve_artifact_store_when_none(
+        self, tmp_path, governed_project
+    ):
+        exp_input = ProjectExportInput(
+            output_path=str(tmp_path / "bundle.zip"),
+            **governed_project,
+        )
+        result = ProjectService().export(exp_input)
+
+        assert result.success, result.errors
+        imported = import_project(result.actual_export_path)
+        assert imported["manifest"]["contains"]["official_curve_artifacts"] is False
+        assert imported["curve_artifact_files"] == {}
 
 
 class TestVerifyImportedReadiness:

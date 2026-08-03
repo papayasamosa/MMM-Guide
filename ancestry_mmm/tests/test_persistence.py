@@ -1,6 +1,8 @@
 import io
+import json
 import zipfile
 from dataclasses import asdict, replace
+from pathlib import Path
 
 import arviz as az
 import numpy as np
@@ -11,6 +13,12 @@ from ancestry_mmm.core.approval import (
     ApprovalMismatchError,
     ModelApproval,
     fingerprint_model_approval,
+)
+from ancestry_mmm.core.curve_artifact import (
+    CurveArtifactMetadata,
+    compute_curve_artifact_fingerprints,
+    load_curve_artifact_store,
+    write_curve_artifact,
 )
 from ancestry_mmm.core.fingerprint import (
     fingerprint_dataframe,
@@ -33,6 +41,7 @@ from ancestry_mmm.core.pathways import (
 )
 from ancestry_mmm.core.persistence import (
     UnsafeZipEntryError,
+    _count_loaded_curve_artifacts,
     _is_safe_zip_member,
     _safe_extract_zip,
     audit_project_resumability,
@@ -142,6 +151,111 @@ class TestSafeExtractZip:
 
         with pytest.raises(UnsafeZipEntryError):
             import_project(zip_path)
+
+    def test_rejects_traversal_entry_inside_curve_artifacts_subtree(self, tmp_path):
+        # PR 96B: the official curve artifact store subtree (curve_artifacts/)
+        # shares _safe_extract_zip with every other bundle subtree - no new
+        # path-safety mechanism was added, so this closes the requirement's
+        # own "safe path validation" bullet with a named regression test.
+        zip_path = tmp_path / "malicious_curve_artifacts.zip"
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr(zipfile.ZipInfo("curve_artifacts/../../evil.json"), "pwned")
+
+        with pytest.raises(UnsafeZipEntryError):
+            import_project(zip_path)
+
+
+# ---------------------------------------------------------------------------
+# PR 96B: minimal official curve artifact fixtures (mirrors
+# test_curve_artifact.py's own fixtures - built directly via write_curve_artifact
+# rather than through the full CurveService governance chain, since these
+# tests exercise the persistence/bundle layer, not curve generation).
+# ---------------------------------------------------------------------------
+
+
+def _official_artifact_metadata(artifact_id: str = "art-1") -> CurveArtifactMetadata:
+    base = CurveArtifactMetadata(
+        artifact_id=artifact_id,
+        creation_timestamp="2026-08-01T00:00:00+00:00",
+        model_identity_snapshot={
+            "model_run_id": "run-1",
+            "data_fingerprint": "d1",
+            "model_spec_fingerprint": "s1",
+            "posterior_fingerprint": "p1",
+        },
+        approval_snapshot={"approval_id": "apr-1", "status": "approved"},
+        threshold_policy_snapshot={"policy_id": "pol-1", "version": "1.0"},
+        readiness_snapshot={"readiness_id": "rd-1", "overall_ready": True},
+        diagnostics_snapshot={"artefact_id": "diag-1", "schema_version": 2},
+        outcome_definition_snapshot={
+            "outcome_id": "fh_new_gsa",
+            "definition_version": "1.0",
+        },
+        outcome_approval_snapshot={
+            "approval_id": "apr-o1",
+            "allowed_uses": ["curve_publication"],
+        },
+        activity_governance_snapshot={"activities": ["tv-paid"]},
+        pathway_governance_snapshot={"pathways": ["direct"]},
+        reference_context_snapshot={"market": "UK", "mode": "steady_state_reference"},
+        support_snapshot={"observed_support_status": "available"},
+        cost_currency_snapshot={"currency": "GBP", "fx_as_of_date": "2026-07-01"},
+    )
+    return replace(base, fingerprints=dict(compute_curve_artifact_fingerprints(base)))
+
+
+def _official_artifact_draws() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "model_run_id": "run-1",
+                "reference_context_id": "ctx-1",
+                "market": "UK",
+                "product": "fh",
+                "segment": "New",
+                "outcome_id": "fh_new_gsa",
+                "metric_key": "fh_gsa",
+                "channel": "TV",
+                "component_type": "direct",
+                "pathway_role": "primary",
+                "spend_point": 0,
+                "posterior_draw": 0,
+                "incremental_response": 1.0,
+            }
+        ]
+    )
+
+
+def _official_artifact_summaries() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "model_run_id": "run-1",
+                "reference_context_id": "ctx-1",
+                "market": "UK",
+                "product": "fh",
+                "segment": "New",
+                "outcome_id": "fh_new_gsa",
+                "metric_key": "fh_gsa",
+                "channel": "TV",
+                "component_type": "direct",
+                "pathway_role": "primary",
+                "spend_point": 0,
+                "incremental_response": 1.0,
+            }
+        ]
+    )
+
+
+def _write_official_artifact(store_dir, artifact_id: str = "art-1"):
+    directory = store_dir / artifact_id
+    write_curve_artifact(
+        directory,
+        metadata=_official_artifact_metadata(artifact_id),
+        draws=_official_artifact_draws(),
+        summaries=_official_artifact_summaries(),
+    )
+    return directory
 
 
 # ---------------------------------------------------------------------------
@@ -487,6 +601,179 @@ def test_bundle_manifest_workflow_diagnostics_notes_and_curve_state_round_trip(
     )
     assert "curve-1.json" in imported["curve_bank_files"]
     assert audit_project_resumability(imported)["resumable"]
+
+
+# ---------------------------------------------------------------------------
+# PR 96B: official curve artifact store project-bundle portability
+# ---------------------------------------------------------------------------
+
+
+def test_bundle_manifest_reports_official_curve_artifacts_presence(
+    tmp_path, sample_project
+):
+    with_store = dict(sample_project)
+    artifact_source = tmp_path / "artifact-source"
+    _write_official_artifact(artifact_source)
+    with_store["curve_artifact_store_source_dir"] = artifact_source
+    imported_with = import_project(
+        export_project(tmp_path / "with-store.zip", **with_store)
+    )
+    assert imported_with["manifest"]["contains"]["official_curve_artifacts"] is True
+
+    without_store = dict(sample_project)
+    imported_without = import_project(
+        export_project(tmp_path / "without-store.zip", **without_store)
+    )
+    assert imported_without["manifest"]["contains"]["official_curve_artifacts"] is False
+
+
+def test_export_then_import_official_curve_artifact_store_clean_environment_round_trip(
+    tmp_path, sample_project
+):
+    """Build an official artifact in one temp directory (the "source"
+    environment), export it into a bundle, import that bundle into a second,
+    unrelated temp directory (the "clean" environment), and confirm the
+    artifact reloads with identical fingerprints/metadata - REQ-CURVE-001's
+    "project export and import (round-trip)" coverage gap, closed."""
+    project = dict(sample_project)
+    artifact_source = tmp_path / "source-env" / "artifact-store"
+    original_directory = _write_official_artifact(artifact_source, "art-shared")
+    project["curve_artifact_store_source_dir"] = artifact_source
+
+    imported = import_project(export_project(tmp_path / "bundle.zip", **project))
+
+    clean_env = tmp_path / "clean-env" / "restored-store"
+    for filename, contents in imported["curve_artifact_files"].items():
+        target = clean_env / filename
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(contents)
+    for filename, contents in imported["curve_artifact_binary_files"].items():
+        target = clean_env / filename
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(contents)
+
+    original_result = load_curve_artifact_store(
+        artifact_source, raise_on_malformed=False
+    )
+    restored_result = load_curve_artifact_store(clean_env, raise_on_malformed=False)
+    assert not restored_result.malformed
+    assert len(restored_result.loaded) == 1
+    original_artifact = original_result.loaded[0]
+    restored_artifact = restored_result.loaded[0]
+    assert (
+        restored_artifact.metadata.artifact_id == original_artifact.metadata.artifact_id
+    )
+    assert (
+        restored_artifact.metadata.fingerprints
+        == original_artifact.metadata.fingerprints
+    )
+    pd.testing.assert_frame_equal(restored_artifact.draws, original_artifact.draws)
+    pd.testing.assert_frame_equal(
+        restored_artifact.summaries, original_artifact.summaries
+    )
+    # Sanity: the source directory really was untouched by the restore.
+    assert original_directory.exists()
+
+
+def test_official_curve_artifact_import_audit_reports_malformed_entries(tmp_path):
+    """A store with one loaded and one malformed artifact round-trips with
+    both reported (never silently dropped) - only the loaded one counts
+    toward the official_curves checkpoint."""
+    store_dir = tmp_path / "mixed-store"
+    _write_official_artifact(store_dir, "art-good")
+    _write_official_artifact(store_dir, "art-bad")
+    # Tamper the second artifact's metadata envelope after writing it via
+    # the real write path, so it fails fingerprint verification on load -
+    # a genuinely malformed artifact, not a hand-built invalid payload.
+    bad_metadata_path = store_dir / "art-bad" / "curve_artifact_metadata.json"
+    envelope = json.loads(bad_metadata_path.read_text(encoding="utf-8"))
+    envelope["metadata"]["fingerprints"] = {"chain_fingerprint": "tampered"}
+    bad_metadata_path.write_text(json.dumps(envelope), encoding="utf-8")
+
+    text_files = {}
+    binary_files = {}
+    for artifact_dir in (store_dir / "art-good", store_dir / "art-bad"):
+        for f in artifact_dir.rglob("*.json"):
+            text_files[str(f.relative_to(store_dir))] = f.read_text()
+        for f in artifact_dir.rglob("*"):
+            if f.is_file() and f.suffix.lower() != ".json":
+                binary_files[str(f.relative_to(store_dir))] = f.read_bytes()
+
+    imported = {
+        "curve_artifact_files": text_files,
+        "curve_artifact_binary_files": binary_files,
+    }
+    assert _count_loaded_curve_artifacts(imported) == 1
+
+
+@pytest.mark.parametrize(
+    "checkpoint",
+    ["official_curves"],
+)
+def test_end_to_end_resume_at_official_curves_checkpoint(
+    tmp_path, consistent_project, checkpoint
+):
+    project = dict(consistent_project)
+    project["raw_sources"] = {"joined": consistent_project["transformed_data"].copy()}
+    project["workflow_state"] = {"checkpoint": checkpoint, "current_page": 9}
+    artifact_source = tmp_path / "artifact-source"
+    _write_official_artifact(artifact_source, "art-resume")
+    project["curve_artifact_store_source_dir"] = artifact_source
+
+    imported = import_project(export_project(tmp_path / f"{checkpoint}.zip", **project))
+    audit = audit_project_resumability(imported)
+    assert audit["resumable"], audit
+    assert audit["checkpoint"] == checkpoint
+    assert any(
+        Path(key) == Path("art-resume") / "curve_artifact_metadata.json"
+        for key in imported["curve_artifact_files"]
+    )
+
+
+def test_legacy_curve_bank_alone_never_satisfies_official_curves_checkpoint(
+    tmp_path, consistent_project
+):
+    """REQ-CURVE-001 / PR 96B: legacy CurveBankEntry parameter snapshots
+    (curve_bank_source_dir) must never satisfy the distinct official_curves
+    checkpoint, even when explicitly declared."""
+    project = dict(consistent_project)
+    curve_dir = tmp_path / "curve-source"
+    curve_dir.mkdir()
+    (curve_dir / "curve.json").write_text('{"channel": "TV_Brand"}')
+    project["curve_bank_source_dir"] = curve_dir
+    project["workflow_state"] = {"checkpoint": "official_curves"}
+
+    imported = import_project(export_project(tmp_path / "bundle.zip", **project))
+    audit = audit_project_resumability(imported)
+    assert audit["checkpoint"] == "official_curves"
+    assert not audit["resumable"]
+    assert "curve_artifact_files" in audit["missing_required"]
+
+
+def test_malformed_only_official_artifact_store_never_satisfies_checkpoint():
+    """A store where every artifact directory fails to load (0 loaded) must
+    not satisfy the official_curves checkpoint - format/historical integrity
+    is required, not merely files-on-disk."""
+    imported = {
+        "curve_artifact_files": {
+            "art-bad/curve_artifact_metadata.json": "{not valid json",
+        },
+        "curve_artifact_binary_files": {},
+    }
+    assert _count_loaded_curve_artifacts(imported) == 0
+    audit = audit_project_resumability(
+        {
+            **imported,
+            "raw_sources": {"joined": pd.DataFrame({"x": [1]})},
+            "workflow_state": {"checkpoint": "official_curves"},
+            "manifest": {
+                "workflow_checkpoint": "official_curves",
+                "schema_version": 9,
+            },
+        }
+    )
+    assert audit["checkpoint"] == "official_curves"
+    assert "curve_artifact_files" in audit["missing_required"]
 
 
 def test_resumability_audit_covers_prefit_and_legacy_bundle_migration(
