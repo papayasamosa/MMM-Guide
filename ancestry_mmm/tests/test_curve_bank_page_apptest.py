@@ -441,11 +441,15 @@ def test_both_make_entries_calls_thread_readiness_and_policy():
         if not line.strip().startswith("#")
     )
     assert source.count("cb.make_entries(") == 2
-    # 4 = the display-gate require_matching_approval() call + both
-    # cb.make_entries() call sites + the PR 95E official-artifact governance
-    # construction (which also threads readiness evidence to the service).
-    assert source.count("approval_readiness=current_readiness") == 4
-    assert source.count("current_policy=current_policy") == 3
+    # 3 = the display-gate require_matching_approval() call + both
+    # cb.make_entries() call sites. The PR 95E official-artifact governance
+    # resolution (PR 96B: now a thin call-through to
+    # CurveService.resolve_current_governance) threads the same readiness/
+    # policy evidence through differently-named keywords
+    # (current_readiness=/current_policy=), counted separately below.
+    assert source.count("approval_readiness=current_readiness") == 3
+    assert source.count("current_policy=current_policy") == 4
+    assert source.count("current_readiness=current_readiness") == 1
     assert "ValidationPolicyBlockedError" in source
 
 

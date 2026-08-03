@@ -1107,6 +1107,83 @@ class TestAuthorizeUse:
 
 
 # ---------------------------------------------------------------------------
+# PR 96B: resolve_current_governance - the shared resolution path used by
+# both Results / Curve Bank and Project Export's report/Excel exposure.
+# ---------------------------------------------------------------------------
+
+
+class TestResolveCurrentGovernance:
+    @staticmethod
+    def _resolve(artifact, **overrides):
+        policy = _policy()
+        diagnostics = _diagnostics()
+        readiness = _readiness(policy=policy, diagnostics=diagnostics)
+        approval = _policy_backed_approval(policy=policy, readiness=readiness)
+        kwargs: dict = dict(
+            current_identity=dict(IDENTITY),
+            approval_dict=approval.to_dict(),
+            current_policy=policy,
+            current_readiness=readiness,
+            current_diagnostics_artefact=diagnostics,
+            activity_definitions=_activities(),
+            outcome_definitions=[_outcome()],
+            outcome_approvals=[
+                _outcome_approval(
+                    allowed_uses=("curve_publication", "headline_reporting")
+                )
+            ],
+        )
+        kwargs.update(overrides)
+        return CurveService().resolve_current_governance(artifact, **kwargs)
+
+    def test_complete_evidence_resolves_a_usable_governance(self):
+        governance = self._resolve(_artifact())
+        assert isinstance(governance, OfficialCurveGovernance)
+        # The resolved governance must actually satisfy authorize_use, not
+        # merely construct without error.
+        authorization = CurveService().authorize_use(
+            _artifact(), "headline_reporting", current_governance=governance
+        )
+        assert authorization.authorized
+
+    def test_missing_current_identity_returns_none(self):
+        assert self._resolve(_artifact(), current_identity=None) is None
+
+    def test_missing_approval_dict_returns_none(self):
+        assert self._resolve(_artifact(), approval_dict=None) is None
+
+    def test_no_outcome_definitions_returns_none(self):
+        assert self._resolve(_artifact(), outcome_definitions=[]) is None
+
+    def test_no_matching_outcome_definition_returns_none(self):
+        other_outcome = dataclasses.replace(_outcome(), outcome_id="other_outcome")
+        assert self._resolve(_artifact(), outcome_definitions=[other_outcome]) is None
+
+    def test_no_matching_outcome_approval_returns_none(self):
+        assert self._resolve(_artifact(), outcome_approvals=[]) is None
+
+    def test_missing_policy_readiness_diagnostics_still_resolves_but_fails_authorize_use(
+        self,
+    ):
+        """Deliberately-incomplete evidence (no policy/readiness/diagnostics)
+        does not collapse into the same generic "cannot be resolved" message
+        as missing identity/approval/outcome - it resolves to a governance
+        object so authorize_use raises the specific
+        CurveGovernanceMissingError (e.g. "require threshold_policy")."""
+        governance = self._resolve(
+            _artifact(),
+            current_policy=None,
+            current_readiness=None,
+            current_diagnostics_artefact=None,
+        )
+        assert isinstance(governance, OfficialCurveGovernance)
+        with pytest.raises(CurveUseNotAuthorizedError, match="threshold_policy"):
+            CurveService().authorize_use(
+                _artifact(), "headline_reporting", current_governance=governance
+            )
+
+
+# ---------------------------------------------------------------------------
 # PR 95B: official generation through the service
 # ---------------------------------------------------------------------------
 

@@ -41,12 +41,10 @@ from ancestry_mmm.core.curve_artifact import (
     CurveArtifactError,
     load_curve_artifact_store,
 )
-from ancestry_mmm.core.model_identity import ModelIdentity
 from ancestry_mmm.core.outcome_approval import OutcomeApproval
 from ancestry_mmm.application.curve_service import (
     CurveGovernanceError,
     CurveService,
-    OfficialCurveGovernance,
 )
 from ancestry_mmm.core.fingerprint import (
     fingerprint_dataframe,
@@ -310,33 +308,21 @@ def _official_artifact_governance(
 ):
     """Resolve current governance for one official artifact.
 
-    Returns an OfficialCurveGovernance when every required element is
-    resolvable, else None (the artifact is then shown as blocked, never
-    rendered as an official curve). ``OfficialCurveGovernance`` requires a
-    ``threshold_policy``, ``approval_readiness``, and ``diagnostics_artefact``
-    (REQ-CURVE-001 Work package A) - when any of these are unavailable from
-    session state, construction still succeeds with that field set to
-    ``None`` and ``CurveService.authorize_use`` (called by the caller,
-    wrapped in a ``CurveGovernanceError`` handler) fails closed rather than
-    raising an uncaught error out of this page.
+    Thin call-through to ``CurveService.resolve_current_governance`` (the
+    shared resolution path also used by the Project Export page's
+    report/Excel authorization-status exposure) - kept as a page-local
+    wrapper only to avoid touching every call site above.
     """
-    snapshot = artifact.metadata.outcome_definition_snapshot or {}
-    outcome_id = snapshot.get("outcome_id")
-    if not current_identity or not approval_dict or not outcome_definitions:
-        return None
-    outcome = next((o for o in outcome_definitions if o.outcome_id == outcome_id), None)
-    approval = next((a for a in outcome_approvals if a.outcome_id == outcome_id), None)
-    if outcome is None or approval is None:
-        return None
-    return OfficialCurveGovernance(
-        model_identity=ModelIdentity(**current_identity),
-        model_approval=ModelApproval.from_dict(approval_dict),
-        outcome_definition=outcome,
-        outcome_approval=approval,
-        threshold_policy=current_policy,
-        approval_readiness=current_readiness,
-        diagnostics_artefact=current_diagnostics_artefact,
+    return _CURVE_SERVICE.resolve_current_governance(
+        artifact,
+        current_identity=current_identity,
+        approval_dict=approval_dict,
+        current_policy=current_policy,
+        current_readiness=current_readiness,
+        current_diagnostics_artefact=current_diagnostics_artefact,
         activity_definitions=activity_definitions,
+        outcome_definitions=outcome_definitions,
+        outcome_approvals=outcome_approvals,
     )
 
 

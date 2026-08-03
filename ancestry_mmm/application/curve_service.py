@@ -54,7 +54,7 @@ import tempfile
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, cast
 
 import arviz as az
 import numpy as np
@@ -636,6 +636,78 @@ class CurveService:
             requested_use=requested_use,
             current_authorization_status="authorized",
             requested_use_eligibility="eligible",
+        )
+
+    def resolve_current_governance(
+        self,
+        artifact: CurveArtifact,
+        *,
+        current_identity: Optional[Mapping[str, str]],
+        approval_dict: Optional[Mapping[str, Any]],
+        current_policy: Optional[ThresholdPolicy],
+        current_readiness: Optional[ApprovalReadiness],
+        current_diagnostics_artefact: Optional[DiagnosticsArtefact],
+        activity_definitions: Sequence[ActivityDefinition],
+        outcome_definitions: Sequence[OutcomeDefinition],
+        outcome_approvals: Sequence[OutcomeApproval],
+    ) -> Optional[OfficialCurveGovernance]:
+        """Resolve current governance for one official artifact from
+        whatever evidence a caller (a Streamlit page, the project-export
+        boundary, a script) currently has in hand.
+
+        Returns ``None`` when the artifact's current model identity,
+        current model approval, or a matching current outcome/outcome
+        approval cannot be resolved at all — the artifact should then be
+        treated as blocked/ungoverned by the caller, never rendered or
+        reported as currently authorized.
+
+        ``current_policy``/``current_readiness``/``current_diagnostics_artefact``
+        are deliberately **not** required to be non-``None`` here: when any
+        of them is unavailable, an ``OfficialCurveGovernance`` is still
+        constructed (with that field ``None``, despite the dataclass's
+        declared type — the same tolerance ``_require_governance_chain``
+        already checks for defensively) so the caller's subsequent
+        ``authorize_use`` call raises the specific, actionable
+        ``CurveGovernanceMissingError`` (e.g. "Official curves require
+        threshold_policy...") instead of this function collapsing every
+        missing-evidence case into one generic "cannot be resolved" message.
+        Both call sites (below) wrap ``authorize_use`` in a
+        ``CurveGovernanceError`` handler and fail closed either way.
+
+        This is the one shared resolution path for every caller that needs
+        to revalidate an artifact against *live* governance outside of
+        generation — used by both the Results / Curve Bank page and the
+        Project Export page's report/Excel authorization-status exposure,
+        so the resolution logic is never duplicated a second time.
+        """
+        snapshot = artifact.metadata.outcome_definition_snapshot or {}
+        outcome_id = snapshot.get("outcome_id")
+        if not current_identity or not approval_dict or not outcome_definitions:
+            return None
+        outcome = next(
+            (o for o in outcome_definitions if o.outcome_id == outcome_id), None
+        )
+        approval = next(
+            (a for a in outcome_approvals if a.outcome_id == outcome_id), None
+        )
+        if outcome is None or approval is None:
+            return None
+        return OfficialCurveGovernance(
+            model_identity=ModelIdentity(**current_identity),
+            model_approval=ModelApproval.from_dict(dict(approval_dict)),
+            outcome_definition=outcome,
+            outcome_approval=approval,
+            # cast: these three may genuinely be None at runtime (see
+            # docstring above) — _require_governance_chain checks for that
+            # explicitly and fails closed; the dataclass's non-Optional
+            # annotation documents the *steady-state* requirement, not a
+            # runtime guarantee this resolver can make.
+            threshold_policy=cast(ThresholdPolicy, current_policy),
+            approval_readiness=cast(ApprovalReadiness, current_readiness),
+            diagnostics_artefact=cast(
+                DiagnosticsArtefact, current_diagnostics_artefact
+            ),
+            activity_definitions=activity_definitions,
         )
 
     # -------------------------------------------------------------------

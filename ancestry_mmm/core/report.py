@@ -2,13 +2,13 @@
 Reproducible project report - Phase 4 of the market-specific redesign
 (docs/project_objectives.md, docs/model_validation.md item 14).
 
-Builds a single document - objective, data, model, diagnostics, curves,
-scenarios, known limitations, and a pointer to the decision log - from the
-*current project's actual state* (the same artefacts `core.persistence`
-exports: spec, frame, scorecard, approval, curve bank entries, scenarios,
-market_spec_config), not a static copy of the `docs/` files. Re-running this
-against a later state of the same project produces an updated report, which
-is the "reproducible" part.
+Builds a single document - objective, data, model, diagnostics, curve bank,
+official curve artifacts, scenarios, known limitations, and a pointer to the
+decision log - from the *current project's actual state* (the same
+artefacts `core.persistence` exports: spec, frame, scorecard, approval,
+curve bank entries, scenarios, market_spec_config), not a static copy of
+the `docs/` files. Re-running this against a later state of the same
+project produces an updated report, which is the "reproducible" part.
 
 Deliberately has no dependency on `ancestry_mmm.utils` (the Streamlit-facing
 display/formatting layer) or `streamlit` itself, matching every other `core`
@@ -259,6 +259,38 @@ def _curve_bank_section(entries: List[CurveBankEntry]) -> ReportSection:
     )
 
 
+def _official_curve_artifacts_section(
+    rows: Optional[List[Dict[str, Any]]],
+) -> ReportSection:
+    """Governed official curve artifact store (REQ-CURVE-001), distinct
+    from the legacy curve-bank parameter snapshots above.
+
+    ``rows`` is pre-resolved by the caller (one row per artifact, current
+    authorization status already revalidated via
+    ``CurveService.resolve_current_governance`` + ``authorize_use``) - this
+    module has no Streamlit/session-state dependency, so it never resolves
+    governance itself, only renders what it's given."""
+    if not rows:
+        return ReportSection(
+            title="Official curve artifacts",
+            paragraphs=[
+                "No official curve artifacts exist for this project yet - see "
+                "Results / Curve Bank to produce one through the governed "
+                "CurveService."
+            ],
+        )
+    df = pd.DataFrame(rows)
+    return ReportSection(
+        title="Official curve artifacts",
+        paragraphs=[
+            f"{len(rows)} official curve artifact(s) in the governed store, "
+            "each revalidated against current governance at report-build time."
+        ],
+        table=df,
+        table_caption="Official curve artifacts and current authorization status",
+    )
+
+
 def _scenarios_section(scenarios: List[Dict]) -> ReportSection:
     if not scenarios:
         return ReportSection(
@@ -343,6 +375,7 @@ def build_report_sections(
     model_meta: Optional[object] = None,
     frame: Optional[Dict[str, Any]] = None,
     excluded_outcome_ids: Optional[List[str]] = None,
+    official_curve_artifact_rows: Optional[List[Dict[str, Any]]] = None,
 ) -> List[ReportSection]:
     """Assemble every section of the report, in display order. Every input is
     optional and independently missing-safe - a report can be generated at
@@ -372,6 +405,7 @@ def build_report_sections(
         _diagnostics_section(scorecard),
         _approval_section(approval),
         _curve_bank_section(curve_bank_entries),
+        _official_curve_artifacts_section(official_curve_artifact_rows),
         _scenarios_section(scenarios),
         _limitations_section(model_type, market_spec_config),
         _decision_log_section(),

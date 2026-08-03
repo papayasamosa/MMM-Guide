@@ -10,6 +10,7 @@ import streamlit as st
 
 from ancestry_mmm.utils import (
     PROJECT_EXPORT_ROOT,
+    curve_artifact_store_dir,
     curve_bank_dir,
     get_state,
     get_workflow_progress,
@@ -34,11 +35,17 @@ from ancestry_mmm.core.persistence import (
 )
 from ancestry_mmm.application.project_service import verify_imported_readiness
 from ancestry_mmm.application.diagnostics_service import DiagnosticsArtefact
+from ancestry_mmm.application.curve_service import CurveService, CurveGovernanceError
 from ancestry_mmm.core.validation_policy import (
     load_approval_readiness,
     load_threshold_policy,
 )
 from ancestry_mmm.core.curve_bank import load_all_entries, entries_to_dataframe
+from ancestry_mmm.core.curve_artifact import (
+    CurveArtifactError,
+    load_curve_artifact_store,
+)
+from ancestry_mmm.core.activities import ActivityDefinition, activity_fit_fingerprint
 from ancestry_mmm.core.attribution import (
     compute_shapley_contributions,
     total_fh_contribution,
@@ -53,13 +60,212 @@ from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.approval import ModelApproval
 from ancestry_mmm.core.market_config import MarketSpecConfig
 from ancestry_mmm.core.evidence_tiers import evidence_tiers_dataframe
+from ancestry_mmm.core.fingerprint import (
+    fingerprint_dataframe,
+    fingerprint_model_spec,
+    fingerprint_posterior,
+)
 from ancestry_mmm.core.media_units import market_specific_cpa_table
-from ancestry_mmm.core.outcomes import fh_gsa_outcome_ids, resolve_outcome_definitions
-from ancestry_mmm.core.pathways import MediaOutcomePathway, pathways_drift_dataframe
+from ancestry_mmm.core.outcome_approval import OutcomeApproval
+from ancestry_mmm.core.outcomes import (
+    fh_gsa_outcome_ids,
+    outcome_catalogue_fingerprint_payload,
+    resolve_outcome_definitions,
+)
+from ancestry_mmm.core.pathways import (
+    MediaOutcomePathway,
+    pathway_catalogue_fingerprint_payload,
+    pathways_drift_dataframe,
+)
 from ancestry_mmm.core.optimization import compare_scenarios
 from ancestry_mmm.core.report import build_report_sections, render_markdown, render_html
 from ancestry_mmm.core.promotions import PROMOTION_EVENT_OP
 from ancestry_mmm.data import apply_pipeline, pipeline_from_json
+
+_CURVE_SERVICE = CurveService()
+
+
+def _resolve_official_curve_artifact_rows() -> list[dict]:
+    """Load the official curve artifact store and resolve each artifact's
+    current authorization status for headline reporting.
+
+    Reuses the same shared resolution path as Results / Curve Bank's
+    official artifact section (``CurveService.resolve_current_governance``
+    + ``authorize_use``) so this page never reimplements governance
+    resolution. A malformed artifact is its own row (never silently
+    dropped, REQ-CURVE-001); an artifact whose current governance can't be
+    resolved or isn't currently authorized is reported as ``"blocked"``
+    with a ``reason``, never omitted.
+    """
+    store_dir = curve_artifact_store_dir()
+    try:
+        load_result = load_curve_artifact_store(store_dir, raise_on_malformed=False)
+    except CurveArtifactError as exc:
+        st.warning(f"Official curve artifact store could not be read: {exc}")
+        return []
+
+    rows: list[dict] = []
+    for entry in load_result.malformed:
+        rows.append(
+            {
+                "artifact_id": entry.artifact_dir.name,
+                "created": None,
+                "schema_version": None,
+                "outcome": None,
+                "reference_context_id": None,
+                "format_status": entry.status,
+                "historical_integrity": "unknown",
+                "current_authorization": "blocked",
+                "requested_use_eligibility": "n/a",
+                "planning_support_eligible": "n/a",
+                "reason": entry.error,
+            }
+        )
+    if not load_result.loaded:
+        return rows
+
+    meta = get_state("model_meta")
+    params = get_state("posterior_params")
+    frame = get_state("frame")
+    spec_dict = get_state("model_spec")
+    model_type = get_state("model_type", "shared")
+    activity_definitions = [
+        ActivityDefinition.from_dict(item)
+        for item in (get_state("activity_definitions") or [])
+    ]
+    model_run_id = get_state("model_run_id")
+    prior_config = get_state("prior_config") or {}
+    dna_lag_weeks = get_state("dna_lag_weeks", 4)
+
+    current_identity = None
+    if (
+        model_run_id
+        and spec_dict is not None
+        and frame is not None
+        and params is not None
+    ):
+        current_identity = {
+            "model_run_id": model_run_id,
+            "data_fingerprint": fingerprint_dataframe(frame["df"]),
+            "model_spec_fingerprint": fingerprint_model_spec(
+                spec_dict,
+                prior_config,
+                dna_lag_weeks,
+                model_type=model_type,
+                pipeline_steps=get_state("pipeline_steps") or [],
+                market_spec_config=get_state("market_spec_config"),
+                direct_dna_outcome_ids=meta.direct_dna_outcome_ids
+                if meta is not None
+                else None,
+                outcome_catalogue=outcome_catalogue_fingerprint_payload(
+                    meta.outcome_catalogue_at_fit
+                )
+                if meta is not None
+                else None,
+                funnel_links=get_state("funnel_links"),
+                media_outcome_pathways=pathway_catalogue_fingerprint_payload(
+                    meta.pathway_catalogue_at_fit
+                )
+                if meta is not None
+                else None,
+                activity_fit_fingerprint=(
+                    activity_fit_fingerprint(activity_definitions)
+                    if activity_definitions
+                    else None
+                ),
+            ),
+            "posterior_fingerprint": fingerprint_posterior(params),
+        }
+
+    approval_dict = get_state("model_approval")
+    current_policy, _ = load_threshold_policy(get_state("validation_policy"))
+    current_readiness, _ = load_approval_readiness(get_state("approval_readiness"))
+    current_diagnostics_artefact = get_state("diagnostics_artefact")
+    spec = ModelSpec.from_dict(spec_dict) if spec_dict else None
+    outcome_definitions = (
+        resolve_outcome_definitions(
+            get_state("outcome_definitions"), spec.segment_outcomes, spec.segment_ltv
+        )
+        if spec is not None
+        else []
+    )
+    outcome_approvals = [
+        OutcomeApproval.from_dict(d) for d in (get_state("outcome_approvals") or [])
+    ]
+
+    for artifact in load_result.loaded:
+        md = artifact.metadata
+        base_row = {
+            "artifact_id": md.artifact_id,
+            "created": md.creation_timestamp,
+            "schema_version": md.schema_version,
+            "outcome": (md.outcome_definition_snapshot or {}).get("outcome_id"),
+            "reference_context_id": (md.reference_context_snapshot or {}).get(
+                "reference_context_id"
+            ),
+            "format_status": md.format_status,
+            "historical_integrity": md.historical_integrity,
+        }
+        governance = _CURVE_SERVICE.resolve_current_governance(
+            artifact,
+            current_identity=current_identity,
+            approval_dict=approval_dict,
+            current_policy=current_policy,
+            current_readiness=current_readiness,
+            current_diagnostics_artefact=current_diagnostics_artefact,
+            activity_definitions=activity_definitions,
+            outcome_definitions=outcome_definitions,
+            outcome_approvals=outcome_approvals,
+        )
+        if governance is None:
+            rows.append(
+                {
+                    **base_row,
+                    "current_authorization": "blocked",
+                    "requested_use_eligibility": "n/a",
+                    "planning_support_eligible": "n/a",
+                    "reason": (
+                        "Current governance cannot be resolved (missing current "
+                        "model identity, model approval, or a matching current "
+                        "outcome approval)."
+                    ),
+                }
+            )
+            continue
+        try:
+            authorization = _CURVE_SERVICE.authorize_use(
+                artifact, "headline_reporting", current_governance=governance
+            )
+        except CurveGovernanceError as exc:
+            rows.append(
+                {
+                    **base_row,
+                    "current_authorization": "blocked",
+                    "requested_use_eligibility": "n/a",
+                    "planning_support_eligible": "n/a",
+                    "reason": str(exc),
+                }
+            )
+            continue
+        planning_support = (
+            bool(artifact.draws["planning_support_eligible"].all())
+            if (
+                not artifact.draws.empty
+                and "planning_support_eligible" in artifact.draws.columns
+            )
+            else "n/a"
+        )
+        rows.append(
+            {
+                **base_row,
+                "current_authorization": authorization.current_authorization_status,
+                "requested_use_eligibility": authorization.requested_use_eligibility,
+                "planning_support_eligible": planning_support,
+                "reason": "" if authorization.authorized else authorization.reason,
+            }
+        )
+    return rows
+
 
 st.set_page_config(
     page_title="Project Export - Ancestry FH MMM", page_icon="🧬", layout="wide"
@@ -112,6 +318,7 @@ if st.button("Build export bundle", type="primary"):
             trace=get_state("trace"),
             scenarios=get_state("scenarios") or [],
             curve_bank_source_dir=curve_bank_dir(),
+            curve_artifact_store_source_dir=curve_artifact_store_dir(),
             model_approval=get_state("model_approval"),
             model_run_id=get_state("model_run_id"),
             model_meta=get_state("model_meta"),
@@ -125,6 +332,10 @@ if st.button("Build export bundle", type="primary"):
                 "checkpoint": (
                     "scenarios"
                     if get_state("scenarios")
+                    else "official_curves"
+                    if load_curve_artifact_store(
+                        curve_artifact_store_dir(), raise_on_malformed=False
+                    ).loaded
                     else "curves"
                     if get_state("curve_bank_entry_id")
                     else "approved"
@@ -292,6 +503,49 @@ if uploaded_zip is not None and st.button("Import bundle"):
                     )
                 ).stem,
             )
+        if imported.get("curve_artifact_files") or imported.get(
+            "curve_artifact_binary_files"
+        ):
+            restored_artifact_dir = curve_artifact_store_dir()
+            restored_artifact_dir.mkdir(parents=True, exist_ok=True)
+            for filename, contents in imported["curve_artifact_files"].items():
+                target = restored_artifact_dir / Path(filename)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(contents)
+            for filename, contents in imported.get(
+                "curve_artifact_binary_files", {}
+            ).items():
+                target = restored_artifact_dir / Path(filename)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(contents)
+            # PR 96B: reload the restored store immediately - this both
+            # verifies every artifact's chain/extra fingerprints (the
+            # "checksum" check for a clean-environment round-trip) and
+            # produces the per-artifact audit (REQ-CURVE-001: malformed
+            # entries are reported, never silently dropped).
+            try:
+                artifact_load_result = load_curve_artifact_store(
+                    restored_artifact_dir, raise_on_malformed=False
+                )
+            except CurveArtifactError as exc:
+                st.warning(
+                    f"Official curve artifact store could not be re-read after "
+                    f"import: {exc}"
+                )
+            else:
+                if artifact_load_result.malformed:
+                    st.warning(
+                        f"{len(artifact_load_result.malformed)} imported official "
+                        "curve artifact(s) failed to verify and are reported below "
+                        "- never silently skipped."
+                    )
+                    for entry in artifact_load_result.malformed:
+                        st.caption(f"{entry.artifact_dir.name}: {entry.error}")
+                if artifact_load_result.loaded:
+                    st.success(
+                        f"Restored {len(artifact_load_result.loaded)} official "
+                        f"curve artifact(s) to {restored_artifact_dir}."
+                    )
         if imported["market_spec_config"] is None:
             st.caption(
                 "This bundle predates the market-specific redesign - no market descriptors or "
@@ -519,6 +773,13 @@ if get_state("trace") is not None and get_state("model_spec"):
                 "Scenarios": scenarios_df,
             }
 
+        official_curve_artifact_rows = _resolve_official_curve_artifact_rows()
+        sheets["Official Curve Artifacts"] = (
+            pd.DataFrame(official_curve_artifact_rows)
+            if official_curve_artifact_rows
+            else None
+        )
+
         PROJECT_EXPORT_ROOT.mkdir(parents=True, exist_ok=True)
         excel_path = PROJECT_EXPORT_ROOT / f"{project_name}_summary.xlsx"
         export_excel_summary(excel_path, sheets)
@@ -567,6 +828,7 @@ if st.button("Build project report"):
         scenarios=get_state("scenarios") or [],
         market_spec_config=market_config,
         outcome_definitions=get_state("outcome_definitions"),
+        official_curve_artifact_rows=_resolve_official_curve_artifact_rows(),
     )
 
     PROJECT_EXPORT_ROOT.mkdir(parents=True, exist_ok=True)
