@@ -303,6 +303,7 @@ def _official_artifact_governance(
     approval_dict,
     current_policy,
     current_readiness,
+    current_diagnostics_artefact,
     activity_definitions,
     outcome_definitions,
     outcome_approvals,
@@ -311,7 +312,13 @@ def _official_artifact_governance(
 
     Returns an OfficialCurveGovernance when every required element is
     resolvable, else None (the artifact is then shown as blocked, never
-    rendered as an official curve).
+    rendered as an official curve). ``OfficialCurveGovernance`` requires a
+    ``threshold_policy``, ``approval_readiness``, and ``diagnostics_artefact``
+    (REQ-CURVE-001 Work package A) - when any of these are unavailable from
+    session state, construction still succeeds with that field set to
+    ``None`` and ``CurveService.authorize_use`` (called by the caller,
+    wrapped in a ``CurveGovernanceError`` handler) fails closed rather than
+    raising an uncaught error out of this page.
     """
     snapshot = artifact.metadata.outcome_definition_snapshot or {}
     outcome_id = snapshot.get("outcome_id")
@@ -328,6 +335,7 @@ def _official_artifact_governance(
         outcome_approval=approval,
         threshold_policy=current_policy,
         approval_readiness=current_readiness,
+        diagnostics_artefact=current_diagnostics_artefact,
         activity_definitions=activity_definitions,
     )
 
@@ -382,6 +390,7 @@ def _render_official_artifact(
     approval_dict,
     current_policy,
     current_readiness,
+    current_diagnostics_artefact,
     activity_definitions,
     outcome_definitions,
     outcome_approvals,
@@ -395,6 +404,7 @@ def _render_official_artifact(
         approval_dict,
         current_policy,
         current_readiness,
+        current_diagnostics_artefact,
         activity_definitions,
         outcome_definitions,
         outcome_approvals,
@@ -457,6 +467,7 @@ def _render_official_artifact_section(
     approval_dict,
     current_policy,
     current_readiness,
+    current_diagnostics_artefact,
     activity_definitions,
     outcome_definitions,
     outcome_approvals,
@@ -513,6 +524,7 @@ def _render_official_artifact_section(
             approval_dict,
             current_policy,
             current_readiness,
+            current_diagnostics_artefact,
             activity_definitions,
             outcome_definitions,
             outcome_approvals,
@@ -923,6 +935,14 @@ if _readiness_config_error:
         f"{_readiness_config_error}"
     )
 
+# REQ-CURVE-001 Work package A: OfficialCurveGovernance now requires a
+# diagnostics_artefact (previously optional). Sourced the same way the
+# Diagnostics page (06) leaves it in session state - not a dict, the
+# DiagnosticsArtefact object itself. Absent here simply means official
+# artifacts fail closed at the authorize_use gate below (never an uncaught
+# error out of this page).
+current_diagnostics_artefact = st.session_state.get("diagnostics_artefact")
+
 # PR 82F: require_matching_approval (already enforced by cb.make_entries
 # itself) re-verifies the FULL chain - model identity AND, for
 # policy-backed approvals, that the bound readiness still exists, is
@@ -1059,6 +1079,7 @@ _render_official_artifact_section(
     approval_dict,
     current_policy,
     current_readiness,
+    current_diagnostics_artefact,
     activity_definitions,
     resolve_outcome_definitions(
         get_state("outcome_definitions"), spec.segment_outcomes, spec.segment_ltv

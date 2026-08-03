@@ -187,6 +187,64 @@ class TestMetadataRoundTrip:
 
 
 # ---------------------------------------------------------------------------
+# PR 96A: unknown metadata is bound into integrity, not just preserved
+# ---------------------------------------------------------------------------
+
+
+class TestUnknownMetadataIntegrity:
+    @staticmethod
+    def _metadata_with_unknown_field(value: object = 1) -> CurveArtifactMetadata:
+        payload = _metadata().to_dict()
+        payload["future_schema_field"] = {"nested": value}
+        loaded = CurveArtifactMetadata.from_dict(payload)
+        return dataclasses.replace(
+            loaded, fingerprints=dict(compute_curve_artifact_fingerprints(loaded))
+        )
+
+    def test_current_schema_round_trip_preserves_unknown_metadata(self, tmp_path):
+        metadata = self._metadata_with_unknown_field()
+        write_curve_artifact(
+            tmp_path, metadata=metadata, draws=_draws(), summaries=_summaries()
+        )
+        artifact = read_curve_artifact(tmp_path)
+        assert artifact.metadata.extra["future_schema_field"] == {"nested": 1}
+        verify_curve_artifact_fingerprints(artifact.metadata)  # must not raise
+
+    def test_unknown_metadata_key_tampering_is_detected(self, tmp_path):
+        metadata = self._metadata_with_unknown_field()
+        write_curve_artifact(
+            tmp_path, metadata=metadata, draws=_draws(), summaries=_summaries()
+        )
+        envelope = json.loads(
+            (tmp_path / CURVE_ARTIFACT_METADATA_FILENAME).read_text(encoding="utf-8")
+        )
+        # Add a brand new unknown key directly to the persisted JSON, without
+        # recomputing fingerprints - simulates a file edited outside the
+        # write_curve_artifact boundary.
+        envelope["metadata"]["another_future_field"] = "sneaky"
+        (tmp_path / CURVE_ARTIFACT_METADATA_FILENAME).write_text(
+            json.dumps(envelope), encoding="utf-8"
+        )
+        with pytest.raises(CurveArtifactError, match="fingerprint mismatch"):
+            read_curve_artifact(tmp_path)
+
+    def test_unknown_metadata_value_tampering_is_detected(self, tmp_path):
+        metadata = self._metadata_with_unknown_field(value=1)
+        write_curve_artifact(
+            tmp_path, metadata=metadata, draws=_draws(), summaries=_summaries()
+        )
+        envelope = json.loads(
+            (tmp_path / CURVE_ARTIFACT_METADATA_FILENAME).read_text(encoding="utf-8")
+        )
+        envelope["metadata"]["future_schema_field"] = {"nested": 999}
+        (tmp_path / CURVE_ARTIFACT_METADATA_FILENAME).write_text(
+            json.dumps(envelope), encoding="utf-8"
+        )
+        with pytest.raises(CurveArtifactError, match="fingerprint mismatch"):
+            read_curve_artifact(tmp_path)
+
+
+# ---------------------------------------------------------------------------
 # Fingerprints (bind key names and values)
 # ---------------------------------------------------------------------------
 
@@ -213,6 +271,7 @@ class TestFingerprints:
         fingerprints = compute_curve_artifact_fingerprints(_base_metadata())
         assert set(fingerprints) == {
             "chain_fingerprint",
+            "extra_fingerprint",
             *CURVE_ARTIFACT_SNAPSHOT_FIELDS,
         }
 
