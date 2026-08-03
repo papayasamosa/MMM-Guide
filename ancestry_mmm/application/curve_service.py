@@ -877,6 +877,7 @@ class CurveService:
             "reporting_currency",
             "fx_rate",
             "fx_as_of_date",
+            "fx_source",
         ]
         pathway_columns = [
             "channel",

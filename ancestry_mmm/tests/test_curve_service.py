@@ -368,6 +368,7 @@ def _monetary_generation_kwargs():
         "reporting_currency": "GBP",
         "currency_rates": {("AUD", "GBP"): 0.5},
         "fx_as_of_date": "2026-07-01",
+        "fx_source": "test-fx-provider",
         "n_draws": 2,
         "spend_points": [0.0, 50.0],
     }
@@ -1426,6 +1427,9 @@ class TestCreateOfficialArtifact:
         assert result.artifact.draws["curve_type"].eq("monetary").all()
         assert result.artifact.draws["cost_mapping_id"].notna().all()
         assert result.artifact.draws["reporting_currency"].eq("GBP").all()
+        assert result.artifact.draws["fx_source"].eq("test-fx-provider").all()
+        cost_currency_rows = result.artifact.metadata.cost_currency_snapshot["rows"]
+        assert all(row["fx_source"] == "test-fx-provider" for row in cost_currency_rows)
 
     def test_generated_artifact_has_nonempty_draws_and_summaries(self, tmp_path):
         result = self._create(tmp_path, artifact_id="art-nonempty")

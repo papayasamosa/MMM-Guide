@@ -259,6 +259,7 @@ def _generate(meta, *, model_type="shared", contexts=None, **kwargs):
         reporting_currency="GBP",
         currency_rates={("AUD", "GBP"): 0.5},
         fx_as_of_date="2026-07-01",
+        fx_source="test-fx-provider",
         value_per_response=value_map,
         support_by_market_channel=support,
         **kwargs,
@@ -485,6 +486,7 @@ def test_missing_support_is_unknown_and_blocks_planning(meta):
         currency_by_market={"UK": "GBP", "AU": "GBP"},
         reporting_currency="GBP",
         fx_as_of_date="2026-07-01",
+        fx_source="test-fx-provider",
     )
     assert set(draws["observed_support_status"]) == {SUPPORT_MISSING}
     assert draws["is_extrapolated"].isna().all()
@@ -500,6 +502,7 @@ def test_missing_support_is_unknown_and_blocks_planning(meta):
             currency_by_market={"UK": "GBP", "AU": "GBP"},
             reporting_currency="GBP",
             fx_as_of_date="2026-07-01",
+            fx_source="test-fx-provider",
         )
 
 
@@ -588,12 +591,27 @@ def test_multi_market_currency_governance_and_conversion(meta):
             currency_by_market={"UK": "GBP", "AU": "AUD"},
             reporting_currency="GBP",
             fx_as_of_date="2026-07-01",
+            fx_source="test-fx-provider",
+        )
+    with pytest.raises(ValueError, match="FX source"):
+        generate_canonical_curve_draws(
+            model_run_id="run",
+            meta=meta,
+            trace=_trace(),
+            n_draws=1,
+            reference_contexts=_contexts(),
+            spend_points=[10],
+            currency_by_market={"UK": "GBP", "AU": "AUD"},
+            reporting_currency="GBP",
+            currency_rates={("AUD", "GBP"): 0.5},
+            fx_as_of_date="2026-07-01",
         )
     draws = _generate(meta)
     au = draws.query("market == 'AU' and spend_point == 1")
     assert set(au["fx_rate"]) == {0.5}
     assert set(au["local_spend"]) == {50.0}
     assert set(au["reporting_currency_spend"]) == {25.0}
+    assert set(au["fx_source"]) == {"test-fx-provider"}
 
 
 def test_cross_channel_aggregation_requires_explicit_portfolio_path(meta):

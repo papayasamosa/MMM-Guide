@@ -1,8 +1,7 @@
 """Page 13: generate and persist a governed official curve artifact
 (REQ-CURVE-001) - the CurveService.create_official_artifact application
-boundary, driven from the UI for the first time. Model-input curves only;
-monetary curves (cost mapping, currency/FX) are deferred to a follow-on PR -
-see docs/decision_log.md.
+boundary, driven from the UI for the first time. Supports both model-input
+curves and monetary curves (governed cost mappings + currency/FX evidence).
 """
 
 import sys
@@ -17,6 +16,7 @@ import streamlit as st
 from ancestry_mmm.utils import (
     init_session_state,
     get_state,
+    set_state,
     curve_artifact_store_dir,
     dataframe_column_config,
 )
@@ -35,7 +35,17 @@ from ancestry_mmm.core.fingerprint import (
     fingerprint_model_spec,
     fingerprint_posterior,
 )
-from ancestry_mmm.core.media_costs import MediaInputSpec, MediaInputSupport
+from ancestry_mmm.core.media_costs import (
+    MediaCostMapping,
+    MediaInputSpec,
+    MediaInputSupport,
+    CostMappingRegistry,
+    IdentitySpendMapping,
+    FixedCostPerUnitMapping,
+    PiecewiseLinearCostMapping,
+    UploadedPlanCostMapping,
+    SUPPORTED_METHODS,
+)
 from ancestry_mmm.core.model_identity import ModelIdentity
 from ancestry_mmm.core.outcome_approval import OutcomeApproval
 from ancestry_mmm.core.outcomes import (
@@ -56,6 +66,118 @@ from ancestry_mmm.application.curve_service import (
 )
 from ancestry_mmm.components.charts import create_response_curve_with_band
 
+_COST_MAPPING_TYPES = {
+    "identity_spend": IdentitySpendMapping,
+    "fixed_cost_per_unit": FixedCostPerUnitMapping,
+    "piecewise_linear": PiecewiseLinearCostMapping,
+    "uploaded_plan": UploadedPlanCostMapping,
+}
+_COST_MAPPING_APPROVAL_STATUSES = [
+    "draft",
+    "approved",
+    "rejected",
+    "migration_required",
+]
+_COST_MAPPING_GRID_COLUMNS = [
+    "mapping_id",
+    "market",
+    "channel",
+    "cost_context_id",
+    "currency",
+    "method",
+    "cost_per_media_input",
+    "spend_knots",
+    "media_input_knots",
+    "plan_id",
+    "source",
+    "effective_period_start",
+    "effective_period_end",
+    "assumptions",
+    "approval_status",
+    "approved_by",
+    "approved_at",
+    "owner",
+    "approval_note",
+    "last_reviewed_at",
+]
+
+
+def _knots_from_text(text: str) -> tuple:
+    return tuple(float(v.strip()) for v in str(text).split(",") if v.strip())
+
+
+def _cost_mapping_from_row(row: dict) -> MediaCostMapping:
+    """Reconstruct one governed cost mapping from a cost-mapping grid row.
+
+    A plain module-level function (not a UI closure) so the reconstruction
+    logic - including the method dispatch and knot parsing - is directly
+    unit-testable without driving ``st.data_editor``.
+    """
+    method = str(row.get("method") or "")
+    if method not in _COST_MAPPING_TYPES:
+        raise ValueError(f"Unsupported cost mapping method: {method!r}")
+    common = dict(
+        mapping_id=str(row["mapping_id"]),
+        market=str(row["market"]),
+        channel=str(row["channel"]),
+        currency=str(row["currency"]).upper(),
+        cost_context_id=str(row.get("cost_context_id") or "default"),
+        source=str(row.get("source") or ""),
+        effective_period_start=(str(row["effective_period_start"]) or None)
+        if row.get("effective_period_start")
+        else None,
+        effective_period_end=(str(row["effective_period_end"]) or None)
+        if row.get("effective_period_end")
+        else None,
+        assumptions=str(row.get("assumptions") or ""),
+        approval_status=str(row.get("approval_status") or "draft"),
+        approved_by=str(row["approved_by"]) or None if row.get("approved_by") else None,
+        approved_at=str(row["approved_at"]) or None if row.get("approved_at") else None,
+        owner=str(row["owner"]) or None if row.get("owner") else None,
+        approval_note=str(row["approval_note"]) or None
+        if row.get("approval_note")
+        else None,
+        last_reviewed_at=str(row["last_reviewed_at"]) or None
+        if row.get("last_reviewed_at")
+        else None,
+    )
+    if method == "identity_spend":
+        return IdentitySpendMapping(**common)
+    if method == "fixed_cost_per_unit":
+        return FixedCostPerUnitMapping(
+            **common, cost_per_media_input=float(row["cost_per_media_input"])
+        )
+    if method == "piecewise_linear":
+        return PiecewiseLinearCostMapping(
+            **common,
+            spend_knots=_knots_from_text(row.get("spend_knots", "")),
+            media_input_knots=_knots_from_text(row.get("media_input_knots", "")),
+        )
+    return UploadedPlanCostMapping(
+        **common,
+        spend_knots=_knots_from_text(row.get("spend_knots", "")),
+        media_input_knots=_knots_from_text(row.get("media_input_knots", "")),
+        plan_id=str(row.get("plan_id") or ""),
+    )
+
+
+def _build_cost_mapping_registry(
+    rows,
+) -> "tuple[CostMappingRegistry, list[str]]":
+    """Build a CostMappingRegistry from grid rows, accumulating row errors
+    instead of raising - the caller decides whether to save or block on
+    errors, mirroring pages/10_Channel_Media_Units.py's activity-grid
+    pattern."""
+    registry = CostMappingRegistry()
+    errors: list[str] = []
+    for row_number, row in enumerate(rows, start=1):
+        try:
+            registry.add(_cost_mapping_from_row(row))
+        except (ValueError, KeyError) as error:
+            errors.append(f"Row {row_number}: {error}")
+    return registry, errors
+
+
 st.set_page_config(
     page_title="Official Curve Generation - Ancestry FH MMM",
     page_icon="🧬",
@@ -69,8 +191,9 @@ st.caption(
     "Produces a governed, evaluated official curve artifact through "
     "CurveService.create_official_artifact - distinct from the legacy curve "
     "bank's fitted-parameter snapshots (Results & Curve Bank), which are "
-    "never official evaluated curves. Model-input curves only; monetary "
-    "curves are not yet supported here."
+    "never official evaluated curves. Supports both model-input curves and "
+    "monetary curves (an approved, effective cost mapping plus currency/FX "
+    "evidence is required for the latter)."
 )
 
 _CURVE_SERVICE = CurveService()
@@ -231,6 +354,126 @@ if not selected_markets:
 fourier_length = len(next(iter(params.gamma_fourier.values())))
 
 # ---------------------------------------------------------------------------
+# 2b. Curve type, and, if monetary, governed cost mappings and currency/FX
+# ---------------------------------------------------------------------------
+st.markdown("---")
+st.markdown("### 2b. Curve type")
+curve_type_label = st.radio(
+    "Curve type",
+    [
+        "Model-input curve (no cost data)",
+        "Monetary curve (requires an approved cost mapping)",
+    ],
+    key="ocg_curve_type",
+)
+curve_type = "monetary" if curve_type_label.startswith("Monetary") else "model_input"
+
+cost_mapping_registry = None
+currency_by_market: dict[str, str] = {}
+reporting_currency = ""
+currency_rates: dict[tuple[str, str], float] = {}
+fx_as_of_date_value = ""
+fx_source_value = ""
+
+if curve_type == "monetary":
+    st.caption(
+        "Monetary curves require an approved, effective cost mapping for "
+        "every (market, channel) plus explicit currency/FX evidence "
+        "(REQ-CURVE-001)."
+    )
+    st.markdown("**Governed cost mappings**")
+    existing_registry = CostMappingRegistry.from_dict(get_state("media_cost_mappings"))
+    existing_rows = existing_registry.to_dict()["mappings"]
+    if existing_rows:
+        grid_rows = [
+            {col: row.get(col, "") for col in _COST_MAPPING_GRID_COLUMNS}
+            for row in existing_rows
+        ]
+        for row, source_row in zip(grid_rows, existing_rows):
+            for knot_col in ("spend_knots", "media_input_knots"):
+                if source_row.get(knot_col):
+                    row[knot_col] = ", ".join(str(v) for v in source_row[knot_col])
+    else:
+        grid_rows = [
+            {
+                **{col: "" for col in _COST_MAPPING_GRID_COLUMNS},
+                "mapping_id": f"{market}-{channel}-cost",
+                "market": market,
+                "channel": channel,
+                "cost_context_id": "default",
+                "method": "identity_spend",
+                "currency": "",
+                "approval_status": "draft",
+            }
+            for market in selected_markets
+            for channel in meta.channels
+        ]
+    cost_editor = st.data_editor(
+        pd.DataFrame(grid_rows).reindex(columns=_COST_MAPPING_GRID_COLUMNS),
+        num_rows="dynamic",
+        width="stretch",
+        key="ocg_cost_mapping_editor",
+        column_config={
+            "market": st.column_config.SelectboxColumn(
+                "Market", options=selected_markets, required=True
+            ),
+            "channel": st.column_config.SelectboxColumn(
+                "Channel", options=meta.channels, required=True
+            ),
+            "method": st.column_config.SelectboxColumn(
+                "Method", options=sorted(SUPPORTED_METHODS), required=True
+            ),
+            "approval_status": st.column_config.SelectboxColumn(
+                "Approval", options=_COST_MAPPING_APPROVAL_STATUSES, required=True
+            ),
+        },
+    )
+    cost_mapping_rows = cost_editor.fillna("").to_dict("records")
+    cost_registry_preview, cost_mapping_errors = _build_cost_mapping_registry(
+        cost_mapping_rows
+    )
+    for error in cost_mapping_errors:
+        st.error(error)
+    if st.button("Save cost mappings"):
+        if cost_mapping_errors:
+            st.error("Nothing was saved. Resolve every row error first.")
+        else:
+            set_state("media_cost_mappings", cost_registry_preview.to_dict())
+            st.success(
+                f"Saved {len(cost_registry_preview.to_dict()['mappings'])} cost "
+                "mapping(s)."
+            )
+    cost_mapping_registry = CostMappingRegistry.from_dict(
+        get_state("media_cost_mappings")
+    )
+
+    st.markdown("**Currency & FX**")
+    for market in selected_markets:
+        currency_by_market[market] = st.text_input(
+            f"Local currency - {market} (ISO code)",
+            value="",
+            key=f"ocg_local_currency_{market}",
+        )
+    c1, c2, c3 = st.columns(3)
+    reporting_currency = c1.text_input(
+        "Reporting currency (ISO code)", value="", key="ocg_reporting_currency"
+    )
+    fx_as_of_date_value = str(
+        c2.date_input("FX as-of date", value=date.today(), key="ocg_fx_as_of_date")
+    )
+    fx_source_value = c3.text_input("FX source", value="", key="ocg_fx_source")
+    distinct_locals = sorted(
+        {cur for cur in currency_by_market.values() if cur} - {reporting_currency}
+    )
+    for local_currency in distinct_locals:
+        currency_rates[(local_currency, reporting_currency)] = st.number_input(
+            f"FX rate: 1 {local_currency} -> {reporting_currency}",
+            value=1.0,
+            min_value=0.0,
+            key=f"ocg_fx_rate_{local_currency}",
+        )
+
+# ---------------------------------------------------------------------------
 # 3. Reference context per market
 # ---------------------------------------------------------------------------
 st.markdown("---")
@@ -302,7 +545,7 @@ for market in selected_markets:
         )
         c2.text_input(
             "Counterfactual axis type",
-            value="model_input",
+            value=curve_type,
             disabled=True,
             key=f"ocg_cf_axis_{market}",
         )
@@ -324,7 +567,7 @@ for market in selected_markets:
             outcome_controls=outcome_controls,
             other_channel_media_input=other_channel_media_input,
             counterfactual_value=counterfactual_value,
-            counterfactual_axis_type="model_input",
+            counterfactual_axis_type=curve_type,
             reference_period_start=str(reference_period_start),
             reference_period_end=str(reference_period_end),
         )
@@ -466,6 +709,18 @@ if st.button("Generate and save official curve artifact", type="primary"):
         activity_definitions=activity_definitions,
     )
     try:
+        monetary_kwargs = (
+            {
+                "cost_mapping_registry": cost_mapping_registry,
+                "currency_by_market": currency_by_market or None,
+                "reporting_currency": reporting_currency or None,
+                "currency_rates": currency_rates or None,
+                "fx_as_of_date": fx_as_of_date_value or None,
+                "fx_source": fx_source_value or None,
+            }
+            if curve_type == "monetary"
+            else {}
+        )
         result = _CURVE_SERVICE.create_official_artifact(
             governance,
             artifact_id=artifact_id.strip(),
@@ -474,11 +729,12 @@ if st.button("Generate and save official curve artifact", type="primary"):
             trace=trace,
             reference_contexts=reference_contexts,
             model_type=model_type,
-            curve_type="model_input",
+            curve_type=curve_type,
             media_input_specs=media_input_specs or None,
             support_by_market_channel=support_by_market_channel or None,
             spend_points=spend_points,
             n_draws=n_draws,
+            **monetary_kwargs,
         )
     except (CurveGovernanceError, CurveArtifactError, ValueError, TypeError) as exc:
         st.error(f"Could not generate the official curve artifact: {exc}")

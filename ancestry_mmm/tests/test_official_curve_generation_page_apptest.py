@@ -17,6 +17,7 @@ from streamlit.testing.v1 import AppTest
 from ancestry_mmm.core.activities import ActivityDefinition, activity_fit_fingerprint
 from ancestry_mmm.core.approval import create_policy_backed_model_approval
 from ancestry_mmm.core.curve_artifact import load_curve_artifact_store
+from ancestry_mmm.core.media_costs import CostMappingRegistry, IdentitySpendMapping
 from ancestry_mmm.core.fingerprint import (
     fingerprint_dataframe,
     fingerprint_model_spec,
@@ -372,3 +373,101 @@ def test_artifact_id_collision_is_reported_not_raised(monkeypatch, tmp_path):
         "Could not generate the official curve artifact" in (e.value or "")
         for e in at.error
     )
+
+
+_MONETARY_RADIO_LABEL = "Monetary curve (requires an approved cost mapping)"
+
+
+def _seed_approved_cost_mapping() -> dict:
+    registry = CostMappingRegistry(
+        [
+            IdentitySpendMapping(
+                mapping_id="UK-TV_Brand-cost",
+                market="UK",
+                channel="TV_Brand",
+                currency="GBP",
+                cost_context_id="default",
+                approval_status="approved",
+                approved_by="reviewer",
+                approved_at="2026-01-01",
+                owner="Analytics",
+                approval_note="approved for test",
+                last_reviewed_at="2026-01-01",
+            )
+        ]
+    )
+    return registry.to_dict()
+
+
+def test_monetary_curve_with_approved_cost_mapping_generates_and_saves_an_artifact(
+    monkeypatch, tmp_path
+):
+    import ancestry_mmm.utils.session_state as ss
+
+    monkeypatch.setattr(ss, "CURVE_ARTIFACT_ROOT", tmp_path)
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_governed_session_state(at)
+    at.session_state["project_name"] = "ocg-monetary-project"
+    at.session_state["media_cost_mappings"] = _seed_approved_cost_mapping()
+    at.session_state["ocg_curve_type"] = _MONETARY_RADIO_LABEL
+    at.session_state["ocg_local_currency_UK"] = "GBP"
+    at.session_state["ocg_reporting_currency"] = "GBP"
+    at.session_state["ocg_fx_source"] = "test-fx-provider"
+    at.run()
+    assert not at.exception, f"initial monetary load raised: {at.exception}"
+
+    at.session_state["ocg_artifact_id"] = "art-monetary-1"
+    generate_button = next(
+        b for b in at.button if b.label == "Generate and save official curve artifact"
+    )
+    generate_button.click().run()
+    assert not at.exception, f"monetary generate click raised: {at.exception}"
+    assert any("Saved official curve artifact" in (s.value or "") for s in at.success)
+
+    store_dir = tmp_path / "ocg-monetary-project"
+    result = load_curve_artifact_store(store_dir, raise_on_malformed=False)
+    assert not result.malformed
+    assert len(result.loaded) == 1
+    draws = result.loaded[0].draws
+    assert draws["curve_type"].eq("monetary").all()
+    assert draws["cost_mapping_id"].notna().all()
+    assert draws["fx_source"].eq("test-fx-provider").all()
+
+
+def test_monetary_curve_without_cost_mapping_blocks_generation(monkeypatch, tmp_path):
+    import ancestry_mmm.utils.session_state as ss
+
+    monkeypatch.setattr(ss, "CURVE_ARTIFACT_ROOT", tmp_path)
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_governed_session_state(at)
+    at.session_state["project_name"] = "ocg-monetary-blocked-project"
+    at.session_state["ocg_curve_type"] = _MONETARY_RADIO_LABEL
+    at.session_state["ocg_local_currency_UK"] = "GBP"
+    at.session_state["ocg_reporting_currency"] = "GBP"
+    at.session_state["ocg_fx_source"] = "test-fx-provider"
+    at.run()
+    assert not at.exception, f"initial monetary load raised: {at.exception}"
+
+    at.session_state["ocg_artifact_id"] = "art-monetary-blocked"
+    generate_button = next(
+        b for b in at.button if b.label == "Generate and save official curve artifact"
+    )
+    generate_button.click().run()
+    assert not at.exception, f"blocked monetary click raised: {at.exception}"
+    assert any(
+        "blocked without an approved, effective cost mapping" in (e.value or "")
+        for e in at.error
+    )
+
+
+def test_cost_mapping_grid_reports_malformed_rows_without_raising(monkeypatch):
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_governed_session_state(at)
+    at.session_state["ocg_curve_type"] = _MONETARY_RADIO_LABEL
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    # No cost mapping has been saved yet, so the default grid row (blank
+    # currency) is surfaced as a row-level error, not raised out of the page.
+    assert any("Row 1:" in (e.value or "") for e in at.error)
