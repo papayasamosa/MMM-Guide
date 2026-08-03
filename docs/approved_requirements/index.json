@@ -248,6 +248,10 @@
         "ancestry_mmm/tests/test_official_curve_generation_page_apptest.py::test_full_governance_generates_and_saves_an_artifact",
         "ancestry_mmm/tests/test_official_curve_generation_page_apptest.py::test_outcome_not_approved_for_curve_publication_blocks_generation",
         "ancestry_mmm/tests/test_official_curve_generation_page_apptest.py::test_artifact_id_collision_is_reported_not_raised",
+        "ancestry_mmm/tests/test_curve_service.py::TestCreateOfficialArtifact::test_monetary_curve_artifact_with_governed_mapping_and_currency",
+        "ancestry_mmm/tests/test_official_curve_generation_page_apptest.py::test_monetary_curve_with_approved_cost_mapping_generates_and_saves_an_artifact",
+        "ancestry_mmm/tests/test_official_curve_generation_page_apptest.py::test_monetary_curve_without_cost_mapping_blocks_generation",
+        "ancestry_mmm/tests/test_official_curve_generation_page_apptest.py::test_cost_mapping_grid_reports_malformed_rows_without_raising",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable"
       ]
     }

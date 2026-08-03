@@ -832,6 +832,7 @@ def _currency_metadata(
     reporting_currency: Optional[str],
     currency_rates: Optional[Mapping[Tuple[str, str], float]],
     fx_as_of_date: Optional[str],
+    fx_source: Optional[str],
 ) -> Dict[str, dict]:
     currencies = dict(currency_by_market or {})
     rates = dict(currency_rates or {})
@@ -848,6 +849,8 @@ def _currency_metadata(
         if not fx_as_of_date:
             raise ValueError("Multi-market curves require an FX as-of date")
         pd.Timestamp(fx_as_of_date)
+        if not fx_source:
+            raise ValueError("Multi-market curves require an explicit FX source")
     result = {}
     for market in meta.markets:
         local = currencies.get(market)
@@ -865,6 +868,7 @@ def _currency_metadata(
             "reporting_currency": reporting,
             "fx_rate": float(rate) if valid else np.nan,
             "fx_as_of_date": fx_as_of_date,
+            "fx_source": fx_source,
             "currency_valid": bool(valid),
         }
     return result
@@ -953,6 +957,7 @@ def generate_canonical_curve_draws(
     reporting_currency: Optional[str] = None,
     currency_rates: Optional[Mapping[Tuple[str, str], float]] = None,
     fx_as_of_date: Optional[str] = None,
+    fx_source: Optional[str] = None,
     value_per_response: Optional[Mapping[str, float]] = None,
     evidence_status: Optional[Mapping[Tuple[str, str], str]] = None,
     identification_status: Optional[Mapping[Tuple[str, str], str]] = None,
@@ -1098,6 +1103,7 @@ def generate_canonical_curve_draws(
                 "reporting_currency": reporting_currency,
                 "fx_rate": np.nan,
                 "fx_as_of_date": fx_as_of_date,
+                "fx_source": None,
                 "currency_valid": False,
             }
             for market in meta.markets
@@ -1109,6 +1115,7 @@ def generate_canonical_curve_draws(
             reporting_currency,
             currency_rates,
             fx_as_of_date,
+            fx_source,
         )
     support = _normalise_support(
         meta,
@@ -1588,6 +1595,7 @@ def generate_canonical_curve_draws(
                                     ],
                                     "fx_rate": fx_rate,
                                     "fx_as_of_date": currency["fx_as_of_date"],
+                                    "fx_source": currency["fx_source"],
                                     "mu_with": mu_with[outcome_id],
                                     "mu_without": mu_without[outcome_id],
                                     "incremental_response": component_response,
