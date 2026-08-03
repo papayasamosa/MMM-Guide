@@ -28,6 +28,7 @@ EXPECTED_LABELS = [
     "Compare Models",
     "Diagnostics",
     "Results & Curve Bank",
+    "Official Curve Generation",
     "Scenario Planner",
     "Project Export & Recovery",
 ]
@@ -57,9 +58,9 @@ class TestSidebarEntries:
 
 
 class TestWorkflowStepMetadata:
-    def test_total_steps_is_twelve(self):
-        assert TOTAL_STEPS == 12
-        assert len(WORKFLOW_STEPS) == 12
+    def test_total_steps_is_thirteen(self):
+        assert TOTAL_STEPS == 13
+        assert len(WORKFLOW_STEPS) == 13
 
     def test_every_step_has_required_fields(self):
         for step in WORKFLOW_STEPS:

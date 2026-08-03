@@ -152,6 +152,21 @@ WORKFLOW_STEPS: List[Dict[str, Any]] = [
             "Approve the model on Diagnostics if you haven't already.",
             "Save the current curves to the curve bank.",
         ],
+        "next": "Generate a governed official curve artifact in Official Curve Generation.",
+    },
+    {
+        "key": "official_curve_generation",
+        "label": "Official Curve Generation",
+        "path": "pages/13_Official_Curve_Generation.py",
+        "title": "Official Curve Generation",
+        "purpose": "Generate and persist a governed official curve artifact (REQ-CURVE-001), distinct from the legacy curve bank's fitted-parameter snapshots.",
+        "steps": [
+            "Pick an approved outcome authorised for curve_publication.",
+            "Build a complete reference context per market - no field defaults silently.",
+            "Record model-input support for each channel to include.",
+            "Choose the posterior draw count and generate the artifact.",
+            "Review its authorization and planning-support status.",
+        ],
         "next": "Plan and compare spend scenarios in the Scenario Planner.",
     },
     {

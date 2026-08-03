@@ -203,6 +203,8 @@
         "ancestry_mmm/application/project_service.py",
         "ancestry_mmm/pages/07_Results_Curve_Bank.py",
         "ancestry_mmm/pages/09_Project_Export.py",
+        "ancestry_mmm/pages/13_Official_Curve_Generation.py",
+        "ancestry_mmm/utils/workflow.py",
         "ancestry_mmm/components/charts.py"
       ],
       "required_tests": [
@@ -241,6 +243,11 @@
         "ancestry_mmm/tests/test_curve_bank_page_apptest.py::test_both_make_entries_calls_thread_readiness_and_policy",
         "ancestry_mmm/tests/test_project_export_page_apptest.py::test_export_reaches_official_curves_checkpoint_with_a_loaded_artifact",
         "ancestry_mmm/tests/test_project_export_page_apptest.py::test_export_falls_back_to_legacy_curves_checkpoint_without_official_artifacts",
+        "ancestry_mmm/tests/test_workflow.py::TestWorkflowStepMetadata::test_total_steps_is_thirteen",
+        "ancestry_mmm/tests/test_official_curve_generation_page_apptest.py::test_empty_state_loads_without_error",
+        "ancestry_mmm/tests/test_official_curve_generation_page_apptest.py::test_full_governance_generates_and_saves_an_artifact",
+        "ancestry_mmm/tests/test_official_curve_generation_page_apptest.py::test_outcome_not_approved_for_curve_publication_blocks_generation",
+        "ancestry_mmm/tests/test_official_curve_generation_page_apptest.py::test_artifact_id_collision_is_reported_not_raised",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable"
       ]
     }
