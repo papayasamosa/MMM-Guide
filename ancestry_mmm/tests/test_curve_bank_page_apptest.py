@@ -57,6 +57,7 @@ from ancestry_mmm.core.outcomes import (
 )
 from ancestry_mmm.core.pathways import pathway_catalogue_fingerprint_payload
 from ancestry_mmm.core.predict import extract_posterior_params
+from ancestry_mmm.application.diagnostics_service import DiagnosticsArtefact
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.validation_policy import (
     ThresholdPolicy,
@@ -226,12 +227,22 @@ def _seed_consistent_session_state(
 
 def _policy_backed_governance(model_run_id, data_fp, spec_fp, posterior_fp):
     """Mirrors test_scenario_planner_apptest.py's helper of the same name:
-    a matching (policy, readiness, approval) triple for the given identity."""
+    a matching (policy, readiness, approval) triple for the given identity.
+
+    PR 96A: also builds and returns the real ``DiagnosticsArtefact`` the
+    readiness is bound to (rather than a bare hardcoded fingerprint string) -
+    ``OfficialCurveGovernance`` now requires an actual diagnostics artefact
+    object and ``CurveService`` verifies it matches the readiness binding
+    and current model identity."""
     identity = ModelIdentity(
         model_run_id=model_run_id,
         data_fingerprint=data_fp,
         model_spec_fingerprint=spec_fp,
         posterior_fingerprint=posterior_fp,
+    )
+    diagnostics = DiagnosticsArtefact(
+        artefact_id="diag-curve-bank",
+        model_identity_fingerprint=identity.fingerprint(),
     )
     gate = ValidationGate(
         name="divergences",
@@ -260,14 +271,14 @@ def _policy_backed_governance(model_run_id, data_fp, spec_fp, posterior_fp):
         policy_fingerprint=policy.fingerprint(),
         model_identity_fingerprint=identity.fingerprint(),
         gate_fingerprint=gate.fingerprint(),
-        diagnostic_artefact_fingerprint="diag-fp-curve-bank",
-        artefact_id="diag-curve-bank",
+        diagnostic_artefact_fingerprint=diagnostics.fingerprint(),
+        artefact_id=diagnostics.artefact_id,
     )
     ctx = ValidationEvidenceContext(
         model_identity=identity,
         policy=policy,
-        diagnostic_artefact_id="diag-curve-bank",
-        diagnostic_artefact_fingerprint="diag-fp-curve-bank",
+        diagnostic_artefact_id=diagnostics.artefact_id,
+        diagnostic_artefact_fingerprint=diagnostics.fingerprint(),
         model_type="shared",
         intended_use="model_approval",
     )
@@ -275,8 +286,8 @@ def _policy_backed_governance(model_run_id, data_fp, spec_fp, posterior_fp):
         [result],
         policy,
         identity,
-        diagnostic_artefact_id="diag-curve-bank",
-        diagnostic_artefact_fingerprint="diag-fp-curve-bank",
+        diagnostic_artefact_id=diagnostics.artefact_id,
+        diagnostic_artefact_fingerprint=diagnostics.fingerprint(),
         evidence_context=ctx,
     )
     approval = create_policy_backed_model_approval(
@@ -288,14 +299,15 @@ def _policy_backed_governance(model_run_id, data_fp, spec_fp, posterior_fp):
         model_spec_fingerprint=spec_fp,
         posterior_fingerprint=posterior_fp,
     )
-    return policy, readiness, approval
+    return policy, readiness, approval, diagnostics
 
 
 def _upgrade_to_policy_backed(at: AppTest) -> None:
     """Rebuild the already-seeded legacy model approval into a matching
-    (policy, readiness, approval) triple without touching any other state."""
+    (policy, readiness, approval, diagnostics) tuple without touching any
+    other state."""
     legacy_approval_dict = at.session_state["model_approval"]
-    policy, readiness, approval = _policy_backed_governance(
+    policy, readiness, approval, diagnostics = _policy_backed_governance(
         legacy_approval_dict["model_run_id"],
         legacy_approval_dict["data_fingerprint"],
         legacy_approval_dict["model_spec_fingerprint"],
@@ -304,6 +316,7 @@ def _upgrade_to_policy_backed(at: AppTest) -> None:
     at.session_state["model_approval"] = approval.to_dict()
     at.session_state["validation_policy"] = policy.to_dict()
     at.session_state["approval_readiness"] = readiness.to_dict()
+    at.session_state["diagnostics_artefact"] = diagnostics
 
 
 def _seed_official_governance_state(at: AppTest) -> None:

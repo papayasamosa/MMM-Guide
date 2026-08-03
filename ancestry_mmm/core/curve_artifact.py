@@ -1,14 +1,20 @@
 """Official curve artifact schema, fingerprints, and round-trip IO (REQ-CURVE-001).
 
-PR 95A scope: the versioned official-artifact schema, its JSON-safe metadata
-contract, deterministic fingerprints that bind both key names and values, the
-portable Parquet draw/summary table contract, a schema-level migration hook,
-and a single-artifact write/read round-trip that fails closed on any missing,
-malformed, unknown-version, or fingerprint-mismatched input.
+The versioned official-artifact schema: its JSON-safe metadata contract,
+deterministic fingerprints that bind both key names and values (including
+unknown/forward-compatible ``extra`` fields, PR 96A), the portable Parquet
+draw/summary table contract, a schema-level migration hook, a single-artifact
+write/read round-trip that fails closed on any missing, malformed,
+unknown-version, or fingerprint-mismatched input, and store-level import,
+migration, and malformed-file audit across many artifacts (PR 95D — already
+implemented below, not future work).
 
-No behaviour change to any existing generator: ``core.canonical_curves`` is
-untouched. Generation wiring lands in PR 95B, current-use revalidation in
-PR 95C, and store-level import/migration/malformed-file audit in PR 95D.
+No curve mathematics live here: ``core.canonical_curves`` is untouched.
+Generation is wired through ``application.curve_service.CurveService``
+(governance-chain enforcement in PR 95B, current-use revalidation in PR 95C,
+the ``create_official_artifact`` creation-and-persistence transaction in
+PR 96A). Display in the Results / Curve Bank page shipped in PR 95E; legacy
+curve-bank parameter-snapshot labelling shipped in PR 95F.
 
 Artifact status follows REQ-CURVE-001 approved decision 4 (Work package G):
 artifact lifecycle status is a separate vocabulary from
@@ -16,7 +22,7 @@ artifact lifecycle status is a separate vocabulary from
 status is never reused as an artifact status. The schema carries the four
 concepts (format/migration status, historical evidence integrity, current
 authorization status, requested-use eligibility) as governed fields; the
-vocabulary is realised in persistence by PR 95D.
+vocabulary is realised in persistence below (PR 95D).
 """
 
 from __future__ import annotations
@@ -88,10 +94,23 @@ CURVE_ARTIFACT_SNAPSHOT_FIELDS = (
     "cost_currency_snapshot",
 )
 
-# Minimal identity columns a draw or summary table must carry. The full
-# canonical schema is validated when generation is wired (PR 95B).
+# Minimal identity columns the draws table must carry: the canonical
+# per-component posterior draws (one row per posterior draw x spend point x
+# market x channel x component), the full IDENTITY_COLUMNS grain.
 CURVE_ARTIFACT_DRAW_REQUIRED_COLUMNS = tuple(IDENTITY_COLUMNS)
-CURVE_ARTIFACT_SUMMARY_REQUIRED_COLUMNS = tuple(IDENTITY_COLUMNS)
+
+# PR 96A: the persisted summary table is the approved channel-safe
+# "segment" governance view (`core.canonical_curves.canonical_governance_views`)
+# summarized across posterior draws — direct and cross-product components are
+# reconciled into channel-total economics before summarization (REQ-CURVE-001
+# "Channel-total economics remain authoritative"), so `component_type` and
+# `pathway_role` are intentionally not part of the summary grain (they remain
+# required for the draws table, which keeps the component-level grain).
+CURVE_ARTIFACT_SUMMARY_REQUIRED_COLUMNS = tuple(
+    column
+    for column in IDENTITY_COLUMNS
+    if column not in ("component_type", "pathway_role")
+)
 
 
 class CurveArtifactError(Exception):
@@ -142,7 +161,10 @@ class CurveArtifactMetadata:
 
     ``fingerprints`` binds the chain (both key names and values). Unknown
     fields are preserved in ``extra`` rather than silently dropped, per
-    REQ-CURVE-001's unknown-field policy.
+    REQ-CURVE-001's unknown-field policy, and are themselves bound into the
+    fingerprint chain (``extra_fingerprint`` plus inclusion in
+    ``chain_fingerprint``) so an unknown key or value cannot be added or
+    changed without failing integrity verification (PR 96A).
     """
 
     artifact_id: str
@@ -273,9 +295,22 @@ def compute_curve_artifact_fingerprints(
 ) -> Mapping[str, str]:
     """Compute per-snapshot and chain fingerprints for the historical evidence.
 
-    Deliberately excludes the ``fingerprints`` field itself (circular) and the
-    ``extra`` unknown-key bag (unknown keys are preserved and surfaced as a
-    schema-mismatch concern rather than bound into the chain fingerprint).
+    Deliberately excludes the ``fingerprints`` field itself (circular).
+
+    PR 96A: unknown fields (``extra``) are now bound into the integrity
+    chain rather than excluded. ``CurveArtifactMetadata.from_dict``
+    preserves unknown/future-schema fields in ``extra`` for round-trip
+    compatibility, but until this change they were excluded from every
+    fingerprint — an unknown field could be added or changed after creation
+    without changing the historical evidence-chain fingerprint, while the
+    artifact still reported ``historical_integrity == "intact"``. ``extra``
+    is now covered both by its own ``extra_fingerprint`` (so a targeted
+    unknown-field tamper is identified precisely) and by inclusion in the
+    ``chain_fingerprint`` payload (so ``verify_curve_artifact_fingerprints``
+    fails closed on any unknown-key or unknown-value change). This is a
+    tamper-detection policy, distinct from schema-version migration
+    (``migrate_curve_artifact_metadata``): a field legitimately introduced by
+    a newer, supported schema version is migrated, not treated as tampering.
     """
     chain_payload: Dict[str, object] = {
         "artifact_id": metadata.artifact_id,
@@ -286,6 +321,7 @@ def compute_curve_artifact_fingerprints(
         "historical_integrity": metadata.historical_integrity,
         "current_authorization_status": metadata.current_authorization_status,
         "requested_use_eligibility": metadata.requested_use_eligibility,
+        "extra": dict(metadata.extra),
     }
     for name in CURVE_ARTIFACT_SNAPSHOT_FIELDS:
         chain_payload[name] = dict(getattr(metadata, name))
@@ -296,6 +332,9 @@ def compute_curve_artifact_fingerprints(
         fingerprints[name] = fingerprint_curve_artifact_payload(
             dict(getattr(metadata, name))
         )
+    fingerprints["extra_fingerprint"] = fingerprint_curve_artifact_payload(
+        dict(metadata.extra)
+    )
     return fingerprints
 
 
