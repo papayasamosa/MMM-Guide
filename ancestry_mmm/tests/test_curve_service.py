@@ -1305,6 +1305,57 @@ class TestResolveCurrentGovernance:
     def test_no_matching_outcome_approval_returns_none(self):
         assert self._resolve(_artifact(), outcome_approvals=[]) is None
 
+    def test_selects_the_currently_valid_approval_not_merely_the_first_in_list_order(
+        self,
+    ):
+        """Corrective PR D4: a stale/rejected approval that happens to
+        iterate before a later valid one must never be picked over it - a
+        naive first-match-by-outcome_id scan could wrongly resolve to (and
+        downstream, wrongly block on) an approval that is not actually
+        current, even though a valid approval for the same outcome exists."""
+        stale = _outcome_approval(
+            approval_id="apr-stale",
+            status="rejected",
+            approved_at="2025-01-01",
+        )
+        valid = _outcome_approval(
+            approval_id="apr-valid",
+            allowed_uses=("curve_publication", "headline_reporting"),
+            approved_at="2026-06-01",
+        )
+        governance = self._resolve(_artifact(), outcome_approvals=[stale, valid])
+        assert isinstance(governance, OfficialCurveGovernance)
+        assert governance.outcome_approval.approval_id == "apr-valid"
+
+    def test_selects_the_latest_approved_at_among_multiple_valid_approvals(self):
+        """Deterministic tiebreak: among several equally-valid (approved,
+        fingerprint-matching) candidates, the latest approved_at wins -
+        matching find_matching_outcome_approval's own tiebreak."""
+        older = _outcome_approval(
+            approval_id="apr-older",
+            allowed_uses=("curve_publication", "headline_reporting"),
+            approved_at="2026-01-01",
+        )
+        newer = _outcome_approval(
+            approval_id="apr-newer",
+            allowed_uses=("curve_publication", "headline_reporting"),
+            approved_at="2026-06-01",
+        )
+        governance = self._resolve(_artifact(), outcome_approvals=[newer, older])
+        assert governance.outcome_approval.approval_id == "apr-newer"
+
+    def test_ignores_an_approval_for_a_stale_outcome_definition_fingerprint(self):
+        """An approval whose definition_fingerprint no longer matches the
+        current outcome definition must never be selected, even when it is
+        the only candidate sharing the outcome_id."""
+        stale_fingerprint_approval = _outcome_approval(
+            definition_fingerprint="not-the-current-fingerprint",
+        )
+        assert (
+            self._resolve(_artifact(), outcome_approvals=[stale_fingerprint_approval])
+            is None
+        )
+
     def test_missing_policy_readiness_diagnostics_still_resolves_but_fails_authorize_use(
         self,
     ):

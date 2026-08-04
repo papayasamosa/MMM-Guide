@@ -664,3 +664,134 @@ def test_official_section_reports_malformed_artifact(monkeypatch, tmp_path):
     at.run()
     assert not at.exception, f"page raised: {at.exception}"
     assert any("malformed or unsupported" in (w.value or "") for w in at.warning)
+
+
+def test_official_artifact_blocked_when_approval_lacks_curve_publication(
+    monkeypatch, tmp_path
+):
+    """ledger-D finding 1 / Corrective PR B1: an approval that still grants
+    headline_reporting but no longer grants curve_publication must block
+    rendering as an official curve - curve_publication (the artifact's own
+    official status) is checked independently of the requested use, not
+    only whichever use is actually being requested."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_official_artifact_governance(at)
+    outcome_def = _meta().outcome_catalogue_at_fit[0]
+    at.session_state["outcome_approvals"] = [
+        OutcomeApproval(
+            approval_id="apr-official-1",
+            outcome_id="New",
+            definition_fingerprint=fingerprint_outcome_definition(outcome_def),
+            status="approved",
+            allowed_uses=("headline_reporting",),
+            approved_by="Jane Analyst",
+            approved_at="2026-01-01",
+        ).to_dict()
+    ]
+    _patch_store_root(monkeypatch, tmp_path)
+    _write_official_artifact(
+        Path(tmp_path) / "test-project", at.session_state["model_approval"]
+    )
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    assert any(
+        "Not currently authorized for headline reporting" in (w.value or "")
+        for w in at.warning
+    )
+    assert not any("art-official-1" in str(df.value) for df in at.dataframe)
+
+
+def test_official_curve_chart_renders_for_model_input_curve_with_two_components(
+    monkeypatch, tmp_path
+):
+    """Corrective PR D1/D2: a model-input curve with two components
+    (direct + cross_product) sharing the same spend_point/posterior_draw,
+    and an all-NaN local_spend column (as every model-input curve has),
+    must still resolve a plottable axis and render - not silently fall back
+    to the "no plottable curves" caption the way a bare column-existence
+    axis probe or a flat mean across component rows would allow."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_official_artifact_governance(at)
+    _patch_store_root(monkeypatch, tmp_path)
+    store_dir = Path(tmp_path) / "test-project"
+    approval_dict = at.session_state["model_approval"]
+    metadata = CurveArtifactMetadata(
+        artifact_id="art-multi-component",
+        creation_timestamp="2026-07-01T00:00:00+00:00",
+        model_identity_snapshot={
+            "model_run_id": approval_dict["model_run_id"],
+            "data_fingerprint": approval_dict["data_fingerprint"],
+            "model_spec_fingerprint": approval_dict["model_spec_fingerprint"],
+            "posterior_fingerprint": approval_dict["posterior_fingerprint"],
+        },
+        outcome_definition_snapshot={
+            "outcome_id": "New",
+            "definition_version": "1.0",
+            "segment": "NewSegment",
+            "product": "Family History",
+        },
+        outcome_approval_snapshot={
+            "approval_id": "apr-official-1",
+            "status": "approved",
+            "allowed_uses": ["curve_publication", "headline_reporting"],
+        },
+        activity_governance_snapshot={
+            "activities": ["tv-paid"],
+            "fingerprint": activity_definitions_fingerprint(
+                [ActivityDefinition.from_dict(_official_activity_dict())]
+            ),
+        },
+    )
+    metadata = dataclasses.replace(
+        metadata, fingerprints=dict(compute_curve_artifact_fingerprints(metadata))
+    )
+    draws = pd.DataFrame(
+        {
+            "model_run_id": [approval_dict["model_run_id"]] * 4,
+            "reference_context_id": ["ref-official"] * 4,
+            "market": ["UK"] * 4,
+            "product": ["Family History"] * 4,
+            "segment": ["New"] * 4,
+            "outcome_id": ["New"] * 4,
+            "metric_key": ["GSA"] * 4,
+            "channel": ["TV_Brand"] * 4,
+            "component_type": ["direct", "cross_product", "direct", "cross_product"],
+            "pathway_role": ["direct", "cross_product", "direct", "cross_product"],
+            "curve_type": ["model_input"] * 4,
+            "spend_point": [0.0, 0.0, 100.0, 100.0],
+            "local_spend": [np.nan] * 4,
+            "media_input": [0.0, 0.0, 100.0, 100.0],
+            "posterior_draw": [0, 0, 1, 1],
+            "incremental_response": [1.0, 0.5, 2.0, 1.0],
+            "planning_support_eligible": [True] * 4,
+            "planning_blocked_reason": [""] * 4,
+        }
+    )
+    summaries = draws.drop(
+        columns=[
+            "local_spend",
+            "media_input",
+            "posterior_draw",
+            "incremental_response",
+            "planning_support_eligible",
+            "planning_blocked_reason",
+            "curve_type",
+        ]
+    )
+    write_curve_artifact(store_dir, metadata=metadata, draws=draws, summaries=summaries)
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    assert not any("does not carry plottable" in (c.value or "") for c in at.caption)
+    # Corrective PR D4/D5: the governed-context fields must actually appear
+    # in the rendered metadata table - checked on the DataFrame itself
+    # (str() truncates a 20-column single-row frame in the middle) -
+    # "NewSegment" only ever comes from the new outcome_definition_
+    # snapshot.segment field, never the pre-existing bare outcome_id
+    # ("New") the table already showed.
+    meta_dataframes = [
+        df.value
+        for df in at.dataframe
+        if "artifact_id" in getattr(df.value, "columns", [])
+    ]
+    assert meta_dataframes, "expected the official-artifact metadata table to render"
+    assert meta_dataframes[0]["segment"].iloc[0] == "NewSegment"

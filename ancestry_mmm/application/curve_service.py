@@ -101,6 +101,7 @@ from ancestry_mmm.core.model_identity import ModelIdentity
 from ancestry_mmm.core.outcome_approval import (
     OutcomeApproval,
     OutcomeApprovalBlockedError,
+    fingerprint_outcome_definition,
     normalise_datetime,
     require_outcome_approval,
 )
@@ -337,6 +338,42 @@ def _artifact_scopes(draws: pd.DataFrame) -> List[Dict[str, Optional[str]]]:
         {column: row[column] for column in present}
         for row in unique.to_dict(orient="records")
     ]
+
+
+def _select_current_outcome_approval(
+    outcome: OutcomeDefinition, outcome_approvals: Sequence[OutcomeApproval]
+) -> Optional[OutcomeApproval]:
+    """Select the current outcome approval for one outcome definition, among
+    possibly several candidates sharing the same outcome_id - never merely
+    the first one in list order (Corrective PR D4).
+
+    Filters to approvals that are ``approved`` and whose
+    ``definition_fingerprint`` matches the *current* outcome definition
+    (never a stale definition version), then deterministically tiebreaks on
+    latest ``approved_at``. A first-match-by-outcome_id scan could pick a
+    stale/rejected/superseded approval that happens to iterate before a
+    later valid one, wrongly blocking an artifact that a valid approval
+    would actually authorize.
+
+    Scope (market/product/segment) is deliberately not filtered here: an
+    official artifact can span several distinct scopes at once (Corrective
+    PR B3), each independently revalidated by ``authorize_use``'s own
+    per-scope loop against whichever single approval this resolver selects
+    - narrowing by one scope here would wrongly reject a legitimately
+    multi-scope-approved artifact before that loop ever runs.
+    """
+    expected_fingerprint = fingerprint_outcome_definition(outcome)
+    candidates = [
+        a
+        for a in outcome_approvals
+        if a.outcome_id == outcome.outcome_id
+        and a.status == "approved"
+        and a.definition_fingerprint == expected_fingerprint
+    ]
+    if not candidates:
+        return None
+    candidates.sort(key=lambda a: a.approved_at or "", reverse=True)
+    return candidates[0]
 
 
 def _require_governance_chain(governance: OfficialCurveGovernance) -> None:
@@ -827,6 +864,12 @@ class CurveService:
         generation — used by both the Results / Curve Bank page and the
         Project Export page's report/Excel authorization-status exposure,
         so the resolution logic is never duplicated a second time.
+
+        The outcome approval is selected via ``_select_current_outcome_approval``
+        (Corrective PR D4) — never merely the first list entry sharing the
+        outcome_id — so a stale/rejected/superseded approval that happens to
+        iterate first can no longer cause a wrongly "cannot be resolved" or
+        wrongly-blocked result when a later, valid approval actually exists.
         """
         snapshot = artifact.metadata.outcome_definition_snapshot or {}
         outcome_id = snapshot.get("outcome_id")
@@ -835,10 +878,10 @@ class CurveService:
         outcome = next(
             (o for o in outcome_definitions if o.outcome_id == outcome_id), None
         )
-        approval = next(
-            (a for a in outcome_approvals if a.outcome_id == outcome_id), None
-        )
-        if outcome is None or approval is None:
+        if outcome is None:
+            return None
+        approval = _select_current_outcome_approval(outcome, outcome_approvals)
+        if approval is None:
             return None
         return OfficialCurveGovernance(
             model_identity=ModelIdentity(**current_identity),

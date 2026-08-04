@@ -37,6 +37,7 @@ from ancestry_mmm.core.curve_artifact import (
     compute_curve_artifact_fingerprints,
     compute_legacy_curve_artifact_fingerprints,
     fingerprint_curve_artifact_payload,
+    governed_context_fields,
     load_curve_artifact_store,
     migrate_curve_artifact_metadata,
     migrate_curve_artifact_store,
@@ -201,6 +202,106 @@ class TestMetadataRoundTrip:
     def test_to_dict_is_json_serialisable(self):
         payload = _metadata().to_dict()
         json.dumps(payload)  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Corrective PR D4/D5: governed-context fields for display/export rows
+# ---------------------------------------------------------------------------
+
+
+class TestGovernedContextFields:
+    def test_extracts_definition_version_segment_product_and_approval_status(self):
+        metadata = _metadata(
+            outcome_definition_snapshot={
+                "outcome_id": "fh_new_gsa",
+                "definition_version": "2.0",
+                "segment": "New",
+                "product": "Family History",
+            },
+            outcome_approval_snapshot={
+                "approval_id": "apr-o1",
+                "status": "approved",
+                "allowed_uses": ["curve_publication"],
+            },
+        )
+        fields = governed_context_fields(metadata)
+        assert fields["outcome_definition_version"] == "2.0"
+        assert fields["segment"] == "New"
+        assert fields["product"] == "Family History"
+        assert fields["outcome_approval_status"] == "approved"
+
+    def test_extracts_currency_fx_and_component_scope_from_snapshot_rows(self):
+        metadata = _metadata(
+            cost_currency_snapshot={
+                "rows": [
+                    {
+                        "market": "UK",
+                        "local_currency": "GBP",
+                        "reporting_currency": "GBP",
+                        "fx_source": "test-fx-provider",
+                        "fx_as_of_date": "2026-07-01",
+                    },
+                    {
+                        "market": "AU",
+                        "local_currency": "AUD",
+                        "reporting_currency": "GBP",
+                        "fx_source": "test-fx-provider",
+                        "fx_as_of_date": "2026-07-01",
+                    },
+                ]
+            },
+            support_snapshot={
+                "rows": [
+                    {"market": "UK", "channel": "TV", "is_extrapolated": False},
+                    {"market": "AU", "channel": "TV", "is_extrapolated": True},
+                ]
+            },
+            pathway_governance_snapshot={
+                "rows": [
+                    {"channel": "TV", "component_type": "direct"},
+                    {"channel": "DNA", "component_type": "cross_product"},
+                ]
+            },
+        )
+        fields = governed_context_fields(metadata)
+        assert fields["local_currency"] == "AUD, GBP"
+        assert fields["reporting_currency"] == "GBP"
+        assert fields["fx_source"] == "test-fx-provider"
+        assert fields["fx_as_of_date"] == "2026-07-01"
+        assert fields["component_scope"] == "cross_product, direct"
+        # Any extrapolated row anywhere in the artifact is surfaced, not
+        # silently averaged away or hidden behind a per-row-only flag.
+        assert fields["extrapolation_status"] == "extrapolated"
+
+    def test_reports_within_observed_range_when_no_row_is_extrapolated(self):
+        metadata = _metadata(
+            support_snapshot={
+                "rows": [{"market": "UK", "channel": "TV", "is_extrapolated": False}]
+            },
+        )
+        fields = governed_context_fields(metadata)
+        assert fields["extrapolation_status"] == "within observed range"
+
+    def test_handles_missing_or_empty_snapshots_gracefully(self):
+        # outcome_definition_snapshot/outcome_approval_snapshot must be
+        # non-empty (CURVE_ARTIFACT_REQUIRED_NON_EMPTY_SNAPSHOT_FIELDS), but
+        # the specific fields governed_context_fields reads from them are
+        # not - and cost_currency/support/pathway snapshots have no such
+        # requirement at all.
+        metadata = _metadata(
+            outcome_definition_snapshot={"outcome_id": "fh_new_gsa"},
+            outcome_approval_snapshot={"approval_id": "apr-o1"},
+            cost_currency_snapshot={},
+            support_snapshot={},
+            pathway_governance_snapshot={},
+        )
+        fields = governed_context_fields(metadata)
+        assert fields["outcome_definition_version"] is None
+        assert fields["segment"] is None
+        assert fields["outcome_approval_status"] is None
+        assert fields["local_currency"] is None
+        assert fields["component_scope"] is None
+        assert fields["extrapolation_status"] == "within observed range"
 
 
 # ---------------------------------------------------------------------------

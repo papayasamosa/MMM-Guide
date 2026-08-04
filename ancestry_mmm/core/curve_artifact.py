@@ -298,6 +298,49 @@ class CurveArtifactMetadata:
         return cls(**payload, extra=extra)
 
 
+def governed_context_fields(metadata: CurveArtifactMetadata) -> Dict[str, object]:
+    """Extract the governed-context fields an official curve display or
+    export must label an artifact with, beyond bare artifact_id/outcome_id
+    (Corrective PR D4/D5) - outcome definition version, approval status,
+    segment/product, currency/FX evidence, extrapolation status, and
+    component scope. Every value here already exists in the artifact's own
+    immutable creation-time snapshots (``_build_artifact_metadata``); this
+    only surfaces what a display/export row was previously omitting, never
+    invents or recomputes anything.
+    """
+    outcome = metadata.outcome_definition_snapshot or {}
+    approval = metadata.outcome_approval_snapshot or {}
+    cost_currency_rows = (metadata.cost_currency_snapshot or {}).get("rows") or []
+    support_rows = (metadata.support_snapshot or {}).get("rows") or []
+    pathway_rows = (metadata.pathway_governance_snapshot or {}).get("rows") or []
+
+    def _joined(values: object) -> "str | None":
+        unique = sorted({v for v in values if v})
+        return ", ".join(unique) if unique else None
+
+    extrapolated = any(bool(row.get("is_extrapolated")) for row in support_rows)
+    return {
+        "outcome_definition_version": outcome.get("definition_version"),
+        "segment": outcome.get("segment"),
+        "product": outcome.get("product"),
+        "outcome_approval_status": approval.get("status"),
+        "local_currency": _joined(
+            row.get("local_currency") for row in cost_currency_rows
+        ),
+        "reporting_currency": _joined(
+            row.get("reporting_currency") for row in cost_currency_rows
+        ),
+        "fx_source": _joined(row.get("fx_source") for row in cost_currency_rows),
+        "fx_as_of_date": _joined(
+            row.get("fx_as_of_date") for row in cost_currency_rows
+        ),
+        "component_scope": _joined(row.get("component_type") for row in pathway_rows),
+        "extrapolation_status": "extrapolated"
+        if extrapolated
+        else "within observed range",
+    }
+
+
 # ---------------------------------------------------------------------------
 # Fingerprints (bind both key names and values)
 # ---------------------------------------------------------------------------
