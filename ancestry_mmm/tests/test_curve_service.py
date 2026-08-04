@@ -2009,6 +2009,72 @@ class TestCreateOfficialArtifact:
         assert result.draws_path.exists()
         assert result.summaries_path.exists()
 
+    # -----------------------------------------------------------------
+    # Corrective PR E1 follow-up (PR #113 review): generation-time
+    # validation must be as scope-aware as authorize_use, not just the
+    # single, unscoped governance.outcome_approval - and every approval
+    # that actually authorized a generated scope must be captured in the
+    # artifact's own immutable creation evidence.
+    # -----------------------------------------------------------------
+
+    def test_blocks_persistence_when_a_generated_scope_lacks_curve_publication_approval(
+        self, tmp_path
+    ):
+        """A UK-only approval must not let a UK+AU artifact actually be
+        generated and persisted - generation-time validation was
+        previously scope-blind (only the single, unscoped
+        governance.outcome_approval was checked, and matches_scope treats
+        an omitted dimension as unrestricted)."""
+        uk_only = _outcome_approval(
+            allowed_uses=("curve_publication",), market_scope=("UK",)
+        )
+        governance = _governance(outcome_approval=uk_only, outcome_approvals=[uk_only])
+        with pytest.raises(CurvePublicationApprovalError, match="AU"):
+            self._create(tmp_path, artifact_id="art-blocked", governance=governance)
+        assert not (tmp_path / "art-blocked").exists()
+
+    def test_separate_scoped_approvals_jointly_authorise_generation_and_are_both_snapshotted(
+        self, tmp_path
+    ):
+        uk = _outcome_approval(
+            approval_id="apr-uk",
+            allowed_uses=("curve_publication",),
+            market_scope=("UK",),
+        )
+        au = _outcome_approval(
+            approval_id="apr-au",
+            allowed_uses=("curve_publication",),
+            market_scope=("AU",),
+        )
+        governance = _governance(outcome_approval=uk, outcome_approvals=[uk, au])
+        result = self._create(tmp_path, artifact_id="art-joint", governance=governance)
+        snapshot_ids = {
+            row["approval_id"]
+            for row in result.artifact.metadata.extra["outcome_approvals_snapshot"]
+        }
+        assert snapshot_ids == {"apr-uk", "apr-au"}
+
+    def test_single_candidate_fallback_still_generates_and_is_snapshotted(
+        self, tmp_path
+    ):
+        """No explicit outcome_approvals list supplied (older-caller
+        fallback): the single outcome_approval is the sole candidate,
+        matches every scope (unscoped), and is captured in the new
+        snapshot."""
+        result = self._create(tmp_path, artifact_id="art-single")
+        snapshot = result.artifact.metadata.extra["outcome_approvals_snapshot"]
+        assert len(snapshot) == 1
+        assert snapshot[0]["approval_id"] == "apr-o1"
+
+    def test_metadata_fingerprints_verify_with_scope_approvals_snapshot(self, tmp_path):
+        result = self._create(tmp_path, artifact_id="art-fp-scope")
+        verify_curve_artifact_fingerprints(result.artifact.metadata)  # must not raise
+        reloaded = read_curve_artifact(result.directory)
+        assert (
+            reloaded.metadata.extra["outcome_approvals_snapshot"]
+            == result.artifact.metadata.extra["outcome_approvals_snapshot"]
+        )
+
     def test_planning_ineligible_draws_preserved_and_block_planning_use(self, tmp_path):
         specs = _specs()
         support = _media_support(specs)
