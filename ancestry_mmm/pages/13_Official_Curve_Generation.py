@@ -947,6 +947,7 @@ if st.button("Generate and save official curve artifact", type="primary"):
         approval_readiness=current_readiness,
         diagnostics_artefact=current_diagnostics_artefact,
         activity_definitions=activity_definitions,
+        outcome_approvals=outcome_approvals,
     )
     try:
         monetary_kwargs = (

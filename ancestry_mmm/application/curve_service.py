@@ -101,6 +101,7 @@ from ancestry_mmm.core.model_identity import ModelIdentity
 from ancestry_mmm.core.outcome_approval import (
     OutcomeApproval,
     OutcomeApprovalBlockedError,
+    find_matching_outcome_approval,
     fingerprint_outcome_definition,
     normalise_datetime,
     require_outcome_approval,
@@ -263,6 +264,19 @@ class OfficialCurveGovernance:
     The computation inputs (model metadata, trace, reference contexts,
     cost/currency, support) are passed to the generation call separately,
     not stored here.
+
+    ``outcome_approvals`` (Corrective PR E1) is the complete current
+    candidate set of outcome approvals available for this outcome,
+    preserved alongside the single ``outcome_approval`` evidence snapshot
+    rather than collapsed into it. An official artifact can span several
+    distinct market/product/segment scopes, and separate approval records
+    can independently cover separate scopes (or separate uses) —
+    ``authorize_use`` resolves a matching approval per scope and per use
+    from this full set via ``find_matching_outcome_approval``, never from
+    one pre-selected record. Defaults to empty for callers that only ever
+    had a single approval in hand (generation-time construction, older
+    tests); ``authorize_use`` then falls back to treating
+    ``outcome_approval`` alone as the sole candidate.
     """
 
     model_identity: ModelIdentity
@@ -273,6 +287,7 @@ class OfficialCurveGovernance:
     approval_readiness: ApprovalReadiness
     diagnostics_artefact: DiagnosticsArtefact
     activity_definitions: Sequence[ActivityDefinition]
+    outcome_approvals: Sequence[OutcomeApproval] = ()
 
 
 @dataclass(frozen=True)
@@ -343,24 +358,35 @@ def _artifact_scopes(draws: pd.DataFrame) -> List[Dict[str, Optional[str]]]:
 def _select_current_outcome_approval(
     outcome: OutcomeDefinition, outcome_approvals: Sequence[OutcomeApproval]
 ) -> Optional[OutcomeApproval]:
-    """Select the current outcome approval for one outcome definition, among
-    possibly several candidates sharing the same outcome_id - never merely
-    the first one in list order (Corrective PR D4).
+    """Broad existence check: is there ANY plausible current approval for
+    this outcome definition at all, among possibly several candidates
+    sharing the same outcome_id?
 
-    Filters to approvals that are ``approved`` and whose
+    Corrective PR E1: this resolver is no longer authoritative for any
+    actual scope or requested-use decision - it exists only so
+    ``resolve_current_governance`` knows whether to construct a governance
+    object at all, and to give the dataclass's required singular
+    ``outcome_approval`` field *some* representative value. The real
+    per-scope, per-use decision is made later, by ``authorize_use``
+    matching against the *complete* candidate set
+    (``OfficialCurveGovernance.outcome_approvals``) via
+    ``find_matching_outcome_approval`` - never against this single pick.
+    Because of that split, this resolver picking a "wrong" representative
+    (e.g. a newer approval that happens not to cover the scope a later
+    check actually needs) can no longer wrongly block or wrongly authorize
+    anything: it would previously do both, since it used to be the ONLY
+    approval ``authorize_use`` ever saw.
+
+    Filters to approvals that are ``approved``, currently active (not
+    expired, not future-dated - ``is_active()``), and whose
     ``definition_fingerprint`` matches the *current* outcome definition
-    (never a stale definition version), then deterministically tiebreaks on
-    latest ``approved_at``. A first-match-by-outcome_id scan could pick a
-    stale/rejected/superseded approval that happens to iterate before a
-    later valid one, wrongly blocking an artifact that a valid approval
-    would actually authorize.
-
-    Scope (market/product/segment) is deliberately not filtered here: an
-    official artifact can span several distinct scopes at once (Corrective
-    PR B3), each independently revalidated by ``authorize_use``'s own
-    per-scope loop against whichever single approval this resolver selects
-    - narrowing by one scope here would wrongly reject a legitimately
-    multi-scope-approved artifact before that loop ever runs.
+    (never a stale definition version); deterministically tiebreaks on
+    latest ``approved_at``. Deliberately never filters by scope or by a
+    specific requested use: narrowing by either here would wrongly make
+    this broad existence check fail (and so wrongly return ``None`` /
+    "cannot be resolved") for an outcome that genuinely does have current,
+    valid approval evidence for some other scope or use than whichever
+    this resolver would have picked.
     """
     expected_fingerprint = fingerprint_outcome_definition(outcome)
     candidates = [
@@ -369,11 +395,76 @@ def _select_current_outcome_approval(
         if a.outcome_id == outcome.outcome_id
         and a.status == "approved"
         and a.definition_fingerprint == expected_fingerprint
+        and a.is_active()
     ]
     if not candidates:
         return None
     candidates.sort(key=lambda a: a.approved_at or "", reverse=True)
     return candidates[0]
+
+
+def _candidate_outcome_approvals(
+    governance: "OfficialCurveGovernance",
+) -> Sequence[OutcomeApproval]:
+    """The full set of outcome approvals ``authorize_use`` should consider
+    for current-use resolution (Corrective PR E1): the governance's
+    complete candidate set when supplied, else the single
+    ``outcome_approval`` evidence snapshot as the sole candidate (older/
+    generation-time callers that never had a candidate list in hand)."""
+    return governance.outcome_approvals or (governance.outcome_approval,)
+
+
+def _require_current_scope_approval(
+    outcome: OutcomeDefinition,
+    candidates: Sequence[OutcomeApproval],
+    requested_use: str,
+    scope: Mapping[str, Optional[str]],
+) -> OutcomeApproval:
+    """Resolve a current approval granting ``requested_use`` for ``scope``
+    from the complete ``candidates`` set (Corrective PR E1), raising
+    ``OutcomeApprovalBlockedError`` with an actionable reason when none
+    matches - fail closed, never silently pass.
+
+    Uses ``find_matching_outcome_approval`` (the same resolver
+    planning/optimisation already use) rather than requiring one
+    pre-selected record to cover every scope: separate approval records may
+    independently cover separate scopes (e.g. one UK approval and one AU
+    approval), and a newer approval that is expired, narrow, or does not
+    grant this specific use must never hide an older approval that is
+    still active and does grant it.
+    """
+    match = find_matching_outcome_approval(
+        outcome, list(candidates), requested_use, **scope
+    )
+    if match is not None:
+        return match
+    same_outcome = [a for a in candidates if a.outcome_id == outcome.outcome_id]
+    if not same_outcome:
+        raise OutcomeApprovalBlockedError(
+            f"Outcome '{outcome.outcome_id}' has no approval record. "
+            f"Official use '{requested_use}' is blocked."
+        )
+    # No candidate matches under the strict per-scope/per-use resolver.
+    # Surface the most specific single-candidate reason available (status,
+    # expiry, stale fingerprint, and use-not-allowed each raise their own
+    # message via require_outcome_approval's permissive scope check); if
+    # every candidate individually passes that permissive check, none of
+    # them actually match, so the remaining explanation is scope evidence
+    # the artifact itself does not carry for a dimension a candidate
+    # restricts (fail closed with a scope-specific reason).
+    reason: Optional[OutcomeApprovalBlockedError] = None
+    for candidate in same_outcome:
+        try:
+            require_outcome_approval(outcome, candidate, requested_use, **scope)
+        except OutcomeApprovalBlockedError as exc:
+            reason = exc
+    if reason is not None:
+        raise reason
+    raise OutcomeApprovalBlockedError(
+        f"Outcome '{outcome.outcome_id}' has no current approval confirmed "
+        f"for use '{requested_use}' and scope {dict(scope)} (no candidate "
+        "carries explicit scope evidence matching this artifact)."
+    )
 
 
 def _require_governance_chain(governance: OfficialCurveGovernance) -> None:
@@ -756,9 +847,16 @@ class CurveService:
         #    status itself, Corrective PR B1 — checked independently of the
         #    requested use, since a replacement approval can grant a
         #    downstream use while no longer granting official status) and
-        #    (b) grants the specific requested_use. The current approval is
-        #    authoritative; the artifact's snapshot is historical evidence,
-        #    never rewritten.
+        #    (b) grants the specific requested_use. Corrective PR E1: each
+        #    scope resolves its own matching approval independently from the
+        #    complete current candidate set (``_candidate_outcome_approvals``)
+        #    via ``find_matching_outcome_approval`` — never one pre-selected
+        #    record required to cover the whole artifact, since separate
+        #    approval records can independently cover separate scopes (e.g.
+        #    a UK approval and an AU approval), and the two checks below may
+        #    each resolve to the same or to different approval records. The
+        #    current approval set is authoritative; the artifact's snapshot
+        #    is historical evidence, never rewritten.
         definition_snapshot = artifact.metadata.outcome_definition_snapshot
         current_outcome = current_governance.outcome_definition
         if definition_snapshot.get("outcome_id") != current_outcome.outcome_id:
@@ -772,13 +870,11 @@ class CurveService:
             raise CurveUseNotAuthorizedError(
                 "Artifact outcome definition has changed since creation (stale)."
             )
+        candidate_approvals = _candidate_outcome_approvals(current_governance)
         for scope in _artifact_scopes(artifact.draws):
             try:
-                require_outcome_approval(
-                    current_outcome,
-                    current_governance.outcome_approval,
-                    "curve_publication",
-                    **scope,
+                _require_current_scope_approval(
+                    current_outcome, candidate_approvals, "curve_publication", scope
                 )
             except OutcomeApprovalBlockedError as exc:
                 raise CurveUseNotAuthorizedError(
@@ -786,11 +882,8 @@ class CurveService:
                     f"(curve_publication) for scope {scope}: {exc}"
                 ) from exc
             try:
-                require_outcome_approval(
-                    current_outcome,
-                    current_governance.outcome_approval,
-                    requested_use,
-                    **scope,
+                _require_current_scope_approval(
+                    current_outcome, candidate_approvals, requested_use, scope
                 )
             except OutcomeApprovalBlockedError as exc:
                 raise CurveUseNotAuthorizedError(str(exc)) from exc
@@ -865,11 +958,17 @@ class CurveService:
         Project Export page's report/Excel authorization-status exposure,
         so the resolution logic is never duplicated a second time.
 
-        The outcome approval is selected via ``_select_current_outcome_approval``
-        (Corrective PR D4) — never merely the first list entry sharing the
-        outcome_id — so a stale/rejected/superseded approval that happens to
-        iterate first can no longer cause a wrongly "cannot be resolved" or
-        wrongly-blocked result when a later, valid approval actually exists.
+        ``_select_current_outcome_approval`` (Corrective PR D4, narrowed by
+        Corrective PR E1) only answers a broad existence question here — is
+        there any plausible current approval for this outcome at all? — so a
+        stale/rejected/expired/superseded candidate that happens to iterate
+        first can no longer cause a wrongly "cannot be resolved" result when
+        a later, valid candidate actually exists. It is deliberately not
+        used to pick the record that actually authorizes anything: the
+        *complete* candidate set is preserved on the returned governance's
+        ``outcome_approvals`` field, and ``authorize_use`` alone resolves,
+        independently per scope and per requested use, which candidate (if
+        any) actually matches — never this resolver's single "best" guess.
         """
         snapshot = artifact.metadata.outcome_definition_snapshot or {}
         outcome_id = snapshot.get("outcome_id")
@@ -899,6 +998,7 @@ class CurveService:
                 DiagnosticsArtefact, current_diagnostics_artefact
             ),
             activity_definitions=activity_definitions,
+            outcome_approvals=outcome_approvals,
         )
 
     # -------------------------------------------------------------------
