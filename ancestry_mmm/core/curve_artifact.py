@@ -32,7 +32,7 @@ import json
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Mapping, Tuple
+from typing import Dict, List, Mapping, Sequence, Tuple
 
 import pandas as pd
 
@@ -318,7 +318,6 @@ def governed_context_fields(metadata: CurveArtifactMetadata) -> Dict[str, object
         unique = sorted({v for v in values if v})
         return ", ".join(unique) if unique else None
 
-    extrapolated = any(bool(row.get("is_extrapolated")) for row in support_rows)
     return {
         "outcome_definition_version": outcome.get("definition_version"),
         "segment": outcome.get("segment"),
@@ -335,10 +334,42 @@ def governed_context_fields(metadata: CurveArtifactMetadata) -> Dict[str, object
             row.get("fx_as_of_date") for row in cost_currency_rows
         ),
         "component_scope": _joined(row.get("component_type") for row in pathway_rows),
-        "extrapolation_status": "extrapolated"
-        if extrapolated
-        else "within observed range",
+        "extrapolation_status": resolve_extrapolation_status(support_rows),
     }
+
+
+def resolve_extrapolation_status(
+    support_rows: Sequence[Mapping[str, object]],
+) -> str:
+    """Tri-state support/extrapolation status (Corrective PR E2.5):
+    ``"extrapolated"``, ``"within observed range"``, or ``"support
+    unavailable or unknown"``.
+
+    ``is_extrapolated`` is ``None`` on a row precisely when
+    ``observed_support_status`` is not ``SUPPORT_AVAILABLE`` (see
+    ``generate_canonical_curve_draws``) - the canonical representation for
+    missing/unavailable support evidence, never evidence of anything.
+    Every non-``True`` value (``False`` and ``None`` alike) previously
+    collapsed to ``"within observed range"``, so an artifact with no
+    support evidence at all - or a mix of rows, some with unknown support -
+    wrongly asserted observed-range evidence that does not exist.
+    ``"within observed range"`` is now reserved for the case where every
+    relevant row explicitly reports ``is_extrapolated is False`` (real
+    supported evidence); any row reporting ``True`` marks the whole
+    artifact ``"extrapolated"`` (still the most actionable/conservative
+    signal even alongside unknown rows); everything else - no rows at all,
+    or any row with unknown support and none extrapolated - is
+    ``"support unavailable or unknown"``, never silently asserted as
+    within range.
+    """
+    if not support_rows:
+        return "support unavailable or unknown"
+    values = [row.get("is_extrapolated") for row in support_rows]
+    if any(value is True for value in values):
+        return "extrapolated"
+    if all(value is False for value in values):
+        return "within observed range"
+    return "support unavailable or unknown"
 
 
 # ---------------------------------------------------------------------------

@@ -39,6 +39,7 @@ from ancestry_mmm.core.validation_policy import (
 from ancestry_mmm.core.activities import ActivityDefinition, activity_fit_fingerprint
 from ancestry_mmm.core.canonical_curves import (
     resolve_curve_axis_column,
+    resolve_curve_axis_label,
     summarize_component_response_by_draw,
 )
 from ancestry_mmm.core.curve_artifact import (
@@ -370,6 +371,12 @@ def _render_official_artifact_curves(artifact):
                 stats["lower_interval"].to_numpy(dtype=float),
                 stats["upper_interval"].to_numpy(dtype=float),
                 title,
+                # Corrective PR E2.4: an official model-input curve's axis
+                # is a governed media-input unit (TVRs, impressions,
+                # clicks, ...), never spend - resolved from this artifact's
+                # own evidence, never hard-coded or inferred from the
+                # chart function's name.
+                x_axis_label=resolve_curve_axis_label(x_col, group),
             ),
             width="stretch",
         )

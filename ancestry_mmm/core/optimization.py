@@ -3912,11 +3912,57 @@ def scenario_from_dict(d: dict) -> dict:
     return d
 
 
+def resolve_scenario_cost_mapping_fingerprint(
+    artifact: Mapping[str, object],
+) -> Optional[str]:
+    """Resolve the cost-mapping dependency fingerprint an artifact
+    (scenario or curve metadata dict) actually depends on (Corrective PR
+    E2.1) - the one canonical resolution path every freshness check must
+    use, rather than each reading a field directly.
+
+    The current, governed contract is the nested
+    ``governance_dependencies.cost_mapping_fingerprint``:
+    ``scenario_to_dict`` always populates it (directly or via
+    ``ScenarioGovernanceDependencies.to_dict()``) whenever a cost mapping
+    was actually used to evaluate the scenario. The top-level
+    ``cost_mapping_fingerprint`` field is supported only as an explicit
+    legacy fallback for artifacts that predate the nested governance-
+    dependencies block (or that never had one, e.g. some curve-metadata
+    dicts). When both are present they must agree - a caller passing
+    ``governance_dependencies=`` without also passing the matching
+    top-level ``cost_mapping_fingerprint=`` kwarg previously left the
+    top-level field ``None`` even though the real dependency existed
+    (silently classifying a normal cost-dependent save as
+    dependency-free); a genuine conflict between the two is a
+    data-integrity problem, never silently resolved by preferring one.
+    """
+    governance_deps = artifact.get("governance_dependencies") or {}
+    nested = (
+        governance_deps.get("cost_mapping_fingerprint")
+        if isinstance(governance_deps, Mapping)
+        else None
+    )
+    legacy = artifact.get("cost_mapping_fingerprint")
+    if nested and legacy and nested != legacy:
+        raise ValueError(
+            "Artifact has conflicting cost_mapping_fingerprint values between "
+            f"the top-level field ({legacy!r}) and governance_dependencies "
+            f"({nested!r}); cannot resolve a single cost-mapping dependency."
+        )
+    return nested or legacy
+
+
 def require_current_cost_mapping(
     artifact: Dict, current_cost_mapping_fingerprint: str
 ) -> None:
-    """Reject scenarios/curve metadata created under another cost mapping."""
-    saved = artifact.get("cost_mapping_fingerprint")
+    """Reject scenarios/curve metadata created under another cost mapping.
+
+    Resolves the dependency via ``resolve_scenario_cost_mapping_fingerprint``
+    (Corrective PR E2.1) rather than reading the top-level field directly,
+    so a normal scenario save (nested ``governance_dependencies`` only) is
+    correctly classified as cost-dependent instead of dependency-free.
+    """
+    saved = resolve_scenario_cost_mapping_fingerprint(artifact)
     if not saved or saved != current_cost_mapping_fingerprint:
         raise ValueError("Artifact is stale because its governed cost mapping changed")
 

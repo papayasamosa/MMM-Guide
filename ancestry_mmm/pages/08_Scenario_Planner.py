@@ -68,6 +68,7 @@ from ancestry_mmm.core.optimization import (
     monthly_economics_table,
     require_current_cost_mapping,
     resolve_planning_objective,
+    resolve_scenario_cost_mapping_fingerprint,
     scenario_to_dict,
     seed_monetary_and_quantity_defaults,
     whole_plan_scope_compatible,
@@ -1348,15 +1349,24 @@ if scenarios:
     # A scenario saved under a since-edited cost mapping predicts totals
     # that no longer reflect the governed mapping in effect now - comparing
     # it alongside current scenarios would be indistinguishable from a
-    # current comparison (Corrective PR C9). Only a scenario that actually
-    # recorded a cost_mapping_fingerprint has this dependency at all; a
-    # scenario that never depended on cost mappings is never flagged stale
-    # by this check.
+    # current comparison (Corrective PR C9). Only a scenario whose resolved
+    # dependency (Corrective PR E2.1: nested governance_dependencies is the
+    # current contract, the top-level field only an explicit legacy
+    # fallback - see resolve_scenario_cost_mapping_fingerprint) actually
+    # names a cost mapping has this dependency at all; a scenario that
+    # never depended on cost mappings is never flagged stale by this check.
     current_cost_mapping_fingerprint = cost_mapping_registry.fingerprint()
     current_scenarios = []
     stale_scenario_names = []
     for scenario in scenarios:
-        if not scenario.get("cost_mapping_fingerprint"):
+        try:
+            dependency_fingerprint = resolve_scenario_cost_mapping_fingerprint(scenario)
+        except ValueError:
+            # Conflicting top-level vs. nested fingerprints - neither can
+            # be trusted, so fail closed rather than silently picking one.
+            stale_scenario_names.append(scenario.get("name", "(unnamed)"))
+            continue
+        if not dependency_fingerprint:
             current_scenarios.append(scenario)
             continue
         try:

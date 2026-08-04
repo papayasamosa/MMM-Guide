@@ -699,3 +699,69 @@ def test_saved_scenarios_without_a_cost_mapping_dependency_are_never_flagged_sta
     assert not any("No Cost Mapping Scenario" in (w.value or "") for w in at.warning)
     dataframe_texts = [str(df.value) for df in at.dataframe]
     assert any("No Cost Mapping Scenario" in text for text in dataframe_texts)
+
+
+def test_normal_saved_scenario_with_only_a_nested_governance_dependency_is_flagged_stale():
+    """Corrective PR E2.1 (PR #111 review): a normal scenario save from
+    this page passes governance_dependencies=gov_deps to scenario_to_dict
+    without also passing the top-level cost_mapping_fingerprint kwarg, so
+    the top-level field is None even though
+    governance_dependencies.cost_mapping_fingerprint carries the real
+    dependency - exactly reproduced here rather than via the legacy flat
+    field the other two tests above use. It must still be excluded from
+    the comparison and named in the warning once the cost mapping changes,
+    not silently treated as dependency-free."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_consistent_session_state(at, value_currency="GBP")
+
+    current_registry = CostMappingRegistry(
+        [
+            IdentitySpendMapping(
+                mapping_id="UK-TV_Brand-cost",
+                market="UK",
+                channel="TV_Brand",
+                currency="GBP",
+                cost_context_id="default",
+                approval_status="approved",
+                approved_by="reviewer",
+                approved_at="2026-01-01",
+                owner="Analytics",
+                approval_note="approved for test",
+                last_reviewed_at="2026-01-01",
+            )
+        ]
+    )
+    at.session_state["media_cost_mappings"] = current_registry.to_dict()
+
+    predicted = pd.DataFrame({"month": ["2026-01"], "predicted_outcome": [100.0]})
+    at.session_state["scenarios"] = [
+        {
+            "name": "Current Normal Save",
+            "market": "UK",
+            "spend_plan": {"TV_Brand": {"2026-01": 100.0}},
+            "predicted": predicted,
+            "cost_mapping_fingerprint": None,
+            "governance_dependencies": {
+                "cost_mapping_fingerprint": current_registry.fingerprint()
+            },
+        },
+        {
+            "name": "Stale Normal Save",
+            "market": "UK",
+            "spend_plan": {"TV_Brand": {"2026-01": 100.0}},
+            "predicted": predicted,
+            "cost_mapping_fingerprint": None,
+            "governance_dependencies": {
+                "cost_mapping_fingerprint": "fingerprint-of-a-cost-mapping-that-no-longer-exists"
+            },
+        },
+    ]
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+
+    assert any("Stale Normal Save" in (w.value or "") for w in at.warning), [
+        w.value for w in at.warning
+    ]
+    dataframe_texts = [str(df.value) for df in at.dataframe]
+    assert any("Current Normal Save" in text for text in dataframe_texts)
+    assert not any("Stale Normal Save" in text for text in dataframe_texts)

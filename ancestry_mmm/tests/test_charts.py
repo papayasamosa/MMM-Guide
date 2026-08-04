@@ -119,6 +119,29 @@ def test_response_curve_with_band_adds_marker_at_nearest_point():
     assert marker_trace.y[0] == 15.0  # mean_values at the nearest x (100.0)
 
 
+def test_response_curve_with_band_defaults_to_spend_axis_label():
+    x = np.array([0.0, 50.0, 100.0])
+    mean = np.array([0.0, 10.0, 15.0])
+    lower = np.array([0.0, 8.0, 12.0])
+    upper = np.array([0.0, 12.0, 18.0])
+    fig = create_response_curve_with_band(x, mean, lower, upper, "TV_Brand")
+    assert fig.layout.xaxis.title.text == "Spend"
+
+
+def test_response_curve_with_band_uses_the_supplied_axis_label():
+    """Corrective PR E2.4: an official model-input curve's axis is a
+    governed media-input unit, never hard-coded "Spend" - the chart
+    contract accepts an explicit label rather than inferring one."""
+    x = np.array([0.0, 50.0, 100.0])
+    mean = np.array([0.0, 10.0, 15.0])
+    lower = np.array([0.0, 8.0, 12.0])
+    upper = np.array([0.0, 12.0, 18.0])
+    fig = create_response_curve_with_band(
+        x, mean, lower, upper, "TV_Brand", x_axis_label="Model input (TVRs)"
+    )
+    assert fig.layout.xaxis.title.text == "Model input (TVRs)"
+
+
 def test_waterfall_chart_marks_every_category_relative_except_the_last():
     fig = create_waterfall_chart(
         categories=["Baseline", "TV_Brand", "Social", "Total"],
