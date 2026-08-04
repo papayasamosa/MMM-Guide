@@ -1,0 +1,129 @@
+"""Tests for ancestry_mmm.components.charts - previously had no dedicated
+test file (PR 97A); all 9 functions here are pure Plotly-figure builders
+with no Streamlit/session-state/I/O dependency, so they're covered directly
+with plain assertions on the returned go.Figure, no fixtures or mocking
+needed.
+"""
+
+import numpy as np
+import pandas as pd
+
+from ancestry_mmm.components.charts import (
+    create_time_series_chart,
+    create_bar_chart_with_ci,
+    create_stacked_area_chart,
+    create_pie_chart,
+    create_correlation_heatmap,
+    create_response_curve,
+    create_response_curve_with_band,
+    create_waterfall_chart,
+)
+
+
+def test_time_series_chart_has_one_trace_per_y_col_with_correct_names():
+    df = pd.DataFrame(
+        {
+            "week": [1, 2, 3],
+            "TV_Brand": [10.0, 20.0, 30.0],
+            "Social": [5.0, 15.0, 25.0],
+        }
+    )
+    fig = create_time_series_chart(df, "week", ["TV_Brand", "Social"], title="t")
+    assert len(fig.data) == 2
+    assert [trace.name for trace in fig.data] == ["TV_Brand", "Social"]
+    assert fig.layout.xaxis.title.text == "week"
+    assert fig.layout.title.text == "t"
+
+
+def test_bar_chart_with_ci_computes_error_bars_from_bounds():
+    fig = create_bar_chart_with_ci(
+        categories=["A", "B"],
+        values=[10.0, 20.0],
+        lower_ci=[8.0, 15.0],
+        upper_ci=[13.0, 22.0],
+    )
+    assert len(fig.data) == 2
+    assert fig.data[0].error_y.array == (3.0,)
+    assert fig.data[0].error_y.arrayminus == (2.0,)
+    assert fig.data[1].error_y.array == (2.0,)
+    assert fig.data[1].error_y.arrayminus == (5.0,)
+
+
+def test_stacked_area_chart_stacks_every_trace():
+    df = pd.DataFrame({"week": [1, 2], "direct": [1.0, 2.0], "halo": [0.5, 1.0]})
+    fig = create_stacked_area_chart(df, "week", ["direct", "halo"])
+    assert len(fig.data) == 2
+    assert all(trace.stackgroup == "one" for trace in fig.data)
+
+
+def test_pie_chart_has_one_trace_with_matching_colors_and_hole():
+    fig = create_pie_chart(labels=["A", "B", "C"], values=[1.0, 2.0, 3.0], hole=0.5)
+    assert len(fig.data) == 1
+    assert fig.data[0].type == "pie"
+    assert fig.data[0].hole == 0.5
+    assert len(fig.data[0].marker.colors) == 3
+
+
+def test_correlation_heatmap_sets_symmetric_color_range():
+    corr = pd.DataFrame([[1.0, 0.5], [0.5, 1.0]], columns=["a", "b"], index=["a", "b"])
+    fig = create_correlation_heatmap(corr)
+    assert len(fig.data) == 1
+    assert fig.layout.coloraxis.cmin == -1
+    assert fig.layout.coloraxis.cmax == 1
+
+
+def test_response_curve_without_current_spend_has_one_trace():
+    x = np.array([0.0, 50.0, 100.0])
+    y = np.array([0.0, 10.0, 15.0])
+    fig = create_response_curve(x, y, "TV_Brand")
+    assert len(fig.data) == 1
+    assert fig.data[0].mode == "lines"
+
+
+def test_response_curve_with_current_spend_adds_marker_at_nearest_point():
+    x = np.array([0.0, 50.0, 100.0])
+    y = np.array([0.0, 10.0, 15.0])
+    fig = create_response_curve(x, y, "TV_Brand", current_spend=48.0)
+    assert len(fig.data) == 2
+    marker_trace = fig.data[1]
+    assert marker_trace.mode == "markers"
+    assert marker_trace.x[0] == 48.0
+    assert marker_trace.y[0] == 10.0  # y_values at the nearest x (50.0)
+
+
+def test_response_curve_with_band_has_two_traces_without_current_spend():
+    x = np.array([0.0, 50.0, 100.0])
+    mean = np.array([0.0, 10.0, 15.0])
+    lower = np.array([0.0, 8.0, 12.0])
+    upper = np.array([0.0, 12.0, 18.0])
+    fig = create_response_curve_with_band(x, mean, lower, upper, "TV_Brand")
+    assert len(fig.data) == 2
+    band_trace, mean_trace = fig.data
+    assert np.array_equal(band_trace.x, np.concatenate([x, x[::-1]]))
+    assert np.array_equal(band_trace.y, np.concatenate([upper, lower[::-1]]))
+    assert np.array_equal(mean_trace.y, mean)
+
+
+def test_response_curve_with_band_adds_marker_at_nearest_point():
+    x = np.array([0.0, 50.0, 100.0])
+    mean = np.array([0.0, 10.0, 15.0])
+    lower = np.array([0.0, 8.0, 12.0])
+    upper = np.array([0.0, 12.0, 18.0])
+    fig = create_response_curve_with_band(
+        x, mean, lower, upper, "TV_Brand", current_spend=99.0
+    )
+    assert len(fig.data) == 3
+    marker_trace = fig.data[2]
+    assert marker_trace.mode == "markers"
+    assert marker_trace.x[0] == 99.0
+    assert marker_trace.y[0] == 15.0  # mean_values at the nearest x (100.0)
+
+
+def test_waterfall_chart_marks_every_category_relative_except_the_last():
+    fig = create_waterfall_chart(
+        categories=["Baseline", "TV_Brand", "Social", "Total"],
+        values=[100.0, 20.0, -5.0, 115.0],
+    )
+    assert len(fig.data) == 1
+    waterfall = fig.data[0]
+    assert waterfall.measure == ("relative", "relative", "relative", "total")

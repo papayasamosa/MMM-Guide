@@ -120,8 +120,11 @@ def detect_column_types(df: pd.DataFrame) -> Dict[str, List[str]]:
     for col in df.columns:
         col_lower = col.lower()
 
-        # Check for date columns
-        if df[col].dtype == "object":
+        # Check for date columns. is_string_dtype covers both the legacy
+        # numpy "object" dtype and pandas' newer default StringDtype (e.g.
+        # pandas>=3's read_csv no longer returns "object" for text columns -
+        # a plain dtype=="object" check silently misses them).
+        if pd.api.types.is_string_dtype(df[col]):
             try:
                 pd.to_datetime(df[col])
                 result["date"].append(col)
@@ -155,7 +158,9 @@ def detect_column_types(df: pd.DataFrame) -> Dict[str, List[str]]:
                 result["potential_promo"].append(col)
 
         # Categorical columns
-        elif df[col].dtype == "object" or pd.api.types.is_categorical_dtype(df[col]):
+        elif pd.api.types.is_string_dtype(df[col]) or isinstance(
+            df[col].dtype, pd.CategoricalDtype
+        ):
             result["categorical"].append(col)
             if any(hint in col_lower for hint in market_hints):
                 result["potential_market"].append(col)
