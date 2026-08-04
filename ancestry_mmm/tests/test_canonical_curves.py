@@ -23,6 +23,8 @@ from ancestry_mmm.core.canonical_curves import (
     generate_canonical_curve_draws,
     reconcile_curve_to_attribution,
     reference_context_from_model_frame,
+    resolve_curve_axis_column,
+    summarize_component_response_by_draw,
     summarize_curve_draws,
     support_from_model_frame,
     validate_reference_context_completeness,
@@ -695,6 +697,94 @@ def test_single_market_currency_conversion_requires_fx_evidence(meta):
         currency_by_market={"UK": "GBP"},
     )
     assert set(unconverted["fx_rate"]) == {1.0}
+
+
+def test_summarize_component_response_by_draw_sums_components_before_averaging(meta):
+    """Corrective PR D1: summing component rows within each posterior_draw
+    first, then averaging draw-level totals, is mathematically distinct
+    from a flat mean taken straight across every component and draw row
+    combined - the bug the Results/Curve Bank page's official-curve chart
+    had before this fix. DNA/fh_new has exactly two components (direct +
+    cross_product) on every draw here, so the correct per-spend-point mean
+    must be exactly double the (wrong) flat mean over the same rows."""
+    draws = _generate(meta)
+    dna_fh_new = draws.query(
+        "market == 'UK' and channel == 'DNA' and outcome_id == 'fh_new'"
+    )
+    assert set(dna_fh_new["component_type"]) == {"direct", "cross_product"}
+    group_sizes = dna_fh_new.groupby(["spend_point", "posterior_draw"]).size()
+    assert (group_sizes == 2).all()
+
+    correct = summarize_component_response_by_draw(
+        dna_fh_new, by=[], x_col="spend_point"
+    ).set_index("spend_point")["posterior_mean"]
+    flat_mean = dna_fh_new.groupby("spend_point")["incremental_response"].mean()
+    assert correct.to_numpy() == pytest.approx(2 * flat_mean.to_numpy())
+
+
+def test_resolve_curve_axis_column_is_curve_type_aware_and_nan_safe():
+    """Corrective PR D2: axis selection must use the artifact's own declared
+    curve_type, never a bare column-existence probe - local_spend is always
+    present as a column but entirely NaN for a model-input curve, and an
+    existence-only check would still wrongly resolve to it."""
+    model_input_draws = pd.DataFrame(
+        {
+            "curve_type": ["model_input"] * 2,
+            "local_spend": [np.nan, np.nan],
+            "reporting_currency_spend": [np.nan, np.nan],
+            "media_input": [10.0, 20.0],
+            "spend_point": [1.0, 2.0],
+        }
+    )
+    assert resolve_curve_axis_column(model_input_draws) == "media_input"
+
+    monetary_draws = pd.DataFrame(
+        {
+            "curve_type": ["monetary"] * 2,
+            "local_spend": [10.0, 20.0],
+            "reporting_currency_spend": [12.0, 24.0],
+            "media_input": [1.0, 2.0],
+            "spend_point": [1.0, 2.0],
+        }
+    )
+    assert resolve_curve_axis_column(monetary_draws) == "local_spend"
+
+    empty_local_spend = pd.DataFrame(
+        {
+            "curve_type": ["model_input"] * 2,
+            "local_spend": [np.nan, np.nan],
+            "spend_point": [1.0, 2.0],
+        }
+    )
+    assert resolve_curve_axis_column(empty_local_spend) == "spend_point"
+
+    assert resolve_curve_axis_column(pd.DataFrame()) is None
+
+
+def test_aggregate_curve_draws_preserves_planning_eligibility(meta):
+    """Corrective PR D3: planning_support_eligible/planning_blocked_reason
+    must survive component aggregation - a pandas named .agg() silently
+    drops any column absent from its enumerated list, so a summary-only
+    consumer previously could not distinguish a planning-ineligible curve
+    from an eligible one once aggregated/summarized."""
+    draws = _generate(meta)
+    assert "planning_support_eligible" in draws.columns
+    ineligible_mask = draws["channel"] == "DNA"
+    draws.loc[ineligible_mask, "planning_support_eligible"] = False
+    draws.loc[ineligible_mask, "planning_blocked_reason"] = "missing observed support"
+    channel = aggregate_curve_draws(
+        draws, by=["market", "channel", "spend_point", "outcome_id"]
+    )
+    assert "planning_support_eligible" in channel.columns
+    assert "planning_blocked_reason" in channel.columns
+    dna_rows = channel[channel["channel"] == "DNA"]
+    assert not dna_rows["planning_support_eligible"].any()
+    assert (dna_rows["planning_blocked_reason"] == "missing observed support").all()
+    tv_rows = channel[channel["channel"] == "TV"]
+    assert tv_rows["planning_support_eligible"].all()
+    assert not any(
+        "missing observed support" in str(v) for v in tv_rows["planning_blocked_reason"]
+    )
 
 
 def test_cross_channel_aggregation_requires_explicit_portfolio_path(meta):

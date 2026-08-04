@@ -37,8 +37,13 @@ from ancestry_mmm.core.validation_policy import (
     load_threshold_policy,
 )
 from ancestry_mmm.core.activities import ActivityDefinition, activity_fit_fingerprint
+from ancestry_mmm.core.canonical_curves import (
+    resolve_curve_axis_column,
+    summarize_component_response_by_draw,
+)
 from ancestry_mmm.core.curve_artifact import (
     CurveArtifactError,
+    governed_context_fields,
     load_curve_artifact_store,
 )
 from ancestry_mmm.core.outcome_approval import OutcomeApproval
@@ -327,44 +332,44 @@ def _official_artifact_governance(
 
 
 def _render_official_artifact_curves(artifact):
-    """Render the mean incremental-response curves for one official artifact."""
+    """Render the incremental-response curve (posterior mean + credible
+    interval) for one official artifact.
+
+    Corrective PR D1: sums component rows (direct + cross-product) within
+    each posterior_draw first, then computes the mean/interval across
+    draw-level totals - never a flat mean straight across every component
+    and draw row combined, which understates the true channel-total
+    response by roughly the number of distinct component_type/
+    posterior_draw combinations folded together (direct and cross-product
+    response are additive, so summing then averaging is correct; averaging
+    first is not).
+    """
     draws = artifact.draws
-    x_col = next(
-        (
-            c
-            for c in (
-                "local_spend",
-                "reporting_currency_spend",
-                "media_input",
-                "spend_point",
-            )
-            if c in draws.columns
-        ),
-        None,
-    )
-    if (
-        draws.empty
-        or "incremental_response" not in draws.columns
-        or "market" not in draws.columns
-        or "channel" not in draws.columns
-        or x_col is None
-    ):
+    x_col = resolve_curve_axis_column(draws)
+    required = {"incremental_response", "market", "channel", "posterior_draw"}
+    if draws.empty or x_col is None or not required.issubset(draws.columns):
         st.caption(
             "This artifact does not carry plottable incremental-response curves "
-            "(missing market/channel/spend/response columns)."
+            "(missing market/channel/spend/response/posterior_draw columns)."
         )
         return
+    outcome_snapshot = artifact.metadata.outcome_definition_snapshot or {}
+    outcome_id = outcome_snapshot.get("outcome_id")
+    definition_version = outcome_snapshot.get("definition_version")
     for (market, channel), group in draws.groupby(["market", "channel"]):
-        mean = (
-            group.groupby(x_col, observed=True)["incremental_response"]
-            .mean()
-            .sort_index()
-        )
+        stats = summarize_component_response_by_draw(
+            group, by=[], x_col=x_col
+        ).sort_values(x_col)
+        title = f"Official curve - {market} / {channel} - {outcome_id}"
+        if definition_version:
+            title += f" (v{definition_version})"
         st.plotly_chart(
-            create_response_curve(
-                mean.index.to_numpy(dtype=float),
-                mean.to_numpy(dtype=float),
-                f"Official curve - {market} / {channel}",
+            create_response_curve_with_band(
+                stats[x_col].to_numpy(dtype=float),
+                stats["posterior_mean"].to_numpy(dtype=float),
+                stats["lower_interval"].to_numpy(dtype=float),
+                stats["upper_interval"].to_numpy(dtype=float),
+                title,
             ),
             width="stretch",
         )
@@ -437,6 +442,12 @@ def _render_official_artifact(
                 "current_authorization": (authorization.current_authorization_status),
                 "requested_use_eligibility": (authorization.requested_use_eligibility),
                 "planning_support_eligible": planning_support,
+                # Corrective PR D4/D5: the governed context REQ-CURVE-001
+                # requires alongside a rendered official curve, beyond bare
+                # artifact_id/outcome_id - already captured in the
+                # artifact's own creation-time snapshots, just not
+                # previously surfaced here.
+                **governed_context_fields(md),
             }
         ]
     )

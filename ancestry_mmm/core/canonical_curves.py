@@ -944,6 +944,42 @@ def _axis_for_channel(
     return axis
 
 
+def resolve_curve_axis_column(draws: pd.DataFrame) -> Optional[str]:
+    """Select the plottable spend axis column from an artifact's own
+    declared ``curve_type`` (Corrective PR D2) - never a bare
+    column-existence probe.
+
+    For a model-input curve, ``local_spend``/``reporting_currency_spend``
+    are always NaN by design (this module sets them so, see
+    ``effective_curve_type == "model_input"``) even though the columns
+    themselves are always present in the generated frame, so an
+    existence-only check silently resolves to an all-NaN axis - a
+    ``groupby`` on a NaN key column drops every row (pandas excludes NaN
+    group keys by default), leaving a display with no data for every
+    model-input official artifact. The resolved column must also actually
+    carry at least one non-NaN value.
+    """
+    if draws.empty or "curve_type" not in draws.columns:
+        curve_type = None
+    else:
+        curve_type = draws["curve_type"].iloc[0]
+    if curve_type == "model_input":
+        ordered = ("media_input", "spend_point")
+    elif curve_type == "monetary":
+        ordered = ("local_spend", "reporting_currency_spend", "spend_point")
+    else:
+        ordered = (
+            "local_spend",
+            "reporting_currency_spend",
+            "media_input",
+            "spend_point",
+        )
+    for column in ordered:
+        if column in draws.columns and draws[column].notna().any():
+            return column
+    return None
+
+
 def _finite_difference_delta(
     spend: float,
     channel_support: Mapping[str, object],
@@ -2007,6 +2043,29 @@ def aggregate_curve_draws(
             "economics_availability_status",
             "first",
         ),
+        # Corrective PR D3: planning_support_eligible/planning_blocked_reason
+        # are not enumerated in CurveService.planning_support_state's own
+        # "strictest across rows" sense here, but they must at minimum
+        # survive aggregation at all - a pandas named .agg() silently drops
+        # any column absent from this list, so a summary-only consumer
+        # previously could not distinguish a planning-ineligible curve from
+        # an eligible one once aggregated/summarized.
+        planning_support_eligible=(
+            "planning_support_eligible",
+            lambda values: bool(values.fillna(False).astype(bool).all()),
+        ),
+        planning_blocked_reason=(
+            "planning_blocked_reason",
+            lambda values: "; ".join(
+                sorted(
+                    {
+                        str(v).strip()
+                        for v in values.dropna().astype(str)
+                        if str(v).strip()
+                    }
+                )
+            ),
+        ),
     ).reset_index()
     values = dict(value_per_response or {})
     economics = []
@@ -2337,6 +2396,51 @@ def summarize_curve_draws(
         result["lower_interval"] = result["incremental_response_lower_interval"]
         result["upper_interval"] = result["incremental_response_upper_interval"]
     return result
+
+
+def summarize_component_response_by_draw(
+    draws: pd.DataFrame,
+    *,
+    by: Sequence[str],
+    x_col: str,
+    response_col: str = "incremental_response",
+    cred_mass: float = DEFAULT_CRED_MASS,
+) -> pd.DataFrame:
+    """Sum component rows within each posterior_draw first, then compute the
+    mean/median/credible-interval across draw-level totals (Corrective PR
+    D1).
+
+    A flat mean straight across every row sharing ``by + [x_col]`` -
+    without first summing per ``posterior_draw`` - silently folds distinct
+    ``component_type`` rows (e.g. direct + cross-product) into the same
+    average as distinct posterior draws. Since component response is
+    additive, this understates the true total by roughly the number of
+    distinct component/draw combinations per group. This is the light,
+    response-only counterpart to :func:`aggregate_curve_draws` +
+    :func:`summarize_curve_draws` for a caller (e.g. a simple response
+    chart) that needs a correct summary without the full component-cost/
+    economics machinery those two carry.
+    """
+    if not 0 < cred_mass < 1:
+        raise ValueError("cred_mass must be between zero and one")
+    if "posterior_draw" not in draws.columns:
+        raise ValueError("draws must carry posterior_draw")
+    tail = (1.0 - cred_mass) / 2.0
+    group_cols = list(by) + [x_col]
+    per_draw = (
+        draws.groupby(group_cols + ["posterior_draw"], observed=True, dropna=False)[
+            response_col
+        ]
+        .sum()
+        .reset_index()
+    )
+    grouped = per_draw.groupby(group_cols, observed=True, dropna=False)[response_col]
+    return grouped.agg(
+        posterior_mean="mean",
+        posterior_median="median",
+        lower_interval=lambda values: values.quantile(tail),
+        upper_interval=lambda values: values.quantile(1.0 - tail),
+    ).reset_index()
 
 
 def export_canonical_curve_bank(

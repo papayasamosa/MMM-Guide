@@ -44,6 +44,7 @@ from ancestry_mmm.core.validation_policy import (
 from ancestry_mmm.core.curve_bank import load_all_entries, entries_to_dataframe
 from ancestry_mmm.core.curve_artifact import (
     CurveArtifactError,
+    governed_context_fields,
     load_curve_artifact_store,
 )
 from ancestry_mmm.core.activities import ActivityDefinition, activity_fit_fingerprint
@@ -206,6 +207,12 @@ def _resolve_official_curve_artifact_rows() -> list[dict]:
             ),
             "format_status": md.format_status,
             "historical_integrity": md.historical_integrity,
+            # Corrective PR D4/D7: the governed context REQ-CURVE-001
+            # requires alongside an exported official curve row, beyond
+            # bare artifact_id/outcome_id - already captured in the
+            # artifact's own creation-time snapshots, just not previously
+            # surfaced in this export/report row shape.
+            **governed_context_fields(md),
         }
         governance = _CURVE_SERVICE.resolve_current_governance(
             artifact,
