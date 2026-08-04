@@ -16,11 +16,14 @@ import pytest
 
 from ancestry_mmm.core.curve_artifact import (
     CURVE_ARTIFACT_DRAW_REQUIRED_COLUMNS,
+    CURVE_ARTIFACT_DRAW_VALUE_REQUIRED_COLUMNS,
+    CURVE_ARTIFACT_DRAWS_FILENAME,
     CURVE_ARTIFACT_FORMAT_STATUSES,
     CURVE_ARTIFACT_GENERATOR_VERSION,
     CURVE_ARTIFACT_METADATA_FILENAME,
     CURVE_ARTIFACT_SCHEMA_VERSION,
     CURVE_ARTIFACT_SNAPSHOT_FIELDS,
+    CURVE_ARTIFACT_SUMMARIES_FILENAME,
     CURVE_ARTIFACT_SUMMARY_REQUIRED_COLUMNS,
     CURVE_CURRENT_AUTHORIZATION_STATUSES,
     CURVE_HISTORICAL_INTEGRITY_STATUSES,
@@ -32,14 +35,17 @@ from ancestry_mmm.core.curve_artifact import (
     CurveArtifactStoreError,
     CurveArtifactStoreLoadResult,
     compute_curve_artifact_fingerprints,
+    compute_legacy_curve_artifact_fingerprints,
     fingerprint_curve_artifact_payload,
     load_curve_artifact_store,
     migrate_curve_artifact_metadata,
     migrate_curve_artifact_store,
     read_curve_artifact,
     verify_curve_artifact_fingerprints,
+    verify_curve_artifact_fingerprints_allow_legacy,
     write_curve_artifact,
 )
+from ancestry_mmm.core.fingerprint import fingerprint_dataframe
 from ancestry_mmm.core.outcome_approval import OUTCOME_APPROVAL_STATUSES
 
 # ---------------------------------------------------------------------------
@@ -163,6 +169,17 @@ class TestSchemaBasics:
     def test_metadata_rejects_bad_fingerprint_values(self):
         with pytest.raises(ValueError, match="fingerprints"):
             _metadata(fingerprints={"chain_fingerprint": 123})
+
+    def test_metadata_rejects_empty_outcome_definition_snapshot(self):
+        # Review-debt finding 1 (PR #97): an artifact with no outcome
+        # definition binding must never be constructible, even though the
+        # single production caller (CurveService) already populates this.
+        with pytest.raises(ValueError, match="outcome_definition_snapshot"):
+            _metadata(outcome_definition_snapshot={})
+
+    def test_metadata_rejects_empty_outcome_approval_snapshot(self):
+        with pytest.raises(ValueError, match="outcome_approval_snapshot"):
+            _metadata(outcome_approval_snapshot={})
 
 
 class TestMetadataRoundTrip:
@@ -344,6 +361,36 @@ class TestRoundTripIO:
                 summaries=_summaries(),
             )
 
+    def test_write_rejects_draws_table_missing_value_columns(self, tmp_path):
+        # Review-debt finding 2 (PR #97): a summary-shaped frame (identity
+        # columns only, no posterior_draw/incremental_response) must not be
+        # accepted as a draws table.
+        summary_shaped = _draws().drop(
+            columns=list(CURVE_ARTIFACT_DRAW_VALUE_REQUIRED_COLUMNS)
+        )
+        with pytest.raises(CurveArtifactError, match="required column"):
+            write_curve_artifact(
+                tmp_path,
+                metadata=_metadata(),
+                draws=summary_shaped,
+                summaries=_summaries(),
+            )
+
+    def test_write_rejects_metadata_with_unpopulated_fingerprints(self, tmp_path):
+        # Review-debt finding 3 (PR #97): a write with empty/unpopulated
+        # fingerprints must fail before anything touches disk, rather than
+        # succeeding and only failing on the next read.
+        with pytest.raises(CurveArtifactError, match="fingerprint mismatch"):
+            write_curve_artifact(
+                tmp_path,
+                metadata=_base_metadata(),
+                draws=_draws(),
+                summaries=_summaries(),
+            )
+        assert not (tmp_path / CURVE_ARTIFACT_METADATA_FILENAME).exists()
+        assert not (tmp_path / CURVE_ARTIFACT_DRAWS_FILENAME).exists()
+        assert not (tmp_path / CURVE_ARTIFACT_SUMMARIES_FILENAME).exists()
+
     def test_write_rejects_empty_table(self, tmp_path):
         with pytest.raises(CurveArtifactError, match="empty"):
             write_curve_artifact(
@@ -421,6 +468,119 @@ class TestRoundTripIO:
         assert CURVE_ARTIFACT_DRAW_REQUIRED_COLUMNS
         assert CURVE_ARTIFACT_SUMMARY_REQUIRED_COLUMNS
         assert "model_run_id" in CURVE_ARTIFACT_DRAW_REQUIRED_COLUMNS
+
+
+# ---------------------------------------------------------------------------
+# Corrective PR A2: pre-96A legacy fingerprint migration.
+#
+# Review-debt finding 7 (PR #103, highest risk in the persistence bucket):
+# PR 96A added "extra" into the fingerprint chain without bumping
+# CURVE_ARTIFACT_SCHEMA_VERSION, so every schema-v1 artifact written before
+# that change has fingerprints computed under the pre-96A formula (no
+# "extra" key in chain_payload, no "extra_fingerprint" entry at all) and was
+# becoming permanently unreadable *and* unmigratable.
+# ---------------------------------------------------------------------------
+
+
+def _write_artifact_bypassing_write_time_fingerprint_check(
+    directory, metadata, draws, summaries
+):
+    """Write an artifact directly to disk exactly like write_curve_artifact
+    does, but WITHOUT its write-time verify_curve_artifact_fingerprints
+    call - used to simulate a pre-96A artifact already on disk, which
+    write_curve_artifact itself would now correctly refuse to create."""
+    directory.mkdir(parents=True, exist_ok=True)
+    draws.to_parquet(directory / CURVE_ARTIFACT_DRAWS_FILENAME, index=False)
+    summaries.to_parquet(directory / CURVE_ARTIFACT_SUMMARIES_FILENAME, index=False)
+    envelope = {
+        "schema_version": metadata.schema_version,
+        "metadata": metadata.to_dict(),
+        "draws_fingerprint": fingerprint_dataframe(draws),
+        "summaries_fingerprint": fingerprint_dataframe(summaries),
+    }
+    (directory / CURVE_ARTIFACT_METADATA_FILENAME).write_text(
+        json.dumps(envelope, indent=2, sort_keys=True), encoding="utf-8"
+    )
+
+
+def _legacy_metadata(**overrides: object) -> CurveArtifactMetadata:
+    """A metadata object whose fingerprints are computed under the pre-96A
+    formula - exactly what a real schema-v1 artifact written before PR 96A
+    has on disk."""
+    base = dataclasses.replace(_base_metadata(), **overrides)
+    legacy_fingerprints = dict(compute_legacy_curve_artifact_fingerprints(base))
+    return dataclasses.replace(base, fingerprints=legacy_fingerprints)
+
+
+class TestLegacyFingerprintMigration:
+    def test_legacy_fingerprints_have_no_extra_fingerprint_key(self):
+        legacy = compute_legacy_curve_artifact_fingerprints(_base_metadata())
+        assert "extra_fingerprint" not in legacy
+        current = compute_curve_artifact_fingerprints(_base_metadata())
+        assert "extra_fingerprint" in current
+
+    def test_pre_96a_artifact_is_still_readable(self, tmp_path):
+        metadata = _legacy_metadata()
+        _write_artifact_bypassing_write_time_fingerprint_check(
+            tmp_path, metadata, _draws(), _summaries()
+        )
+        artifact = read_curve_artifact(tmp_path)  # must not raise
+        assert artifact.metadata.format_status == "legacy"
+        # the original (legacy) fingerprints are preserved, not silently
+        # rewritten by a read
+        assert "extra_fingerprint" not in artifact.metadata.fingerprints
+
+    def test_verify_allow_legacy_reports_legacy(self):
+        metadata = _legacy_metadata()
+        assert verify_curve_artifact_fingerprints_allow_legacy(metadata) == "legacy"
+
+    def test_verify_allow_legacy_reports_current(self):
+        assert verify_curve_artifact_fingerprints_allow_legacy(_metadata()) == "current"
+
+    def test_pre_96a_artifact_can_be_migrated_via_store_migration(self, tmp_path):
+        # The store-level migration rescue path must actually be able to
+        # reach and migrate a legacy artifact, not fail identically to a
+        # direct read (the original bug: migrate_curve_artifact_store's
+        # first step was read_curve_artifact, which used to raise).
+        artifact_dir = tmp_path / "art-pre-96a"
+        # A real pre-96A artifact was written before the "legacy"/"migrated"
+        # format_status distinction existed for fingerprints, so its stored
+        # format_status is "current" (the field's own default) even though
+        # its fingerprints predate the extra-inclusion change - read must
+        # detect this from fingerprint shape alone, not from format_status.
+        metadata = _legacy_metadata(artifact_id="art-pre-96a")
+        assert metadata.format_status == "current"
+        _write_artifact_bypassing_write_time_fingerprint_check(
+            artifact_dir, metadata, _draws(), _summaries()
+        )
+        result = migrate_curve_artifact_store(tmp_path)
+        assert result.failed == ()
+        assert result.migrated_count == 1
+        migrated = read_curve_artifact(artifact_dir)
+        assert migrated.metadata.format_status == "migrated"
+        # After migration, the artifact verifies under the CURRENT formula.
+        verify_curve_artifact_fingerprints(migrated.metadata)
+
+    def test_malformed_current_artifact_is_not_reinterpreted_as_legacy(self, tmp_path):
+        # A genuinely current-format artifact (has an extra_fingerprint key)
+        # whose value is wrong must fail as tampered/corrupted, never be
+        # silently treated as a legacy layout.
+        metadata = _metadata()
+        tampered = dataclasses.replace(
+            metadata,
+            fingerprints={**metadata.fingerprints, "extra_fingerprint": "wrong"},
+        )
+        with pytest.raises(CurveArtifactError, match="extra_fingerprint"):
+            verify_curve_artifact_fingerprints_allow_legacy(tampered)
+
+    def test_legacy_artifact_with_wrong_fingerprint_still_fails_closed(self):
+        metadata = _legacy_metadata()
+        tampered = dataclasses.replace(
+            metadata,
+            fingerprints={**metadata.fingerprints, "chain_fingerprint": "wrong"},
+        )
+        with pytest.raises(CurveArtifactError, match="fingerprint mismatch"):
+            verify_curve_artifact_fingerprints_allow_legacy(tampered)
 
 
 # ---------------------------------------------------------------------------
@@ -576,3 +736,63 @@ class TestStoreImportMigrationAudit:
         result = migrate_curve_artifact_store(tmp_path)
         assert result.migrated_count == 0
         assert result.failed == ()
+
+    # -----------------------------------------------------------------
+    # Corrective PR A3: partial-artifact audit, schema-version
+    # preservation, directory-identified fail-closed errors.
+    # -----------------------------------------------------------------
+
+    def test_partial_artifact_missing_metadata_is_audited_as_malformed(self, tmp_path):
+        # Review-debt finding 4 (PR #100): metadata deleted (or an
+        # interrupted write) leaves only the Parquet tables - this must
+        # still surface as a malformed audit entry, not be silently skipped.
+        target = self._write_artifact(tmp_path, "art-partial")
+        (target / CURVE_ARTIFACT_METADATA_FILENAME).unlink()
+        result = load_curve_artifact_store(tmp_path, raise_on_malformed=False)
+        assert result.loaded == ()
+        assert len(result.malformed) == 1
+        assert result.malformed[0].artifact_dir.name == "art-partial"
+        assert result.malformed[0].status == "malformed"
+        assert "metadata" in result.malformed[0].error.lower()
+
+    def test_partial_artifact_raises_when_raise_on_malformed(self, tmp_path):
+        target = self._write_artifact(tmp_path, "art-partial")
+        (target / CURVE_ARTIFACT_METADATA_FILENAME).unlink()
+        with pytest.raises(CurveArtifactStoreError, match="failed to load"):
+            load_curve_artifact_store(tmp_path)
+
+    def test_migration_failure_preserves_parsed_schema_version(self, tmp_path):
+        # Review-debt finding 5 (PR #100): a failed migration entry must
+        # report the artifact's actual (unsupported) schema version, not
+        # always 0 - otherwise it's indistinguishable from a v1 artifact
+        # whose fingerprint chain failed for an unrelated reason.
+        self._write_unsupported_schema(tmp_path, "art-future")
+        result = migrate_curve_artifact_store(tmp_path, raise_on_error=False)
+        assert len(result.failed) == 1
+        assert result.failed[0].schema_version == 99
+
+    def test_migration_failure_schema_version_falls_back_to_zero_when_unparseable(
+        self, tmp_path
+    ):
+        target = self._write_corrupted_metadata(tmp_path, "art-corrupt")
+        result = migrate_curve_artifact_store(tmp_path, raise_on_error=False)
+        assert len(result.failed) == 1
+        assert result.failed[0].schema_version == 0
+        assert result.failed[0].artifact_dir == target
+
+    def test_load_failure_message_identifies_artifact_directory(self, tmp_path):
+        # Review-debt finding 6 (PR #100): an operator with multiple
+        # artifacts must be able to tell which directory failed from the
+        # exception message alone.
+        self._write_corrupted_metadata(tmp_path, "art-bad-1")
+        self._write_corrupted_metadata(tmp_path, "art-bad-2")
+        with pytest.raises(CurveArtifactStoreError) as excinfo:
+            load_curve_artifact_store(tmp_path)
+        assert "art-bad-1" in str(excinfo.value)
+        assert "art-bad-2" in str(excinfo.value)
+
+    def test_migration_failure_message_identifies_artifact_directory(self, tmp_path):
+        self._write_corrupted_metadata(tmp_path, "art-bad-1")
+        with pytest.raises(CurveArtifactStoreError) as excinfo:
+            migrate_curve_artifact_store(tmp_path)
+        assert "art-bad-1" in str(excinfo.value)

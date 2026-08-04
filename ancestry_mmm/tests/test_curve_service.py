@@ -76,6 +76,7 @@ from ancestry_mmm.core.validation_policy import (
 from ancestry_mmm.application.diagnostics_service import DiagnosticsArtefact
 from ancestry_mmm.application.curve_service import (
     CurveArtifactAlreadyExistsError,
+    CurveArtifactUnsafeIdError,
     CurveDiagnosticsArtefactError,
     CurveGovernanceError,
     CurveGovernanceMissingError,
@@ -1510,6 +1511,48 @@ class TestCreateOfficialArtifact:
         )
         assert authorization.authorized  # reporting is not gated on planning support
 
+    @pytest.mark.parametrize(
+        "unsafe_artifact_id",
+        [
+            "../escape",
+            "..\\escape",
+            "../../etc/passwd",
+            "/absolute/path",
+            "C:/evil",
+            "C:\\evil",
+            "..",
+            ".",
+            "sub/dir",
+            "sub\\dir",
+            "CON",
+            "con.json",
+            "  ",
+        ],
+    )
+    def test_rejects_unsafe_artifact_ids(self, tmp_path, unsafe_artifact_id):
+        # Review-debt finding 8 (PR #103, Corrective PR A1): artifact_id
+        # must be a single safe path component - path traversal, absolute
+        # paths, drive prefixes, separators, and reserved device names must
+        # all be rejected before anything touches disk.
+        with pytest.raises(CurveArtifactUnsafeIdError):
+            self._create(tmp_path, artifact_id=unsafe_artifact_id)
+        # Nothing must have been written outside (or inside) the store.
+        assert list(tmp_path.iterdir()) == []
+
+    def test_unsafe_artifact_id_cannot_escape_configured_store(self, tmp_path):
+        store_dir = tmp_path / "store"
+        sibling = tmp_path / "sibling-marker"
+        with pytest.raises(CurveArtifactUnsafeIdError):
+            self._create(store_dir, artifact_id="../sibling-marker")
+        assert not sibling.exists()
+
+    def test_safe_artifact_id_with_dots_and_dashes_is_accepted(self, tmp_path):
+        # A realistic artifact_id (containing dots/dashes but not a
+        # traversal sequence or reserved name) must still work.
+        result = self._create(tmp_path, artifact_id="art-2026.08.04-v1")
+        assert result.artifact_id == "art-2026.08.04-v1"
+        assert result.directory == tmp_path / "art-2026.08.04-v1"
+
     def test_existing_artifact_id_is_not_overwritten(self, tmp_path):
         self._create(tmp_path, artifact_id="art-dup")
         marker = (tmp_path / "art-dup" / CURVE_ARTIFACT_METADATA_FILENAME).read_text(
@@ -1580,6 +1623,40 @@ class TestCreateOfficialArtifact:
             self._create(tmp_path, artifact_id="art-fail-verify")
         assert not (tmp_path / "art-fail-verify").exists()
         assert list(tmp_path.iterdir()) == []
+
+    def test_final_verification_failure_removes_promoted_directory(
+        self, tmp_path, monkeypatch
+    ):
+        # Review-debt finding 9 (PR #103, Corrective PR A4): unlike
+        # test_readback_verification_failure_removes_temp_directory (which
+        # only exercises the PRE-promotion read on tmp_dir, since that
+        # monkeypatch fails unconditionally and execution never reaches
+        # rename()), this makes the first read_curve_artifact call succeed
+        # (the tmp_dir check) and only the SECOND call (post-promotion, on
+        # final_dir) fail - the scenario the finding describes.
+        import ancestry_mmm.application.curve_service as svc
+
+        original_read = svc.read_curve_artifact
+        calls = {"n": 0}
+
+        def flaky_read(directory):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return original_read(directory)
+            raise CurveArtifactError("simulated post-promotion verify failure")
+
+        monkeypatch.setattr(svc, "read_curve_artifact", flaky_read)
+        with pytest.raises(
+            CurveArtifactError, match="simulated post-promotion verify failure"
+        ):
+            self._create(tmp_path, artifact_id="art-fail-final-verify")
+        # The promoted directory must not survive the failure...
+        assert not (tmp_path / "art-fail-final-verify").exists()
+        assert list(tmp_path.iterdir()) == []
+        # ...so a retry with the same artifact_id is not permanently blocked.
+        monkeypatch.setattr(svc, "read_curve_artifact", original_read)
+        result = self._create(tmp_path, artifact_id="art-fail-final-verify")
+        assert result.artifact_id == "art-fail-final-verify"
 
     def test_unknown_metadata_tampering_after_creation_is_detected(self, tmp_path):
         """Complements test_curve_artifact.py::TestUnknownMetadataIntegrity,

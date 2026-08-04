@@ -138,6 +138,66 @@ class CurveArtifactAlreadyExistsError(CurveGovernanceError):
     """
 
 
+class CurveArtifactUnsafeIdError(CurveGovernanceError):
+    """``artifact_id`` is not a single safe path component.
+
+    Raised before anything touches disk, so a caller can never escape the
+    configured artifact store via ``..``, an absolute path, a drive prefix,
+    a path separator, or a reserved Windows device name (Corrective PR A1).
+    """
+
+
+# Windows reserved device names (case-insensitive, extension-insensitive) —
+# a path component matching one of these is invalid regardless of platform,
+# since artifact stores must remain portable across the repository's
+# Windows-first tooling.
+_RESERVED_WINDOWS_ARTIFACT_ID_STEMS = frozenset(
+    {"CON", "PRN", "AUX", "NUL"}
+    | {f"COM{i}" for i in range(1, 10)}
+    | {f"LPT{i}" for i in range(1, 10)}
+)
+
+
+def _validate_safe_artifact_id(artifact_id: str) -> None:
+    """Reject any ``artifact_id`` that is not a single safe path component.
+
+    Corrective PR A1: ``artifact_id`` is joined onto the configured
+    ``store_dir`` (and used as a ``tempfile.mkdtemp`` prefix) to build the
+    on-disk path for an official artifact. Blankness alone is not a
+    sufficient check — ``..``, an absolute path, or a drive prefix can make
+    the resolved destination escape ``store_dir`` entirely.
+    """
+    if not artifact_id or not artifact_id.strip():
+        raise CurveArtifactUnsafeIdError("artifact_id must be non-blank")
+    candidate = artifact_id.strip()
+    if candidate != artifact_id:
+        raise CurveArtifactUnsafeIdError(
+            f"artifact_id must not have leading/trailing whitespace: {artifact_id!r}"
+        )
+    if candidate in (".", ".."):
+        raise CurveArtifactUnsafeIdError(
+            f"artifact_id must not be '.' or '..': {artifact_id!r}"
+        )
+    if "/" in candidate or "\\" in candidate:
+        raise CurveArtifactUnsafeIdError(
+            f"artifact_id must be a single path component (no separators): "
+            f"{artifact_id!r}"
+        )
+    if ":" in candidate:
+        raise CurveArtifactUnsafeIdError(
+            f"artifact_id must not contain a drive prefix: {artifact_id!r}"
+        )
+    if Path(candidate).is_absolute():
+        raise CurveArtifactUnsafeIdError(
+            f"artifact_id must not be an absolute path: {artifact_id!r}"
+        )
+    stem = candidate.split(".", 1)[0].upper()
+    if stem in _RESERVED_WINDOWS_ARTIFACT_ID_STEMS:
+        raise CurveArtifactUnsafeIdError(
+            f"artifact_id must not be a reserved device name: {artifact_id!r}"
+        )
+
+
 class CurveReferenceContextIncompleteError(CurveGovernanceError):
     """Official curve blocked: a reference context does not cover the fitted model."""
 
@@ -767,10 +827,19 @@ class CurveService:
         final artifact is left; an existing artifact ID is never
         overwritten, silently or otherwise.
         """
-        if not artifact_id or not artifact_id.strip():
-            raise CurveGovernanceError("artifact_id must be non-blank")
+        _validate_safe_artifact_id(artifact_id)
         store_dir = Path(store_dir)
         final_dir = store_dir / artifact_id
+        resolved_store_dir = store_dir.resolve()
+        if final_dir.resolve().parent != resolved_store_dir:
+            # Defense in depth beyond _validate_safe_artifact_id's component-
+            # level checks: verify the resolved destination is still a
+            # direct child of the configured store before anything is
+            # written (Corrective PR A1).
+            raise CurveArtifactUnsafeIdError(
+                f"artifact_id {artifact_id!r} must resolve to a direct child of "
+                f"the configured artifact store {store_dir}"
+            )
         if final_dir.exists():
             raise CurveArtifactAlreadyExistsError(
                 f"Curve artifact '{artifact_id}' already exists at {final_dir}; "
@@ -835,7 +904,18 @@ class CurveService:
                 "official artifacts are never silently overwritten."
             ) from None
 
-        verified = read_curve_artifact(final_dir)
+        try:
+            verified = read_curve_artifact(final_dir)
+        except CurveArtifactError:
+            # Post-promotion verification failed after the atomic rename
+            # already succeeded. Remove the promoted directory rather than
+            # leaving it behind: a leftover final_dir would otherwise
+            # permanently block a retry with this artifact_id (the
+            # already-exists guard above) and later surface as a malformed
+            # entry in the store's audit instead of a clean retry
+            # opportunity (Corrective PR A4).
+            shutil.rmtree(final_dir, ignore_errors=True)
+            raise
         return OfficialArtifactCreationResult(
             artifact=verified,
             artifact_id=artifact_id,

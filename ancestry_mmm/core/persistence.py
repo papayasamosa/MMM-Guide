@@ -66,7 +66,7 @@ from .fingerprint import (
     fingerprint_model_spec,
     fingerprint_posterior,
 )
-from .curve_artifact import load_curve_artifact_store
+from .curve_artifact import CurveArtifact, load_curve_artifact_store
 from .hierarchical_model import FHModelMeta
 from .outcomes import outcome_catalogue_fingerprint_payload
 from .pathways import pathway_catalogue_fingerprint_payload
@@ -701,21 +701,62 @@ def resolve_imported_outcome_approvals(
     return legacy_records, warnings
 
 
-def _count_loaded_curve_artifacts(imported: Dict[str, Any]) -> int:
-    """How many official curve artifacts round-trip cleanly from an
-    imported bundle's ``curve_artifact_files``/``curve_artifact_binary_files``.
+def replace_curve_artifact_store(
+    imported: Dict[str, Any], restored_artifact_dir: Path
+) -> None:
+    """Atomically replace ``restored_artifact_dir``'s contents with an
+    imported bundle's official curve artifacts (Corrective PR A5).
+
+    Importing a bundle must replace the destination project's
+    official-artifact store, never merge into it - unconditionally,
+    including when the bundle declares zero official curve artifacts.
+    Without this, (a) a bundle that omits ``curve_artifact_files`` entirely
+    leaves the destination's prior artifacts untouched, and (b) even a
+    bundle that does declare artifacts only ever adds/overwrites paths
+    present in the bundle, so any artifact directory already present in the
+    destination but absent from the bundle survives the import. Either way,
+    stale artifacts from a previously open project could satisfy the
+    ``official_curves`` checkpoint or appear in reports for a project they
+    don't belong to.
+    """
+    restored_artifact_dir = Path(restored_artifact_dir)
+    shutil.rmtree(restored_artifact_dir, ignore_errors=True)
+    text_files = imported.get("curve_artifact_files") or {}
+    binary_files = imported.get("curve_artifact_binary_files") or {}
+    if not text_files and not binary_files:
+        return
+    restored_artifact_dir.mkdir(parents=True, exist_ok=True)
+    for rel_path, contents in text_files.items():
+        target = restored_artifact_dir / Path(rel_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(contents)
+    for rel_path, binary_contents in binary_files.items():
+        target = restored_artifact_dir / Path(rel_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(binary_contents)
+
+
+def _load_curve_artifacts_for_audit(imported: Dict[str, Any]) -> List[CurveArtifact]:
+    """Materialise and load every official curve artifact from an imported
+    bundle's ``curve_artifact_files``/``curve_artifact_binary_files``.
 
     Materialises the imported files into a fresh temp directory and reuses
     ``load_curve_artifact_store``'s existing fingerprint verification and
     per-artifact audit (REQ-CURVE-001) rather than a second, bundle-level
     checksum mechanism - a store that fails to reload here fails the same
-    way it would in the live app. A malformed-only store (0 loaded) must
-    not satisfy the ``official_curves`` checkpoint (PR 96B).
+    way it would in the live app. The returned artifacts (metadata plus
+    in-memory draw/summary frames) are fully materialised before the temp
+    directory is cleaned up, so they remain valid after this function
+    returns. Used both to count loadable artifacts and, for the
+    ``official_curves`` checkpoint, to revalidate each artifact's own
+    governance snapshot against the imported bundle's reconstructed
+    identity (Corrective PR A6) - historical fingerprint self-consistency
+    alone is not sufficient for that checkpoint.
     """
     text_files = imported.get("curve_artifact_files") or {}
     binary_files = imported.get("curve_artifact_binary_files") or {}
     if not text_files and not binary_files:
-        return 0
+        return []
     with tempfile.TemporaryDirectory() as tmp_str:
         tmp = Path(tmp_str)
         for rel_path, contents in text_files.items():
@@ -727,7 +768,17 @@ def _count_loaded_curve_artifacts(imported: Dict[str, Any]) -> int:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(binary_contents)
         result = load_curve_artifact_store(tmp, raise_on_malformed=False)
-        return len(result.loaded)
+        return list(result.loaded)
+
+
+def _count_loaded_curve_artifacts(imported: Dict[str, Any]) -> int:
+    """How many official curve artifacts round-trip cleanly from an
+    imported bundle's ``curve_artifact_files``/``curve_artifact_binary_files``.
+
+    A malformed-only store (0 loaded) must not satisfy the
+    ``official_curves`` checkpoint (PR 96B).
+    """
+    return len(_load_curve_artifacts_for_audit(imported))
 
 
 def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
@@ -911,14 +962,15 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
         # G2A.7a.2, G2A.7a.3: for scenarios checkpoint, check that saved
         # scenario targets have matching approvals for the correct use —
         # manual scenarios require "planning", optimiser results require
-        # "optimisation".
-        if declared == "scenarios" and officially_resumable:
+        # "optimisation". Corrective PR A6: the official_curves checkpoint
+        # shares the same model-identity reconstruction, since historical
+        # fingerprint self-consistency alone (each artifact matching its own
+        # stored fingerprints) does not prove the artifact belongs to *this*
+        # bundle's model — a foreign artifact copied from another project,
+        # or one bound to an outcome with only an unrelated active approval,
+        # must not satisfy the checkpoint.
+        if declared in {"official_curves", "scenarios"} and officially_resumable:
             scenarios = imported.get("scenarios") or []
-            from .optimization import (
-                PlanningObjective,
-                validation_context_from_legacy_args,
-                validate_scenario_dependencies,
-            )
 
             # G2A.7a.9: build a complete validation context per scenario.
             # Each official scenario has its own planning objective which
@@ -974,7 +1026,107 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
                     except (TypeError, ValueError, ApprovalMismatchError) as exc:
                         model_identity_reason = f"model_approval_mismatch: {exc}"
 
-            for idx, sc in enumerate(scenarios):
+            # Corrective PR A6: revalidate every loaded curve artifact
+            # against the reconstructed imported model identity and a
+            # matching current outcome approval, rather than trusting an
+            # artifact's own historical fingerprint self-consistency.
+            if declared == "official_curves":
+                from .outcome_approval import fingerprint_outcome_definition
+                from .outcomes import OutcomeDefinition
+
+                bundle_model_run_id = imported.get("model_run_id", "")
+                for artifact in _load_curve_artifacts_for_audit(imported):
+                    artifact_label = artifact.metadata.artifact_id
+                    if model_identity_reason is not None:
+                        officially_resumable = False
+                        official_blocking_reasons.append(
+                            {
+                                "artefact_type": "curve_artifact",
+                                "artefact_id": artifact_label,
+                                "reason": model_identity_reason,
+                            }
+                        )
+                        continue
+
+                    identity_snapshot = artifact.metadata.model_identity_snapshot
+                    if (
+                        identity_snapshot.get("model_run_id") != bundle_model_run_id
+                        or identity_snapshot.get("data_fingerprint") != current_data_fp
+                        or identity_snapshot.get("model_spec_fingerprint")
+                        != current_spec_fp
+                        or identity_snapshot.get("posterior_fingerprint")
+                        != current_posterior_fp
+                    ):
+                        officially_resumable = False
+                        official_blocking_reasons.append(
+                            {
+                                "artefact_type": "curve_artifact",
+                                "artefact_id": artifact_label,
+                                "reason": (
+                                    "model_identity_mismatch: artifact's "
+                                    "model_identity_snapshot does not match this "
+                                    "bundle's reconstructed model identity — it "
+                                    "may belong to a different model."
+                                ),
+                            }
+                        )
+                        continue
+
+                    try:
+                        outcome_def = OutcomeDefinition.from_dict(
+                            artifact.metadata.outcome_definition_snapshot
+                        )
+                    except (TypeError, ValueError, KeyError, AttributeError) as exc:
+                        officially_resumable = False
+                        official_blocking_reasons.append(
+                            {
+                                "artefact_type": "curve_artifact",
+                                "artefact_id": artifact_label,
+                                "reason": (
+                                    f"malformed_outcome_definition_snapshot: {exc}"
+                                ),
+                            }
+                        )
+                        continue
+
+                    definition_fingerprint = fingerprint_outcome_definition(outcome_def)
+                    matching_approval = next(
+                        (
+                            a_dict
+                            for a_dict in active_approvals
+                            if a_dict.get("outcome_id") == outcome_def.outcome_id
+                            and a_dict.get("definition_fingerprint")
+                            == definition_fingerprint
+                            and "curve_publication"
+                            in (a_dict.get("allowed_uses") or ())
+                        ),
+                        None,
+                    )
+                    if matching_approval is None:
+                        officially_resumable = False
+                        official_blocking_reasons.append(
+                            {
+                                "artefact_type": "curve_artifact",
+                                "artefact_id": artifact_label,
+                                "outcome_id": outcome_def.outcome_id,
+                                "required_use": "curve_publication",
+                                "reason": (
+                                    "no_matching_outcome_approval: no active "
+                                    "approval with 'curve_publication' authority "
+                                    "matches this artifact's actual outcome "
+                                    "definition."
+                                ),
+                            }
+                        )
+
+            if declared == "scenarios":
+                from .optimization import (
+                    PlanningObjective,
+                    validation_context_from_legacy_args,
+                    validate_scenario_dependencies,
+                )
+
+            for idx, sc in enumerate(scenarios if declared == "scenarios" else []):
                 sc_gov = sc.get("governance_mode", "exploratory")
                 if sc_gov != "official":
                     continue

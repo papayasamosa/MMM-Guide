@@ -44,6 +44,14 @@ def _write_official_artifact(store_dir: Path, artifact_id: str = "art-1") -> Non
         artifact_id=artifact_id,
         creation_timestamp="2026-08-01T00:00:00+00:00",
         model_identity_snapshot={"model_run_id": "run-1"},
+        outcome_definition_snapshot={
+            "outcome_id": "fh_new_gsa",
+            "definition_version": "1.0",
+        },
+        outcome_approval_snapshot={
+            "approval_id": "apr-1",
+            "allowed_uses": ["curve_publication"],
+        },
     )
     metadata = dataclasses.replace(
         metadata, fingerprints=dict(compute_curve_artifact_fingerprints(metadata))

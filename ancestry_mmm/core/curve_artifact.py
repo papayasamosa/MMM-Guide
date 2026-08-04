@@ -94,10 +94,28 @@ CURVE_ARTIFACT_SNAPSHOT_FIELDS = (
     "cost_currency_snapshot",
 )
 
+# Of the snapshot fields above, these must be non-empty: an artifact with no
+# outcome-definition/outcome-approval snapshot at all has no versioned,
+# approved outcome binding and must never be accepted as official, even
+# though the module-level schema alone cannot enforce the fuller
+# governance-chain requirements (threshold policy, readiness, diagnostics)
+# that belong to CurveService's generation-time validation.
+CURVE_ARTIFACT_REQUIRED_NON_EMPTY_SNAPSHOT_FIELDS = (
+    "outcome_definition_snapshot",
+    "outcome_approval_snapshot",
+)
+
 # Minimal identity columns the draws table must carry: the canonical
 # per-component posterior draws (one row per posterior draw x spend point x
 # market x channel x component), the full IDENTITY_COLUMNS grain.
-CURVE_ARTIFACT_DRAW_REQUIRED_COLUMNS = tuple(IDENTITY_COLUMNS)
+# Also requires the draw-level calculation columns (posterior_draw identity
+# and the incremental_response value) so a summary-shaped frame — identity
+# columns only, no per-draw value or uncertainty — cannot pass as a draws
+# table (REQ-CURVE-001 posterior-draws-before-summary contract).
+CURVE_ARTIFACT_DRAW_VALUE_REQUIRED_COLUMNS = ("posterior_draw", "incremental_response")
+CURVE_ARTIFACT_DRAW_REQUIRED_COLUMNS = tuple(IDENTITY_COLUMNS) + (
+    CURVE_ARTIFACT_DRAW_VALUE_REQUIRED_COLUMNS
+)
 
 # PR 96A: the persisted summary table is the approved channel-safe
 # "segment" governance view (`core.canonical_curves.canonical_governance_views`)
@@ -209,6 +227,12 @@ class CurveArtifactMetadata:
                 raise ValueError(f"{name} must be a mapping")
             if not _is_json_safe(dict(value)):
                 raise ValueError(f"{name} must be JSON-safe")
+        for name in CURVE_ARTIFACT_REQUIRED_NON_EMPTY_SNAPSHOT_FIELDS:
+            if not getattr(self, name):
+                raise ValueError(
+                    f"{name} must be non-empty: every official curve artifact "
+                    "must be bound to a versioned, approved outcome"
+                )
         if not isinstance(self.fingerprints, Mapping) or not all(
             isinstance(k, str) and isinstance(v, str)
             for k, v in self.fingerprints.items()
@@ -339,9 +363,16 @@ def compute_curve_artifact_fingerprints(
 
 
 def verify_curve_artifact_fingerprints(metadata: CurveArtifactMetadata) -> None:
-    """Raise CurveArtifactError unless every expected fingerprint matches.
+    """Raise CurveArtifactError unless every expected (current-format)
+    fingerprint matches.
 
-    Fails closed: a missing fingerprint is a mismatch, never an implicit pass.
+    Fails closed: a missing fingerprint is a mismatch, never an implicit
+    pass. This is the strict, current-only check: it is used at write time,
+    where every newly written artifact must use the current fingerprint
+    formula. Reading an existing artifact from disk should go through
+    ``verify_curve_artifact_fingerprints_allow_legacy`` instead, which also
+    accepts the pre-96A legacy formula for artifacts written before
+    ``extra_fingerprint`` entered the chain.
     """
     expected = compute_curve_artifact_fingerprints(metadata)
     for name, value in expected.items():
@@ -351,6 +382,74 @@ def verify_curve_artifact_fingerprints(metadata: CurveArtifactMetadata) -> None:
                 f"Curve artifact fingerprint mismatch for '{name}': stored {stored!r} "
                 f"!= computed {value!r}."
             )
+
+
+def compute_legacy_curve_artifact_fingerprints(
+    metadata: CurveArtifactMetadata,
+) -> Mapping[str, str]:
+    """Compute fingerprints under the pre-PR-96A formula.
+
+    Before PR 96A, ``extra`` was not bound into the fingerprint chain: the
+    chain payload excluded the ``"extra"`` key entirely, and there was no
+    ``extra_fingerprint`` entry. Every schema-v1 artifact written before that
+    change has fingerprints computed this way. ``CURVE_ARTIFACT_SCHEMA_VERSION``
+    was not bumped when PR 96A landed, so these legacy artifacts cannot be
+    told apart from current ones by schema version alone — only by the shape
+    of their stored ``fingerprints`` mapping (see
+    ``verify_curve_artifact_fingerprints_allow_legacy``).
+    """
+    chain_payload: Dict[str, object] = {
+        "artifact_id": metadata.artifact_id,
+        "creation_timestamp": metadata.creation_timestamp,
+        "schema_version": metadata.schema_version,
+        "generator_version": metadata.generator_version,
+        "format_status": metadata.format_status,
+        "historical_integrity": metadata.historical_integrity,
+        "current_authorization_status": metadata.current_authorization_status,
+        "requested_use_eligibility": metadata.requested_use_eligibility,
+    }
+    for name in CURVE_ARTIFACT_SNAPSHOT_FIELDS:
+        chain_payload[name] = dict(getattr(metadata, name))
+    fingerprints: Dict[str, str] = {
+        "chain_fingerprint": fingerprint_curve_artifact_payload(chain_payload)
+    }
+    for name in CURVE_ARTIFACT_SNAPSHOT_FIELDS:
+        fingerprints[name] = fingerprint_curve_artifact_payload(
+            dict(getattr(metadata, name))
+        )
+    return fingerprints
+
+
+def verify_curve_artifact_fingerprints_allow_legacy(
+    metadata: CurveArtifactMetadata,
+) -> str:
+    """Verify fingerprints against the current formula, falling back to the
+    pre-96A legacy formula only for artifacts that are structurally legacy.
+
+    Returns ``"current"`` or ``"legacy"``. Raises ``CurveArtifactError`` if
+    neither formula matches. The legacy fallback is only attempted when the
+    stored ``fingerprints`` mapping itself lacks an ``"extra_fingerprint"``
+    key — that is a structural signal of a pre-96A artifact, not merely a
+    wrong value. A current-format artifact whose ``extra_fingerprint`` key is
+    present but wrong is a genuine tamper/corruption case and must never be
+    silently reinterpreted as legacy.
+    """
+    try:
+        verify_curve_artifact_fingerprints(metadata)
+        return "current"
+    except CurveArtifactError:
+        if "extra_fingerprint" in metadata.fingerprints:
+            raise
+        legacy_expected = compute_legacy_curve_artifact_fingerprints(metadata)
+        for name, value in legacy_expected.items():
+            stored = metadata.fingerprints.get(name)
+            if stored != value:
+                raise CurveArtifactError(
+                    f"Curve artifact fingerprint mismatch for '{name}' (checked "
+                    f"both current and legacy pre-96A formulas): stored "
+                    f"{stored!r} != legacy-expected {value!r}."
+                ) from None
+        return "legacy"
 
 
 # ---------------------------------------------------------------------------
@@ -438,6 +537,11 @@ def write_curve_artifact(
     directory.mkdir(parents=True, exist_ok=True)
     validate_draws_table(draws)
     validate_summaries_table(summaries)
+    # Fail closed before anything touches disk: a write with unpopulated or
+    # incorrect fingerprints would otherwise succeed here and only surface as
+    # a fingerprint mismatch on the next read. Always current-only — a fresh
+    # write must never use the legacy formula.
+    verify_curve_artifact_fingerprints(metadata)
 
     metadata_path = directory / CURVE_ARTIFACT_METADATA_FILENAME
     draws_path = directory / CURVE_ARTIFACT_DRAWS_FILENAME
@@ -530,7 +634,17 @@ def read_curve_artifact(directory: Path) -> CurveArtifact:
                 f"{label} table fingerprint mismatch (tampered or corrupted)"
             )
 
-    verify_curve_artifact_fingerprints(metadata)
+    detected_format = verify_curve_artifact_fingerprints_allow_legacy(metadata)
+    if detected_format == "legacy" and metadata.format_status not in (
+        "legacy",
+        "migrated",
+    ):
+        # A pre-96A artifact whose fingerprints only satisfy the legacy
+        # formula. Its own fingerprints (the original layout) are preserved
+        # unchanged; only the in-memory format_status label is updated so
+        # callers (including migrate_curve_artifact_store) can recognise and
+        # migrate it to the current fingerprint layout.
+        metadata = replace(metadata, format_status="legacy")
     return CurveArtifact(metadata=metadata, draws=draws, summaries=summaries)
 
 
@@ -605,14 +719,32 @@ class CurveArtifactMigrationResult:
         return len(self.migrated_entries)
 
 
+def _has_any_artifact_file(directory: Path) -> bool:
+    """True if ``directory`` contains any canonical artifact file, even a
+    partial set (e.g. metadata deleted, or an interrupted write leaving only
+    the Parquet tables). Used so a partial artifact is audited as malformed
+    rather than silently skipped (Corrective PR A3)."""
+    return any(
+        (directory / filename).exists()
+        for filename in (
+            CURVE_ARTIFACT_METADATA_FILENAME,
+            CURVE_ARTIFACT_DRAWS_FILENAME,
+            CURVE_ARTIFACT_SUMMARIES_FILENAME,
+        )
+    )
+
+
 def _iter_artifact_dirs(directory: Path) -> List[Path]:
     """Yield artifact directories: the store root when it is itself an
-    artifact, plus every immediate subdirectory that contains an artifact
-    metadata file (sorted for determinism)."""
-    if (directory / CURVE_ARTIFACT_METADATA_FILENAME).exists():
+    artifact (or partial artifact), plus every immediate subdirectory
+    containing any canonical artifact file — even a partial set — so a
+    directory missing its metadata (deleted, or an interrupted write) is
+    still audited as malformed rather than silently dropped (sorted for
+    determinism)."""
+    if _has_any_artifact_file(directory):
         yield directory
     for child in sorted(path for path in directory.iterdir() if path.is_dir()):
-        if (child / CURVE_ARTIFACT_METADATA_FILENAME).exists():
+        if _has_any_artifact_file(child):
             yield child
 
 
@@ -660,9 +792,34 @@ def load_curve_artifact_store(
     if raise_on_malformed and result.malformed:
         raise CurveArtifactStoreError(
             f"{len(result.malformed)} curve artifact(s) failed to load: "
-            f"{[entry.error for entry in result.malformed]}"
+            + "; ".join(
+                f"{entry.artifact_dir}: {entry.error}" for entry in result.malformed
+            )
         )
     return result
+
+
+def _peek_schema_version(directory: Path) -> int | None:
+    """Best-effort recovery of a schema_version from an artifact directory
+    that failed full read/validation, so a failed migration entry can report
+    the actual parsed version instead of always reporting 0 (Corrective PR
+    A3). Returns ``None`` if no version could be parsed at all."""
+    metadata_path = Path(directory) / CURVE_ARTIFACT_METADATA_FILENAME
+    try:
+        envelope = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    if not isinstance(envelope, dict):
+        return None
+    metadata_payload = envelope.get("metadata")
+    if isinstance(metadata_payload, dict):
+        inner_version = metadata_payload.get("schema_version")
+        if isinstance(inner_version, int):
+            return inner_version
+    outer_version = envelope.get("schema_version")
+    if isinstance(outer_version, int):
+        return outer_version
+    return None
 
 
 def migrate_curve_artifact_store(
@@ -687,11 +844,14 @@ def migrate_curve_artifact_store(
         try:
             artifact = read_curve_artifact(artifact_dir)
         except CurveArtifactError as exc:
+            parsed_version = _peek_schema_version(artifact_dir)
             entries.append(
                 CurveArtifactMigrationEntry(
                     artifact_dir=artifact_dir,
                     migrated=False,
-                    schema_version=0,
+                    schema_version=(
+                        parsed_version if parsed_version is not None else 0
+                    ),
                     error=str(exc),
                 )
             )
@@ -726,6 +886,8 @@ def migrate_curve_artifact_store(
     if raise_on_error and result.failed:
         raise CurveArtifactStoreError(
             f"{len(result.failed)} curve artifact(s) failed to migrate: "
-            f"{[entry.error for entry in result.failed]}"
+            + "; ".join(
+                f"{entry.artifact_dir}: {entry.error}" for entry in result.failed
+            )
         )
     return result
