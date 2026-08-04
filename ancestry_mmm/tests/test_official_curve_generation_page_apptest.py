@@ -305,6 +305,19 @@ def _seed_governed_session_state(
     ]
 
 
+def _confirm_market_context(at, market: str) -> None:
+    """Find and check the reference-context confirmation checkbox for
+    ``market`` by its stable label (Corrective PR E2.2: the checkbox's
+    widget key now embeds a fingerprint of the context it confirms, so it
+    can no longer be pre-seeded by a fixed key before the first run - the
+    label is the only thing that stays constant)."""
+    label = (
+        f"I have reviewed and confirm the {market} reference context above is correct"
+    )
+    checkbox = next(cb for cb in at.checkbox if cb.label == label)
+    checkbox.check().run()
+
+
 def test_empty_state_loads_without_error():
     at = AppTest.from_file(str(PAGE), default_timeout=60)
     at.run()
@@ -325,10 +338,11 @@ def test_full_governance_generates_and_saves_an_artifact(monkeypatch, tmp_path):
     # the default "period_average", which needs an explicit period that
     # actually overlaps the fixture's dates).
     at.session_state["ocg_mode_UK"] = "recent_average"
-    at.session_state["ocg_ctx_confirmed_UK"] = True
     at.session_state["ocg_spend_points"] = "0, 50, 100, 150, 200"
     at.run()
     assert not at.exception, f"initial load raised: {at.exception}"
+    _confirm_market_context(at, "UK")
+    assert not at.exception, f"confirmation click raised: {at.exception}"
 
     at.session_state["ocg_artifact_id"] = "art-ocg-1"
     generate_button = next(
@@ -374,9 +388,9 @@ def test_artifact_id_collision_is_reported_not_raised(monkeypatch, tmp_path):
     _seed_governed_session_state(at)
     at.session_state["project_name"] = "ocg-collision-project"
     at.session_state["ocg_mode_UK"] = "recent_average"
-    at.session_state["ocg_ctx_confirmed_UK"] = True
     at.session_state["ocg_spend_points"] = "0, 50, 100, 150, 200"
     at.run()
+    _confirm_market_context(at, "UK")
     at.session_state["ocg_artifact_id"] = "art-dup"
     generate_button = next(
         b for b in at.button if b.label == "Generate and save official curve artifact"
@@ -438,10 +452,10 @@ def test_monetary_curve_with_approved_cost_mapping_generates_and_saves_an_artifa
     at.session_state["ocg_reporting_currency"] = "GBP"
     at.session_state["ocg_fx_source"] = "test-fx-provider"
     at.session_state["ocg_mode_UK"] = "recent_average"
-    at.session_state["ocg_ctx_confirmed_UK"] = True
     at.session_state["ocg_spend_points"] = "0, 50, 100, 150, 200"
     at.run()
     assert not at.exception, f"initial monetary load raised: {at.exception}"
+    _confirm_market_context(at, "UK")
 
     at.session_state["ocg_artifact_id"] = "art-monetary-1"
     generate_button = next(
@@ -474,10 +488,10 @@ def test_monetary_curve_without_cost_mapping_blocks_generation(monkeypatch, tmp_
     at.session_state["ocg_reporting_currency"] = "GBP"
     at.session_state["ocg_fx_source"] = "test-fx-provider"
     at.session_state["ocg_mode_UK"] = "recent_average"
-    at.session_state["ocg_ctx_confirmed_UK"] = True
     at.session_state["ocg_spend_points"] = "0, 50, 100, 150, 200"
     at.run()
     assert not at.exception, f"initial monetary load raised: {at.exception}"
+    _confirm_market_context(at, "UK")
 
     at.session_state["ocg_artifact_id"] = "art-monetary-blocked"
     generate_button = next(
@@ -489,6 +503,132 @@ def test_monetary_curve_without_cost_mapping_blocks_generation(monkeypatch, tmp_
         "blocked without an approved, effective cost mapping" in (e.value or "")
         for e in at.error
     )
+
+
+def _seed_narrow_piecewise_cost_mapping(*, spend_max: float = 50.0) -> dict:
+    registry = CostMappingRegistry(
+        [
+            PiecewiseLinearCostMapping(
+                mapping_id="UK-TV_Brand-cost",
+                market="UK",
+                channel="TV_Brand",
+                currency="GBP",
+                cost_context_id="default",
+                approval_status="approved",
+                approved_by="reviewer",
+                approved_at="2026-01-01",
+                owner="Analytics",
+                approval_note="approved for test",
+                last_reviewed_at="2026-01-01",
+                spend_knots=(0.0, spend_max),
+                media_input_knots=(0.0, spend_max),
+                allow_extrapolation=False,
+            )
+        ]
+    )
+    return registry.to_dict()
+
+
+def test_monetary_support_out_of_domain_blocks_generation_without_crashing_the_page(
+    monkeypatch, tmp_path
+):
+    """Corrective PR E2.3: derive_monetary_support raises ValueError when a
+    non-extrapolating piecewise/uploaded-plan mapping does not cover the
+    observed/planning support range (the fixture's TV_Brand observed range
+    is ~100-250, well outside these 0-50 knots) - this must render an
+    actionable, per-cell blocking error and prevent generation, never crash
+    the whole page."""
+    import ancestry_mmm.utils.session_state as ss
+
+    monkeypatch.setattr(ss, "CURVE_ARTIFACT_ROOT", tmp_path)
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_governed_session_state(at)
+    at.session_state["project_name"] = "ocg-out-of-domain-project"
+    at.session_state["media_cost_mappings"] = _seed_narrow_piecewise_cost_mapping()
+    at.session_state["ocg_curve_type"] = _MONETARY_RADIO_LABEL
+    at.session_state["ocg_local_currency_UK"] = "GBP"
+    at.session_state["ocg_reporting_currency"] = "GBP"
+    at.session_state["ocg_fx_source"] = "test-fx-provider"
+    at.session_state["ocg_mode_UK"] = "recent_average"
+    at.session_state["ocg_spend_points"] = "0, 50, 100, 150, 200"
+    at.session_state["ocg_support_UK_TV_Brand_include"] = True
+    at.run()
+    assert not at.exception, (
+        f"page raised instead of rendering a blocking error: {at.exception}"
+    )
+    assert any(
+        "Cannot derive monetary support for UK/TV_Brand" in (e.value or "")
+        for e in at.error
+    ), [e.value for e in at.error]
+
+    _confirm_market_context(at, "UK")
+    assert not at.exception, f"confirmation click raised: {at.exception}"
+
+    at.session_state["ocg_artifact_id"] = "art-out-of-domain"
+    generate_button = next(
+        b for b in at.button if b.label == "Generate and save official curve artifact"
+    )
+    generate_button.click().run()
+    assert not at.exception, f"generate click raised: {at.exception}"
+    assert any(
+        "monetary support is out of the governed cost mapping's domain"
+        in (e.value or "")
+        for e in at.error
+    ), [e.value for e in at.error]
+    assert not any(
+        "Saved official curve artifact" in (s.value or "") for s in at.success
+    )
+
+
+def test_monetary_support_out_of_domain_is_resolved_after_widening_the_mapping(
+    monkeypatch, tmp_path
+):
+    """The invalid-support state is never permanent: the mapping and the
+    analyst's inputs are retained, and correcting the mapping (rather than
+    losing the analyst's work) resolves the blocking error and lets
+    generation proceed."""
+    import ancestry_mmm.utils.session_state as ss
+
+    monkeypatch.setattr(ss, "CURVE_ARTIFACT_ROOT", tmp_path)
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_governed_session_state(at)
+    at.session_state["project_name"] = "ocg-out-of-domain-fixed-project"
+    at.session_state["media_cost_mappings"] = _seed_narrow_piecewise_cost_mapping()
+    at.session_state["ocg_curve_type"] = _MONETARY_RADIO_LABEL
+    at.session_state["ocg_local_currency_UK"] = "GBP"
+    at.session_state["ocg_reporting_currency"] = "GBP"
+    at.session_state["ocg_fx_source"] = "test-fx-provider"
+    at.session_state["ocg_mode_UK"] = "recent_average"
+    at.session_state["ocg_spend_points"] = "0, 50, 100, 150, 200"
+    at.session_state["ocg_support_UK_TV_Brand_include"] = True
+    at.run()
+    assert any(
+        "Cannot derive monetary support for UK/TV_Brand" in (e.value or "")
+        for e in at.error
+    )
+
+    # Widen the governed mapping to cover the observed range - a governed-
+    # evidence fix, not a workaround to the analyst's inputs.
+    at.session_state["media_cost_mappings"] = _seed_narrow_piecewise_cost_mapping(
+        spend_max=1000.0
+    )
+    at.run()
+    assert not at.exception, f"page raised after correcting the mapping: {at.exception}"
+    assert not any(
+        "Cannot derive monetary support for UK/TV_Brand" in (e.value or "")
+        for e in at.error
+    )
+
+    _confirm_market_context(at, "UK")
+    at.session_state["ocg_artifact_id"] = "art-out-of-domain-fixed"
+    generate_button = next(
+        b for b in at.button if b.label == "Generate and save official curve artifact"
+    )
+    generate_button.click().run()
+    assert not at.exception, f"generate click raised: {at.exception}"
+    assert any("Saved official curve artifact" in (s.value or "") for s in at.success)
 
 
 def test_cost_mapping_grid_reports_malformed_rows_without_raising(monkeypatch):
@@ -533,6 +673,56 @@ def test_reference_context_confirmation_is_required_before_generation(
     )
 
 
+def test_changing_context_after_confirmation_invalidates_it_and_blocks_generation(
+    monkeypatch, tmp_path
+):
+    """Corrective PR E2.2: the confirmation checkbox is bound to a
+    fingerprint of the context it confirms (complete context values, model
+    identity, market, curve type, mode, source period/week) - changing any
+    material input after confirming must visibly un-confirm it, not
+    silently let a stale confirmation authorize generation against a
+    materially different context."""
+    import ancestry_mmm.utils.session_state as ss
+
+    monkeypatch.setattr(ss, "CURVE_ARTIFACT_ROOT", tmp_path)
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_governed_session_state(at)
+    at.session_state["project_name"] = "ocg-invalidate-project"
+    at.session_state["ocg_mode_UK"] = "recent_average"
+    at.session_state["ocg_spend_points"] = "0, 50, 100, 150, 200"
+    at.run()
+    assert not at.exception, f"initial load raised: {at.exception}"
+    _confirm_market_context(at, "UK")
+    assert not at.exception, f"confirmation click raised: {at.exception}"
+
+    label = "I have reviewed and confirm the UK reference context above is correct"
+    checkbox = next(cb for cb in at.checkbox if cb.label == label)
+    assert checkbox.value is True
+
+    # Change a material input the context was confirmed under (the
+    # counterfactual value feeding reference_context_from_model_frame).
+    at.session_state["ocg_cf_value_UK"] = 5.0
+    at.run()
+    assert not at.exception, f"context-change rerun raised: {at.exception}"
+
+    checkbox_after_change = next(cb for cb in at.checkbox if cb.label == label)
+    assert checkbox_after_change.value is False
+
+    at.session_state["ocg_artifact_id"] = "art-invalidated"
+    generate_button = next(
+        b for b in at.button if b.label == "Generate and save official curve artifact"
+    )
+    generate_button.click().run()
+    assert not at.exception, f"generate click raised: {at.exception}"
+    assert any(
+        "Review and confirm the reference context" in (e.value or "") for e in at.error
+    )
+    assert not any(
+        "Saved official curve artifact" in (s.value or "") for s in at.success
+    )
+
+
 def test_blank_spend_axis_derives_per_channel_axis_from_support(monkeypatch, tmp_path):
     """Corrective PR C3: leaving the diagnostic spend axis blank derives each
     channel's axis from its own planning support range instead of forcing
@@ -546,12 +736,12 @@ def test_blank_spend_axis_derives_per_channel_axis_from_support(monkeypatch, tmp
     _seed_governed_session_state(at)
     at.session_state["project_name"] = "ocg-per-channel-axis-project"
     at.session_state["ocg_mode_UK"] = "recent_average"
-    at.session_state["ocg_ctx_confirmed_UK"] = True
     # ocg_spend_points is left at its blank default - the only axis source
     # is the derived support range opted into below.
     at.session_state["ocg_support_UK_TV_Brand_include"] = True
     at.run()
     assert not at.exception, f"initial load raised: {at.exception}"
+    _confirm_market_context(at, "UK")
 
     at.session_state["ocg_artifact_id"] = "art-per-channel-axis"
     generate_button = next(
@@ -578,10 +768,10 @@ def test_deselecting_a_market_generates_only_for_the_selected_subset(
     at.session_state["project_name"] = "ocg-market-subset-project"
     at.session_state["ocg_markets"] = ["UK"]
     at.session_state["ocg_mode_UK"] = "recent_average"
-    at.session_state["ocg_ctx_confirmed_UK"] = True
     at.session_state["ocg_spend_points"] = "0, 50, 100, 150, 200"
     at.run()
     assert not at.exception, f"initial load raised: {at.exception}"
+    _confirm_market_context(at, "UK")
 
     at.session_state["ocg_artifact_id"] = "art-market-subset"
     generate_button = next(

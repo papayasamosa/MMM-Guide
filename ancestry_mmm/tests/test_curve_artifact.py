@@ -301,7 +301,58 @@ class TestGovernedContextFields:
         assert fields["outcome_approval_status"] is None
         assert fields["local_currency"] is None
         assert fields["component_scope"] is None
-        assert fields["extrapolation_status"] == "within observed range"
+        # Corrective PR E2.5: no support evidence at all must never be
+        # asserted as "within observed range" - that claims evidence that
+        # does not exist.
+        assert fields["extrapolation_status"] == "support unavailable or unknown"
+
+    def test_reports_unavailable_when_every_row_has_unknown_support(self):
+        """is_extrapolated is None precisely when observed_support_status
+        is not SUPPORT_AVAILABLE (canonical missing-support representation,
+        core.canonical_curves.generate_canonical_curve_draws) - this must
+        never be treated as "within observed range" evidence."""
+        metadata = _metadata(
+            support_snapshot={
+                "rows": [
+                    {"market": "UK", "channel": "TV", "is_extrapolated": None},
+                    {"market": "UK", "channel": "DNA", "is_extrapolated": None},
+                ]
+            },
+        )
+        fields = governed_context_fields(metadata)
+        assert fields["extrapolation_status"] == "support unavailable or unknown"
+
+    def test_reports_unavailable_when_some_rows_have_unknown_support_and_none_extrapolated(
+        self,
+    ):
+        """A mix of known-non-extrapolated and unknown-support rows must
+        not be rounded up to "within observed range" - only every relevant
+        row being explicitly known non-extrapolated earns that label."""
+        metadata = _metadata(
+            support_snapshot={
+                "rows": [
+                    {"market": "UK", "channel": "TV", "is_extrapolated": False},
+                    {"market": "UK", "channel": "DNA", "is_extrapolated": None},
+                ]
+            },
+        )
+        fields = governed_context_fields(metadata)
+        assert fields["extrapolation_status"] == "support unavailable or unknown"
+
+    def test_reports_extrapolated_even_when_mixed_with_unknown_support_rows(self):
+        """An extrapolated row is still the most actionable signal even
+        alongside an unrelated unknown-support row - it must not be
+        diluted into "unavailable or unknown"."""
+        metadata = _metadata(
+            support_snapshot={
+                "rows": [
+                    {"market": "UK", "channel": "TV", "is_extrapolated": True},
+                    {"market": "UK", "channel": "DNA", "is_extrapolated": None},
+                ]
+            },
+        )
+        fields = governed_context_fields(metadata)
+        assert fields["extrapolation_status"] == "extrapolated"
 
 
 # ---------------------------------------------------------------------------

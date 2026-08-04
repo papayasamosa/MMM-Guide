@@ -16,6 +16,7 @@ from ancestry_mmm.core.media_costs import (
 from ancestry_mmm.core.optimization import (
     monetary_plan_to_media_input,
     require_current_cost_mapping,
+    resolve_scenario_cost_mapping_fingerprint,
 )
 
 
@@ -207,6 +208,80 @@ def test_mapping_fingerprint_invalidates_stale_artifact():
     )
     with pytest.raises(ValueError, match="stale"):
         require_current_cost_mapping(artifact, changed.fingerprint())
+
+
+# ---------------------------------------------------------------------------
+# Corrective PR E2.1: resolve_scenario_cost_mapping_fingerprint is the one
+# canonical resolution path for a scenario's/artifact's cost-mapping
+# dependency - the nested governance_dependencies.cost_mapping_fingerprint
+# is the current contract, the top-level field only a legacy fallback.
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_reads_nested_governance_dependency_for_a_normal_save():
+    """A normal scenario save (scenario_to_dict with
+    governance_dependencies=gov_deps) leaves the top-level field None but
+    populates the nested block - the resolver must not classify it as
+    dependency-free."""
+    scenario = {
+        "cost_mapping_fingerprint": None,
+        "governance_dependencies": {"cost_mapping_fingerprint": "fp-nested"},
+    }
+    assert resolve_scenario_cost_mapping_fingerprint(scenario) == "fp-nested"
+
+
+def test_resolve_falls_back_to_legacy_top_level_field():
+    """A legacy record with no nested governance_dependencies block at all
+    still resolves via the top-level field."""
+    scenario = {"cost_mapping_fingerprint": "fp-legacy"}
+    assert resolve_scenario_cost_mapping_fingerprint(scenario) == "fp-legacy"
+
+
+def test_resolve_returns_none_when_neither_field_is_set():
+    assert resolve_scenario_cost_mapping_fingerprint({}) is None
+    assert (
+        resolve_scenario_cost_mapping_fingerprint(
+            {"governance_dependencies": {"cost_mapping_fingerprint": None}}
+        )
+        is None
+    )
+
+
+def test_resolve_rejects_conflicting_top_level_and_nested_fingerprints():
+    scenario = {
+        "cost_mapping_fingerprint": "fp-top-level",
+        "governance_dependencies": {"cost_mapping_fingerprint": "fp-nested"},
+    }
+    with pytest.raises(ValueError, match="conflicting"):
+        resolve_scenario_cost_mapping_fingerprint(scenario)
+
+
+def test_resolve_accepts_agreeing_top_level_and_nested_fingerprints():
+    scenario = {
+        "cost_mapping_fingerprint": "fp-same",
+        "governance_dependencies": {"cost_mapping_fingerprint": "fp-same"},
+    }
+    assert resolve_scenario_cost_mapping_fingerprint(scenario) == "fp-same"
+
+
+def test_require_current_cost_mapping_flags_a_normal_save_as_stale_when_nested_dependency_changed():
+    """Reproduces the PR #111 defect: a normal cost-dependent scenario save
+    (nested-only dependency) must actually be flagged stale when the
+    governed cost mapping changes, not silently treated as dependency-free."""
+    scenario = {
+        "cost_mapping_fingerprint": None,
+        "governance_dependencies": {"cost_mapping_fingerprint": "fp-old"},
+    }
+    with pytest.raises(ValueError, match="stale"):
+        require_current_cost_mapping(scenario, "fp-new")
+
+
+def test_require_current_cost_mapping_accepts_a_normal_save_when_nested_dependency_matches():
+    scenario = {
+        "cost_mapping_fingerprint": None,
+        "governance_dependencies": {"cost_mapping_fingerprint": "fp-current"},
+    }
+    require_current_cost_mapping(scenario, "fp-current")  # must not raise
 
 
 def test_derived_monetary_support_round_trips():

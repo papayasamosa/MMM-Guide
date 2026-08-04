@@ -24,6 +24,7 @@ from ancestry_mmm.core.canonical_curves import (
     reconcile_curve_to_attribution,
     reference_context_from_model_frame,
     resolve_curve_axis_column,
+    resolve_curve_axis_label,
     summarize_component_response_by_draw,
     summarize_curve_draws,
     support_from_model_frame,
@@ -759,6 +760,33 @@ def test_resolve_curve_axis_column_is_curve_type_aware_and_nan_safe():
     assert resolve_curve_axis_column(empty_local_spend) == "spend_point"
 
     assert resolve_curve_axis_column(pd.DataFrame()) is None
+
+
+def test_resolve_curve_axis_label_uses_the_governed_media_input_unit():
+    """Corrective PR E2.4: an official model-input curve's axis is a
+    governed media-input unit (TVRs, impressions, clicks, ...), never
+    hard-coded "Spend"."""
+    draws = pd.DataFrame({"media_input_unit": ["TVRs", "TVRs"]})
+    assert resolve_curve_axis_label("media_input", draws) == "Model input (TVRs)"
+
+
+def test_resolve_curve_axis_label_uses_local_and_reporting_currency():
+    local = pd.DataFrame({"local_currency": ["GBP", "GBP"]})
+    assert resolve_curve_axis_label("local_spend", local) == "Spend (GBP)"
+    reporting = pd.DataFrame({"reporting_currency": ["USD", "USD"]})
+    assert (
+        resolve_curve_axis_label("reporting_currency_spend", reporting) == "Spend (USD)"
+    )
+
+
+def test_resolve_curve_axis_label_falls_back_when_unit_evidence_is_absent():
+    """A legacy artifact predating the unit/currency columns must still get
+    a sensible bare label - never crash, never silently mislabel a
+    non-spend axis as spend by falling through to something misleading."""
+    assert resolve_curve_axis_label("media_input", pd.DataFrame()) == "Model input"
+    assert resolve_curve_axis_label("local_spend", pd.DataFrame()) == "Spend"
+    assert resolve_curve_axis_label("spend_point", pd.DataFrame()) == "Spend"
+    assert resolve_curve_axis_label(None, pd.DataFrame()) == "Spend"
 
 
 def test_aggregate_curve_draws_preserves_planning_eligibility(meta):

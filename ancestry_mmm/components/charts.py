@@ -239,11 +239,22 @@ def create_response_curve_with_band(
     channel_name: str,
     current_spend: Optional[float] = None,
     height: int = 320,
+    x_axis_label: str = "Spend",
 ) -> go.Figure:
     """Response curve with a shaded credible-interval band around the mean -
     the per-draw uncertainty equivalent of create_response_curve
     (core.uncertainty's generate_channel_curve_with_uncertainty /
-    generate_market_channel_curve_with_uncertainty)."""
+    generate_market_channel_curve_with_uncertainty).
+
+    ``x_axis_label`` (Corrective PR E2.4) defaults to "Spend" for the
+    exploratory/legacy point-estimate viewers that always pass a genuine
+    spend axis, but an official curve caller must resolve and pass the
+    actual axis label explicitly (e.g. via
+    ``core.canonical_curves.resolve_curve_axis_label``) - an official
+    model-input curve's x-axis is a governed media-input unit (TVRs,
+    impressions, clicks, ...), never spend, and this function must never
+    infer a monetary meaning from its own name or from column presence.
+    """
     fig = go.Figure()
 
     fig.add_trace(
@@ -286,7 +297,7 @@ def create_response_curve_with_band(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         title=f"{channel_name} Response Curve (with uncertainty)",
-        xaxis_title="Spend",
+        xaxis_title=x_axis_label,
         yaxis_title="Response",
         height=height,
     )

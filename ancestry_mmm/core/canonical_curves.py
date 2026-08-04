@@ -980,6 +980,42 @@ def resolve_curve_axis_column(draws: pd.DataFrame) -> Optional[str]:
     return None
 
 
+def resolve_curve_axis_label(x_col: Optional[str], draws: pd.DataFrame) -> str:
+    """Resolve the plottable x-axis label/unit for ``x_col`` (Corrective PR
+    E2.4) from the artifact's own governed evidence - never a hard-coded
+    "Spend" regardless of what the axis actually measures.
+
+    ``x_col`` is whatever ``resolve_curve_axis_column`` selected for this
+    same ``draws`` (or a market/channel subset of it). Official model-input
+    curves (``x_col == "media_input"``) use a governed media-input unit
+    (TVRs, impressions, clicks, ...) carried in the ``media_input_unit``
+    column - never spend. Monetary curves are labelled with the actual
+    local or reporting currency carried in ``local_currency`` /
+    ``reporting_currency``, never inferred from the function name or a
+    bare column-presence check. Falls back to a bare "Spend"/"Model input"
+    only when the artifact carries no unit/currency evidence for that
+    column (e.g. a legacy artifact predating those columns) - still never
+    silently mislabelling a non-spend axis as spend.
+    """
+
+    def _first_present(column: str) -> Optional[str]:
+        if column not in draws.columns:
+            return None
+        values = draws[column].dropna()
+        return str(values.iloc[0]) if not values.empty else None
+
+    if x_col == "media_input":
+        unit = _first_present("media_input_unit")
+        return f"Model input ({unit})" if unit else "Model input"
+    if x_col == "local_spend":
+        currency = _first_present("local_currency")
+        return f"Spend ({currency})" if currency else "Spend"
+    if x_col == "reporting_currency_spend":
+        currency = _first_present("reporting_currency")
+        return f"Spend ({currency})" if currency else "Spend"
+    return "Spend"
+
+
 def _finite_difference_delta(
     spend: float,
     channel_support: Mapping[str, object],

@@ -4,11 +4,13 @@ boundary, driven from the UI for the first time. Supports both model-input
 curves and monetary curves (governed cost mappings + currency/FX evidence).
 """
 
+import hashlib
+import json
 import sys
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
-from typing import Optional
+from typing import Mapping, Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -35,6 +37,7 @@ from ancestry_mmm.core.canonical_curves import (
     CONTEXT_MODES,
     CurveReferenceContext,
     reference_context_from_model_frame,
+    resolve_curve_axis_label,
     support_from_model_frame,
 )
 from ancestry_mmm.core.fingerprint import (
@@ -110,6 +113,49 @@ _COST_MAPPING_GRID_COLUMNS = [
     "last_reviewed_at",
     "supersedes_mapping_id",
 ]
+
+
+def _context_confirmation_fingerprint(
+    *,
+    market: str,
+    context: Optional[CurveReferenceContext],
+    curve_type: str,
+    mode: str,
+    period_start: Optional[str],
+    period_end: Optional[str],
+    specific_week: Optional[str],
+    model_identity: Optional[Mapping[str, str]],
+) -> str:
+    """Deterministic fingerprint of everything a reference-context
+    confirmation actually depends on (Corrective PR E2.2).
+
+    A plain module-level function (not a UI closure) so it is directly
+    unit-testable. Covers the complete reference-context values, the
+    fitted model identity, market, curve type, and the reference-context
+    method plus its source-period inputs (period/week selection is not
+    itself part of ``context.to_dict()`` once derivation has already
+    happened, so it must be included explicitly). Changing any of these
+    must invalidate a prior confirmation - the confirmation checkbox's
+    own widget key embeds this fingerprint (Streamlit renders a fresh,
+    unchecked widget under a new key rather than preserving a stale
+    checked state), and generation additionally requires the persisted
+    confirmed fingerprint to still equal this current one, so invalidation
+    never depends solely on one Streamlit rerun clearing a checkbox.
+    """
+    payload = {
+        "market": market,
+        "curve_type": curve_type,
+        "mode": mode,
+        "period_start": period_start,
+        "period_end": period_end,
+        "specific_week": specific_week,
+        "model_identity": dict(model_identity) if model_identity else None,
+        "context": context.to_dict() if context is not None else None,
+    }
+    encoded = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), default=str
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _knots_from_text(text: str) -> tuple:
@@ -538,6 +584,7 @@ st.caption(
 )
 reference_contexts: dict[str, CurveReferenceContext] = {}
 reference_context_confirmed: dict[str, bool] = {}
+confirmed_context_fingerprints: dict[str, str] = {}
 for market in selected_markets:
     with st.expander(f"Reference context - {market}", expanded=False):
         mode = st.selectbox("Mode", sorted(CONTEXT_MODES), key=f"ocg_mode_{market}")
@@ -551,6 +598,12 @@ for market in selected_markets:
         )
 
         context: Optional[CurveReferenceContext] = None
+        # Corrective PR E2.2: always fresh per market/iteration - the
+        # `else` branch below only reassigns these when mode is not
+        # "specific_scenario", so without resetting them here the
+        # confirmation fingerprint could otherwise pick up a stale value
+        # left over from a previous market's iteration of this loop.
+        period_start = period_end = specific_week = None
         if mode == "specific_scenario":
             st.caption(
                 "Explicit hypothetical scenario - every value below is "
@@ -689,13 +742,41 @@ for market in selected_markets:
                     }
                 )
 
+        # Corrective PR E2.2: the checkbox's own widget key embeds a
+        # fingerprint of everything the confirmation actually depends on
+        # (complete context values, model identity, market, curve type,
+        # mode, and source period/week). Changing any of those changes the
+        # key, so Streamlit renders a fresh, unchecked widget rather than
+        # preserving a stale checked state carried over from a materially
+        # different context - never relying solely on clearing a checkbox
+        # during one rerun.
+        context_fingerprint = _context_confirmation_fingerprint(
+            market=market,
+            context=context,
+            curve_type=curve_type,
+            mode=mode,
+            period_start=period_start,
+            period_end=period_end,
+            specific_week=specific_week,
+            model_identity=current_identity,
+        )
         confirmed = st.checkbox(
             f"I have reviewed and confirm the {market} reference context above is correct",
             value=False,
-            key=f"ocg_ctx_confirmed_{market}",
+            key=f"ocg_ctx_confirmed_{market}_{context_fingerprint}",
             disabled=context is None,
         )
-        reference_context_confirmed[market] = confirmed and context is not None
+        if context is not None and confirmed:
+            confirmed_context_fingerprints[market] = context_fingerprint
+        # Explicit, testable defense in depth alongside the key-based reset
+        # above: generation later requires this persisted fingerprint to
+        # still equal the current one, rather than trusting the checkbox's
+        # boolean value alone.
+        reference_context_confirmed[market] = (
+            context is not None
+            and confirmed
+            and confirmed_context_fingerprints.get(market) == context_fingerprint
+        )
         if context is not None:
             reference_contexts[market] = context
 
@@ -796,6 +877,12 @@ except ValueError as exc:
     derived_support = {}
 
 support_by_market_channel: dict[tuple[str, str], object] = {}
+# Corrective PR E2.3: a market/channel cell the analyst opted into but
+# whose monetary conversion is out of the governed cost mapping's domain
+# (allow_extrapolation=False) must render an actionable blocking message
+# and prevent official generation, never crash the whole page - and never
+# silently permit extrapolation to make the error go away.
+invalid_support_cells: list[str] = []
 for market in selected_markets:
     for channel in meta.channels:
         key_prefix = f"ocg_support_{market}_{channel}"
@@ -874,13 +961,26 @@ for market in selected_markets:
                     f"{market}; cannot build monetary support."
                 )
                 continue
-            support_by_market_channel[(market, channel)] = derive_monetary_support(
-                media_support,
-                cost_mapping,
-                reporting_currency=reporting,
-                fx_rate=rate,
-                mapping_fingerprint=cost_mapping_registry.fingerprint(),
-            )
+            try:
+                support_by_market_channel[(market, channel)] = derive_monetary_support(
+                    media_support,
+                    cost_mapping,
+                    reporting_currency=reporting,
+                    fx_rate=rate,
+                    mapping_fingerprint=cost_mapping_registry.fingerprint(),
+                )
+            except ValueError as exc:
+                # A non-extrapolating piecewise/uploaded-plan mapping does
+                # not cover the fitted or planning support range -
+                # actionable and blocking, never a crashed page and never
+                # silently extrapolated to make the error disappear.
+                invalid_support_cells.append(f"{market}/{channel}")
+                st.error(
+                    f"Cannot derive monetary support for {market}/{channel}: "
+                    f"{exc}. Adjust the planning min/max above, or the cost "
+                    "mapping's knots/allow_extrapolation on the Media Costs "
+                    "page, then retry."
+                )
 
 st.markdown("**Diagnostic spend axis**")
 st.caption(
@@ -936,6 +1036,17 @@ if st.button("Generate and save official curve artifact", type="primary"):
         st.error(
             "Review and confirm the reference context for every selected "
             f"market before generating: {unconfirmed_markets}"
+        )
+        st.stop()
+    if invalid_support_cells:
+        # Corrective PR E2.3: a cell whose monetary conversion is out of
+        # the governed cost mapping's domain must block generation, not
+        # merely display an error above that the analyst could ignore.
+        st.error(
+            "Cannot generate: monetary support is out of the governed cost "
+            "mapping's domain for "
+            f"{sorted(invalid_support_cells)}. Correct it above before "
+            "generating."
         )
         st.stop()
     governance = OfficialCurveGovernance(
@@ -1032,6 +1143,23 @@ if st.button("Generate and save official curve artifact", type="primary"):
             ):
                 group = group.sort_values("spend_point")
                 if "incremental_response_posterior_mean" in group.columns:
+                    # Corrective PR E2.4: the persisted summary grain only
+                    # ever carries the generic "spend_point" axis column
+                    # (IDENTITY_COLUMNS), regardless of curve_type - the
+                    # label must still name the governed unit/currency
+                    # this artifact actually measures, resolved from the
+                    # just-generated draws (which do carry
+                    # media_input_unit/local_currency/reporting_currency),
+                    # never hard-coded as "Spend" for a model-input curve.
+                    draws = result.artifact.draws
+                    draws_group = draws[
+                        (draws["market"] == curve_market)
+                        & (draws["channel"] == curve_channel)
+                    ]
+                    axis_label = resolve_curve_axis_label(
+                        "media_input" if curve_type == "model_input" else "local_spend",
+                        draws_group,
+                    )
                     st.plotly_chart(
                         create_response_curve_with_band(
                             group["spend_point"].to_numpy(dtype=float),
@@ -1045,6 +1173,7 @@ if st.button("Generate and save official curve artifact", type="primary"):
                                 dtype=float
                             ),
                             f"{curve_market} - {curve_channel}",
+                            x_axis_label=axis_label,
                         ),
                         width="stretch",
                     )
