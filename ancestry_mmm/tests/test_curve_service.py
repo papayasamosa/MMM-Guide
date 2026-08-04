@@ -1189,6 +1189,259 @@ class TestAuthorizeUse:
             )
 
     # -----------------------------------------------------------------
+    # Corrective PR E1: current-use approval resolution is per-scope and
+    # per-use against the *complete* candidate set (governance.
+    # outcome_approvals), never one pre-selected record required to cover
+    # the whole artifact.
+    # -----------------------------------------------------------------
+
+    def _multi_product_artifact(self):
+        base = _artifact()
+        draws = pd.DataFrame(
+            {
+                "market": ["UK", "UK"],
+                "product": ["Family History", "DNA"],
+                "segment": ["New", "New"],
+                "planning_support_eligible": [True, True],
+                "planning_blocked_reason": ["", ""],
+            }
+        )
+        return dataclasses.replace(base, draws=draws)
+
+    def test_one_broad_approval_authorises_every_scope(self):
+        broad = _outcome_approval(
+            allowed_uses=("curve_publication", "headline_reporting")
+        )
+        governance = _governance(outcome_approval=broad, outcome_approvals=[broad])
+        result = CurveService().authorize_use(
+            self._multi_market_artifact(),
+            "headline_reporting",
+            current_governance=governance,
+        )
+        assert result.authorized
+
+    def test_separate_scoped_approvals_jointly_authorise_a_multi_market_artifact(self):
+        """E1.1: a UK approval and a separate AU approval must each be able
+        to authorize their own scope - one record is never required to
+        cover the whole multi-market artifact."""
+        uk = _outcome_approval(
+            approval_id="apr-uk",
+            allowed_uses=("curve_publication", "headline_reporting"),
+            market_scope=("UK",),
+        )
+        au = _outcome_approval(
+            approval_id="apr-au",
+            allowed_uses=("curve_publication", "headline_reporting"),
+            market_scope=("AU",),
+        )
+        governance = _governance(outcome_approval=uk, outcome_approvals=[uk, au])
+        result = CurveService().authorize_use(
+            self._multi_market_artifact(),
+            "headline_reporting",
+            current_governance=governance,
+        )
+        assert result.authorized
+
+    def test_uk_only_approval_cannot_authorise_au(self):
+        uk_only = _outcome_approval(
+            allowed_uses=("curve_publication", "headline_reporting"),
+            market_scope=("UK",),
+        )
+        governance = _governance(outcome_approval=uk_only, outcome_approvals=[uk_only])
+        with pytest.raises(CurveUseNotAuthorizedError):
+            CurveService().authorize_use(
+                self._multi_market_artifact(),
+                "headline_reporting",
+                current_governance=governance,
+            )
+
+    def test_newer_expired_approval_does_not_hide_an_older_active_approval(self):
+        """E1.2: an approval that was approved more recently but has
+        already lapsed must not shadow an older approval that is still
+        active."""
+        older_active = _outcome_approval(
+            approval_id="apr-older-active",
+            allowed_uses=("curve_publication", "headline_reporting"),
+            approved_at="2026-01-01",
+        )
+        newer_expired = _outcome_approval(
+            approval_id="apr-newer-expired",
+            allowed_uses=("curve_publication", "headline_reporting"),
+            approved_at="2026-02-01",
+            expires_at="2026-03-01",
+        )
+        governance = _governance(
+            outcome_approval=newer_expired,
+            outcome_approvals=[older_active, newer_expired],
+        )
+        result = CurveService().authorize_use(
+            _artifact(), "headline_reporting", current_governance=governance
+        )
+        assert result.authorized
+
+    def test_newer_planning_only_approval_does_not_hide_a_valid_curve_publication_approval(
+        self,
+    ):
+        curve_pub = _outcome_approval(
+            approval_id="apr-curve-pub",
+            allowed_uses=("curve_publication", "headline_reporting"),
+            approved_at="2026-01-01",
+        )
+        newer_planning_only = _outcome_approval(
+            approval_id="apr-newer-planning",
+            allowed_uses=("planning",),
+            approved_at="2026-06-01",
+        )
+        governance = _governance(
+            outcome_approval=newer_planning_only,
+            outcome_approvals=[curve_pub, newer_planning_only],
+        )
+        result = CurveService().authorize_use(
+            _artifact(), "headline_reporting", current_governance=governance
+        )
+        assert result.authorized
+
+    def test_separate_curve_publication_and_planning_records_jointly_authorise_planning(
+        self,
+    ):
+        curve_pub_only = _outcome_approval(
+            approval_id="apr-curve-pub-only", allowed_uses=("curve_publication",)
+        )
+        planning_only = _outcome_approval(
+            approval_id="apr-planning-only", allowed_uses=("planning",)
+        )
+        governance = _governance(
+            outcome_approval=curve_pub_only,
+            outcome_approvals=[curve_pub_only, planning_only],
+        )
+        result = CurveService().authorize_use(
+            _artifact(), "planning", current_governance=governance
+        )
+        assert result.authorized
+
+    def test_reporting_approval_cannot_authorise_planning(self):
+        reporting_only = _outcome_approval(
+            allowed_uses=("curve_publication", "headline_reporting")
+        )
+        governance = _governance(
+            outcome_approval=reporting_only, outcome_approvals=[reporting_only]
+        )
+        with pytest.raises(CurveUseNotAuthorizedError):
+            CurveService().authorize_use(
+                _artifact(), "planning", current_governance=governance
+            )
+
+    def test_stale_definition_fingerprint_cannot_authorise_any_use(self):
+        stale_fingerprint = _outcome_approval(
+            allowed_uses=("curve_publication", "headline_reporting"),
+            definition_fingerprint="not-the-current-fingerprint",
+        )
+        governance = _governance(
+            outcome_approval=stale_fingerprint,
+            outcome_approvals=[stale_fingerprint],
+        )
+        with pytest.raises(CurveUseNotAuthorizedError):
+            CurveService().authorize_use(
+                _artifact(), "headline_reporting", current_governance=governance
+            )
+
+    def test_approval_outside_effective_period_cannot_authorise_use(self):
+        future_dated = _outcome_approval(
+            allowed_uses=("curve_publication", "headline_reporting"),
+            approved_at="2099-01-01",
+        )
+        governance = _governance(
+            outcome_approval=future_dated, outcome_approvals=[future_dated]
+        )
+        with pytest.raises(CurveUseNotAuthorizedError):
+            CurveService().authorize_use(
+                _artifact(), "headline_reporting", current_governance=governance
+            )
+
+    def test_product_and_segment_scope_are_matched(self):
+        fh_only = _outcome_approval(
+            approval_id="apr-fh",
+            allowed_uses=("curve_publication", "headline_reporting"),
+            product_scope=("Family History",),
+        )
+        governance = _governance(outcome_approval=fh_only, outcome_approvals=[fh_only])
+        with pytest.raises(CurveUseNotAuthorizedError):
+            CurveService().authorize_use(
+                self._multi_product_artifact(),
+                "headline_reporting",
+                current_governance=governance,
+            )
+        fh_and_dna = _outcome_approval(
+            approval_id="apr-fh-dna",
+            allowed_uses=("curve_publication", "headline_reporting"),
+            product_scope=("Family History", "DNA"),
+        )
+        governance_both = _governance(
+            outcome_approval=fh_and_dna, outcome_approvals=[fh_and_dna]
+        )
+        result = CurveService().authorize_use(
+            self._multi_product_artifact(),
+            "headline_reporting",
+            current_governance=governance_both,
+        )
+        assert result.authorized
+
+    def test_resolve_current_governance_and_authorize_use_share_the_same_per_scope_path(
+        self,
+    ):
+        """Both the Curve Bank and Project Export pages resolve governance
+        via resolve_current_governance() then call authorize_use() - proving
+        the separate-scoped-approvals case works through that exact shared
+        path (not only when a test constructs OfficialCurveGovernance
+        directly) demonstrates display and export share the same matching
+        path."""
+        policy = _policy()
+        diagnostics = _diagnostics()
+        readiness = _readiness(policy=policy, diagnostics=diagnostics)
+        model_approval = _policy_backed_approval(policy=policy, readiness=readiness)
+        uk = _outcome_approval(
+            approval_id="apr-uk",
+            allowed_uses=("curve_publication", "headline_reporting"),
+            market_scope=("UK",),
+        )
+        au = _outcome_approval(
+            approval_id="apr-au",
+            allowed_uses=("curve_publication", "headline_reporting"),
+            market_scope=("AU",),
+        )
+        governance = CurveService().resolve_current_governance(
+            self._multi_market_artifact(),
+            current_identity=dict(IDENTITY),
+            approval_dict=model_approval.to_dict(),
+            current_policy=policy,
+            current_readiness=readiness,
+            current_diagnostics_artefact=diagnostics,
+            activity_definitions=_activities(),
+            outcome_definitions=[_outcome()],
+            outcome_approvals=[uk, au],
+        )
+        assert isinstance(governance, OfficialCurveGovernance)
+        result = CurveService().authorize_use(
+            self._multi_market_artifact(),
+            "headline_reporting",
+            current_governance=governance,
+        )
+        assert result.authorized
+
+    def test_no_matching_approval_fails_closed_with_an_actionable_reason(self):
+        unrelated_use = _outcome_approval(allowed_uses=("model_fit",))
+        governance = _governance(
+            outcome_approval=unrelated_use, outcome_approvals=[unrelated_use]
+        )
+        with pytest.raises(CurveUseNotAuthorizedError) as excinfo:
+            CurveService().authorize_use(
+                _artifact(), "headline_reporting", current_governance=governance
+            )
+        message = str(excinfo.value)
+        assert "fh_new" in message
+        assert "curve_publication" in message
+
+    # -----------------------------------------------------------------
     # Corrective PR B4: the supplied activities must be the artifact's OWN
     # activities, not merely approved activities of any kind.
     # -----------------------------------------------------------------
@@ -1304,6 +1557,44 @@ class TestResolveCurrentGovernance:
 
     def test_no_matching_outcome_approval_returns_none(self):
         assert self._resolve(_artifact(), outcome_approvals=[]) is None
+
+    def test_expired_candidate_alone_returns_none(self):
+        """Corrective PR E1: the broad existence check now also requires
+        current validity, not merely status == 'approved' - a lapsed-only
+        candidate must not make resolve_current_governance construct a
+        governance object at all."""
+        expired = _outcome_approval(approved_at="2026-01-01", expires_at="2026-02-01")
+        assert self._resolve(_artifact(), outcome_approvals=[expired]) is None
+
+    def test_newer_expired_candidate_does_not_prevent_resolution_when_an_older_active_one_exists(
+        self,
+    ):
+        """Corrective PR E1 (E1.2): resolve_current_governance must still
+        construct a governance object - carrying the *complete* candidate
+        set - when an older approval is genuinely active, even though a
+        newer, already-expired candidate for the same outcome also exists."""
+        older_active = _outcome_approval(
+            approval_id="apr-older-active",
+            allowed_uses=("curve_publication", "headline_reporting"),
+            approved_at="2026-01-01",
+        )
+        newer_expired = _outcome_approval(
+            approval_id="apr-newer-expired",
+            allowed_uses=("curve_publication", "headline_reporting"),
+            approved_at="2026-02-01",
+            expires_at="2026-03-01",
+        )
+        governance = self._resolve(
+            _artifact(), outcome_approvals=[older_active, newer_expired]
+        )
+        assert isinstance(governance, OfficialCurveGovernance)
+        assert list(governance.outcome_approvals) == [older_active, newer_expired]
+        # The complete candidate set (not just the resolver's single pick)
+        # is what authorize_use actually matches against.
+        authorization = CurveService().authorize_use(
+            _artifact(), "headline_reporting", current_governance=governance
+        )
+        assert authorization.authorized
 
     def test_selects_the_currently_valid_approval_not_merely_the_first_in_list_order(
         self,
