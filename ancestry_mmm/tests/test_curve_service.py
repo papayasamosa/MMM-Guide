@@ -2075,6 +2075,31 @@ class TestCreateOfficialArtifact:
             == result.artifact.metadata.extra["outcome_approvals_snapshot"]
         )
 
+    def test_rejects_colliding_approval_ids_across_distinct_scope_matches(
+        self, tmp_path
+    ):
+        """OutcomeApproval.approval_id uniqueness is not enforced anywhere
+        upstream (record construction, import) - two distinct records that
+        happen to share an id, each matching a different generated scope,
+        must never let one silently overwrite the other's evidence in the
+        snapshot (fail closed instead)."""
+        dup_uk = _outcome_approval(
+            approval_id="apr-dup",
+            allowed_uses=("curve_publication",),
+            market_scope=("UK",),
+        )
+        dup_au = _outcome_approval(
+            approval_id="apr-dup",
+            allowed_uses=("curve_publication",),
+            market_scope=("AU",),
+        )
+        governance = _governance(
+            outcome_approval=dup_uk, outcome_approvals=[dup_uk, dup_au]
+        )
+        with pytest.raises(CurvePublicationApprovalError, match="apr-dup"):
+            self._create(tmp_path, artifact_id="art-collision", governance=governance)
+        assert not (tmp_path / "art-collision").exists()
+
     def test_planning_ineligible_draws_preserved_and_block_planning_use(self, tmp_path):
         specs = _specs()
         support = _media_support(specs)
