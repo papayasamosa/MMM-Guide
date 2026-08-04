@@ -2075,21 +2075,22 @@ class TestCreateOfficialArtifact:
             == result.artifact.metadata.extra["outcome_approvals_snapshot"]
         )
 
-    def test_rejects_colliding_approval_ids_across_distinct_scope_matches(
-        self, tmp_path
-    ):
+    def test_preserves_both_distinct_approvals_when_their_ids_collide(self, tmp_path):
         """REQ-CURVE-001 "Historical artifact integrity (reproducibility)"
         (docs/approved_requirements/REQ-CURVE-001.md) requires the
-        persisted artifact carry complete immutable evidence of what was
+        persisted artifact carry *complete* immutable evidence of what was
         true at creation, including the outcome definition and approval
-        snapshot - and requires the use-time/evidence gates to fail closed
-        rather than silently pass. OutcomeApproval.approval_id uniqueness
-        is not enforced anywhere upstream (record construction, import),
-        so two distinct records that happen to share an id, each matching
-        a different generated scope, must never let one silently overwrite
-        the other's evidence in the snapshot - that would violate the
-        "complete" half of the historical-integrity contract without ever
-        raising."""
+        snapshot. OutcomeApproval.approval_id uniqueness is not enforced
+        anywhere upstream (record construction, import), so two distinct
+        records can legitimately share an id while each independently
+        authorizes a different generated scope - deduplicating by id alone
+        would silently drop one record's evidence even though both remain
+        individually valid, active approvals. REQ-CURVE-001's fail-closed
+        rule governs current official-use authorization, not this
+        creation-time completeness question, so it is not authority for
+        blocking generation over an id coincidence: both records must be
+        preserved in the snapshot instead, and generation must still
+        succeed."""
         dup_uk = _outcome_approval(
             approval_id="apr-dup",
             allowed_uses=("curve_publication",),
@@ -2103,9 +2104,13 @@ class TestCreateOfficialArtifact:
         governance = _governance(
             outcome_approval=dup_uk, outcome_approvals=[dup_uk, dup_au]
         )
-        with pytest.raises(CurvePublicationApprovalError, match="apr-dup"):
-            self._create(tmp_path, artifact_id="art-collision", governance=governance)
-        assert not (tmp_path / "art-collision").exists()
+        result = self._create(
+            tmp_path, artifact_id="art-collision", governance=governance
+        )
+        snapshot = result.artifact.metadata.extra["outcome_approvals_snapshot"]
+        assert len(snapshot) == 2
+        market_scopes = {tuple(row["market_scope"]) for row in snapshot}
+        assert market_scopes == {("UK",), ("AU",)}
 
     def test_planning_ineligible_draws_preserved_and_block_planning_use(self, tmp_path):
         specs = _specs()
