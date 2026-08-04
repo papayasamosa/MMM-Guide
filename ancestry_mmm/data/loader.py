@@ -123,8 +123,12 @@ def detect_column_types(df: pd.DataFrame) -> Dict[str, List[str]]:
         # Check for date columns. is_string_dtype covers both the legacy
         # numpy "object" dtype and pandas' newer default StringDtype (e.g.
         # pandas>=3's read_csv no longer returns "object" for text columns -
-        # a plain dtype=="object" check silently misses them).
-        if pd.api.types.is_string_dtype(df[col]):
+        # a plain dtype=="object" check silently misses them). The explicit
+        # dtype == "object" check is kept alongside it: is_string_dtype
+        # inspects content and returns False for object-dtype columns that
+        # hold real date/Timestamp objects rather than strings, which would
+        # otherwise skip the pd.to_datetime attempt entirely.
+        if pd.api.types.is_string_dtype(df[col]) or df[col].dtype == "object":
             try:
                 pd.to_datetime(df[col])
                 result["date"].append(col)

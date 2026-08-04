@@ -13,9 +13,19 @@ in the column name) and any plain string column at all under pandas 3.
 Both branches now use pd.api.types.is_string_dtype, which covers "object",
 the new "str" dtype, and (for the categorical branch, kept as an explicit
 extra check) any pd.CategoricalDtype regardless of its category value type.
+
+Also locks in a follow-up fix for a regression the above fix introduced
+(flagged in PR #107 review): is_string_dtype inspects column content, not
+just dtype, so it returns False for object-dtype columns holding real
+date/Timestamp objects rather than strings - the date-detection branch
+silently stopped attempting pd.to_datetime on those. An explicit
+dtype == "object" check is retained alongside is_string_dtype to cover
+them. The pandas-3-only regression test above was also replaced with one
+that constructs its StringDtype column explicitly, so it exercises the same
+gap regardless of whether the test environment runs pandas 2.x or 3.x.
 """
 
-import io
+import datetime
 
 import pandas as pd
 
@@ -44,13 +54,50 @@ def test_date_hint_in_name_is_detected_even_without_datetime_dtype():
     assert "period" in result["date"]
 
 
-def test_csv_loaded_date_column_is_detected_without_a_name_hint():
-    """Regression guard: pd.read_csv's actual output dtype for a date
-    column (a name with no date hint) must still be parsed and classified
-    as date, not silently skipped because its dtype isn't "object"."""
-    csv = "as_of,value\n2026-01-01,10\n2026-01-08,12\n"
-    df = pd.read_csv(io.StringIO(csv))
-    assert df["as_of"].dtype != object  # confirms this exercises the gap
+def test_string_dtype_date_column_is_detected_without_a_name_hint():
+    """Regression guard: a StringDtype date column (a name with no date
+    hint) must still be parsed and classified as date, not silently skipped
+    because its dtype isn't "object". The StringDtype column is constructed
+    explicitly rather than relying on pd.read_csv's ambient, pandas-version-
+    dependent output dtype, so this exercises the gap on both pandas 2.x
+    (read_csv defaults text columns to "object") and pandas>=3
+    (read_csv defaults text columns to StringDtype)."""
+    df = pd.DataFrame(
+        {
+            "as_of": pd.array(["2026-01-01", "2026-01-08"], dtype="string"),
+            "value": [10, 12],
+        }
+    )
+    assert isinstance(df["as_of"].dtype, pd.StringDtype)
+    result = detect_column_types(df)
+    assert "as_of" in result["date"]
+
+
+def test_object_dtype_date_objects_column_is_detected_without_a_name_hint():
+    """Regression guard for the P2 finding on PR #107: is_string_dtype
+    returns False for object-dtype columns holding real date/Timestamp
+    objects (not strings), since it inspects content rather than just
+    dtype. The explicit dtype == "object" check must still trigger the
+    pd.to_datetime attempt for these."""
+    df = pd.DataFrame(
+        {
+            "as_of": pd.Series(
+                [datetime.date(2026, 1, 1), datetime.date(2026, 1, 8)], dtype=object
+            ),
+            "value": [10, 12],
+        }
+    )
+    assert df["as_of"].dtype == object
+    result = detect_column_types(df)
+    assert "as_of" in result["date"]
+
+
+def test_object_dtype_timestamp_objects_column_is_detected_without_a_name_hint():
+    df = pd.Series(
+        [pd.Timestamp("2026-01-01"), pd.Timestamp("2026-01-08")], dtype=object
+    )
+    df = pd.DataFrame({"as_of": df, "value": [10, 12]})
+    assert df["as_of"].dtype == object
     result = detect_column_types(df)
     assert "as_of" in result["date"]
 
