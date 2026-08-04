@@ -1200,13 +1200,18 @@ class CurveService:
                 ) from exc
             existing = resolved.get(matched.approval_id)
             if existing is not None and existing != matched:
-                # OutcomeApproval.approval_id uniqueness is not enforced
-                # anywhere upstream (record construction, import), so two
-                # distinct records can collide on the same id. Keying
-                # solely by approval_id would then silently overwrite one
-                # matched record's evidence with the other's in the
-                # snapshot below - fail closed instead of guessing which
-                # (if either) is the trustworthy one.
+                # REQ-CURVE-001 "Historical artifact integrity
+                # (reproducibility)" requires the persisted artifact carry
+                # *complete* immutable evidence of what was true at
+                # creation, and requires evidence gates to fail closed
+                # rather than silently pass. OutcomeApproval.approval_id
+                # uniqueness is not enforced anywhere upstream (record
+                # construction, import), so two distinct records can
+                # collide on the same id. Keying solely by approval_id
+                # would then silently overwrite one matched record's
+                # evidence with the other's in the snapshot below - fail
+                # closed instead of guessing which (if either) is the
+                # trustworthy one.
                 raise CurvePublicationApprovalError(
                     f"Two distinct outcome approvals share approval_id "
                     f"{matched.approval_id!r} for outcome "

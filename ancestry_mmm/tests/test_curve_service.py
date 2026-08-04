@@ -2078,11 +2078,18 @@ class TestCreateOfficialArtifact:
     def test_rejects_colliding_approval_ids_across_distinct_scope_matches(
         self, tmp_path
     ):
-        """OutcomeApproval.approval_id uniqueness is not enforced anywhere
-        upstream (record construction, import) - two distinct records that
-        happen to share an id, each matching a different generated scope,
-        must never let one silently overwrite the other's evidence in the
-        snapshot (fail closed instead)."""
+        """REQ-CURVE-001 "Historical artifact integrity (reproducibility)"
+        (docs/approved_requirements/REQ-CURVE-001.md) requires the
+        persisted artifact carry complete immutable evidence of what was
+        true at creation, including the outcome definition and approval
+        snapshot - and requires the use-time/evidence gates to fail closed
+        rather than silently pass. OutcomeApproval.approval_id uniqueness
+        is not enforced anywhere upstream (record construction, import),
+        so two distinct records that happen to share an id, each matching
+        a different generated scope, must never let one silently overwrite
+        the other's evidence in the snapshot - that would violate the
+        "complete" half of the historical-integrity contract without ever
+        raising."""
         dup_uk = _outcome_approval(
             approval_id="apr-dup",
             allowed_uses=("curve_publication",),
