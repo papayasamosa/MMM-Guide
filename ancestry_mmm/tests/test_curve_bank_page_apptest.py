@@ -32,7 +32,11 @@ from ancestry_mmm.core.approval import (
     ModelApproval,
     create_policy_backed_model_approval,
 )
-from ancestry_mmm.core.activities import ActivityDefinition, activity_fit_fingerprint
+from ancestry_mmm.core.activities import (
+    ActivityDefinition,
+    activity_definitions_fingerprint,
+    activity_fit_fingerprint,
+)
 from ancestry_mmm.core.curve_artifact import (
     CurveArtifactMetadata,
     compute_curve_artifact_fingerprints,
@@ -528,6 +532,12 @@ def _write_official_artifact(store_dir: Path, approval_dict: dict) -> None:
         outcome_approval_snapshot={
             "approval_id": "apr-official-1",
             "allowed_uses": ["curve_publication", "headline_reporting"],
+        },
+        activity_governance_snapshot={
+            "activities": ["tv-paid"],
+            "fingerprint": activity_definitions_fingerprint(
+                [ActivityDefinition.from_dict(_official_activity_dict())]
+            ),
         },
     )
     metadata = dataclasses.replace(

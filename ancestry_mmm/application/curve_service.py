@@ -101,6 +101,7 @@ from ancestry_mmm.core.model_identity import ModelIdentity
 from ancestry_mmm.core.outcome_approval import (
     OutcomeApproval,
     OutcomeApprovalBlockedError,
+    normalise_datetime,
     require_outcome_approval,
 )
 from ancestry_mmm.core.outcomes import OutcomeDefinition
@@ -318,6 +319,26 @@ def _json_safe_records(
     return decoded
 
 
+def _artifact_scopes(draws: pd.DataFrame) -> List[Dict[str, Optional[str]]]:
+    """Every distinct (market, product, segment) scope represented by an
+    artifact's own draw rows (Corrective PR B3).
+
+    An outcome approval scoped to only some of these must not authorize use
+    of an artifact whose rows span other markets/products/segments too -
+    resolving/validating a single unscoped approval is not sufficient for a
+    multi-scope artifact.
+    """
+    scope_columns = ["market", "product", "segment"]
+    present = [c for c in scope_columns if c in draws.columns]
+    if not present:
+        return [{}]
+    unique = draws[present].drop_duplicates()
+    return [
+        {column: row[column] for column in present}
+        for row in unique.to_dict(orient="records")
+    ]
+
+
 def _require_governance_chain(governance: OfficialCurveGovernance) -> None:
     """Validate the complete REQ-CURVE-001 governance chain.
 
@@ -474,32 +495,40 @@ class CurveService:
         trace: az.InferenceData,
         reference_contexts: Mapping[str, CurveReferenceContext],
         model_type: str = "shared",
-        params: Any = None,
         **generation_kwargs: Any,
     ) -> pd.DataFrame:
         """Generate an official curve through the service.
 
         Order of enforcement (REQ-CURVE-001):
         1. full governance chain (``validate_official_governance``);
-        2. complete reference contexts against the fitted model structure;
+        2. complete reference contexts against the fitted model structure,
+           validated against parameters derived fresh from ``trace``/``meta``
+           (never a caller-supplied override — Corrective PR B, "derive
+           context structure from the trace being generated": the low-level
+           generator always re-derives its own parameters per draw from
+           ``trace`` regardless, so an override here could only desynchronise
+           validation from what is actually generated, never legitimately
+           change it);
         3. call ``generate_canonical_curve_draws`` with
            ``governance_mode="official"`` and the governance's
            ``activity_definitions`` bound (never omission-skippable);
-        4. preserve the strictest ``planning_support_eligible`` state across
+        4. restrict the result to the single outcome
+           ``governance.outcome_definition.outcome_id`` this governance
+           actually approves (Corrective PR B2, "bind approval to each
+           generated outcome" — one official artifact represents exactly one
+           approved outcome; a jointly-fitted model's *other* outcomes are
+           never included merely because they share a trace, since they
+           have no approval of their own here);
+        5. preserve the strictest ``planning_support_eligible`` state across
            all component rows and posterior draws (planning/optimisation
            enforcement is the use gate, ``enforce_planning_support``).
-
-        ``params`` may be pre-extracted; otherwise it is derived from the
-        trace via ``extract_posterior_params`` /
-        ``extract_market_specific_posterior_params``.
         """
         self.validate_official_governance(governance)
-        if params is None:
-            params = (
-                extract_market_specific_posterior_params(trace, meta)
-                if model_type == "market_specific"
-                else extract_posterior_params(trace, meta)
-            )
+        params = (
+            extract_market_specific_posterior_params(trace, meta)
+            if model_type == "market_specific"
+            else extract_posterior_params(trace, meta)
+        )
         self.validate_reference_contexts(reference_contexts, meta, params)
         kwargs = dict(generation_kwargs)
         kwargs["governance_mode"] = "official"
@@ -512,6 +541,16 @@ class CurveService:
             model_type=model_type,
             **kwargs,
         )
+        approved_outcome_id = governance.outcome_definition.outcome_id
+        if "outcome_id" in draws.columns:
+            if approved_outcome_id not in set(draws["outcome_id"]):
+                raise CurveGovernanceMissingError(
+                    f"Approved outcome '{approved_outcome_id}' was not generated "
+                    "by this model (meta.outcome_ids does not include it)."
+                )
+            draws = draws[draws["outcome_id"] == approved_outcome_id].reset_index(
+                drop=True
+            )
         # Preserve the strictest planning-support state; raises if the draws
         # are missing the fields or carry empty reasons on ineligible rows.
         self.planning_support_state(draws)
@@ -602,14 +641,23 @@ class CurveService:
            approval (identity/policy-backed/readiness), the diagnostics
            artefact binding, and approved activity definitions (the same
            structural gate ``validate_official_governance`` applies at
-           generation time; see ``_require_governance_chain``);
+           generation time; see ``_require_governance_chain``) — **and**
+           the supplied activity definitions must be the artifact's own
+           (fingerprint-matched against ``activity_governance_snapshot``,
+           not merely approved activities of any kind);
         4. the artifact's outcome definition must still match the current
-           outcome definition (not stale), and a current, matching outcome
-           approval must allow the requested use;
+           outcome definition (not stale), and for every distinct
+           market/product/segment scope the artifact's rows actually span,
+           a current, matching outcome approval must independently grant
+           both ``curve_publication`` (the artifact's own official status —
+           checked regardless of the requested use) and the specific
+           requested use;
         5. planning/optimisation uses additionally enforce
            ``planning_support_eligible`` on the artifact's draws;
-        6. when ``staleness_cutoff`` is provided, an artifact created before
-           it is not currently authorised.
+        6. when ``staleness_cutoff`` is provided, both it and the artifact's
+           creation timestamp are normalised to timezone-aware UTC before
+           comparison, and an artifact created before the cutoff is not
+           currently authorised.
 
         Raises ``CurveUseNotAuthorizedError`` (fail closed) when any check
         fails or current governance cannot be resolved. Never rewrites the
@@ -646,9 +694,34 @@ class CurveService:
         except CurveGovernanceError as exc:
             raise CurveUseNotAuthorizedError(str(exc)) from exc
 
-        # 4. Outcome definition not stale + current approval allows the
-        #    requested use (the current approval is authoritative; the
-        #    artifact's snapshot is historical evidence, never rewritten).
+        # 3. The supplied activities must be the artifact's OWN activities,
+        #    not merely approved activities of any kind (Corrective PR B4):
+        #    compare against the fingerprint the artifact was actually
+        #    generated with (activity_governance_snapshot), the same
+        #    fingerprint _build_artifact_metadata records at creation time.
+        current_activity_fingerprint = activity_definitions_fingerprint(
+            current_governance.activity_definitions
+        )
+        snapshot_activity_fingerprint = (
+            artifact.metadata.activity_governance_snapshot or {}
+        ).get("fingerprint")
+        if current_activity_fingerprint != snapshot_activity_fingerprint:
+            raise CurveUseNotAuthorizedError(
+                "Current activity definitions do not match the activities "
+                "this artifact was actually generated against (activity "
+                "governance is stale or unrelated)."
+            )
+
+        # 4. Outcome definition not stale, and — for EVERY distinct
+        #    market/product/segment scope the artifact's own rows actually
+        #    span (Corrective PR B3) — a current, matching approval that
+        #    (a) still grants curve_publication (the artifact's official
+        #    status itself, Corrective PR B1 — checked independently of the
+        #    requested use, since a replacement approval can grant a
+        #    downstream use while no longer granting official status) and
+        #    (b) grants the specific requested_use. The current approval is
+        #    authoritative; the artifact's snapshot is historical evidence,
+        #    never rewritten.
         definition_snapshot = artifact.metadata.outcome_definition_snapshot
         current_outcome = current_governance.outcome_definition
         if definition_snapshot.get("outcome_id") != current_outcome.outcome_id:
@@ -662,26 +735,41 @@ class CurveService:
             raise CurveUseNotAuthorizedError(
                 "Artifact outcome definition has changed since creation (stale)."
             )
-        try:
-            require_outcome_approval(
-                current_outcome,
-                current_governance.outcome_approval,
-                requested_use,
-            )
-        except OutcomeApprovalBlockedError as exc:
-            raise CurveUseNotAuthorizedError(str(exc)) from exc
+        for scope in _artifact_scopes(artifact.draws):
+            try:
+                require_outcome_approval(
+                    current_outcome,
+                    current_governance.outcome_approval,
+                    "curve_publication",
+                    **scope,
+                )
+            except OutcomeApprovalBlockedError as exc:
+                raise CurveUseNotAuthorizedError(
+                    f"Artifact is no longer currently authorised as official "
+                    f"(curve_publication) for scope {scope}: {exc}"
+                ) from exc
+            try:
+                require_outcome_approval(
+                    current_outcome,
+                    current_governance.outcome_approval,
+                    requested_use,
+                    **scope,
+                )
+            except OutcomeApprovalBlockedError as exc:
+                raise CurveUseNotAuthorizedError(str(exc)) from exc
 
         # 5. Planning/optimisation uses enforce planning support on the draws
         if requested_use in {"planning", "optimisation"}:
             self.enforce_planning_support(artifact.draws, requested_use=requested_use)
 
-        # 6. Staleness cutoff
+        # 6. Staleness cutoff — both timestamps normalised to timezone-aware
+        #    UTC before comparison (Corrective PR B7), so a naive/aware
+        #    mismatch never raises an uncaught TypeError in place of the
+        #    documented CurveUseNotAuthorizedError.
         if staleness_cutoff is not None:
             try:
-                created = datetime.fromisoformat(
-                    artifact.metadata.creation_timestamp.replace("Z", "+00:00")
-                )
-                cutoff = datetime.fromisoformat(staleness_cutoff.replace("Z", "+00:00"))
+                created = normalise_datetime(artifact.metadata.creation_timestamp)
+                cutoff = normalise_datetime(staleness_cutoff)
             except (ValueError, TypeError, AttributeError) as exc:
                 raise CurveUseNotAuthorizedError(
                     f"Cannot resolve staleness_cutoff {staleness_cutoff!r}: {exc}"
@@ -786,7 +874,6 @@ class CurveService:
         trace: az.InferenceData,
         reference_contexts: Mapping[str, CurveReferenceContext],
         model_type: str = "shared",
-        params: Any = None,
         creation_timestamp: Optional[str] = None,
         value_per_response: Optional[Mapping[str, float]] = None,
         **generation_kwargs: Any,
@@ -852,7 +939,6 @@ class CurveService:
             trace=trace,
             reference_contexts=reference_contexts,
             model_type=model_type,
-            params=params,
             **generation_kwargs,
         )
 

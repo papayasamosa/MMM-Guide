@@ -97,6 +97,16 @@ def _normalise_datetime(value: str) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
+def normalise_datetime(value: str) -> datetime:
+    """Public wrapper for :func:`_normalise_datetime`.
+
+    The single normalisation point for date/timestamp comparisons outside
+    this module too (e.g. ``CurveService.authorize_use``'s staleness-cutoff
+    comparison) - callers must never compare raw ``datetime.fromisoformat()``
+    values directly, since a naive/aware mismatch raises ``TypeError``."""
+    return _normalise_datetime(value)
+
+
 # ---------------------------------------------------------------------------
 # Approved vocabularies
 # ---------------------------------------------------------------------------

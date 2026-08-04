@@ -19,6 +19,7 @@ from ancestry_mmm.core.outcome_approval import (
     approved_outcome_ids_for_use,
     fingerprint_outcome_definition,
     legacy_unapproved_approval,
+    normalise_datetime,
     outcome_is_approved_for_use,
     require_outcome_approval,
     resolve_approvals_by_outcome_id,
@@ -795,3 +796,19 @@ class TestPlanningObjectiveLegacy:
 
         with pytest.raises(ValueError, match="unknown legacy objective"):
             planning_objective_from_legacy("unknown_objective")
+
+
+class TestNormaliseDatetimePublicWrapper:
+    """normalise_datetime is the public wrapper for _normalise_datetime,
+    reused by CurveService.authorize_use's staleness-cutoff comparison
+    (Corrective PR B7) so a naive/aware timestamp mismatch never raises an
+    uncaught TypeError."""
+
+    def test_naive_and_aware_timestamps_compare_without_raising(self):
+        naive = normalise_datetime("2026-07-01T00:00:00")
+        aware = normalise_datetime("2026-07-01T00:00:00+00:00")
+        assert naive == aware  # must not raise TypeError
+
+    def test_returns_timezone_aware_utc(self):
+        result = normalise_datetime("2026-07-01")
+        assert result.tzinfo is not None
