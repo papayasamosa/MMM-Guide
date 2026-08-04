@@ -1085,6 +1085,23 @@ class CurveService:
             **generation_kwargs,
         )
 
+        # Corrective PR E1 follow-up (PR #113 review): generation-time
+        # governance validation (validate_official_governance, inside
+        # generate_official_curve) checks only the single, unscoped
+        # governance.outcome_approval - a narrowly-scoped approval (e.g. a
+        # UK-only approval) is therefore sufficient to let generation
+        # proceed even for a broader multi-scope artifact than that
+        # approval actually covers. Before this artifact is written, every
+        # distinct scope the generated draws actually span must
+        # independently resolve a current, matching curve_publication
+        # approval from the complete candidate set - the same per-scope
+        # resolution authorize_use applies at use time - and every
+        # approval actually used to authorize a scope is captured in the
+        # artifact's own immutable creation evidence, never only the
+        # single governance.outcome_approval (which may not be the record
+        # that matched a given scope).
+        scope_approvals = self._resolve_generation_scope_approvals(governance, draws)
+
         # Work package C: the approved channel-safe governance view,
         # summarized across posterior draws after draw-level response and
         # economics have been calculated (never parameters summarized
@@ -1101,6 +1118,7 @@ class CurveService:
             governance=governance,
             reference_contexts=reference_contexts,
             draws=draws,
+            scope_approvals=scope_approvals,
         )
 
         store_dir.mkdir(parents=True, exist_ok=True)
@@ -1154,6 +1172,35 @@ class CurveService:
             summaries_path=final_dir / CURVE_ARTIFACT_SUMMARIES_FILENAME,
         )
 
+    def _resolve_generation_scope_approvals(
+        self, governance: OfficialCurveGovernance, draws: pd.DataFrame
+    ) -> List[OutcomeApproval]:
+        """Resolve the current ``curve_publication`` approval for every
+        distinct market/product/segment scope the just-generated ``draws``
+        actually span, from the complete candidate set
+        (``_candidate_outcome_approvals``) - failing closed
+        (``CurvePublicationApprovalError``) before the artifact is ever
+        written if any generated scope has none (Corrective PR E1
+        follow-up). Returns the deduplicated set of approvals that actually
+        authorized generation, for the caller to persist as creation-time
+        evidence.
+        """
+        candidates = _candidate_outcome_approvals(governance)
+        outcome = governance.outcome_definition
+        resolved: Dict[str, OutcomeApproval] = {}
+        for scope in _artifact_scopes(draws):
+            try:
+                matched = _require_current_scope_approval(
+                    outcome, candidates, "curve_publication", scope
+                )
+            except OutcomeApprovalBlockedError as exc:
+                raise CurvePublicationApprovalError(
+                    f"Generated scope {scope} is not currently authorised for "
+                    f"curve_publication and cannot be persisted: {exc}"
+                ) from exc
+            resolved[matched.approval_id] = matched
+        return list(resolved.values())
+
     def _build_artifact_metadata(
         self,
         *,
@@ -1162,6 +1209,7 @@ class CurveService:
         governance: OfficialCurveGovernance,
         reference_contexts: Mapping[str, CurveReferenceContext],
         draws: pd.DataFrame,
+        scope_approvals: Sequence[OutcomeApproval] = (),
     ) -> CurveArtifactMetadata:
         """Build the immutable creation-time evidence snapshot.
 
@@ -1169,6 +1217,19 @@ class CurveService:
         actually-generated draws — a caller can never pass a pre-computed
         metadata snapshot or fingerprint that could disagree with the
         validated governance (REQ-CURVE-001 Work package B).
+
+        ``scope_approvals`` (Corrective PR E1 follow-up) is the complete,
+        deduplicated set of approvals that
+        ``_resolve_generation_scope_approvals`` actually matched to
+        authorize ``curve_publication`` for every distinct scope the
+        generated draws span - captured under
+        ``extra["outcome_approvals_snapshot"]`` (never inside the
+        existing, single-record ``outcome_approval_snapshot`` field, whose
+        shape and required-non-empty contract must stay unchanged for
+        already-persisted legacy artifacts). ``extra`` is bound into the
+        fingerprint chain like every other field (PR 96A), so this
+        evidence is tamper-detected exactly like the rest of the snapshot,
+        without a schema-version bump.
         """
         activity_rows = list(governance.activity_definitions)
         support_columns = [
@@ -1228,6 +1289,9 @@ class CurveService:
             support_snapshot={"rows": _json_safe_records(draws, support_columns)},
             cost_currency_snapshot={
                 "rows": _json_safe_records(draws, cost_currency_columns)
+            },
+            extra={
+                "outcome_approvals_snapshot": [a.to_dict() for a in scope_approvals]
             },
         )
         fingerprints = dict(
