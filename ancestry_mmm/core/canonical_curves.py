@@ -187,6 +187,18 @@ class CurveReferenceContext:
             raise ValueError(
                 "other-channel reference spend must be finite and non-negative"
             )
+        if any(not np.isfinite(value) for value in self.promo.values()):
+            raise ValueError("reference promo values must be finite")
+        if any(not np.isfinite(value) for value in self.controls.values()):
+            raise ValueError("reference control values must be finite")
+        if any(
+            not np.isfinite(value)
+            for inner in self.outcome_controls.values()
+            for value in inner.values()
+        ):
+            raise ValueError("reference outcome-control values must be finite")
+        if any(not np.isfinite(value) for value in self.fourier):
+            raise ValueError("reference fourier terms must be finite")
 
     def prediction_context(self) -> dict:
         return {

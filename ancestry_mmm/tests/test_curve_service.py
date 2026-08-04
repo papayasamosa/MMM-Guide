@@ -33,7 +33,10 @@ from ancestry_mmm.core.approval import (
     ModelApproval,
     create_policy_backed_model_approval,
 )
-from ancestry_mmm.core.activities import ActivityDefinition
+from ancestry_mmm.core.activities import (
+    ActivityDefinition,
+    activity_definitions_fingerprint,
+)
 from ancestry_mmm.core.canonical_curves import CurveReferenceContext
 from ancestry_mmm.core.curve_artifact import (
     CURVE_ARTIFACT_DRAWS_FILENAME,
@@ -526,8 +529,12 @@ def _manual_policy_backed_approval(
 
 
 def _outcome() -> OutcomeDefinition:
+    # outcome_id must be one of _meta()'s actual fitted outcome_ids
+    # ("fh_new") - not an unrelated business-outcome id - since
+    # generate_official_curve now binds official generation to exactly this
+    # outcome_id within the fitted model (Corrective PR B2).
     return OutcomeDefinition(
-        outcome_id="fh_new_gsa",
+        outcome_id="fh_new",
         product=FAMILY_HISTORY,
         segment="New",
         metric="GSA",
@@ -554,7 +561,7 @@ def _outcome_approval(
 ) -> OutcomeApproval:
     values: dict = {
         "approval_id": "apr-o1",
-        "outcome_id": "fh_new_gsa",
+        "outcome_id": "fh_new",
         "definition_fingerprint": fingerprint_outcome_definition(_outcome()),
         "status": status,
         "allowed_uses": allowed_uses,
@@ -910,14 +917,17 @@ def _artifact(planning_eligible=True, **metadata_overrides):
         model_identity_snapshot=dict(IDENTITY),
         approval_snapshot={"approval_id": "apr-1", "status": "approved"},
         outcome_definition_snapshot={
-            "outcome_id": "fh_new_gsa",
+            "outcome_id": "fh_new",
             "definition_version": "1.0",
         },
         outcome_approval_snapshot={
             "approval_id": "apr-o1",
             "allowed_uses": ["curve_publication"],
         },
-        activity_governance_snapshot={"activities": ["tv-paid", "dna-paid"]},
+        activity_governance_snapshot={
+            "activities": ["tv-paid", "dna-paid"],
+            "fingerprint": activity_definitions_fingerprint(_activities()),
+        },
     )
     metadata = dataclasses.replace(base, **metadata_overrides)
     if "fingerprints" not in metadata_overrides:
@@ -994,7 +1004,7 @@ class TestAuthorizeUse:
     def test_blocks_when_outcome_definition_changed(self):
         artifact = _artifact(
             outcome_definition_snapshot={
-                "outcome_id": "fh_new_gsa",
+                "outcome_id": "fh_new",
                 "definition_version": "0.9",
             }
         )
@@ -1106,6 +1116,137 @@ class TestAuthorizeUse:
                 current_governance=self._governance_for_use(),
                 staleness_cutoff="not-a-date",
             )
+
+    # -----------------------------------------------------------------
+    # Corrective PR B1: curve_publication must be independently current,
+    # not merely implied by the requested use also being approved.
+    # -----------------------------------------------------------------
+
+    def test_blocks_when_curve_publication_no_longer_current(self):
+        # The replacement approval grants "planning" but has dropped
+        # curve_publication entirely - official status itself is no longer
+        # current, even though the requested use is technically approved.
+        governance = _governance(
+            outcome_approval=_outcome_approval(allowed_uses=("planning",))
+        )
+        with pytest.raises(CurveUseNotAuthorizedError, match="curve_publication"):
+            CurveService().authorize_use(
+                _artifact(), "planning", current_governance=governance
+            )
+
+    def test_curve_publication_check_runs_even_when_requested_use_is_curve_publication(
+        self,
+    ):
+        governance = _governance(
+            outcome_approval=_outcome_approval(allowed_uses=("planning",))
+        )
+        with pytest.raises(CurveUseNotAuthorizedError, match="curve_publication"):
+            CurveService().authorize_use(
+                _artifact(), "curve_publication", current_governance=governance
+            )
+
+    # -----------------------------------------------------------------
+    # Corrective PR B3: the approval's scope must cover every distinct
+    # market/product/segment the artifact's own rows actually span.
+    # -----------------------------------------------------------------
+
+    def _multi_market_artifact(self):
+        base = _artifact()
+        draws = pd.DataFrame(
+            {
+                "market": ["UK", "AU"],
+                "product": ["Family History", "Family History"],
+                "segment": ["New", "New"],
+                "planning_support_eligible": [True, True],
+                "planning_blocked_reason": ["", ""],
+            }
+        )
+        return dataclasses.replace(base, draws=draws)
+
+    def test_authorizes_when_approval_scope_covers_every_artifact_market(self):
+        governance = self._governance_for_use(
+            allowed_uses=("curve_publication", "headline_reporting")
+        )  # unscoped approval covers every market
+        result = CurveService().authorize_use(
+            self._multi_market_artifact(),
+            "headline_reporting",
+            current_governance=governance,
+        )
+        assert result.authorized
+
+    def test_blocks_when_approval_scope_excludes_one_of_the_artifacts_markets(self):
+        governance = _governance(
+            outcome_approval=_outcome_approval(
+                allowed_uses=("curve_publication", "headline_reporting"),
+                market_scope=("UK",),
+            )
+        )
+        with pytest.raises(CurveUseNotAuthorizedError):
+            CurveService().authorize_use(
+                self._multi_market_artifact(),
+                "headline_reporting",
+                current_governance=governance,
+            )
+
+    # -----------------------------------------------------------------
+    # Corrective PR B4: the supplied activities must be the artifact's OWN
+    # activities, not merely approved activities of any kind.
+    # -----------------------------------------------------------------
+
+    def test_blocks_when_current_activities_are_unrelated_to_the_artifact(self):
+        # Both approved, but a different activity than the artifact was
+        # actually generated against ("tv-paid"/"dna-paid" per _artifact()'s
+        # activity_governance_snapshot).
+        unrelated = ActivityDefinition(
+            activity_id="radio-paid",
+            channel="Radio",
+            activity_ownership="paid",
+            model_role="intervention",
+            economic_treatment="paid_media_cost",
+            planning_eligibility="optimisable",
+            source="media plan",
+            approval_status="approved",
+            approved_by="reviewer",
+            approved_at="2026-01-01",
+        )
+        governance = _governance(
+            activity_definitions=[unrelated],
+            outcome_approval=_outcome_approval(
+                allowed_uses=("curve_publication", "headline_reporting")
+            ),
+        )
+        with pytest.raises(CurveUseNotAuthorizedError, match="activity"):
+            CurveService().authorize_use(
+                _artifact(), "headline_reporting", current_governance=governance
+            )
+
+    # -----------------------------------------------------------------
+    # Corrective PR B7: staleness_cutoff comparison must never raise an
+    # uncaught TypeError for a naive/aware timestamp mismatch.
+    # -----------------------------------------------------------------
+
+    def test_naive_staleness_cutoff_against_aware_creation_timestamp_does_not_crash(
+        self,
+    ):
+        # _artifact()'s creation_timestamp is "2026-07-01T00:00:00+00:00"
+        # (aware); a naive cutoff must still compare cleanly (normalised to
+        # UTC) and raise the documented error, never a bare TypeError.
+        with pytest.raises(CurveUseNotAuthorizedError, match="predates"):
+            CurveService().authorize_use(
+                _artifact(),
+                "headline_reporting",
+                current_governance=self._governance_for_use(),
+                staleness_cutoff="2026-12-31T00:00:00",
+            )
+
+    def test_naive_staleness_cutoff_before_creation_authorizes(self):
+        result = CurveService().authorize_use(
+            _artifact(),
+            "headline_reporting",
+            current_governance=self._governance_for_use(),
+            staleness_cutoff="2026-01-01T00:00:00",
+        )
+        assert result.authorized
 
 
 # ---------------------------------------------------------------------------
@@ -1258,6 +1399,62 @@ class TestGenerateOfficialCurve:
         assert captured["governance_mode"] == "official"
         assert captured["activity_definitions"] is governance.activity_definitions
         assert captured["model_run_id"] == "run-123"
+
+    # -----------------------------------------------------------------
+    # Corrective PR B2: bind approval to each generated outcome - one
+    # official artifact represents exactly the one approved outcome, never
+    # every outcome the jointly-fitted model happens to also cover.
+    # -----------------------------------------------------------------
+
+    def test_restricts_generated_draws_to_the_approved_outcome_only(self):
+        # _meta()'s fitted model covers three outcomes (fh_new, fh_returning,
+        # dna_kit); _governance()'s single approval is for "fh_new" only.
+        draws = CurveService().generate_official_curve(
+            _governance(),
+            meta=_meta(),
+            trace=_trace(),
+            reference_contexts=_contexts(),
+            **_generation_kwargs(),
+        )
+        assert set(draws["outcome_id"]) == {"fh_new"}
+
+    def test_blocks_when_approved_outcome_is_not_in_the_fitted_model(self):
+        missing_outcome = dataclasses.replace(
+            _outcome(), outcome_id="not-in-fitted-model"
+        )
+        governance = _governance(
+            outcome_definition=missing_outcome,
+            outcome_approval=_outcome_approval(
+                outcome_id="not-in-fitted-model",
+                definition_fingerprint=fingerprint_outcome_definition(missing_outcome),
+            ),
+        )
+        with pytest.raises(CurveGovernanceMissingError, match="not-in-fitted-model"):
+            CurveService().generate_official_curve(
+                governance,
+                meta=_meta(),
+                trace=_trace(),
+                reference_contexts=_contexts(),
+                **_generation_kwargs(),
+            )
+
+    def test_generate_official_curve_no_longer_accepts_a_params_override(self):
+        # Corrective PR B, finding 10: the params override was removed
+        # entirely - official generation always derives parameters fresh
+        # from trace/meta, since generate_canonical_curve_draws ignores any
+        # caller-supplied params anyway (it independently re-extracts its
+        # own per draw), so a validation-only override could only
+        # desynchronise completeness-checking from what is actually
+        # generated.
+        with pytest.raises(TypeError):
+            CurveService().generate_official_curve(
+                _governance(),
+                meta=_meta(),
+                trace=_trace(),
+                reference_contexts=_contexts(),
+                params=object(),
+                **_generation_kwargs(),
+            )
 
 
 # ---------------------------------------------------------------------------

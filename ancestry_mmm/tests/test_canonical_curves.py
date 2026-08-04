@@ -268,6 +268,9 @@ def _generate(meta, *, model_type="shared", contexts=None, **kwargs):
 
 @pytest.mark.parametrize("model_type", ["shared", "market_specific"])
 def test_contract_uses_outcome_scale_counterfactuals(meta, model_type):
+    """REQ-CURVE-001: the draws table contract carries outcome-scale
+    counterfactual columns and reconciles incremental_response against
+    mu_with/mu_without exactly, for both shared and market-specific models."""
     draws = _generate(meta, model_type=model_type)
     required = {
         "reference_context_id",
@@ -304,6 +307,9 @@ def test_contract_uses_outcome_scale_counterfactuals(meta, model_type):
 
 
 def test_matches_normal_prediction_function_exactly(meta):
+    """REQ-CURVE-001: canonical curve generation must reproduce
+    steady_state_outcome_response exactly (no drift between the two
+    prediction paths)."""
     trace = _trace()
     draws = _generate(meta)
     params = extract_posterior_params(trace, meta, at=(0, 0))
@@ -356,6 +362,9 @@ def test_market_offsets_change_shared_model_outcome_counts(meta):
 
 
 def test_direct_plus_halo_decomposition_and_no_component_cpa(meta):
+    """REQ-CURVE-001: direct + cross-product (halo) components sum to the
+    channel-total incremental response, and per-component CPA remains
+    unallocated (NaN) absent an explicit cost-allocation method."""
     draws = _generate(meta)
     rows = draws.query(
         "market == 'UK' and channel == 'DNA' and outcome_id == 'fh_new' "
@@ -372,6 +381,9 @@ def test_direct_plus_halo_decomposition_and_no_component_cpa(meta):
 
 
 def test_explicit_component_cost_allocation_enables_component_economics(meta):
+    """REQ-CURVE-001: an explicit, analyst-supplied ComponentCostAllocation
+    enables per-component average_cpa, scoped as component_allocated_cost -
+    never inferred or defaulted."""
     grouped = {}
     for component in meta.pathway_masks.components:
         if component.included_in_fit and component.component_type in {
@@ -402,6 +414,9 @@ def test_explicit_component_cost_allocation_enables_component_economics(meta):
 
 
 def test_channel_nbt_economics_count_spend_once(meta):
+    """REQ-CURVE-001 "Channel-total economics remain authoritative": channel-
+    level NBT/CPA aggregation must count each channel's spend exactly once
+    even when multiple components (direct + cross-product) share it."""
     draws = _generate(meta)
     channel = aggregate_curve_draws(
         draws,
@@ -476,6 +491,9 @@ def test_zero_spend_and_missing_value_status(meta):
 
 
 def test_missing_support_is_unknown_and_blocks_planning(meta):
+    """REQ-CURVE-001 "Support and extrapolation": a (market, channel) with
+    no supplied observed-support entry is classified unknown, not
+    available, and planning_support_eligible is False."""
     draws = generate_canonical_curve_draws(
         model_run_id="run",
         meta=meta,
@@ -571,6 +589,9 @@ def test_reference_context_builder_uses_prepared_business_context(meta):
 
 
 def test_multi_market_currency_governance_and_conversion(meta):
+    """REQ-CURVE-001: multi-market monetary curves require an explicit,
+    governed ISO currency and FX conversion per market - never an implicit
+    or silently-defaulted currency."""
     with pytest.raises(ValueError, match="explicit ISO currency"):
         generate_canonical_curve_draws(
             model_run_id="run",
@@ -679,6 +700,9 @@ def test_governance_views_are_channel_safe_and_labelled(meta):
 
 
 def test_uncertainty_summary_aggregates_draws_before_summary(meta):
+    """REQ-CURVE-001 "posterior-draw calculations before summaries": uncertainty
+    intervals must be computed across posterior draws, never derived from an
+    already-summarized point estimate."""
     channel = aggregate_curve_draws(
         _generate(meta),
         by=[
@@ -795,6 +819,8 @@ def _typed_support(specs, costs=None):
 
 
 def test_model_input_curve_is_available_without_cost_economics(meta):
+    """REQ-CURVE-001: a model-input curve is generable without any cost
+    mapping (monetary economics are separate from model-input response)."""
     specs, _ = _governed_inputs_and_costs()
     draws = generate_canonical_curve_draws(
         model_run_id="input-only",
@@ -828,6 +854,10 @@ def test_model_input_curve_is_available_without_cost_economics(meta):
 
 
 def test_monetary_curve_maps_spend_and_stores_chain_rule_derivatives(meta):
+    """REQ-CURVE-001: a monetary curve maps media-input spend through the
+    governed cost mapping and stores the chain-rule marginal derivatives
+    (response per currency unit = response per media-input unit x the
+    mapping's marginal rate)."""
     specs, costs = _governed_inputs_and_costs(cost_per_unit=2.0)
     draws = _generate(
         meta,
@@ -853,6 +883,9 @@ def test_monetary_curve_maps_spend_and_stores_chain_rule_derivatives(meta):
 
 
 def test_monetary_curve_is_blocked_without_approved_mapping(meta):
+    """REQ-CURVE-001 approved decision #5: a monetary curve - official or
+    exploratory - requires a resolved, effective, approved MediaCostMapping;
+    there is no draft-cost-assumption alternative."""
     specs, _ = _governed_inputs_and_costs()
     with pytest.raises(ValueError, match="blocked"):
         _generate(
@@ -993,9 +1026,10 @@ def _unapproved_activities():
 def test_monetary_curve_is_blocked_in_official_mode_without_approved_activity_governance(
     meta,
 ):
-    # PR G2A.6c workstream F: a draft (default approval_status) activity's
-    # economic_treatment must not drive an official monetary curve, on top
-    # of the pre-existing approved-cost-mapping requirement.
+    """REQ-CURVE-001 (PR G2A.6c workstream F): a draft (default
+    approval_status) activity's economic_treatment must not drive an
+    official monetary curve, on top of the pre-existing approved-cost-
+    mapping requirement."""
     specs, costs = _governed_inputs_and_costs()
     with pytest.raises(ValueError, match="official mode"):
         _generate(
@@ -1012,6 +1046,10 @@ def test_monetary_curve_is_blocked_in_official_mode_without_approved_activity_go
 def test_monetary_curve_succeeds_in_exploratory_mode_without_approved_activity_governance(
     meta,
 ):
+    """REQ-CURVE-001: exploratory-mode generation skips the activity-
+    approval check (governance_mode="exploratory"), but the cost-mapping
+    requirement is never waived - confirming cost-mapping and activity
+    governance are independently gated."""
     specs, costs = _governed_inputs_and_costs()
     draws = _generate(
         meta,
@@ -1027,6 +1065,9 @@ def test_monetary_curve_succeeds_in_exploratory_mode_without_approved_activity_g
 
 
 def test_reference_context_migrates_legacy_spend_names():
+    """REQ-CURVE-001: CurveReferenceContext.from_dict migrates the legacy
+    other_channel_spend/counterfactual_spend field names to their current
+    other_channel_media_input/counterfactual_value equivalents."""
     legacy = {
         "reference_context_id": "legacy",
         "mode": "steady_state_reference",
@@ -1163,3 +1204,31 @@ class TestReferenceContextCompleteness:
         )
         # an explicit zero is a persisted governed value, not a silent default
         validate_reference_context_completeness(context, meta, params)
+
+    # -----------------------------------------------------------------
+    # Corrective PR B, finding 11: non-finite values must be rejected at
+    # construction (CurveReferenceContext.__post_init__), not merely
+    # accepted because key-coverage completeness passes.
+    # -----------------------------------------------------------------
+
+    def test_non_finite_promo_value_rejected_at_construction(self):
+        base = _contexts()["UK"]
+        with pytest.raises(ValueError, match="promo values must be finite"):
+            dataclasses.replace(base, promo={**base.promo, "fh_new": float("nan")})
+
+    def test_non_finite_control_value_rejected_at_construction(self):
+        base = _contexts()["UK"]
+        with pytest.raises(ValueError, match="control values must be finite"):
+            dataclasses.replace(base, controls={"macro": float("inf")})
+
+    def test_non_finite_outcome_control_value_rejected_at_construction(self):
+        base = _contexts()["UK"]
+        with pytest.raises(ValueError, match="outcome-control values must be finite"):
+            dataclasses.replace(
+                base, outcome_controls={"fh_new": {"unemployment": float("nan")}}
+            )
+
+    def test_non_finite_fourier_term_rejected_at_construction(self):
+        base = _contexts()["UK"]
+        with pytest.raises(ValueError, match="fourier terms must be finite"):
+            dataclasses.replace(base, fourier=(float("nan"),))
