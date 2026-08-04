@@ -28,6 +28,7 @@ from ancestry_mmm.core.persistence import (
     import_project,
     export_excel_summary,
     reconstruct_model_state,
+    replace_curve_artifact_store,
     resolve_imported_outcome_approvals,
     verify_imported_approval,
     UnsafeZipEntryError,
@@ -503,21 +504,17 @@ if uploaded_zip is not None and st.button("Import bundle"):
                     )
                 ).stem,
             )
+        # Corrective PR A5: importing a bundle must atomically replace the
+        # destination project's official-artifact store, not merge into it -
+        # unconditionally, including when the imported bundle has zero
+        # official curve artifacts (replace_curve_artifact_store always
+        # clears the destination first, regardless of what the bundle
+        # contains).
+        restored_artifact_dir = curve_artifact_store_dir()
+        replace_curve_artifact_store(imported, restored_artifact_dir)
         if imported.get("curve_artifact_files") or imported.get(
             "curve_artifact_binary_files"
         ):
-            restored_artifact_dir = curve_artifact_store_dir()
-            restored_artifact_dir.mkdir(parents=True, exist_ok=True)
-            for filename, contents in imported["curve_artifact_files"].items():
-                target = restored_artifact_dir / Path(filename)
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(contents)
-            for filename, contents in imported.get(
-                "curve_artifact_binary_files", {}
-            ).items():
-                target = restored_artifact_dir / Path(filename)
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_bytes(contents)
             # PR 96B: reload the restored store immediately - this both
             # verifies every artifact's chain/extra fingerprints (the
             # "checksum" check for a clean-environment round-trip) and

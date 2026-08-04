@@ -525,6 +525,10 @@ def _write_official_artifact(store_dir: Path, approval_dict: dict) -> None:
             "outcome_id": "New",
             "definition_version": "1.0",
         },
+        outcome_approval_snapshot={
+            "approval_id": "apr-official-1",
+            "allowed_uses": ["curve_publication", "headline_reporting"],
+        },
     )
     metadata = dataclasses.replace(
         metadata,
@@ -544,6 +548,7 @@ def _write_official_artifact(store_dir: Path, approval_dict: dict) -> None:
             "pathway_role": ["direct"] * 4,
             "spend_point": [0.0, 100.0, 200.0, 300.0],
             "local_spend": [0.0, 100.0, 200.0, 300.0],
+            "posterior_draw": [0] * 4,
             "incremental_response": [0.0, 2.0, 3.0, 3.5],
             "planning_support_eligible": [True] * 4,
             "planning_blocked_reason": [""] * 4,
@@ -552,6 +557,7 @@ def _write_official_artifact(store_dir: Path, approval_dict: dict) -> None:
     summaries = draws.drop(
         columns=[
             "local_spend",
+            "posterior_draw",
             "incremental_response",
             "planning_support_eligible",
             "planning_blocked_reason",

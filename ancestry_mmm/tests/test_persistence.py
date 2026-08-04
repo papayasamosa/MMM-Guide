@@ -49,6 +49,7 @@ from ancestry_mmm.core.persistence import (
     export_project,
     import_project,
     reconstruct_model_state,
+    replace_curve_artifact_store,
     resolve_imported_outcome_approvals,
     verify_imported_approval,
 )
@@ -704,6 +705,78 @@ def test_official_curve_artifact_import_audit_reports_malformed_entries(tmp_path
         "curve_artifact_binary_files": binary_files,
     }
     assert _count_loaded_curve_artifacts(imported) == 1
+
+
+def _bundle_files_for_store(store_dir) -> dict:
+    """Materialise a store directory's artifact files into the
+    curve_artifact_files/curve_artifact_binary_files shape an imported
+    bundle dict carries them in (mirrors export_project's own encoding)."""
+    text_files = {}
+    binary_files = {}
+    for artifact_dir in sorted(p for p in store_dir.iterdir() if p.is_dir()):
+        for f in artifact_dir.rglob("*.json"):
+            text_files[str(f.relative_to(store_dir))] = f.read_text()
+        for f in artifact_dir.rglob("*"):
+            if f.is_file() and f.suffix.lower() != ".json":
+                binary_files[str(f.relative_to(store_dir))] = f.read_bytes()
+    return {
+        "curve_artifact_files": text_files,
+        "curve_artifact_binary_files": binary_files,
+    }
+
+
+class TestReplaceCurveArtifactStore:
+    """Corrective PR A5 (review-debt finding 11, PR #104): importing a
+    bundle must atomically replace the destination's official-artifact
+    store, never merge into it."""
+
+    def test_populates_an_empty_destination(self, tmp_path):
+        bundle_store = tmp_path / "bundle-store"
+        _write_official_artifact(bundle_store, "art-new")
+        imported = _bundle_files_for_store(bundle_store)
+
+        destination = tmp_path / "destination"
+        replace_curve_artifact_store(imported, destination)
+
+        result = load_curve_artifact_store(destination)
+        assert {a.metadata.artifact_id for a in result.loaded} == {"art-new"}
+
+    def test_replaces_rather_than_merges_when_destination_has_prior_artifacts(
+        self, tmp_path
+    ):
+        destination = tmp_path / "destination"
+        _write_official_artifact(destination, "art-old")
+
+        bundle_store = tmp_path / "bundle-store"
+        _write_official_artifact(bundle_store, "art-new")
+        imported = _bundle_files_for_store(bundle_store)
+
+        replace_curve_artifact_store(imported, destination)
+
+        result = load_curve_artifact_store(destination)
+        artifact_ids = {a.metadata.artifact_id for a in result.loaded}
+        assert artifact_ids == {"art-new"}
+        assert "art-old" not in artifact_ids
+        assert not (destination / "art-old").exists()
+
+    def test_empty_bundle_clears_a_non_empty_destination(self, tmp_path):
+        destination = tmp_path / "destination"
+        _write_official_artifact(destination, "art-old")
+        assert (destination / "art-old").exists()
+
+        # A bundle with genuinely zero official curve artifacts - the key
+        # may be entirely absent, not just an empty dict.
+        imported: dict = {}
+        replace_curve_artifact_store(imported, destination)
+
+        assert not (destination / "art-old").exists()
+        result = load_curve_artifact_store(destination)
+        assert result.loaded == ()
+
+    def test_empty_bundle_leaves_a_nonexistent_destination_absent(self, tmp_path):
+        destination = tmp_path / "destination-never-created"
+        replace_curve_artifact_store({}, destination)
+        assert not destination.exists()
 
 
 @pytest.mark.parametrize(
@@ -2494,3 +2567,201 @@ class TestScenariosCheckpointOfficialResumability:
         # Never a generic, uninformative message pretending the scenario
         # was compared against itself.
         assert "incomplete_validation_context" not in reasons
+
+
+# ---------------------------------------------------------------------------
+# Corrective PR A6 (review-debt finding 10, PR #104): the official_curves
+# checkpoint must revalidate each imported curve artifact against the
+# reconstructed imported model identity and a matching current outcome
+# approval - historical fingerprint self-consistency alone (an artifact
+# matching its own stored fingerprints) does not prove the artifact belongs
+# to *this* bundle's model.
+# ---------------------------------------------------------------------------
+
+
+def _matching_outcome_def_and_approval(allowed_uses=("curve_publication",)):
+    from ancestry_mmm.core.outcome_approval import (
+        OutcomeApproval,
+        fingerprint_outcome_definition,
+    )
+    from ancestry_mmm.core.outcomes import (
+        FAMILY_HISTORY,
+        METRIC_KEY_FH_GSA,
+        OutcomeDefinition,
+    )
+
+    outcome_def = OutcomeDefinition(
+        outcome_id="New",
+        product=FAMILY_HISTORY,
+        segment="New",
+        metric="GSA",
+        metric_key=METRIC_KEY_FH_GSA,
+        source_column="fh_new_gsa",
+        unit="GSA",
+        aggregation_type="count",
+        event_definition="A new subscriber",
+        date_basis="event_date",
+        cohort_or_attribution_basis="signup_cohort",
+        completeness_or_maturity_policy="Mature after 12 weeks",
+        exclusions="Excludes internal/test accounts",
+        reconciliation_source="Finance report",
+        business_owner="Analytics",
+        definition_version="1.0",
+    )
+    def_fp = fingerprint_outcome_definition(outcome_def)
+    approval_record = OutcomeApproval(
+        approval_id="apr-gsa",
+        outcome_id="New",
+        definition_fingerprint=def_fp,
+        status="approved",
+        allowed_uses=allowed_uses,
+        approved_by="Jane Analyst",
+        approved_at="2026-01-01",
+    )
+    return outcome_def, approval_record
+
+
+class TestOfficialCurvesCheckpointRevalidation:
+    def test_matching_official_curve_artifact_satisfies_checkpoint(
+        self, tmp_path, consistent_project, consistent_meta
+    ):
+        outcome_def, approval_record = _matching_outcome_def_and_approval()
+        approval = ModelApproval.from_dict(consistent_project["model_approval"])
+
+        project = dict(consistent_project)
+        project["raw_sources"] = {"media": project["transformed_data"].copy()}
+        project["model_meta"] = consistent_meta
+        project["outcome_definitions"] = [outcome_def.to_dict()]
+        project["outcome_approvals"] = [approval_record.to_dict()]
+        project["workflow_state"] = {"checkpoint": "official_curves"}
+
+        artifact_metadata = replace(
+            _official_artifact_metadata("art-matching"),
+            model_identity_snapshot={
+                "model_run_id": consistent_project["model_run_id"],
+                "data_fingerprint": approval.data_fingerprint,
+                "model_spec_fingerprint": approval.model_spec_fingerprint,
+                "posterior_fingerprint": approval.posterior_fingerprint,
+            },
+            outcome_definition_snapshot=outcome_def.to_dict(),
+            outcome_approval_snapshot=approval_record.to_dict(),
+        )
+        artifact_metadata = replace(
+            artifact_metadata,
+            fingerprints=dict(compute_curve_artifact_fingerprints(artifact_metadata)),
+        )
+        artifact_source = tmp_path / "artifact-source"
+        write_curve_artifact(
+            artifact_source / "art-matching",
+            metadata=artifact_metadata,
+            draws=_official_artifact_draws(),
+            summaries=_official_artifact_summaries(),
+        )
+        project["curve_artifact_store_source_dir"] = artifact_source
+
+        imported = import_project(export_project(tmp_path / "bundle.zip", **project))
+        audit = audit_project_resumability(imported)
+
+        assert audit["resumable"] is True
+        assert audit["officially_resumable"] is True, audit["official_blocking_reasons"]
+
+    def test_foreign_artifact_identity_mismatch_blocks_checkpoint(
+        self, tmp_path, consistent_project, consistent_meta
+    ):
+        # The artifact's model_identity_snapshot (run-1/d1/s1/p1, from the
+        # shared _official_artifact_metadata fixture) does not match
+        # consistent_project's actual reconstructed model identity -
+        # simulating an artifact copied from a different project/model.
+        outcome_def, approval_record = _matching_outcome_def_and_approval()
+        project = dict(consistent_project)
+        project["raw_sources"] = {"media": project["transformed_data"].copy()}
+        project["model_meta"] = consistent_meta
+        project["outcome_definitions"] = [outcome_def.to_dict()]
+        project["outcome_approvals"] = [approval_record.to_dict()]
+        project["workflow_state"] = {"checkpoint": "official_curves"}
+
+        artifact_source = tmp_path / "artifact-source"
+        _write_official_artifact(artifact_source, "art-foreign")
+        project["curve_artifact_store_source_dir"] = artifact_source
+
+        imported = import_project(export_project(tmp_path / "bundle.zip", **project))
+        audit = audit_project_resumability(imported)
+
+        assert audit["resumable"] is True
+        assert audit["officially_resumable"] is False
+        reasons = [
+            r
+            for r in audit["official_blocking_reasons"]
+            if r["artefact_type"] == "curve_artifact"
+        ]
+        assert reasons, audit["official_blocking_reasons"]
+        assert reasons[0]["artefact_id"] == "art-foreign"
+        assert "model_identity_mismatch" in reasons[0]["reason"]
+
+    def test_artifact_bound_to_unrelated_approval_blocks_checkpoint(
+        self, tmp_path, consistent_project, consistent_meta
+    ):
+        # Model identity matches, but the only active approval in the
+        # bundle is for a *different* outcome than the one the artifact is
+        # actually bound to - a foreign/unrelated approval must not satisfy
+        # the checkpoint on the artifact's behalf.
+        from ancestry_mmm.core.outcome_approval import fingerprint_outcome_definition
+
+        outcome_def, _matching_approval = _matching_outcome_def_and_approval()
+        unrelated_def, unrelated_approval = _matching_outcome_def_and_approval()
+        unrelated_def = replace(unrelated_def, outcome_id="fh_returning")
+        unrelated_approval = replace(
+            unrelated_approval,
+            approval_id="apr-unrelated",
+            outcome_id="fh_returning",
+            definition_fingerprint=fingerprint_outcome_definition(unrelated_def),
+        )
+        approval = ModelApproval.from_dict(consistent_project["model_approval"])
+
+        project = dict(consistent_project)
+        project["raw_sources"] = {"media": project["transformed_data"].copy()}
+        project["model_meta"] = consistent_meta
+        project["outcome_definitions"] = [
+            outcome_def.to_dict(),
+            unrelated_def.to_dict(),
+        ]
+        project["outcome_approvals"] = [unrelated_approval.to_dict()]
+        project["workflow_state"] = {"checkpoint": "official_curves"}
+
+        artifact_metadata = replace(
+            _official_artifact_metadata("art-unrelated-approval"),
+            model_identity_snapshot={
+                "model_run_id": consistent_project["model_run_id"],
+                "data_fingerprint": approval.data_fingerprint,
+                "model_spec_fingerprint": approval.model_spec_fingerprint,
+                "posterior_fingerprint": approval.posterior_fingerprint,
+            },
+            outcome_definition_snapshot=outcome_def.to_dict(),
+            outcome_approval_snapshot={"approval_id": "apr-gsa"},
+        )
+        artifact_metadata = replace(
+            artifact_metadata,
+            fingerprints=dict(compute_curve_artifact_fingerprints(artifact_metadata)),
+        )
+        artifact_source = tmp_path / "artifact-source"
+        write_curve_artifact(
+            artifact_source / "art-unrelated-approval",
+            metadata=artifact_metadata,
+            draws=_official_artifact_draws(),
+            summaries=_official_artifact_summaries(),
+        )
+        project["curve_artifact_store_source_dir"] = artifact_source
+
+        imported = import_project(export_project(tmp_path / "bundle.zip", **project))
+        audit = audit_project_resumability(imported)
+
+        assert audit["resumable"] is True
+        assert audit["officially_resumable"] is False
+        reasons = [
+            r
+            for r in audit["official_blocking_reasons"]
+            if r["artefact_type"] == "curve_artifact"
+        ]
+        assert reasons, audit["official_blocking_reasons"]
+        assert reasons[0]["artefact_id"] == "art-unrelated-approval"
+        assert "no_matching_outcome_approval" in reasons[0]["reason"]
