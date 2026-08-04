@@ -17,7 +17,11 @@ from streamlit.testing.v1 import AppTest
 from ancestry_mmm.core.activities import ActivityDefinition, activity_fit_fingerprint
 from ancestry_mmm.core.approval import create_policy_backed_model_approval
 from ancestry_mmm.core.curve_artifact import load_curve_artifact_store
-from ancestry_mmm.core.media_costs import CostMappingRegistry, IdentitySpendMapping
+from ancestry_mmm.core.media_costs import (
+    CostMappingRegistry,
+    IdentitySpendMapping,
+    PiecewiseLinearCostMapping,
+)
 from ancestry_mmm.core.fingerprint import (
     fingerprint_dataframe,
     fingerprint_model_spec,
@@ -75,9 +79,9 @@ def _outcome_definition() -> OutcomeDefinition:
     )
 
 
-def _meta() -> FHModelMeta:
+def _meta(markets: list | None = None) -> FHModelMeta:
     return FHModelMeta(
-        markets=["UK"],
+        markets=markets or ["UK"],
         outcome_ids=["New"],
         channels=["TV_Brand"],
         dna_channels=[],
@@ -197,22 +201,30 @@ def _policy_backed_governance(model_run_id, data_fp, spec_fp, posterior_fp):
 
 
 def _seed_governed_session_state(
-    at: AppTest, *, allowed_uses=("curve_publication", "headline_reporting")
+    at: AppTest,
+    *,
+    allowed_uses=("curve_publication", "headline_reporting"),
+    markets: list | None = None,
 ) -> None:
-    meta = _meta()
+    markets = markets or ["UK"]
+    meta = _meta(markets)
     trace = _trace(meta)
     transformed_data = pd.DataFrame(
-        {
-            "date": pd.date_range("2024-01-01", periods=16, freq="W"),
-            "market": ["UK"] * 16,
-            "TV_Brand": np.linspace(100.0, 250.0, 16),
-            "fh_new_gsa": np.linspace(10.0, 16.0, 16),
-        }
+        [
+            {
+                "date": d,
+                "market": market,
+                "TV_Brand": 100.0 + i * 10.0,
+                "fh_new_gsa": 10.0 + i * 0.5,
+            }
+            for market in markets
+            for i, d in enumerate(pd.date_range("2024-01-01", periods=16, freq="W"))
+        ]
     )
     model_spec_dict = ModelSpec(
         date_col="date",
         market_col="market",
-        markets=["UK"],
+        markets=markets,
         segment_outcomes={"New": "fh_new_gsa"},
         channels=["TV_Brand"],
     ).to_dict()
@@ -307,6 +319,14 @@ def test_full_governance_generates_and_saves_an_artifact(monkeypatch, tmp_path):
     at = AppTest.from_file(str(PAGE), default_timeout=60)
     _seed_governed_session_state(at)
     at.session_state["project_name"] = "ocg-test-project"
+    # Corrective PR C1: generation is blocked without an explicit, reviewed
+    # confirmation of the reference context for every selected market.
+    # "recent_average" derives from the model frame unconditionally (unlike
+    # the default "period_average", which needs an explicit period that
+    # actually overlaps the fixture's dates).
+    at.session_state["ocg_mode_UK"] = "recent_average"
+    at.session_state["ocg_ctx_confirmed_UK"] = True
+    at.session_state["ocg_spend_points"] = "0, 50, 100, 150, 200"
     at.run()
     assert not at.exception, f"initial load raised: {at.exception}"
 
@@ -353,6 +373,9 @@ def test_artifact_id_collision_is_reported_not_raised(monkeypatch, tmp_path):
     at = AppTest.from_file(str(PAGE), default_timeout=60)
     _seed_governed_session_state(at)
     at.session_state["project_name"] = "ocg-collision-project"
+    at.session_state["ocg_mode_UK"] = "recent_average"
+    at.session_state["ocg_ctx_confirmed_UK"] = True
+    at.session_state["ocg_spend_points"] = "0, 50, 100, 150, 200"
     at.run()
     at.session_state["ocg_artifact_id"] = "art-dup"
     generate_button = next(
@@ -414,6 +437,9 @@ def test_monetary_curve_with_approved_cost_mapping_generates_and_saves_an_artifa
     at.session_state["ocg_local_currency_UK"] = "GBP"
     at.session_state["ocg_reporting_currency"] = "GBP"
     at.session_state["ocg_fx_source"] = "test-fx-provider"
+    at.session_state["ocg_mode_UK"] = "recent_average"
+    at.session_state["ocg_ctx_confirmed_UK"] = True
+    at.session_state["ocg_spend_points"] = "0, 50, 100, 150, 200"
     at.run()
     assert not at.exception, f"initial monetary load raised: {at.exception}"
 
@@ -447,6 +473,9 @@ def test_monetary_curve_without_cost_mapping_blocks_generation(monkeypatch, tmp_
     at.session_state["ocg_local_currency_UK"] = "GBP"
     at.session_state["ocg_reporting_currency"] = "GBP"
     at.session_state["ocg_fx_source"] = "test-fx-provider"
+    at.session_state["ocg_mode_UK"] = "recent_average"
+    at.session_state["ocg_ctx_confirmed_UK"] = True
+    at.session_state["ocg_spend_points"] = "0, 50, 100, 150, 200"
     at.run()
     assert not at.exception, f"initial monetary load raised: {at.exception}"
 
@@ -471,3 +500,149 @@ def test_cost_mapping_grid_reports_malformed_rows_without_raising(monkeypatch):
     # No cost mapping has been saved yet, so the default grid row (blank
     # currency) is surfaced as a row-level error, not raised out of the page.
     assert any("Row 1:" in (e.value or "") for e in at.error)
+
+
+def test_reference_context_confirmation_is_required_before_generation(
+    monkeypatch, tmp_path
+):
+    """Corrective PR C1: generation must be blocked until an analyst has
+    explicitly reviewed and confirmed every selected market's reference
+    context - never silently accepted, derived-from-frame or not."""
+    import ancestry_mmm.utils.session_state as ss
+
+    monkeypatch.setattr(ss, "CURVE_ARTIFACT_ROOT", tmp_path)
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_governed_session_state(at)
+    at.session_state["project_name"] = "ocg-unconfirmed-project"
+    at.session_state["ocg_spend_points"] = "0, 50, 100, 150, 200"
+    at.run()
+    assert not at.exception, f"initial load raised: {at.exception}"
+
+    at.session_state["ocg_artifact_id"] = "art-unconfirmed"
+    generate_button = next(
+        b for b in at.button if b.label == "Generate and save official curve artifact"
+    )
+    generate_button.click().run()
+    assert not at.exception, f"generate click raised: {at.exception}"
+    assert any(
+        "Review and confirm the reference context" in (e.value or "") for e in at.error
+    )
+    assert not any(
+        "Saved official curve artifact" in (s.value or "") for s in at.success
+    )
+
+
+def test_blank_spend_axis_derives_per_channel_axis_from_support(monkeypatch, tmp_path):
+    """Corrective PR C3: leaving the diagnostic spend axis blank derives each
+    channel's axis from its own planning support range instead of forcing
+    one axis, in one unit, onto every channel regardless of what it
+    actually measures."""
+    import ancestry_mmm.utils.session_state as ss
+
+    monkeypatch.setattr(ss, "CURVE_ARTIFACT_ROOT", tmp_path)
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_governed_session_state(at)
+    at.session_state["project_name"] = "ocg-per-channel-axis-project"
+    at.session_state["ocg_mode_UK"] = "recent_average"
+    at.session_state["ocg_ctx_confirmed_UK"] = True
+    # ocg_spend_points is left at its blank default - the only axis source
+    # is the derived support range opted into below.
+    at.session_state["ocg_support_UK_TV_Brand_include"] = True
+    at.run()
+    assert not at.exception, f"initial load raised: {at.exception}"
+
+    at.session_state["ocg_artifact_id"] = "art-per-channel-axis"
+    generate_button = next(
+        b for b in at.button if b.label == "Generate and save official curve artifact"
+    )
+    generate_button.click().run()
+    assert not at.exception, f"generate click raised: {at.exception}"
+    assert any("Saved official curve artifact" in (s.value or "") for s in at.success)
+
+
+def test_deselecting_a_market_generates_only_for_the_selected_subset(
+    monkeypatch, tmp_path
+):
+    """Corrective PR C4: generation must honor the analyst's market
+    selection - deselecting a market previously still required that
+    market's reference context/support and made generation fail outright
+    with a ValueError from the fitted model's full market list."""
+    import ancestry_mmm.utils.session_state as ss
+
+    monkeypatch.setattr(ss, "CURVE_ARTIFACT_ROOT", tmp_path)
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_governed_session_state(at, markets=["UK", "AU"])
+    at.session_state["project_name"] = "ocg-market-subset-project"
+    at.session_state["ocg_markets"] = ["UK"]
+    at.session_state["ocg_mode_UK"] = "recent_average"
+    at.session_state["ocg_ctx_confirmed_UK"] = True
+    at.session_state["ocg_spend_points"] = "0, 50, 100, 150, 200"
+    at.run()
+    assert not at.exception, f"initial load raised: {at.exception}"
+
+    at.session_state["ocg_artifact_id"] = "art-market-subset"
+    generate_button = next(
+        b for b in at.button if b.label == "Generate and save official curve artifact"
+    )
+    generate_button.click().run()
+    assert not at.exception, f"generate click raised: {at.exception}"
+    assert any("Saved official curve artifact" in (s.value or "") for s in at.success)
+
+    store_dir = tmp_path / "ocg-market-subset-project"
+    result = load_curve_artifact_store(store_dir, raise_on_malformed=False)
+    assert not result.malformed
+    assert set(result.loaded[0].draws["market"]) == {"UK"}
+
+
+def test_cost_mapping_editor_preserves_allow_extrapolation_and_supersedes_id(
+    monkeypatch, tmp_path
+):
+    """Corrective PR C7: allow_extrapolation and supersedes_mapping_id must
+    round-trip through the cost-mapping data_editor grid unedited - both
+    previously reverted to their dataclass defaults on every save, even
+    with no edit at all."""
+    import ancestry_mmm.utils.session_state as ss
+
+    monkeypatch.setattr(ss, "CURVE_ARTIFACT_ROOT", tmp_path)
+
+    registry = CostMappingRegistry(
+        [
+            PiecewiseLinearCostMapping(
+                mapping_id="UK-TV_Brand-cost",
+                market="UK",
+                channel="TV_Brand",
+                currency="GBP",
+                cost_context_id="default",
+                approval_status="approved",
+                approved_by="reviewer",
+                approved_at="2026-01-01",
+                owner="Analytics",
+                approval_note="approved for test",
+                last_reviewed_at="2026-01-01",
+                spend_knots=(0.0, 100.0),
+                media_input_knots=(0.0, 1000.0),
+                allow_extrapolation=True,
+                supersedes_mapping_id="UK-TV_Brand-cost-v1",
+            )
+        ]
+    )
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_governed_session_state(at)
+    at.session_state["media_cost_mappings"] = registry.to_dict()
+    at.session_state["ocg_curve_type"] = _MONETARY_RADIO_LABEL
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+
+    save_button = next(b for b in at.button if b.label == "Save cost mappings")
+    save_button.click().run()
+    assert not at.exception, f"save click raised: {at.exception}"
+
+    saved = CostMappingRegistry.from_dict(at.session_state["media_cost_mappings"])
+    saved_mapping = saved.resolve("UK", "TV_Brand", "default")
+    assert saved_mapping is not None
+    assert saved_mapping.allow_extrapolation is True
+    assert saved_mapping.supersedes_mapping_id == "UK-TV_Brand-cost-v1"

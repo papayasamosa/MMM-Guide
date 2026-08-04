@@ -849,20 +849,32 @@ def _currency_metadata(
     currencies = dict(currency_by_market or {})
     rates = dict(currency_rates or {})
     multi_market = len(meta.markets) > 1
-    if multi_market:
+    # A single-market curve that converts its local currency to a different
+    # reporting currency needs exactly the same FX provenance a multi-market
+    # curve does - gating these checks on market count alone let a
+    # single-market conversion through with no as-of date, no source, and no
+    # validated rate (Corrective PR C8).
+    requires_conversion = multi_market or (
+        bool(reporting_currency)
+        and any(
+            currencies.get(market) and currencies[market] != reporting_currency
+            for market in meta.markets
+        )
+    )
+    if requires_conversion:
         if set(currencies) != set(meta.markets):
             raise ValueError(
-                "Multi-market curves require an explicit ISO currency for every market"
+                "Currency conversion requires an explicit ISO currency for every market"
             )
         if not _is_iso_currency(reporting_currency):
             raise ValueError(
-                "Multi-market curves require an explicit ISO reporting currency"
+                "Currency conversion requires an explicit ISO reporting currency"
             )
         if not fx_as_of_date:
-            raise ValueError("Multi-market curves require an FX as-of date")
+            raise ValueError("Currency conversion requires an FX as-of date")
         pd.Timestamp(fx_as_of_date)
         if not fx_source:
-            raise ValueError("Multi-market curves require an explicit FX source")
+            raise ValueError("Currency conversion requires an explicit FX source")
     result = {}
     for market in meta.markets:
         local = currencies.get(market)
@@ -873,7 +885,7 @@ def _currency_metadata(
             raise ValueError(f"Invalid reporting currency: {reporting}")
         rate = 1.0 if local == reporting else rates.get((local, reporting))
         valid = rate is not None and np.isfinite(rate) and rate > 0
-        if multi_market and not valid:
+        if requires_conversion and not valid:
             raise ValueError(f"Missing valid FX rate for {local}->{reporting}")
         result[market] = {
             "local_currency": local,

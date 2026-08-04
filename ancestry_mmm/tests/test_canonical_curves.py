@@ -635,6 +635,68 @@ def test_multi_market_currency_governance_and_conversion(meta):
     assert set(au["fx_source"]) == {"test-fx-provider"}
 
 
+def test_single_market_currency_conversion_requires_fx_evidence(meta):
+    """REQ-CURVE-001 (Corrective PR C8): a single-market curve that converts
+    its local currency to a different reporting currency requires exactly
+    the same FX provenance a multi-market curve does - gating these checks
+    on market count alone let a single-market conversion through with no
+    as-of date, no source, and no validated rate."""
+    single_market_meta = dataclasses.replace(meta, markets=["UK"])
+    contexts = {"UK": _contexts()["UK"]}
+    with pytest.raises(ValueError, match="FX as-of date"):
+        generate_canonical_curve_draws(
+            model_run_id="run",
+            meta=single_market_meta,
+            trace=_trace(),
+            n_draws=1,
+            reference_contexts=contexts,
+            spend_points=[10],
+            currency_by_market={"UK": "GBP"},
+            reporting_currency="USD",
+        )
+    with pytest.raises(ValueError, match="FX rate"):
+        generate_canonical_curve_draws(
+            model_run_id="run",
+            meta=single_market_meta,
+            trace=_trace(),
+            n_draws=1,
+            reference_contexts=contexts,
+            spend_points=[10],
+            currency_by_market={"UK": "GBP"},
+            reporting_currency="USD",
+            fx_as_of_date="2026-07-01",
+            fx_source="test-fx-provider",
+        )
+    draws = generate_canonical_curve_draws(
+        model_run_id="run",
+        meta=single_market_meta,
+        trace=_trace(),
+        n_draws=1,
+        reference_contexts=contexts,
+        spend_points=[10],
+        currency_by_market={"UK": "GBP"},
+        reporting_currency="USD",
+        fx_as_of_date="2026-07-01",
+        fx_source="test-fx-provider",
+        currency_rates={("GBP", "USD"): 1.25},
+    )
+    assert set(draws["fx_rate"]) == {1.25}
+
+    # No conversion is actually requested (reporting_currency left unset, so
+    # it defaults to each market's own local currency) - no FX evidence is
+    # required in that case, single market or not.
+    unconverted = generate_canonical_curve_draws(
+        model_run_id="run",
+        meta=single_market_meta,
+        trace=_trace(),
+        n_draws=1,
+        reference_contexts=contexts,
+        spend_points=[10],
+        currency_by_market={"UK": "GBP"},
+    )
+    assert set(unconverted["fx_rate"]) == {1.0}
+
+
 def test_cross_channel_aggregation_requires_explicit_portfolio_path(meta):
     draws = _generate(meta)
     with pytest.raises(ValueError, match="portfolio path"):

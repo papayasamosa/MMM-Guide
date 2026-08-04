@@ -5,8 +5,10 @@ curves and monetary curves (governed cost mappings + currency/FX evidence).
 """
 
 import sys
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
+from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -29,7 +31,12 @@ from ancestry_mmm.components import (
 )
 from ancestry_mmm.core.activities import ActivityDefinition, activity_fit_fingerprint
 from ancestry_mmm.core.approval import ModelApproval
-from ancestry_mmm.core.canonical_curves import CONTEXT_MODES, CurveReferenceContext
+from ancestry_mmm.core.canonical_curves import (
+    CONTEXT_MODES,
+    CurveReferenceContext,
+    reference_context_from_model_frame,
+    support_from_model_frame,
+)
 from ancestry_mmm.core.fingerprint import (
     fingerprint_dataframe,
     fingerprint_model_spec,
@@ -45,6 +52,7 @@ from ancestry_mmm.core.media_costs import (
     PiecewiseLinearCostMapping,
     UploadedPlanCostMapping,
     SUPPORTED_METHODS,
+    derive_monetary_support,
 )
 from ancestry_mmm.core.model_identity import ModelIdentity
 from ancestry_mmm.core.outcome_approval import OutcomeApproval
@@ -88,6 +96,7 @@ _COST_MAPPING_GRID_COLUMNS = [
     "cost_per_media_input",
     "spend_knots",
     "media_input_knots",
+    "allow_extrapolation",
     "plan_id",
     "source",
     "effective_period_start",
@@ -99,11 +108,20 @@ _COST_MAPPING_GRID_COLUMNS = [
     "owner",
     "approval_note",
     "last_reviewed_at",
+    "supersedes_mapping_id",
 ]
 
 
 def _knots_from_text(text: str) -> tuple:
     return tuple(float(v.strip()) for v in str(text).split(",") if v.strip())
+
+
+def _as_bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "1", "yes"}
+    return bool(value)
 
 
 def _cost_mapping_from_row(row: dict) -> MediaCostMapping:
@@ -140,6 +158,9 @@ def _cost_mapping_from_row(row: dict) -> MediaCostMapping:
         last_reviewed_at=str(row["last_reviewed_at"]) or None
         if row.get("last_reviewed_at")
         else None,
+        supersedes_mapping_id=str(row["supersedes_mapping_id"]) or None
+        if row.get("supersedes_mapping_id")
+        else None,
     )
     if method == "identity_spend":
         return IdentitySpendMapping(**common)
@@ -147,16 +168,19 @@ def _cost_mapping_from_row(row: dict) -> MediaCostMapping:
         return FixedCostPerUnitMapping(
             **common, cost_per_media_input=float(row["cost_per_media_input"])
         )
+    allow_extrapolation = _as_bool(row.get("allow_extrapolation", False))
     if method == "piecewise_linear":
         return PiecewiseLinearCostMapping(
             **common,
             spend_knots=_knots_from_text(row.get("spend_knots", "")),
             media_input_knots=_knots_from_text(row.get("media_input_knots", "")),
+            allow_extrapolation=allow_extrapolation,
         )
     return UploadedPlanCostMapping(
         **common,
         spend_knots=_knots_from_text(row.get("spend_knots", "")),
         media_input_knots=_knots_from_text(row.get("media_input_knots", "")),
+        allow_extrapolation=allow_extrapolation,
         plan_id=str(row.get("plan_id") or ""),
     )
 
@@ -350,6 +374,13 @@ selected_markets = st.multiselect(
 if not selected_markets:
     st.info("Select at least one market to continue.")
     st.stop()
+# Generation must only ever cover the markets the analyst actually selected
+# (Corrective PR C4) - meta.markets governs both the completeness checks and
+# the (market, channel) iteration inside generate_canonical_curve_draws, so
+# passing the full fitted meta through would either require every
+# deselected market's inputs too or silently generate for markets nobody
+# asked for.
+meta_selected = replace(meta, markets=selected_markets)
 
 fourier_length = len(next(iter(params.gamma_fourier.values())))
 
@@ -374,6 +405,7 @@ reporting_currency = ""
 currency_rates: dict[tuple[str, str], float] = {}
 fx_as_of_date_value = ""
 fx_source_value = ""
+cost_as_of_date_value = ""
 
 if curve_type == "monetary":
     st.caption(
@@ -404,6 +436,7 @@ if curve_type == "monetary":
                 "method": "identity_spend",
                 "currency": "",
                 "approval_status": "draft",
+                "allow_extrapolation": False,
             }
             for market in selected_markets
             for channel in meta.channels
@@ -426,6 +459,9 @@ if curve_type == "monetary":
             "approval_status": st.column_config.SelectboxColumn(
                 "Approval", options=_COST_MAPPING_APPROVAL_STATUSES, required=True
             ),
+            "allow_extrapolation": st.column_config.CheckboxColumn(
+                "Allow extrapolation", default=False
+            ),
         },
     )
     cost_mapping_rows = cost_editor.fillna("").to_dict("records")
@@ -445,6 +481,19 @@ if curve_type == "monetary":
             )
     cost_mapping_registry = CostMappingRegistry.from_dict(
         get_state("media_cost_mappings")
+    )
+    cost_as_of_date_value = str(
+        st.date_input(
+            "Cost mapping as-of date",
+            value=date.today(),
+            key="ocg_cost_as_of_date",
+            help=(
+                "Resolves which effective cost mapping applies for every "
+                "(market, channel) - distinct from the FX as-of date below. "
+                "Required whenever more than one effective mapping could "
+                "otherwise exist for the same cell (REQ-CURVE-001)."
+            ),
+        )
     )
 
     st.markdown("**Currency & FX**")
@@ -479,11 +528,16 @@ if curve_type == "monetary":
 st.markdown("---")
 st.markdown("### 3. Reference context per market")
 st.caption(
-    "Every field below is required explicitly - REQ-CURVE-001 forbids an "
-    "implicit zero, historical mean, or unstated default standing in for a "
-    "reference-context value."
+    "Every mode except 'specific_scenario' is derived directly from the "
+    "prepared model frame's actual history for that market - never an "
+    "implicit zero or unstated default (REQ-CURVE-001). 'specific_scenario' "
+    "remains fully explicit by design. Either way, an analyst must review "
+    "and explicitly confirm each market's context below before it can be "
+    "used to generate - an unreviewed context, derived or not, can never be "
+    "silently accepted."
 )
 reference_contexts: dict[str, CurveReferenceContext] = {}
+reference_context_confirmed: dict[str, bool] = {}
 for market in selected_markets:
     with st.expander(f"Reference context - {market}", expanded=False):
         mode = st.selectbox("Mode", sorted(CONTEXT_MODES), key=f"ocg_mode_{market}")
@@ -492,85 +546,158 @@ for market in selected_markets:
             value=f"{market}-{mode}",
             key=f"ocg_ctx_id_{market}",
         )
-        trend = st.number_input("Trend", value=0.0, key=f"ocg_trend_{market}")
-        st.markdown("**Fourier terms** (must match the fitted dimension)")
-        fourier_cols = st.columns(max(fourier_length, 1))
-        fourier = tuple(
-            fourier_cols[i].number_input(
-                f"Fourier[{i}]", value=0.0, key=f"ocg_fourier_{market}_{i}"
-            )
-            for i in range(fourier_length)
-        )
-        st.markdown("**Promotion reference value per outcome**")
-        promo = {
-            outcome_id: st.number_input(
-                outcome_id, value=0.0, key=f"ocg_promo_{market}_{outcome_id}"
-            )
-            for outcome_id in meta.outcome_ids
-        }
-        st.markdown("**Common controls**")
-        controls = {
-            name: st.number_input(name, value=0.0, key=f"ocg_control_{market}_{name}")
-            for name in params.control_coef
-        }
-        st.markdown("**Outcome-specific controls**")
-        # Only outcomes that actually appear in params.outcome_control_coef
-        # may appear here at all - validate_reference_context_completeness
-        # treats any other outcome key as an unknown extra (core/
-        # canonical_curves.py's exact-key-set-coverage rule), even an
-        # outcome that is otherwise perfectly valid for every other field.
-        outcome_controls = {}
-        for outcome_id, fitted_names in params.outcome_control_coef.items():
-            if not fitted_names:
-                outcome_controls[outcome_id] = {}
-                continue
-            outcome_controls[outcome_id] = {
-                name: st.number_input(
-                    f"{outcome_id} / {name}",
-                    value=0.0,
-                    key=f"ocg_outcome_control_{market}_{outcome_id}_{name}",
-                )
-                for name in fitted_names
-            }
-        st.markdown("**Other-channel model input** (every fitted channel)")
-        other_channel_media_input = {
-            channel: st.number_input(
-                channel, value=0.0, key=f"ocg_other_channel_{market}_{channel}"
-            )
-            for channel in meta.channels
-        }
-        c1, c2 = st.columns(2)
-        counterfactual_value = c1.number_input(
+        counterfactual_value = st.number_input(
             "Counterfactual value", value=0.0, key=f"ocg_cf_value_{market}"
         )
-        c2.text_input(
-            "Counterfactual axis type",
-            value=curve_type,
-            disabled=True,
-            key=f"ocg_cf_axis_{market}",
+
+        context: Optional[CurveReferenceContext] = None
+        if mode == "specific_scenario":
+            st.caption(
+                "Explicit hypothetical scenario - every value below is "
+                "entered directly; nothing is derived from the model frame."
+            )
+            trend = st.number_input("Trend", value=0.0, key=f"ocg_trend_{market}")
+            st.markdown("**Fourier terms** (must match the fitted dimension)")
+            fourier_cols = st.columns(max(fourier_length, 1))
+            fourier = tuple(
+                fourier_cols[i].number_input(
+                    f"Fourier[{i}]", value=0.0, key=f"ocg_fourier_{market}_{i}"
+                )
+                for i in range(fourier_length)
+            )
+            st.markdown("**Promotion reference value per outcome**")
+            promo = {
+                outcome_id: st.number_input(
+                    outcome_id, value=0.0, key=f"ocg_promo_{market}_{outcome_id}"
+                )
+                for outcome_id in meta.outcome_ids
+            }
+            st.markdown("**Common controls**")
+            controls = {
+                name: st.number_input(
+                    name, value=0.0, key=f"ocg_control_{market}_{name}"
+                )
+                for name in params.control_coef
+            }
+            st.markdown("**Outcome-specific controls**")
+            # Only outcomes that actually appear in params.outcome_control_coef
+            # may appear here at all - validate_reference_context_completeness
+            # treats any other outcome key as an unknown extra (core/
+            # canonical_curves.py's exact-key-set-coverage rule), even an
+            # outcome that is otherwise perfectly valid for every other field.
+            outcome_controls = {}
+            for outcome_id, fitted_names in params.outcome_control_coef.items():
+                if not fitted_names:
+                    outcome_controls[outcome_id] = {}
+                    continue
+                outcome_controls[outcome_id] = {
+                    name: st.number_input(
+                        f"{outcome_id} / {name}",
+                        value=0.0,
+                        key=f"ocg_outcome_control_{market}_{outcome_id}_{name}",
+                    )
+                    for name in fitted_names
+                }
+            st.markdown("**Other-channel model input** (every fitted channel)")
+            other_channel_media_input = {
+                channel: st.number_input(
+                    channel, value=0.0, key=f"ocg_other_channel_{market}_{channel}"
+                )
+                for channel in meta.channels
+            }
+            p1, p2 = st.columns(2)
+            reference_period_start = p1.date_input(
+                "Reference period start",
+                value=date.today(),
+                key=f"ocg_ref_start_{market}",
+            )
+            reference_period_end = p2.date_input(
+                "Reference period end", value=date.today(), key=f"ocg_ref_end_{market}"
+            )
+            context = CurveReferenceContext(
+                reference_context_id=reference_context_id,
+                mode=mode,
+                market=market,
+                trend=trend,
+                fourier=fourier,
+                promo=promo,
+                controls=controls,
+                outcome_controls=outcome_controls,
+                other_channel_media_input=other_channel_media_input,
+                counterfactual_value=counterfactual_value,
+                counterfactual_axis_type=curve_type,
+                reference_period_start=str(reference_period_start),
+                reference_period_end=str(reference_period_end),
+            )
+        else:
+            # market (not meta_selected.markets) is looked up as a position
+            # into meta.markets, matching frame["market_idx"]'s original
+            # fit-time market encoding - the subset meta built for C4 must
+            # never be used for a frame-derived lookup like this one.
+            period_start = period_end = specific_week = None
+            if mode == "period_average":
+                pp1, pp2 = st.columns(2)
+                period_start = str(
+                    pp1.date_input(
+                        "Period start",
+                        value=date.today(),
+                        key=f"ocg_period_start_{market}",
+                    )
+                )
+                period_end = str(
+                    pp2.date_input(
+                        "Period end", value=date.today(), key=f"ocg_period_end_{market}"
+                    )
+                )
+            elif mode == "specific_week":
+                specific_week = str(
+                    st.date_input(
+                        "Specific week",
+                        value=date.today(),
+                        key=f"ocg_specific_week_{market}",
+                    )
+                )
+            try:
+                context = reference_context_from_model_frame(
+                    frame,
+                    meta,
+                    market=market,
+                    mode=mode,
+                    reference_context_id=reference_context_id,
+                    period_start=period_start,
+                    period_end=period_end,
+                    specific_week=specific_week,
+                    counterfactual_value=counterfactual_value,
+                    counterfactual_axis_type=curve_type,
+                )
+            except ValueError as exc:
+                st.error(f"Could not derive a reference context for {market}: {exc}")
+            else:
+                st.markdown(
+                    "**Derived from the model frame** (review before confirming)"
+                )
+                st.write(
+                    {
+                        "trend": context.trend,
+                        "fourier": context.fourier,
+                        "promo": context.promo,
+                        "controls": context.controls,
+                        "outcome_controls": context.outcome_controls,
+                        "other_channel_media_input": context.other_channel_media_input,
+                        "reference_period_start": context.reference_period_start,
+                        "reference_period_end": context.reference_period_end,
+                    }
+                )
+
+        confirmed = st.checkbox(
+            f"I have reviewed and confirm the {market} reference context above is correct",
+            value=False,
+            key=f"ocg_ctx_confirmed_{market}",
+            disabled=context is None,
         )
-        p1, p2 = st.columns(2)
-        reference_period_start = p1.date_input(
-            "Reference period start", value=date.today(), key=f"ocg_ref_start_{market}"
-        )
-        reference_period_end = p2.date_input(
-            "Reference period end", value=date.today(), key=f"ocg_ref_end_{market}"
-        )
-        reference_contexts[market] = CurveReferenceContext(
-            reference_context_id=reference_context_id,
-            mode=mode,
-            market=market,
-            trend=trend,
-            fourier=fourier,
-            promo=promo,
-            controls=controls,
-            outcome_controls=outcome_controls,
-            other_channel_media_input=other_channel_media_input,
-            counterfactual_value=counterfactual_value,
-            counterfactual_axis_type=curve_type,
-            reference_period_start=str(reference_period_start),
-            reference_period_end=str(reference_period_end),
-        )
+        reference_context_confirmed[market] = confirmed and context is not None
+        if context is not None:
+            reference_contexts[market] = context
 
 # ---------------------------------------------------------------------------
 # 4. Model-input support (optional per market/channel - enables planning
@@ -582,29 +709,97 @@ st.markdown("### 4. Model-input support")
 st.caption(
     "Model-input identity/unit metadata (column, unit, unit scale) is "
     "required for every channel below - generation itself needs it to know "
-    "what unit spend_points are expressed in. The observed/planning support "
-    "range is optional per (market, channel): providing it marks that cell "
-    "planning-support-eligible; an omitted range still generates a curve but "
-    "blocks it from planning/optimisation use."
+    "what unit spend_points are expressed in. Observed current/min/max "
+    "support is always derived from the prepared model frame's actual "
+    "history (REQ-CURVE-001 forbids a self-declared observed range); only "
+    "the forward-looking planning min/max remain an explicit analyst "
+    "choice. The support range is optional per (market, channel): providing "
+    "it marks that cell planning-support-eligible; an omitted range still "
+    "generates a curve but blocks it from planning/optimisation use."
 )
+derivation_method = st.selectbox(
+    "Current-spend derivation method (applies to every cell below that "
+    "opts in to a support range)",
+    [
+        "latest_complete_week",
+        "last_4_week_average",
+        "last_13_week_average",
+        "selected_period_average",
+    ],
+    key="ocg_support_method",
+)
+support_period_start = support_period_end = None
+if derivation_method == "selected_period_average":
+    sp1, sp2 = st.columns(2)
+    support_period_start = str(
+        sp1.date_input(
+            "Support period start", value=date.today(), key="ocg_support_period_start"
+        )
+    )
+    support_period_end = str(
+        sp2.date_input(
+            "Support period end", value=date.today(), key="ocg_support_period_end"
+        )
+    )
+
 media_input_specs: dict[tuple[str, str], MediaInputSpec] = {}
-support_by_market_channel: dict[tuple[str, str], MediaInputSupport] = {}
-for market in selected_markets:
+_all_media_input_specs: dict[tuple[str, str], MediaInputSpec] = {}
+for market in meta.markets:
     for channel in meta.channels:
-        key_prefix = f"ocg_support_{market}_{channel}"
-        with st.expander(f"Model input - {market} / {channel}", expanded=False):
-            unit = st.text_input("Unit", value="impressions", key=f"{key_prefix}_unit")
-            unit_scale = st.number_input(
-                "Unit scale", value=1.0, min_value=1e-9, key=f"{key_prefix}_scale"
+        if market in selected_markets:
+            key_prefix = f"ocg_support_{market}_{channel}"
+            unit = st.text_input(
+                f"Unit - {market}/{channel}",
+                value="impressions",
+                key=f"{key_prefix}_unit",
             )
-            media_input_specs[(market, channel)] = MediaInputSpec(
+            unit_scale = st.number_input(
+                f"Unit scale - {market}/{channel}",
+                value=1.0,
+                min_value=1e-9,
+                key=f"{key_prefix}_scale",
+            )
+            spec = MediaInputSpec(
                 market=market,
                 channel=channel,
                 column=channel,
                 unit=unit,
                 unit_scale=unit_scale,
             )
+            media_input_specs[(market, channel)] = spec
+        else:
+            # support_from_model_frame requires a spec for every market in
+            # the *original* fitted meta - never the C4 market subset, since
+            # its market-position mask indexing only lines up against
+            # meta.markets in fit-time order. A deselected market's
+            # placeholder here is never surfaced or used for generation.
+            spec = MediaInputSpec(
+                market=market,
+                channel=channel,
+                column=channel,
+                unit="units",
+                unit_scale=1.0,
+            )
+        _all_media_input_specs[(market, channel)] = spec
 
+try:
+    derived_support = support_from_model_frame(
+        frame,
+        meta,
+        current_spend_method=derivation_method,
+        selected_period_start=support_period_start,
+        selected_period_end=support_period_end,
+        media_input_specs=_all_media_input_specs,
+    )
+except ValueError as exc:
+    st.error(f"Could not derive support from the model frame: {exc}")
+    derived_support = {}
+
+support_by_market_channel: dict[tuple[str, str], object] = {}
+for market in selected_markets:
+    for channel in meta.channels:
+        key_prefix = f"ocg_support_{market}_{channel}"
+        with st.expander(f"Model input - {market} / {channel}", expanded=False):
             include_support = st.checkbox(
                 "Also record observed/planning support for this cell "
                 "(enables planning eligibility)",
@@ -613,63 +808,99 @@ for market in selected_markets:
             )
             if not include_support:
                 continue
-            s1, s2, s3 = st.columns(3)
-            current = s1.number_input("Current", value=0.0, key=f"{key_prefix}_current")
-            observed_min = s2.number_input(
-                "Observed min", value=0.0, key=f"{key_prefix}_obs_min"
-            )
-            observed_max = s3.number_input(
-                "Observed max", value=0.0, key=f"{key_prefix}_obs_max"
-            )
+            derived = derived_support.get((market, channel))
+            if derived is None:
+                st.warning(
+                    "No observed data for this market/channel in the "
+                    "prepared model frame; support cannot be derived."
+                )
+                continue
+            st.markdown("**Derived from the model frame** (review before use)")
+            d1, d2, d3 = st.columns(3)
+            d1.metric("Current", f"{derived.current:,.2f}")
+            d2.metric("Observed min", f"{derived.observed_min:,.2f}")
+            d3.metric("Observed max", f"{derived.observed_max:,.2f}")
             s4, s5 = st.columns(2)
             planning_min = s4.number_input(
-                "Planning min", value=0.0, key=f"{key_prefix}_plan_min"
+                "Planning min", value=derived.observed_min, key=f"{key_prefix}_plan_min"
             )
             planning_max = s5.number_input(
-                "Planning max", value=0.0, key=f"{key_prefix}_plan_max"
+                "Planning max", value=derived.observed_max, key=f"{key_prefix}_plan_max"
             )
-            current_method = st.selectbox(
-                "Current method",
-                [
-                    "latest_complete_week",
-                    "last_4_week_average",
-                    "last_13_week_average",
-                    "selected_period_average",
-                    "uploaded_plan",
-                ],
-                key=f"{key_prefix}_method",
-            )
-            source = st.text_input(
-                "Source", value="model frame", key=f"{key_prefix}_source"
-            )
-            provenance = st.text_input(
-                "Provenance", value="", key=f"{key_prefix}_provenance"
-            )
-            support_by_market_channel[(market, channel)] = MediaInputSupport(
+            media_support = MediaInputSupport(
                 market=market,
                 channel=channel,
-                unit=unit,
-                current=current,
-                observed_min=observed_min,
-                observed_max=observed_max,
+                unit=derived.unit,
+                current=derived.current,
+                observed_min=derived.observed_min,
+                observed_max=derived.observed_max,
                 planning_min=planning_min,
                 planning_max=planning_max,
-                current_method=current_method,
-                source=source,
-                provenance=provenance,
+                current_method=derived.current_method,
+                source=derived.source,
+                provenance=derived.provenance,
+                effective_period_start=derived.effective_period_start,
+                effective_period_end=derived.effective_period_end,
+            )
+            if curve_type == "model_input":
+                support_by_market_channel[(market, channel)] = media_support
+                continue
+            # Monetary curves require MonetarySpendSupport, never
+            # MediaInputSupport - _normalise_support rejects the latter
+            # outright for a monetary curve (Corrective PR C5).
+            cost_mapping = (
+                cost_mapping_registry.resolve(
+                    market, channel, "default", as_of=cost_as_of_date_value or None
+                )
+                if cost_mapping_registry is not None
+                else None
+            )
+            if cost_mapping is None:
+                st.error(
+                    f"No approved, effective cost mapping for {market}/{channel} "
+                    "as of the cost as-of date above; cannot build monetary support."
+                )
+                continue
+            local_currency = currency_by_market.get(market)
+            reporting = reporting_currency or local_currency
+            rate = (
+                1.0
+                if local_currency == reporting
+                else currency_rates.get((local_currency, reporting))
+            )
+            if not rate:
+                st.error(
+                    f"No valid FX rate {local_currency}->{reporting} for "
+                    f"{market}; cannot build monetary support."
+                )
+                continue
+            support_by_market_channel[(market, channel)] = derive_monetary_support(
+                media_support,
+                cost_mapping,
+                reporting_currency=reporting,
+                fx_rate=rate,
+                mapping_fingerprint=cost_mapping_registry.fingerprint(),
             )
 
-st.markdown(
-    "**Diagnostic spend axis** (required for any cell without an "
-    "observed support range above)"
+st.markdown("**Diagnostic spend axis**")
+st.caption(
+    "Leave blank to derive each channel's axis from its own observed/"
+    "planning support range instead (a unit-specific axis per channel - "
+    "REQ-CURVE-001). A comma-separated list here overrides that and applies "
+    "the same axis, in the same units, to every channel; every cell without "
+    "a support range above then requires this override."
 )
 spend_points_text = st.text_input(
-    "Spend points (comma-separated)",
-    value="0, 50, 100, 150, 200",
+    "Spend points (comma-separated, optional)",
+    value="",
     key="ocg_spend_points",
 )
 try:
-    spend_points = [float(v.strip()) for v in spend_points_text.split(",") if v.strip()]
+    spend_points = (
+        [float(v.strip()) for v in spend_points_text.split(",") if v.strip()]
+        if spend_points_text.strip()
+        else None
+    )
 except ValueError:
     st.error("Spend points must be a comma-separated list of numbers.")
     st.stop()
@@ -698,6 +929,15 @@ if st.button("Generate and save official curve artifact", type="primary"):
     if not artifact_id.strip():
         st.error("Artifact ID must be non-blank.")
         st.stop()
+    unconfirmed_markets = sorted(
+        m for m in selected_markets if not reference_context_confirmed.get(m)
+    )
+    if unconfirmed_markets:
+        st.error(
+            "Review and confirm the reference context for every selected "
+            f"market before generating: {unconfirmed_markets}"
+        )
+        st.stop()
     governance = OfficialCurveGovernance(
         model_identity=ModelIdentity(**current_identity),
         model_approval=ModelApproval.from_dict(approval_dict),
@@ -717,6 +957,7 @@ if st.button("Generate and save official curve artifact", type="primary"):
                 "currency_rates": currency_rates or None,
                 "fx_as_of_date": fx_as_of_date_value or None,
                 "fx_source": fx_source_value or None,
+                "cost_as_of_date": cost_as_of_date_value or None,
             }
             if curve_type == "monetary"
             else {}
@@ -725,7 +966,7 @@ if st.button("Generate and save official curve artifact", type="primary"):
             governance,
             artifact_id=artifact_id.strip(),
             store_dir=curve_artifact_store_dir(),
-            meta=meta,
+            meta=meta_selected,
             trace=trace,
             reference_contexts=reference_contexts,
             model_type=model_type,
