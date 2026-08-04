@@ -30,6 +30,7 @@ from ancestry_mmm.core.fingerprint import (
     fingerprint_posterior,
 )
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
+from ancestry_mmm.core.media_costs import CostMappingRegistry, IdentitySpendMapping
 from ancestry_mmm.core.model_identity import ModelIdentity
 from ancestry_mmm.core.outcome_approval import (
     OutcomeApproval,
@@ -616,3 +617,85 @@ def test_exploratory_result_invalidated_when_switched_back_to_official():
         "Governance mode changed since this result was computed" in (i.value or "")
         for i in at.info
     )
+
+
+def test_saved_scenarios_excludes_and_warns_about_a_stale_cost_mapping():
+    """Corrective PR C9: a scenario saved under a since-edited cost mapping
+    predicts totals that no longer reflect the governed mapping in effect
+    now - comparing it alongside current scenarios would be indistinguishable
+    from a current comparison. It must be excluded from the comparison table
+    and named in a warning instead."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_consistent_session_state(at, value_currency="GBP")
+
+    current_registry = CostMappingRegistry(
+        [
+            IdentitySpendMapping(
+                mapping_id="UK-TV_Brand-cost",
+                market="UK",
+                channel="TV_Brand",
+                currency="GBP",
+                cost_context_id="default",
+                approval_status="approved",
+                approved_by="reviewer",
+                approved_at="2026-01-01",
+                owner="Analytics",
+                approval_note="approved for test",
+                last_reviewed_at="2026-01-01",
+            )
+        ]
+    )
+    at.session_state["media_cost_mappings"] = current_registry.to_dict()
+
+    predicted = pd.DataFrame({"month": ["2026-01"], "predicted_outcome": [100.0]})
+    at.session_state["scenarios"] = [
+        {
+            "name": "Current Scenario",
+            "market": "UK",
+            "spend_plan": {"TV_Brand": {"2026-01": 100.0}},
+            "predicted": predicted,
+            "cost_mapping_fingerprint": current_registry.fingerprint(),
+        },
+        {
+            "name": "Stale Scenario",
+            "market": "UK",
+            "spend_plan": {"TV_Brand": {"2026-01": 100.0}},
+            "predicted": predicted,
+            "cost_mapping_fingerprint": "fingerprint-of-a-cost-mapping-that-no-longer-exists",
+        },
+    ]
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+
+    assert any("Stale Scenario" in (w.value or "") for w in at.warning), [
+        w.value for w in at.warning
+    ]
+    dataframe_texts = [str(df.value) for df in at.dataframe]
+    assert any("Current Scenario" in text for text in dataframe_texts)
+    assert not any("Stale Scenario" in text for text in dataframe_texts)
+
+
+def test_saved_scenarios_without_a_cost_mapping_dependency_are_never_flagged_stale():
+    """A scenario that never depended on a cost mapping (cost_mapping_
+    fingerprint never set) has nothing to go stale - it must still appear in
+    the comparison, never excluded or warned about."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_consistent_session_state(at, value_currency="GBP")
+    at.session_state["media_cost_mappings"] = CostMappingRegistry().to_dict()
+
+    predicted = pd.DataFrame({"month": ["2026-01"], "predicted_outcome": [100.0]})
+    at.session_state["scenarios"] = [
+        {
+            "name": "No Cost Mapping Scenario",
+            "market": "UK",
+            "spend_plan": {"TV_Brand": {"2026-01": 100.0}},
+            "predicted": predicted,
+            "cost_mapping_fingerprint": None,
+        },
+    ]
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+
+    assert not any("No Cost Mapping Scenario" in (w.value or "") for w in at.warning)
+    dataframe_texts = [str(df.value) for df in at.dataframe]
+    assert any("No Cost Mapping Scenario" in text for text in dataframe_texts)

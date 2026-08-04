@@ -66,6 +66,7 @@ from ancestry_mmm.core.optimization import (
     compare_scenarios,
     governance_deps_from_optimizer_result,
     monthly_economics_table,
+    require_current_cost_mapping,
     resolve_planning_objective,
     scenario_to_dict,
     seed_monetary_and_quantity_defaults,
@@ -1344,10 +1345,41 @@ st.markdown("---")
 st.markdown("### Saved scenarios")
 scenarios = get_state("scenarios") or []
 if scenarios:
-    compare_df = compare_scenarios(scenarios)
-    st.dataframe(
-        compare_df, width="stretch", column_config=dataframe_column_config(compare_df)
-    )
+    # A scenario saved under a since-edited cost mapping predicts totals
+    # that no longer reflect the governed mapping in effect now - comparing
+    # it alongside current scenarios would be indistinguishable from a
+    # current comparison (Corrective PR C9). Only a scenario that actually
+    # recorded a cost_mapping_fingerprint has this dependency at all; a
+    # scenario that never depended on cost mappings is never flagged stale
+    # by this check.
+    current_cost_mapping_fingerprint = cost_mapping_registry.fingerprint()
+    current_scenarios = []
+    stale_scenario_names = []
+    for scenario in scenarios:
+        if not scenario.get("cost_mapping_fingerprint"):
+            current_scenarios.append(scenario)
+            continue
+        try:
+            require_current_cost_mapping(scenario, current_cost_mapping_fingerprint)
+        except ValueError:
+            stale_scenario_names.append(scenario.get("name", "(unnamed)"))
+        else:
+            current_scenarios.append(scenario)
+    if stale_scenario_names:
+        st.warning(
+            "Excluded from the comparison below because their governed cost "
+            "mapping has since changed - regenerate them to compare current "
+            f"totals: {', '.join(stale_scenario_names)}"
+        )
+    if current_scenarios:
+        compare_df = compare_scenarios(current_scenarios)
+        st.dataframe(
+            compare_df,
+            width="stretch",
+            column_config=dataframe_column_config(compare_df),
+        )
+    elif not stale_scenario_names:
+        st.info("No scenarios saved yet.")
 else:
     st.info("No scenarios saved yet.")
 
