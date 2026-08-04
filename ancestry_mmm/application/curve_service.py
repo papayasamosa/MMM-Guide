@@ -1181,13 +1181,28 @@ class CurveService:
         (``_candidate_outcome_approvals``) - failing closed
         (``CurvePublicationApprovalError``) before the artifact is ever
         written if any generated scope has none (Corrective PR E1
-        follow-up). Returns the deduplicated set of approvals that actually
-        authorized generation, for the caller to persist as creation-time
-        evidence.
+        follow-up). Returns the set of approvals that actually authorized
+        generation, for the caller to persist as creation-time evidence.
+
+        REQ-CURVE-001 "Historical artifact integrity (reproducibility)"
+        requires this evidence to be *complete* - deduplicated by full
+        record equality, never by ``approval_id`` alone.
+        ``OutcomeApproval.approval_id`` uniqueness is not enforced
+        anywhere upstream (record construction, import), so two distinct
+        records can legitimately share an id while each independently
+        authorizes a different scope; keying by id alone would silently
+        drop one record's evidence even though both remain individually
+        valid, active approvals. REQ-CURVE-001's fail-closed rule governs
+        *current official-use* authorization (``authorize_use``), not
+        this creation-time completeness question - it is not authority
+        for rejecting generation over an id coincidence unrelated to
+        whether the artifact is actually authorized, so both records are
+        preserved rather than one being dropped or generation being
+        blocked.
         """
         candidates = _candidate_outcome_approvals(governance)
         outcome = governance.outcome_definition
-        resolved: Dict[str, OutcomeApproval] = {}
+        resolved: List[OutcomeApproval] = []
         for scope in _artifact_scopes(draws):
             try:
                 matched = _require_current_scope_approval(
@@ -1198,29 +1213,9 @@ class CurveService:
                     f"Generated scope {scope} is not currently authorised for "
                     f"curve_publication and cannot be persisted: {exc}"
                 ) from exc
-            existing = resolved.get(matched.approval_id)
-            if existing is not None and existing != matched:
-                # REQ-CURVE-001 "Historical artifact integrity
-                # (reproducibility)" requires the persisted artifact carry
-                # *complete* immutable evidence of what was true at
-                # creation, and requires evidence gates to fail closed
-                # rather than silently pass. OutcomeApproval.approval_id
-                # uniqueness is not enforced anywhere upstream (record
-                # construction, import), so two distinct records can
-                # collide on the same id. Keying solely by approval_id
-                # would then silently overwrite one matched record's
-                # evidence with the other's in the snapshot below - fail
-                # closed instead of guessing which (if either) is the
-                # trustworthy one.
-                raise CurvePublicationApprovalError(
-                    f"Two distinct outcome approvals share approval_id "
-                    f"{matched.approval_id!r} for outcome "
-                    f"'{outcome.outcome_id}'; a creation-time evidence "
-                    "snapshot cannot be built from non-unique approval "
-                    "IDs. Outcome approval IDs must be unique."
-                )
-            resolved[matched.approval_id] = matched
-        return list(resolved.values())
+            if matched not in resolved:
+                resolved.append(matched)
+        return resolved
 
     def _build_artifact_metadata(
         self,
