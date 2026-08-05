@@ -147,29 +147,19 @@ def streamlit_base_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait(timeout=10)
+        # proc.wait() only waits for process exit - unlike communicate(), it
+        # never closes the stdout pipe this Popen was given, so on the
+        # normal success path (never hitting the communicate() call in the
+        # not-ready branch above) that pipe's file descriptor stayed open
+        # until the Popen object was eventually garbage collected, raising
+        # a ResourceWarning at some later, unrelated point.
+        if proc.stdout is not None:
+            proc.stdout.close()
 
 
-@pytest.mark.filterwarnings(
-    # No literal ":" in the message regex - pytest/warnings parses this
-    # marker string as colon-delimited fields with no escaping mechanism,
-    # so a literal colon here would silently misalign the category field.
-    # "." (unescaped) stands in for the ":" in the real message instead.
-    r"ignore:Exception ignored in. <_io\.FileIO.*:pytest.PytestUnraisableExceptionWarning"
-)
 def test_official_lifecycle_journey_in_browser(
     page: Page, streamlit_base_url: str, bundle_path: Path
 ) -> None:
-    # The repo-wide warning ledger (pyproject.toml) treats every warning as
-    # an error by default. This test's own assertions already prove the
-    # journey; the ignore above is scoped to exactly this one message
-    # pattern - not the whole PytestUnraisableExceptionWarning class, which
-    # would also mask a genuine resource-cleanup bug in this test's own
-    # code or fixtures - because Playwright's own browser-subprocess/pipe
-    # teardown can raise a ResourceWarning on a raw file descriptor (not
-    # one this test opens) during a delayed GC sweep, well after the test
-    # itself has already passed - a pytest-playwright/Playwright internal
-    # cleanup timing artifact, not something this test's own code can
-    # close.
     console_errors: list[str] = []
     page.on(
         "console",
