@@ -915,7 +915,15 @@ def build_lifecycle_project_bundle(
     the same construction `test_official_lifecycle_integration.py` proves
     step-by-step, reused here so the Playwright browser journey exercises
     the real `Project Import` file-upload path against an identical bundle
-    rather than a hand-rolled duplicate."""
+    rather than a hand-rolled duplicate.
+
+    `raw_sources` carries the fixture's own transformed frame (there is no
+    separate pre-pipeline table here - `pipeline_steps=[]` already means
+    "transformed_data is the raw upload, unmodified"). Without it,
+    `audit_project_resumability()`'s "scenarios" checkpoint reports
+    `raw_sources` missing and the real Project Import page warns that the
+    bundle cannot actually resume its saved scenario - exactly the
+    officially-resumable claim this fixture exists to prove end to end."""
     from ancestry_mmm.core.persistence import export_project
 
     project = project or build_lifecycle_project()
@@ -925,7 +933,7 @@ def build_lifecycle_project_bundle(
     scenario_dict = build_saved_scenario_dict(project, scenario_result)
     return export_project(
         bundle_path,
-        raw_sources={},
+        raw_sources={"joined": project.fitted.transformed_data.copy()},
         transformed_data=project.fitted.transformed_data,
         pipeline_steps=[],
         model_spec=project.fitted.model_spec_dict,

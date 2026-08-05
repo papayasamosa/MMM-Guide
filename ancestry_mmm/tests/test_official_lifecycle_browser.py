@@ -200,6 +200,16 @@ def test_official_lifecycle_journey_in_browser(
     expect(
         page.get_by_text(re.compile(r"Restored \d+ official curve artifact"))
     ).to_be_visible(timeout=30_000)
+    # A bundle can import "successfully" while still being unable to resume
+    # its own saved scenario (e.g. missing raw source data) - the page's own
+    # resumability audit is the thing that actually proves this fixture
+    # bundle is complete, not just that the zip extracted cleanly.
+    expect(
+        page.get_by_text(re.compile(r"Resumability audit passed at checkpoint"))
+    ).to_be_visible(timeout=30_000)
+    expect(
+        page.get_by_text("its declared checkpoint is incomplete", exact=False)
+    ).not_to_be_visible()
 
     # --- Official Curve Generation: generate a THIRD artifact through the
     # real page, not only import pre-built ones - otherwise this required

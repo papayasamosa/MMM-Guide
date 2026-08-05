@@ -1172,6 +1172,25 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
                         "in this bundle."
                     )
                 else:
+                    # REQ-VAL-001: a policy-backed approval also requires its
+                    # readiness and current policy evidence, not model
+                    # identity alone (require_matching_approval raises
+                    # ValidationPolicyBlockedError, not ApprovalMismatchError,
+                    # when either is missing) - load both from this same
+                    # bundle so a genuinely policy-backed, self-consistent
+                    # approval is verified rather than always rejected for
+                    # evidence this function never looked up.
+                    from .validation_policy import (
+                        load_approval_readiness,
+                        load_threshold_policy,
+                    )
+
+                    bundle_readiness, _ = load_approval_readiness(
+                        imported.get("approval_readiness")
+                    )
+                    bundle_policy, _ = load_threshold_policy(
+                        imported.get("validation_policy")
+                    )
                     try:
                         approval_obj = ModelApproval.from_dict(raw_approval)
                         require_matching_approval(
@@ -1180,11 +1199,18 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
                             data_fingerprint=current_data_fp,
                             model_spec_fingerprint=current_spec_fp,
                             posterior_fingerprint=current_posterior_fp,
+                            approval_readiness=bundle_readiness,
+                            current_policy=bundle_policy,
                         )
                         verified_model_approval_fingerprint = (
                             fingerprint_model_approval(approval_obj)
                         )
-                    except (TypeError, ValueError, ApprovalMismatchError) as exc:
+                    except (
+                        TypeError,
+                        ValueError,
+                        ApprovalMismatchError,
+                        ValidationPolicyBlockedError,
+                    ) as exc:
                         model_identity_reason = f"model_approval_mismatch: {exc}"
 
             # Corrective PR A6: revalidate every loaded curve artifact
