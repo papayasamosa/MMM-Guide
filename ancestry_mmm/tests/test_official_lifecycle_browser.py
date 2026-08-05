@@ -203,13 +203,24 @@ def test_official_lifecycle_journey_in_browser(
     # A bundle can import "successfully" while still being unable to resume
     # its own saved scenario (e.g. missing raw source data) - the page's own
     # resumability audit is the thing that actually proves this fixture
-    # bundle is complete, not just that the zip extracted cleanly.
+    # bundle is technically complete, not just that the zip extracted
+    # cleanly.
     expect(
         page.get_by_text(re.compile(r"Resumability audit passed at checkpoint"))
     ).to_be_visible(timeout=30_000)
     expect(
         page.get_by_text("its declared checkpoint is incomplete", exact=False)
     ).not_to_be_visible()
+    # This scenario's saved counterfactual identity is, by the export
+    # format's own design, never *officially* verifiable after a re-import
+    # (core.persistence.audit_project_resumability: no project-level
+    # CounterfactualPolicy travels through a bundle, only each scenario's
+    # own saved fingerprint) - asserted explicitly, not ignored, so a future
+    # change to that documented limitation (in either direction) is caught
+    # here rather than silently passing either way.
+    expect(page.get_by_text("is not officially resumable", exact=False)).to_be_visible(
+        timeout=30_000
+    )
 
     # --- Official Curve Generation: generate a THIRD artifact through the
     # real page, not only import pre-built ones - otherwise this required
