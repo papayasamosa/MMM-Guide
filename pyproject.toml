@@ -104,6 +104,10 @@ filterwarnings = [
     # Third-party library warnings we do not control and cannot fix here.
     "ignore:Scan return signature will change.*:DeprecationWarning",
     "ignore:invalid value encountered in scalar divide:RuntimeWarning",
+    # CI-runner-specific (no BLAS linked on GitHub Actions' Ubuntu images;
+    # never fires on a local machine with BLAS installed) - a PyTensor
+    # infrastructure notice about the runner environment, not our code.
+    "ignore:PyTensor could not link to a BLAS installation.*:UserWarning",
     # data/loader.py's column-type auto-detection deliberately probes
     # arbitrary uploaded columns with pd.to_datetime and no fixed format -
     # forcing one would break detection of any file using a different
