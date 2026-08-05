@@ -170,11 +170,18 @@ def test_official_lifecycle_journey_in_browser(
     # real page, not only import pre-built ones - otherwise this required
     # browser job would still pass even if page 13's generate/save path were
     # broken, since it would never have been exercised in a real browser.
+    # force=True throughout this section: Streamlit's sticky top toolbar/
+    # header intercepts pointer events for content scrolled directly
+    # underneath it - a CSS overlap false-positive (observed on both the
+    # confirmation checkbox locally and the mode combobox in CI), not a
+    # real actionability problem.
     page.get_by_role("link", name="Official Curve Generation").click()
-    page.get_by_text("Reference context - UK", exact=False).click()
+    page.get_by_text("Reference context - UK", exact=False).click(force=True)
     mode_select = page.get_by_role("combobox", name="Mode")
-    mode_select.click()
-    page.get_by_role("option", name="recent_average", exact=True).click()
+    mode_select.click(force=True)
+    mode_option = page.get_by_role("option", name="recent_average", exact=True)
+    expect(mode_option).to_be_visible(timeout=30_000)
+    mode_option.click(force=True)
     # Selecting the mode triggers a script rerun that recomputes the
     # confirmation checkbox's fingerprinted widget key (page 13's own
     # anti-stale-confirmation design: a changed context renders a *new*,
@@ -182,9 +189,9 @@ def test_official_lifecycle_journey_in_browser(
     # checked one). Waiting for the derived-context preview - the last
     # thing that rerun renders before the checkbox - avoids checking a
     # checkbox instance that's about to be replaced mid-click.
-    expect(
-        page.get_by_text("Derived from the model frame", exact=False)
-    ).to_be_visible(timeout=30_000)
+    expect(page.get_by_text("Derived from the model frame", exact=False)).to_be_visible(
+        timeout=30_000
+    )
     confirm_checkbox = page.get_by_role(
         "checkbox",
         name=re.compile(
@@ -192,10 +199,6 @@ def test_official_lifecycle_journey_in_browser(
         ),
     )
     expect(confirm_checkbox).to_be_enabled(timeout=30_000)
-    # force=True: Streamlit's sticky top toolbar/header intercepts pointer
-    # events for content scrolled directly underneath it - a CSS overlap
-    # false-positive, not a real actionability problem (already asserted
-    # visible + enabled above).
     confirm_checkbox.check(force=True)
     # No (market, channel) support range is recorded (section 4 is left at
     # its default, unchecked "include support" state), so generation needs
