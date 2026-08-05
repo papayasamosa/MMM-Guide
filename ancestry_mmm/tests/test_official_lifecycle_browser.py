@@ -10,8 +10,10 @@ Streamlit health-check ping (see the `windows-tooling` CI job) is not
 browser validation; this is.
 
 Journey: upload bundle -> import success + transactional store-replacement
-confirmation -> Curve Bank shows both official curve artifacts -> Scenario
-Planner shows the imported saved scenario.
+confirmation -> generate a THIRD official model-input curve artifact
+through the real Official Curve Generation page (page 13) - never only
+imported, pre-built ones - -> Curve Bank shows all three official curve
+artifacts -> Scenario Planner shows the imported saved scenario.
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ import socket
 import subprocess
 import sys
 import time
+from datetime import date
 from pathlib import Path
 from typing import Iterator
 
@@ -126,11 +129,14 @@ def test_official_lifecycle_journey_in_browser(
     # (workflow-progress sidebar) client-side, and only a real in-app
     # navigation is guaranteed to land on the target page reliably.
     page.goto(streamlit_base_url, wait_until="load")
+    # 60s (double the usual): the very first load also pays for the
+    # frontend JS bundle plus the app's first Python script execution, not
+    # just a rerun - occasionally exceeds a plain 30s budget.
     expect(
         page.get_by_test_id("stSidebarUserContent").get_by_text(
             "Marketing Mix Modelling"
         )
-    ).to_be_visible(timeout=30_000)
+    ).to_be_visible(timeout=60_000)
 
     # --- Project Export/Import page: upload the deterministic bundle -----
     # `exact=True` throughout this test: Streamlit renders a visually-hidden
@@ -160,7 +166,56 @@ def test_official_lifecycle_journey_in_browser(
         page.get_by_text(re.compile(r"Restored \d+ official curve artifact"))
     ).to_be_visible(timeout=30_000)
 
-    # --- Curve Bank: both official curve artifacts are visible -----------
+    # --- Official Curve Generation: generate a THIRD artifact through the
+    # real page, not only import pre-built ones - otherwise this required
+    # browser job would still pass even if page 13's generate/save path were
+    # broken, since it would never have been exercised in a real browser.
+    page.get_by_role("link", name="Official Curve Generation").click()
+    page.get_by_text("Reference context - UK", exact=False).click()
+    mode_select = page.get_by_role("combobox", name="Mode")
+    mode_select.click()
+    page.get_by_role("option", name="recent_average", exact=True).click()
+    # Selecting the mode triggers a script rerun that recomputes the
+    # confirmation checkbox's fingerprinted widget key (page 13's own
+    # anti-stale-confirmation design: a changed context renders a *new*,
+    # unchecked checkbox under a new key rather than preserving a stale
+    # checked one). Waiting for the derived-context preview - the last
+    # thing that rerun renders before the checkbox - avoids checking a
+    # checkbox instance that's about to be replaced mid-click.
+    expect(
+        page.get_by_text("Derived from the model frame", exact=False)
+    ).to_be_visible(timeout=30_000)
+    confirm_checkbox = page.get_by_role(
+        "checkbox",
+        name=re.compile(
+            "I have reviewed and confirm the UK reference context above is correct"
+        ),
+    )
+    expect(confirm_checkbox).to_be_enabled(timeout=30_000)
+    # force=True: Streamlit's sticky top toolbar/header intercepts pointer
+    # events for content scrolled directly underneath it - a CSS overlap
+    # false-positive, not a real actionability problem (already asserted
+    # visible + enabled above).
+    confirm_checkbox.check(force=True)
+    # No (market, channel) support range is recorded (section 4 is left at
+    # its default, unchecked "include support" state), so generation needs
+    # an explicit diagnostic spend axis instead - otherwise it fails closed
+    # with "Observed support is missing" rather than silently guessing one.
+    page.get_by_role("textbox", name="Spend points (comma-separated, optional)").fill(
+        "0, 50, 100"
+    )
+    generate_button = page.get_by_role(
+        "button", name="Generate and save official curve artifact"
+    )
+    generate_button.click()
+    expect(
+        page.get_by_text(re.compile(r"Saved official curve artifact"))
+    ).to_be_visible(timeout=30_000)
+    # Matches page 13's own default artifact_id, f"{outcome_id}-{today}" -
+    # the lifecycle fixture's only eligible outcome is "New".
+    generated_artifact_id = f"New-{date.today().isoformat()}"
+
+    # --- Curve Bank: all three official curve artifacts are visible ------
     page.get_by_role("link", name="Results & Curve Bank").click()
     expect(page.get_by_text("Official curve artifacts", exact=True)).to_be_visible(
         timeout=30_000
@@ -172,6 +227,9 @@ def test_official_lifecycle_journey_in_browser(
         timeout=30_000
     )
     expect(page.get_by_text("lifecycle-monetary", exact=True).first).to_be_visible(
+        timeout=30_000
+    )
+    expect(page.get_by_text(generated_artifact_id, exact=True).first).to_be_visible(
         timeout=30_000
     )
 
