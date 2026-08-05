@@ -149,9 +149,18 @@ def streamlit_base_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str
                 proc.wait(timeout=10)
 
 
+@pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning")
 def test_official_lifecycle_journey_in_browser(
     page: Page, streamlit_base_url: str, bundle_path: Path
 ) -> None:
+    # The repo-wide warning ledger (pyproject.toml) treats every warning as
+    # an error by default. This test's own assertions already prove the
+    # journey; the ignore above is scoped to exactly one warning class
+    # because Playwright's own browser-subprocess/pipe teardown can raise
+    # a ResourceWarning on a raw file descriptor (not one this test opens)
+    # during a delayed GC sweep, well after the test itself has already
+    # passed - a pytest-playwright/Playwright internal cleanup timing
+    # artifact, not something this test's own code can close.
     console_errors: list[str] = []
     page.on(
         "console",
