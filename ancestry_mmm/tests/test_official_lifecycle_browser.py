@@ -178,9 +178,14 @@ def test_official_lifecycle_journey_in_browser(
     # --- Scenario Planner: the imported saved scenario is visible --------
     # The comparison table itself is a canvas-rendered `st.dataframe` grid
     # (its cell text isn't exposed to Playwright's accessibility-tree text
-    # locators), so presence is proved by the absence of the page's own
-    # empty-state message ("No scenarios saved yet.", pages/08_Scenario_
-    # Planner.py) rather than by reading a cell's text directly - the exact
+    # locators), so presence is proved by the absence of BOTH of the page's
+    # own non-current-scenario messages (pages/08_Scenario_Planner.py):
+    # "No scenarios saved yet." (zero saved scenarios) and the stale-cost-
+    # mapping warning (every saved scenario excluded as stale) - the page
+    # suppresses the empty-state message in the all-stale case too, so
+    # checking only its absence would pass even if our scenario were
+    # wrongly excluded as stale. Neither message appears only when a
+    # current, non-empty comparison table actually rendered. The exact
     # scenario content is already proved by the AppTest and integration
     # test coverage.
     page.get_by_role("link", name="Scenario Planner").click()
@@ -188,6 +193,13 @@ def test_official_lifecycle_journey_in_browser(
         timeout=30_000
     )
     expect(page.get_by_text("No scenarios saved yet.", exact=True)).not_to_be_visible()
+    expect(
+        page.get_by_text(
+            "Excluded from the comparison below because their governed cost "
+            "mapping has since changed",
+            exact=False,
+        )
+    ).not_to_be_visible()
 
     unexpected_console_errors = [
         e for e in console_errors if "favicon" not in e.lower()
