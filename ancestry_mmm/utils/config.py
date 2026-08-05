@@ -1,5 +1,6 @@
 """Configuration constants and defaults for the Ancestry FH MMM app."""
 
+import os
 from pathlib import Path
 
 # Default model parameters
@@ -56,8 +57,17 @@ CURVE_BANK_ROOT = Path(__file__).parent.parent / ".curve_bank_store"
 PROJECT_EXPORT_ROOT = Path(__file__).parent.parent / ".project_exports"
 
 # Official curve artifact store (REQ-CURVE-001, PR 95E) - per-project,
-# not committed to the repo, see .gitignore.
-CURVE_ARTIFACT_ROOT = Path(__file__).parent.parent / ".curve_artifact_store"
+# not committed to the repo, see .gitignore. Overridable via
+# MMM_CURVE_ARTIFACT_ROOT so a spawned test/CI instance of the app can be
+# pointed at a disposable directory instead of a developer's real local
+# store - `replace_curve_artifact_store` is a destructive transactional
+# replace, and the default path is shared across every app instance.
+CURVE_ARTIFACT_ROOT = Path(
+    os.environ.get(
+        "MMM_CURVE_ARTIFACT_ROOT",
+        str(Path(__file__).parent.parent / ".curve_artifact_store"),
+    )
+)
 
 # Budget optimization defaults
 OPTIMIZATION_DEFAULTS = {

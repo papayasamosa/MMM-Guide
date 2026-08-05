@@ -18,6 +18,7 @@ artifacts -> Scenario Planner shows the imported saved scenario.
 
 from __future__ import annotations
 
+import os
 import re
 import socket
 import subprocess
@@ -75,8 +76,16 @@ def bundle_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 @pytest.fixture(scope="module")
-def streamlit_base_url() -> Iterator[str]:
+def streamlit_base_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
     port = _free_port()
+    # Isolate the app's official curve artifact store from a developer's
+    # real local state: the import step below performs a destructive
+    # transactional replace of `curve_artifact_store_dir()`, which defaults
+    # to a fixed, shared, repo-relative path keyed only by project name
+    # (`ancestry_mmm/.curve_artifact_store/ancestry-fh-uk`). Without this
+    # override, running this test outside a disposable checkout would wipe
+    # any official artifacts a developer has saved for the default project.
+    isolated_curve_store_root = tmp_path_factory.mktemp("lifecycle-browser-curve-store")
     proc = subprocess.Popen(
         [
             sys.executable,
@@ -94,6 +103,7 @@ def streamlit_base_url() -> Iterator[str]:
             "false",
         ],
         cwd=REPO_ROOT,
+        env={**os.environ, "MMM_CURVE_ARTIFACT_ROOT": str(isolated_curve_store_root)},
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
     )
