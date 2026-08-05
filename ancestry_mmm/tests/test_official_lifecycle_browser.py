@@ -170,18 +170,13 @@ def test_official_lifecycle_journey_in_browser(
     # real page, not only import pre-built ones - otherwise this required
     # browser job would still pass even if page 13's generate/save path were
     # broken, since it would never have been exercised in a real browser.
-    # force=True throughout this section: Streamlit's sticky top toolbar/
-    # header intercepts pointer events for content scrolled directly
-    # underneath it - a CSS overlap false-positive (observed on both the
-    # confirmation checkbox locally and the mode combobox in CI), not a
-    # real actionability problem.
     page.get_by_role("link", name="Official Curve Generation").click()
-    page.get_by_text("Reference context - UK", exact=False).click(force=True)
+    page.get_by_text("Reference context - UK", exact=False).click()
     mode_select = page.get_by_role("combobox", name="Mode")
-    mode_select.click(force=True)
+    mode_select.click()
     mode_option = page.get_by_role("option", name="recent_average", exact=True)
     expect(mode_option).to_be_visible(timeout=30_000)
-    mode_option.click(force=True)
+    mode_option.click()
     # Selecting the mode triggers a script rerun that recomputes the
     # confirmation checkbox's fingerprinted widget key (page 13's own
     # anti-stale-confirmation design: a changed context renders a *new*,
