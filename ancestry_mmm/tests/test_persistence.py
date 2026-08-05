@@ -1809,7 +1809,9 @@ def test_export_excel_summary_skips_none_and_empty_sheets(tmp_path):
             "Missing": None,
         },
     )
-    workbook_sheets = pd.ExcelFile(output_path).sheet_names
+    with open(output_path, "rb") as f:
+        with pd.ExcelFile(io.BytesIO(f.read())) as workbook:
+            workbook_sheets = workbook.sheet_names
     assert workbook_sheets == ["Total FH Contribution"]
 
 
@@ -1822,7 +1824,16 @@ def test_export_excel_summary_writes_every_non_empty_sheet(tmp_path):
         "CPA": pd.DataFrame({"market": ["UK"], "channel": ["TV"], "avg_cpa": [12.5]}),
     }
     output_path = export_excel_summary(tmp_path / "summary.xlsx", sheets)
-    workbook_sheets = pd.ExcelFile(output_path).sheet_names
+    # Read into memory rather than opening ExcelFile directly on the path:
+    # openpyxl's own internal archive handle for a path-based read isn't
+    # released deterministically by ExcelFile.close() (cyclic references
+    # mean it waits for the next GC cycle, which can happen during a later,
+    # unrelated test and get misattributed by pytest-playwright's
+    # unraisable-exception hook). A BytesIO source has no OS file handle to
+    # leak in the first place.
+    with open(output_path, "rb") as f:
+        with pd.ExcelFile(io.BytesIO(f.read())) as workbook:
+            workbook_sheets = workbook.sheet_names
     assert set(workbook_sheets) == set(sheets.keys())
 
 

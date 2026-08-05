@@ -147,6 +147,14 @@ def streamlit_base_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait(timeout=10)
+        # proc.wait() only waits for process exit - unlike communicate(), it
+        # never closes the stdout pipe this Popen was given, so on the
+        # normal success path (never hitting the communicate() call in the
+        # not-ready branch above) that pipe's file descriptor stayed open
+        # until the Popen object was eventually garbage collected, raising
+        # a ResourceWarning at some later, unrelated point.
+        if proc.stdout is not None:
+            proc.stdout.close()
 
 
 def test_official_lifecycle_journey_in_browser(

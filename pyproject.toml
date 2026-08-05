@@ -9,7 +9,11 @@ description = "Marketing Mix Modelling - Complete Guide with Practical Implement
 requires-python = ">=3.11,<3.13"
 dependencies = [
     # Data manipulation
-    "pandas>=2.0.0",
+    # Upper bound is deliberate, same rationale as the Python range above:
+    # an unvetted future major pandas release should fail dependency
+    # resolution loudly rather than get silently installed and only found
+    # to be incompatible (or not) once something already broke in CI.
+    "pandas>=2.0.0,<4.0.0",
     "numpy>=1.24.0",
     # Bayesian modelling
     "pymc==5.28.5",
@@ -47,17 +51,15 @@ api = [
     "uvicorn[standard]>=0.27.0",
     "python-multipart>=0.0.6",
 ]
-dev = [
-    "black>=23.0.0",
-    "ruff>=0.1.0",
-    "pytest>=7.4.0",
-    "pytest-cov>=4.1.0",
-    "mypy>=1.7.0",
-    "pip-audit>=2.7.0",
-    "bandit>=1.7.5",
-    "pytest-playwright>=0.5.2",
-]
 
+# Dev tooling lives only here, not duplicated under [project.optional-
+# dependencies] - nothing in this repo ever installs it via `pip install
+# .[dev]`/`uv sync --extra dev` (CI and local development both use
+# `uv sync --locked`, which includes this default dependency-group
+# automatically). A second, identical copy previously existed under
+# optional-dependencies purely as dead duplication - every new dev
+# dependency had to be remembered and added to both lists, or the two
+# would silently drift apart.
 [dependency-groups]
 dev = [
     "black>=23.0.0",
@@ -77,7 +79,43 @@ addopts = [
     "--strict-markers",
     "--cov=ancestry_mmm",
     "--cov-report=term-missing:skip-covered",
+    # This is a lenient floor for any partial/ad-hoc pytest invocation
+    # (a single test file, one CI job's narrow subset) - it is NOT the
+    # project's real coverage bar. The full-suite CI jobs (Python 3.11/3.12
+    # tests) explicitly pass --cov-fail-under=75 on the command line, which
+    # overrides this default; several other CI jobs run a narrow subset
+    # (Streamlit AppTest, test_persistence.py, test_simulation_recovery.py)
+    # and rely on this lower default instead - raising it here would fail
+    # those jobs, which never exercise enough of the package to clear 75%.
     "--cov-fail-under=30",
+]
+# Warning ledger: any warning not explicitly allow-listed below fails the
+# test it occurs in. Without this, a newly-introduced warning (a real
+# regression, or scope creep from an upgraded dependency) is invisible -
+# it prints once in a wall of test output and nobody notices. Every entry
+# below is a warning already known and accounted for as of PR 123; adding
+# a new one requires updating this list deliberately, not silently.
+filterwarnings = [
+    "error",
+    # Our own code's deliberate, already-tracked deprecations (each
+    # message documents its own migration path) - not new regressions.
+    "ignore:curve_type=None is deprecated and ungoverned.*:DeprecationWarning",
+    "ignore:String objectives are deprecated.*:DeprecationWarning",
+    # Third-party library warnings we do not control and cannot fix here.
+    "ignore:Scan return signature will change.*:DeprecationWarning",
+    "ignore:invalid value encountered in scalar divide:RuntimeWarning",
+    # CI-runner-specific (no BLAS linked on GitHub Actions' Ubuntu images;
+    # never fires on a local machine with BLAS installed) - a PyTensor
+    # infrastructure notice about the runner environment, not our code.
+    "ignore:PyTensor could not link to a BLAS installation.*:UserWarning",
+    # NOTE: data/loader.py's column-type auto-detection deliberately probes
+    # arbitrary uploaded columns with pd.to_datetime and no fixed format,
+    # which pandas warns about ("Could not infer format..."). That warning
+    # is suppressed locally around the probe itself (see loader.py), not
+    # here - a repo-wide ignore would also hide the same warning from any
+    # other, non-probing date-conversion path (data/pipeline.py,
+    # data/preprocessor.py), where it could mean a genuinely inconsistent
+    # format worth surfacing.
 ]
 
 [tool.coverage.run]
