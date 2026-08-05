@@ -1172,19 +1172,75 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
                         "in this bundle."
                     )
                 else:
+                    # REQ-VAL-001: a policy-backed approval also requires its
+                    # readiness and current policy evidence, not model
+                    # identity alone (require_matching_approval raises
+                    # ValidationPolicyBlockedError, not ApprovalMismatchError,
+                    # when either is missing) - load both from this same
+                    # bundle so a genuinely policy-backed, self-consistent
+                    # approval is verified rather than always rejected for
+                    # evidence this function never looked up.
+                    from .validation_policy import (
+                        load_approval_readiness,
+                        load_threshold_policy,
+                    )
+
+                    bundle_readiness, _ = load_approval_readiness(
+                        imported.get("approval_readiness")
+                    )
+                    bundle_policy, _ = load_threshold_policy(
+                        imported.get("validation_policy")
+                    )
                     try:
                         approval_obj = ModelApproval.from_dict(raw_approval)
+                        # require_matching_approval only checks that
+                        # approval_readiness's own recorded fingerprints are
+                        # internally self-consistent - it cannot also verify
+                        # those fingerprints against a freshly recomputed
+                        # diagnostics artefact fingerprint, since
+                        # DiagnosticsArtefact is an application-layer type
+                        # core must not import (see
+                        # application.project_service.verify_imported_readiness,
+                        # the caller that does that fuller check - a bundle
+                        # this audit calls "resumable" must still go through
+                        # that fuller verification before any official use is
+                        # actually authorised; CurveService.authorize_use
+                        # independently re-verifies the full chain at every
+                        # official use regardless of what this audit
+                        # reports). A missing or structurally-invalid
+                        # diagnostics_artefact for a policy-backed approval is
+                        # still a core-detectable evidence gap, so it fails
+                        # closed here too rather than letting an incomplete
+                        # bundle report full official resumability.
+                        raw_diagnostics_artefact = imported.get("diagnostics_artefact")
+                        if approval_obj.validation_policy_id and (
+                            raw_diagnostics_artefact is None
+                            or not isinstance(raw_diagnostics_artefact, dict)
+                        ):
+                            raise ValidationPolicyBlockedError(
+                                "Approval references validation policy "
+                                f"'{approval_obj.validation_policy_id}' but this "
+                                "bundle has no diagnostics artefact to verify "
+                                "the readiness evidence against."
+                            )
                         require_matching_approval(
                             approval_obj,
                             model_run_id=imported.get("model_run_id", ""),
                             data_fingerprint=current_data_fp,
                             model_spec_fingerprint=current_spec_fp,
                             posterior_fingerprint=current_posterior_fp,
+                            approval_readiness=bundle_readiness,
+                            current_policy=bundle_policy,
                         )
                         verified_model_approval_fingerprint = (
                             fingerprint_model_approval(approval_obj)
                         )
-                    except (TypeError, ValueError, ApprovalMismatchError) as exc:
+                    except (
+                        TypeError,
+                        ValueError,
+                        ApprovalMismatchError,
+                        ValidationPolicyBlockedError,
+                    ) as exc:
                         model_identity_reason = f"model_approval_mismatch: {exc}"
 
             # Corrective PR A6: revalidate every loaded curve artifact

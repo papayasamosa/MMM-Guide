@@ -466,6 +466,49 @@ def test_official_manual_scenario_succeeds_with_matching_policy_readiness_approv
     )
 
 
+def test_saving_a_manual_scenario_persists_cost_mapping_governance_dependency():
+    """PR 122: drives the real "Save this scenario" button (the other tests
+    in this file pre-seed `st.session_state["scenarios"]` directly rather
+    than exercising the save path itself) and proves the saved scenario's
+    `governance_dependencies.cost_mapping_fingerprint` matches the governed
+    `CostMappingRegistry` actually used to evaluate it."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_official_governance_state(at)
+    registry = CostMappingRegistry(
+        [
+            IdentitySpendMapping(
+                mapping_id="uk-tv-brand",
+                market="UK",
+                channel="TV_Brand",
+                currency="GBP",
+                approval_status="approved",
+                approved_by="finance-owner",
+                approved_at="2026-01-01",
+                owner="media-finance",
+                approval_note="approved for test",
+                last_reviewed_at="2026-01-01",
+            )
+        ]
+    )
+    at.session_state["media_cost_mappings"] = registry.to_dict()
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+
+    save_button = next(b for b in at.button if b.label == "Save this scenario")
+    save_button.click().run()
+    assert not at.exception, f"save click raised: {at.exception}"
+    assert any("Saved scenario" in (s.value or "") for s in at.success)
+
+    saved_scenarios = at.session_state["scenarios"]
+    assert len(saved_scenarios) == 1
+    saved = saved_scenarios[0]
+    assert saved["governance_mode"] == "official"
+    assert (
+        saved["governance_dependencies"]["cost_mapping_fingerprint"]
+        == registry.fingerprint()
+    )
+
+
 def test_official_scenario_blocked_with_missing_readiness():
     """A policy-backed approval with no matching approval_readiness in
     session state must block the whole page (require_matching_approval

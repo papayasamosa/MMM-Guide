@@ -2917,6 +2917,142 @@ class TestScenariosCheckpointOfficialResumability:
         assert "incomplete_validation_context" not in reasons
 
 
+class TestScenariosCheckpointPolicyBackedApprovalRequiresDiagnostics:
+    """PR 122 corrective review finding: fixing the crash where
+    audit_project_resumability never loaded a policy-backed approval's
+    approval_readiness/validation_policy before calling
+    require_matching_approval (always raising an uncaught
+    ValidationPolicyBlockedError) exposed a narrower gap -
+    require_matching_approval only checks that approval_readiness's own
+    recorded fingerprints are internally self-consistent; it cannot also
+    verify them against a freshly recomputed diagnostics artefact
+    fingerprint, since DiagnosticsArtefact is an application-layer type
+    core.persistence must not import (see
+    application.project_service.verify_imported_readiness, which does that
+    fuller check). A bundle missing its diagnostics_artefact entirely must
+    still fail closed here rather than reporting full official
+    resumability on an incomplete evidence chain."""
+
+    def test_policy_backed_scenario_without_a_diagnostics_artefact_is_not_officially_resumable(
+        self, tmp_path
+    ):
+        from ancestry_mmm.tests.support.lifecycle_fixture import (
+            build_lifecycle_project,
+            build_saved_scenario_dict,
+            create_official_artifacts,
+            evaluate_official_manual_scenario,
+        )
+
+        # Mirrors build_lifecycle_project_bundle exactly (the same
+        # self-consistent policy-backed governance chain PR 122's browser
+        # journey proves resumable), but deliberately omits
+        # diagnostics_artefact - everything else that
+        # require_matching_approval itself checks (readiness, policy,
+        # approval, model identity, scenario) is otherwise complete.
+        project = build_lifecycle_project()
+        store_dir = tmp_path / "curve-artifacts"
+        create_official_artifacts(project, store_dir)
+        scenario_result = evaluate_official_manual_scenario(project)
+        scenario_dict = build_saved_scenario_dict(project, scenario_result)
+        assert project.approval.validation_policy_id
+
+        output_path = export_project(
+            tmp_path / "no-diagnostics-bundle.zip",
+            raw_sources={"joined": project.fitted.transformed_data.copy()},
+            transformed_data=project.fitted.transformed_data,
+            pipeline_steps=[],
+            model_spec=project.fitted.model_spec_dict,
+            prior_config=project.fitted.prior_config,
+            dna_lag_weeks=project.fitted.dna_lag_weeks,
+            trace=project.fitted.trace,
+            scenarios=[scenario_dict],
+            curve_artifact_store_source_dir=store_dir,
+            model_approval=project.approval.to_dict(),
+            model_run_id=project.fitted.model_run_id,
+            model_meta=project.fitted.meta,
+            outcome_definitions=[project.fitted.outcome_definition.to_dict()],
+            activity_definitions=[
+                a.to_dict() for a in project.fitted.activity_definitions
+            ],
+            outcome_approvals=[project.outcome_approval.to_dict()],
+            validation_policy=project.policy.to_dict(),
+            approval_readiness=project.readiness.to_dict(),
+            media_cost_mappings=project.cost_mapping_registry.to_dict(),
+            # diagnostics_artefact intentionally omitted (defaults to None).
+        )
+
+        reimported = import_project(output_path)
+        assert reimported.get("diagnostics_artefact") is None
+        audit = audit_project_resumability(reimported)
+
+        assert audit["resumable"] is True
+        assert audit["officially_resumable"] is False, audit[
+            "official_blocking_reasons"
+        ]
+        reasons = " ".join(r["reason"] for r in audit["official_blocking_reasons"])
+        assert "diagnostics artefact" in reasons
+
+    def test_policy_backed_scenario_with_a_structurally_malformed_diagnostics_artefact_is_not_officially_resumable(
+        self, tmp_path
+    ):
+        from ancestry_mmm.tests.support.lifecycle_fixture import (
+            build_lifecycle_project,
+            build_saved_scenario_dict,
+            create_official_artifacts,
+            evaluate_official_manual_scenario,
+        )
+
+        # Same self-consistent chain as above, but diagnostics_artefact is
+        # present-and-not-None while still structurally invalid (a list, not
+        # a dict) - core.persistence cannot import DiagnosticsArtefact to
+        # fully re-verify a *well-formed* artefact's fingerprint (that fuller
+        # check lives at application.project_service.verify_imported_readiness),
+        # but a value that isn't even a dict is a core-detectable gap and
+        # must not be treated as present evidence.
+        project = build_lifecycle_project()
+        store_dir = tmp_path / "curve-artifacts"
+        create_official_artifacts(project, store_dir)
+        scenario_result = evaluate_official_manual_scenario(project)
+        scenario_dict = build_saved_scenario_dict(project, scenario_result)
+        assert project.approval.validation_policy_id
+
+        output_path = export_project(
+            tmp_path / "malformed-diagnostics-bundle.zip",
+            raw_sources={"joined": project.fitted.transformed_data.copy()},
+            transformed_data=project.fitted.transformed_data,
+            pipeline_steps=[],
+            model_spec=project.fitted.model_spec_dict,
+            prior_config=project.fitted.prior_config,
+            dna_lag_weeks=project.fitted.dna_lag_weeks,
+            trace=project.fitted.trace,
+            scenarios=[scenario_dict],
+            curve_artifact_store_source_dir=store_dir,
+            model_approval=project.approval.to_dict(),
+            model_run_id=project.fitted.model_run_id,
+            model_meta=project.fitted.meta,
+            outcome_definitions=[project.fitted.outcome_definition.to_dict()],
+            activity_definitions=[
+                a.to_dict() for a in project.fitted.activity_definitions
+            ],
+            outcome_approvals=[project.outcome_approval.to_dict()],
+            validation_policy=project.policy.to_dict(),
+            approval_readiness=project.readiness.to_dict(),
+            media_cost_mappings=project.cost_mapping_registry.to_dict(),
+            diagnostics_artefact=["not", "a", "dict"],  # type: ignore[arg-type]
+        )
+
+        reimported = import_project(output_path)
+        assert reimported.get("diagnostics_artefact") == ["not", "a", "dict"]
+        audit = audit_project_resumability(reimported)
+
+        assert audit["resumable"] is True
+        assert audit["officially_resumable"] is False, audit[
+            "official_blocking_reasons"
+        ]
+        reasons = " ".join(r["reason"] for r in audit["official_blocking_reasons"])
+        assert "diagnostics artefact" in reasons
+
+
 # ---------------------------------------------------------------------------
 # Corrective PR A6 (review-debt finding 10, PR #104): the official_curves
 # checkpoint must revalidate each imported curve artifact against the

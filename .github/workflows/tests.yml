@@ -387,7 +387,7 @@ jobs:
           uv run python -c "import os, pymc_marketing; assert pymc_marketing.__version__ == os.environ['EXPECTED_PYMC_MARKETING'], (pymc_marketing.__version__, os.environ['EXPECTED_PYMC_MARKETING'])" &&
           uv run pytest ancestry_mmm/tests/test_transformations.py -k pymc_marketing -v --no-cov
       - name: Run tests with coverage
-        run: uv run pytest ancestry_mmm/tests/ -q --ignore=ancestry_mmm/tests/test_persistence.py --cov --cov-report=term-missing:skip-covered --cov-fail-under=75
+        run: uv run pytest ancestry_mmm/tests/ -q --ignore=ancestry_mmm/tests/test_persistence.py --ignore=ancestry_mmm/tests/test_official_lifecycle_browser.py --cov --cov-report=term-missing:skip-covered --cov-fail-under=75
 
   # -- Python 3.12 unit/integration ----------------------------------
   py312-tests:
@@ -408,7 +408,7 @@ jobs:
           uv run python -c "import os, pymc_marketing; assert pymc_marketing.__version__ == os.environ['EXPECTED_PYMC_MARKETING'], (pymc_marketing.__version__, os.environ['EXPECTED_PYMC_MARKETING'])" &&
           uv run pytest ancestry_mmm/tests/test_transformations.py -k pymc_marketing -v --no-cov
       - name: Run tests with coverage
-        run: uv run pytest ancestry_mmm/tests/ -q --ignore=ancestry_mmm/tests/test_persistence.py --cov --cov-report=term-missing:skip-covered --cov-fail-under=75
+        run: uv run pytest ancestry_mmm/tests/ -q --ignore=ancestry_mmm/tests/test_persistence.py --ignore=ancestry_mmm/tests/test_official_lifecycle_browser.py --cov --cov-report=term-missing:skip-covered --cov-fail-under=75
 
   # -- Ruff lint and format check -------------------------------------
   ruff:
@@ -523,6 +523,36 @@ jobs:
       - run: uv sync --locked
       - name: Run bundle round-trip tests
         run: uv run pytest ancestry_mmm/tests/test_persistence.py -v
+
+  # -- Browser lifecycle journey (required, deterministic fixture only) --
+  # Drives the real Streamlit app in a real browser through Project Import
+  # -> Curve Bank -> Official Curve Generation -> Scenario Planner using a
+  # deterministic already-fitted synthetic project bundle (no live MCMC/NUTS
+  # sampling). A health-check ping (see windows-tooling above) is not browser
+  # validation; this job is.
+  browser:
+    name: Browser lifecycle journey
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - run: uv sync --locked
+      - name: Install Chromium
+        run: uv run playwright install --with-deps chromium
+      - name: Run deterministic browser lifecycle journey
+        run: uv run pytest ancestry_mmm/tests/test_official_lifecycle_browser.py -v --no-cov --browser chromium
+        timeout-minutes: 10
+      - name: Upload failure artefacts (screenshots, traces, console logs)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-lifecycle-failure-artifacts
+          path: test-artifacts/playwright/**
+          if-no-files-found: ignore
 
   # -- Deterministic attribution recovery (schedule/manual only) --
   # NOTE: This is NOT MCMC parameter recovery. It tests deterministic

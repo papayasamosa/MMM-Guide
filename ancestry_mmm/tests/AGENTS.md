@@ -165,6 +165,15 @@ Use Streamlit AppTests for:
 - stale-state warnings
 - governance views
 
+### Browser-level deterministic journeys
+
+A Streamlit health-check ping is not browser validation. Where a change touches a full cross-page
+workflow (e.g. official curve creation through to scenario staleness), add or extend a Playwright test
+(`test_official_lifecycle_browser.py`) that drives the real running app in a real browser using a
+deterministic, already-fitted synthetic project bundle uploaded through the real Project Import file
+picker - never a live NUTS/MCMC fit inside a browser test. Assert on visible page state (buttons, forms,
+warnings, blocking messages, success confirmations), not only on HTTP status.
+
 ## CI gate
 
 A modelling PR is incomplete until all of the following pass:
