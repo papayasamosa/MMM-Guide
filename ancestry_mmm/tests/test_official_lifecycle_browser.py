@@ -37,6 +37,31 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 STARTUP_TIMEOUT_SECONDS = 60
 
 
+def _click_until_visible(
+    trigger,
+    target,
+    *,
+    attempts: int = 3,
+    per_attempt_timeout_ms: int = 10_000,
+) -> None:
+    """Click `trigger`, then wait for `target` to become visible - retrying
+    the click if it doesn't (observed in CI only: a BaseWeb Select's
+    dropdown occasionally fails to open on the first click in headless
+    Linux, never reproduced across 15+ local Windows runs). Each attempt
+    gets a short timeout so a genuinely-failed open is retried quickly
+    rather than spending the whole budget waiting once."""
+    last_error: Exception | None = None
+    for _ in range(attempts):
+        trigger.click()
+        try:
+            expect(target).to_be_visible(timeout=per_attempt_timeout_ms)
+            return
+        except AssertionError as exc:
+            last_error = exc
+    assert last_error is not None
+    raise last_error
+
+
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
@@ -173,9 +198,8 @@ def test_official_lifecycle_journey_in_browser(
     page.get_by_role("link", name="Official Curve Generation").click()
     page.get_by_text("Reference context - UK", exact=False).click()
     mode_select = page.get_by_role("combobox", name="Mode")
-    mode_select.click()
     mode_option = page.get_by_role("option", name="recent_average", exact=True)
-    expect(mode_option).to_be_visible(timeout=30_000)
+    _click_until_visible(mode_select, mode_option)
     mode_option.click()
     # Selecting the mode triggers a script rerun that recomputes the
     # confirmation checkbox's fingerprinted widget key (page 13's own
@@ -199,8 +223,17 @@ def test_official_lifecycle_journey_in_browser(
         ),
     )
     expect(confirm_checkbox).to_be_enabled(timeout=30_000)
-    confirm_checkbox.check(force=True, timeout=60_000)
-    expect(confirm_checkbox).to_be_checked(timeout=30_000)
+    # Same CI-only flakiness pattern as the dropdown above (never seen
+    # locally): retry the click a few times rather than trust one attempt.
+    for _ in range(3):
+        confirm_checkbox.check(force=True, timeout=15_000)
+        try:
+            expect(confirm_checkbox).to_be_checked(timeout=5_000)
+            break
+        except AssertionError:
+            continue
+    else:
+        expect(confirm_checkbox).to_be_checked(timeout=15_000)
     # No (market, channel) support range is recorded (section 4 is left at
     # its default, unchecked "include support" state), so generation needs
     # an explicit diagnostic spend axis instead - otherwise it fails closed
