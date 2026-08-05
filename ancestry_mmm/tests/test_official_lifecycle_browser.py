@@ -187,6 +187,11 @@ def test_official_lifecycle_journey_in_browser(
     expect(page.get_by_text("Derived from the model frame", exact=False)).to_be_visible(
         timeout=30_000
     )
+    # Let any trailing DOM updates from that rerun settle before touching
+    # the checkbox - CI has shown "clicking did not change its state" here
+    # (never seen locally) consistent with a slower websocket round-trip
+    # than the derived-preview text alone accounts for.
+    page.wait_for_timeout(1_000)
     confirm_checkbox = page.get_by_role(
         "checkbox",
         name=re.compile(
@@ -194,7 +199,8 @@ def test_official_lifecycle_journey_in_browser(
         ),
     )
     expect(confirm_checkbox).to_be_enabled(timeout=30_000)
-    confirm_checkbox.check(force=True)
+    confirm_checkbox.check(force=True, timeout=60_000)
+    expect(confirm_checkbox).to_be_checked(timeout=30_000)
     # No (market, channel) support range is recorded (section 4 is left at
     # its default, unchecked "include support" state), so generation needs
     # an explicit diagnostic spend axis instead - otherwise it fails closed
