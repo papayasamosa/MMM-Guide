@@ -6,6 +6,7 @@ Fixture recipe mirrors test_curve_bank_page_apptest.py's (same page-computed
 both pages resolve governance identically.
 """
 
+import json
 from pathlib import Path
 
 import arviz as az
@@ -836,3 +837,120 @@ def test_cost_mapping_editor_preserves_allow_extrapolation_and_supersedes_id(
     assert saved_mapping is not None
     assert saved_mapping.allow_extrapolation is True
     assert saved_mapping.supersedes_mapping_id == "UK-TV_Brand-cost-v1"
+
+
+def _decode_plotly_array(value):
+    """Decode a plotly-JSON trace field that may be a plain list or the
+    binary-encoded {"dtype", "bdata"} form numpy arrays serialise to."""
+    if isinstance(value, dict) and "bdata" in value:
+        import base64
+
+        return np.frombuffer(
+            base64.b64decode(value["bdata"]), dtype=np.dtype(value["dtype"])
+        ).tolist()
+    return list(value)
+
+
+def _rendered_response_curves(at: AppTest) -> list[dict]:
+    """Parse every rendered ``st.plotly_chart`` on the page into its title,
+    the "Mean response" trace's x values, and the resolved x-axis title -
+    the same evidence the reviewer flagged as showing ordinal spend_point
+    values under a real-unit label (Corrective PR E2a)."""
+    charts = []
+    for element in at.get("plotly_chart"):
+        spec = json.loads(element.proto.spec)
+        mean_trace = next(
+            trace for trace in spec["data"] if trace.get("name") == "Mean response"
+        )
+        charts.append(
+            {
+                "title": spec["layout"]["title"]["text"],
+                "x": _decode_plotly_array(mean_trace["x"]),
+                "x_axis_title": spec["layout"]["xaxis"]["title"]["text"],
+            }
+        )
+    return charts
+
+
+def test_official_curve_generation_preview_plots_actual_model_input_axis_values(
+    monkeypatch, tmp_path
+):
+    """Corrective PR E2a: the post-save preview must plot the real governed
+    media-input axis values (0, 30, 120, 275, 900), never the persisted
+    summary grain's ordinal spend_point (0, 1, 2, 3, 4) mislabelled as
+    though it were the real unit. Non-linear, non-consecutive points are
+    used deliberately so a regression back to plotting spend_point (which
+    would show 0-4) is unambiguous."""
+    import ancestry_mmm.utils.session_state as ss
+
+    monkeypatch.setattr(ss, "CURVE_ARTIFACT_ROOT", tmp_path)
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_governed_session_state(at)
+    at.session_state["project_name"] = "ocg-axis-project"
+    at.session_state["ocg_mode_UK"] = "recent_average"
+    at.session_state["ocg_spend_points"] = "0, 30, 120, 275, 900"
+    at.run()
+    assert not at.exception, f"initial load raised: {at.exception}"
+    _confirm_market_context(at, "UK")
+
+    at.session_state["ocg_artifact_id"] = "art-axis-model-input"
+    generate_button = next(
+        b for b in at.button if b.label == "Generate and save official curve artifact"
+    )
+    generate_button.click().run()
+    assert not at.exception, f"generate click raised: {at.exception}"
+    assert any("Saved official curve artifact" in (s.value or "") for s in at.success)
+
+    charts = _rendered_response_curves(at)
+    chart = next(c for c in charts if "UK - TV_Brand" in c["title"])
+    assert chart["x"] == [0.0, 30.0, 120.0, 275.0, 900.0]
+    assert chart["x"] != [0.0, 1.0, 2.0, 3.0, 4.0]
+    assert "Model input" in chart["x_axis_title"]
+
+
+def test_official_curve_generation_preview_plots_local_spend_not_reporting_currency(
+    monkeypatch, tmp_path
+):
+    """Corrective PR E2a: for a monetary curve the preview must plot the
+    real local_spend axis (with an identity cost mapping this equals the
+    entered spend points exactly) and label it with the local currency -
+    never the reporting_currency_spend values (which differ here under a
+    1.25 FX rate) silently substituted in, and never the persisted summary
+    grain's ordinal spend_point."""
+    import ancestry_mmm.utils.session_state as ss
+
+    monkeypatch.setattr(ss, "CURVE_ARTIFACT_ROOT", tmp_path)
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_governed_session_state(at)
+    at.session_state["project_name"] = "ocg-axis-monetary-project"
+    at.session_state["media_cost_mappings"] = _seed_approved_cost_mapping()
+    at.session_state["ocg_curve_type"] = _MONETARY_RADIO_LABEL
+    at.session_state["ocg_local_currency_UK"] = "GBP"
+    at.session_state["ocg_reporting_currency"] = "USD"
+    at.session_state["ocg_fx_rate_GBP"] = 1.25
+    at.session_state["ocg_fx_source"] = "test-fx-provider"
+    at.session_state["ocg_mode_UK"] = "recent_average"
+    at.session_state["ocg_spend_points"] = "0, 30, 120, 275, 900"
+    at.run()
+    assert not at.exception, f"initial monetary load raised: {at.exception}"
+    _confirm_market_context(at, "UK")
+
+    at.session_state["ocg_artifact_id"] = "art-axis-monetary"
+    generate_button = next(
+        b for b in at.button if b.label == "Generate and save official curve artifact"
+    )
+    generate_button.click().run()
+    assert not at.exception, f"monetary generate click raised: {at.exception}"
+    assert any("Saved official curve artifact" in (s.value or "") for s in at.success)
+
+    charts = _rendered_response_curves(at)
+    chart = next(c for c in charts if "UK - TV_Brand" in c["title"])
+    # IdentitySpendMapping: local_spend == the entered spend points exactly.
+    assert chart["x"] == [0.0, 30.0, 120.0, 275.0, 900.0]
+    # reporting_currency_spend (local_spend * 1.25) must NOT be plotted.
+    assert chart["x"] != [0.0, 37.5, 150.0, 343.75, 1125.0]
+    assert chart["x"] != [0.0, 1.0, 2.0, 3.0, 4.0]
+    assert "GBP" in chart["x_axis_title"]
+    assert "USD" not in chart["x_axis_title"]
