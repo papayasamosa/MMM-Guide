@@ -225,14 +225,21 @@ def test_official_lifecycle_journey_in_browser(
     expect(confirm_checkbox).to_be_enabled(timeout=30_000)
     # Same CI-only flakiness pattern as the dropdown above (never seen
     # locally): retry the click a few times rather than trust one attempt.
+    # `.check()` itself raises on "did not change state" (a plain
+    # playwright.Error, not an AssertionError) - the whole attempt,
+    # including that call, must be inside the try or a first-attempt
+    # failure skips every retry and propagates immediately.
+    checked = False
     for _ in range(3):
-        confirm_checkbox.check(force=True, timeout=15_000)
         try:
+            confirm_checkbox.check(force=True, timeout=15_000)
             expect(confirm_checkbox).to_be_checked(timeout=5_000)
+            checked = True
             break
-        except AssertionError:
+        except Exception:
             continue
-    else:
+    if not checked:
+        confirm_checkbox.check(force=True, timeout=15_000)
         expect(confirm_checkbox).to_be_checked(timeout=15_000)
     # No (market, channel) support range is recorded (section 4 is left at
     # its default, unchecked "include support" state), so generation needs
