@@ -63,6 +63,7 @@ from ancestry_mmm.core.optimization import validate_scenario_dependencies
 from ancestry_mmm.core.outcome_approval import OutcomeApproval
 from ancestry_mmm.core.outcomes import OutcomeDefinition
 from ancestry_mmm.core.persistence import (
+    audit_project_resumability,
     current_model_identity_fingerprints,
     export_project,
     import_project,
@@ -179,9 +180,15 @@ def test_official_curve_to_scenario_lifecycle(project, tmp_path):
     )
 
     # --- 6. export_project bundles the curve artifact store + scenario
+    # raw_sources carries the fixture's own transformed frame (there is no
+    # separate pre-pipeline table here - pipeline_steps=[] already means
+    # "transformed_data is the raw upload, unmodified"). An empty dict here
+    # would leave audit_project_resumability()'s "scenarios" checkpoint
+    # reporting raw_sources missing - a bundle this test calls a complete
+    # round trip that a real re-import could never actually resume.
     bundle_path = export_project(
         tmp_path / "bundle.zip",
-        raw_sources={},
+        raw_sources={"joined": project.fitted.transformed_data.copy()},
         transformed_data=project.fitted.transformed_data,
         pipeline_steps=[],
         model_spec=project.fitted.model_spec_dict,
@@ -210,6 +217,11 @@ def test_official_curve_to_scenario_lifecycle(project, tmp_path):
         imported["scenarios"][0]["governance_dependencies"]["cost_mapping_fingerprint"]
         == project.cost_mapping_registry.fingerprint()
     )
+    # This bundle is a genuinely complete "scenarios" checkpoint round trip
+    # - not merely loadable, but proved resumable by the same audit the
+    # real Project Import page runs.
+    resumability = audit_project_resumability(imported)
+    assert resumability["resumable"] is True, resumability["missing_required"]
 
     # --- 8. Transactional replacement - proves replacement, not a merge
     replace_curve_artifact_store(imported, destination_store)
