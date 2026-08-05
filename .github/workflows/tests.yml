@@ -387,7 +387,7 @@ jobs:
           uv run python -c "import os, pymc_marketing; assert pymc_marketing.__version__ == os.environ['EXPECTED_PYMC_MARKETING'], (pymc_marketing.__version__, os.environ['EXPECTED_PYMC_MARKETING'])" &&
           uv run pytest ancestry_mmm/tests/test_transformations.py -k pymc_marketing -v --no-cov
       - name: Run tests with coverage
-        run: uv run pytest ancestry_mmm/tests/ -q --ignore=ancestry_mmm/tests/test_persistence.py --cov --cov-report=term-missing:skip-covered --cov-fail-under=75
+        run: uv run pytest ancestry_mmm/tests/ -q --ignore=ancestry_mmm/tests/test_persistence.py --ignore=ancestry_mmm/tests/test_official_lifecycle_browser.py --cov --cov-report=term-missing:skip-covered --cov-fail-under=75
 
   # -- Python 3.12 unit/integration ----------------------------------
   py312-tests:
@@ -408,7 +408,7 @@ jobs:
           uv run python -c "import os, pymc_marketing; assert pymc_marketing.__version__ == os.environ['EXPECTED_PYMC_MARKETING'], (pymc_marketing.__version__, os.environ['EXPECTED_PYMC_MARKETING'])" &&
           uv run pytest ancestry_mmm/tests/test_transformations.py -k pymc_marketing -v --no-cov
       - name: Run tests with coverage
-        run: uv run pytest ancestry_mmm/tests/ -q --ignore=ancestry_mmm/tests/test_persistence.py --cov --cov-report=term-missing:skip-covered --cov-fail-under=75
+        run: uv run pytest ancestry_mmm/tests/ -q --ignore=ancestry_mmm/tests/test_persistence.py --ignore=ancestry_mmm/tests/test_official_lifecycle_browser.py --cov --cov-report=term-missing:skip-covered --cov-fail-under=75
 
   # -- Ruff lint and format check -------------------------------------
   ruff:

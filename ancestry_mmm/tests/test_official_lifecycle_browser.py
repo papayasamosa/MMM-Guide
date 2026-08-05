@@ -113,15 +113,22 @@ def test_official_lifecycle_journey_in_browser(
     # (workflow-progress sidebar) client-side, and only a real in-app
     # navigation is guaranteed to land on the target page reliably.
     page.goto(streamlit_base_url, wait_until="load")
-    expect(page.get_by_text("Marketing Mix Modelling", exact=False)).to_be_visible(
-        timeout=30_000
-    )
+    expect(
+        page.get_by_test_id("stSidebarUserContent").get_by_text(
+            "Marketing Mix Modelling"
+        )
+    ).to_be_visible(timeout=30_000)
 
     # --- Project Export/Import page: upload the deterministic bundle -----
+    # `exact=True` throughout this test: Streamlit renders a visually-hidden
+    # anchor-link duplicate of every heading's text (`#some-heading`), and
+    # some captions/labels are near-duplicates of a heading's text - both
+    # trip Playwright's strict-mode "resolved to N elements" check on a
+    # plain substring `get_by_text` match.
     page.get_by_role("link", name="Project Export & Recovery").click()
-    expect(page.get_by_text("Upload a previously exported .zip")).to_be_visible(
-        timeout=30_000
-    )
+    expect(
+        page.get_by_text("Upload a previously exported .zip", exact=True)
+    ).to_be_visible(timeout=30_000)
     page.locator("input[type=file]").set_input_files(str(bundle_path))
     import_button = page.get_by_role("button", name="Import bundle")
     expect(import_button).to_be_enabled(timeout=30_000)
@@ -132,7 +139,8 @@ def test_official_lifecycle_journey_in_browser(
     # a silent no-op, is visible to the user - not only to the test suite).
     expect(
         page.get_by_text(
-            "Project imported. Review each page to pick up where you left off."
+            "Project imported. Review each page to pick up where you left off.",
+            exact=True,
         )
     ).to_be_visible(timeout=30_000)
     expect(
@@ -141,9 +149,15 @@ def test_official_lifecycle_journey_in_browser(
 
     # --- Curve Bank: both official curve artifacts are visible -----------
     page.get_by_role("link", name="Results & Curve Bank").click()
-    expect(page.get_by_text("Official curve artifacts")).to_be_visible(timeout=30_000)
-    expect(page.get_by_text("lifecycle-model-input")).to_be_visible(timeout=30_000)
-    expect(page.get_by_text("lifecycle-monetary")).to_be_visible(timeout=30_000)
+    expect(page.get_by_text("Official curve artifacts", exact=True)).to_be_visible(
+        timeout=30_000
+    )
+    expect(page.get_by_text("lifecycle-model-input", exact=True)).to_be_visible(
+        timeout=30_000
+    )
+    expect(page.get_by_text("lifecycle-monetary", exact=True)).to_be_visible(
+        timeout=30_000
+    )
 
     # --- Scenario Planner: the imported saved scenario is visible --------
     # The comparison table itself is a canvas-rendered `st.dataframe` grid
@@ -154,8 +168,10 @@ def test_official_lifecycle_journey_in_browser(
     # scenario content is already proved by the AppTest and integration
     # test coverage.
     page.get_by_role("link", name="Scenario Planner").click()
-    expect(page.get_by_text("Saved scenarios")).to_be_visible(timeout=30_000)
-    expect(page.get_by_text("No scenarios saved yet.")).not_to_be_visible()
+    expect(page.get_by_text("Saved scenarios", exact=True)).to_be_visible(
+        timeout=30_000
+    )
+    expect(page.get_by_text("No scenarios saved yet.", exact=True)).not_to_be_visible()
 
     unexpected_console_errors = [
         e for e in console_errors if "favicon" not in e.lower()
