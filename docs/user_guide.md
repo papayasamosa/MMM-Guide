@@ -86,6 +86,21 @@ estimate, plus a mirrored media-unit entry wherever a cost-per-unit relationship
 curve bank history by market/channel/segment/curve status, and log geo-test or in-platform
 calibration results against any saved entry.
 
+## Step 10b: Official Curve Generation
+
+The curve viewer on Step 10 renders directly from the fitted trace and current session state - useful
+for exploration, but not itself a governed artefact: nothing pins it to a specific approval, and it
+disappears when the session ends. Page 13 (`CurveService.create_official_artifact`, REQ-CURVE-001) is
+the separate, deliberate act of turning that fitted evidence into a governed, fingerprinted curve
+artefact - re-validating the full governance chain (model approval, outcome approval, activity
+definitions, threshold policy) before writing anything, then persisting the result under the official
+curve artifact store. Generate an **official model-input curve** (response on the model's native input
+scale) and, wherever a governed cost mapping and currency/FX evidence exist, an **official monetary
+curve** (response against spend, in the market's reporting currency). Every artefact carries fingerprints
+over its governance inputs, so a later consumer (Curve Bank display, project export, a saved scenario)
+can prove it is still current rather than silently reusing stale evidence - see `docs/curve_bank.md` and
+`docs/approved_requirements/REQ-CURVE-001.md`.
+
 ## Step 11: Scenario Planner
 
 Choose a market and a planning window. For a market-specific model, an expander shows each planned

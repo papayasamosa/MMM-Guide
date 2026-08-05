@@ -55,6 +55,7 @@ dev = [
     "mypy>=1.7.0",
     "pip-audit>=2.7.0",
     "bandit>=1.7.5",
+    "pytest-playwright>=0.5.2",
 ]
 
 [dependency-groups]
@@ -66,6 +67,7 @@ dev = [
     "mypy>=1.7.0",
     "pip-audit>=2.7.0",
     "bandit>=1.7.5",
+    "pytest-playwright>=0.5.2",
 ]
 
 [tool.pytest.ini_options]

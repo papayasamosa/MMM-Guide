@@ -7,15 +7,20 @@ since it determines whether a bundle is later recognised as having reached
 the distinct `official_curves` checkpoint versus falling back to `curves`
 (the legacy parameter-snapshot checkpoint) or an earlier one.
 
-The import side (file upload) and the Excel/report buttons (which require a
-fitted model in session state) are not driven through the UI here - Streamlit
-AppTest has no API for simulating `st.file_uploader` input, and the
-export/import/checkpoint/report-row logic itself is already covered
-end-to-end at the core/application layer in test_persistence.py,
-test_project_service.py, test_curve_service.py, and test_report.py. This
-file's job is only to confirm the page wiring (the new
-`curve_artifact_store_source_dir=`/checkpoint-expression additions) actually
-fires when a real button is clicked.
+The Excel/report buttons (which require a fitted model in session state) are
+not driven through the UI here - that logic is already covered end-to-end at
+the core/application layer in test_persistence.py, test_project_service.py,
+test_curve_service.py, and test_report.py.
+
+PR 122: the import side (file upload) IS driven through the UI below -
+`streamlit.testing.v1`'s `FileUploader.set_value()` (available in the
+Streamlit version this repo currently pins) can simulate an uploaded file,
+closing the gap the docstring above used to describe as untestable. This
+proves the page's real "Import bundle" button click reaches
+`replace_curve_artifact_store` and transactionally replaces (not merges) the
+destination project's official curve artifact store - using the same
+deterministic lifecycle fixture builders as
+`test_official_lifecycle_integration.py`, not a second hand-rolled fixture.
 """
 
 import dataclasses
@@ -28,9 +33,16 @@ from streamlit.testing.v1 import AppTest
 from ancestry_mmm.core.curve_artifact import (
     CurveArtifactMetadata,
     compute_curve_artifact_fingerprints,
+    load_curve_artifact_store,
     write_curve_artifact,
 )
-from ancestry_mmm.core.persistence import import_project
+from ancestry_mmm.core.persistence import export_project, import_project
+from ancestry_mmm.tests.support.lifecycle_fixture import (
+    UNRELATED_ARTIFACT_ID,
+    build_lifecycle_project,
+    create_official_artifacts,
+    write_unrelated_artifact,
+)
 
 st.page_link = lambda *a, **k: None
 
@@ -139,3 +151,68 @@ def test_export_falls_back_to_legacy_curves_checkpoint_without_official_artifact
     imported = import_project(export_root / "proj-legacy.zip")
     assert imported["manifest"]["workflow_checkpoint"] == "curves"
     assert imported["manifest"]["contains"]["official_curve_artifacts"] is False
+
+
+def test_import_bundle_transactionally_replaces_the_destination_artifact_store(
+    monkeypatch, tmp_path
+):
+    """PR 122: uploading a bundle via the real "Import bundle" button
+    replaces (never merges into) the destination project's official curve
+    artifact store - the old unrelated artifact is gone afterwards and the
+    two artifacts from the imported bundle are present."""
+    export_root = tmp_path / "exports"
+    artifact_root = tmp_path / "artifact-root"
+    project_name = "proj-destination"
+
+    import ancestry_mmm.utils as utils_pkg
+    import ancestry_mmm.utils.session_state as ss
+
+    monkeypatch.setattr(utils_pkg, "PROJECT_EXPORT_ROOT", export_root)
+    monkeypatch.setattr(ss, "CURVE_ARTIFACT_ROOT", artifact_root)
+
+    destination_store = artifact_root / project_name
+    write_unrelated_artifact(destination_store)
+    pre_existing = load_curve_artifact_store(destination_store)
+    assert {a.metadata.artifact_id for a in pre_existing.loaded} == {
+        UNRELATED_ARTIFACT_ID
+    }
+
+    project = build_lifecycle_project()
+    source_store = tmp_path / "source-curve-artifacts"
+    create_official_artifacts(project, source_store)
+    bundle_path = export_project(
+        tmp_path / "lifecycle-bundle.zip",
+        raw_sources={},
+        transformed_data=None,
+        pipeline_steps=[],
+        model_spec=None,
+        prior_config=None,
+        dna_lag_weeks=0,
+        trace=None,
+        scenarios=[],
+        curve_artifact_store_source_dir=source_store,
+    )
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.run()
+    assert not at.exception, f"initial load raised: {at.exception}"
+    at.session_state["project_name"] = project_name
+
+    uploader = at.file_uploader[0]
+    uploader.set_value(
+        (bundle_path.name, bundle_path.read_bytes(), "application/zip")
+    ).run()
+    assert not at.exception, f"file upload raised: {at.exception}"
+
+    import_button = next(b for b in at.button if b.label == "Import bundle")
+    import_button.click().run()
+    assert not at.exception, f"import click raised: {at.exception}"
+
+    replaced = load_curve_artifact_store(destination_store)
+    assert not replaced.malformed
+    replaced_ids = {a.metadata.artifact_id for a in replaced.loaded}
+    assert UNRELATED_ARTIFACT_ID not in replaced_ids
+    assert replaced_ids == {"lifecycle-model-input", "lifecycle-monetary"}
+    assert any(
+        "Restored 2 official curve artifact(s)" in (s.value or "") for s in at.success
+    )

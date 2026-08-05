@@ -524,6 +524,36 @@ jobs:
       - name: Run bundle round-trip tests
         run: uv run pytest ancestry_mmm/tests/test_persistence.py -v
 
+  # -- Browser lifecycle journey (required, deterministic fixture only) --
+  # Drives the real Streamlit app in a real browser through Project Import
+  # -> Curve Bank -> Official Curve Generation -> Scenario Planner using a
+  # deterministic already-fitted synthetic project bundle (no live MCMC/NUTS
+  # sampling). A health-check ping (see windows-tooling above) is not browser
+  # validation; this job is.
+  browser:
+    name: Browser lifecycle journey
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - run: uv sync --locked
+      - name: Install Chromium
+        run: uv run playwright install --with-deps chromium
+      - name: Run deterministic browser lifecycle journey
+        run: uv run pytest ancestry_mmm/tests/test_official_lifecycle_browser.py -v --no-cov --browser chromium
+        timeout-minutes: 10
+      - name: Upload failure artefacts (screenshots, traces, console logs)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-lifecycle-failure-artifacts
+          path: test-artifacts/playwright/**
+          if-no-files-found: ignore
+
   # -- Deterministic attribution recovery (schedule/manual only) --
   # NOTE: This is NOT MCMC parameter recovery. It tests deterministic
   # replay and attribution using known parameters. A full MCMC recovery
