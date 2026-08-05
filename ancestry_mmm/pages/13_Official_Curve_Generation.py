@@ -37,7 +37,9 @@ from ancestry_mmm.core.canonical_curves import (
     CONTEXT_MODES,
     CurveReferenceContext,
     reference_context_from_model_frame,
+    resolve_curve_axis_column,
     resolve_curve_axis_label,
+    summarize_component_response_by_draw,
     support_from_model_frame,
 )
 from ancestry_mmm.core.fingerprint import (
@@ -1130,64 +1132,71 @@ if st.button("Generate and save official curve artifact", type="primary"):
         # 8. Posterior interval display + average/marginal economics
         st.markdown("#### Posterior interval and economics")
         summaries = result.artifact.summaries
-        if (
-            summaries.empty
-            or "spend_point" not in summaries.columns
-            or "market" not in summaries.columns
-            or "channel" not in summaries.columns
-        ):
-            st.caption("No plottable posterior summaries on this artifact.")
+        draws = result.artifact.draws
+        # Corrective PR E2a: the persisted summary grain's "spend_point" is
+        # an ordinal point identifier (0, 1, 2, ...), never the real
+        # media_input/local_spend/reporting_currency_spend axis - plotting
+        # it under a real-unit label displayed point indexes as though they
+        # were TVRs, impressions, GBP, etc. The real axis only lives on the
+        # draws (aggregate_curve_draws, which builds the persisted summary
+        # grain, does not carry media_input through at all, and only ever
+        # carries local_spend - never a channel/spend_point-safe axis for a
+        # model-input curve). Resolve the axis and summarise the same way
+        # the Curve Bank display does (resolve_curve_axis_column +
+        # summarize_component_response_by_draw on the draws), so both pages
+        # share one canonical curve-axis resolution - never a second,
+        # page-specific posterior summarisation.
+        chart_required = {"incremental_response", "market", "channel", "posterior_draw"}
+        x_col = resolve_curve_axis_column(draws)
+        if draws.empty or x_col is None or not chart_required.issubset(draws.columns):
+            st.caption(
+                "This artifact does not carry a plottable posterior response "
+                "curve (missing market/channel/axis/response/posterior_draw "
+                "columns)."
+            )
         else:
-            for (curve_market, curve_channel), group in summaries.groupby(
+            for (curve_market, curve_channel), draws_group in draws.groupby(
                 ["market", "channel"], observed=True
             ):
-                group = group.sort_values("spend_point")
-                if "incremental_response_posterior_mean" in group.columns:
-                    # Corrective PR E2.4: the persisted summary grain only
-                    # ever carries the generic "spend_point" axis column
-                    # (IDENTITY_COLUMNS), regardless of curve_type - the
-                    # label must still name the governed unit/currency
-                    # this artifact actually measures, resolved from the
-                    # just-generated draws (which do carry
-                    # media_input_unit/local_currency/reporting_currency),
-                    # never hard-coded as "Spend" for a model-input curve.
-                    draws = result.artifact.draws
-                    draws_group = draws[
-                        (draws["market"] == curve_market)
-                        & (draws["channel"] == curve_channel)
+                stats = summarize_component_response_by_draw(
+                    draws_group, by=[], x_col=x_col
+                ).sort_values(x_col)
+                st.plotly_chart(
+                    create_response_curve_with_band(
+                        stats[x_col].to_numpy(dtype=float),
+                        stats["posterior_mean"].to_numpy(dtype=float),
+                        stats["lower_interval"].to_numpy(dtype=float),
+                        stats["upper_interval"].to_numpy(dtype=float),
+                        f"{curve_market} - {curve_channel}",
+                        x_axis_label=resolve_curve_axis_label(x_col, draws_group),
+                    ),
+                    width="stretch",
+                )
+                if not summaries.empty and {
+                    "market",
+                    "channel",
+                    "spend_point",
+                }.issubset(summaries.columns):
+                    econ_group = summaries[
+                        (summaries["market"] == curve_market)
+                        & (summaries["channel"] == curve_channel)
+                    ].sort_values("spend_point")
+                    economics_cols = [
+                        c
+                        for c in econ_group.columns
+                        if c.startswith(
+                            (
+                                "average_cpa",
+                                "marginal_cpa",
+                                "average_roi",
+                                "marginal_roi",
+                            )
+                        )
                     ]
-                    axis_label = resolve_curve_axis_label(
-                        "media_input" if curve_type == "model_input" else "local_spend",
-                        draws_group,
-                    )
-                    st.plotly_chart(
-                        create_response_curve_with_band(
-                            group["spend_point"].to_numpy(dtype=float),
-                            group["incremental_response_posterior_mean"].to_numpy(
-                                dtype=float
-                            ),
-                            group["incremental_response_lower_interval"].to_numpy(
-                                dtype=float
-                            ),
-                            group["incremental_response_upper_interval"].to_numpy(
-                                dtype=float
-                            ),
-                            f"{curve_market} - {curve_channel}",
-                            x_axis_label=axis_label,
-                        ),
-                        width="stretch",
-                    )
-                economics_cols = [
-                    c
-                    for c in group.columns
-                    if c.startswith(
-                        ("average_cpa", "marginal_cpa", "average_roi", "marginal_roi")
-                    )
-                ]
-                if economics_cols:
-                    st.dataframe(
-                        group[["spend_point", *economics_cols]],
-                        width="stretch",
-                    )
+                    if economics_cols:
+                        st.dataframe(
+                            econ_group[["spend_point", *economics_cols]],
+                            width="stretch",
+                        )
 
 render_next_step("official_curve_generation")
