@@ -123,6 +123,28 @@ def test_official_curve_to_scenario_lifecycle(project, tmp_path):
     ]
     assert monetary_positive_spend["average_roi_posterior_mean"].notna().any()
 
+    # The disjoint-unit check above only proves the two curves are labelled
+    # differently - it would still pass if a regression fed monetary £
+    # spend straight into the model, ignoring the cost mapping entirely.
+    # build_monetary_generation_kwargs's cost mapping is
+    # cost_per_media_input=2.0 (build_cost_mapping_registry's default), so
+    # the monetary curve's own local_spend=100 point (index 2) converts to
+    # exactly 100/2=50 model-input units - the model-input curve's own
+    # local_spend=50 point (index 1, from the identical
+    # spend_points=[0, 50, 100] both curves were generated with). If the
+    # monetary curve genuinely applies the cost mapping before evaluating
+    # the same underlying response function, these must match exactly, not
+    # just approximately - both are deterministic functions of the same
+    # synthetic posterior.
+    model_input_at_50_units = model_input_summary.iloc[1]
+    monetary_at_gbp_100 = monetary_summary.iloc[2]
+    assert model_input_at_50_units["spend_point"] == 1
+    assert monetary_at_gbp_100["local_spend"] == 100.0
+    assert (
+        model_input_at_50_units["incremental_response_posterior_mean"]
+        == monetary_at_gbp_100["incremental_response_posterior_mean"]
+    )
+
     # --- 4. Draws, summary, metadata and fingerprints verify correctly
     for result in (model_input_result, monetary_result):
         verify_curve_artifact_fingerprints(result.artifact.metadata)
