@@ -108,11 +108,14 @@ filterwarnings = [
     # never fires on a local machine with BLAS installed) - a PyTensor
     # infrastructure notice about the runner environment, not our code.
     "ignore:PyTensor could not link to a BLAS installation.*:UserWarning",
-    # data/loader.py's column-type auto-detection deliberately probes
-    # arbitrary uploaded columns with pd.to_datetime and no fixed format -
-    # forcing one would break detection of any file using a different
-    # format, so pandas' fallback-to-dateutil notice is expected here.
-    "ignore:Could not infer format, so each element will be parsed individually.*:UserWarning",
+    # NOTE: data/loader.py's column-type auto-detection deliberately probes
+    # arbitrary uploaded columns with pd.to_datetime and no fixed format,
+    # which pandas warns about ("Could not infer format..."). That warning
+    # is suppressed locally around the probe itself (see loader.py), not
+    # here - a repo-wide ignore would also hide the same warning from any
+    # other, non-probing date-conversion path (data/pipeline.py,
+    # data/preprocessor.py), where it could mean a genuinely inconsistent
+    # format worth surfacing.
 ]
 
 [tool.coverage.run]

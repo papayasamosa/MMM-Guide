@@ -1,5 +1,7 @@
 """Data loading and validation utilities."""
 
+import warnings
+
 import pandas as pd
 from pathlib import Path
 from typing import Optional, Tuple, List, Dict, Any
@@ -130,7 +132,22 @@ def detect_column_types(df: pd.DataFrame) -> Dict[str, List[str]]:
         # otherwise skip the pd.to_datetime attempt entirely.
         if pd.api.types.is_string_dtype(df[col]) or df[col].dtype == "object":
             try:
-                pd.to_datetime(df[col])
+                # This probe deliberately has no fixed format - arbitrary
+                # uploaded columns can use any date format, and forcing one
+                # would break detection of legitimate columns using a
+                # different one. pandas' "falling back to dateutil" notice
+                # is therefore expected here specifically, not a sign of a
+                # genuinely ambiguous/inconsistent format worth surfacing -
+                # suppressed only around this exact call, not repo-wide, so
+                # the same warning from any other, non-probing conversion
+                # path still surfaces normally.
+                with warnings.catch_warnings():
+                    warnings.filterwarnings(
+                        "ignore",
+                        message="Could not infer format",
+                        category=UserWarning,
+                    )
+                    pd.to_datetime(df[col])
                 result["date"].append(col)
                 continue
             except (ValueError, TypeError):
