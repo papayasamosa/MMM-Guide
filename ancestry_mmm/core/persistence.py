@@ -1193,6 +1193,29 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
                     )
                     try:
                         approval_obj = ModelApproval.from_dict(raw_approval)
+                        # require_matching_approval only checks that
+                        # approval_readiness's own recorded fingerprints are
+                        # internally self-consistent - it cannot also verify
+                        # those fingerprints against a freshly recomputed
+                        # diagnostics artefact fingerprint, since
+                        # DiagnosticsArtefact is an application-layer type
+                        # core must not import (see
+                        # application.project_service.verify_imported_readiness,
+                        # the caller that does that fuller check). A missing
+                        # diagnostics_artefact for a policy-backed approval is
+                        # still a core-detectable evidence gap, so it fails
+                        # closed here too rather than letting an incomplete
+                        # bundle report full official resumability.
+                        if (
+                            approval_obj.validation_policy_id
+                            and imported.get("diagnostics_artefact") is None
+                        ):
+                            raise ValidationPolicyBlockedError(
+                                "Approval references validation policy "
+                                f"'{approval_obj.validation_policy_id}' but this "
+                                "bundle has no diagnostics artefact to verify "
+                                "the readiness evidence against."
+                            )
                         require_matching_approval(
                             approval_obj,
                             model_run_id=imported.get("model_run_id", ""),
