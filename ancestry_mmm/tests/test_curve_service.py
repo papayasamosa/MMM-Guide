@@ -46,8 +46,10 @@ from ancestry_mmm.core.curve_artifact import (
     CurveArtifact,
     CurveArtifactError,
     CurveArtifactMetadata,
+    CurveArtifactStoreError,
     compute_curve_artifact_fingerprints,
     read_curve_artifact,
+    validate_portable_path_component,
     verify_curve_artifact_fingerprints,
 )
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
@@ -2169,6 +2171,18 @@ class TestCreateOfficialArtifact:
             "CON",
             "con.json",
             "  ",
+            # PR #120 review (Corrective PR E3 follow-up): these were
+            # previously accepted at creation time but unconditionally
+            # rejected by the E3.2 import-side portable-path validator,
+            # so an artifact created with one of these IDs could never be
+            # re-imported after being exported.
+            "art?1",
+            "art*1",
+            "art<1",
+            "art>1",
+            'art"1',
+            "art|1",
+            "trailing-dot.",
         ],
     )
     def test_rejects_unsafe_artifact_ids(self, tmp_path, unsafe_artifact_id):
@@ -2180,6 +2194,20 @@ class TestCreateOfficialArtifact:
             self._create(tmp_path, artifact_id=unsafe_artifact_id)
         # Nothing must have been written outside (or inside) the store.
         assert list(tmp_path.iterdir()) == []
+
+    def test_creation_time_artifact_id_validation_matches_import_time_validation(
+        self, tmp_path
+    ):
+        # PR #120 review: creation-time and import-time validation must
+        # never drift apart - an artifact_id accepted here is guaranteed to
+        # survive an export/import round trip, and vice versa. This asserts
+        # the two entry points agree on the exact same rejection, not just
+        # that each independently rejects something.
+        unsafe_artifact_id = "art?1"
+        with pytest.raises(CurveArtifactUnsafeIdError):
+            self._create(tmp_path, artifact_id=unsafe_artifact_id)
+        with pytest.raises(CurveArtifactStoreError):
+            validate_portable_path_component(unsafe_artifact_id, label="artifact_id")
 
     def test_unsafe_artifact_id_cannot_escape_configured_store(self, tmp_path):
         store_dir = tmp_path / "store"
