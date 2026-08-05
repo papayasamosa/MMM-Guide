@@ -88,8 +88,10 @@ from ancestry_mmm.core.curve_artifact import (
     CurveArtifact,
     CurveArtifactError,
     CurveArtifactMetadata,
+    CurveArtifactStoreError,
     compute_curve_artifact_fingerprints,
     read_curve_artifact,
+    validate_portable_path_component,
     verify_curve_artifact_fingerprints,
     write_curve_artifact,
 )
@@ -150,17 +152,6 @@ class CurveArtifactUnsafeIdError(CurveGovernanceError):
     """
 
 
-# Windows reserved device names (case-insensitive, extension-insensitive) —
-# a path component matching one of these is invalid regardless of platform,
-# since artifact stores must remain portable across the repository's
-# Windows-first tooling.
-_RESERVED_WINDOWS_ARTIFACT_ID_STEMS = frozenset(
-    {"CON", "PRN", "AUX", "NUL"}
-    | {f"COM{i}" for i in range(1, 10)}
-    | {f"LPT{i}" for i in range(1, 10)}
-)
-
-
 def _validate_safe_artifact_id(artifact_id: str) -> None:
     """Reject any ``artifact_id`` that is not a single safe path component.
 
@@ -169,36 +160,23 @@ def _validate_safe_artifact_id(artifact_id: str) -> None:
     on-disk path for an official artifact. Blankness alone is not a
     sufficient check — ``..``, an absolute path, or a drive prefix can make
     the resolved destination escape ``store_dir`` entirely.
+
+    Corrective PR E3 follow-up (PR #120 review): delegates to the same
+    ``validate_portable_path_component`` the export/import store-replacement
+    path enforces (Corrective PR E3.2), rather than maintaining a second,
+    independently-drifting character list here. Without this, an artifact_id
+    accepted at creation time on a permissive OS could pass here yet be
+    unconditionally rejected on import, permanently trapping the artifact in
+    an exported project.
     """
-    if not artifact_id or not artifact_id.strip():
-        raise CurveArtifactUnsafeIdError("artifact_id must be non-blank")
-    candidate = artifact_id.strip()
-    if candidate != artifact_id:
-        raise CurveArtifactUnsafeIdError(
-            f"artifact_id must not have leading/trailing whitespace: {artifact_id!r}"
-        )
-    if candidate in (".", ".."):
-        raise CurveArtifactUnsafeIdError(
-            f"artifact_id must not be '.' or '..': {artifact_id!r}"
-        )
-    if "/" in candidate or "\\" in candidate:
-        raise CurveArtifactUnsafeIdError(
-            f"artifact_id must be a single path component (no separators): "
-            f"{artifact_id!r}"
-        )
-    if ":" in candidate:
-        raise CurveArtifactUnsafeIdError(
-            f"artifact_id must not contain a drive prefix: {artifact_id!r}"
-        )
-    if Path(candidate).is_absolute():
+    if Path(artifact_id).is_absolute():
         raise CurveArtifactUnsafeIdError(
             f"artifact_id must not be an absolute path: {artifact_id!r}"
         )
-    stem = candidate.split(".", 1)[0].upper()
-    if stem in _RESERVED_WINDOWS_ARTIFACT_ID_STEMS:
-        raise CurveArtifactUnsafeIdError(
-            f"artifact_id must not be a reserved device name: {artifact_id!r}"
-        )
+    try:
+        validate_portable_path_component(artifact_id, label="artifact_id")
+    except CurveArtifactStoreError as exc:
+        raise CurveArtifactUnsafeIdError(str(exc)) from exc
 
 
 class CurveReferenceContextIncompleteError(CurveGovernanceError):
