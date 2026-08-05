@@ -149,6 +149,65 @@ class CurveArtifactUnsupportedSchemaError(CurveArtifactError):
     """
 
 
+# Characters forbidden in a portable path component on every supported
+# operating system - a superset of what any single OS actually forbids, so a
+# name accepted here is guaranteed writable on Windows, macOS, and Linux
+# alike (Corrective PR E3.2).
+_FORBIDDEN_PATH_COMPONENT_CHARS = frozenset('<>:"/\\|?*')
+
+# Windows reserved device names (case-insensitive, extension-insensitive) -
+# a path component matching one of these is invalid regardless of platform,
+# since artifact stores must remain portable across the repository's
+# Windows-first tooling.
+_RESERVED_WINDOWS_PATH_COMPONENT_STEMS = frozenset(
+    {"CON", "PRN", "AUX", "NUL"}
+    | {f"COM{i}" for i in range(1, 10)}
+    | {f"LPT{i}" for i in range(1, 10)}
+)
+
+
+def validate_portable_path_component(
+    component: str, *, label: str = "path component"
+) -> None:
+    """Reject a path component that is not safe to write on every supported
+    operating system (Corrective PR E3.2).
+
+    A single component - never a multi-segment relative path (path
+    separators are themselves rejected here; a caller validating a relative
+    path must call this once per segment). Rejects: blank/whitespace-only
+    values, ``.``/``..``, ASCII control characters (0-31), the characters
+    ``< > : " / \\ | ? *``, a trailing dot or trailing space (both illegal
+    on Windows even though the component is otherwise well-formed), and a
+    reserved Windows device stem (``CON``, ``COM1``, ... ) with or without
+    an extension. Never relaxes a check already enforced elsewhere - this is
+    the strict superset every portable name must satisfy.
+    """
+    if not component or not component.strip():
+        raise CurveArtifactStoreError(f"{label} must not be blank: {component!r}")
+    if component != component.strip():
+        raise CurveArtifactStoreError(
+            f"{label} must not have leading/trailing whitespace: {component!r}"
+        )
+    if component in (".", ".."):
+        raise CurveArtifactStoreError(f"{label} must not be '.' or '..': {component!r}")
+    if any(ord(ch) < 32 for ch in component):
+        raise CurveArtifactStoreError(
+            f"{label} must not contain control characters: {component!r}"
+        )
+    forbidden = sorted(set(component) & _FORBIDDEN_PATH_COMPONENT_CHARS)
+    if forbidden:
+        raise CurveArtifactStoreError(
+            f"{label} must not contain {forbidden}: {component!r}"
+        )
+    if component.endswith("."):
+        raise CurveArtifactStoreError(f"{label} must not end in a dot: {component!r}")
+    stem = component.split(".", 1)[0].upper()
+    if stem in _RESERVED_WINDOWS_PATH_COMPONENT_STEMS:
+        raise CurveArtifactStoreError(
+            f"{label} must not be a reserved device name: {component!r}"
+        )
+
+
 def _is_json_safe(payload: object) -> bool:
     try:
         json.dumps(payload)

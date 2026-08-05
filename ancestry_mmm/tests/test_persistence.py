@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import zipfile
 from dataclasses import asdict, replace
 from pathlib import Path
@@ -16,8 +17,10 @@ from ancestry_mmm.core.approval import (
 )
 from ancestry_mmm.core.curve_artifact import (
     CurveArtifactMetadata,
+    CurveArtifactStoreError,
     compute_curve_artifact_fingerprints,
     load_curve_artifact_store,
+    validate_portable_path_component,
     write_curve_artifact,
 )
 from ancestry_mmm.core.fingerprint import (
@@ -777,6 +780,351 @@ class TestReplaceCurveArtifactStore:
         destination = tmp_path / "destination-never-created"
         replace_curve_artifact_store({}, destination)
         assert not destination.exists()
+
+
+def _snapshot_store(store_dir: Path) -> dict:
+    """Byte-for-byte snapshot of every file under ``store_dir``, keyed by
+    relative path - used to assert the old store survives a failed
+    transaction untouched."""
+    if not store_dir.exists():
+        return {}
+    return {
+        str(f.relative_to(store_dir)): f.read_bytes()
+        for f in sorted(store_dir.rglob("*"))
+        if f.is_file()
+    }
+
+
+def _no_stray_staging_dirs(store_root: Path) -> bool:
+    return not any(
+        ".stage-" in p.name or ".backup-" in p.name
+        for p in store_root.iterdir()
+        if p.is_dir()
+    )
+
+
+class TestReplaceCurveArtifactStoreTransactional:
+    """Corrective PR E3.1: ``replace_curve_artifact_store`` stages the
+    imported bundle on a sibling directory, verifies it through the
+    canonical loader, and only then swaps it in - backing up (and
+    restoring) the previous store around the swap - instead of deleting the
+    destination before anything is validated or written."""
+
+    def test_stage_write_failure_preserves_the_old_store(self, tmp_path, monkeypatch):
+        destination = tmp_path / "destination"
+        _write_official_artifact(destination, "art-old")
+        before = _snapshot_store(destination)
+
+        bundle_store = tmp_path / "bundle-store"
+        _write_official_artifact(bundle_store, "art-new")
+        imported = _bundle_files_for_store(bundle_store)
+
+        monkeypatch.setattr(
+            Path,
+            "write_text",
+            lambda self, *a, **k: (_ for _ in ()).throw(
+                OSError("simulated stage write failure")
+            ),
+        )
+        with pytest.raises(OSError):
+            replace_curve_artifact_store(imported, destination)
+
+        assert _snapshot_store(destination) == before
+        assert _no_stray_staging_dirs(tmp_path)
+
+    def test_binary_write_failure_preserves_the_old_store(self, tmp_path, monkeypatch):
+        destination = tmp_path / "destination"
+        _write_official_artifact(destination, "art-old")
+        before = _snapshot_store(destination)
+
+        bundle_store = tmp_path / "bundle-store"
+        _write_official_artifact(bundle_store, "art-new")
+        imported = _bundle_files_for_store(bundle_store)
+        assert imported["curve_artifact_binary_files"], (
+            "fixture must carry at least one binary file for this test to "
+            "exercise the binary write path"
+        )
+
+        monkeypatch.setattr(
+            Path,
+            "write_bytes",
+            lambda self, *a, **k: (_ for _ in ()).throw(
+                OSError("simulated binary write failure")
+            ),
+        )
+        with pytest.raises(OSError):
+            replace_curve_artifact_store(imported, destination)
+
+        assert _snapshot_store(destination) == before
+        assert _no_stray_staging_dirs(tmp_path)
+
+    def test_audit_failure_before_promotion_never_touches_the_destination(
+        self, tmp_path, monkeypatch
+    ):
+        destination = tmp_path / "destination"
+        _write_official_artifact(destination, "art-old")
+        before = _snapshot_store(destination)
+
+        bundle_store = tmp_path / "bundle-store"
+        _write_official_artifact(bundle_store, "art-new")
+        imported = _bundle_files_for_store(bundle_store)
+
+        def fake_load(*args, **kwargs):
+            raise CurveArtifactStoreError("simulated malformed staged store")
+
+        monkeypatch.setattr(
+            "ancestry_mmm.core.persistence.load_curve_artifact_store", fake_load
+        )
+        with pytest.raises(CurveArtifactStoreError):
+            replace_curve_artifact_store(imported, destination)
+
+        # The destination was never even renamed to a backup - it is the
+        # exact same directory, untouched.
+        assert _snapshot_store(destination) == before
+        assert _no_stray_staging_dirs(tmp_path)
+
+    def _patch_os_replace(self, monkeypatch, *, fail_when):
+        real_replace = os.replace
+
+        def fake_replace(src, dst, *args, **kwargs):
+            if fail_when(Path(src), Path(dst)):
+                raise OSError("simulated os.replace failure")
+            return real_replace(src, dst, *args, **kwargs)
+
+        monkeypatch.setattr(os, "replace", fake_replace)
+
+    def test_backup_rename_failure_leaves_the_original_destination_in_place(
+        self, tmp_path, monkeypatch
+    ):
+        destination = tmp_path / "destination"
+        _write_official_artifact(destination, "art-old")
+        before = _snapshot_store(destination)
+
+        bundle_store = tmp_path / "bundle-store"
+        _write_official_artifact(bundle_store, "art-new")
+        imported = _bundle_files_for_store(bundle_store)
+
+        self._patch_os_replace(
+            monkeypatch, fail_when=lambda src, dst: ".backup-" in dst.name
+        )
+        with pytest.raises(OSError):
+            replace_curve_artifact_store(imported, destination)
+
+        assert destination.exists()
+        assert _snapshot_store(destination) == before
+        assert _no_stray_staging_dirs(tmp_path)
+
+    def test_promotion_failure_restores_the_backup(self, tmp_path, monkeypatch):
+        destination = tmp_path / "destination"
+        _write_official_artifact(destination, "art-old")
+        before = _snapshot_store(destination)
+
+        bundle_store = tmp_path / "bundle-store"
+        _write_official_artifact(bundle_store, "art-new")
+        imported = _bundle_files_for_store(bundle_store)
+
+        self._patch_os_replace(
+            monkeypatch, fail_when=lambda src, dst: ".stage-" in src.name
+        )
+        with pytest.raises(OSError):
+            replace_curve_artifact_store(imported, destination)
+
+        assert destination.exists()
+        assert _snapshot_store(destination) == before
+        assert _no_stray_staging_dirs(tmp_path)
+
+    def test_final_verification_failure_restores_the_backup(
+        self, tmp_path, monkeypatch
+    ):
+        destination = tmp_path / "destination"
+        _write_official_artifact(destination, "art-old")
+        before = _snapshot_store(destination)
+
+        bundle_store = tmp_path / "bundle-store"
+        _write_official_artifact(bundle_store, "art-new")
+        imported = _bundle_files_for_store(bundle_store)
+
+        real_load = load_curve_artifact_store
+        calls = {"count": 0}
+
+        def flaky_load(*args, **kwargs):
+            calls["count"] += 1
+            if calls["count"] >= 2:
+                raise CurveArtifactStoreError("simulated post-promotion audit failure")
+            return real_load(*args, **kwargs)
+
+        monkeypatch.setattr(
+            "ancestry_mmm.core.persistence.load_curve_artifact_store", flaky_load
+        )
+        with pytest.raises(CurveArtifactStoreError):
+            replace_curve_artifact_store(imported, destination)
+
+        assert calls["count"] >= 2  # staging audit, then the post-promotion audit
+        assert destination.exists()
+        assert _snapshot_store(destination) == before
+        assert _no_stray_staging_dirs(tmp_path)
+
+    def test_rollback_failure_raises_an_actionable_error_and_keeps_the_backup(
+        self, tmp_path, monkeypatch
+    ):
+        destination = tmp_path / "destination"
+        _write_official_artifact(destination, "art-old")
+        before = _snapshot_store(destination)
+
+        bundle_store = tmp_path / "bundle-store"
+        _write_official_artifact(bundle_store, "art-new")
+        imported = _bundle_files_for_store(bundle_store)
+
+        # Trigger a rollback via a failing final verification, and also
+        # fail the rollback's own restore-from-backup rename (src name
+        # contains ".backup-" only for that specific call).
+        real_load = load_curve_artifact_store
+        calls = {"count": 0}
+
+        def flaky_load(*args, **kwargs):
+            calls["count"] += 1
+            if calls["count"] >= 2:
+                raise CurveArtifactStoreError("simulated post-promotion audit failure")
+            return real_load(*args, **kwargs)
+
+        monkeypatch.setattr(
+            "ancestry_mmm.core.persistence.load_curve_artifact_store", flaky_load
+        )
+        self._patch_os_replace(
+            monkeypatch, fail_when=lambda src, dst: ".backup-" in src.name
+        )
+
+        with pytest.raises(CurveArtifactStoreError, match="rollback also failed"):
+            replace_curve_artifact_store(imported, destination)
+
+        # The previous store was not lost - it survives at the reported
+        # backup path (the error message names it), even though it could
+        # not be moved back to the original destination automatically.
+        store_root = destination.parent
+        backups = [
+            p for p in store_root.iterdir() if p.is_dir() and ".backup-" in p.name
+        ]
+        assert len(backups) == 1
+        assert _snapshot_store(backups[0]) == before
+
+    def test_successful_replacement_leaves_no_staging_or_backup_directories(
+        self, tmp_path
+    ):
+        destination = tmp_path / "destination"
+        _write_official_artifact(destination, "art-old")
+
+        bundle_store = tmp_path / "bundle-store"
+        _write_official_artifact(bundle_store, "art-new")
+        imported = _bundle_files_for_store(bundle_store)
+
+        replace_curve_artifact_store(imported, destination)
+
+        assert _no_stray_staging_dirs(tmp_path)
+        result = load_curve_artifact_store(destination)
+        assert {a.metadata.artifact_id for a in result.loaded} == {"art-new"}
+
+    def test_empty_replacement_is_staged_and_audited_like_any_other(
+        self, tmp_path, monkeypatch
+    ):
+        destination = tmp_path / "destination"
+        _write_official_artifact(destination, "art-old")
+
+        real_load = load_curve_artifact_store
+        calls = {"count": 0}
+
+        def counting_load(*args, **kwargs):
+            calls["count"] += 1
+            return real_load(*args, **kwargs)
+
+        monkeypatch.setattr(
+            "ancestry_mmm.core.persistence.load_curve_artifact_store", counting_load
+        )
+        replace_curve_artifact_store({}, destination)
+
+        # The empty bundle still went through the staging + audit + promote
+        # + post-promotion-audit sequence - not a delete-only shortcut.
+        assert calls["count"] >= 2
+        assert _no_stray_staging_dirs(tmp_path)
+        result = load_curve_artifact_store(destination)
+        assert result.loaded == ()
+
+
+class TestRejectsUnsafeCurveArtifactPaths:
+    """Corrective PR E3.2: every relative path a bundle supplies for
+    ``replace_curve_artifact_store`` must resolve to safe, portable path
+    components on every operating system before anything is written."""
+
+    @pytest.mark.parametrize(
+        "unsafe_rel_path",
+        [
+            "/absolute/metadata.json",
+            "C:/evil/metadata.json",
+            "C:\\evil\\metadata.json",
+            "../escape/metadata.json",
+            "art-1/../../../etc/passwd",
+            "..",
+            ".",
+            "",
+            "  ",
+            "art-1/CON",
+            "art-1/con.json",
+            "art-1/PRN.json",
+            "art-1/COM1",
+            "art-1/LPT1.json",
+            "art-1/trailing-dot.",
+            "art-1/trailing-space ",
+            "art-1/ leading-space",
+            "art-1/\x00null-byte",
+            "art-1/\x1fcontrol-char",
+        ],
+    )
+    def test_rejects_unsafe_relative_paths(self, tmp_path, unsafe_rel_path):
+        destination = tmp_path / "destination"
+        imported = {
+            "curve_artifact_files": {unsafe_rel_path: "{}"},
+            "curve_artifact_binary_files": {},
+        }
+        with pytest.raises(CurveArtifactStoreError):
+            replace_curve_artifact_store(imported, destination)
+        # Nothing must have been written outside (or inside) the store.
+        assert not destination.exists()
+        assert _no_stray_staging_dirs(tmp_path)
+
+    @pytest.mark.parametrize(
+        "forbidden_component",
+        [
+            "bad<name",
+            "bad>name",
+            "bad:name",
+            'bad"name',
+            "bad|name",
+            "bad?name",
+            "bad*name",
+        ],
+    )
+    def test_validate_portable_path_component_rejects_forbidden_characters(
+        self, forbidden_component
+    ):
+        with pytest.raises(CurveArtifactStoreError):
+            validate_portable_path_component(forbidden_component)
+
+    def test_validate_portable_path_component_accepts_safe_ascii_and_unicode(self):
+        for name in ("art-2026.08.04-v1", "art_1", "café-artefact", "モデル-1"):
+            validate_portable_path_component(name)  # must not raise
+
+    def test_case_insensitive_top_level_collision_is_rejected(self, tmp_path):
+        destination = tmp_path / "destination"
+        imported = {
+            "curve_artifact_files": {
+                "Art-1/metadata.json": "{}",
+                "art-1/metadata.json": "{}",
+            },
+            "curve_artifact_binary_files": {},
+        }
+        with pytest.raises(CurveArtifactStoreError):
+            replace_curve_artifact_store(imported, destination)
+        assert not destination.exists()
+        assert _no_stray_staging_dirs(tmp_path)
 
 
 @pytest.mark.parametrize(

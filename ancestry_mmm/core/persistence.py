@@ -40,12 +40,14 @@ from __future__ import annotations
 
 import gc
 import json
+import os
 import shutil
 import tempfile
+import uuid
 import zipfile
 from dataclasses import asdict
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import pandas as pd
 import arviz as az
@@ -66,7 +68,12 @@ from .fingerprint import (
     fingerprint_model_spec,
     fingerprint_posterior,
 )
-from .curve_artifact import CurveArtifact, load_curve_artifact_store
+from .curve_artifact import (
+    CurveArtifact,
+    CurveArtifactStoreError,
+    load_curve_artifact_store,
+    validate_portable_path_component,
+)
 from .hierarchical_model import FHModelMeta
 from .outcomes import outcome_catalogue_fingerprint_payload
 from .pathways import pathway_catalogue_fingerprint_payload
@@ -701,11 +708,62 @@ def resolve_imported_outcome_approvals(
     return legacy_records, warnings
 
 
+def _validate_relative_artifact_path(rel_path: str) -> None:
+    """Reject a bundle-supplied relative path unless every segment is a
+    portable, non-traversing path component (Corrective PR E3.2)."""
+    candidate = Path(rel_path)
+    if candidate.is_absolute():
+        raise CurveArtifactStoreError(
+            f"curve artifact path must be relative, got an absolute path: {rel_path!r}"
+        )
+    if not candidate.parts:
+        raise CurveArtifactStoreError("curve artifact path must not be blank")
+    for part in candidate.parts:
+        validate_portable_path_component(part, label="curve artifact path segment")
+
+
+def _reject_case_insensitive_top_level_collisions(rel_paths: Sequence[str]) -> None:
+    """Reject two distinct top-level artifact directories that would collide
+    once case-folded (Corrective PR E3.2) - Windows and macOS default
+    filesystems are case-insensitive, so ``Art-1`` and ``art-1`` are the same
+    destination on disk even though the bundle carries them as distinct
+    entries."""
+    seen: Dict[str, str] = {}
+    for rel_path in rel_paths:
+        top = Path(rel_path).parts[0]
+        folded = top.casefold()
+        existing = seen.setdefault(folded, top)
+        if existing != top:
+            raise CurveArtifactStoreError(
+                "curve artifact paths collide once case-folded (unsafe on a "
+                f"case-insensitive filesystem): {existing!r} vs {top!r}"
+            )
+
+
+def _resolve_under(root: Path, rel_path: str) -> Path:
+    """Join ``rel_path`` onto ``root`` and verify the resolved destination
+    is still beneath ``root`` (defense in depth beyond
+    ``_validate_relative_artifact_path``'s component-level checks -
+    Corrective PR E3.2, mirroring ``CurveService``'s equivalent
+    resolved-destination check for a freshly generated artifact_id)."""
+    target = root / Path(rel_path)
+    resolved_root = root.resolve()
+    resolved_target = target.resolve()
+    if resolved_target != resolved_root and not resolved_target.is_relative_to(
+        resolved_root
+    ):
+        raise CurveArtifactStoreError(
+            f"curve artifact path resolves outside the store: {rel_path!r}"
+        )
+    return target
+
+
 def replace_curve_artifact_store(
     imported: Dict[str, Any], restored_artifact_dir: Path
 ) -> None:
-    """Atomically replace ``restored_artifact_dir``'s contents with an
-    imported bundle's official curve artifacts (Corrective PR A5).
+    """Transactionally replace ``restored_artifact_dir``'s contents with an
+    imported bundle's official curve artifacts (Corrective PR A5, made
+    transactional by Corrective PR E3.1/E3.2).
 
     Importing a bundle must replace the destination project's
     official-artifact store, never merge into it - unconditionally,
@@ -718,22 +776,125 @@ def replace_curve_artifact_store(
     stale artifacts from a previously open project could satisfy the
     ``official_curves`` checkpoint or appear in reports for a project they
     don't belong to.
+
+    The previous implementation removed ``restored_artifact_dir`` before
+    writing anything, so a failure partway through (malformed payload, a
+    write failure, disk exhaustion, a failed promotion or verification)
+    could destroy a previously valid store and leave an empty or partial
+    destination. This version stages the complete imported store on a
+    sibling directory (same volume as the destination, so the final
+    promotion can be an atomic rename), verifies it through the same
+    canonical loader/fingerprint audit the live app uses, and only then
+    swaps it in - backing up the current destination first and restoring
+    that backup if anything past this point fails. The old store is never
+    touched until the staged replacement has already proven loadable.
     """
     restored_artifact_dir = Path(restored_artifact_dir)
-    shutil.rmtree(restored_artifact_dir, ignore_errors=True)
-    text_files = imported.get("curve_artifact_files") or {}
-    binary_files = imported.get("curve_artifact_binary_files") or {}
-    if not text_files and not binary_files:
+    text_files: Dict[str, str] = imported.get("curve_artifact_files") or {}
+    binary_files: Dict[str, bytes] = imported.get("curve_artifact_binary_files") or {}
+    all_rel_paths = [*text_files.keys(), *binary_files.keys()]
+
+    if not all_rel_paths and not restored_artifact_dir.exists():
+        # Nothing to import, nothing to replace - preserve "never existed"
+        # rather than manufacturing an empty directory that wasn't there
+        # before (existing contract, still transactional: source state
+        # already equals destination state).
         return
-    restored_artifact_dir.mkdir(parents=True, exist_ok=True)
-    for rel_path, contents in text_files.items():
-        target = restored_artifact_dir / Path(rel_path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(contents)
-    for rel_path, binary_contents in binary_files.items():
-        target = restored_artifact_dir / Path(rel_path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(binary_contents)
+
+    # 1. Validate every relative path before writing anything.
+    for rel_path in all_rel_paths:
+        _validate_relative_artifact_path(rel_path)
+    _reject_case_insensitive_top_level_collisions(all_rel_paths)
+
+    store_root = restored_artifact_dir.parent
+    store_root.mkdir(parents=True, exist_ok=True)
+    stage_dir = Path(
+        tempfile.mkdtemp(
+            prefix=f".{restored_artifact_dir.name}.stage-", dir=str(store_root)
+        )
+    )
+    backup_dir: Optional[Path] = None
+    promoted = False
+    preserve_backup_for_manual_recovery = False
+    try:
+        # 2-4. Materialise the complete imported store into staging (an
+        # empty bundle stages an empty directory - still promoted through
+        # the same swap below, never a shortcut that touches the old store
+        # first).
+        for rel_path, contents in text_files.items():
+            target = _resolve_under(stage_dir, rel_path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(contents)
+        for rel_path, binary_contents in binary_files.items():
+            target = _resolve_under(stage_dir, rel_path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(binary_contents)
+
+        # 5-6. Canonical artefact-store loader and fingerprint audit on
+        # staging - fails closed before the current destination is touched
+        # if the staged store is invalid.
+        load_curve_artifact_store(stage_dir, raise_on_malformed=True)
+
+        # 7-8. Atomically back up the current destination, if any exists.
+        # ``backup_dir`` is only ever recorded once the rename onto it has
+        # actually succeeded - if this ``os.replace`` itself raises, the
+        # original destination was never touched, so the except clause
+        # below must see no backup to roll back (nothing to undo).
+        if restored_artifact_dir.exists():
+            candidate_backup_dir = store_root / (
+                f".{restored_artifact_dir.name}.backup-{uuid.uuid4().hex}"
+            )
+            os.replace(restored_artifact_dir, candidate_backup_dir)
+            backup_dir = candidate_backup_dir
+
+        # 9. Atomically promote staging into the destination.
+        os.replace(stage_dir, restored_artifact_dir)
+        promoted = True
+
+        # 10. Verify the final destination through the canonical loader.
+        load_curve_artifact_store(restored_artifact_dir, raise_on_malformed=True)
+
+        # 11. Remove the backup only after final verification succeeds.
+        if backup_dir is not None:
+            shutil.rmtree(backup_dir, ignore_errors=True)
+            backup_dir = None
+    except Exception as exc:
+        # 12. On any failure from this point on - including promotion
+        # itself failing, not only a later verification failure - restore
+        # the backup: ``promoted`` only controls whether the (bad) promoted
+        # content must be discarded first, never whether a restore is
+        # attempted at all. A backup exists (``backup_dir is not None``)
+        # whenever the previous store was renamed aside, regardless of
+        # whether the rename that was supposed to replace it afterward ever
+        # completed - the old store is preserved byte-for-byte whenever the
+        # replacement itself fails.
+        if backup_dir is not None:
+            if promoted:
+                shutil.rmtree(restored_artifact_dir, ignore_errors=True)
+            try:
+                os.replace(backup_dir, restored_artifact_dir)
+            except OSError as restore_exc:
+                # The rollback itself failed - never silently drop the only
+                # surviving copy of the previous store. Leave it on disk at
+                # ``backup_dir`` (finally: below must not clean it up) and
+                # say exactly where it is and what to do.
+                preserve_backup_for_manual_recovery = True
+                raise CurveArtifactStoreError(
+                    "Curve artifact store replacement failed and the "
+                    f"automatic rollback also failed ({restore_exc}). "
+                    f"The previous store was NOT lost - it is intact at "
+                    f"{backup_dir} and must be moved back to "
+                    f"{restored_artifact_dir} manually."
+                ) from exc
+            backup_dir = None
+        raise
+    finally:
+        # 13. Clean up staging/backup remnants after success or rollback -
+        # except a backup a failed rollback couldn't restore, which must
+        # survive for manual recovery (see the except clause above).
+        shutil.rmtree(stage_dir, ignore_errors=True)
+        if backup_dir is not None and not preserve_backup_for_manual_recovery:
+            shutil.rmtree(backup_dir, ignore_errors=True)
 
 
 def _load_curve_artifacts_for_audit(imported: Dict[str, Any]) -> List[CurveArtifact]:
