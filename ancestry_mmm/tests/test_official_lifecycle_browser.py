@@ -84,18 +84,31 @@ def streamlit_base_url() -> Iterator[str]:
                 pass
             time.sleep(1.0)
         if not ready:
-            output = proc.stdout.read().decode(errors="replace") if proc.stdout else ""
+            # Terminate before reading stdout: if the process is still alive
+            # (e.g. a slow/hung import rather than a clean exit), `read()`
+            # blocks until EOF and would ignore STARTUP_TIMEOUT_SECONDS
+            # entirely, leaving CI to sit until the outer job timeout kills
+            # pytest with no useful RuntimeError.
+            if proc.poll() is None:
+                proc.terminate()
+            try:
+                output = proc.communicate(timeout=10)[0]
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                output = proc.communicate(timeout=10)[0]
+            text = output.decode(errors="replace") if output else ""
             raise RuntimeError(
-                f"Streamlit did not become ready within {STARTUP_TIMEOUT_SECONDS}s.\n{output}"
+                f"Streamlit did not become ready within {STARTUP_TIMEOUT_SECONDS}s.\n{text}"
             )
         yield base_url
     finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(timeout=10)
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=10)
 
 
 def test_official_lifecycle_journey_in_browser(
@@ -152,10 +165,13 @@ def test_official_lifecycle_journey_in_browser(
     expect(page.get_by_text("Official curve artifacts", exact=True)).to_be_visible(
         timeout=30_000
     )
-    expect(page.get_by_text("lifecycle-model-input", exact=True)).to_be_visible(
+    # `.first`: the artifact ID legitimately appears twice (the artifact's
+    # own expander label, and a row in the curve-bank history grid) -
+    # either is sufficient proof the artifact rendered.
+    expect(page.get_by_text("lifecycle-model-input", exact=True).first).to_be_visible(
         timeout=30_000
     )
-    expect(page.get_by_text("lifecycle-monetary", exact=True)).to_be_visible(
+    expect(page.get_by_text("lifecycle-monetary", exact=True).first).to_be_visible(
         timeout=30_000
     )
 
