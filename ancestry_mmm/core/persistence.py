@@ -1201,14 +1201,21 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
                         # DiagnosticsArtefact is an application-layer type
                         # core must not import (see
                         # application.project_service.verify_imported_readiness,
-                        # the caller that does that fuller check). A missing
+                        # the caller that does that fuller check - a bundle
+                        # this audit calls "resumable" must still go through
+                        # that fuller verification before any official use is
+                        # actually authorised; CurveService.authorize_use
+                        # independently re-verifies the full chain at every
+                        # official use regardless of what this audit
+                        # reports). A missing or structurally-invalid
                         # diagnostics_artefact for a policy-backed approval is
                         # still a core-detectable evidence gap, so it fails
                         # closed here too rather than letting an incomplete
                         # bundle report full official resumability.
-                        if (
-                            approval_obj.validation_policy_id
-                            and imported.get("diagnostics_artefact") is None
+                        raw_diagnostics_artefact = imported.get("diagnostics_artefact")
+                        if approval_obj.validation_policy_id and (
+                            raw_diagnostics_artefact is None
+                            or not isinstance(raw_diagnostics_artefact, dict)
                         ):
                             raise ValidationPolicyBlockedError(
                                 "Approval references validation policy "
