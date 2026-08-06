@@ -38,10 +38,12 @@ from ancestry_mmm.core.market_config import (
 from ancestry_mmm.core.optimization import SpendConstraint, evaluate_scenario
 from ancestry_mmm.core.outcomes import DNA, FAMILY_HISTORY, OutcomeDefinition
 from ancestry_mmm.core.planning import CURRENT_PLANNING_EVALUATION_SEMANTICS
+from ancestry_mmm.core.planning.value import CurrencyContext
 from ancestry_mmm.core.pathways import (
     ResolvedPathwayComponent,
     ResolvedPathwayMasks,
 )
+from ancestry_mmm.core.scenario_governance import CounterfactualPolicy
 from ancestry_mmm.core.persistence import (
     UnsafeZipEntryError,
     _count_loaded_curve_artifacts,
@@ -2926,6 +2928,210 @@ class TestScenariosCheckpointOfficialResumability:
         # Never a generic, uninformative message pretending the scenario
         # was compared against itself.
         assert "incomplete_validation_context" not in reasons
+
+    def _project_with_counterfactual_scenario(
+        self, consistent_project, consistent_meta, *, counterfactual_fp
+    ):
+        approval = ModelApproval.from_dict(consistent_project["model_approval"])
+        canonical_fp = fingerprint_model_approval(approval)
+        scenario = self._official_scenario(
+            model_run_id=consistent_project["model_run_id"],
+            model_approval_fingerprint=canonical_fp,
+            counterfactual_fp=counterfactual_fp,
+        )
+        scenario["governance_dependencies"]["data_fingerprint"] = (
+            approval.data_fingerprint
+        )
+        scenario["governance_dependencies"]["model_spec_fingerprint"] = (
+            approval.model_spec_fingerprint
+        )
+        scenario["governance_dependencies"]["posterior_fingerprint"] = (
+            approval.posterior_fingerprint
+        )
+        return self._project_with_official_scenario(
+            consistent_project, consistent_meta, scenario=scenario
+        )
+
+    def test_matching_project_level_counterfactual_policy_is_officially_resumable(
+        self, tmp_path, consistent_project, consistent_meta
+    ):
+        # PR 125A: a project-level CounterfactualPolicy now travels through
+        # the bundle - a scenario whose saved fingerprint matches it is
+        # genuinely, not just technically, resumable.
+        policy = CounterfactualPolicy()
+        project = self._project_with_counterfactual_scenario(
+            consistent_project, consistent_meta, counterfactual_fp=policy.fingerprint()
+        )
+        project["counterfactual_policy"] = policy.to_dict()
+
+        output_path = export_project(tmp_path / "bundle.zip", **project)
+        imported = import_project(output_path)
+        assert imported["counterfactual_policy"] == policy.to_dict()
+        audit = audit_project_resumability(imported)
+
+        assert audit["resumable"] is True
+        assert audit["officially_resumable"] is True, audit["official_blocking_reasons"]
+
+    def test_mismatched_project_level_counterfactual_policy_blocks_with_explicit_reason(
+        self, tmp_path, consistent_project, consistent_meta
+    ):
+        # The scenario's saved fingerprint reflects a policy the project no
+        # longer uses (e.g. the demand-capture rule was changed after this
+        # scenario was saved) - must fail closed with a precise reason, not
+        # be silently treated as current.
+        saved_policy = CounterfactualPolicy(demand_capture_rule="zero")
+        current_policy = CounterfactualPolicy(demand_capture_rule="hold_plan")
+        project = self._project_with_counterfactual_scenario(
+            consistent_project,
+            consistent_meta,
+            counterfactual_fp=saved_policy.fingerprint(),
+        )
+        project["counterfactual_policy"] = current_policy.to_dict()
+
+        output_path = export_project(tmp_path / "bundle.zip", **project)
+        imported = import_project(output_path)
+        audit = audit_project_resumability(imported)
+
+        assert audit["resumable"] is True
+        assert audit["officially_resumable"] is False
+        reasons = " ".join(r["reason"] for r in audit["official_blocking_reasons"])
+        assert "counterfactual_identity_mismatch" in reasons
+
+    def test_malformed_project_level_counterfactual_policy_blocks_with_explicit_reason(
+        self, tmp_path, consistent_project, consistent_meta
+    ):
+        # A tampered or corrupted config/counterfactual_policy.json must
+        # fail closed with a precise reason, never crash the audit and
+        # never be silently treated as absent (which would fall back to the
+        # weaker "unverifiable" legacy path instead of flagging corruption).
+        policy = CounterfactualPolicy()
+        project = self._project_with_counterfactual_scenario(
+            consistent_project, consistent_meta, counterfactual_fp=policy.fingerprint()
+        )
+        project["counterfactual_policy"] = {"decision_activity_rule": "not-a-real-rule"}
+
+        output_path = export_project(tmp_path / "bundle.zip", **project)
+        imported = import_project(output_path)
+        audit = audit_project_resumability(imported)
+
+        assert audit["resumable"] is True
+        assert audit["officially_resumable"] is False
+        reasons = " ".join(r["reason"] for r in audit["official_blocking_reasons"])
+        assert "counterfactual_policy_malformed" in reasons
+
+    def _project_with_currency_scenario(
+        self, consistent_project, consistent_meta, *, currency_context_fp
+    ):
+        approval = ModelApproval.from_dict(consistent_project["model_approval"])
+        canonical_fp = fingerprint_model_approval(approval)
+        scenario = self._official_scenario(
+            model_run_id=consistent_project["model_run_id"],
+            model_approval_fingerprint=canonical_fp,
+            counterfactual_fp="",
+        )
+        scenario["governance_dependencies"]["data_fingerprint"] = (
+            approval.data_fingerprint
+        )
+        scenario["governance_dependencies"]["model_spec_fingerprint"] = (
+            approval.model_spec_fingerprint
+        )
+        scenario["governance_dependencies"]["posterior_fingerprint"] = (
+            approval.posterior_fingerprint
+        )
+        scenario["governance_dependencies"]["currency_context_fingerprint"] = (
+            currency_context_fp
+        )
+        return self._project_with_official_scenario(
+            consistent_project, consistent_meta, scenario=scenario
+        )
+
+    def test_matching_project_level_currency_context_is_officially_resumable(
+        self, tmp_path, consistent_project, consistent_meta
+    ):
+        context = CurrencyContext(market_reporting_currency="GBP", value_currency="GBP")
+        project = self._project_with_currency_scenario(
+            consistent_project,
+            consistent_meta,
+            currency_context_fp=context.fingerprint(),
+        )
+        project["currency_context"] = context.to_dict()
+
+        output_path = export_project(tmp_path / "bundle.zip", **project)
+        imported = import_project(output_path)
+        assert imported["currency_context"]["value_currency"] == "GBP"
+        audit = audit_project_resumability(imported)
+
+        assert audit["resumable"] is True
+        assert audit["officially_resumable"] is True, audit["official_blocking_reasons"]
+
+    def test_missing_project_level_currency_context_blocks_as_unverifiable(
+        self, tmp_path, consistent_project, consistent_meta
+    ):
+        # A bundle exported before PR 125A (or one where the analyst never
+        # resolved a value currency this session) carries no project-level
+        # currency context - a scenario that depends on one must fail
+        # closed, never be silently promoted to official.
+        context = CurrencyContext(market_reporting_currency="GBP", value_currency="GBP")
+        project = self._project_with_currency_scenario(
+            consistent_project,
+            consistent_meta,
+            currency_context_fp=context.fingerprint(),
+        )
+
+        output_path = export_project(tmp_path / "bundle.zip", **project)
+        imported = import_project(output_path)
+        assert imported["currency_context"] is None
+        audit = audit_project_resumability(imported)
+
+        assert audit["resumable"] is True
+        assert audit["officially_resumable"] is False
+        reasons = " ".join(r["reason"] for r in audit["official_blocking_reasons"])
+        assert "currency_identity_unverifiable" in reasons
+
+    def test_mismatched_project_level_currency_context_blocks_with_explicit_reason(
+        self, tmp_path, consistent_project, consistent_meta
+    ):
+        saved_context = CurrencyContext(
+            market_reporting_currency="GBP", value_currency="GBP"
+        )
+        current_context = CurrencyContext(
+            market_reporting_currency="USD", value_currency="USD"
+        )
+        project = self._project_with_currency_scenario(
+            consistent_project,
+            consistent_meta,
+            currency_context_fp=saved_context.fingerprint(),
+        )
+        project["currency_context"] = current_context.to_dict()
+
+        output_path = export_project(tmp_path / "bundle.zip", **project)
+        imported = import_project(output_path)
+        audit = audit_project_resumability(imported)
+
+        assert audit["resumable"] is True
+        assert audit["officially_resumable"] is False
+        reasons = " ".join(r["reason"] for r in audit["official_blocking_reasons"])
+        assert "currency_identity_mismatch" in reasons
+
+    def test_malformed_project_level_currency_context_blocks_with_explicit_reason(
+        self, tmp_path, consistent_project, consistent_meta
+    ):
+        context = CurrencyContext(market_reporting_currency="GBP", value_currency="GBP")
+        project = self._project_with_currency_scenario(
+            consistent_project,
+            consistent_meta,
+            currency_context_fp=context.fingerprint(),
+        )
+        project["currency_context"] = {"market_reporting_currency": "not-iso"}
+
+        output_path = export_project(tmp_path / "bundle.zip", **project)
+        imported = import_project(output_path)
+        audit = audit_project_resumability(imported)
+
+        assert audit["resumable"] is True
+        assert audit["officially_resumable"] is False
+        reasons = " ".join(r["reason"] for r in audit["official_blocking_reasons"])
+        assert "currency_context_malformed" in reasons
 
 
 class TestScenariosCheckpointPolicyBackedApprovalRequiresDiagnostics:

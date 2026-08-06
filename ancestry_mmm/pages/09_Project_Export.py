@@ -380,6 +380,12 @@ if st.button("Build export bundle", type="primary"):
             diagnostics_artefact=_diagnostics_artefact_dict,
             validation_results=get_state("validation_results"),
             approval_readiness=get_state("approval_readiness"),
+            # PR 125A: the project-level planning dependencies every
+            # official scenario's saved governance-dependency fingerprint
+            # is verified against on import - see core.persistence's
+            # module docstring.
+            counterfactual_policy=get_state("counterfactual_policy"),
+            currency_context=get_state("currency_context"),
         )
     st.success(f"Project bundle built: {output_path}")
     with open(output_path, "rb") as f:
@@ -475,6 +481,12 @@ if uploaded_zip is not None and st.button("Import bundle"):
         set_state("media_outcome_pathways", imported["media_outcome_pathways"])
         set_state("net_billthrough_metadata", imported["net_billthrough_metadata"])
         set_state("migration_review", imported.get("migration_review"))
+        # PR 125A: restore the project-level planning dependencies so a
+        # resumed session's Scenario Planner selection (and any newly
+        # re-saved scenario) matches what was exported, and so a re-export
+        # of this same session round-trips the identical policy/context.
+        set_state("counterfactual_policy", imported.get("counterfactual_policy"))
+        set_state("currency_context", imported.get("currency_context"))
         workflow_state = imported.get("workflow_state") or {}
         set_state("current_page", workflow_state.get("current_page", 0))
         set_state("active_scenario", workflow_state.get("active_scenario"))
@@ -587,15 +599,28 @@ if uploaded_zip is not None and st.button("Import bundle"):
         # G2A.7a.1 (REQ-OUT-002 section 12.2): a bundle can be technically
         # loadable while official use of its checkpoint remains blocked by
         # outcome governance - reported separately so "resumable" is never
-        # read as "officially usable".
-        if resume_audit["resumable"] and not resume_audit.get(
-            "officially_resumable", True
-        ):
+        # read as "officially usable". PR 125A: the positive case is now
+        # reported explicitly too (previously only the negative case had
+        # any visible text), and every blocking reason is shown, not just
+        # outcome-governance ones - a mismatched project-level
+        # counterfactual policy or currency context is exactly the kind of
+        # reason an analyst needs to see, not only infer from silence.
+        if resume_audit["resumable"] and resume_audit.get("officially_resumable", True):
+            st.success(
+                f"This bundle is officially resumable at checkpoint "
+                f"'{resume_audit['checkpoint']}'."
+            )
+        elif resume_audit["resumable"]:
             st.warning(
                 "This bundle loaded successfully, but is not **officially** "
-                "resumable at its checkpoint - see the outcome-governance "
-                "note(s) below."
+                "resumable at its checkpoint - see the reason(s) below."
             )
+            for blocking_reason in resume_audit.get("official_blocking_reasons", []):
+                st.caption(
+                    f"{blocking_reason.get('artefact_type')} "
+                    f"'{blocking_reason.get('artefact_id')}': "
+                    f"{blocking_reason.get('reason')}"
+                )
         for audit_warning in resume_audit["warnings"]:
             st.caption(audit_warning)
         for outcome_governance_warning in resume_audit.get(

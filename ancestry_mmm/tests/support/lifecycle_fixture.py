@@ -952,6 +952,14 @@ def build_lifecycle_project_bundle(
         diagnostics_artefact=project.diagnostics.to_dict(),
         approval_readiness=project.readiness.to_dict(),
         media_cost_mappings=project.cost_mapping_registry.to_dict(),
+        # PR 125A: the project-level policy/context this scenario's saved
+        # counterfactual_policy_fingerprint / currency_context_fingerprint
+        # (see build_scenario_validation_context above) must be verifiable
+        # against on import - without these, this bundle is a genuine
+        # "technically but not officially resumable" case, exactly the gap
+        # PR 125A closes.
+        counterfactual_policy=build_counterfactual_policy().to_dict(),
+        currency_context=project.currency_context.to_dict(),
     )
 
 

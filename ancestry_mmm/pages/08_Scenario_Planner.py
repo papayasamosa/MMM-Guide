@@ -550,9 +550,24 @@ if activity_map:
         "and non-applicable activity is stored separately as model-input quantities."
     )
 
+_DEMAND_CAPTURE_RULE_OPTIONS = ["hold_plan", "zero"]
+# PR 125A: seed the widget's default from the project-level counterfactual
+# policy restored by a bundle import, not always the first option - so a
+# resumed session shows the same selection that was exported, and re-saves
+# the identical CounterfactualPolicy (same fingerprint) until the analyst
+# deliberately changes it.
+_imported_demand_capture_rule = (get_state("counterfactual_policy") or {}).get(
+    "demand_capture_rule"
+)
+_demand_capture_rule_index = (
+    _DEMAND_CAPTURE_RULE_OPTIONS.index(_imported_demand_capture_rule)
+    if _imported_demand_capture_rule in _DEMAND_CAPTURE_RULE_OPTIONS
+    else 0
+)
 demand_capture_rule = st.radio(
     "Demand-capture counterfactual",
-    ["hold_plan", "zero"],
+    _DEMAND_CAPTURE_RULE_OPTIONS,
+    index=_demand_capture_rule_index,
     horizontal=True,
     format_func=lambda value: {
         "hold_plan": "Hold demand-capture activity at the candidate level",
@@ -566,6 +581,10 @@ demand_capture_rule = st.radio(
 counterfactual_policy = CounterfactualPolicy(
     demand_capture_rule=demand_capture_rule,
 )
+# PR 125A: the project-level policy every official scenario's saved
+# counterfactual identity is verified against on import - see
+# core.persistence's module docstring and audit_project_resumability().
+set_state("counterfactual_policy", counterfactual_policy.to_dict())
 
 # G2A.7a.1 (section 4.2): one source of truth. The radio's own return
 # value IS the authoritative governance mode for this rerun - it is never
@@ -730,6 +749,12 @@ currency_context = (
     if value_currency
     else None
 )
+# PR 125A: the project-level currency context every official scenario's
+# saved currency identity is verified against on import. Only set when this
+# rerun actually resolved one - an objective with no target-outcome
+# currency must not overwrite a previously exported context with None.
+if currency_context is not None:
+    set_state("currency_context", currency_context.to_dict())
 
 # G2A.7a.7: protected objective resolution with error boundary
 planning_objective = None
