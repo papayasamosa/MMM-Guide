@@ -64,6 +64,7 @@ class ProjectExportInput:
     approval_readiness: Optional[dict] = None
     counterfactual_policy: Optional[dict] = None
     currency_context: Optional[dict] = None
+    value_mapping: Optional[dict] = None
     include_excel: bool = False
     excel_sheets: Optional[Dict[str, Optional[pd.DataFrame]]] = None
     excel_output_path: Optional[str] = None
@@ -171,6 +172,7 @@ class ProjectService:
                 approval_readiness=exp_input.approval_readiness,
                 counterfactual_policy=exp_input.counterfactual_policy,
                 currency_context=exp_input.currency_context,
+                value_mapping=exp_input.value_mapping,
             )
         except Exception as exc:
             errors.append(f"Project export failed: {exc}")

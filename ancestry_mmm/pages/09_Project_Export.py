@@ -386,6 +386,7 @@ if st.button("Build export bundle", type="primary"):
             # module docstring.
             counterfactual_policy=get_state("counterfactual_policy"),
             currency_context=get_state("currency_context"),
+            value_mapping=get_state("value_mapping"),
         )
     st.success(f"Project bundle built: {output_path}")
     with open(output_path, "rb") as f:
@@ -487,6 +488,7 @@ if uploaded_zip is not None and st.button("Import bundle"):
         # of this same session round-trips the identical policy/context.
         set_state("counterfactual_policy", imported.get("counterfactual_policy"))
         set_state("currency_context", imported.get("currency_context"))
+        set_state("value_mapping", imported.get("value_mapping"))
         workflow_state = imported.get("workflow_state") or {}
         set_state("current_page", workflow_state.get("current_page", 0))
         set_state("active_scenario", workflow_state.get("active_scenario"))

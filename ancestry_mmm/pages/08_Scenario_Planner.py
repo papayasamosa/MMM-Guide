@@ -551,24 +551,34 @@ if activity_map:
     )
 
 
-def _validated_stored_mapping(state_key: str, *, label: str) -> dict | None:
+def _validated_stored_mapping(
+    state_key: str, *, label: str
+) -> tuple[dict | None, bool]:
     """Corrective review finding: `config/<state_key>.json` round-trips
     through `import_project()` as whatever JSON value it actually contains -
     a bundle with a structurally malformed file (e.g. a JSON array or
     string, not an object) restores that raw non-mapping value into session
     state as-is. Calling `.get()` or `**`-unpacking it directly then crashes
     the page with an AttributeError/TypeError instead of the fail-closed
-    warning every other malformed-evidence path in this app gives. Returns
-    the stored value only if it's actually a mapping; otherwise warns and
-    returns None (the same "nothing stored" state a fresh project has)."""
+    warning every other malformed-evidence path in this app gives.
+
+    Returns ``(value, is_malformed)``. A non-mapping stored value is fresh
+    evidence of corruption, not the same as nothing having been stored at
+    all - a caller that collapsed both cases to `None` would let a
+    corrupted array/string be silently treated as "no evidence, safe to
+    default", the WEAKEST possible handling, while a dict with one invalid
+    field correctly gets the STRONGEST (blocked until explicitly repaired).
+    Callers must route `is_malformed=True` through the same blocking path
+    as any other invalid evidence, never the same path as `value is None`
+    from nothing having been stored."""
     stored = get_state(state_key)
     if stored is not None and not isinstance(stored, dict):
         st.warning(
             f"This project's stored {label} is malformed (expected an "
-            f"object, got {type(stored).__name__}) and was discarded."
+            f"object, got {type(stored).__name__})."
         )
-        return None
-    return stored
+        return None, True
+    return stored, False
 
 
 def _invalidate_stale_cached_result(
@@ -615,7 +625,7 @@ _DEMAND_CAPTURE_RULE_OPTIONS = ["hold_plan", "zero"]
 # resumed session shows the same selection that was exported, and re-saves
 # the identical CounterfactualPolicy (same fingerprint) until the analyst
 # deliberately changes it.
-_stored_cf_policy_dict = _validated_stored_mapping(
+_stored_cf_policy_dict, _cf_policy_mapping_malformed = _validated_stored_mapping(
     "counterfactual_policy", label="counterfactual policy"
 )
 _stored_demand_capture_rule = None
@@ -635,7 +645,15 @@ _stored_demand_capture_rule = None
 # isn't enough; the whole dict must round-trip through from_dict() first.
 _cf_policy_safe_to_sync = True
 _cf_policy_problem: str | None = None
-if _stored_cf_policy_dict:
+if _cf_policy_mapping_malformed:
+    # Fresh review finding: a non-mapping stored value must be routed
+    # through the same "blocked, explicit repair required" path as any
+    # other invalid evidence below - never silently treated the same as
+    # "nothing was ever stored" (which would let a corrupted array/string
+    # be quietly replaced with a fresh default and continue).
+    _cf_policy_safe_to_sync = False
+    _cf_policy_problem = "is malformed and cannot be used"
+elif _stored_cf_policy_dict:
     _stored_demand_capture_rule = _stored_cf_policy_dict.get("demand_capture_rule")
     try:
         CounterfactualPolicy.from_dict(_stored_cf_policy_dict)
@@ -877,6 +895,17 @@ if objective == "expected_value" and value_currency and _target_ids_for_value:
             )
         except (ValueError, KeyError):
             value_mapping = None
+# PR 125A: the project-level value mapping every official "incremental_
+# value" scenario's saved governance_dependencies.value_mapping_fingerprint
+# is verified against on import - see core.persistence's module docstring
+# and audit_project_resumability(). Unlike counterfactual_policy/
+# currency_context above, every field of OutcomeValueMapping is fully
+# re-derived by this page from the outcome catalogue each rerun (no field
+# only an import could ever supply), so there is nothing to merge/preserve
+# here - only set when this rerun actually resolved one, the same "never
+# overwrite with None" rule currency_context follows.
+if value_mapping is not None:
+    set_state("value_mapping", value_mapping.to_dict())
 
 # Corrective review finding: market_reporting_currency/value_currency are
 # genuinely re-derived from the current objective's target outcomes every
@@ -888,15 +917,38 @@ if objective == "expected_value" and value_currency and _target_ids_for_value:
 # exactly the counterfactual-policy defect above. Preserve them by merging
 # onto whatever was already stored, only overriding the two fields this
 # page actually computes.
-_stored_currency_context_dict = _validated_stored_mapping(
-    "currency_context", label="currency context"
+_stored_currency_context_dict, _currency_context_mapping_malformed = (
+    _validated_stored_mapping("currency_context", label="currency context")
 )
 try:
+    if _currency_context_mapping_malformed:
+        # Fresh review finding: route a non-mapping stored value through the
+        # same blocking path as a mapping that fails CurrencyContext
+        # validation below - never silently treated the same as "nothing
+        # stored" (which would let a corrupted array/string be quietly
+        # replaced with a fresh default and continue).
+        raise ValueError("stored currency context is not a valid object")
     currency_context = (
         CurrencyContext.from_dict(
             {
                 **(_stored_currency_context_dict or {}),
-                "market_reporting_currency": value_currency,
+                # Fresh review finding: market_reporting_currency and
+                # value_currency are DISTINCT fields (a market can report in
+                # one currency while its outcomes are value-weighted in
+                # another, governed by explicit FX evidence) - only
+                # value_currency is genuinely re-derived by this page every
+                # rerun. Overwriting market_reporting_currency from the same
+                # derived value too corrupted a legitimately different
+                # stored market currency the moment this page loaded.
+                # Preserve whatever was already stored for it; only a fresh
+                # project (nothing stored yet) falls back to the derived
+                # value.
+                "market_reporting_currency": (
+                    (_stored_currency_context_dict or {}).get(
+                        "market_reporting_currency"
+                    )
+                    or value_currency
+                ),
                 "value_currency": value_currency,
             }
         )

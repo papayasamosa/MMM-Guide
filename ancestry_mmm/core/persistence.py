@@ -46,6 +46,14 @@ Bundle layout (a single zip):
                                           currency context is not yet supported by this
                                           single project-level file (out of scope here -
                                           see PR 125A's dependency inventory).
+    config/value_mapping.json          - PR 125A: project-level OutcomeValueMapping
+                                          (core.planning.value), if an expected-value
+                                          objective's value mapping was resolved when
+                                          the project was exported - verified the same
+                                          way as counterfactual_policy/currency_context
+                                          above, required by any official scenario whose
+                                          planning_objective.estimand is
+                                          "incremental_value".
     scenarios/scenario_<i>_predicted.csv
     model/trace.nc                     - fitted posterior (ArviZ InferenceData, NetCDF)
     curve_bank/*.json                  - curve bank + calibration records, if any
@@ -101,15 +109,16 @@ from .curve_artifact import (
 from .hierarchical_model import FHModelMeta
 from .outcomes import outcome_catalogue_fingerprint_payload
 from .pathways import pathway_catalogue_fingerprint_payload
-from .planning.value import CurrencyContext
+from .planning.value import CurrencyContext, OutcomeValueMapping
 from .predict import extract_posterior_params
 from .scenario_governance import CounterfactualPolicy
 from .schema import ModelSpec
 from .optimization import SpendConstraint
 
-# PR 125A: bumped 9 -> 10 for the project-level counterfactual_policy and
-# currency_context bundle files (see export_project()'s docstring).
-PROJECT_BUNDLE_SCHEMA_VERSION = 10
+# PR 125A: bumped 9 -> 11 for the project-level counterfactual_policy,
+# currency_context, and value_mapping bundle files (see export_project()'s
+# docstring).
+PROJECT_BUNDLE_SCHEMA_VERSION = 11
 PROJECT_APP_VERSION = "0.1.0"
 
 
@@ -200,6 +209,7 @@ def export_project(
     approval_readiness: Optional[dict] = None,
     counterfactual_policy: Optional[dict] = None,
     currency_context: Optional[dict] = None,
+    value_mapping: Optional[dict] = None,
 ) -> Path:
     output_path = Path(output_path)
     with tempfile.TemporaryDirectory() as tmp:
@@ -333,6 +343,10 @@ def export_project(
             (tmp / "config" / "currency_context.json").write_text(
                 json.dumps(currency_context, indent=2, default=str)
             )
+        if value_mapping is not None:
+            (tmp / "config" / "value_mapping.json").write_text(
+                json.dumps(value_mapping, indent=2, default=str)
+            )
         if diagnostics is not None:
             for name, value in diagnostics.items():
                 if value is None:
@@ -399,6 +413,7 @@ def export_project(
                 "approval_readiness": approval_readiness is not None,
                 "counterfactual_policy": counterfactual_policy is not None,
                 "currency_context": currency_context is not None,
+                "value_mapping": value_mapping is not None,
             },
         }
         (tmp / "manifest.json").write_text(json.dumps(manifest, indent=2, default=str))
@@ -489,6 +504,7 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         # absent here - it never fabricates legacy evidence.
         "counterfactual_policy": None,
         "currency_context": None,
+        "value_mapping": None,
     }
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
@@ -620,6 +636,10 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         if (config_dir / "currency_context.json").exists():
             result["currency_context"] = json.loads(
                 (config_dir / "currency_context.json").read_text()
+            )
+        if (config_dir / "value_mapping.json").exists():
+            result["value_mapping"] = json.loads(
+                (config_dir / "value_mapping.json").read_text()
             )
         # G2A.7 (REQ-OUT-002): outcome approvals persisted alongside outcome
         # definitions. Absent in legacy bundles — treated as no approvals on
@@ -1450,6 +1470,7 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
                 sc_deps = sc.get("governance_dependencies") or {}
                 sc_cf_fp = sc_deps.get("counterfactual_policy_fingerprint")
                 sc_currency_fp = sc_deps.get("currency_context_fingerprint")
+                sc_value_mapping_fp = sc_deps.get("value_mapping_fingerprint")
                 identity_check_failed = False
 
                 if sc_cf_fp:
@@ -1558,6 +1579,59 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
                                     }
                                 )
 
+                if sc_value_mapping_fp:
+                    raw_value_mapping = imported.get("value_mapping")
+                    if raw_value_mapping is None:
+                        identity_check_failed = True
+                        official_blocking_reasons.append(
+                            {
+                                "artefact_type": "scenario",
+                                "artefact_id": sc.get("name", f"scenario_{idx}"),
+                                "reason": (
+                                    "value_mapping_identity_unverifiable: this "
+                                    "bundle has no project-level value mapping "
+                                    "to verify the scenario's saved value-"
+                                    "mapping identity against."
+                                ),
+                            }
+                        )
+                    else:
+                        try:
+                            current_value_mapping_fp = OutcomeValueMapping.from_dict(
+                                raw_value_mapping
+                            ).fingerprint
+                        except (TypeError, ValueError, KeyError, AttributeError) as exc:
+                            identity_check_failed = True
+                            official_blocking_reasons.append(
+                                {
+                                    "artefact_type": "scenario",
+                                    "artefact_id": sc.get("name", f"scenario_{idx}"),
+                                    "reason": (
+                                        "value_mapping_malformed: this bundle's "
+                                        "project-level value mapping could not "
+                                        f"be loaded: {exc}"
+                                    ),
+                                }
+                            )
+                        else:
+                            if current_value_mapping_fp != sc_value_mapping_fp:
+                                identity_check_failed = True
+                                official_blocking_reasons.append(
+                                    {
+                                        "artefact_type": "scenario",
+                                        "artefact_id": sc.get(
+                                            "name", f"scenario_{idx}"
+                                        ),
+                                        "reason": (
+                                            "value_mapping_identity_mismatch: "
+                                            "this scenario's saved value-mapping "
+                                            "fingerprint does not match this "
+                                            "bundle's project-level value "
+                                            "mapping."
+                                        ),
+                                    }
+                                )
+
                 if identity_check_failed:
                     officially_resumable = False
                     continue
@@ -1575,6 +1649,7 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
                         outcome_approvals=current_outcome_appr,
                         counterfactual_fingerprint=sc_cf_fp or "unverifiable",
                         currency_context_fingerprint=sc_currency_fp,
+                        value_mapping_fingerprint=sc_value_mapping_fp,
                     )
                 except ValueError as exc:
                     officially_resumable = False

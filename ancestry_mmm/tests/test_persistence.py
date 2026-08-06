@@ -38,7 +38,7 @@ from ancestry_mmm.core.market_config import (
 from ancestry_mmm.core.optimization import SpendConstraint, evaluate_scenario
 from ancestry_mmm.core.outcomes import DNA, FAMILY_HISTORY, OutcomeDefinition
 from ancestry_mmm.core.planning import CURRENT_PLANNING_EVALUATION_SEMANTICS
-from ancestry_mmm.core.planning.value import CurrencyContext
+from ancestry_mmm.core.planning.value import CurrencyContext, OutcomeValueMapping
 from ancestry_mmm.core.pathways import (
     ResolvedPathwayComponent,
     ResolvedPathwayMasks,
@@ -3132,6 +3132,150 @@ class TestScenariosCheckpointOfficialResumability:
         assert audit["officially_resumable"] is False
         reasons = " ".join(r["reason"] for r in audit["official_blocking_reasons"])
         assert "currency_context_malformed" in reasons
+
+    def _project_with_value_mapping_scenario(
+        self, consistent_project, consistent_meta, *, value_mapping_fp
+    ):
+        # PR 125A corrective review finding (P1): an "incremental_value"
+        # estimand is the one PlanningObjective shape that actually requires
+        # a value mapping (validate_scenario_dependencies's
+        # requires_value_and_currency gate) - reuses _official_scenario's
+        # shape but swaps the estimand/value_currency so this test exercises
+        # the exact workflow the finding named, not incremental_outcome.
+        approval = ModelApproval.from_dict(consistent_project["model_approval"])
+        canonical_fp = fingerprint_model_approval(approval)
+        scenario = self._official_scenario(
+            model_run_id=consistent_project["model_run_id"],
+            model_approval_fingerprint=canonical_fp,
+            counterfactual_fp="",
+        )
+        scenario["planning_objective"]["estimand"] = "incremental_value"
+        scenario["planning_objective"]["value_currency"] = "GBP"
+        scenario["governance_dependencies"]["data_fingerprint"] = (
+            approval.data_fingerprint
+        )
+        scenario["governance_dependencies"]["model_spec_fingerprint"] = (
+            approval.model_spec_fingerprint
+        )
+        scenario["governance_dependencies"]["posterior_fingerprint"] = (
+            approval.posterior_fingerprint
+        )
+        scenario["governance_dependencies"]["value_mapping_fingerprint"] = (
+            value_mapping_fp
+        )
+        # An incremental_value objective also requires a current currency
+        # context (the same requires_value_and_currency gate) - give it a
+        # matching one so this test isolates the value-mapping check.
+        currency_context = CurrencyContext(
+            market_reporting_currency="GBP", value_currency="GBP"
+        )
+        scenario["governance_dependencies"]["currency_context_fingerprint"] = (
+            currency_context.fingerprint()
+        )
+        project = self._project_with_official_scenario(
+            consistent_project, consistent_meta, scenario=scenario
+        )
+        project["currency_context"] = currency_context.to_dict()
+        return project
+
+    def test_matching_project_level_value_mapping_is_officially_resumable(
+        self, tmp_path, consistent_project, consistent_meta
+    ):
+        mapping = OutcomeValueMapping(
+            value_by_outcome_id={"New": 5.0},
+            currency_by_outcome_id={"New": "GBP"},
+        )
+        project = self._project_with_value_mapping_scenario(
+            consistent_project,
+            consistent_meta,
+            value_mapping_fp=mapping.fingerprint,
+        )
+        project["value_mapping"] = mapping.to_dict()
+
+        output_path = export_project(tmp_path / "bundle.zip", **project)
+        imported = import_project(output_path)
+        assert imported["value_mapping"]["mapping_fingerprint"] == mapping.fingerprint
+        audit = audit_project_resumability(imported)
+
+        assert audit["resumable"] is True
+        assert audit["officially_resumable"] is True, audit["official_blocking_reasons"]
+
+    def test_missing_project_level_value_mapping_blocks_as_unverifiable(
+        self, tmp_path, consistent_project, consistent_meta
+    ):
+        mapping = OutcomeValueMapping(
+            value_by_outcome_id={"New": 5.0},
+            currency_by_outcome_id={"New": "GBP"},
+        )
+        project = self._project_with_value_mapping_scenario(
+            consistent_project,
+            consistent_meta,
+            value_mapping_fp=mapping.fingerprint,
+        )
+        # value_mapping intentionally omitted (project-level file absent).
+
+        output_path = export_project(tmp_path / "bundle.zip", **project)
+        imported = import_project(output_path)
+        assert imported["value_mapping"] is None
+        audit = audit_project_resumability(imported)
+
+        assert audit["resumable"] is True
+        assert audit["officially_resumable"] is False
+        reasons = " ".join(r["reason"] for r in audit["official_blocking_reasons"])
+        assert "value_mapping_identity_unverifiable" in reasons
+
+    def test_mismatched_project_level_value_mapping_blocks_with_explicit_reason(
+        self, tmp_path, consistent_project, consistent_meta
+    ):
+        saved_mapping = OutcomeValueMapping(
+            value_by_outcome_id={"New": 5.0},
+            currency_by_outcome_id={"New": "GBP"},
+        )
+        current_mapping = OutcomeValueMapping(
+            value_by_outcome_id={"New": 9.0},
+            currency_by_outcome_id={"New": "GBP"},
+        )
+        project = self._project_with_value_mapping_scenario(
+            consistent_project,
+            consistent_meta,
+            value_mapping_fp=saved_mapping.fingerprint,
+        )
+        project["value_mapping"] = current_mapping.to_dict()
+
+        output_path = export_project(tmp_path / "bundle.zip", **project)
+        imported = import_project(output_path)
+        audit = audit_project_resumability(imported)
+
+        assert audit["resumable"] is True
+        assert audit["officially_resumable"] is False
+        reasons = " ".join(r["reason"] for r in audit["official_blocking_reasons"])
+        assert "value_mapping_identity_mismatch" in reasons
+
+    def test_malformed_project_level_value_mapping_blocks_with_explicit_reason(
+        self, tmp_path, consistent_project, consistent_meta
+    ):
+        mapping = OutcomeValueMapping(
+            value_by_outcome_id={"New": 5.0},
+            currency_by_outcome_id={"New": "GBP"},
+        )
+        project = self._project_with_value_mapping_scenario(
+            consistent_project,
+            consistent_meta,
+            value_mapping_fp=mapping.fingerprint,
+        )
+        project["value_mapping"] = {
+            "value_by_outcome_id": {"New": 5.0},
+            "currency_by_outcome_id": {"New": "not-iso"},
+        }
+
+        output_path = export_project(tmp_path / "bundle.zip", **project)
+        imported = import_project(output_path)
+        audit = audit_project_resumability(imported)
+
+        assert audit["resumable"] is True
+        assert audit["officially_resumable"] is False
+        reasons = " ".join(r["reason"] for r in audit["official_blocking_reasons"])
+        assert "value_mapping_malformed" in reasons
 
 
 class TestScenariosCheckpointPolicyBackedApprovalRequiresDiagnostics:
