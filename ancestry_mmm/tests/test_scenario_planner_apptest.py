@@ -685,6 +685,103 @@ def test_malformed_stored_currency_context_does_not_crash_page():
     assert "malformed" in warnings
 
 
+def test_structurally_valid_but_invalid_counterfactual_policy_is_preserved_not_narrowed():
+    """Corrective review finding (P2): a stored policy can be a
+    structurally valid mapping with a representable demand_capture_rule
+    while still being an invalid CounterfactualPolicy overall (e.g. an
+    unrecognised fixed_activity_rule) - checking demand_capture_rule
+    membership alone let this reach an unguarded
+    CounterfactualPolicy.from_dict() call and crash the page. The whole
+    dict must be validated, not just the one field this page's widget
+    edits, and the invalid policy must be preserved untouched (same
+    explicit-replace contract as the unsupported-value case)."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_consistent_session_state(at, value_currency="GBP")
+    invalid_policy_dict = {
+        "demand_capture_rule": "hold_plan",
+        "fixed_activity_rule": "not-a-real-rule",
+    }
+    at.session_state["counterfactual_policy"] = invalid_policy_dict
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    assert at.session_state["counterfactual_policy"] == invalid_policy_dict
+    warnings = " ".join(w.value for w in at.warning)
+    assert "is invalid and cannot be used" in warnings
+
+
+def test_invalid_currency_context_blocks_instead_of_replacing_stored_state():
+    """Corrective review finding (P2): the earlier fix for preserving a
+    valid stored currency context's extra fields still fell back, on
+    validation failure, to constructing-and-persisting a fresh minimal
+    CurrencyContext - silently discarding the stored context's other
+    fields via a different path than the one already fixed. A malformed
+    stored context must block (preserved untouched in session state), not
+    be quietly replaced with a stripped-down one."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_consistent_session_state(at, value_currency="GBP")
+    invalid_context_dict = {
+        "market_reporting_currency": "GBP",
+        "value_currency": "GBP",
+        "group_reporting_currency": "not-iso",
+    }
+    at.session_state["currency_context"] = invalid_context_dict
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    assert at.session_state["currency_context"] == invalid_context_dict
+    warnings = " ".join(w.value for w in at.warning)
+    assert "is invalid and cannot be combined" in warnings
+
+
+def test_stale_cached_constrained_result_invalidated_when_counterfactual_policy_changes():
+    """Corrective review finding (P2): a cached optimiser result was only
+    ever invalidated on a governance_mode change - changing the
+    counterfactual-policy radio after running an optimisation left the
+    stale result (still carrying the OLD policy's fingerprint) fully
+    displayable and saveable under the project's now-different policy."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_consistent_session_state(at, value_currency="GBP")
+    at.session_state["counterfactual_policy"] = CounterfactualPolicy(
+        demand_capture_rule="hold_plan"
+    ).to_dict()
+    stale_fingerprint = CounterfactualPolicy(demand_capture_rule="zero").fingerprint()
+    at.session_state["constrained_result"] = {
+        "governance_mode": "official",
+        "counterfactual_policy_fingerprint": stale_fingerprint,
+    }
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    assert at.session_state["constrained_result"] is None
+    infos = " ".join(i.value for i in at.info)
+    assert "counterfactual policy changed" in infos
+
+
+def test_saved_scenario_excluded_when_counterfactual_policy_has_changed():
+    """Corrective review finding (P2): the saved-scenario staleness
+    comparison only ever checked cost mappings - a scenario saved under a
+    since-changed counterfactual policy predicted totals under a
+    demand-capture rule the project no longer uses, but was never excluded
+    or flagged, indistinguishable from a genuinely current scenario."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_consistent_session_state(at, value_currency="GBP")
+    at.session_state["counterfactual_policy"] = CounterfactualPolicy(
+        demand_capture_rule="hold_plan"
+    ).to_dict()
+    stale_fingerprint = CounterfactualPolicy(demand_capture_rule="zero").fingerprint()
+    at.session_state["scenarios"] = [
+        {
+            "name": "stale-scenario",
+            "governance_dependencies": {
+                "counterfactual_policy_fingerprint": stale_fingerprint
+            },
+        }
+    ]
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    warnings = " ".join(w.value for w in at.warning)
+    assert "counterfactual policy has since changed" in warnings
+    assert "stale-scenario" in warnings
+
+
 def test_page_reads_no_deprecated_state_keys():
     """PR 82C: validation_policy / approval_readiness are the sole policy/
     readiness state keys - the deprecated validation_readiness /

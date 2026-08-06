@@ -571,6 +571,44 @@ def _validated_stored_mapping(state_key: str, *, label: str) -> dict | None:
     return stored
 
 
+def _invalidate_stale_cached_result(
+    state_key: str,
+    result: dict | None,
+    *,
+    current_governance_mode: str,
+    current_counterfactual_fingerprint: str,
+) -> dict | None:
+    """Corrective review finding: a cached optimiser result
+    (`st.session_state["constrained_result"]`/`"unconstrained_result"`) was
+    only ever invalidated on a governance_mode change - an analyst changing
+    the counterfactual-policy radio after running an optimisation left the
+    stale result (still carrying the OLD policy's fingerprint) fully
+    displayable and saveable, with the project's now-current policy already
+    silently diverged from it. Clears and returns `None` for `result` the
+    same way the governance_mode check already does, the moment either has
+    drifted since the result was computed."""
+    if not result:
+        return result
+    if result.get("governance_mode") != current_governance_mode:
+        st.session_state[state_key] = None
+        st.info(
+            "Governance mode changed since this result was computed - re-run "
+            "the optimisation to refresh it."
+        )
+        return None
+    cached_cf_fp = governance_deps_from_optimizer_result(result).get(
+        "counterfactual_policy_fingerprint"
+    )
+    if cached_cf_fp and cached_cf_fp != current_counterfactual_fingerprint:
+        st.session_state[state_key] = None
+        st.info(
+            "The project's counterfactual policy changed since this result "
+            "was computed - re-run the optimisation to refresh it."
+        )
+        return None
+    return result
+
+
 _DEMAND_CAPTURE_RULE_OPTIONS = ["hold_plan", "zero"]
 # PR 125A: seed the widget's default from the project-level counterfactual
 # policy restored by a bundle import, not always the first option - so a
@@ -580,7 +618,7 @@ _DEMAND_CAPTURE_RULE_OPTIONS = ["hold_plan", "zero"]
 _stored_cf_policy_dict = _validated_stored_mapping(
     "counterfactual_policy", label="counterfactual policy"
 )
-_stored_demand_capture_rule = (_stored_cf_policy_dict or {}).get("demand_capture_rule")
+_stored_demand_capture_rule = None
 # Corrective review finding: this radio can only ever choose between two of
 # CounterfactualPolicy's four demand_capture_rule values (e.g. an imported/
 # fixture-built policy's default is "require_explicit", never offered here)
@@ -590,23 +628,37 @@ _stored_demand_capture_rule = (_stored_cf_policy_dict or {}).get("demand_capture
 # as authoritative whenever the stored policy uses a value or field this
 # widget doesn't expose would silently narrow the project's real policy the
 # moment this page loads - staling every official scenario that depended on
-# the policy it just overwrote, with no explicit choice behind it.
-_demand_capture_rule_representable = (
-    _stored_demand_capture_rule is None
-    or _stored_demand_capture_rule in _DEMAND_CAPTURE_RULE_OPTIONS
-)
-if not _demand_capture_rule_representable:
+# the policy it just overwrote, with no explicit choice behind it. Fresh
+# review finding: a stored policy can also be a structurally valid mapping
+# that is simply not a valid CounterfactualPolicy (e.g. an invalid
+# fixed_activity_rule) - checking demand_capture_rule membership alone
+# isn't enough; the whole dict must round-trip through from_dict() first.
+_cf_policy_safe_to_sync = True
+_cf_policy_problem: str | None = None
+if _stored_cf_policy_dict:
+    _stored_demand_capture_rule = _stored_cf_policy_dict.get("demand_capture_rule")
+    try:
+        CounterfactualPolicy.from_dict(_stored_cf_policy_dict)
+    except (TypeError, ValueError) as exc:
+        _cf_policy_safe_to_sync = False
+        _cf_policy_problem = f"is invalid and cannot be used ({exc})"
+    if _stored_demand_capture_rule not in (None, *_DEMAND_CAPTURE_RULE_OPTIONS):
+        _cf_policy_safe_to_sync = False
+        _cf_policy_problem = (
+            "currently uses demand_capture_rule="
+            f"{_stored_demand_capture_rule!r}, which this control does not "
+            "offer (supported here: hold_plan, zero)"
+        )
+if _cf_policy_problem:
     st.warning(
-        "This project's counterfactual policy currently uses "
-        f"demand_capture_rule={_stored_demand_capture_rule!r}, which this "
-        "control does not offer (supported here: hold_plan, zero). The "
+        f"This project's counterfactual policy {_cf_policy_problem}. The "
         "existing policy - including any other governance fields this page "
         "does not expose - is preserved untouched until you explicitly "
         "replace it below."
     )
 _demand_capture_rule_index = (
     _DEMAND_CAPTURE_RULE_OPTIONS.index(_stored_demand_capture_rule)
-    if _demand_capture_rule_representable and _stored_demand_capture_rule is not None
+    if _stored_demand_capture_rule in _DEMAND_CAPTURE_RULE_OPTIONS
     else 0
 )
 demand_capture_rule = st.radio(
@@ -623,17 +675,26 @@ demand_capture_rule = st.radio(
         "is stored with the scenario and objective."
     ),
 )
-if _demand_capture_rule_representable:
-    # Safe: the stored policy's demand_capture_rule (if any) is already one
-    # of this widget's own options, so keeping it in sync on every rerun
-    # never discards a choice the widget itself didn't just make. Every
-    # OTHER field (fixed_activity_rule, mediator_rule, control_rule,
-    # event_rule, explicit_values_by_period, rationale) is carried over from
-    # whatever was already stored - e.g. an import - never silently reset to
-    # CounterfactualPolicy's own dataclass defaults.
-    counterfactual_policy = CounterfactualPolicy.from_dict(
-        {**(_stored_cf_policy_dict or {}), "demand_capture_rule": demand_capture_rule}
-    )
+if _cf_policy_safe_to_sync:
+    # Safe: the stored policy (if any) is already a valid CounterfactualPolicy
+    # whose demand_capture_rule is one of this widget's own options, so
+    # keeping it in sync on every rerun never discards a choice the widget
+    # itself didn't just make. Every OTHER field (fixed_activity_rule,
+    # mediator_rule, control_rule, event_rule, explicit_values_by_period,
+    # rationale) is carried over from whatever was already stored - e.g. an
+    # import - never silently reset to CounterfactualPolicy's own dataclass
+    # defaults.
+    try:
+        counterfactual_policy = CounterfactualPolicy.from_dict(
+            {
+                **(_stored_cf_policy_dict or {}),
+                "demand_capture_rule": demand_capture_rule,
+            }
+        )
+    except (TypeError, ValueError):
+        counterfactual_policy = CounterfactualPolicy(
+            demand_capture_rule=demand_capture_rule
+        )
     # PR 125A: the project-level policy every official scenario's saved
     # counterfactual identity is verified against on import - see
     # core.persistence's module docstring and audit_project_resumability().
@@ -646,8 +707,9 @@ elif st.button("Replace this project's counterfactual policy with the selection 
     st.rerun()
 else:
     # Not yet explicitly confirmed - this rerun's scenario evaluation below
-    # still uses the stored (unsupported-by-this-widget) policy, not the
-    # widget's own lossy value.
+    # still uses the stored (invalid-or-unsupported-by-this-widget) policy,
+    # not the widget's own lossy value, and nothing is written back to
+    # session state.
     try:
         counterfactual_policy = CounterfactualPolicy.from_dict(_stored_cf_policy_dict)
     except (TypeError, ValueError):
@@ -836,11 +898,22 @@ try:
         if value_currency
         else None
     )
+    _currency_context_blocked = False
 except (TypeError, ValueError) as exc:
+    # Fresh review finding: falling back to a freshly-constructed minimal
+    # CurrencyContext here and then persisting it below would silently
+    # discard the stored context's other fields exactly like the P1 defect
+    # this block already fixes - just reached via a different path (invalid
+    # values rather than an unsupported-shape currency). A malformed stored
+    # context must block, not be quietly replaced: this in-memory fallback
+    # is used only so downstream code in this rerun has a usable object, and
+    # is deliberately never written back to session state below.
     st.warning(
-        "This project's stored currency context is malformed and could not "
-        f"be combined with the current objective's currency ({exc}) - using "
-        "the current objective's currency only."
+        "This project's stored currency context is invalid and cannot be "
+        f"combined with the current objective's currency ({exc}). The "
+        "existing stored context is preserved untouched - fix the "
+        "underlying currency/FX data (e.g. Market Descriptors) rather than "
+        "continuing with a stripped-down context."
     )
     currency_context = (
         CurrencyContext(
@@ -849,11 +922,13 @@ except (TypeError, ValueError) as exc:
         if value_currency
         else None
     )
+    _currency_context_blocked = True
 # PR 125A: the project-level currency context every official scenario's
 # saved currency identity is verified against on import. Only set when this
-# rerun actually resolved one - an objective with no target-outcome
-# currency must not overwrite a previously exported context with None.
-if currency_context is not None:
+# rerun actually resolved one (an objective with no target-outcome currency
+# must not overwrite a previously exported context with None) and the
+# stored context combined cleanly (never persist the blocked fallback above).
+if currency_context is not None and not _currency_context_blocked:
     set_state("currency_context", currency_context.to_dict())
 
 # G2A.7a.7: protected objective resolution with error boundary
@@ -1251,18 +1326,17 @@ with tab_constrained:
                     st.warning(f"Optimiser did not fully converge: {result['message']}")
                 st.session_state["constrained_result"] = result
 
-    result = st.session_state.get("constrained_result")
-    if result and result.get("governance_mode") != governance_mode:
-        # The governance-mode control changed since this result was
-        # computed (e.g. switched back to "official" after an exploratory
-        # run) - the cached result no longer matches what's displayed above,
-        # so it must never be shown or saved under the new, mismatched label.
-        st.session_state["constrained_result"] = None
-        result = None
-        st.info(
-            "Governance mode changed since this result was computed - re-run the "
-            "optimisation to refresh it."
-        )
+    # The governance-mode control or the project's counterfactual policy may
+    # have changed since this result was computed (e.g. switched back to
+    # "official" after an exploratory run, or the demand-capture rule was
+    # changed) - a cached result that no longer matches either must never be
+    # shown or saved under a mismatched label.
+    result = _invalidate_stale_cached_result(
+        "constrained_result",
+        st.session_state.get("constrained_result"),
+        current_governance_mode=governance_mode,
+        current_counterfactual_fingerprint=counterfactual_policy.fingerprint(),
+    )
     if result:
         governance_badge = (
             "⚠️ Exploratory"
@@ -1408,14 +1482,12 @@ with tab_unconstrained:
             if result is not None:
                 st.session_state["unconstrained_result"] = result
 
-    result = st.session_state.get("unconstrained_result")
-    if result and result.get("governance_mode") != governance_mode:
-        st.session_state["unconstrained_result"] = None
-        result = None
-        st.info(
-            "Governance mode changed since this result was computed - re-run the "
-            "optimisation to refresh it."
-        )
+    result = _invalidate_stale_cached_result(
+        "unconstrained_result",
+        st.session_state.get("unconstrained_result"),
+        current_governance_mode=governance_mode,
+        current_counterfactual_fingerprint=counterfactual_policy.fingerprint(),
+    )
     if result:
         governance_badge = (
             "⚠️ Exploratory"
@@ -1481,9 +1553,21 @@ if scenarios:
     # names a cost mapping has this dependency at all; a scenario that
     # never depended on cost mappings is never flagged stale by this check.
     current_cost_mapping_fingerprint = cost_mapping_registry.fingerprint()
+    # Corrective review finding: this comparison only ever checked cost
+    # mappings - a scenario saved under a since-changed counterfactual
+    # policy predicted totals under a demand-capture rule the project no
+    # longer uses, but was never excluded or flagged, indistinguishable from
+    # a genuinely current scenario.
+    current_counterfactual_fingerprint = counterfactual_policy.fingerprint()
     current_scenarios = []
     stale_scenario_names = []
     for scenario in scenarios:
+        scenario_cf_fp = (scenario.get("governance_dependencies") or {}).get(
+            "counterfactual_policy_fingerprint"
+        )
+        if scenario_cf_fp and scenario_cf_fp != current_counterfactual_fingerprint:
+            stale_scenario_names.append(scenario.get("name", "(unnamed)"))
+            continue
         try:
             dependency_fingerprint = resolve_scenario_cost_mapping_fingerprint(scenario)
         except ValueError:
@@ -1503,8 +1587,8 @@ if scenarios:
     if stale_scenario_names:
         st.warning(
             "Excluded from the comparison below because their governed cost "
-            "mapping has since changed - regenerate them to compare current "
-            f"totals: {', '.join(stale_scenario_names)}"
+            "mapping or counterfactual policy has since changed - regenerate "
+            f"them to compare current totals: {', '.join(stale_scenario_names)}"
         )
     if current_scenarios:
         compare_df = compare_scenarios(current_scenarios)
