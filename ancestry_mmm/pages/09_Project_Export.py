@@ -596,31 +596,6 @@ if uploaded_zip is not None and st.button("Import bundle"):
                 "Bundle imported, but its declared checkpoint is incomplete: "
                 + ", ".join(resume_audit["missing_required"])
             )
-        # G2A.7a.1 (REQ-OUT-002 section 12.2): a bundle can be technically
-        # loadable while official use of its checkpoint remains blocked by
-        # outcome governance - reported separately so "resumable" is never
-        # read as "officially usable". PR 125A: the positive case is now
-        # reported explicitly too (previously only the negative case had
-        # any visible text), and every blocking reason is shown, not just
-        # outcome-governance ones - a mismatched project-level
-        # counterfactual policy or currency context is exactly the kind of
-        # reason an analyst needs to see, not only infer from silence.
-        if resume_audit["resumable"] and resume_audit.get("officially_resumable", True):
-            st.success(
-                f"This bundle is officially resumable at checkpoint "
-                f"'{resume_audit['checkpoint']}'."
-            )
-        elif resume_audit["resumable"]:
-            st.warning(
-                "This bundle loaded successfully, but is not **officially** "
-                "resumable at its checkpoint - see the reason(s) below."
-            )
-            for blocking_reason in resume_audit.get("official_blocking_reasons", []):
-                st.caption(
-                    f"{blocking_reason.get('artefact_type')} "
-                    f"'{blocking_reason.get('artefact_id')}': "
-                    f"{blocking_reason.get('reason')}"
-                )
         for audit_warning in resume_audit["warnings"]:
             st.caption(audit_warning)
         for outcome_governance_warning in resume_audit.get(
@@ -689,6 +664,55 @@ if uploaded_zip is not None and st.button("Import bundle"):
             "model_approval", verified_approval.to_dict() if verified_approval else None
         )
         (st.success if verified_approval else st.warning)(message)
+
+        # G2A.7a.1 (REQ-OUT-002 section 12.2): a bundle can be technically
+        # loadable while official use of its checkpoint remains blocked by
+        # outcome governance - reported separately so "resumable" is never
+        # read as "officially usable". PR 125A: the positive case is now
+        # reported explicitly too (previously only the negative case had
+        # any visible text), and every blocking reason is shown, not just
+        # outcome-governance ones. Corrective review finding: this must be
+        # decided only after verify_imported_approval above, not from
+        # audit_project_resumability() alone - that core-layer check
+        # cannot recompute the diagnostics-artefact fingerprint (core must
+        # not import the application-layer DiagnosticsArtefact type), so a
+        # bundle whose approval is policy-backed but whose diagnostics
+        # artefact has since drifted could pass the coarse audit while the
+        # fuller check above still rejects it. Emitting the positive claim
+        # here (after that fuller check ran) rather than earlier means an
+        # analyst is never told "officially resumable" only to see it
+        # contradicted by a warning further down the same page.
+        officially_resumable_and_verified = (
+            resume_audit["resumable"]
+            and resume_audit.get("officially_resumable", True)
+            and (verified_approval is not None or not imported.get("model_approval"))
+        )
+        if officially_resumable_and_verified:
+            st.success(
+                f"This bundle is officially resumable at checkpoint "
+                f"'{resume_audit['checkpoint']}'."
+            )
+        elif resume_audit["resumable"]:
+            st.warning(
+                "This bundle loaded successfully, but is not **officially** "
+                "resumable at its checkpoint - see the reason(s) below."
+            )
+            for blocking_reason in resume_audit.get("official_blocking_reasons", []):
+                st.caption(
+                    f"{blocking_reason.get('artefact_type')} "
+                    f"'{blocking_reason.get('artefact_id')}': "
+                    f"{blocking_reason.get('reason')}"
+                )
+            if (
+                resume_audit.get("officially_resumable", True)
+                and verified_approval is None
+                and imported.get("model_approval")
+            ):
+                st.caption(
+                    "model_approval: the imported model approval could not be "
+                    f"verified against the imported readiness and diagnostics "
+                    f"evidence ({message})."
+                )
 
         if imported["trace"] is not None and reconstructed["frame"] is None:
             st.info(

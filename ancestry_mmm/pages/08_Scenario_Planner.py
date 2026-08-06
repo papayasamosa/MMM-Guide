@@ -556,12 +556,34 @@ _DEMAND_CAPTURE_RULE_OPTIONS = ["hold_plan", "zero"]
 # resumed session shows the same selection that was exported, and re-saves
 # the identical CounterfactualPolicy (same fingerprint) until the analyst
 # deliberately changes it.
-_imported_demand_capture_rule = (get_state("counterfactual_policy") or {}).get(
-    "demand_capture_rule"
+_stored_cf_policy_dict = get_state("counterfactual_policy")
+_stored_demand_capture_rule = (_stored_cf_policy_dict or {}).get("demand_capture_rule")
+# Corrective review finding: this radio can only ever choose between two of
+# CounterfactualPolicy's four demand_capture_rule values (e.g. an imported/
+# fixture-built policy's default is "require_explicit", never offered here)
+# and never edits fixed_activity_rule / mediator_rule / control_rule /
+# event_rule / explicit_values_by_period at all. Rendering the widget always
+# returns one of its two options regardless, so treating that return value
+# as authoritative whenever the stored policy uses a value or field this
+# widget doesn't expose would silently narrow the project's real policy the
+# moment this page loads - staling every official scenario that depended on
+# the policy it just overwrote, with no explicit choice behind it.
+_demand_capture_rule_representable = (
+    _stored_demand_capture_rule is None
+    or _stored_demand_capture_rule in _DEMAND_CAPTURE_RULE_OPTIONS
 )
+if not _demand_capture_rule_representable:
+    st.warning(
+        "This project's counterfactual policy currently uses "
+        f"demand_capture_rule={_stored_demand_capture_rule!r}, which this "
+        "control does not offer (supported here: hold_plan, zero). The "
+        "existing policy - including any other governance fields this page "
+        "does not expose - is preserved untouched until you explicitly "
+        "replace it below."
+    )
 _demand_capture_rule_index = (
-    _DEMAND_CAPTURE_RULE_OPTIONS.index(_imported_demand_capture_rule)
-    if _imported_demand_capture_rule in _DEMAND_CAPTURE_RULE_OPTIONS
+    _DEMAND_CAPTURE_RULE_OPTIONS.index(_stored_demand_capture_rule)
+    if _demand_capture_rule_representable and _stored_demand_capture_rule is not None
     else 0
 )
 demand_capture_rule = st.radio(
@@ -578,13 +600,37 @@ demand_capture_rule = st.radio(
         "is stored with the scenario and objective."
     ),
 )
-counterfactual_policy = CounterfactualPolicy(
-    demand_capture_rule=demand_capture_rule,
-)
-# PR 125A: the project-level policy every official scenario's saved
-# counterfactual identity is verified against on import - see
-# core.persistence's module docstring and audit_project_resumability().
-set_state("counterfactual_policy", counterfactual_policy.to_dict())
+if _demand_capture_rule_representable:
+    # Safe: the stored policy's demand_capture_rule (if any) is already one
+    # of this widget's own options, so keeping it in sync on every rerun
+    # never discards a choice the widget itself didn't just make. Every
+    # OTHER field (fixed_activity_rule, mediator_rule, control_rule,
+    # event_rule, explicit_values_by_period, rationale) is carried over from
+    # whatever was already stored - e.g. an import - never silently reset to
+    # CounterfactualPolicy's own dataclass defaults.
+    counterfactual_policy = CounterfactualPolicy.from_dict(
+        {**(_stored_cf_policy_dict or {}), "demand_capture_rule": demand_capture_rule}
+    )
+    # PR 125A: the project-level policy every official scenario's saved
+    # counterfactual identity is verified against on import - see
+    # core.persistence's module docstring and audit_project_resumability().
+    set_state("counterfactual_policy", counterfactual_policy.to_dict())
+elif st.button("Replace this project's counterfactual policy with the selection above"):
+    counterfactual_policy = CounterfactualPolicy(
+        demand_capture_rule=demand_capture_rule
+    )
+    set_state("counterfactual_policy", counterfactual_policy.to_dict())
+    st.rerun()
+else:
+    # Not yet explicitly confirmed - this rerun's scenario evaluation below
+    # still uses the stored (unsupported-by-this-widget) policy, not the
+    # widget's own lossy value.
+    try:
+        counterfactual_policy = CounterfactualPolicy.from_dict(_stored_cf_policy_dict)
+    except (TypeError, ValueError):
+        counterfactual_policy = CounterfactualPolicy(
+            demand_capture_rule=demand_capture_rule
+        )
 
 # G2A.7a.1 (section 4.2): one source of truth. The radio's own return
 # value IS the authoritative governance mode for this rerun - it is never

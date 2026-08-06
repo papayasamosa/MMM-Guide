@@ -45,6 +45,7 @@ from ancestry_mmm.core.outcomes import (
 )
 from ancestry_mmm.core.pathways import pathway_catalogue_fingerprint_payload
 from ancestry_mmm.core.predict import extract_posterior_params
+from ancestry_mmm.core.scenario_governance import CounterfactualPolicy
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.validation_policy import (
     ApprovalReadiness,
@@ -580,6 +581,50 @@ def test_malformed_readiness_does_not_crash_scenario_planner_page():
     at.session_state["approval_readiness"] = {"gate_results": "not-a-list"}
     at.run()
     assert not at.exception, f"page raised: {at.exception}"
+
+
+def test_representable_imported_counterfactual_policy_round_trips_unchanged():
+    """PR 125A: a stored project-level policy whose demand_capture_rule is
+    already one of this page's two radio options round-trips through the
+    page unchanged, including fields the widget never edits."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_consistent_session_state(at, value_currency="GBP")
+    imported_policy = CounterfactualPolicy(
+        demand_capture_rule="zero", fixed_activity_rule="explicit"
+    )
+    at.session_state["counterfactual_policy"] = imported_policy.to_dict()
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    stored = at.session_state["counterfactual_policy"]
+    assert stored["demand_capture_rule"] == "zero"
+    # fixed_activity_rule isn't exposed by any widget on this page - must
+    # survive the rerun exactly as imported, not reset to the dataclass
+    # default ("hold_plan").
+    assert stored["fixed_activity_rule"] == "explicit"
+
+
+def test_unsupported_imported_demand_capture_rule_is_preserved_not_narrowed():
+    """Corrective review finding (P1): CounterfactualPolicy's own default
+    demand_capture_rule is "require_explicit" - a value this page's radio
+    (hold_plan / zero) cannot represent. Previously, merely loading this
+    page with such a policy already in session state (e.g. just imported)
+    silently narrowed it to "hold_plan" on first render, staling every
+    official scenario that depended on the real policy - with no explicit
+    choice behind the change. The stored policy must survive untouched
+    until the analyst explicitly clicks the replace button."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_consistent_session_state(at, value_currency="GBP")
+    unsupported_policy = (
+        CounterfactualPolicy()
+    )  # demand_capture_rule="require_explicit"
+    at.session_state["counterfactual_policy"] = unsupported_policy.to_dict()
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    stored = at.session_state["counterfactual_policy"]
+    assert stored["demand_capture_rule"] == "require_explicit"
+    assert stored == unsupported_policy.to_dict()
+    warnings = " ".join(w.value for w in at.warning)
+    assert "does not offer" in warnings
 
 
 def test_page_reads_no_deprecated_state_keys():
