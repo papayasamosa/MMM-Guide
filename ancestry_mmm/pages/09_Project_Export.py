@@ -489,6 +489,20 @@ if uploaded_zip is not None and st.button("Import bundle"):
         set_state("counterfactual_policy", imported.get("counterfactual_policy"))
         set_state("currency_context", imported.get("currency_context"))
         set_state("value_mapping", imported.get("value_mapping"))
+        # Fresh review finding: a cached constrained_result/unconstrained_
+        # result left over from a DIFFERENT project earlier in this same
+        # Streamlit session is only invalidated by a governance_mode or
+        # counterfactual_policy_fingerprint change (Scenario Planner's
+        # _invalidate_stale_cached_result) - it doesn't compare currency
+        # context or value mapping at all, so an imported project sharing
+        # the same counterfactual policy but a different currency/value
+        # mapping could still show and allow saving the PREVIOUS project's
+        # cached result under this newly imported one. A project import is
+        # exactly the boundary where session-only cached results (never the
+        # system of record - see this module's docstring) must never
+        # survive across projects.
+        set_state("constrained_result", None)
+        set_state("unconstrained_result", None)
         workflow_state = imported.get("workflow_state") or {}
         set_state("current_page", workflow_state.get("current_page", 0))
         set_state("active_scenario", workflow_state.get("active_scenario"))

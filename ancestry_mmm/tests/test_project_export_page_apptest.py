@@ -221,6 +221,57 @@ def test_import_bundle_transactionally_replaces_the_destination_artifact_store(
     )
 
 
+def test_import_clears_stale_cached_optimiser_results(monkeypatch, tmp_path):
+    """Fresh review finding: a cached constrained_result/unconstrained_result
+    left over from a DIFFERENT project earlier in this same Streamlit
+    session is only invalidated by Scenario Planner's own staleness guard,
+    which compares governance_mode and counterfactual_policy_fingerprint -
+    not currency context or value mapping. An imported project sharing the
+    same counterfactual policy but a different currency/value mapping could
+    therefore still show and allow saving the PREVIOUS project's cached
+    result under the newly imported one. A project import must clear both -
+    session-only cached results are never the system of record (this
+    module's own docstring)."""
+    export_root = tmp_path / "exports"
+    artifact_root = tmp_path / "artifact-root"
+
+    import ancestry_mmm.utils as utils_pkg
+    import ancestry_mmm.utils.session_state as ss
+
+    monkeypatch.setattr(utils_pkg, "PROJECT_EXPORT_ROOT", export_root)
+    monkeypatch.setattr(ss, "CURVE_ARTIFACT_ROOT", artifact_root)
+
+    bundle_path = export_project(
+        tmp_path / "bundle.zip",
+        raw_sources={},
+        transformed_data=None,
+        pipeline_steps=[],
+        model_spec=None,
+        prior_config=None,
+        dna_lag_weeks=0,
+        trace=None,
+        scenarios=[],
+    )
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.run()
+    assert not at.exception, f"initial load raised: {at.exception}"
+    at.session_state["project_name"] = "proj-import-clear"
+    at.session_state["constrained_result"] = {"governance_mode": "exploratory"}
+    at.session_state["unconstrained_result"] = {"governance_mode": "exploratory"}
+
+    uploader = at.file_uploader[0]
+    uploader.set_value(
+        (bundle_path.name, bundle_path.read_bytes(), "application/zip")
+    ).run()
+    import_button = next(b for b in at.button if b.label == "Import bundle")
+    import_button.click().run()
+    assert not at.exception, f"import click raised: {at.exception}"
+
+    assert at.session_state["constrained_result"] is None
+    assert at.session_state["unconstrained_result"] is None
+
+
 def _rewrite_bundle_diagnostics_artefact(
     bundle_path: Path, tmp_path: Path, **overrides
 ) -> Path:

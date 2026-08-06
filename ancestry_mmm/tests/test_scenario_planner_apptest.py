@@ -44,7 +44,7 @@ from ancestry_mmm.core.outcomes import (
     outcome_eligibility,
 )
 from ancestry_mmm.core.pathways import pathway_catalogue_fingerprint_payload
-from ancestry_mmm.core.planning.value import CurrencyContext
+from ancestry_mmm.core.planning.value import CurrencyContext, OutcomeValueMapping
 from ancestry_mmm.core.predict import extract_posterior_params
 from ancestry_mmm.core.scenario_governance import CounterfactualPolicy
 from ancestry_mmm.core.schema import ModelSpec
@@ -304,6 +304,59 @@ def test_expected_value_objective_derives_currency_and_evaluates_manual_tab():
     # OutcomeValueMapping covers the only target outcome.
     warnings_text = [w.value for w in at.warning]
     assert not any("value mapping" in (w or "") for w in warnings_text), warnings_text
+
+
+def test_compatible_stored_value_mapping_is_preserved_not_overwritten():
+    """Fresh review finding (P2): a stored value mapping (e.g. from an
+    import) that's still compatible with the current objective's target
+    outcome set and currency must be preserved, including any custom
+    mapping_id/source or curated values - re-deriving from the catalogue
+    every rerun would silently discard governed/curated evidence the
+    analyst never asked to change."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_consistent_session_state(at, value_currency="GBP")
+    governed_mapping = OutcomeValueMapping(
+        value_by_outcome_id={"New": 99.0},
+        currency_by_outcome_id={"New": "GBP"},
+        mapping_id="custom-governed",
+        source="manual_override",
+    )
+    at.session_state["value_mapping"] = governed_mapping.to_dict()
+    at.run()
+    assert not at.exception, f"initial load raised: {at.exception}"
+
+    objective_radio = [r for r in at.radio if r.label == "Optimisation objective"]
+    objective_radio[0].set_value("expected_value").run()
+    assert not at.exception, f"selecting expected_value raised: {at.exception}"
+
+    stored = at.session_state["value_mapping"]
+    assert stored["mapping_id"] == "custom-governed"
+    assert stored["value_by_outcome_id"]["New"] == 99.0
+
+
+def test_incompatible_stored_value_mapping_is_replaced_by_fresh_derivation():
+    """A stored value mapping whose target outcome set no longer matches
+    the current objective (e.g. left over from a different project/
+    objective) doesn't describe this objective at all - re-deriving fresh
+    from the catalogue is correct here, not a preservation concern."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_consistent_session_state(at, value_currency="GBP")
+    stale_mapping = OutcomeValueMapping(
+        value_by_outcome_id={"Other": 1.0},
+        currency_by_outcome_id={"Other": "GBP"},
+        mapping_id="from-a-different-project",
+    )
+    at.session_state["value_mapping"] = stale_mapping.to_dict()
+    at.run()
+    assert not at.exception, f"initial load raised: {at.exception}"
+
+    objective_radio = [r for r in at.radio if r.label == "Optimisation objective"]
+    objective_radio[0].set_value("expected_value").run()
+    assert not at.exception, f"selecting expected_value raised: {at.exception}"
+
+    stored = at.session_state["value_mapping"]
+    assert stored["mapping_id"] == "outcome-catalogue"
+    assert "New" in stored["value_by_outcome_id"]
 
 
 @pytest.mark.parametrize("value_currency", ["USD"])

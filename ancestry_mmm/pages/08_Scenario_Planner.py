@@ -866,35 +866,67 @@ if hasattr(meta, "outcome_catalogue_at_fit") and meta.outcome_catalogue_at_fit:
 # segment-LTV adapter only when catalogue weights don't cover every target.
 value_mapping: OutcomeValueMapping | None = None
 if objective == "expected_value" and value_currency and _target_ids_for_value:
-    _catalogue_target_weights = {
-        oid: value_weights_by_outcome_id[oid]
-        for oid in _target_ids_for_value
-        if oid in value_weights_by_outcome_id
-    }
-    if len(_catalogue_target_weights) == len(_target_ids_for_value):
-        value_mapping = OutcomeValueMapping(
-            value_by_outcome_id=_catalogue_target_weights,
-            currency_by_outcome_id={
-                oid: value_currency for oid in _catalogue_target_weights
-            },
-            mapping_id="outcome-catalogue",
-            source="outcome_catalogue",
+    # Fresh review finding: a stored value mapping (e.g. from an import) may
+    # be a legitimately governed/curated mapping that isn't exactly
+    # reproducible by either derivation path below (a custom mapping_id/
+    # source, or values curated rather than taken straight from the fitted
+    # catalogue). Preserve it when it's still compatible with the CURRENT
+    # objective's target outcome set and currency - re-deriving from scratch
+    # would silently discard it with no analyst choice behind it, exactly
+    # the counterfactual-policy/currency-context defect above. When the
+    # target set has genuinely changed (a different objective/outcome
+    # selection), the stored mapping no longer describes this objective at
+    # all, so re-deriving fresh below is correct, not a preservation
+    # concern.
+    _stored_value_mapping_dict, _value_mapping_mapping_malformed = (
+        _validated_stored_mapping("value_mapping", label="value mapping")
+    )
+    if (
+        not _value_mapping_mapping_malformed
+        and _stored_value_mapping_dict
+        and set(_stored_value_mapping_dict.get("value_by_outcome_id") or {})
+        == _target_ids_for_value
+        and all(
+            currency == value_currency
+            for currency in (
+                _stored_value_mapping_dict.get("currency_by_outcome_id") or {}
+            ).values()
         )
-    elif ltv:
-        _segment_by_outcome_id = {
-            o.outcome_id: o.segment
-            for o in (meta.outcome_catalogue_at_fit or [])
-            if o.outcome_id in _target_ids_for_value
-        }
+    ):
         try:
-            value_mapping = OutcomeValueMapping.from_legacy_segment_ltv(
-                segment_by_outcome_id=_segment_by_outcome_id,
-                segment_ltv=ltv,
-                currency=value_currency,
-                outcome_ids=tuple(sorted(_target_ids_for_value)),
-            )
-        except (ValueError, KeyError):
+            value_mapping = OutcomeValueMapping.from_dict(_stored_value_mapping_dict)
+        except (TypeError, ValueError):
             value_mapping = None
+    if value_mapping is None:
+        _catalogue_target_weights = {
+            oid: value_weights_by_outcome_id[oid]
+            for oid in _target_ids_for_value
+            if oid in value_weights_by_outcome_id
+        }
+        if len(_catalogue_target_weights) == len(_target_ids_for_value):
+            value_mapping = OutcomeValueMapping(
+                value_by_outcome_id=_catalogue_target_weights,
+                currency_by_outcome_id={
+                    oid: value_currency for oid in _catalogue_target_weights
+                },
+                mapping_id="outcome-catalogue",
+                source="outcome_catalogue",
+            )
+        elif ltv:
+            _segment_by_outcome_id = {
+                o.outcome_id: o.segment
+                for o in (meta.outcome_catalogue_at_fit or [])
+                if o.outcome_id in _target_ids_for_value
+            }
+            try:
+                value_mapping = OutcomeValueMapping.from_legacy_segment_ltv(
+                    segment_by_outcome_id=_segment_by_outcome_id,
+                    segment_ltv=ltv,
+                    currency=value_currency,
+                    outcome_ids=tuple(sorted(_target_ids_for_value)),
+                )
+            except (ValueError, KeyError):
+                value_mapping = None
 # PR 125A: the project-level value mapping every official "incremental_
 # value" scenario's saved governance_dependencies.value_mapping_fingerprint
 # is verified against on import - see core.persistence's module docstring
