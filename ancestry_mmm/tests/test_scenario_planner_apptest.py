@@ -44,6 +44,7 @@ from ancestry_mmm.core.outcomes import (
     outcome_eligibility,
 )
 from ancestry_mmm.core.pathways import pathway_catalogue_fingerprint_payload
+from ancestry_mmm.core.planning.value import CurrencyContext
 from ancestry_mmm.core.predict import extract_posterior_params
 from ancestry_mmm.core.scenario_governance import CounterfactualPolicy
 from ancestry_mmm.core.schema import ModelSpec
@@ -625,6 +626,63 @@ def test_unsupported_imported_demand_capture_rule_is_preserved_not_narrowed():
     assert stored == unsupported_policy.to_dict()
     warnings = " ".join(w.value for w in at.warning)
     assert "does not offer" in warnings
+
+
+def test_stored_currency_context_extra_fields_survive_a_rerun():
+    """Corrective review finding (P1): market_reporting_currency/
+    value_currency are genuinely re-derived from the current objective's
+    target outcomes every rerun, but group_reporting_currency,
+    model_currency, and any governed FX rate-set identity are never derived
+    by this page at all - only ever restored from an import. Previously,
+    merely rendering this page with such a context already stored replaced
+    it with a fresh minimal CurrencyContext(market_reporting_currency=...,
+    value_currency=...), discarding those fields the moment the page
+    loaded, with no analyst choice behind it."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_consistent_session_state(at, value_currency="GBP")
+    imported_context = CurrencyContext(
+        market_reporting_currency="GBP",
+        value_currency="GBP",
+        group_reporting_currency="USD",
+        model_currency="GBP",
+        historical_fx_rate_set_id="fx-set-1",
+        historical_fx_rate_set_fingerprint="fx-set-1-fp",
+    )
+    at.session_state["currency_context"] = imported_context.to_dict()
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    stored = at.session_state["currency_context"]
+    assert stored["market_reporting_currency"] == "GBP"
+    assert stored["group_reporting_currency"] == "USD"
+    assert stored["historical_fx_rate_set_id"] == "fx-set-1"
+    assert stored["historical_fx_rate_set_fingerprint"] == "fx-set-1-fp"
+
+
+def test_malformed_stored_counterfactual_policy_does_not_crash_page():
+    """Corrective review finding (P2): config/counterfactual_policy.json
+    round-trips through import_project() as whatever JSON value it actually
+    contains - a structurally malformed file (e.g. a JSON array, not an
+    object) previously crashed this page's `.get()` call with an
+    AttributeError instead of failing closed with a warning."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_consistent_session_state(at, value_currency="GBP")
+    at.session_state["counterfactual_policy"] = ["not", "a", "mapping"]
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    warnings = " ".join(w.value for w in at.warning)
+    assert "malformed" in warnings
+
+
+def test_malformed_stored_currency_context_does_not_crash_page():
+    """Same fail-closed contract as the counterfactual-policy case above,
+    for config/currency_context.json."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_consistent_session_state(at, value_currency="GBP")
+    at.session_state["currency_context"] = "not-a-mapping"
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    warnings = " ".join(w.value for w in at.warning)
+    assert "malformed" in warnings
 
 
 def test_page_reads_no_deprecated_state_keys():

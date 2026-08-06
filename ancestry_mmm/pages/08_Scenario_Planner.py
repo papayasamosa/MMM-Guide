@@ -550,13 +550,36 @@ if activity_map:
         "and non-applicable activity is stored separately as model-input quantities."
     )
 
+
+def _validated_stored_mapping(state_key: str, *, label: str) -> dict | None:
+    """Corrective review finding: `config/<state_key>.json` round-trips
+    through `import_project()` as whatever JSON value it actually contains -
+    a bundle with a structurally malformed file (e.g. a JSON array or
+    string, not an object) restores that raw non-mapping value into session
+    state as-is. Calling `.get()` or `**`-unpacking it directly then crashes
+    the page with an AttributeError/TypeError instead of the fail-closed
+    warning every other malformed-evidence path in this app gives. Returns
+    the stored value only if it's actually a mapping; otherwise warns and
+    returns None (the same "nothing stored" state a fresh project has)."""
+    stored = get_state(state_key)
+    if stored is not None and not isinstance(stored, dict):
+        st.warning(
+            f"This project's stored {label} is malformed (expected an "
+            f"object, got {type(stored).__name__}) and was discarded."
+        )
+        return None
+    return stored
+
+
 _DEMAND_CAPTURE_RULE_OPTIONS = ["hold_plan", "zero"]
 # PR 125A: seed the widget's default from the project-level counterfactual
 # policy restored by a bundle import, not always the first option - so a
 # resumed session shows the same selection that was exported, and re-saves
 # the identical CounterfactualPolicy (same fingerprint) until the analyst
 # deliberately changes it.
-_stored_cf_policy_dict = get_state("counterfactual_policy")
+_stored_cf_policy_dict = _validated_stored_mapping(
+    "counterfactual_policy", label="counterfactual policy"
+)
 _stored_demand_capture_rule = (_stored_cf_policy_dict or {}).get("demand_capture_rule")
 # Corrective review finding: this radio can only ever choose between two of
 # CounterfactualPolicy's four demand_capture_rule values (e.g. an imported/
@@ -788,13 +811,44 @@ if objective == "expected_value" and value_currency and _target_ids_for_value:
         except (ValueError, KeyError):
             value_mapping = None
 
-currency_context = (
-    CurrencyContext(
-        market_reporting_currency=value_currency, value_currency=value_currency
-    )
-    if value_currency
-    else None
+# Corrective review finding: market_reporting_currency/value_currency are
+# genuinely re-derived from the current objective's target outcomes every
+# rerun (that's this block's job), but group_reporting_currency,
+# model_currency, and any governed FX rate-set identity are never derived
+# by this page at all - they can only ever have come from an import.
+# Constructing a fresh minimal CurrencyContext from just the two derived
+# fields discarded those on every rerun with no analyst choice behind it,
+# exactly the counterfactual-policy defect above. Preserve them by merging
+# onto whatever was already stored, only overriding the two fields this
+# page actually computes.
+_stored_currency_context_dict = _validated_stored_mapping(
+    "currency_context", label="currency context"
 )
+try:
+    currency_context = (
+        CurrencyContext.from_dict(
+            {
+                **(_stored_currency_context_dict or {}),
+                "market_reporting_currency": value_currency,
+                "value_currency": value_currency,
+            }
+        )
+        if value_currency
+        else None
+    )
+except (TypeError, ValueError) as exc:
+    st.warning(
+        "This project's stored currency context is malformed and could not "
+        f"be combined with the current objective's currency ({exc}) - using "
+        "the current objective's currency only."
+    )
+    currency_context = (
+        CurrencyContext(
+            market_reporting_currency=value_currency, value_currency=value_currency
+        )
+        if value_currency
+        else None
+    )
 # PR 125A: the project-level currency context every official scenario's
 # saved currency identity is verified against on import. Only set when this
 # rerun actually resolved one - an objective with no target-outcome
