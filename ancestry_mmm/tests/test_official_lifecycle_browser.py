@@ -219,16 +219,21 @@ def test_official_lifecycle_journey_in_browser(
     expect(
         page.get_by_text("its declared checkpoint is incomplete", exact=False)
     ).not_to_be_visible()
-    # This scenario's saved counterfactual identity is, by the export
-    # format's own design, never *officially* verifiable after a re-import
-    # (core.persistence.audit_project_resumability: no project-level
-    # CounterfactualPolicy travels through a bundle, only each scenario's
-    # own saved fingerprint) - asserted explicitly, not ignored, so a future
-    # change to that documented limitation (in either direction) is caught
-    # here rather than silently passing either way.
-    expect(page.get_by_text("is not officially resumable", exact=False)).to_be_visible(
-        timeout=30_000
-    )
+    # PR 125A: the project-level CounterfactualPolicy and CurrencyContext
+    # this fixture's official scenario depends on now travel through the
+    # bundle (core.persistence's config/counterfactual_policy.json,
+    # config/currency_context.json) and are verified against the scenario's
+    # own saved fingerprints on import - so this deterministic bundle is now
+    # genuinely *officially* resumable, not only technically loadable.
+    # Asserted explicitly (not just the absence of the old warning) so a
+    # regression back to "not officially resumable" is caught here rather
+    # than silently passing either way.
+    expect(
+        page.get_by_text("This bundle is officially resumable", exact=False)
+    ).to_be_visible(timeout=30_000)
+    expect(
+        page.get_by_text("is not officially resumable", exact=False)
+    ).not_to_be_visible()
 
     # --- Official Curve Generation: generate a THIRD artifact through the
     # real page, not only import pre-built ones - otherwise this required

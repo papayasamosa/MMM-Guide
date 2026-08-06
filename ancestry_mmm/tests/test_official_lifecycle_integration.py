@@ -77,6 +77,7 @@ from ancestry_mmm.tests.support.lifecycle_fixture import (
     MARKET,
     SCENARIO_MONTH,
     UNRELATED_ARTIFACT_ID,
+    build_counterfactual_policy,
     build_lifecycle_project,
     build_reference_context_by_month,
     build_saved_scenario_dict,
@@ -207,6 +208,10 @@ def test_official_curve_to_scenario_lifecycle(project, tmp_path):
         diagnostics_artefact=project.diagnostics.to_dict(),
         approval_readiness=project.readiness.to_dict(),
         media_cost_mappings=project.cost_mapping_registry.to_dict(),
+        # PR 125A: the project-level policy/context this scenario's saved
+        # governance dependencies must be verified against on import.
+        counterfactual_policy=build_counterfactual_policy().to_dict(),
+        currency_context=project.currency_context.to_dict(),
     )
 
     # --- 7. Import into the destination store dir (already has the
@@ -222,6 +227,12 @@ def test_official_curve_to_scenario_lifecycle(project, tmp_path):
     # real Project Import page runs.
     resumability = audit_project_resumability(imported)
     assert resumability["resumable"] is True, resumability["missing_required"]
+    # PR 125A: this bundle now carries the project-level counterfactual
+    # policy and currency context its scenario depends on, so it is
+    # genuinely officially resumable, not only technically loadable.
+    assert resumability["officially_resumable"] is True, resumability[
+        "official_blocking_reasons"
+    ]
 
     # --- 8. Transactional replacement - proves replacement, not a merge
     replace_curve_artifact_store(imported, destination_store)

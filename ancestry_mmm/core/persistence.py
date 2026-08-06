@@ -22,6 +22,38 @@ Bundle layout (a single zip):
                                           when this file is absent) or "market_specific"
                                           (Model C, core.market_specific_model)
     config/scenarios.json              - scenario definitions (spend plan, constraints)
+    config/counterfactual_policy.json  - PR 125A: project-level CounterfactualPolicy
+                                          (core.scenario_governance), if one was in
+                                          effect when the project was exported. Every
+                                          official scenario's saved
+                                          governance_dependencies.counterfactual_policy_
+                                          fingerprint is verified against THIS file on
+                                          import, not against itself - a bundle
+                                          exported before this field existed carries no
+                                          project-level policy, so any of its official
+                                          scenarios with a saved counterfactual
+                                          fingerprint remain unverifiable (fails closed,
+                                          never silently promoted to official).
+    config/currency_context.json       - PR 125A: project-level CurrencyContext
+                                          (core.planning.value), if a value/reporting
+                                          currency was in effect when the project was
+                                          exported. Bundles a single-market project's
+                                          reporting currency, value currency, and any
+                                          historical/future FX rate-set identity
+                                          together - verified the same way as
+                                          counterfactual_policy above. A project with
+                                          official scenarios spanning more than one
+                                          currency context is not yet supported by this
+                                          single project-level file (out of scope here -
+                                          see PR 125A's dependency inventory).
+    config/value_mapping.json          - PR 125A: project-level OutcomeValueMapping
+                                          (core.planning.value), if an expected-value
+                                          objective's value mapping was resolved when
+                                          the project was exported - verified the same
+                                          way as counterfactual_policy/currency_context
+                                          above, required by any official scenario whose
+                                          planning_objective.estimand is
+                                          "incremental_value".
     scenarios/scenario_<i>_predicted.csv
     model/trace.nc                     - fitted posterior (ArviZ InferenceData, NetCDF)
     curve_bank/*.json                  - curve bank + calibration records, if any
@@ -77,11 +109,16 @@ from .curve_artifact import (
 from .hierarchical_model import FHModelMeta
 from .outcomes import outcome_catalogue_fingerprint_payload
 from .pathways import pathway_catalogue_fingerprint_payload
+from .planning.value import CurrencyContext, OutcomeValueMapping
 from .predict import extract_posterior_params
+from .scenario_governance import CounterfactualPolicy
 from .schema import ModelSpec
 from .optimization import SpendConstraint
 
-PROJECT_BUNDLE_SCHEMA_VERSION = 9
+# PR 125A: bumped 9 -> 11 for the project-level counterfactual_policy,
+# currency_context, and value_mapping bundle files (see export_project()'s
+# docstring).
+PROJECT_BUNDLE_SCHEMA_VERSION = 11
 PROJECT_APP_VERSION = "0.1.0"
 
 
@@ -170,6 +207,9 @@ def export_project(
     diagnostics_artefact: Optional[dict] = None,
     validation_results: Optional[List[dict]] = None,
     approval_readiness: Optional[dict] = None,
+    counterfactual_policy: Optional[dict] = None,
+    currency_context: Optional[dict] = None,
+    value_mapping: Optional[dict] = None,
 ) -> Path:
     output_path = Path(output_path)
     with tempfile.TemporaryDirectory() as tmp:
@@ -292,6 +332,21 @@ def export_project(
             (tmp / "config" / "approval_readiness.json").write_text(
                 json.dumps(approval_readiness, indent=2, default=str)
             )
+        # PR 125A: project-level planning dependencies that every official
+        # scenario's saved governance_dependencies fingerprint must be
+        # verifiable against on import - see the module docstring.
+        if counterfactual_policy is not None:
+            (tmp / "config" / "counterfactual_policy.json").write_text(
+                json.dumps(counterfactual_policy, indent=2, default=str)
+            )
+        if currency_context is not None:
+            (tmp / "config" / "currency_context.json").write_text(
+                json.dumps(currency_context, indent=2, default=str)
+            )
+        if value_mapping is not None:
+            (tmp / "config" / "value_mapping.json").write_text(
+                json.dumps(value_mapping, indent=2, default=str)
+            )
         if diagnostics is not None:
             for name, value in diagnostics.items():
                 if value is None:
@@ -356,6 +411,9 @@ def export_project(
                 "diagnostics_artefact": diagnostics_artefact is not None,
                 "validation_results": validation_results is not None,
                 "approval_readiness": approval_readiness is not None,
+                "counterfactual_policy": counterfactual_policy is not None,
+                "currency_context": currency_context is not None,
+                "value_mapping": value_mapping is not None,
             },
         }
         (tmp / "manifest.json").write_text(json.dumps(manifest, indent=2, default=str))
@@ -439,6 +497,14 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         "diagnostics_artefact": None,
         "validation_results": None,
         "approval_readiness": None,
+        # PR 125A: project-level planning dependencies - None for bundles
+        # exported before this field existed (a legacy bundle, not an
+        # error). audit_project_resumability() fails closed for any
+        # official scenario that depended on one of these but finds it
+        # absent here - it never fabricates legacy evidence.
+        "counterfactual_policy": None,
+        "currency_context": None,
+        "value_mapping": None,
     }
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
@@ -562,6 +628,18 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         if (config_dir / "approval_readiness.json").exists():
             result["approval_readiness"] = json.loads(
                 (config_dir / "approval_readiness.json").read_text()
+            )
+        if (config_dir / "counterfactual_policy.json").exists():
+            result["counterfactual_policy"] = json.loads(
+                (config_dir / "counterfactual_policy.json").read_text()
+            )
+        if (config_dir / "currency_context.json").exists():
+            result["currency_context"] = json.loads(
+                (config_dir / "currency_context.json").read_text()
+            )
+        if (config_dir / "value_mapping.json").exists():
+            result["value_mapping"] = json.loads(
+                (config_dir / "value_mapping.json").read_text()
             )
         # G2A.7 (REQ-OUT-002): outcome approvals persisted alongside outcome
         # definitions. Absent in legacy bundles — treated as no approvals on
@@ -1377,34 +1455,185 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
                     )
                     continue
 
-                # G2A.7a.10 (brief section 7.2): no project-level
-                # CounterfactualPolicy is persisted anywhere in a bundle -
-                # only each scenario's own saved counterfactual identity is.
-                # A scenario that depends on counterfactual identity
-                # (governance_dependencies.counterfactual_policy_fingerprint
-                # is set) cannot have that dependency verified against a
-                # "current" policy that does not exist in the bundle -
-                # comparing it against itself would not be verification.
-                # Classify as unverifiable with an explicit reason rather
-                # than passing an empty-string placeholder that
-                # ScenarioValidationContext rejects with a generic message.
-                sc_cf_fp = (sc.get("governance_dependencies") or {}).get(
-                    "counterfactual_policy_fingerprint"
-                )
+                # PR 125A (brief section 7.2): a project-level
+                # CounterfactualPolicy and CurrencyContext now travel through
+                # the bundle (config/counterfactual_policy.json,
+                # config/currency_context.json) alongside each scenario's own
+                # saved dependency fingerprint. A scenario is verified
+                # against THIS bundle's project-level evidence, never against
+                # its own saved fingerprint (that would be tautological -
+                # see the model-approval comment above). A bundle exported
+                # before this field existed (or one where the project-level
+                # evidence is missing/malformed) still fails closed, exactly
+                # as every scenario with a saved dependency did before this
+                # PR - no legacy evidence is ever fabricated.
+                sc_deps = sc.get("governance_dependencies") or {}
+                sc_cf_fp = sc_deps.get("counterfactual_policy_fingerprint")
+                sc_currency_fp = sc_deps.get("currency_context_fingerprint")
+                sc_value_mapping_fp = sc_deps.get("value_mapping_fingerprint")
+                identity_check_failed = False
+
                 if sc_cf_fp:
+                    raw_cf_policy = imported.get("counterfactual_policy")
+                    if raw_cf_policy is None:
+                        identity_check_failed = True
+                        official_blocking_reasons.append(
+                            {
+                                "artefact_type": "scenario",
+                                "artefact_id": sc.get("name", f"scenario_{idx}"),
+                                "reason": (
+                                    "counterfactual_identity_unverifiable: this "
+                                    "bundle has no project-level counterfactual "
+                                    "policy to verify the scenario's saved "
+                                    "counterfactual identity against."
+                                ),
+                            }
+                        )
+                    else:
+                        try:
+                            current_cf_fp = CounterfactualPolicy.from_dict(
+                                raw_cf_policy
+                            ).fingerprint()
+                        except (TypeError, ValueError, KeyError, AttributeError) as exc:
+                            identity_check_failed = True
+                            official_blocking_reasons.append(
+                                {
+                                    "artefact_type": "scenario",
+                                    "artefact_id": sc.get("name", f"scenario_{idx}"),
+                                    "reason": (
+                                        "counterfactual_policy_malformed: this "
+                                        f"bundle's project-level counterfactual "
+                                        f"policy could not be loaded: {exc}"
+                                    ),
+                                }
+                            )
+                        else:
+                            if current_cf_fp != sc_cf_fp:
+                                identity_check_failed = True
+                                official_blocking_reasons.append(
+                                    {
+                                        "artefact_type": "scenario",
+                                        "artefact_id": sc.get(
+                                            "name", f"scenario_{idx}"
+                                        ),
+                                        "reason": (
+                                            "counterfactual_identity_mismatch: "
+                                            "this scenario's saved counterfactual "
+                                            "policy fingerprint does not match "
+                                            "this bundle's project-level "
+                                            "counterfactual policy."
+                                        ),
+                                    }
+                                )
+
+                if sc_currency_fp:
+                    raw_currency_context = imported.get("currency_context")
+                    if raw_currency_context is None:
+                        identity_check_failed = True
+                        official_blocking_reasons.append(
+                            {
+                                "artefact_type": "scenario",
+                                "artefact_id": sc.get("name", f"scenario_{idx}"),
+                                "reason": (
+                                    "currency_identity_unverifiable: this bundle "
+                                    "has no project-level currency context to "
+                                    "verify the scenario's saved currency "
+                                    "identity against."
+                                ),
+                            }
+                        )
+                    else:
+                        try:
+                            current_currency_fp = CurrencyContext.from_dict(
+                                raw_currency_context
+                            ).fingerprint()
+                        except (TypeError, ValueError, KeyError, AttributeError) as exc:
+                            identity_check_failed = True
+                            official_blocking_reasons.append(
+                                {
+                                    "artefact_type": "scenario",
+                                    "artefact_id": sc.get("name", f"scenario_{idx}"),
+                                    "reason": (
+                                        "currency_context_malformed: this "
+                                        f"bundle's project-level currency "
+                                        f"context could not be loaded: {exc}"
+                                    ),
+                                }
+                            )
+                        else:
+                            if current_currency_fp != sc_currency_fp:
+                                identity_check_failed = True
+                                official_blocking_reasons.append(
+                                    {
+                                        "artefact_type": "scenario",
+                                        "artefact_id": sc.get(
+                                            "name", f"scenario_{idx}"
+                                        ),
+                                        "reason": (
+                                            "currency_identity_mismatch: this "
+                                            "scenario's saved currency context "
+                                            "fingerprint does not match this "
+                                            "bundle's project-level currency "
+                                            "context."
+                                        ),
+                                    }
+                                )
+
+                if sc_value_mapping_fp:
+                    raw_value_mapping = imported.get("value_mapping")
+                    if raw_value_mapping is None:
+                        identity_check_failed = True
+                        official_blocking_reasons.append(
+                            {
+                                "artefact_type": "scenario",
+                                "artefact_id": sc.get("name", f"scenario_{idx}"),
+                                "reason": (
+                                    "value_mapping_identity_unverifiable: this "
+                                    "bundle has no project-level value mapping "
+                                    "to verify the scenario's saved value-"
+                                    "mapping identity against."
+                                ),
+                            }
+                        )
+                    else:
+                        try:
+                            current_value_mapping_fp = OutcomeValueMapping.from_dict(
+                                raw_value_mapping
+                            ).fingerprint
+                        except (TypeError, ValueError, KeyError, AttributeError) as exc:
+                            identity_check_failed = True
+                            official_blocking_reasons.append(
+                                {
+                                    "artefact_type": "scenario",
+                                    "artefact_id": sc.get("name", f"scenario_{idx}"),
+                                    "reason": (
+                                        "value_mapping_malformed: this bundle's "
+                                        "project-level value mapping could not "
+                                        f"be loaded: {exc}"
+                                    ),
+                                }
+                            )
+                        else:
+                            if current_value_mapping_fp != sc_value_mapping_fp:
+                                identity_check_failed = True
+                                official_blocking_reasons.append(
+                                    {
+                                        "artefact_type": "scenario",
+                                        "artefact_id": sc.get(
+                                            "name", f"scenario_{idx}"
+                                        ),
+                                        "reason": (
+                                            "value_mapping_identity_mismatch: "
+                                            "this scenario's saved value-mapping "
+                                            "fingerprint does not match this "
+                                            "bundle's project-level value "
+                                            "mapping."
+                                        ),
+                                    }
+                                )
+
+                if identity_check_failed:
                     officially_resumable = False
-                    official_blocking_reasons.append(
-                        {
-                            "artefact_type": "scenario",
-                            "artefact_id": sc.get("name", f"scenario_{idx}"),
-                            "reason": (
-                                "counterfactual_identity_unverifiable: this bundle "
-                                "has no project-level counterfactual policy to "
-                                "verify the scenario's saved counterfactual "
-                                "identity against."
-                            ),
-                        }
-                    )
                     continue
 
                 # Build per-scenario validation context
@@ -1419,6 +1648,8 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
                         outcome_definitions=current_outcome_defns,
                         outcome_approvals=current_outcome_appr,
                         counterfactual_fingerprint=sc_cf_fp or "unverifiable",
+                        currency_context_fingerprint=sc_currency_fp,
+                        value_mapping_fingerprint=sc_value_mapping_fp,
                     )
                 except ValueError as exc:
                     officially_resumable = False

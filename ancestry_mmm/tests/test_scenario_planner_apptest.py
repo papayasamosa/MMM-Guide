@@ -44,7 +44,9 @@ from ancestry_mmm.core.outcomes import (
     outcome_eligibility,
 )
 from ancestry_mmm.core.pathways import pathway_catalogue_fingerprint_payload
+from ancestry_mmm.core.planning.value import CurrencyContext, OutcomeValueMapping
 from ancestry_mmm.core.predict import extract_posterior_params
+from ancestry_mmm.core.scenario_governance import CounterfactualPolicy
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.validation_policy import (
     ApprovalReadiness,
@@ -302,6 +304,59 @@ def test_expected_value_objective_derives_currency_and_evaluates_manual_tab():
     # OutcomeValueMapping covers the only target outcome.
     warnings_text = [w.value for w in at.warning]
     assert not any("value mapping" in (w or "") for w in warnings_text), warnings_text
+
+
+def test_compatible_stored_value_mapping_is_preserved_not_overwritten():
+    """Fresh review finding (P2): a stored value mapping (e.g. from an
+    import) that's still compatible with the current objective's target
+    outcome set and currency must be preserved, including any custom
+    mapping_id/source or curated values - re-deriving from the catalogue
+    every rerun would silently discard governed/curated evidence the
+    analyst never asked to change."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_consistent_session_state(at, value_currency="GBP")
+    governed_mapping = OutcomeValueMapping(
+        value_by_outcome_id={"New": 99.0},
+        currency_by_outcome_id={"New": "GBP"},
+        mapping_id="custom-governed",
+        source="manual_override",
+    )
+    at.session_state["value_mapping"] = governed_mapping.to_dict()
+    at.run()
+    assert not at.exception, f"initial load raised: {at.exception}"
+
+    objective_radio = [r for r in at.radio if r.label == "Optimisation objective"]
+    objective_radio[0].set_value("expected_value").run()
+    assert not at.exception, f"selecting expected_value raised: {at.exception}"
+
+    stored = at.session_state["value_mapping"]
+    assert stored["mapping_id"] == "custom-governed"
+    assert stored["value_by_outcome_id"]["New"] == 99.0
+
+
+def test_incompatible_stored_value_mapping_is_replaced_by_fresh_derivation():
+    """A stored value mapping whose target outcome set no longer matches
+    the current objective (e.g. left over from a different project/
+    objective) doesn't describe this objective at all - re-deriving fresh
+    from the catalogue is correct here, not a preservation concern."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_consistent_session_state(at, value_currency="GBP")
+    stale_mapping = OutcomeValueMapping(
+        value_by_outcome_id={"Other": 1.0},
+        currency_by_outcome_id={"Other": "GBP"},
+        mapping_id="from-a-different-project",
+    )
+    at.session_state["value_mapping"] = stale_mapping.to_dict()
+    at.run()
+    assert not at.exception, f"initial load raised: {at.exception}"
+
+    objective_radio = [r for r in at.radio if r.label == "Optimisation objective"]
+    objective_radio[0].set_value("expected_value").run()
+    assert not at.exception, f"selecting expected_value raised: {at.exception}"
+
+    stored = at.session_state["value_mapping"]
+    assert stored["mapping_id"] == "outcome-catalogue"
+    assert "New" in stored["value_by_outcome_id"]
 
 
 @pytest.mark.parametrize("value_currency", ["USD"])
@@ -580,6 +635,220 @@ def test_malformed_readiness_does_not_crash_scenario_planner_page():
     at.session_state["approval_readiness"] = {"gate_results": "not-a-list"}
     at.run()
     assert not at.exception, f"page raised: {at.exception}"
+
+
+def test_representable_imported_counterfactual_policy_round_trips_unchanged():
+    """PR 125A: a stored project-level policy whose demand_capture_rule is
+    already one of this page's two radio options round-trips through the
+    page unchanged, including fields the widget never edits."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_consistent_session_state(at, value_currency="GBP")
+    imported_policy = CounterfactualPolicy(
+        demand_capture_rule="zero", fixed_activity_rule="explicit"
+    )
+    at.session_state["counterfactual_policy"] = imported_policy.to_dict()
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    stored = at.session_state["counterfactual_policy"]
+    assert stored["demand_capture_rule"] == "zero"
+    # fixed_activity_rule isn't exposed by any widget on this page - must
+    # survive the rerun exactly as imported, not reset to the dataclass
+    # default ("hold_plan").
+    assert stored["fixed_activity_rule"] == "explicit"
+
+
+def test_unsupported_imported_demand_capture_rule_is_preserved_not_narrowed():
+    """Corrective review finding (P1): CounterfactualPolicy's own default
+    demand_capture_rule is "require_explicit" - a value this page's radio
+    (hold_plan / zero) cannot represent. Previously, merely loading this
+    page with such a policy already in session state (e.g. just imported)
+    silently narrowed it to "hold_plan" on first render, staling every
+    official scenario that depended on the real policy - with no explicit
+    choice behind the change. The stored policy must survive untouched
+    until the analyst explicitly clicks the replace button."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_consistent_session_state(at, value_currency="GBP")
+    unsupported_policy = (
+        CounterfactualPolicy()
+    )  # demand_capture_rule="require_explicit"
+    at.session_state["counterfactual_policy"] = unsupported_policy.to_dict()
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    stored = at.session_state["counterfactual_policy"]
+    assert stored["demand_capture_rule"] == "require_explicit"
+    assert stored == unsupported_policy.to_dict()
+    warnings = " ".join(w.value for w in at.warning)
+    assert "does not offer" in warnings
+
+
+def test_stored_currency_context_extra_fields_survive_a_rerun():
+    """Corrective review finding (P1): market_reporting_currency/
+    value_currency are genuinely re-derived from the current objective's
+    target outcomes every rerun, but group_reporting_currency,
+    model_currency, and any governed FX rate-set identity are never derived
+    by this page at all - only ever restored from an import. Previously,
+    merely rendering this page with such a context already stored replaced
+    it with a fresh minimal CurrencyContext(market_reporting_currency=...,
+    value_currency=...), discarding those fields the moment the page
+    loaded, with no analyst choice behind it."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_consistent_session_state(at, value_currency="GBP")
+    imported_context = CurrencyContext(
+        market_reporting_currency="GBP",
+        value_currency="GBP",
+        group_reporting_currency="USD",
+        model_currency="GBP",
+        historical_fx_rate_set_id="fx-set-1",
+        historical_fx_rate_set_fingerprint="fx-set-1-fp",
+    )
+    at.session_state["currency_context"] = imported_context.to_dict()
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    stored = at.session_state["currency_context"]
+    assert stored["market_reporting_currency"] == "GBP"
+    assert stored["group_reporting_currency"] == "USD"
+    assert stored["historical_fx_rate_set_id"] == "fx-set-1"
+    assert stored["historical_fx_rate_set_fingerprint"] == "fx-set-1-fp"
+
+
+def test_malformed_stored_counterfactual_policy_does_not_crash_page():
+    """Corrective review finding (P2): config/counterfactual_policy.json
+    round-trips through import_project() as whatever JSON value it actually
+    contains - a structurally malformed file (e.g. a JSON array, not an
+    object) previously crashed this page's `.get()` call with an
+    AttributeError instead of failing closed with a warning."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_consistent_session_state(at, value_currency="GBP")
+    at.session_state["counterfactual_policy"] = ["not", "a", "mapping"]
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    warnings = " ".join(w.value for w in at.warning)
+    assert "malformed" in warnings
+
+
+def test_malformed_stored_currency_context_does_not_crash_page():
+    """Same fail-closed contract as the counterfactual-policy case above,
+    for config/currency_context.json."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_consistent_session_state(at, value_currency="GBP")
+    at.session_state["currency_context"] = "not-a-mapping"
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    warnings = " ".join(w.value for w in at.warning)
+    assert "malformed" in warnings
+
+
+def test_structurally_valid_but_invalid_counterfactual_policy_is_preserved_not_narrowed():
+    """Corrective review finding (P2): a stored policy can be a
+    structurally valid mapping with a representable demand_capture_rule
+    while still being an invalid CounterfactualPolicy overall (e.g. an
+    unrecognised fixed_activity_rule) - checking demand_capture_rule
+    membership alone let this reach an unguarded
+    CounterfactualPolicy.from_dict() call and crash the page. The whole
+    dict must be validated, not just the one field this page's widget
+    edits, and the invalid policy must be preserved untouched (same
+    explicit-replace contract as the unsupported-value case)."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_consistent_session_state(at, value_currency="GBP")
+    invalid_policy_dict = {
+        "demand_capture_rule": "hold_plan",
+        "fixed_activity_rule": "not-a-real-rule",
+    }
+    at.session_state["counterfactual_policy"] = invalid_policy_dict
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    assert at.session_state["counterfactual_policy"] == invalid_policy_dict
+    warnings = " ".join(w.value for w in at.warning)
+    assert "is invalid and cannot be used" in warnings
+    # Fresh review finding: preserving the invalid dict isn't enough on its
+    # own - the planning workflow itself must stop (st.stop()) rather than
+    # silently continue to evaluate/save/optimise against a substitute
+    # policy the analyst never chose. "Governance mode" is rendered well
+    # after the counterfactual-policy block; its absence proves the script
+    # actually halted there rather than merely warning and carrying on.
+    errors = " ".join(e.value for e in at.error)
+    assert "Planning is blocked" in errors
+    assert "Governance mode" not in [r.label for r in at.radio]
+
+
+def test_invalid_currency_context_blocks_instead_of_replacing_stored_state():
+    """Corrective review finding (P2): the earlier fix for preserving a
+    valid stored currency context's extra fields still fell back, on
+    validation failure, to constructing-and-persisting a fresh minimal
+    CurrencyContext - silently discarding the stored context's other
+    fields via a different path than the one already fixed. A malformed
+    stored context must block (preserved untouched in session state), not
+    be quietly replaced with a stripped-down one - and, per a further
+    review finding, must actually stop the planning workflow (st.stop()),
+    not just decline to persist the fallback while still evaluating,
+    saving, and optimising against it."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_consistent_session_state(at, value_currency="GBP")
+    invalid_context_dict = {
+        "market_reporting_currency": "GBP",
+        "value_currency": "GBP",
+        "group_reporting_currency": "not-iso",
+    }
+    at.session_state["currency_context"] = invalid_context_dict
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    assert at.session_state["currency_context"] == invalid_context_dict
+    errors = " ".join(e.value for e in at.error)
+    assert "Planning is blocked" in errors
+    assert "is invalid and cannot be combined" in errors
+    # "Saved scenarios" is the last section on the page - its absence proves
+    # the script actually halted rather than merely erroring and continuing.
+    assert "Saved scenarios" not in " ".join(m.value for m in at.markdown)
+
+
+def test_stale_cached_constrained_result_invalidated_when_counterfactual_policy_changes():
+    """Corrective review finding (P2): a cached optimiser result was only
+    ever invalidated on a governance_mode change - changing the
+    counterfactual-policy radio after running an optimisation left the
+    stale result (still carrying the OLD policy's fingerprint) fully
+    displayable and saveable under the project's now-different policy."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_consistent_session_state(at, value_currency="GBP")
+    at.session_state["counterfactual_policy"] = CounterfactualPolicy(
+        demand_capture_rule="hold_plan"
+    ).to_dict()
+    stale_fingerprint = CounterfactualPolicy(demand_capture_rule="zero").fingerprint()
+    at.session_state["constrained_result"] = {
+        "governance_mode": "official",
+        "counterfactual_policy_fingerprint": stale_fingerprint,
+    }
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    assert at.session_state["constrained_result"] is None
+    infos = " ".join(i.value for i in at.info)
+    assert "counterfactual policy changed" in infos
+
+
+def test_saved_scenario_excluded_when_counterfactual_policy_has_changed():
+    """Corrective review finding (P2): the saved-scenario staleness
+    comparison only ever checked cost mappings - a scenario saved under a
+    since-changed counterfactual policy predicted totals under a
+    demand-capture rule the project no longer uses, but was never excluded
+    or flagged, indistinguishable from a genuinely current scenario."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_consistent_session_state(at, value_currency="GBP")
+    at.session_state["counterfactual_policy"] = CounterfactualPolicy(
+        demand_capture_rule="hold_plan"
+    ).to_dict()
+    stale_fingerprint = CounterfactualPolicy(demand_capture_rule="zero").fingerprint()
+    at.session_state["scenarios"] = [
+        {
+            "name": "stale-scenario",
+            "governance_dependencies": {
+                "counterfactual_policy_fingerprint": stale_fingerprint
+            },
+        }
+    ]
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    warnings = " ".join(w.value for w in at.warning)
+    assert "counterfactual policy has since changed" in warnings
+    assert "stale-scenario" in warnings
 
 
 def test_page_reads_no_deprecated_state_keys():

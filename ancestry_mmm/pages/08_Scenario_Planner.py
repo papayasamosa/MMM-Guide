@@ -550,9 +550,139 @@ if activity_map:
         "and non-applicable activity is stored separately as model-input quantities."
     )
 
+
+def _validated_stored_mapping(
+    state_key: str, *, label: str
+) -> tuple[dict | None, bool]:
+    """Corrective review finding: `config/<state_key>.json` round-trips
+    through `import_project()` as whatever JSON value it actually contains -
+    a bundle with a structurally malformed file (e.g. a JSON array or
+    string, not an object) restores that raw non-mapping value into session
+    state as-is. Calling `.get()` or `**`-unpacking it directly then crashes
+    the page with an AttributeError/TypeError instead of the fail-closed
+    warning every other malformed-evidence path in this app gives.
+
+    Returns ``(value, is_malformed)``. A non-mapping stored value is fresh
+    evidence of corruption, not the same as nothing having been stored at
+    all - a caller that collapsed both cases to `None` would let a
+    corrupted array/string be silently treated as "no evidence, safe to
+    default", the WEAKEST possible handling, while a dict with one invalid
+    field correctly gets the STRONGEST (blocked until explicitly repaired).
+    Callers must route `is_malformed=True` through the same blocking path
+    as any other invalid evidence, never the same path as `value is None`
+    from nothing having been stored."""
+    stored = get_state(state_key)
+    if stored is not None and not isinstance(stored, dict):
+        st.warning(
+            f"This project's stored {label} is malformed (expected an "
+            f"object, got {type(stored).__name__})."
+        )
+        return None, True
+    return stored, False
+
+
+def _invalidate_stale_cached_result(
+    state_key: str,
+    result: dict | None,
+    *,
+    current_governance_mode: str,
+    current_counterfactual_fingerprint: str,
+) -> dict | None:
+    """Corrective review finding: a cached optimiser result
+    (`st.session_state["constrained_result"]`/`"unconstrained_result"`) was
+    only ever invalidated on a governance_mode change - an analyst changing
+    the counterfactual-policy radio after running an optimisation left the
+    stale result (still carrying the OLD policy's fingerprint) fully
+    displayable and saveable, with the project's now-current policy already
+    silently diverged from it. Clears and returns `None` for `result` the
+    same way the governance_mode check already does, the moment either has
+    drifted since the result was computed."""
+    if not result:
+        return result
+    if result.get("governance_mode") != current_governance_mode:
+        st.session_state[state_key] = None
+        st.info(
+            "Governance mode changed since this result was computed - re-run "
+            "the optimisation to refresh it."
+        )
+        return None
+    cached_cf_fp = governance_deps_from_optimizer_result(result).get(
+        "counterfactual_policy_fingerprint"
+    )
+    if cached_cf_fp and cached_cf_fp != current_counterfactual_fingerprint:
+        st.session_state[state_key] = None
+        st.info(
+            "The project's counterfactual policy changed since this result "
+            "was computed - re-run the optimisation to refresh it."
+        )
+        return None
+    return result
+
+
+_DEMAND_CAPTURE_RULE_OPTIONS = ["hold_plan", "zero"]
+# PR 125A: seed the widget's default from the project-level counterfactual
+# policy restored by a bundle import, not always the first option - so a
+# resumed session shows the same selection that was exported, and re-saves
+# the identical CounterfactualPolicy (same fingerprint) until the analyst
+# deliberately changes it.
+_stored_cf_policy_dict, _cf_policy_mapping_malformed = _validated_stored_mapping(
+    "counterfactual_policy", label="counterfactual policy"
+)
+_stored_demand_capture_rule = None
+# Corrective review finding: this radio can only ever choose between two of
+# CounterfactualPolicy's four demand_capture_rule values (e.g. an imported/
+# fixture-built policy's default is "require_explicit", never offered here)
+# and never edits fixed_activity_rule / mediator_rule / control_rule /
+# event_rule / explicit_values_by_period at all. Rendering the widget always
+# returns one of its two options regardless, so treating that return value
+# as authoritative whenever the stored policy uses a value or field this
+# widget doesn't expose would silently narrow the project's real policy the
+# moment this page loads - staling every official scenario that depended on
+# the policy it just overwrote, with no explicit choice behind it. Fresh
+# review finding: a stored policy can also be a structurally valid mapping
+# that is simply not a valid CounterfactualPolicy (e.g. an invalid
+# fixed_activity_rule) - checking demand_capture_rule membership alone
+# isn't enough; the whole dict must round-trip through from_dict() first.
+_cf_policy_safe_to_sync = True
+_cf_policy_problem: str | None = None
+if _cf_policy_mapping_malformed:
+    # Fresh review finding: a non-mapping stored value must be routed
+    # through the same "blocked, explicit repair required" path as any
+    # other invalid evidence below - never silently treated the same as
+    # "nothing was ever stored" (which would let a corrupted array/string
+    # be quietly replaced with a fresh default and continue).
+    _cf_policy_safe_to_sync = False
+    _cf_policy_problem = "is malformed and cannot be used"
+elif _stored_cf_policy_dict:
+    _stored_demand_capture_rule = _stored_cf_policy_dict.get("demand_capture_rule")
+    try:
+        CounterfactualPolicy.from_dict(_stored_cf_policy_dict)
+    except (TypeError, ValueError) as exc:
+        _cf_policy_safe_to_sync = False
+        _cf_policy_problem = f"is invalid and cannot be used ({exc})"
+    if _stored_demand_capture_rule not in (None, *_DEMAND_CAPTURE_RULE_OPTIONS):
+        _cf_policy_safe_to_sync = False
+        _cf_policy_problem = (
+            "currently uses demand_capture_rule="
+            f"{_stored_demand_capture_rule!r}, which this control does not "
+            "offer (supported here: hold_plan, zero)"
+        )
+if _cf_policy_problem:
+    st.warning(
+        f"This project's counterfactual policy {_cf_policy_problem}. The "
+        "existing policy - including any other governance fields this page "
+        "does not expose - is preserved untouched until you explicitly "
+        "replace it below."
+    )
+_demand_capture_rule_index = (
+    _DEMAND_CAPTURE_RULE_OPTIONS.index(_stored_demand_capture_rule)
+    if _stored_demand_capture_rule in _DEMAND_CAPTURE_RULE_OPTIONS
+    else 0
+)
 demand_capture_rule = st.radio(
     "Demand-capture counterfactual",
-    ["hold_plan", "zero"],
+    _DEMAND_CAPTURE_RULE_OPTIONS,
+    index=_demand_capture_rule_index,
     horizontal=True,
     format_func=lambda value: {
         "hold_plan": "Hold demand-capture activity at the candidate level",
@@ -563,9 +693,52 @@ demand_capture_rule = st.radio(
         "is stored with the scenario and objective."
     ),
 )
-counterfactual_policy = CounterfactualPolicy(
-    demand_capture_rule=demand_capture_rule,
-)
+if _cf_policy_safe_to_sync:
+    # Safe: the stored policy (if any) is already a valid CounterfactualPolicy
+    # whose demand_capture_rule is one of this widget's own options, so
+    # keeping it in sync on every rerun never discards a choice the widget
+    # itself didn't just make. Every OTHER field (fixed_activity_rule,
+    # mediator_rule, control_rule, event_rule, explicit_values_by_period,
+    # rationale) is carried over from whatever was already stored - e.g. an
+    # import - never silently reset to CounterfactualPolicy's own dataclass
+    # defaults.
+    try:
+        counterfactual_policy = CounterfactualPolicy.from_dict(
+            {
+                **(_stored_cf_policy_dict or {}),
+                "demand_capture_rule": demand_capture_rule,
+            }
+        )
+    except (TypeError, ValueError):
+        counterfactual_policy = CounterfactualPolicy(
+            demand_capture_rule=demand_capture_rule
+        )
+    # PR 125A: the project-level policy every official scenario's saved
+    # counterfactual identity is verified against on import - see
+    # core.persistence's module docstring and audit_project_resumability().
+    set_state("counterfactual_policy", counterfactual_policy.to_dict())
+elif st.button("Replace this project's counterfactual policy with the selection above"):
+    counterfactual_policy = CounterfactualPolicy(
+        demand_capture_rule=demand_capture_rule
+    )
+    set_state("counterfactual_policy", counterfactual_policy.to_dict())
+    st.rerun()
+else:
+    # Fresh review finding: merely declining to persist a substitute policy
+    # wasn't enough - the rest of this page (evaluation, saving,
+    # optimisation) still ran against a fallback CounterfactualPolicy that
+    # was never the analyst's explicit choice, so a scenario could still be
+    # saved and exported carrying a fingerprint that matches neither the
+    # invalid/unsupported stored policy nor any policy the analyst actually
+    # approved. Block the entire planning workflow below this point until
+    # the analyst explicitly replaces or repairs the policy - the same
+    # st.stop() gate this page already uses for "no trained model yet".
+    st.error(
+        "Planning is blocked until the counterfactual policy above is "
+        "replaced or repaired - see the warning above for why the stored "
+        "policy can't be used as-is."
+    )
+    st.stop()
 
 # G2A.7a.1 (section 4.2): one source of truth. The radio's own return
 # value IS the authoritative governance mode for this rerun - it is never
@@ -693,43 +866,151 @@ if hasattr(meta, "outcome_catalogue_at_fit") and meta.outcome_catalogue_at_fit:
 # segment-LTV adapter only when catalogue weights don't cover every target.
 value_mapping: OutcomeValueMapping | None = None
 if objective == "expected_value" and value_currency and _target_ids_for_value:
-    _catalogue_target_weights = {
-        oid: value_weights_by_outcome_id[oid]
-        for oid in _target_ids_for_value
-        if oid in value_weights_by_outcome_id
-    }
-    if len(_catalogue_target_weights) == len(_target_ids_for_value):
-        value_mapping = OutcomeValueMapping(
-            value_by_outcome_id=_catalogue_target_weights,
-            currency_by_outcome_id={
-                oid: value_currency for oid in _catalogue_target_weights
-            },
-            mapping_id="outcome-catalogue",
-            source="outcome_catalogue",
-        )
-    elif ltv:
-        _segment_by_outcome_id = {
-            o.outcome_id: o.segment
-            for o in (meta.outcome_catalogue_at_fit or [])
-            if o.outcome_id in _target_ids_for_value
-        }
-        try:
-            value_mapping = OutcomeValueMapping.from_legacy_segment_ltv(
-                segment_by_outcome_id=_segment_by_outcome_id,
-                segment_ltv=ltv,
-                currency=value_currency,
-                outcome_ids=tuple(sorted(_target_ids_for_value)),
-            )
-        except (ValueError, KeyError):
-            value_mapping = None
-
-currency_context = (
-    CurrencyContext(
-        market_reporting_currency=value_currency, value_currency=value_currency
+    # Fresh review finding: a stored value mapping (e.g. from an import) may
+    # be a legitimately governed/curated mapping that isn't exactly
+    # reproducible by either derivation path below (a custom mapping_id/
+    # source, or values curated rather than taken straight from the fitted
+    # catalogue). Preserve it when it's still compatible with the CURRENT
+    # objective's target outcome set and currency - re-deriving from scratch
+    # would silently discard it with no analyst choice behind it, exactly
+    # the counterfactual-policy/currency-context defect above. When the
+    # target set has genuinely changed (a different objective/outcome
+    # selection), the stored mapping no longer describes this objective at
+    # all, so re-deriving fresh below is correct, not a preservation
+    # concern.
+    _stored_value_mapping_dict, _value_mapping_mapping_malformed = (
+        _validated_stored_mapping("value_mapping", label="value mapping")
     )
-    if value_currency
-    else None
+    if (
+        not _value_mapping_mapping_malformed
+        and _stored_value_mapping_dict
+        and set(_stored_value_mapping_dict.get("value_by_outcome_id") or {})
+        == _target_ids_for_value
+        and all(
+            currency == value_currency
+            for currency in (
+                _stored_value_mapping_dict.get("currency_by_outcome_id") or {}
+            ).values()
+        )
+    ):
+        try:
+            value_mapping = OutcomeValueMapping.from_dict(_stored_value_mapping_dict)
+        except (TypeError, ValueError):
+            value_mapping = None
+    if value_mapping is None:
+        _catalogue_target_weights = {
+            oid: value_weights_by_outcome_id[oid]
+            for oid in _target_ids_for_value
+            if oid in value_weights_by_outcome_id
+        }
+        if len(_catalogue_target_weights) == len(_target_ids_for_value):
+            value_mapping = OutcomeValueMapping(
+                value_by_outcome_id=_catalogue_target_weights,
+                currency_by_outcome_id={
+                    oid: value_currency for oid in _catalogue_target_weights
+                },
+                mapping_id="outcome-catalogue",
+                source="outcome_catalogue",
+            )
+        elif ltv:
+            _segment_by_outcome_id = {
+                o.outcome_id: o.segment
+                for o in (meta.outcome_catalogue_at_fit or [])
+                if o.outcome_id in _target_ids_for_value
+            }
+            try:
+                value_mapping = OutcomeValueMapping.from_legacy_segment_ltv(
+                    segment_by_outcome_id=_segment_by_outcome_id,
+                    segment_ltv=ltv,
+                    currency=value_currency,
+                    outcome_ids=tuple(sorted(_target_ids_for_value)),
+                )
+            except (ValueError, KeyError):
+                value_mapping = None
+# PR 125A: the project-level value mapping every official "incremental_
+# value" scenario's saved governance_dependencies.value_mapping_fingerprint
+# is verified against on import - see core.persistence's module docstring
+# and audit_project_resumability(). Unlike counterfactual_policy/
+# currency_context above, every field of OutcomeValueMapping is fully
+# re-derived by this page from the outcome catalogue each rerun (no field
+# only an import could ever supply), so there is nothing to merge/preserve
+# here - only set when this rerun actually resolved one, the same "never
+# overwrite with None" rule currency_context follows.
+if value_mapping is not None:
+    set_state("value_mapping", value_mapping.to_dict())
+
+# Corrective review finding: market_reporting_currency/value_currency are
+# genuinely re-derived from the current objective's target outcomes every
+# rerun (that's this block's job), but group_reporting_currency,
+# model_currency, and any governed FX rate-set identity are never derived
+# by this page at all - they can only ever have come from an import.
+# Constructing a fresh minimal CurrencyContext from just the two derived
+# fields discarded those on every rerun with no analyst choice behind it,
+# exactly the counterfactual-policy defect above. Preserve them by merging
+# onto whatever was already stored, only overriding the two fields this
+# page actually computes.
+_stored_currency_context_dict, _currency_context_mapping_malformed = (
+    _validated_stored_mapping("currency_context", label="currency context")
 )
+try:
+    if _currency_context_mapping_malformed:
+        # Fresh review finding: route a non-mapping stored value through the
+        # same blocking path as a mapping that fails CurrencyContext
+        # validation below - never silently treated the same as "nothing
+        # stored" (which would let a corrupted array/string be quietly
+        # replaced with a fresh default and continue).
+        raise ValueError("stored currency context is not a valid object")
+    currency_context = (
+        CurrencyContext.from_dict(
+            {
+                **(_stored_currency_context_dict or {}),
+                # Fresh review finding: market_reporting_currency and
+                # value_currency are DISTINCT fields (a market can report in
+                # one currency while its outcomes are value-weighted in
+                # another, governed by explicit FX evidence) - only
+                # value_currency is genuinely re-derived by this page every
+                # rerun. Overwriting market_reporting_currency from the same
+                # derived value too corrupted a legitimately different
+                # stored market currency the moment this page loaded.
+                # Preserve whatever was already stored for it; only a fresh
+                # project (nothing stored yet) falls back to the derived
+                # value.
+                "market_reporting_currency": (
+                    (_stored_currency_context_dict or {}).get(
+                        "market_reporting_currency"
+                    )
+                    or value_currency
+                ),
+                "value_currency": value_currency,
+            }
+        )
+        if value_currency
+        else None
+    )
+except (TypeError, ValueError) as exc:
+    # Fresh review finding: falling back to a freshly-constructed minimal
+    # CurrencyContext and continuing with it - even only in memory, never
+    # persisted - still let evaluation, saving, and optimisation run against
+    # governance semantics the analyst never chose, and a saved scenario's
+    # fingerprint would match neither the invalid stored context nor any
+    # context the analyst actually approved. Block the entire planning
+    # workflow below this point, the same st.stop() gate the counterfactual
+    # policy check above uses, until the underlying currency/FX data (e.g.
+    # Market Descriptors) is corrected - the stored context itself is left
+    # completely untouched in session state.
+    st.error(
+        "Planning is blocked until this project's stored currency context is "
+        f"corrected: it is invalid and cannot be combined with the current "
+        f"objective's currency ({exc}). Fix the underlying currency/FX data "
+        "(e.g. Market Descriptors) rather than continuing."
+    )
+    st.stop()
+# PR 125A: the project-level currency context every official scenario's
+# saved currency identity is verified against on import. Only set when this
+# rerun actually resolved one - an objective with no target-outcome
+# currency must not overwrite a previously exported context with None.
+if currency_context is not None:
+    set_state("currency_context", currency_context.to_dict())
 
 # G2A.7a.7: protected objective resolution with error boundary
 planning_objective = None
@@ -1126,18 +1407,17 @@ with tab_constrained:
                     st.warning(f"Optimiser did not fully converge: {result['message']}")
                 st.session_state["constrained_result"] = result
 
-    result = st.session_state.get("constrained_result")
-    if result and result.get("governance_mode") != governance_mode:
-        # The governance-mode control changed since this result was
-        # computed (e.g. switched back to "official" after an exploratory
-        # run) - the cached result no longer matches what's displayed above,
-        # so it must never be shown or saved under the new, mismatched label.
-        st.session_state["constrained_result"] = None
-        result = None
-        st.info(
-            "Governance mode changed since this result was computed - re-run the "
-            "optimisation to refresh it."
-        )
+    # The governance-mode control or the project's counterfactual policy may
+    # have changed since this result was computed (e.g. switched back to
+    # "official" after an exploratory run, or the demand-capture rule was
+    # changed) - a cached result that no longer matches either must never be
+    # shown or saved under a mismatched label.
+    result = _invalidate_stale_cached_result(
+        "constrained_result",
+        st.session_state.get("constrained_result"),
+        current_governance_mode=governance_mode,
+        current_counterfactual_fingerprint=counterfactual_policy.fingerprint(),
+    )
     if result:
         governance_badge = (
             "⚠️ Exploratory"
@@ -1283,14 +1563,12 @@ with tab_unconstrained:
             if result is not None:
                 st.session_state["unconstrained_result"] = result
 
-    result = st.session_state.get("unconstrained_result")
-    if result and result.get("governance_mode") != governance_mode:
-        st.session_state["unconstrained_result"] = None
-        result = None
-        st.info(
-            "Governance mode changed since this result was computed - re-run the "
-            "optimisation to refresh it."
-        )
+    result = _invalidate_stale_cached_result(
+        "unconstrained_result",
+        st.session_state.get("unconstrained_result"),
+        current_governance_mode=governance_mode,
+        current_counterfactual_fingerprint=counterfactual_policy.fingerprint(),
+    )
     if result:
         governance_badge = (
             "⚠️ Exploratory"
@@ -1356,9 +1634,21 @@ if scenarios:
     # names a cost mapping has this dependency at all; a scenario that
     # never depended on cost mappings is never flagged stale by this check.
     current_cost_mapping_fingerprint = cost_mapping_registry.fingerprint()
+    # Corrective review finding: this comparison only ever checked cost
+    # mappings - a scenario saved under a since-changed counterfactual
+    # policy predicted totals under a demand-capture rule the project no
+    # longer uses, but was never excluded or flagged, indistinguishable from
+    # a genuinely current scenario.
+    current_counterfactual_fingerprint = counterfactual_policy.fingerprint()
     current_scenarios = []
     stale_scenario_names = []
     for scenario in scenarios:
+        scenario_cf_fp = (scenario.get("governance_dependencies") or {}).get(
+            "counterfactual_policy_fingerprint"
+        )
+        if scenario_cf_fp and scenario_cf_fp != current_counterfactual_fingerprint:
+            stale_scenario_names.append(scenario.get("name", "(unnamed)"))
+            continue
         try:
             dependency_fingerprint = resolve_scenario_cost_mapping_fingerprint(scenario)
         except ValueError:
@@ -1378,8 +1668,8 @@ if scenarios:
     if stale_scenario_names:
         st.warning(
             "Excluded from the comparison below because their governed cost "
-            "mapping has since changed - regenerate them to compare current "
-            f"totals: {', '.join(stale_scenario_names)}"
+            "mapping or counterfactual policy has since changed - regenerate "
+            f"them to compare current totals: {', '.join(stale_scenario_names)}"
         )
     if current_scenarios:
         compare_df = compare_scenarios(current_scenarios)

@@ -62,6 +62,9 @@ class ProjectExportInput:
     diagnostics_artefact: Optional[dict] = None
     validation_results: Optional[List[dict]] = None
     approval_readiness: Optional[dict] = None
+    counterfactual_policy: Optional[dict] = None
+    currency_context: Optional[dict] = None
+    value_mapping: Optional[dict] = None
     include_excel: bool = False
     excel_sheets: Optional[Dict[str, Optional[pd.DataFrame]]] = None
     excel_output_path: Optional[str] = None
@@ -167,6 +170,9 @@ class ProjectService:
                 diagnostics_artefact=exp_input.diagnostics_artefact,
                 validation_results=exp_input.validation_results,
                 approval_readiness=exp_input.approval_readiness,
+                counterfactual_policy=exp_input.counterfactual_policy,
+                currency_context=exp_input.currency_context,
+                value_mapping=exp_input.value_mapping,
             )
         except Exception as exc:
             errors.append(f"Project export failed: {exc}")

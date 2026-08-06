@@ -33,6 +33,8 @@ from ancestry_mmm.core.fingerprint import (
 )
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
 from ancestry_mmm.core.model_identity import ModelIdentity
+from ancestry_mmm.core.planning.value import CurrencyContext
+from ancestry_mmm.core.scenario_governance import CounterfactualPolicy
 from ancestry_mmm.core.persistence import (
     export_project,
     import_project,
@@ -390,6 +392,47 @@ class TestProjectExportInputGovernanceFields:
         assert imported["diagnostics_artefact"] is None
         assert imported["validation_results"] is None
         assert imported["approval_readiness"] is None
+
+
+class TestProjectExportInputCounterfactualAndCurrencyContext:
+    """PR 125A: counterfactual_policy / currency_context - the project-level
+    planning dependencies newly threaded through ProjectExportInput ->
+    ProjectService.export() -> export_project(), mirroring the governance
+    fields above."""
+
+    def test_export_passes_fields_through_to_the_bundle(
+        self, tmp_path, governed_project
+    ):
+        governed_project = dict(governed_project)
+        governed_project["counterfactual_policy"] = CounterfactualPolicy().to_dict()
+        governed_project["currency_context"] = CurrencyContext(
+            market_reporting_currency="GBP", value_currency="GBP"
+        ).to_dict()
+        exp_input = ProjectExportInput(
+            output_path=str(tmp_path / "bundle.zip"),
+            **governed_project,
+        )
+        result = ProjectService().export(exp_input)
+
+        assert result.success, result.errors
+        imported = import_project(result.actual_export_path)
+        assert (
+            imported["counterfactual_policy"]
+            == governed_project["counterfactual_policy"]
+        )
+        assert imported["currency_context"] == governed_project["currency_context"]
+
+    def test_export_omits_fields_when_none(self, tmp_path, governed_project):
+        exp_input = ProjectExportInput(
+            output_path=str(tmp_path / "bundle.zip"),
+            **governed_project,
+        )
+        result = ProjectService().export(exp_input)
+
+        assert result.success, result.errors
+        imported = import_project(result.actual_export_path)
+        assert imported["counterfactual_policy"] is None
+        assert imported["currency_context"] is None
 
 
 class TestProjectExportInputCurveArtifactStore:

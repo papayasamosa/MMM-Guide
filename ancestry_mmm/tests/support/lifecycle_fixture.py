@@ -792,7 +792,14 @@ def write_unrelated_artifact(
 
 
 def build_counterfactual_policy() -> CounterfactualPolicy:
-    return CounterfactualPolicy()
+    # PR 125A corrective review finding: CounterfactualPolicy()'s bare
+    # default is demand_capture_rule="require_explicit", a value the real
+    # Scenario Planner page's own widget (hold_plan / zero) can never
+    # actually produce - no live analyst session could export this exact
+    # policy. Use "hold_plan", the same value the page's own radio defaults
+    # to, so this deterministic fixture models what a real session actually
+    # produces end to end (see the Playwright lifecycle journey).
+    return CounterfactualPolicy(demand_capture_rule="hold_plan")
 
 
 def build_reference_context_by_month(*, n_fourier: int = N_FOURIER) -> Dict[str, dict]:
@@ -952,6 +959,14 @@ def build_lifecycle_project_bundle(
         diagnostics_artefact=project.diagnostics.to_dict(),
         approval_readiness=project.readiness.to_dict(),
         media_cost_mappings=project.cost_mapping_registry.to_dict(),
+        # PR 125A: the project-level policy/context this scenario's saved
+        # counterfactual_policy_fingerprint / currency_context_fingerprint
+        # (see build_scenario_validation_context above) must be verifiable
+        # against on import - without these, this bundle is a genuine
+        # "technically but not officially resumable" case, exactly the gap
+        # PR 125A closes.
+        counterfactual_policy=build_counterfactual_policy().to_dict(),
+        currency_context=project.currency_context.to_dict(),
     )
 
 

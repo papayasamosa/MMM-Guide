@@ -24,6 +24,8 @@ deterministic lifecycle fixture builders as
 """
 
 import dataclasses
+import json
+import zipfile
 from pathlib import Path
 
 import pandas as pd
@@ -40,6 +42,7 @@ from ancestry_mmm.core.persistence import export_project, import_project
 from ancestry_mmm.tests.support.lifecycle_fixture import (
     UNRELATED_ARTIFACT_ID,
     build_lifecycle_project,
+    build_lifecycle_project_bundle,
     create_official_artifacts,
     write_unrelated_artifact,
 )
@@ -216,3 +219,126 @@ def test_import_bundle_transactionally_replaces_the_destination_artifact_store(
     assert any(
         "Restored 2 official curve artifact(s)" in (s.value or "") for s in at.success
     )
+
+
+def test_import_clears_stale_cached_optimiser_results(monkeypatch, tmp_path):
+    """Fresh review finding: a cached constrained_result/unconstrained_result
+    left over from a DIFFERENT project earlier in this same Streamlit
+    session is only invalidated by Scenario Planner's own staleness guard,
+    which compares governance_mode and counterfactual_policy_fingerprint -
+    not currency context or value mapping. An imported project sharing the
+    same counterfactual policy but a different currency/value mapping could
+    therefore still show and allow saving the PREVIOUS project's cached
+    result under the newly imported one. A project import must clear both -
+    session-only cached results are never the system of record (this
+    module's own docstring)."""
+    export_root = tmp_path / "exports"
+    artifact_root = tmp_path / "artifact-root"
+
+    import ancestry_mmm.utils as utils_pkg
+    import ancestry_mmm.utils.session_state as ss
+
+    monkeypatch.setattr(utils_pkg, "PROJECT_EXPORT_ROOT", export_root)
+    monkeypatch.setattr(ss, "CURVE_ARTIFACT_ROOT", artifact_root)
+
+    bundle_path = export_project(
+        tmp_path / "bundle.zip",
+        raw_sources={},
+        transformed_data=None,
+        pipeline_steps=[],
+        model_spec=None,
+        prior_config=None,
+        dna_lag_weeks=0,
+        trace=None,
+        scenarios=[],
+    )
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.run()
+    assert not at.exception, f"initial load raised: {at.exception}"
+    at.session_state["project_name"] = "proj-import-clear"
+    at.session_state["constrained_result"] = {"governance_mode": "exploratory"}
+    at.session_state["unconstrained_result"] = {"governance_mode": "exploratory"}
+
+    uploader = at.file_uploader[0]
+    uploader.set_value(
+        (bundle_path.name, bundle_path.read_bytes(), "application/zip")
+    ).run()
+    import_button = next(b for b in at.button if b.label == "Import bundle")
+    import_button.click().run()
+    assert not at.exception, f"import click raised: {at.exception}"
+
+    assert at.session_state["constrained_result"] is None
+    assert at.session_state["unconstrained_result"] is None
+
+
+def _rewrite_bundle_diagnostics_artefact(
+    bundle_path: Path, tmp_path: Path, **overrides
+) -> Path:
+    """Return a copy of `bundle_path` with config/diagnostics_artefact.json's
+    content mutated by `overrides` - simulates a diagnostics artefact that
+    has drifted after the readiness proof binding it was computed, without
+    touching anything else in the bundle (in particular, leaving the
+    already-computed approval_readiness / model_approval / validation_policy
+    files exactly as exported)."""
+    extract_dir = tmp_path / "bundle-edit"
+    with zipfile.ZipFile(bundle_path) as zf:
+        zf.extractall(extract_dir)
+    artefact_path = extract_dir / "config" / "diagnostics_artefact.json"
+    artefact = json.loads(artefact_path.read_text())
+    artefact.update(overrides)
+    artefact_path.write_text(json.dumps(artefact))
+    edited_path = tmp_path / "edited-bundle.zip"
+    with zipfile.ZipFile(edited_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for file_path in extract_dir.rglob("*"):
+            if file_path.is_file():
+                zf.write(file_path, file_path.relative_to(extract_dir))
+    return edited_path
+
+
+def test_officially_resumable_message_withheld_when_diagnostics_artefact_has_drifted(
+    monkeypatch, tmp_path
+):
+    """Corrective review finding (P2): audit_project_resumability()'s
+    policy-backed-approval check only verifies approval_readiness's own
+    recorded fingerprints are internally self-consistent - it cannot also
+    recompute a fresh DiagnosticsArtefact fingerprint (an application-layer
+    type core must not import), so it reports officially_resumable=True even
+    when the bundle's actual diagnostics_artefact content has drifted since
+    the readiness proof was computed. Previously the page showed "This
+    bundle is officially resumable" from that audit alone; the fuller
+    verify_imported_readiness/verify_imported_approval checks further down
+    the same script then rejected the readiness and approval, contradicting
+    the claim already on screen. The success message must only appear once
+    both agree."""
+    export_root = tmp_path / "exports"
+    artifact_root = tmp_path / "artifact-root"
+
+    import ancestry_mmm.utils as utils_pkg
+    import ancestry_mmm.utils.session_state as ss
+
+    monkeypatch.setattr(utils_pkg, "PROJECT_EXPORT_ROOT", export_root)
+    monkeypatch.setattr(ss, "CURVE_ARTIFACT_ROOT", artifact_root)
+
+    bundle_path = build_lifecycle_project_bundle(tmp_path / "lifecycle-bundle.zip")
+    edited_bundle_path = _rewrite_bundle_diagnostics_artefact(
+        bundle_path, tmp_path, market_scope="DRIFTED"
+    )
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.run()
+    assert not at.exception, f"initial load raised: {at.exception}"
+    at.session_state["project_name"] = "proj-drifted"
+
+    uploader = at.file_uploader[0]
+    uploader.set_value(
+        (edited_bundle_path.name, edited_bundle_path.read_bytes(), "application/zip")
+    ).run()
+    import_button = next(b for b in at.button if b.label == "Import bundle")
+    import_button.click().run()
+    assert not at.exception, f"import click raised: {at.exception}"
+
+    assert not any(
+        "This bundle is officially resumable" in (s.value or "") for s in at.success
+    )
+    assert any("not **officially** resumable" in (w.value or "") for w in at.warning)
