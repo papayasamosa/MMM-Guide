@@ -707,6 +707,15 @@ def test_structurally_valid_but_invalid_counterfactual_policy_is_preserved_not_n
     assert at.session_state["counterfactual_policy"] == invalid_policy_dict
     warnings = " ".join(w.value for w in at.warning)
     assert "is invalid and cannot be used" in warnings
+    # Fresh review finding: preserving the invalid dict isn't enough on its
+    # own - the planning workflow itself must stop (st.stop()) rather than
+    # silently continue to evaluate/save/optimise against a substitute
+    # policy the analyst never chose. "Governance mode" is rendered well
+    # after the counterfactual-policy block; its absence proves the script
+    # actually halted there rather than merely warning and carrying on.
+    errors = " ".join(e.value for e in at.error)
+    assert "Planning is blocked" in errors
+    assert "Governance mode" not in [r.label for r in at.radio]
 
 
 def test_invalid_currency_context_blocks_instead_of_replacing_stored_state():
@@ -716,7 +725,10 @@ def test_invalid_currency_context_blocks_instead_of_replacing_stored_state():
     CurrencyContext - silently discarding the stored context's other
     fields via a different path than the one already fixed. A malformed
     stored context must block (preserved untouched in session state), not
-    be quietly replaced with a stripped-down one."""
+    be quietly replaced with a stripped-down one - and, per a further
+    review finding, must actually stop the planning workflow (st.stop()),
+    not just decline to persist the fallback while still evaluating,
+    saving, and optimising against it."""
     at = AppTest.from_file(str(PAGE), default_timeout=60)
     _seed_consistent_session_state(at, value_currency="GBP")
     invalid_context_dict = {
@@ -728,8 +740,12 @@ def test_invalid_currency_context_blocks_instead_of_replacing_stored_state():
     at.run()
     assert not at.exception, f"page raised: {at.exception}"
     assert at.session_state["currency_context"] == invalid_context_dict
-    warnings = " ".join(w.value for w in at.warning)
-    assert "is invalid and cannot be combined" in warnings
+    errors = " ".join(e.value for e in at.error)
+    assert "Planning is blocked" in errors
+    assert "is invalid and cannot be combined" in errors
+    # "Saved scenarios" is the last section on the page - its absence proves
+    # the script actually halted rather than merely erroring and continuing.
+    assert "Saved scenarios" not in " ".join(m.value for m in at.markdown)
 
 
 def test_stale_cached_constrained_result_invalidated_when_counterfactual_policy_changes():

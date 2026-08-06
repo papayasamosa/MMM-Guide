@@ -706,16 +706,21 @@ elif st.button("Replace this project's counterfactual policy with the selection 
     set_state("counterfactual_policy", counterfactual_policy.to_dict())
     st.rerun()
 else:
-    # Not yet explicitly confirmed - this rerun's scenario evaluation below
-    # still uses the stored (invalid-or-unsupported-by-this-widget) policy,
-    # not the widget's own lossy value, and nothing is written back to
-    # session state.
-    try:
-        counterfactual_policy = CounterfactualPolicy.from_dict(_stored_cf_policy_dict)
-    except (TypeError, ValueError):
-        counterfactual_policy = CounterfactualPolicy(
-            demand_capture_rule=demand_capture_rule
-        )
+    # Fresh review finding: merely declining to persist a substitute policy
+    # wasn't enough - the rest of this page (evaluation, saving,
+    # optimisation) still ran against a fallback CounterfactualPolicy that
+    # was never the analyst's explicit choice, so a scenario could still be
+    # saved and exported carrying a fingerprint that matches neither the
+    # invalid/unsupported stored policy nor any policy the analyst actually
+    # approved. Block the entire planning workflow below this point until
+    # the analyst explicitly replaces or repairs the policy - the same
+    # st.stop() gate this page already uses for "no trained model yet".
+    st.error(
+        "Planning is blocked until the counterfactual policy above is "
+        "replaced or repaired - see the warning above for why the stored "
+        "policy can't be used as-is."
+    )
+    st.stop()
 
 # G2A.7a.1 (section 4.2): one source of truth. The radio's own return
 # value IS the authoritative governance mode for this rerun - it is never
@@ -898,37 +903,29 @@ try:
         if value_currency
         else None
     )
-    _currency_context_blocked = False
 except (TypeError, ValueError) as exc:
     # Fresh review finding: falling back to a freshly-constructed minimal
-    # CurrencyContext here and then persisting it below would silently
-    # discard the stored context's other fields exactly like the P1 defect
-    # this block already fixes - just reached via a different path (invalid
-    # values rather than an unsupported-shape currency). A malformed stored
-    # context must block, not be quietly replaced: this in-memory fallback
-    # is used only so downstream code in this rerun has a usable object, and
-    # is deliberately never written back to session state below.
-    st.warning(
-        "This project's stored currency context is invalid and cannot be "
-        f"combined with the current objective's currency ({exc}). The "
-        "existing stored context is preserved untouched - fix the "
-        "underlying currency/FX data (e.g. Market Descriptors) rather than "
-        "continuing with a stripped-down context."
+    # CurrencyContext and continuing with it - even only in memory, never
+    # persisted - still let evaluation, saving, and optimisation run against
+    # governance semantics the analyst never chose, and a saved scenario's
+    # fingerprint would match neither the invalid stored context nor any
+    # context the analyst actually approved. Block the entire planning
+    # workflow below this point, the same st.stop() gate the counterfactual
+    # policy check above uses, until the underlying currency/FX data (e.g.
+    # Market Descriptors) is corrected - the stored context itself is left
+    # completely untouched in session state.
+    st.error(
+        "Planning is blocked until this project's stored currency context is "
+        f"corrected: it is invalid and cannot be combined with the current "
+        f"objective's currency ({exc}). Fix the underlying currency/FX data "
+        "(e.g. Market Descriptors) rather than continuing."
     )
-    currency_context = (
-        CurrencyContext(
-            market_reporting_currency=value_currency, value_currency=value_currency
-        )
-        if value_currency
-        else None
-    )
-    _currency_context_blocked = True
+    st.stop()
 # PR 125A: the project-level currency context every official scenario's
 # saved currency identity is verified against on import. Only set when this
-# rerun actually resolved one (an objective with no target-outcome currency
-# must not overwrite a previously exported context with None) and the
-# stored context combined cleanly (never persist the blocked fallback above).
-if currency_context is not None and not _currency_context_blocked:
+# rerun actually resolved one - an objective with no target-outcome
+# currency must not overwrite a previously exported context with None.
+if currency_context is not None:
     set_state("currency_context", currency_context.to_dict())
 
 # G2A.7a.7: protected objective resolution with error boundary
