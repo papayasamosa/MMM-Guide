@@ -30,11 +30,12 @@ import pytensor.tensor as pt
 from .transformations import pt_geometric_adstock_matrix, pt_hill_function
 from .schema import ModelSpec
 from .outcomes import outcome_eligibility
+from .causal_graph import CausalGraph
+from .graph_model_compiler import resolve_pathway_masks_preferring_graph
 from .pathways import (
     MediaOutcomePathway,
     ResolvedPathwayMasks,
     resolve_pathway_masks,
-    resolve_validated_pathway_masks,
 )
 from .net_billthrough import assert_model_frame_net_billthrough_complete
 
@@ -312,6 +313,7 @@ def build_fh_hierarchical_model(
     dna_outcome_id: Optional[str] = None,
     prior_config: Optional[Dict] = None,
     direct_dna_outcome_ids: Optional[List[str]] = None,
+    causal_graph: Optional[CausalGraph] = None,
 ) -> "tuple[pm.Model, FHModelMeta]":
     """
     Build the joint hierarchical FH model.
@@ -321,6 +323,13 @@ def build_fh_hierarchical_model(
         spec: the ModelSpec used to build `frame`
         dna_lag_weeks: extra lag (beyond adstock carryover) applied to DNA-channel
             saturated media before it entering the DNA halo pathway
+        causal_graph: REQ-GRAPH-001 work package D - an approved
+            core.causal_graph.CausalGraph. When supplied, it is the sole
+            authoritative source of pathway structure and the frame's
+            media_outcome_pathways catalogue is not consulted (see
+            core.graph_model_compiler.resolve_pathway_masks_preferring_graph).
+            None (the default, and every caller today - no graph editor
+            exists yet) reproduces exactly today's behaviour.
         dna_outcome_id: which outcome_id is the FH DNA cross-sell outcome
             (auto-detected from the outcome_ids if not given)
         prior_config: optional dict of prior overrides (see defaults below)
@@ -386,10 +395,11 @@ def build_fh_hierarchical_model(
         channel: ("DNA" if index in dna_channel_idx else "Family History")
         for index, channel in enumerate(channels)
     }
-    pathway_masks = resolve_validated_pathway_masks(
-        outcome_ids,
-        channels,
-        pathway_catalogue,
+    pathway_masks = resolve_pathway_masks_preferring_graph(
+        causal_graph=causal_graph,
+        outcome_ids=outcome_ids,
+        channels=channels,
+        pathways=pathway_catalogue,
         channel_products=channel_products,
         outcome_products=outcome_products,
         fitted_outcome_ids=outcome_ids,

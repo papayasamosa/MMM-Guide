@@ -42,11 +42,10 @@ from .hierarchical_model import (
     _market_grouped_lag,
     _resolve_direct_dna_outcome_ids,
 )
+from .causal_graph import CausalGraph
+from .graph_model_compiler import resolve_pathway_masks_preferring_graph
 from .outcomes import outcome_eligibility
-from .pathways import (
-    MediaOutcomePathway,
-    resolve_validated_pathway_masks,
-)
+from .pathways import MediaOutcomePathway
 from .net_billthrough import assert_model_frame_net_billthrough_complete
 from .schema import ModelSpec
 from .transformations import pt_geometric_adstock_matrix, pt_hill_function
@@ -82,6 +81,7 @@ def build_fh_market_specific_model(
     dna_outcome_id: Optional[str] = None,
     prior_config: Optional[Dict] = None,
     direct_dna_outcome_ids: Optional[List[str]] = None,
+    causal_graph: Optional[CausalGraph] = None,
 ) -> "tuple[pm.Model, FHModelMeta]":
     """
     Build the market-specific, partially-pooled joint hierarchical FH model
@@ -93,7 +93,9 @@ def build_fh_market_specific_model(
     C; only the shape of `hill_K` and `beta` in the fitted trace does, which
     is why posterior extraction and curve replay need their own
     market-specific-aware code (core.market_specific_predict), not this
-    module. `direct_dna_outcome_ids` has the same meaning as Model A's - see
+    module. `causal_graph` has the same meaning as Model A's - see
+    `core.hierarchical_model.build_fh_hierarchical_model`.
+    `direct_dna_outcome_ids` has the same meaning as Model A's - see
     that function's docstring.
 
     Requires at least 2 markets - partial pooling across a single market is
@@ -151,10 +153,11 @@ def build_fh_market_specific_model(
         channel: ("DNA" if index in dna_channel_idx else "Family History")
         for index, channel in enumerate(channels)
     }
-    pathway_masks = resolve_validated_pathway_masks(
-        outcome_ids,
-        channels,
-        pathway_catalogue,
+    pathway_masks = resolve_pathway_masks_preferring_graph(
+        causal_graph=causal_graph,
+        outcome_ids=outcome_ids,
+        channels=channels,
+        pathways=pathway_catalogue,
         channel_products=channel_products,
         outcome_products=outcome_products,
         fitted_outcome_ids=outcome_ids,
