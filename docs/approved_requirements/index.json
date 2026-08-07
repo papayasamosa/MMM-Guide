@@ -1,6 +1,6 @@
 {
   "schema_version": 3,
-  "generated_at": "2026-07-26",
+  "generated_at": "2026-08-07",
   "requirements": [
     {
       "requirement_id": "REQ-AUTH-001",
@@ -252,6 +252,24 @@
         "ancestry_mmm/tests/test_official_curve_generation_page_apptest.py::test_monetary_curve_with_approved_cost_mapping_generates_and_saves_an_artifact",
         "ancestry_mmm/tests/test_official_curve_generation_page_apptest.py::test_monetary_curve_without_cost_mapping_blocks_generation",
         "ancestry_mmm/tests/test_official_curve_generation_page_apptest.py::test_cost_mapping_grid_reports_malformed_rows_without_raising",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable"
+      ]
+    },
+    {
+      "requirement_id": "REQ-GRAPH-001",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-GRAPH-001.md",
+      "affected_modules": [
+        "docs/approved_requirements/REQ-GRAPH-001.md",
+        "docs/approved_requirements/index.json"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable"
       ]
     }
