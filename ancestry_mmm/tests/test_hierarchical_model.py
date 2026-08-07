@@ -138,7 +138,15 @@ class TestModelAModelCMetaConstructionParity:
         resolve_pathway_masks with the same arguments and derive the same
         primary/active/exploratory masks from beta before summing over
         channels, not just share the metadata-population lines checked
-        above."""
+        above.
+
+        REQ-GRAPH-001 work package D: the call site is now
+        resolve_pathway_masks_preferring_graph, which prefers an approved
+        causal_graph over the raw pathway catalogue when one is supplied and
+        is otherwise a byte-for-byte passthrough to the resolver this test
+        originally named - the parity invariant is unchanged, only extended
+        to also require both builders accept and forward causal_graph
+        identically."""
         import inspect
 
         from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
@@ -150,7 +158,8 @@ class TestModelAModelCMetaConstructionParity:
         source_c = inspect.getsource(build_fh_market_specific_model)
 
         for field_expr in (
-            "pathway_masks = resolve_validated_pathway_masks(",
+            "pathway_masks = resolve_pathway_masks_preferring_graph(",
+            "causal_graph=causal_graph",
             "channel_products=channel_products",
             "outcome_products=outcome_products",
             "fitted_outcome_ids=outcome_ids",
