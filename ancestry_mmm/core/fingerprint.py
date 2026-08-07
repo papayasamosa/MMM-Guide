@@ -206,11 +206,12 @@ def fingerprint_model_spec(
     structural (never layout) fingerprint of the approved `CausalGraph`
     actually compiled for this fit, when one was used (see
     `core.graph_model_compiler.GraphModelCompiler`). `""` when omitted (no
-    graph was used - every fit today, since compiling from a graph requires
-    an approved graph and no editor exists yet to produce one). A
-    layout-only edit to the graph never changes this value, so it never
-    stales a bound approval; a structural edit always does, the same as
-    every other field in this payload.
+    graph was used - either the project has no approved causal graph
+    configured, or this fingerprint was computed via
+    `core.causal_graph.current_structural_fingerprint_for_identity` for a
+    fit that didn't use one). A layout-only edit to the graph never changes
+    this value, so it never stales a bound approval; a structural edit
+    always does, the same as every other field in this payload.
 
     Note: adding `pipeline_steps`, `market_spec_config`,
     `direct_dna_outcome_ids`, `outcome_catalogue`, `funnel_links`,

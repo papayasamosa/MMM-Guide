@@ -9,32 +9,62 @@ largest missing first-release product capability.
 
 ## Capability status
 
-Not yet implemented. No graph domain object exists anywhere in this
-repository today (core, application, tests, or docs — confirmed by search
-for `CausalGraph`, `GraphNode`, `GraphEdge`, `networkx`, `DAG`, `acyclic`).
-The current relationship-configuration mechanism is the `MediaOutcomePathway`
-catalogue (`ancestry_mmm/core/pathways.py`, edited via a `st.data_editor` in
-`ancestry_mmm/pages/03_Structure_Segments_Markets.py`) plus the
-diagnostics-only `FunnelLink` list (`ancestry_mmm/core/funnel.py`). Both are
-form-driven and neither is a general graph: `MediaOutcomePathway` is a flat
-channel→outcome edge list with no cycle detection (cycles are not
-structurally possible in a bipartite list), and `FunnelLink` is an unordered
-pair list used only for coherence diagnostics.
+Implemented. The dependent PRs this record reserved have landed:
 
-Root `AGENTS.md` already names a target pathway taxonomy (direct, mediated,
-capacity-constrained/censored, cross-product halo, moderated,
-residual-interaction, excluded/diagnostic-only) broader than today's four
-`PATHWAY_ROLES` (`primary_direct`, `active_cross_product`,
-`exploratory_cross_product`, `excluded`), and both PR E.2 and PR G1 decision
-log entries explicitly listed a causal DAG as out of scope, reserved for a
-dedicated future PR. This record is that reservation being exercised.
+- **Graph domain, validation, fingerprints, persistence** —
+  `ancestry_mmm/core/causal_graph.py` (`CausalGraph`/`CausalNode`/
+  `CausalEdge`/`GraphLayout`, `validate_causal_graph`, structural/layout
+  fingerprints, `graph_dependency_issues`, lifecycle transitions
+  `mark_draft_if_approved`/`save_draft_version`/`approve_version`, export/
+  import helpers `graph_versions_for_export`/
+  `current_graph_from_resolved_versions`/`current_structural_fingerprint_
+  for_identity`) and `ancestry_mmm/core/persistence.py`
+  (`config/causal_graphs.json`, `resolve_imported_causal_graphs`,
+  graph-evidence-aware `audit_project_resumability`).
+- **Graph-authoritative model compilation** —
+  `ancestry_mmm/core/graph_model_compiler.py` (`GraphModelCompiler`,
+  `check_graph_approval_eligibility` gating approval on engine capability
+  *before* it is granted, `resolve_pathway_masks_preferring_graph` wired
+  into both `core.hierarchical_model.build_fh_hierarchical_model` and
+  `core.market_specific_model.build_fh_market_specific_model`) and
+  `core.hierarchical_model.FHModelMeta`'s `causal_graph_id`/`_version`/
+  `_structural_fingerprint`/`_engine` fit-time identity fields.
+- **Graph-first Streamlit editor** — `ancestry_mmm/pages/14_Causal_Graph.py`
+  (drag-and-drop canvas plus keyboard-accessible Add-node/Add-edge forms
+  and structured property panel, Save draft/Approve/Prepare model
+  configuration), with AppTest and real-browser (Playwright) coverage.
 
-This record is design/specification only. It does not implement the graph
-editor UI, the graph domain model, or the model compiler — those are
-delivered by separate, dependent requirements/PRs (causal graph domain and
-persistence; graph-authoritative model compilation; graph-first Streamlit
-editor), each re-validated against this record's contract rather than
-re-deriving it.
+The current PyMC-hierarchical engine does not yet compile every structure
+the graph domain's role vocabulary (§4/§5) can express — see "Unsupported
+edge/node roles today" below. `check_graph_approval_eligibility` rejects an
+unsupported structure before approval, not only when a model configuration
+is later prepared from it, exactly as §7 requires. `MediaOutcomePathway`/
+`FunnelLink` remain the compilation input for any project with no approved
+causal graph (every project before this capability existed, and any project
+that has not yet configured one) - see §11.
+
+### Unsupported edge/node roles today
+
+`core.graph_model_compiler.check_engine_capability` is the single source of
+truth; this table is descriptive, not authoritative over it.
+
+| Edge role | Engine support |
+|---|---|
+| `direct` (from an `intervention` node to an `outcome` node) | Supported |
+| `cross_product_halo` (from an `intervention` node to an `outcome` node) | Supported |
+| `excluded_diagnostic_only` | Supported (compiles to nothing) |
+| `mediated` | Not yet supported — no multi-hop mediation path in either builder |
+| `capacity_constrained` | Not yet supported — no capacity/censoring equation in either builder |
+| `moderated` | Not yet supported — no moderation term in either builder |
+| `residual_interaction` | Not yet supported |
+| any edge whose source is not `intervention` or target is not `outcome` (except `excluded_diagnostic_only`) | Not yet supported |
+
+The full node-role vocabulary (§4) — including `mediator`,
+`capacity_or_cap`, `moderator` — remains valid graph vocabulary; a node
+using one of these roles is not itself rejected, only an edge the current
+engine cannot express is. This preserves the target-state roles for a
+future engine capability extension rather than removing them from the
+domain the moment the first engine ships.
 
 ## Requirement
 
@@ -252,14 +282,20 @@ explicitly supersedes them.
 
 ## Unresolved decisions
 
-- Final graph-editing component selection (candidate:
-  `streamlit-flow-component`) — deferred to the editor requirement, subject
-  to a freshness re-check at that time.
+- Whether/when to extend `core.graph_model_compiler.check_engine_capability`
+  to compile `mediated`/`capacity_constrained`/`moderated`/
+  `residual_interaction` edges — no engine (PyMC hierarchical or otherwise)
+  supports them yet; deferred to a future engine-capability requirement,
+  not assumed here.
 - Whether acyclicity is ever relaxable for a declared capacity/diagnostic-
-  only edge, and under what engine-capability declaration — deferred to the
-  domain requirement's validator design; must not default to permissive.
-- Exact `GraphCompilationPlan` preview schema — deferred to the compiler
-  requirement.
+  only edge beyond `EngineCapabilities.allow_capacity_only_cycles`'s current
+  narrow scope, and under what broader engine-capability declaration —
+  deferred; must not default to permissive.
+
+Resolved: graph-editing component selection
+(`streamlit-flow-component`, `ancestry_mmm/pages/14_Causal_Graph.py`) and
+the `GraphCompilationPlan` preview schema
+(`core.causal_graph.GraphCompilationPlan`) — see Capability status above.
 
 ## Owner
 

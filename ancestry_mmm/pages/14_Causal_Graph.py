@@ -43,14 +43,16 @@ from ancestry_mmm.core.causal_graph import (
     EDGE_ROLE_DIRECT,
     EDGE_ROLES,
     GRAPH_STATUS_APPROVED,
-    GRAPH_STATUS_DRAFT,
     NODE_ROLES,
     CausalEdge,
     CausalGraph,
     CausalNode,
     GraphLayout,
     NodePosition,
+    approve_version,
     build_compilation_plan_preview,
+    mark_draft_if_approved,
+    save_draft_version,
     validate_causal_graph,
 )
 from ancestry_mmm.core.graph_model_compiler import (
@@ -198,12 +200,6 @@ def _reconcile_graph_from_flow_state(
     return replace(graph, edges=new_edges, layout=layout)
 
 
-def _mark_draft(graph: CausalGraph) -> CausalGraph:
-    if graph.status == GRAPH_STATUS_APPROVED:
-        return replace(graph, status=GRAPH_STATUS_DRAFT)
-    return graph
-
-
 def _reset_property_panel_selection() -> None:
     """Adding or removing a node/edge can invalidate the property panel's
     selectbox-cached selection (a widget `key`'s session-state value that is
@@ -278,7 +274,7 @@ with st.expander("Seed nodes from current Structure (optional)"):
                 continue
             added_nodes.append(CausalNode(node_id=outcome_id, role="outcome"))
             positions[outcome_id] = NodePosition(x=400.0, y=float(index) * 90.0)
-        graph = _mark_draft(
+        graph = mark_draft_if_approved(
             replace(
                 graph,
                 nodes=added_nodes,
@@ -302,7 +298,7 @@ with st.form("cg_add_node_form", clear_on_submit=True):
         elif new_node_id in {n.node_id for n in graph.nodes}:
             st.error(f"Node id '{new_node_id}' already exists.")
         else:
-            graph = _mark_draft(
+            graph = mark_draft_if_approved(
                 replace(
                     graph,
                     nodes=graph.nodes
@@ -338,7 +334,7 @@ with st.form("cg_add_edge_form", clear_on_submit=True):
         if not node_ids:
             st.error("Add at least one node before adding an edge.")
         else:
-            graph = _mark_draft(
+            graph = mark_draft_if_approved(
                 replace(
                     graph,
                     edges=graph.edges
@@ -385,7 +381,7 @@ reconciled = _reconcile_graph_from_flow_state(
     graph, st.session_state[flow_state_key], removed_edge_ids
 )
 if reconciled != graph:
-    graph = _mark_draft(reconciled)
+    graph = mark_draft_if_approved(reconciled)
     _persist_graph(graph)
 
 st.markdown("---")
@@ -426,7 +422,7 @@ if selected_kind == "Node" and len(node_options) > 1:
                 segment=segment,
                 market=market,
             )
-            graph = _mark_draft(
+            graph = mark_draft_if_approved(
                 replace(
                     graph,
                     nodes=[
@@ -443,7 +439,7 @@ if selected_kind == "Node" and len(node_options) > 1:
                 for e in graph.edges
                 if node.node_id in (e.source_node_id, e.target_node_id)
             }
-            graph = _mark_draft(
+            graph = mark_draft_if_approved(
                 replace(
                     graph,
                     nodes=[n for n in graph.nodes if n.node_id != node.node_id],
@@ -489,7 +485,7 @@ elif selected_kind == "Edge" and len(edge_options) > 1:
                 lag_type=lag_type,
                 lag_weeks=lag_weeks if lag_type != "none" else None,
             )
-            graph = _mark_draft(
+            graph = mark_draft_if_approved(
                 replace(
                     graph,
                     edges=[
@@ -501,7 +497,7 @@ elif selected_kind == "Edge" and len(edge_options) > 1:
             del st.session_state[flow_state_key]
             st.rerun()
         if remove_clicked:
-            graph = _mark_draft(
+            graph = mark_draft_if_approved(
                 replace(
                     graph, edges=[e for e in graph.edges if e.edge_id != edge.edge_id]
                 )
@@ -580,9 +576,7 @@ status_cols[2].metric(
 
 save_col, approve_col, compile_col = st.columns(3)
 if save_col.button("Save draft"):
-    saved = replace(
-        graph, graph_version=graph.graph_version + 1, status=GRAPH_STATUS_DRAFT
-    )
+    saved = save_draft_version(graph)
     _persist_graph(saved)
     versions = get_state("causal_graph_versions") or []
     set_state("causal_graph_versions", versions + [saved.to_dict()])
@@ -591,10 +585,8 @@ if save_col.button("Save draft"):
 if approve_col.button("Approve", disabled=not approval_eligibility.is_eligible):
     from datetime import datetime, timezone
 
-    approved = replace(
+    approved = approve_version(
         graph,
-        graph_version=graph.graph_version + 1,
-        status=GRAPH_STATUS_APPROVED,
         approved_by="analyst",
         approved_at=datetime.now(timezone.utc).isoformat(),
     )

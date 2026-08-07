@@ -29,10 +29,14 @@ from ancestry_mmm.core.causal_graph import (
     EngineCapabilities,
     GraphLayout,
     NodePosition,
+    approve_version,
     build_compilation_plan_preview,
+    current_graph_from_resolved_versions,
     current_structural_fingerprint_for_identity,
     graph_dependency_issues,
     graph_versions_for_export,
+    mark_draft_if_approved,
+    save_draft_version,
     validate_causal_graph,
 )
 
@@ -925,3 +929,54 @@ class TestGraphVersionsForExport:
             current_graph_dict=current, version_history=[]
         )
         assert result == [current]
+
+
+class TestLifecycleTransitions:
+    """REQ-GRAPH-001 work package (lifecycle hardening): the reusable
+    Save draft / Approve / in-place-edit transitions, extracted out of the
+    Causal Graph page so any future surface gets identical behaviour."""
+
+    def test_mark_draft_if_approved_reverts_an_approved_graph_to_draft(self):
+        graph = _minimal_valid_graph(status=GRAPH_STATUS_APPROVED)
+        result = mark_draft_if_approved(graph)
+        assert result.status == GRAPH_STATUS_DRAFT
+        # Version number is untouched - this is an in-place edit, not a save.
+        assert result.graph_version == graph.graph_version
+
+    def test_mark_draft_if_approved_is_a_no_op_for_a_draft_graph(self):
+        graph = _minimal_valid_graph(status=GRAPH_STATUS_DRAFT)
+        result = mark_draft_if_approved(graph)
+        assert result is graph
+
+    def test_save_draft_version_bumps_version_and_forces_draft_status(self):
+        graph = _minimal_valid_graph(graph_version=3, status=GRAPH_STATUS_APPROVED)
+        saved = save_draft_version(graph)
+        assert saved.graph_version == 4
+        assert saved.status == GRAPH_STATUS_DRAFT
+        # The original graph is untouched (immutable transition).
+        assert graph.graph_version == 3
+        assert graph.status == GRAPH_STATUS_APPROVED
+
+    def test_approve_version_bumps_version_and_stamps_approval_metadata(self):
+        graph = _minimal_valid_graph(graph_version=1, status=GRAPH_STATUS_DRAFT)
+        approved = approve_version(
+            graph, approved_by="analyst", approved_at="2026-08-07T00:00:00+00:00"
+        )
+        assert approved.graph_version == 2
+        assert approved.status == GRAPH_STATUS_APPROVED
+        assert approved.approved_by == "analyst"
+        assert approved.approved_at == "2026-08-07T00:00:00+00:00"
+
+
+class TestCurrentGraphFromResolvedVersions:
+    def test_returns_none_for_no_versions(self):
+        assert current_graph_from_resolved_versions([]) is None
+
+    def test_returns_the_highest_numbered_version(self):
+        v1 = _minimal_valid_graph(graph_version=1).to_dict()
+        v3 = _minimal_valid_graph(
+            graph_version=3, status=GRAPH_STATUS_APPROVED
+        ).to_dict()
+        v2 = _minimal_valid_graph(graph_version=2).to_dict()
+        result = current_graph_from_resolved_versions([v1, v3, v2])
+        assert result == v3

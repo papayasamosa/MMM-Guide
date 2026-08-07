@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from .pathways import LAG_TYPES
@@ -727,6 +727,69 @@ def build_compilation_plan_preview(graph: CausalGraph) -> GraphCompilationPlan:
     )
 
 
+# --- Lifecycle transitions (REQ-GRAPH-001 S8) --------------------------------
+#
+# The reusable "what does Save draft / Approve / an in-place edit do to a
+# CausalGraph" rules - kept here rather than page-local so any future
+# surface (a service, a batch migration, a second UI) gets the exact same
+# version-transition and structural-invalidation behaviour the Streamlit
+# Causal Graph page uses, never a page-local reimplementation that could
+# quietly diverge from it.
+
+
+def mark_draft_if_approved(graph: CausalGraph) -> CausalGraph:
+    """A structural or layout edit to an approved graph invalidates its
+    approval in place, reverting `status` to draft (REQ-GRAPH-001 S8/S9) -
+    "approved" is a claim about one specific, frozen graph state, and
+    editing that state without a fresh Approve click must never leave a
+    stale "approved" label on now-different content. A no-op for a graph
+    that is already draft/superseded/deprecated."""
+    if graph.status == GRAPH_STATUS_APPROVED:
+        return replace(graph, status=GRAPH_STATUS_DRAFT)
+    return graph
+
+
+def save_draft_version(graph: CausalGraph) -> CausalGraph:
+    """The Save draft transition: a new version number, status forced to
+    draft. Every save is a new immutable `graph_version` (REQ-GRAPH-001 S2)
+    - this never mutates `graph` in place or reuses its version number."""
+    return replace(
+        graph, graph_version=graph.graph_version + 1, status=GRAPH_STATUS_DRAFT
+    )
+
+
+def approve_version(
+    graph: CausalGraph, *, approved_by: str, approved_at: str
+) -> CausalGraph:
+    """The Approve transition: a new version number, status set to
+    approved, approval metadata stamped. Callers must first confirm
+    `graph_model_compiler.check_graph_approval_eligibility(graph)` (this
+    function does not itself re-validate structure or engine capability -
+    REQ-GRAPH-001's own package boundary keeps this module independent of
+    `core.graph_model_compiler`)."""
+    return replace(
+        graph,
+        graph_version=graph.graph_version + 1,
+        status=GRAPH_STATUS_APPROVED,
+        approved_by=approved_by,
+        approved_at=approved_at,
+    )
+
+
+def current_graph_from_resolved_versions(
+    resolved_versions: Sequence[Mapping[str, Any]],
+) -> Optional[dict]:
+    """Which restored graph version becomes "current" after importing a
+    project bundle (`core.persistence.resolve_imported_causal_graphs`'s
+    output) - the highest-numbered version, this project's single graph
+    lineage's most recently saved state. `None` when no graph versions were
+    resolved at all - "no graph" restores to "no graph", never fabricated."""
+    if not resolved_versions:
+        return None
+    best = max(resolved_versions, key=lambda g: int(g.get("graph_version", 0)))
+    return dict(best)
+
+
 # --- Project export/import portability --------------------------------------
 
 
@@ -751,9 +814,9 @@ def graph_versions_for_export(
     the already-saved record under that key (a harmless no-op). A live
     graph that shares its key with a saved record but has *different*
     content - an in-place edit made after that version was saved, which
-    Causal Graph page's own `_mark_draft` allows without bumping
-    `graph_version` (e.g. editing an approved graph's edge lag reverts its
-    status to draft in place) - is an unsaved, never re-versioned edit that
+    `mark_draft_if_approved` allows without bumping `graph_version` (e.g.
+    editing an approved graph's edge lag reverts its status to draft in
+    place) - is an unsaved, never re-versioned edit that
     must never silently overwrite the saved record it collided with; it is
     dropped from the export the same way any other unsaved widget edit
     elsewhere in the app already isn't durable until explicitly saved.

@@ -348,8 +348,10 @@ def build_fh_hierarchical_model(
             authoritative source of pathway structure and the frame's
             media_outcome_pathways catalogue is not consulted (see
             core.graph_model_compiler.resolve_pathway_masks_preferring_graph).
-            None (the default, and every caller today - no graph editor
-            exists yet) reproduces exactly today's behaviour.
+            None (the default, and every caller for a project with no
+            approved causal graph configured - pages/05_Model_Training.py
+            passes one only when the project's graph status is approved)
+            reproduces exactly today's pathway-catalogue-driven behaviour.
         dna_outcome_id: which outcome_id is the FH DNA cross-sell outcome
             (auto-detected from the outcome_ids if not given)
         prior_config: optional dict of prior overrides (see defaults below)
