@@ -111,3 +111,27 @@ def test_approve_is_disabled_until_valid_then_enabled():
 
     approve_button = next(b for b in at.button if b.label == "Approve")
     assert not approve_button.disabled
+
+
+def test_approve_is_disabled_for_structurally_valid_but_engine_unsupported_graph():
+    """REQ-GRAPH-001 work package: a structurally valid graph the current
+    engine cannot compile (here, a mediated edge - multi-hop mediation has
+    no engine support yet) must never become approvable - discovering that
+    only later, when preparing a model configuration, is too late."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.run()
+    _add_two_nodes(at)
+
+    next(sb for sb in at.selectbox if sb.label == "Source node").set_value("TV")
+    next(sb for sb in at.selectbox if sb.label == "Target node").set_value("fh_new")
+    # Two "Role" selectboxes coexist at this point (Add-node form, Add-edge
+    # form) - the second is the edge form's.
+    edge_role_selectbox = [sb for sb in at.selectbox if sb.label == "Role"][1]
+    edge_role_selectbox.set_value("mediated")
+    next(b for b in at.button if b.label == "Add edge").click().run()
+
+    assert not at.exception, f"page raised: {at.exception}"
+    assert any(s.value == "Graph passes deterministic validation." for s in at.success)
+    assert any("cannot compile" in e.value for e in at.error)
+    approve_button = next(b for b in at.button if b.label == "Approve")
+    assert approve_button.disabled

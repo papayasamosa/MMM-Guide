@@ -27,6 +27,7 @@ from ancestry_mmm.core.graph_model_compiler import (
     GraphModelCompiler,
     UnsupportedGraphStructureError,
     check_engine_capability,
+    check_graph_approval_eligibility,
     resolve_pathway_masks_preferring_graph,
     resolved_pathway_masks_from_graph,
 )
@@ -127,6 +128,66 @@ class TestCheckEngineCapability:
             ],
         )
         assert check_engine_capability(graph) == []
+
+
+class TestCheckGraphApprovalEligibility:
+    """REQ-GRAPH-001 work package: engine-ready approval. Approve must never
+    be enabled for a structurally-valid graph the current engine cannot
+    compile - discovering that only when "Prepare model configuration" is
+    later clicked is too late."""
+
+    def test_valid_engine_supported_graph_is_eligible(self):
+        graph = _approved_direct_graph()
+        eligibility = check_graph_approval_eligibility(graph)
+        assert eligibility.is_eligible is True
+        assert eligibility.reasons == ()
+
+    def test_structurally_valid_but_engine_unsupported_graph_is_ineligible(self):
+        # A mediated edge is structurally valid (mediator role/edge combo is
+        # a legal graph vocabulary entry) but the current PyMC hierarchical
+        # engine cannot compile multi-hop mediation.
+        graph = _approved_direct_graph(
+            nodes=[
+                CausalNode(node_id="TV", role=NODE_ROLE_INTERVENTION),
+                CausalNode(node_id="mid", role=NODE_ROLE_MEDIATOR),
+                CausalNode(node_id="A", role=NODE_ROLE_OUTCOME),
+            ],
+            edges=[
+                CausalEdge(
+                    source_node_id="TV", target_node_id="mid", role=EDGE_ROLE_MEDIATED
+                ),
+            ],
+        )
+        # Not itself a structural validation error - only engine capability
+        # rejects it - so the eligibility path must be the one gating
+        # approval, not validate_causal_graph() alone.
+        from ancestry_mmm.core.causal_graph import validate_causal_graph
+
+        assert validate_causal_graph(graph).is_valid, (
+            "test setup: graph must be structurally valid so the failure "
+            "below is attributable to engine capability, not validation"
+        )
+        eligibility = check_graph_approval_eligibility(graph)
+        assert eligibility.is_eligible is False
+        assert eligibility.validation_errors == ()
+        assert eligibility.capability_reasons
+        assert any("cannot compile" in r for r in eligibility.reasons)
+
+    def test_structurally_invalid_graph_is_ineligible_without_capability_check(self):
+        graph = _approved_direct_graph(
+            edges=[
+                CausalEdge(
+                    source_node_id="does_not_exist",
+                    target_node_id="A",
+                    role=EDGE_ROLE_DIRECT,
+                )
+            ]
+        )
+        eligibility = check_graph_approval_eligibility(graph)
+        assert eligibility.is_eligible is False
+        assert eligibility.validation_errors
+        # Capability is meaningless on an invalid graph - never evaluated.
+        assert eligibility.capability_reasons == ()
 
 
 class TestResolvedPathwayMasksFromGraph:

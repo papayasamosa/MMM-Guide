@@ -43,6 +43,7 @@ from ancestry_mmm.core.fingerprint import (
     fingerprint_model_spec,
     fingerprint_posterior,
 )
+from ancestry_mmm.core.causal_graph import current_structural_fingerprint_for_identity
 from ancestry_mmm.core.outcomes import (
     dna_kit_sale_outcome_ids,
     eligible_outcome_ids,
@@ -174,6 +175,14 @@ if model_run_id and spec_dict is not None:
                 activity_fit_fingerprint(activity_definitions)
                 if activity_definitions
                 else None
+            ),
+            causal_graph_structural_fingerprint=current_structural_fingerprint_for_identity(
+                fit_time_structural_fingerprint=(
+                    getattr(meta, "causal_graph_structural_fingerprint", "") or ""
+                )
+                if meta is not None
+                else "",
+                live_graph_dict=get_state("causal_graph"),
             ),
         ),
         "posterior_fingerprint": fingerprint_posterior(params),

@@ -43,7 +43,10 @@ from .hierarchical_model import (
     _resolve_direct_dna_outcome_ids,
 )
 from .causal_graph import CausalGraph
-from .graph_model_compiler import resolve_pathway_masks_preferring_graph
+from .graph_model_compiler import (
+    GRAPH_ENGINE_PYMC_HIERARCHICAL,
+    resolve_pathway_masks_preferring_graph,
+)
 from .outcomes import outcome_eligibility
 from .pathways import MediaOutcomePathway
 from .net_billthrough import assert_model_frame_net_billthrough_complete
@@ -547,5 +550,15 @@ def build_fh_market_specific_model(
         pathway_catalogue_at_fit=pathway_catalogue,
         pathway_masks=pathway_masks,
         net_billthrough_metadata=frame.get("net_billthrough_metadata"),
+        causal_graph_id=causal_graph.graph_id if causal_graph is not None else "",
+        causal_graph_version=(
+            causal_graph.graph_version if causal_graph is not None else 0
+        ),
+        causal_graph_structural_fingerprint=(
+            causal_graph.structural_fingerprint() if causal_graph is not None else ""
+        ),
+        causal_graph_engine=(
+            GRAPH_ENGINE_PYMC_HIERARCHICAL if causal_graph is not None else ""
+        ),
     )
     return model, meta

@@ -29,7 +29,7 @@ not imply a dependency natively supports a capability it does not).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from .causal_graph import (
     CausalGraph,
@@ -69,6 +69,62 @@ class UnsupportedGraphStructureError(ValueError):
     """Raised when a graph is not approved, fails validation, or contains a
     structure the target engine cannot express. Always carries the specific
     reason(s) - never a bare rejection."""
+
+
+@dataclass(frozen=True)
+class GraphApprovalEligibility:
+    """The one reusable "can this graph be approved right now" check
+    (REQ-GRAPH-001 work package: engine-ready approval). Combines
+    `validate_causal_graph` (structural correctness) and
+    `check_engine_capability` (target-engine expressiveness) so a UI never
+    has to gate Approve on structural validity alone - a structurally valid
+    graph the current engine cannot compile (multi-hop mediation, capacity
+    constraints, moderation, residual interaction) must not become
+    `GRAPH_STATUS_APPROVED` in the first place; discovering that only at
+    "Prepare model configuration" time is too late (REQ-GRAPH-001: reject
+    unsupported structures before approval, not only after)."""
+
+    is_eligible: bool
+    validation_errors: Tuple[str, ...] = ()
+    capability_reasons: Tuple[str, ...] = ()
+
+    @property
+    def reasons(self) -> Tuple[str, ...]:
+        """Every blocking reason - structural first, then capability - in the
+        order a reader should fix them: a structurally invalid graph's
+        capability reasons aren't meaningful yet, so capability is only
+        checked once validation passes (see
+        `check_graph_approval_eligibility`)."""
+        return self.validation_errors + self.capability_reasons
+
+    def to_dict(self) -> dict:
+        return {
+            "is_eligible": self.is_eligible,
+            "validation_errors": list(self.validation_errors),
+            "capability_reasons": list(self.capability_reasons),
+        }
+
+
+def check_graph_approval_eligibility(
+    graph: CausalGraph, *, engine: str = GRAPH_ENGINE_PYMC_HIERARCHICAL
+) -> GraphApprovalEligibility:
+    """The single path a UI or service should call to decide whether Approve
+    may be enabled for `graph` against `engine` - never structural validity
+    alone. Capability is only evaluated once `graph` is structurally valid
+    (an invalid graph's edges/roles aren't reliable enough to reason about
+    engine support), mirroring `GraphModelCompiler.compile`'s own two-stage
+    check."""
+    validation = validate_causal_graph(graph)
+    if not validation.is_valid:
+        return GraphApprovalEligibility(
+            is_eligible=False, validation_errors=validation.errors
+        )
+    capability_reasons = tuple(check_engine_capability(graph, engine=engine))
+    return GraphApprovalEligibility(
+        is_eligible=not capability_reasons,
+        validation_errors=(),
+        capability_reasons=capability_reasons,
+    )
 
 
 def check_engine_capability(
