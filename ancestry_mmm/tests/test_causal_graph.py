@@ -3,6 +3,8 @@ graph domain: typed nodes/edges/layout, structural-vs-layout fingerprints,
 deterministic validation, model-plan preview, and invalidation propagation.
 """
 
+from dataclasses import replace
+
 import pytest
 
 from ancestry_mmm.core.causal_graph import (
@@ -30,6 +32,7 @@ from ancestry_mmm.core.causal_graph import (
     build_compilation_plan_preview,
     current_structural_fingerprint_for_identity,
     graph_dependency_issues,
+    graph_versions_for_export,
     validate_causal_graph,
 )
 
@@ -844,3 +847,81 @@ class TestCurrentStructuralFingerprintForIdentity:
         )
         assert result == ""
         assert result != fit_time_graph.structural_fingerprint()
+
+
+class TestGraphVersionsForExport:
+    """REQ-GRAPH-001 work package (graph portability): the shared rule for
+    what a project export bundle's causal_graphs.json should contain -
+    every saved version plus the current live graph, deduplicated by
+    unambiguous (graph_id, graph_version) identity."""
+
+    def test_combines_saved_history_and_current_live_graph(self):
+        v1 = _minimal_valid_graph(graph_version=1).to_dict()
+        current = _minimal_valid_graph(graph_version=2).to_dict()
+        result = graph_versions_for_export(
+            current_graph_dict=current, version_history=[v1]
+        )
+        assert {(r["graph_id"], r["graph_version"]) for r in result} == {
+            ("g1", 1),
+            ("g1", 2),
+        }
+
+    def test_current_graph_deduplicates_against_matching_history_entry(self):
+        v1 = _minimal_valid_graph(graph_version=1).to_dict()
+        result = graph_versions_for_export(current_graph_dict=v1, version_history=[v1])
+        assert len(result) == 1
+
+    def test_no_current_graph_returns_history_only(self):
+        v1 = _minimal_valid_graph(graph_version=1).to_dict()
+        result = graph_versions_for_export(
+            current_graph_dict=None, version_history=[v1]
+        )
+        assert result == [v1]
+
+    def test_no_history_and_no_current_graph_returns_empty(self):
+        assert (
+            graph_versions_for_export(current_graph_dict=None, version_history=None)
+            == []
+        )
+
+    def test_current_graph_never_overwrites_a_differently_structured_saved_version(
+        self,
+    ):
+        """Regression: the Causal Graph page's own _mark_draft() lets an
+        analyst edit an approved graph's edge (e.g. its lag) without
+        clicking Save draft/Approve again - the live graph then shares its
+        saved (graph_id, graph_version) key with a *differently structured*
+        history entry (status reverted to draft in place, edges changed).
+        The saved, approved record must never be silently overwritten by
+        that unsaved edit."""
+        saved_approved = replace(
+            _minimal_valid_graph(graph_version=1), status=GRAPH_STATUS_APPROVED
+        )
+        live_unsaved_edit = replace(
+            saved_approved,
+            status=GRAPH_STATUS_DRAFT,
+            edges=[
+                CausalEdge(
+                    source_node_id="tv_spend",
+                    target_node_id="fh_new",
+                    role=EDGE_ROLE_DIRECT,
+                    lag_type="fixed_weeks",
+                    lag_weeks=3,
+                )
+            ],
+        )
+        result = graph_versions_for_export(
+            current_graph_dict=live_unsaved_edit.to_dict(),
+            version_history=[saved_approved.to_dict()],
+        )
+        assert len(result) == 1
+        assert result[0] == saved_approved.to_dict()
+
+    def test_current_graph_is_kept_when_its_key_was_never_saved(self):
+        # A brand-new graph, never Saved/Approved yet - version_history is
+        # still empty, so the live graph is the only worthwhile record.
+        current = _minimal_valid_graph(graph_version=1).to_dict()
+        result = graph_versions_for_export(
+            current_graph_dict=current, version_history=[]
+        )
+        assert result == [current]

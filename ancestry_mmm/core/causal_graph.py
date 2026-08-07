@@ -727,6 +727,52 @@ def build_compilation_plan_preview(graph: CausalGraph) -> GraphCompilationPlan:
     )
 
 
+# --- Project export/import portability --------------------------------------
+
+
+def graph_versions_for_export(
+    *,
+    current_graph_dict: Optional[Mapping[str, Any]],
+    version_history: Optional[Sequence[Mapping[str, Any]]],
+) -> List[dict]:
+    """The causal graph version records worth persisting in a project
+    export bundle (`core.persistence.export_project`'s `causal_graphs`
+    argument): every explicitly saved version (`version_history` - appended
+    by the Causal Graph page's Save draft/Approve buttons) plus the current
+    live graph, so a brand-new, never-yet-saved graph is not silently lost
+    across an export/import round trip (REQ-GRAPH-001: "an authoritative
+    graph can therefore be lost across the actual user export/import
+    workflow").
+
+    `version_history` is always authoritative for a `(graph_id,
+    graph_version)` key it already contains - REQ-GRAPH-001 S2 ("this type
+    never mutates history in place"). The current live graph is added only
+    when its key is new (never saved at all) or its content is identical to
+    the already-saved record under that key (a harmless no-op). A live
+    graph that shares its key with a saved record but has *different*
+    content - an in-place edit made after that version was saved, which
+    Causal Graph page's own `_mark_draft` allows without bumping
+    `graph_version` (e.g. editing an approved graph's edge lag reverts its
+    status to draft in place) - is an unsaved, never re-versioned edit that
+    must never silently overwrite the saved record it collided with; it is
+    dropped from the export the same way any other unsaved widget edit
+    elsewhere in the app already isn't durable until explicitly saved.
+    """
+    history_by_key: Dict[Tuple[str, int], dict] = {}
+    for item in version_history or []:
+        key = (str(item.get("graph_id", "")), int(item.get("graph_version", 0)))
+        history_by_key[key] = dict(item)
+    if current_graph_dict:
+        key = (
+            str(current_graph_dict.get("graph_id", "")),
+            int(current_graph_dict.get("graph_version", 0)),
+        )
+        existing = history_by_key.get(key)
+        if existing is None or existing == dict(current_graph_dict):
+            history_by_key[key] = dict(current_graph_dict)
+    return list(history_by_key.values())
+
+
 # --- Invalidation propagation (REQ-GRAPH-001 S3/S9) -------------------------
 
 

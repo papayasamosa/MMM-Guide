@@ -1467,6 +1467,96 @@ def test_audit_resumability_officially_resumable_not_gated_before_fitted_checkpo
     assert audit["officially_resumable"] is True
 
 
+def test_audit_resumability_fails_closed_when_fit_graph_evidence_is_missing():
+    """REQ-GRAPH-001 work package (graph portability): a fit that was bound
+    to a causal graph (FHModelMeta.causal_graph_structural_fingerprint) but
+    whose bundle carries no matching causal_graphs.json record must not be
+    officially resumable - the authoritative structural input for that fit
+    cannot be verified."""
+    imported = {
+        "raw_sources": {"source": pd.DataFrame({"x": [1]})},
+        "transformed_data": pd.DataFrame({"x": [1]}),
+        "model_spec": ModelSpec(
+            date_col="date",
+            market_col="market",
+            markets=["UK"],
+            segment_outcomes={"New": "fh_new_gsa"},
+            channels=["TV_Brand"],
+        ).to_dict(),
+        "trace": object(),
+        "model_meta": {
+            "causal_graph_id": "g1",
+            "causal_graph_structural_fingerprint": "deadbeef",
+        },
+        "manifest": {"workflow_checkpoint": "fitted"},
+    }
+    audit = audit_project_resumability(imported)
+    assert audit["resumable"]
+    assert audit["officially_resumable"] is False
+    assert any(
+        r["artefact_type"] == "causal_graph" and r["artefact_id"] == "g1"
+        for r in audit["official_blocking_reasons"]
+    )
+
+
+def test_audit_resumability_true_when_fit_graph_evidence_matches():
+    from ancestry_mmm.core.causal_graph import CausalGraph, CausalNode
+
+    graph = CausalGraph(
+        graph_id="g1",
+        graph_version=2,
+        nodes=[
+            CausalNode(node_id="tv_spend", role="intervention"),
+            CausalNode(node_id="fh_new", role="outcome"),
+        ],
+    )
+    imported = {
+        "raw_sources": {"source": pd.DataFrame({"x": [1]})},
+        "transformed_data": pd.DataFrame({"x": [1]}),
+        "model_spec": ModelSpec(
+            date_col="date",
+            market_col="market",
+            markets=["UK"],
+            segment_outcomes={"New": "fh_new_gsa"},
+            channels=["TV_Brand"],
+        ).to_dict(),
+        "trace": object(),
+        "model_meta": {
+            "causal_graph_id": "g1",
+            "causal_graph_structural_fingerprint": graph.structural_fingerprint(),
+        },
+        "causal_graphs": [graph.to_dict()],
+        "manifest": {"workflow_checkpoint": "fitted"},
+    }
+    audit = audit_project_resumability(imported)
+    assert audit["resumable"]
+    assert audit["officially_resumable"] is True
+    assert audit["official_blocking_reasons"] == []
+
+
+def test_audit_resumability_unaffected_when_no_graph_was_used_at_fit():
+    # Every bundle before this capability existed, and every fit today
+    # without an approved graph - model_meta has no causal_graph_structural_
+    # fingerprint at all (or it's falsy), so this check is inert.
+    imported = {
+        "raw_sources": {"source": pd.DataFrame({"x": [1]})},
+        "transformed_data": pd.DataFrame({"x": [1]}),
+        "model_spec": ModelSpec(
+            date_col="date",
+            market_col="market",
+            markets=["UK"],
+            segment_outcomes={"New": "fh_new_gsa"},
+            channels=["TV_Brand"],
+        ).to_dict(),
+        "trace": object(),
+        "model_meta": {"causal_graph_structural_fingerprint": ""},
+        "manifest": {"workflow_checkpoint": "fitted"},
+    }
+    audit = audit_project_resumability(imported)
+    assert audit["officially_resumable"] is True
+    assert audit["official_blocking_reasons"] == []
+
+
 def test_export_then_import_reproduces_market_spec_config(tmp_path, sample_project):
     market_spec_config = MarketSpecConfig()
     market_spec_config.set_profile(
