@@ -30,6 +30,7 @@ from ancestry_mmm.core.persistence import (
     reconstruct_model_state,
     replace_curve_artifact_store,
     resolve_imported_outcome_approvals,
+    resolve_imported_causal_graphs,
     verify_imported_approval,
     UnsafeZipEntryError,
     audit_project_resumability,
@@ -67,7 +68,10 @@ from ancestry_mmm.core.fingerprint import (
     fingerprint_model_spec,
     fingerprint_posterior,
 )
-from ancestry_mmm.core.causal_graph import current_structural_fingerprint_for_identity
+from ancestry_mmm.core.causal_graph import (
+    current_structural_fingerprint_for_identity,
+    graph_versions_for_export,
+)
 from ancestry_mmm.core.media_units import market_specific_cpa_table
 from ancestry_mmm.core.outcome_approval import OutcomeApproval
 from ancestry_mmm.core.outcomes import (
@@ -396,6 +400,13 @@ if st.button("Build export bundle", type="primary"):
             counterfactual_policy=get_state("counterfactual_policy"),
             currency_context=get_state("currency_context"),
             value_mapping=get_state("value_mapping"),
+            # REQ-GRAPH-001 work package (graph portability): every saved
+            # graph version plus the current live (possibly unsaved) graph -
+            # see graph_versions_for_export's docstring.
+            causal_graphs=graph_versions_for_export(
+                current_graph_dict=get_state("causal_graph"),
+                version_history=get_state("causal_graph_versions"),
+            ),
         )
     st.success(f"Project bundle built: {output_path}")
     with open(output_path, "rb") as f:
@@ -490,6 +501,32 @@ if uploaded_zip is not None and st.button("Import bundle"):
         set_state("funnel_links", imported["funnel_links"])
         set_state("media_outcome_pathways", imported["media_outcome_pathways"])
         set_state("net_billthrough_metadata", imported["net_billthrough_metadata"])
+        # REQ-GRAPH-001 work package (graph portability): restore every
+        # quarantine-checked graph version, and make the highest-numbered
+        # one (this project's single graph lineage - see
+        # graph_versions_for_export) the current graph. A bundle with no
+        # causal_graphs.json (every bundle exported before this capability
+        # existed, or a project with no graph configured) resolves to an
+        # empty list - "no graph" is restored as no graph, never fabricated.
+        _resolved_graphs, _graph_warnings = resolve_imported_causal_graphs(imported)
+        set_state("causal_graph_versions", _resolved_graphs)
+        set_state(
+            "causal_graph",
+            max(_resolved_graphs, key=lambda g: g.get("graph_version", 0))
+            if _resolved_graphs
+            else None,
+        )
+        for _graph_warning in _graph_warnings:
+            st.warning(_graph_warning)
+        # A "prepared model configuration" flag and edge-removal tombstone
+        # set are both session-only working state scoped to whatever graph
+        # was live in THIS session before import (mirrors the
+        # constrained_result/unconstrained_result clearing below, and for
+        # the same reason: importing a project is exactly the boundary
+        # where session-only state from a previous project must never
+        # survive) - never left over from a previous project's graph work.
+        set_state("causal_graph_compiled_structural_fingerprint", None)
+        set_state("cg_removed_edge_ids", None)
         set_state("migration_review", imported.get("migration_review"))
         # PR 125A: restore the project-level planning dependencies so a
         # resumed session's Scenario Planner selection (and any newly

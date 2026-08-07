@@ -18,13 +18,16 @@ real, engine-supported TV_Brand -> New edge -> inspect the model-plan
 preview -> save a draft -> approve -> prepare model configuration succeeds
 and binds a structural fingerprint -> move a node (layout-only) -> the
 prepared configuration stays current -> edit the surviving edge's lag (a
-structural change) -> the prepared configuration goes stale. Every removal
-in this journey goes through the property panel's explicit Remove-edge
-button, never a canvas-side delete gesture.
+structural change) -> the prepared configuration goes stale -> build a
+project export bundle and verify the downloaded file actually carries this
+approved graph (graph portability). Every removal in this journey goes
+through the property panel's explicit Remove-edge button, never a
+canvas-side delete gesture.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import socket
@@ -32,6 +35,7 @@ import subprocess
 import sys
 import threading
 import time
+import zipfile
 from pathlib import Path
 from typing import Iterator
 
@@ -434,6 +438,32 @@ def test_causal_graph_editor_journey_in_browser(
         page.get_by_role("button", name="Save edge"),
         lambda: page.get_by_text("it is now stale", exact=False).count() > 0,
     )
+
+    # --- graph portability: the real "Build export bundle" click on
+    # Project Export must carry this session's approved, structurally-
+    # edited graph into the downloaded bundle (REQ-GRAPH-001 work package,
+    # graph portability - "an authoritative graph can therefore be lost
+    # across the actual user export/import workflow"). The import side of
+    # this same round trip is covered at the AppTest layer
+    # (test_project_export_page_apptest.py), which drives the identical
+    # button-click code path without the added flakiness risk of a second
+    # real browser session boundary in this already-long journey. ---------
+    page.get_by_role("link", name="Project Export & Recovery").click()
+    expect(page.get_by_text("Build export bundle", exact=True)).to_be_visible(
+        timeout=30_000
+    )
+    with page.expect_download(timeout=30_000) as download_info:
+        page.get_by_role("button", name="Build export bundle").click()
+        page.get_by_role("button", name="Download project bundle (.zip)").click(
+            timeout=30_000
+        )
+    downloaded_path = download_info.value.path()
+    assert downloaded_path is not None
+    with zipfile.ZipFile(downloaded_path) as zf:
+        assert "config/causal_graphs.json" in zf.namelist()
+        exported_graphs = json.loads(zf.read("config/causal_graphs.json"))
+    assert exported_graphs
+    assert any(g.get("status") == "approved" for g in exported_graphs)
 
     unexpected_console_errors = [
         e for e in console_errors if "favicon" not in e.lower()

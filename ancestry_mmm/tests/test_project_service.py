@@ -435,6 +435,49 @@ class TestProjectExportInputCounterfactualAndCurrencyContext:
         assert imported["currency_context"] is None
 
 
+class TestProjectExportInputCausalGraphs:
+    """REQ-GRAPH-001 work package (graph portability): causal_graphs - the
+    new ProjectExportInput field mirroring counterfactual_policy/
+    currency_context above, threaded through ProjectService.export() to
+    export_project()."""
+
+    def test_export_passes_field_through_to_the_bundle(
+        self, tmp_path, governed_project
+    ):
+        from ancestry_mmm.core.causal_graph import CausalGraph, CausalNode
+
+        graph = CausalGraph(
+            graph_id="g1",
+            graph_version=1,
+            nodes=[
+                CausalNode(node_id="tv_spend", role="intervention"),
+                CausalNode(node_id="fh_new", role="outcome"),
+            ],
+        )
+        governed_project = dict(governed_project)
+        governed_project["causal_graphs"] = [graph.to_dict()]
+        exp_input = ProjectExportInput(
+            output_path=str(tmp_path / "bundle.zip"),
+            **governed_project,
+        )
+        result = ProjectService().export(exp_input)
+
+        assert result.success, result.errors
+        imported = import_project(result.actual_export_path)
+        assert imported["causal_graphs"] == governed_project["causal_graphs"]
+
+    def test_export_omits_field_when_none(self, tmp_path, governed_project):
+        exp_input = ProjectExportInput(
+            output_path=str(tmp_path / "bundle.zip"),
+            **governed_project,
+        )
+        result = ProjectService().export(exp_input)
+
+        assert result.success, result.errors
+        imported = import_project(result.actual_export_path)
+        assert imported["causal_graphs"] is None
+
+
 class TestProjectExportInputCurveArtifactStore:
     """PR 96B: curve_artifact_store_source_dir - a new ProjectExportInput
     field mirroring the pre-existing curve_bank_source_dir, threaded

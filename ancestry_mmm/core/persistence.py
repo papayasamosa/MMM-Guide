@@ -54,18 +54,21 @@ Bundle layout (a single zip):
                                           above, required by any official scenario whose
                                           planning_objective.estimand is
                                           "incremental_value".
-    config/causal_graphs.json          - REQ-GRAPH-001: all `CausalGraph` versions
-                                          worth keeping (core.causal_graph), if any
-                                          have been saved. Absent for every bundle
-                                          exported before this capability existed, and
-                                          for any current project with no graph
-                                          configured yet - "no graph yet" is a valid,
+    config/causal_graphs.json          - REQ-GRAPH-001: every `CausalGraph` version
+                                          worth keeping (core.causal_graph.
+                                          graph_versions_for_export), if any have
+                                          been saved or are currently in progress.
+                                          Absent for every bundle exported before
+                                          this capability existed, and for any
+                                          current project with no graph configured
+                                          yet - "no graph yet" is a valid,
                                           not-an-error reading (see
-                                          resolve_imported_causal_graphs below). No
-                                          compiled artefact reads this yet - a
-                                          dependent requirement binds an approved
-                                          graph's structural fingerprint into model
-                                          compilation.
+                                          resolve_imported_causal_graphs below).
+                                          audit_project_resumability fails closed
+                                          when a fitted model's bound
+                                          causal_graph_structural_fingerprint
+                                          (core.hierarchical_model.FHModelMeta) has
+                                          no matching record here.
     scenarios/scenario_<i>_predicted.csv
     model/trace.nc                     - fitted posterior (ArviZ InferenceData, NetCDF)
     curve_bank/*.json                  - curve bank + calibration records, if any
@@ -1745,6 +1748,46 @@ def audit_project_resumability(imported: Dict[str, Any]) -> Dict[str, Any]:
                             "reason": f"{issue.reason_code or issue.issue_type}: {issue.detail}",
                         }
                     )
+
+    # REQ-GRAPH-001 work package (graph portability): a fit that used an
+    # approved causal graph (FHModelMeta.causal_graph_structural_fingerprint,
+    # "graph authority and fitted identity") must have that exact graph
+    # identity recoverable from this same bundle's causal_graphs.json - a
+    # fitted/approved model whose authoritative structural input cannot be
+    # verified fails closed here rather than silently being treated as if no
+    # graph was ever used. Unconditional on `declared`: even a bare "fitted"
+    # bundle's identity is unverifiable if its graph evidence is missing.
+    meta_dict = imported.get("model_meta") or {}
+    fit_time_graph_fingerprint = meta_dict.get("causal_graph_structural_fingerprint")
+    if fit_time_graph_fingerprint:
+        from .causal_graph import CausalGraph
+
+        resolved_graphs, graph_warnings = resolve_imported_causal_graphs(imported)
+        warnings.extend(graph_warnings)
+        matching_graph = next(
+            (
+                g
+                for g in resolved_graphs
+                if CausalGraph.from_dict(g).structural_fingerprint()
+                == fit_time_graph_fingerprint
+            ),
+            None,
+        )
+        if matching_graph is None:
+            officially_resumable = False
+            official_blocking_reasons.append(
+                {
+                    "artefact_type": "causal_graph",
+                    "artefact_id": meta_dict.get("causal_graph_id", "<unknown>"),
+                    "reason": (
+                        "causal_graph_evidence_missing: this fit's bound "
+                        f"structural fingerprint {fit_time_graph_fingerprint!r} "
+                        "has no matching causal graph record in this bundle's "
+                        "causal_graphs.json - the authoritative structural "
+                        "input for this fit cannot be verified."
+                    ),
+                }
+            )
 
     return {
         "resumable": not missing,

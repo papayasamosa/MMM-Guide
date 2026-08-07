@@ -38,7 +38,11 @@ from ancestry_mmm.core.curve_artifact import (
     load_curve_artifact_store,
     write_curve_artifact,
 )
-from ancestry_mmm.core.persistence import export_project, import_project
+from ancestry_mmm.core.persistence import (
+    export_project,
+    import_project,
+    resolve_imported_causal_graphs,
+)
 from ancestry_mmm.tests.support.lifecycle_fixture import (
     UNRELATED_ARTIFACT_ID,
     build_lifecycle_project,
@@ -270,6 +274,153 @@ def test_import_clears_stale_cached_optimiser_results(monkeypatch, tmp_path):
 
     assert at.session_state["constrained_result"] is None
     assert at.session_state["unconstrained_result"] is None
+
+
+def test_export_includes_causal_graph_state(monkeypatch, tmp_path):
+    """REQ-GRAPH-001 work package (graph portability): the real "Build
+    export bundle" button click carries the project's causal graph state
+    into the bundle, via graph_versions_for_export."""
+    from ancestry_mmm.core.causal_graph import CausalGraph, CausalNode
+
+    export_root = tmp_path / "exports"
+    artifact_root = tmp_path / "artifact-root"
+
+    import ancestry_mmm.utils as utils_pkg
+    import ancestry_mmm.utils.session_state as ss
+
+    monkeypatch.setattr(utils_pkg, "PROJECT_EXPORT_ROOT", export_root)
+    monkeypatch.setattr(ss, "CURVE_ARTIFACT_ROOT", artifact_root)
+
+    graph = CausalGraph(
+        graph_id="g1",
+        graph_version=1,
+        nodes=[
+            CausalNode(node_id="tv_spend", role="intervention"),
+            CausalNode(node_id="fh_new", role="outcome"),
+        ],
+    )
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.run()
+    assert not at.exception, f"initial load raised: {at.exception}"
+    at.session_state["project_name"] = "proj-with-graph"
+    at.session_state["causal_graph"] = graph.to_dict()
+    at.session_state["causal_graph_versions"] = [graph.to_dict()]
+
+    build_button = next(b for b in at.button if b.label == "Build export bundle")
+    build_button.click().run()
+    assert not at.exception, f"export click raised: {at.exception}"
+
+    imported = import_project(export_root / "proj-with-graph.zip")
+    graphs, warnings = resolve_imported_causal_graphs(imported)
+    assert warnings == []
+    assert {g["graph_id"] for g in graphs} == {"g1"}
+
+
+def test_import_restores_causal_graph_history_and_current_graph(monkeypatch, tmp_path):
+    """REQ-GRAPH-001 work package (graph portability): the real "Import
+    bundle" button click restores every quarantine-checked graph version
+    and makes the highest-numbered one current."""
+    import dataclasses as dc
+
+    from ancestry_mmm.core.causal_graph import CausalGraph, CausalNode
+
+    export_root = tmp_path / "exports"
+    artifact_root = tmp_path / "artifact-root"
+
+    import ancestry_mmm.utils as utils_pkg
+    import ancestry_mmm.utils.session_state as ss
+
+    monkeypatch.setattr(utils_pkg, "PROJECT_EXPORT_ROOT", export_root)
+    monkeypatch.setattr(ss, "CURVE_ARTIFACT_ROOT", artifact_root)
+
+    v1 = CausalGraph(
+        graph_id="g1",
+        graph_version=1,
+        nodes=[
+            CausalNode(node_id="tv_spend", role="intervention"),
+            CausalNode(node_id="fh_new", role="outcome"),
+        ],
+    )
+    v2 = dc.replace(v1, graph_version=2, status="approved")
+
+    bundle_path = export_project(
+        tmp_path / "bundle.zip",
+        raw_sources={},
+        transformed_data=None,
+        pipeline_steps=[],
+        model_spec=None,
+        prior_config=None,
+        dna_lag_weeks=0,
+        trace=None,
+        scenarios=[],
+        causal_graphs=[v1.to_dict(), v2.to_dict()],
+    )
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.run()
+    assert not at.exception, f"initial load raised: {at.exception}"
+    at.session_state["project_name"] = "proj-import-graph"
+
+    uploader = at.file_uploader[0]
+    uploader.set_value(
+        (bundle_path.name, bundle_path.read_bytes(), "application/zip")
+    ).run()
+    import_button = next(b for b in at.button if b.label == "Import bundle")
+    import_button.click().run()
+    assert not at.exception, f"import click raised: {at.exception}"
+
+    restored_versions = at.session_state["causal_graph_versions"]
+    assert {(g["graph_id"], g["graph_version"]) for g in restored_versions} == {
+        ("g1", 1),
+        ("g1", 2),
+    }
+    current = at.session_state["causal_graph"]
+    assert current["graph_version"] == 2
+    assert current["status"] == "approved"
+
+
+def test_import_with_no_causal_graphs_leaves_graph_state_empty(monkeypatch, tmp_path):
+    """A legacy bundle (or a project with no graph configured) round-trips
+    to "no graph", never fabricated evidence."""
+    export_root = tmp_path / "exports"
+    artifact_root = tmp_path / "artifact-root"
+
+    import ancestry_mmm.utils as utils_pkg
+    import ancestry_mmm.utils.session_state as ss
+
+    monkeypatch.setattr(utils_pkg, "PROJECT_EXPORT_ROOT", export_root)
+    monkeypatch.setattr(ss, "CURVE_ARTIFACT_ROOT", artifact_root)
+
+    bundle_path = export_project(
+        tmp_path / "bundle.zip",
+        raw_sources={},
+        transformed_data=None,
+        pipeline_steps=[],
+        model_spec=None,
+        prior_config=None,
+        dna_lag_weeks=0,
+        trace=None,
+        scenarios=[],
+    )
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.run()
+    assert not at.exception, f"initial load raised: {at.exception}"
+    at.session_state["project_name"] = "proj-no-graph"
+    at.session_state["causal_graph"] = {"graph_id": "stale-from-previous-project"}
+    at.session_state["causal_graph_versions"] = [{"graph_id": "stale"}]
+
+    uploader = at.file_uploader[0]
+    uploader.set_value(
+        (bundle_path.name, bundle_path.read_bytes(), "application/zip")
+    ).run()
+    import_button = next(b for b in at.button if b.label == "Import bundle")
+    import_button.click().run()
+    assert not at.exception, f"import click raised: {at.exception}"
+
+    assert at.session_state["causal_graph_versions"] == []
+    assert at.session_state["causal_graph"] is None
 
 
 def _rewrite_bundle_diagnostics_artefact(
