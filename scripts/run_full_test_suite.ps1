@@ -9,10 +9,11 @@ matching CI command line, and previously had no single documented local
 entry point - a developer had to already know to add --cov-fail-under=75
 by hand to get a result that means anything.
 
-test_persistence.py and test_official_lifecycle_browser.py are excluded
-because CI runs them as their own separate, focused jobs (Bundle
-round-trip, Browser lifecycle journey) - see run_persistence_tests.ps1 /
-the Playwright browser job for those.
+test_persistence.py, test_official_lifecycle_browser.py and
+test_causal_graph_editor_browser.py are excluded because CI runs them as
+their own separate, focused jobs (Bundle round-trip, Browser lifecycle
+journey) - see run_persistence_tests.ps1 / the Playwright browser job for
+those.
 #>
 
 $ErrorActionPreference = "Stop"
@@ -22,6 +23,7 @@ try {
     uv run pytest ancestry_mmm/tests/ -q `
         --ignore=ancestry_mmm/tests/test_persistence.py `
         --ignore=ancestry_mmm/tests/test_official_lifecycle_browser.py `
+        --ignore=ancestry_mmm/tests/test_causal_graph_editor_browser.py `
         --cov --cov-report=term-missing:skip-covered --cov-fail-under=75
     exit $LASTEXITCODE
 } finally {

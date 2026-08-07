@@ -243,7 +243,7 @@
         "ancestry_mmm/tests/test_curve_bank_page_apptest.py::test_both_make_entries_calls_thread_readiness_and_policy",
         "ancestry_mmm/tests/test_project_export_page_apptest.py::test_export_reaches_official_curves_checkpoint_with_a_loaded_artifact",
         "ancestry_mmm/tests/test_project_export_page_apptest.py::test_export_falls_back_to_legacy_curves_checkpoint_without_official_artifacts",
-        "ancestry_mmm/tests/test_workflow.py::TestWorkflowStepMetadata::test_total_steps_is_thirteen",
+        "ancestry_mmm/tests/test_workflow.py::TestWorkflowStepMetadata::test_total_steps_is_fourteen",
         "ancestry_mmm/tests/test_official_curve_generation_page_apptest.py::test_empty_state_loads_without_error",
         "ancestry_mmm/tests/test_official_curve_generation_page_apptest.py::test_full_governance_generates_and_saves_an_artifact",
         "ancestry_mmm/tests/test_official_curve_generation_page_apptest.py::test_outcome_not_approved_for_curve_publication_blocks_generation",

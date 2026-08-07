@@ -58,6 +58,21 @@ WORKFLOW_STEPS: List[Dict[str, Any]] = [
             "Select media channels, promo flags, controls and LTV per segment.",
             "Save the structure to validate it.",
         ],
+        "next": "Build the variable-level causal graph in Causal Graph.",
+    },
+    {
+        "key": "causal_graph",
+        "label": "Causal Graph",
+        "path": "pages/14_Causal_Graph.py",
+        "title": "Causal Graph",
+        "purpose": "Build a graph-first, variable-level causal structure (REQ-GRAPH-001) - optional, and once approved, the sole authoritative structural input to model compilation.",
+        "steps": [
+            "Add variable nodes (intervention, mediator, outcome, control, ...) and draw edges between them.",
+            "Set each edge's role and lag in the property panel.",
+            "Fix any validation errors, then review the model-plan preview.",
+            "Save a draft, or approve the graph once it passes validation.",
+            "Prepare a compiled model configuration from the approved graph.",
+        ],
         "next": "Map each channel's spend and physical media units in Channel & Media Units.",
     },
     {
