@@ -54,6 +54,18 @@ Bundle layout (a single zip):
                                           above, required by any official scenario whose
                                           planning_objective.estimand is
                                           "incremental_value".
+    config/causal_graphs.json          - REQ-GRAPH-001: all `CausalGraph` versions
+                                          worth keeping (core.causal_graph), if any
+                                          have been saved. Absent for every bundle
+                                          exported before this capability existed, and
+                                          for any current project with no graph
+                                          configured yet - "no graph yet" is a valid,
+                                          not-an-error reading (see
+                                          resolve_imported_causal_graphs below). No
+                                          compiled artefact reads this yet - a
+                                          dependent requirement binds an approved
+                                          graph's structural fingerprint into model
+                                          compilation.
     scenarios/scenario_<i>_predicted.csv
     model/trace.nc                     - fitted posterior (ArviZ InferenceData, NetCDF)
     curve_bank/*.json                  - curve bank + calibration records, if any
@@ -115,10 +127,9 @@ from .scenario_governance import CounterfactualPolicy
 from .schema import ModelSpec
 from .optimization import SpendConstraint
 
-# PR 125A: bumped 9 -> 11 for the project-level counterfactual_policy,
-# currency_context, and value_mapping bundle files (see export_project()'s
-# docstring).
-PROJECT_BUNDLE_SCHEMA_VERSION = 11
+# REQ-GRAPH-001: bumped 11 -> 12 for the project-level causal_graphs bundle
+# file (see export_project()'s docstring).
+PROJECT_BUNDLE_SCHEMA_VERSION = 12
 PROJECT_APP_VERSION = "0.1.0"
 
 
@@ -210,6 +221,7 @@ def export_project(
     counterfactual_policy: Optional[dict] = None,
     currency_context: Optional[dict] = None,
     value_mapping: Optional[dict] = None,
+    causal_graphs: Optional[List[dict]] = None,
 ) -> Path:
     output_path = Path(output_path)
     with tempfile.TemporaryDirectory() as tmp_str:
@@ -347,6 +359,12 @@ def export_project(
             (tmp / "config" / "value_mapping.json").write_text(
                 json.dumps(value_mapping, indent=2, default=str)
             )
+        # REQ-GRAPH-001: all CausalGraph versions worth keeping - see the
+        # module docstring.
+        if causal_graphs is not None:
+            (tmp / "config" / "causal_graphs.json").write_text(
+                json.dumps(causal_graphs, indent=2, default=str)
+            )
         if diagnostics is not None:
             for name, value in diagnostics.items():
                 if value is None:
@@ -414,6 +432,7 @@ def export_project(
                 "counterfactual_policy": counterfactual_policy is not None,
                 "currency_context": currency_context is not None,
                 "value_mapping": value_mapping is not None,
+                "causal_graphs": causal_graphs is not None and bool(causal_graphs),
             },
         }
         (tmp / "manifest.json").write_text(json.dumps(manifest, indent=2, default=str))
@@ -505,6 +524,10 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         "counterfactual_policy": None,
         "currency_context": None,
         "value_mapping": None,
+        # REQ-GRAPH-001: None for bundles exported before this capability
+        # existed - "no graph yet" is a valid, not-an-error reading, same
+        # convention as funnel_links/media_outcome_pathways above.
+        "causal_graphs": None,
     }
     with tempfile.TemporaryDirectory() as tmp_str:
         tmp = Path(tmp_str)
@@ -640,6 +663,10 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         if (config_dir / "value_mapping.json").exists():
             result["value_mapping"] = json.loads(
                 (config_dir / "value_mapping.json").read_text()
+            )
+        if (config_dir / "causal_graphs.json").exists():
+            result["causal_graphs"] = json.loads(
+                (config_dir / "causal_graphs.json").read_text()
             )
         # G2A.7 (REQ-OUT-002): outcome approvals persisted alongside outcome
         # definitions. Absent in legacy bundles — treated as no approvals on
@@ -784,6 +811,51 @@ def resolve_imported_outcome_approvals(
         if outcome.outcome_id
     ]
     return legacy_records, warnings
+
+
+def resolve_imported_causal_graphs(
+    imported: Dict[str, Any],
+) -> Tuple[List[dict], List[str]]:
+    """REQ-GRAPH-001 S10: resolve the causal-graph version records an
+    imported bundle should use. Each record is round-tripped through
+    `CausalGraph.from_dict`/`to_dict` for validation - a malformed record,
+    or one carrying an unrecognised future `schema_version`, is quarantined
+    (dropped), never silently discarded without a trace: it is named by
+    index in `warnings` and excluded from the returned list, mirroring
+    `resolve_imported_outcome_approvals`'s never-trust-silently contract.
+
+    A bundle with no `causal_graphs.json` file (every bundle exported before
+    this capability existed, and every current project with no graph
+    configured yet) resolves to an empty list with no warnings - that is
+    the correct "no graph yet" reading, not an error.
+    """
+    from .causal_graph import CausalGraph
+
+    raw_graphs = imported.get("causal_graphs")
+    warnings: List[str] = []
+    if not raw_graphs:
+        return [], warnings
+
+    normalised: List[dict] = []
+    for index, item in enumerate(raw_graphs):
+        if not isinstance(item, Mapping):
+            input_type = type(item).__name__
+            warnings.append(
+                f"Causal graph record {index} is not a mapping "
+                f"(type={input_type!r}) and was quarantined "
+                "(dropped, not silently kept)."
+            )
+            continue
+        try:
+            normalised.append(CausalGraph.from_dict(item).to_dict())
+        except (TypeError, ValueError, KeyError, AttributeError) as exc:
+            graph_id = item.get("graph_id", "<unknown>")
+            warnings.append(
+                f"Causal graph record {index} (graph_id={graph_id!r}) was "
+                f"malformed and was quarantined (dropped, not silently "
+                f"kept): {exc}"
+            )
+    return normalised, warnings
 
 
 def _validate_relative_artifact_path(rel_path: str) -> None:
