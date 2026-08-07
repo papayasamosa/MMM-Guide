@@ -55,6 +55,7 @@ from ancestry_mmm.core.persistence import (
     import_project,
     reconstruct_model_state,
     replace_curve_artifact_store,
+    resolve_imported_causal_graphs,
     resolve_imported_outcome_approvals,
     verify_imported_approval,
 )
@@ -1330,6 +1331,62 @@ def test_resolve_imported_outcome_approvals_reports_malformed_records_by_index()
     assert approvals == []
     assert len(warnings) == 1
     assert "0" in warnings[0] and "apr-1" in warnings[0]
+
+
+def test_export_then_import_causal_graphs_round_trip(tmp_path, sample_project):
+    """REQ-GRAPH-001 S10: config/causal_graphs.json round-trips through
+    export_project/import_project like every other project-level governed
+    file (counterfactual_policy, currency_context, ...)."""
+    from ancestry_mmm.core.causal_graph import CausalGraph, CausalNode
+
+    graph = CausalGraph(
+        graph_id="g1",
+        graph_version=1,
+        nodes=[
+            CausalNode(node_id="tv_spend", role="intervention"),
+            CausalNode(node_id="fh_new", role="outcome"),
+        ],
+    )
+    project = dict(sample_project)
+    project["causal_graphs"] = [graph.to_dict()]
+
+    bundle_path = export_project(tmp_path / "bundle.zip", **project)
+    imported = import_project(bundle_path)
+
+    graphs, warnings = resolve_imported_causal_graphs(imported)
+    assert warnings == []
+    assert len(graphs) == 1
+    assert graphs[0]["graph_id"] == "g1"
+    restored = CausalGraph.from_dict(graphs[0])
+    assert restored.structural_fingerprint() == graph.structural_fingerprint()
+
+
+def test_import_project_causal_graphs_absent_for_legacy_bundle(
+    tmp_path, sample_project
+):
+    bundle_path = export_project(tmp_path / "bundle.zip", **sample_project)
+    imported = import_project(bundle_path)
+    assert imported["causal_graphs"] is None
+    graphs, warnings = resolve_imported_causal_graphs(imported)
+    assert graphs == []
+    assert warnings == []
+
+
+def test_resolve_imported_causal_graphs_quarantines_malformed_records():
+    imported = {
+        "causal_graphs": [
+            {"graph_id": "good", "nodes": [], "edges": []},
+            {"graph_id": "future-schema", "schema_version": 999},
+            "not-a-mapping",
+            {"nodes": []},  # missing required graph_id
+        ]
+    }
+    graphs, warnings = resolve_imported_causal_graphs(imported)
+    assert len(graphs) == 1
+    assert graphs[0]["graph_id"] == "good"
+    assert len(warnings) == 3
+    assert any("future-schema" in w for w in warnings)
+    assert any("not a mapping" in w for w in warnings)
 
 
 def test_audit_resumability_officially_resumable_false_without_approvals():
