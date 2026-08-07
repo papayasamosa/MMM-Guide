@@ -41,3 +41,5 @@ Coding agents must not independently interpret or reconcile the external Ancestr
 - `REQ-PLAN-*` — scenario planning and optimisation
 - `REQ-USE-*` — official versus exploratory use
 - `REQ-STALE-*` — staleness and invalidation
+- `REQ-GRAPH-*` — graph-authoritative causal configuration
+- `REQ-SEARCH-*` — Search demand/delivery/spend/cap/organic-capture object separation
