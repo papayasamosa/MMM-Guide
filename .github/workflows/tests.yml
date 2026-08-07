@@ -27,6 +27,16 @@ jobs:
           python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: "uv.lock"
+      - name: Assert the installed uv matches the repository's required-version pin
+        run: |
+          set -euo pipefail
+          installed="$(uv --version | awk '{print $2}')"
+          pinned="$(grep -m1 '^required-version' pyproject.toml | sed -E 's/.*"==?([^"]+)".*/\1/')"
+          echo "Installed uv: $installed | Repository-pinned uv: $pinned"
+          if [ "$installed" != "$pinned" ]; then
+            echo "::error::setup-uv installed $installed but pyproject.toml pins $pinned - astral-sh/setup-uv's default pyproject.toml detection did not take effect." >&2
+            exit 1
+          fi
       - run: uv sync --locked
       - name: Compile package
         run: uv run python -m compileall -q ancestry_mmm
@@ -444,7 +454,24 @@ jobs:
           uv run mypy ancestry_mmm/core/planning --ignore-missing-imports --follow-imports=silent
           uv run mypy ancestry_mmm/core/validation_policy.py --ignore-missing-imports --follow-imports=silent
           uv run mypy ancestry_mmm/application --ignore-missing-imports --follow-imports=silent
-          uv run mypy ancestry_mmm/core --ignore-missing-imports || true  # 341 errors tracked in issue #123
+      - name: Full-core mypy debt ratchet (issue #123 - must not increase past baseline)
+        run: |
+          set -euo pipefail
+          baseline="$(cat .mypy-baseline-count)"
+          set +e
+          output="$(uv run mypy ancestry_mmm/core --ignore-missing-imports)"
+          set -e
+          echo "$output"
+          current="$(echo "$output" | grep -oE 'Found [0-9]+ error' | grep -oE '[0-9]+' || true)"
+          current="${current:-0}"
+          echo "Full-core (ancestry_mmm/core) mypy errors: $current (baseline ceiling: $baseline)"
+          if [ "$current" -gt "$baseline" ]; then
+            echo "::error::Full-core mypy error count increased from $baseline to $current. Fix the regression, or if a new error is genuinely unavoidable, raise the ceiling in .mypy-baseline-count in the same PR with justification - never silently." >&2
+            exit 1
+          fi
+          if [ "$current" -lt "$baseline" ]; then
+            echo "::notice::Full-core mypy error count dropped from $baseline to $current - lower .mypy-baseline-count to $current to lock the improvement in."
+          fi
 
   # -- Bandit security scan -------------------------------------------
   bandit:

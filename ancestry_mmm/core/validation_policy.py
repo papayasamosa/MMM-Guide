@@ -26,6 +26,7 @@ import hashlib
 import json
 import math
 import uuid
+import warnings
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional
@@ -2202,7 +2203,17 @@ def _evaluate_rhat(
     credible_mass: float,
 ) -> ValidationResult:
     """Evaluate R-hat convergence diagnostic."""
-    rhat = az.rhat(trace, var_names=["mu", "beta", "hill_K", "alpha"])
+    # A degenerate/zero-variance chain makes ArviZ's own rank-normalised
+    # R-hat divide 0/0 internally (arviz/stats/diagnostics.py) - see
+    # ancestry_mmm/core/models.py's compute_model_diagnostics for the full
+    # rationale. Suppressed only around this exact call.
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="invalid value encountered in scalar divide",
+            category=RuntimeWarning,
+        )
+        rhat = az.rhat(trace, var_names=["mu", "beta", "hill_K", "alpha"])
     max_val = float("-inf")
     for var_data in rhat.values():
         if hasattr(var_data, "values"):

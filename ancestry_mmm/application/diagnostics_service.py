@@ -15,6 +15,7 @@ import dataclasses
 import hashlib
 import json
 import uuid
+import warnings
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
@@ -735,7 +736,17 @@ class DiagnosticsService:
         ESS, and the divergence count (0 if no divergences or no
         sample_stats) - the single authoritative convergence calculation
         reused for both the artefact and the displayed scorecard."""
-        rhat = az.rhat(trace, var_names=["mu", "beta", "hill_K", "alpha"])
+        # A degenerate/zero-variance chain makes ArviZ's own rank-normalised
+        # R-hat divide 0/0 internally (arviz/stats/diagnostics.py) - see
+        # ancestry_mmm/core/models.py's compute_model_diagnostics for the
+        # full rationale. Suppressed only around this exact call.
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="invalid value encountered in scalar divide",
+                category=RuntimeWarning,
+            )
+            rhat = az.rhat(trace, var_names=["mu", "beta", "hill_K", "alpha"])
         ess = az.ess(trace, var_names=["mu", "beta", "hill_K", "alpha"])
 
         max_rhat = float("-inf")

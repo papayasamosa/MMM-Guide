@@ -1,5 +1,7 @@
 """PyMC model builders for Marketing Mix Modeling."""
 
+import warnings
+
 import numpy as np
 import pymc as pm
 import arviz as az
@@ -334,8 +336,23 @@ def compute_model_diagnostics(trace: az.InferenceData) -> Dict[str, Any]:
     """
     diagnostics = {}
 
-    # R-hat (should be < 1.01 for convergence)
-    rhat = az.rhat(trace)
+    # R-hat (should be < 1.01 for convergence). ArviZ's rank-normalised R-hat
+    # divides by each chain's within-chain variance (arviz/stats/diagnostics.py
+    # _rhat) - a genuinely zero-variance chain (e.g. a small/degenerate
+    # synthetic trace used in tests) makes that division 0/0, which numpy
+    # reports as "invalid value encountered in scalar divide". This is
+    # ArviZ's own numerics, not this codebase's, and the resulting NaN R-hat
+    # is already the correct non-convergence signal - suppressed only around
+    # this exact call, not repo-wide, so the same warning from any other,
+    # non-ArviZ source (a genuine app-code divide bug) still surfaces
+    # normally.
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="invalid value encountered in scalar divide",
+            category=RuntimeWarning,
+        )
+        rhat = az.rhat(trace)
     diagnostics["rhat"] = {
         var: float(rhat[var].values)
         if rhat[var].ndim == 0

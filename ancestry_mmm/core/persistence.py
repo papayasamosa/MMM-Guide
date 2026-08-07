@@ -212,8 +212,8 @@ def export_project(
     value_mapping: Optional[dict] = None,
 ) -> Path:
     output_path = Path(output_path)
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp = Path(tmp)
+    with tempfile.TemporaryDirectory() as tmp_str:
+        tmp = Path(tmp_str)
         (tmp / "data").mkdir()
         (tmp / "config").mkdir()
         (tmp / "scenarios").mkdir()
@@ -506,8 +506,8 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         "currency_context": None,
         "value_mapping": None,
     }
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp = Path(tmp)
+    with tempfile.TemporaryDirectory() as tmp_str:
+        tmp = Path(tmp_str)
         with zipfile.ZipFile(zip_path, "r") as zf:
             _safe_extract_zip(zf, tmp)
 
