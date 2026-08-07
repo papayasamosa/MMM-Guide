@@ -135,3 +135,49 @@ def test_approve_is_disabled_for_structurally_valid_but_engine_unsupported_graph
     assert any("cannot compile" in e.value for e in at.error)
     approve_button = next(b for b in at.button if b.label == "Approve")
     assert approve_button.disabled
+
+
+def test_seed_button_adds_nodes_from_governed_search_objects():
+    """REQ-SEARCH-001 work package (graph integration): a governed
+    paid_search_spend object seeds an intervention node and a
+    paid_search_cap object seeds a capacity_or_cap node - the exact role
+    mapping core.search_objects.graph_node_role_for_search_object defines.
+    paid_search_delivery has no graph node role and must not be seeded."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.session_state["search_objects"] = [
+        {
+            "search_object_id": "uk_paid_search_spend",
+            "search_role": "paid_search_spend",
+            "source_column": "paid_search_gbp_spend",
+            "unit": "monetary",
+            "currency": "GBP",
+            "market": "UK",
+            "planning_eligibility": "optimisable",
+        },
+        {
+            "search_object_id": "uk_paid_search_cap",
+            "search_role": "paid_search_cap",
+            "source_column": "daily_budget_cap_gbp",
+            "unit": "monetary",
+            "currency": "GBP",
+            "market": "UK",
+        },
+        {
+            "search_object_id": "uk_paid_search_delivery",
+            "search_role": "paid_search_delivery",
+            "source_column": "paid_search_clicks",
+            "unit": "exposure_count",
+            "market": "UK",
+        },
+    ]
+    at.run()
+    assert not at.exception, f"initial load raised: {at.exception}"
+
+    next(b for b in at.button if b.label == "Add these as nodes").click().run()
+    assert not at.exception, f"seed click raised: {at.exception}"
+
+    stored = at.session_state["causal_graph"]
+    nodes_by_id = {n["node_id"]: n for n in stored["nodes"]}
+    assert nodes_by_id["uk_paid_search_spend"]["role"] == "intervention"
+    assert nodes_by_id["uk_paid_search_cap"]["role"] == "capacity_or_cap"
+    assert "uk_paid_search_delivery" not in nodes_by_id

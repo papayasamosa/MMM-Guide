@@ -31,6 +31,7 @@ from ancestry_mmm.core.persistence import (
     replace_curve_artifact_store,
     resolve_imported_outcome_approvals,
     resolve_imported_causal_graphs,
+    resolve_imported_search_objects,
     verify_imported_approval,
     UnsafeZipEntryError,
     audit_project_resumability,
@@ -408,6 +409,8 @@ if st.button("Build export bundle", type="primary"):
                 current_graph_dict=get_state("causal_graph"),
                 version_history=get_state("causal_graph_versions"),
             ),
+            # REQ-SEARCH-001: governed Search object definitions.
+            search_objects=get_state("search_objects") or [],
         )
     st.success(f"Project bundle built: {output_path}")
     with open(output_path, "rb") as f:
@@ -525,6 +528,18 @@ if uploaded_zip is not None and st.button("Import bundle"):
         # survive) - never left over from a previous project's graph work.
         set_state("causal_graph_compiled_structural_fingerprint", None)
         set_state("cg_removed_edge_ids", None)
+        # REQ-SEARCH-001: restore every quarantine-checked, cross-object-
+        # validated governed Search object. A bundle with no
+        # search_objects.json (every bundle exported before this
+        # capability existed, or a project with none governed) resolves to
+        # an empty list - "none governed" is restored as none, never
+        # fabricated.
+        _resolved_search_objects, _search_object_warnings = (
+            resolve_imported_search_objects(imported)
+        )
+        set_state("search_objects", _resolved_search_objects)
+        for _search_object_warning in _search_object_warnings:
+            st.warning(_search_object_warning)
         set_state("migration_review", imported.get("migration_review"))
         # PR 125A: restore the project-level planning dependencies so a
         # resumed session's Scenario Planner selection (and any newly

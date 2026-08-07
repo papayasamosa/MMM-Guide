@@ -62,6 +62,10 @@ from ancestry_mmm.core.graph_model_compiler import (
     check_graph_approval_eligibility,
 )
 from ancestry_mmm.core.schema import ModelSpec
+from ancestry_mmm.core.search_objects import (
+    SearchObjectDefinition,
+    graph_node_role_for_search_object,
+)
 
 _NODE_ROLE_COLORS = {
     "outcome": "#f4a460",
@@ -250,15 +254,26 @@ with st.expander("Seed nodes from current Structure (optional)"):
     seed_outcome_ids = [
         item.get("outcome_id") for item in outcome_defs if item.get("outcome_id")
     ]
+    seed_search_objects = [
+        SearchObjectDefinition.from_dict(item)
+        for item in (get_state("search_objects") or [])
+    ]
+    # REQ-SEARCH-001 S8: paid_search_delivery has no graph node of its own
+    # (descriptive spend-to-delivery context) - only objects with a
+    # resolved node role are seedable here.
+    seedable_search_objects = [
+        defn for defn in seed_search_objects if graph_node_role_for_search_object(defn)
+    ]
     st.caption(
-        f"Detected {len(seed_channels)} channel(s) and {len(seed_outcome_ids)} "
-        "outcome(s) from Structure: Segments & Markets. Adds one intervention "
-        "node per channel and one outcome node per outcome - no edges are "
-        "inferred or invented."
+        f"Detected {len(seed_channels)} channel(s), {len(seed_outcome_ids)} "
+        f"outcome(s), and {len(seedable_search_objects)} governed Search "
+        "object(s) from Structure: Segments & Markets / Channel & Media "
+        "Units. Adds one node per item, with the role REQ-SEARCH-001 maps "
+        "each Search object to - no edges are inferred or invented."
     )
     if st.button(
         "Add these as nodes",
-        disabled=not (seed_channels or seed_outcome_ids),
+        disabled=not (seed_channels or seed_outcome_ids or seedable_search_objects),
         key="cg_seed_button",
     ):
         existing_ids = {n.node_id for n in graph.nodes}
@@ -274,6 +289,20 @@ with st.expander("Seed nodes from current Structure (optional)"):
                 continue
             added_nodes.append(CausalNode(node_id=outcome_id, role="outcome"))
             positions[outcome_id] = NodePosition(x=400.0, y=float(index) * 90.0)
+        for index, search_defn in enumerate(seedable_search_objects):
+            if search_defn.search_object_id in existing_ids:
+                continue
+            added_nodes.append(
+                CausalNode(
+                    node_id=search_defn.search_object_id,
+                    role=graph_node_role_for_search_object(search_defn),
+                    product=search_defn.product,
+                    market=search_defn.market if search_defn.market != "*" else "",
+                )
+            )
+            positions[search_defn.search_object_id] = NodePosition(
+                x=200.0, y=float(index) * 90.0
+            )
         graph = mark_draft_if_approved(
             replace(
                 graph,
