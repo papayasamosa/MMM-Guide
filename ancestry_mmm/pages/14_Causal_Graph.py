@@ -54,8 +54,10 @@ from ancestry_mmm.core.causal_graph import (
     validate_causal_graph,
 )
 from ancestry_mmm.core.graph_model_compiler import (
+    GRAPH_ENGINE_PYMC_HIERARCHICAL,
     GraphModelCompiler,
     UnsupportedGraphStructureError,
+    check_graph_approval_eligibility,
 )
 from ancestry_mmm.core.schema import ModelSpec
 
@@ -525,6 +527,28 @@ else:
 for warning in validation.warnings:
     st.warning(warning)
 
+st.markdown("#### Engine readiness")
+st.caption(
+    f"Whether engine '{GRAPH_ENGINE_PYMC_HIERARCHICAL}' - the current "
+    "production fitting engine - can compile this graph. Checked before "
+    "Approve is enabled, not only when preparing a model configuration "
+    "afterwards, so an unsupported structure is never approved in the "
+    "first place."
+)
+approval_eligibility = check_graph_approval_eligibility(
+    graph, engine=GRAPH_ENGINE_PYMC_HIERARCHICAL
+)
+if not validation.is_valid:
+    st.info("Fix validation errors above before engine readiness can be checked.")
+elif approval_eligibility.is_eligible:
+    st.success(f"Engine '{GRAPH_ENGINE_PYMC_HIERARCHICAL}' can compile this graph.")
+else:
+    st.error(
+        "This graph is structurally valid but the current engine cannot "
+        "compile it - fix these before approving:\n\n"
+        + "\n".join(f"- {reason}" for reason in approval_eligibility.capability_reasons)
+    )
+
 st.markdown("---")
 st.markdown("### 4. Model-plan preview")
 st.caption(
@@ -564,7 +588,7 @@ if save_col.button("Save draft"):
     set_state("causal_graph_versions", versions + [saved.to_dict()])
     st.rerun()
 
-if approve_col.button("Approve", disabled=not validation.is_valid):
+if approve_col.button("Approve", disabled=not approval_eligibility.is_eligible):
     from datetime import datetime, timezone
 
     approved = replace(

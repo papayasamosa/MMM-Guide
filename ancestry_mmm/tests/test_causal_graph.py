@@ -28,6 +28,7 @@ from ancestry_mmm.core.causal_graph import (
     GraphLayout,
     NodePosition,
     build_compilation_plan_preview,
+    current_structural_fingerprint_for_identity,
     graph_dependency_issues,
     validate_causal_graph,
 )
@@ -782,3 +783,64 @@ class TestGraphDependencyIssues:
         fp_after = graph.structural_fingerprint()
         assert fp_after == fp_before
         assert graph_dependency_issues(fp_after, dependents) == []
+
+
+class TestCurrentStructuralFingerprintForIdentity:
+    """REQ-GRAPH-001 work package: the shared rule every page computing a
+    current ModelIdentity must use so a live structural graph edit stales a
+    previously-granted approval/curve/scenario without requiring a refit,
+    while a layout-only edit never does."""
+
+    def test_no_graph_used_at_fit_returns_none(self):
+        # fingerprint_model_spec treats None as "" - omitted from identity
+        # entirely, so a graph drafted after a non-graph fit can't affect it.
+        assert (
+            current_structural_fingerprint_for_identity(
+                fit_time_structural_fingerprint="",
+                live_graph_dict=_minimal_valid_graph().to_dict(),
+            )
+            is None
+        )
+
+    def test_graph_used_at_fit_reads_the_live_graph_not_the_fit_time_value(self):
+        fit_time_graph = _minimal_valid_graph()
+        live_graph = _minimal_valid_graph()
+        live_graph.edges.append(
+            CausalEdge(
+                source_node_id="tv_spend",
+                target_node_id="fh_new",
+                role=EDGE_ROLE_EXCLUDED_DIAGNOSTIC_ONLY,
+                metadata={"note": "distinguishing edge"},
+            )
+        )
+        result = current_structural_fingerprint_for_identity(
+            fit_time_structural_fingerprint=fit_time_graph.structural_fingerprint(),
+            live_graph_dict=live_graph.to_dict(),
+        )
+        assert result == live_graph.structural_fingerprint()
+        assert result != fit_time_graph.structural_fingerprint()
+
+    def test_layout_only_live_edit_does_not_change_the_result(self):
+        fit_time_graph = _minimal_valid_graph()
+        live_graph = _minimal_valid_graph()
+        before = current_structural_fingerprint_for_identity(
+            fit_time_structural_fingerprint=fit_time_graph.structural_fingerprint(),
+            live_graph_dict=live_graph.to_dict(),
+        )
+        live_graph.layout = GraphLayout(
+            positions={"tv_spend": NodePosition(x=42.0, y=7.0)}
+        )
+        after = current_structural_fingerprint_for_identity(
+            fit_time_structural_fingerprint=fit_time_graph.structural_fingerprint(),
+            live_graph_dict=live_graph.to_dict(),
+        )
+        assert before == after == fit_time_graph.structural_fingerprint()
+
+    def test_missing_live_graph_fails_closed_to_empty_string(self):
+        fit_time_graph = _minimal_valid_graph()
+        result = current_structural_fingerprint_for_identity(
+            fit_time_structural_fingerprint=fit_time_graph.structural_fingerprint(),
+            live_graph_dict=None,
+        )
+        assert result == ""
+        assert result != fit_time_graph.structural_fingerprint()

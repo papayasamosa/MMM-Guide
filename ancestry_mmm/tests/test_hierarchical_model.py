@@ -101,6 +101,32 @@ class TestFHModelMetaOutcomeCatalogueDicts:
         assert meta.outcome_id_to_source_column == {"fh_new": "GSA_New"}
 
 
+class TestFHModelMetaCausalGraphIdentityDefaults:
+    """REQ-GRAPH-001 work package: fit-time causal graph identity fields
+    default to "not used" (empty string / 0), never None, so a bundle saved
+    before these fields existed round-trips through FHModelMeta(**meta_dict)
+    unchanged (core.persistence.reconstruct_model_state)."""
+
+    def test_defaults_when_no_graph_was_used(self):
+        meta = _meta()
+        assert meta.causal_graph_id == ""
+        assert meta.causal_graph_version == 0
+        assert meta.causal_graph_structural_fingerprint == ""
+        assert meta.causal_graph_engine == ""
+
+    def test_explicit_values_are_preserved(self):
+        meta = _meta(
+            causal_graph_id="graph-abc",
+            causal_graph_version=3,
+            causal_graph_structural_fingerprint="deadbeef",
+            causal_graph_engine="pymc_hierarchical",
+        )
+        assert meta.causal_graph_id == "graph-abc"
+        assert meta.causal_graph_version == 3
+        assert meta.causal_graph_structural_fingerprint == "deadbeef"
+        assert meta.causal_graph_engine == "pymc_hierarchical"
+
+
 class TestModelAModelCMetaConstructionParity:
     """PR E.2 required test case: "Model A and Model C parity" for the new
     metric_key/eligibility catalogue metadata. Both build_fh_hierarchical_model
@@ -169,6 +195,33 @@ class TestModelAModelCMetaConstructionParity:
             "exploratory_cells(outcome_ids, channels)",
             'prior_config.get("active_cross_product_sigma", 0.25)',
             'prior_config.get("exploratory_cross_product_sigma", 0.08)',
+        ):
+            assert field_expr in source_a, f"Model A missing: {field_expr}"
+            assert field_expr in source_c, f"Model C missing: {field_expr}"
+
+    def test_both_builders_bind_fit_time_causal_graph_identity_identically(self):
+        """REQ-GRAPH-001 work package: both builders must record the same
+        four fit-time graph identity fields on FHModelMeta from the same
+        `causal_graph` parameter - never reconstructed later from whatever
+        graph happens to be live, and never populated in only one builder."""
+        import inspect
+
+        from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
+        from ancestry_mmm.core.market_specific_model import (
+            build_fh_market_specific_model,
+        )
+
+        source_a = inspect.getsource(build_fh_hierarchical_model)
+        source_c = inspect.getsource(build_fh_market_specific_model)
+
+        for field_expr in (
+            "causal_graph_id=causal_graph.graph_id if causal_graph is not None else",
+            "causal_graph_version=(",
+            "causal_graph.graph_version if causal_graph is not None else 0",
+            "causal_graph_structural_fingerprint=(",
+            "causal_graph.structural_fingerprint() if causal_graph is not None else",
+            "causal_graph_engine=(",
+            "GRAPH_ENGINE_PYMC_HIERARCHICAL if causal_graph is not None else",
         ):
             assert field_expr in source_a, f"Model A missing: {field_expr}"
             assert field_expr in source_c, f"Model C missing: {field_expr}"

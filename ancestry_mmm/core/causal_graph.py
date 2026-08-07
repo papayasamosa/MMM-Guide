@@ -742,6 +742,46 @@ class CausalGraphDependencyIssue:
     detail: str
 
 
+def current_structural_fingerprint_for_identity(
+    *,
+    fit_time_structural_fingerprint: str,
+    live_graph_dict: Optional[Mapping[str, Any]],
+) -> Optional[str]:
+    """The one shared rule every page computing a current `ModelIdentity`
+    (`core.fingerprint.fingerprint_model_spec`'s `causal_graph_structural_
+    fingerprint` argument) must use, so a live structural edit to the causal
+    graph on the Causal Graph page - without a refit - correctly stales a
+    previously-granted `ModelApproval`/official curve/scenario the same way
+    any other model-identity-relevant change already does (REQ-GRAPH-001,
+    "structural graph changes stale dependent analytical state").
+
+    Returns `None` (fingerprint_model_spec then defaults this to `""`) when
+    the currently-loaded fit did not use a causal graph at all
+    (`fit_time_structural_fingerprint` falsy) - a draft or approved graph
+    that was never compiled into a fit is irrelevant to that fit's identity,
+    exactly as REQ-GRAPH-001 S4/S9 requires (a graph only becomes
+    authoritative once compiled and used).
+
+    When the fit *did* use a graph, this reads the **live** current graph
+    (`live_graph_dict`, e.g. `get_state("causal_graph")`) rather than the
+    fit-time value - so recomputing "the current identity" on every render
+    naturally diverges from the identity fingerprint bound into an already-
+    granted approval the moment a structural edit happens, without needing a
+    refit first. A layout-only edit never changes `structural_fingerprint()`
+    (see this module's docstring), so it never causes that divergence -
+    exactly the "layout-only movement does not stale" half of the same
+    requirement. `live_graph_dict` being empty/missing (the graph was
+    deleted from the project since the fit) fails closed to `""`, which
+    never matches a non-empty fit-time fingerprint - a missing graph can
+    never silently keep an approval "current".
+    """
+    if not fit_time_structural_fingerprint:
+        return None
+    if not live_graph_dict:
+        return ""
+    return CausalGraph.from_dict(live_graph_dict).structural_fingerprint()
+
+
 def graph_dependency_issues(
     current_structural_fingerprint: str,
     dependents: Sequence[Mapping[str, Any]],

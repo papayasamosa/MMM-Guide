@@ -31,7 +31,10 @@ from .transformations import pt_geometric_adstock_matrix, pt_hill_function
 from .schema import ModelSpec
 from .outcomes import outcome_eligibility
 from .causal_graph import CausalGraph
-from .graph_model_compiler import resolve_pathway_masks_preferring_graph
+from .graph_model_compiler import (
+    GRAPH_ENGINE_PYMC_HIERARCHICAL,
+    resolve_pathway_masks_preferring_graph,
+)
 from .pathways import (
     MediaOutcomePathway,
     ResolvedPathwayMasks,
@@ -147,6 +150,23 @@ class FHModelMeta:
     # overwrite with the legacy default instead of respecting it.
     pathway_masks: Optional[ResolvedPathwayMasks] = None
     net_billthrough_metadata: Optional[Any] = None
+    # REQ-GRAPH-001 work package: the exact approved CausalGraph actually
+    # compiled for this fit, when one was used - durable historical
+    # evidence of "which graph identity was authoritative for this model",
+    # never reconstructed after the fact from whatever graph happens to be
+    # live later. All four default to "" / 0 (never None) when no graph was
+    # used - every fit before this field existed, and every fit today that
+    # doesn't yet have an approved graph - so a bundle saved before this
+    # field existed round-trips through FHModelMeta(**meta_dict) unchanged.
+    # `causal_graph_structural_fingerprint` is the one of these four that
+    # `core.fingerprint.fingerprint_model_spec`/`core.causal_graph.
+    # current_structural_fingerprint_for_identity` actually read for model
+    # identity; `causal_graph_id`/`_version`/`_engine` are audit context
+    # only (which graph lineage/version/engine produced that fingerprint).
+    causal_graph_id: str = ""
+    causal_graph_version: int = 0
+    causal_graph_structural_fingerprint: str = ""
+    causal_graph_engine: str = ""
 
     def __post_init__(self) -> None:
         if not self.direct_dna_outcome_ids:
@@ -779,5 +799,15 @@ def build_fh_hierarchical_model(
         pathway_catalogue_at_fit=pathway_catalogue,
         pathway_masks=pathway_masks,
         net_billthrough_metadata=frame.get("net_billthrough_metadata"),
+        causal_graph_id=causal_graph.graph_id if causal_graph is not None else "",
+        causal_graph_version=(
+            causal_graph.graph_version if causal_graph is not None else 0
+        ),
+        causal_graph_structural_fingerprint=(
+            causal_graph.structural_fingerprint() if causal_graph is not None else ""
+        ),
+        causal_graph_engine=(
+            GRAPH_ENGINE_PYMC_HIERARCHICAL if causal_graph is not None else ""
+        ),
     )
     return model, meta
