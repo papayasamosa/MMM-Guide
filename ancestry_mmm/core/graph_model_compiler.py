@@ -9,8 +9,10 @@ an approved graph authoritative.
 
 No drag-and-drop editor and no MMM mathematics change here (REQ-GRAPH-001's
 own package boundary): this module only replaces *which object* resolves
-to a `ResolvedPathwayMasks` when a graph is supplied. When no graph is
-supplied - every project today, since no graph editor exists yet -
+to a `ResolvedPathwayMasks` when a graph is supplied. The drag-and-drop
+editor lives at `ancestry_mmm/pages/14_Causal_Graph.py`. When no graph is
+supplied - a project with no approved causal graph configured, which
+remains every project's default until an analyst builds and approves one -
 `resolve_pathway_masks_preferring_graph` below is a byte-for-byte passthrough
 to `core.pathways.resolve_validated_pathway_masks`.
 
@@ -302,8 +304,8 @@ def resolve_pathway_masks_preferring_graph(
     consulted - a graph and the legacy `MediaOutcomePathway` catalogue can
     never silently disagree in a compiled result, because only one of them
     is ever read for it (REQ-GRAPH-001: "no second hidden relationship
-    configuration"). If no graph is supplied - every project today, since
-    no graph editor exists yet - this is a byte-for-byte passthrough to
+    configuration"). If no graph is supplied - a project with no approved
+    causal graph configured - this is a byte-for-byte passthrough to
     `core.pathways.resolve_validated_pathway_masks`, identical to what
     every existing caller already gets.
     """

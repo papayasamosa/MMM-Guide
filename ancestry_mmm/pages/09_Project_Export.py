@@ -69,6 +69,7 @@ from ancestry_mmm.core.fingerprint import (
     fingerprint_posterior,
 )
 from ancestry_mmm.core.causal_graph import (
+    current_graph_from_resolved_versions,
     current_structural_fingerprint_for_identity,
     graph_versions_for_export,
 )
@@ -511,10 +512,7 @@ if uploaded_zip is not None and st.button("Import bundle"):
         _resolved_graphs, _graph_warnings = resolve_imported_causal_graphs(imported)
         set_state("causal_graph_versions", _resolved_graphs)
         set_state(
-            "causal_graph",
-            max(_resolved_graphs, key=lambda g: g.get("graph_version", 0))
-            if _resolved_graphs
-            else None,
+            "causal_graph", current_graph_from_resolved_versions(_resolved_graphs)
         )
         for _graph_warning in _graph_warnings:
             st.warning(_graph_warning)

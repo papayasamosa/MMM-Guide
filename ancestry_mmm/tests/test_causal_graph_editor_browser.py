@@ -47,6 +47,11 @@ from ancestry_mmm.tests.support.lifecycle_fixture import build_lifecycle_project
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 STARTUP_TIMEOUT_SECONDS = 60
+# CI's "Upload failure artefacts" step (.github/workflows/tests.yml, job
+# `browser`) uploads test-artifacts/playwright/** only `if: failure()` - a
+# repo-relative, not a pytest tmp_path, location so it survives test
+# teardown for that later step to find.
+FAILURE_ARTIFACT_DIR = REPO_ROOT / "test-artifacts" / "playwright"
 
 
 def _select_option(
@@ -208,9 +213,8 @@ def streamlit_base_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
     )
-    stdout_log_path = (
-        tmp_path_factory.mktemp("causal-graph-browser-server-log") / "streamlit.log"
-    )
+    FAILURE_ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+    stdout_log_path = FAILURE_ARTIFACT_DIR / "causal-graph-streamlit-server.log"
     drain_thread = _drain_subprocess_output(proc, stdout_log_path)
     base_url = f"http://127.0.0.1:{port}"
     deadline = time.monotonic() + STARTUP_TIMEOUT_SECONDS

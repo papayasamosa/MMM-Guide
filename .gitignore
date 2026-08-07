@@ -98,6 +98,10 @@ config/mcp/*.local.json
 config/mcp/*.env
 !config/mcp/*.env.example
 test-artifacts/playwright-mcp/
+# Browser test failure evidence (screenshots, traces, server logs) - written
+# to this repo-relative path so CI's "Upload failure artefacts" step
+# (.github/workflows/tests.yml, job `browser`) can find it, never committed.
+test-artifacts/playwright/
 logs/mcp/
 playwright/.auth/
 storage-state.json

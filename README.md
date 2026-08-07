@@ -25,9 +25,12 @@ uv run streamlit run ancestry_mmm/app.py
 
 Opens at `http://localhost:8501`. From there: **Data Upload** → click "Load synthetic demo
 sources" for a working UK/Australia/Canada dataset with no setup required, then work through the
-sidebar in order (Transform Pipeline → Structure → Channel & Media Units → Market Descriptors →
-Model Configuration → Model Training → Compare Models → Diagnostics → Results & Curve Bank →
-Scenario Planner → Project Export & Recovery).
+sidebar in order (Transform Pipeline → Structure → Causal Graph → Channel & Media Units → Market
+Descriptors → Model Configuration → Model Training → Compare Models → Diagnostics → Results &
+Curve Bank → Scenario Planner → Project Export & Recovery). Causal Graph is optional - build and
+approve a variable-level causal graph there and it becomes the sole authoritative structural input
+to model compilation (REQ-GRAPH-001); skip it and Model Training falls back to the
+`MediaOutcomePathway` catalogue configured on Structure exactly as before.
 
 Requires Python 3.11 or 3.12 (see [Deployment](#deployment) below for why there's an upper bound).
 

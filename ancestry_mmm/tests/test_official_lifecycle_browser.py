@@ -23,6 +23,7 @@ import re
 import socket
 import subprocess
 import sys
+import threading
 import time
 from datetime import date
 from pathlib import Path
@@ -36,6 +37,36 @@ from ancestry_mmm.tests.support.lifecycle_fixture import build_lifecycle_project
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 STARTUP_TIMEOUT_SECONDS = 60
+# CI's "Upload failure artefacts" step (.github/workflows/tests.yml, job
+# `browser`) uploads test-artifacts/playwright/** only `if: failure()` - a
+# repo-relative, not a pytest tmp_path, location so it survives test
+# teardown for that later step to find.
+FAILURE_ARTIFACT_DIR = REPO_ROOT / "test-artifacts" / "playwright"
+
+
+def _drain_subprocess_output(
+    proc: subprocess.Popen, log_path: Path
+) -> threading.Thread:
+    """Continuously read `proc.stdout` to a file on a background thread -
+    see test_causal_graph_editor_browser.py's identical helper for why this
+    must never be skipped (an undrained OS pipe can silently deadlock the
+    whole app mid-test), and it doubles as the real server-side log a
+    failed run leaves behind in FAILURE_ARTIFACT_DIR for CI to upload."""
+    assert proc.stdout is not None
+    stdout = proc.stdout
+
+    def _pump() -> None:
+        try:
+            with log_path.open("wb") as fh:
+                for chunk in iter(lambda: stdout.read(4096), b""):
+                    fh.write(chunk)
+                    fh.flush()
+        except ValueError:
+            pass  # our end of the pipe was closed from the main thread
+
+    thread = threading.Thread(target=_pump, daemon=True)
+    thread.start()
+    return thread
 
 
 def _click_until_visible(
@@ -107,6 +138,9 @@ def streamlit_base_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
     )
+    FAILURE_ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+    stdout_log_path = FAILURE_ARTIFACT_DIR / "lifecycle-streamlit-server.log"
+    drain_thread = _drain_subprocess_output(proc, stdout_log_path)
     base_url = f"http://127.0.0.1:{port}"
     deadline = time.monotonic() + STARTUP_TIMEOUT_SECONDS
     ready = False
@@ -122,19 +156,18 @@ def streamlit_base_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str
                 pass
             time.sleep(1.0)
         if not ready:
-            # Terminate before reading stdout: if the process is still alive
-            # (e.g. a slow/hung import rather than a clean exit), `read()`
-            # blocks until EOF and would ignore STARTUP_TIMEOUT_SECONDS
-            # entirely, leaving CI to sit until the outer job timeout kills
-            # pytest with no useful RuntimeError.
             if proc.poll() is None:
                 proc.terminate()
             try:
-                output = proc.communicate(timeout=10)[0]
+                proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 proc.kill()
-                output = proc.communicate(timeout=10)[0]
-            text = output.decode(errors="replace") if output else ""
+                proc.wait(timeout=10)
+            text = (
+                stdout_log_path.read_text(errors="replace")
+                if stdout_log_path.exists()
+                else ""
+            )
             raise RuntimeError(
                 f"Streamlit did not become ready within {STARTUP_TIMEOUT_SECONDS}s.\n{text}"
             )
@@ -147,12 +180,10 @@ def streamlit_base_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait(timeout=10)
-        # proc.wait() only waits for process exit - unlike communicate(), it
-        # never closes the stdout pipe this Popen was given, so on the
-        # normal success path (never hitting the communicate() call in the
-        # not-ready branch above) that pipe's file descriptor stayed open
-        # until the Popen object was eventually garbage collected, raising
-        # a ResourceWarning at some later, unrelated point.
+        # The process exiting closes its end of the pipe, which unblocks the
+        # drain thread's read() with EOF - join it before closing our end
+        # ourselves, so the thread never reads from an already-closed file.
+        drain_thread.join(timeout=10)
         if proc.stdout is not None:
             proc.stdout.close()
 
