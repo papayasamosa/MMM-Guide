@@ -9,11 +9,23 @@ work.
 
 ## Capability status
 
-Not yet implemented. This record is requirement/design only — it defines
-the distinct semantic objects and their governance contract; a dependent
-requirement implements the domain/data/UI representation
-(`REQ-SEARCH-002`), and no requirement yet implements Search demand or
-capacity mathematics (see Out of scope below).
+Partially implemented. `core.search_objects.SearchObjectDefinition` governs
+identity, unit, scope, provenance, planning eligibility, and cross-object
+validation for the first six §1 concepts; `Channel & Media Units` (page 10)
+is the governance UI; `core.persistence` round-trips governed records
+through project export/import (`config/search_objects.json`,
+`resolve_imported_search_objects`); the Causal Graph page's "Seed nodes"
+action seeds a graph node per §8's role mapping. §1.7 (residual Paid Search
+incrementality) remains exactly `core.brand_search`'s existing mechanism -
+untouched.
+
+Not yet implemented: Search demand/capacity mathematics (see Out of scope
+below, unchanged), and binding a Search object's identity into a fitted
+model's governed identity (`core.search_objects.search_objects_fingerprint`
+exists and is tested, but is not yet threaded into
+`core.fingerprint.fingerprint_model_spec` the way `activity_fit_fingerprint`
+already is - deferred to when a fit actually consumes a Search object's
+`model_input_column`).
 
 ### What already exists today (do not duplicate)
 
@@ -167,10 +179,12 @@ predictor).
 
 ### 7. Future role
 
-Once a dependent requirement implements the domain objects, these become
-selectable in Structure: Segments & Markets (activity registration) and, if
-a causal graph is used, as typed graph nodes (§8). No page or model
-behaviour changes as a *direct* result of this record.
+Governed on `Channel & Media Units` (page 10), and seedable as typed graph
+nodes on the Causal Graph page (§8). Registering a Search object changes no
+fitting behaviour by itself - it is not yet read by either model builder
+(no `model_input_mapping` wiring into `resolve_pathway_masks_preferring_graph`
+or the legacy pathway catalogue); that remains a future, explicitly-scoped
+step, not an implicit consequence of registration.
 
 ### 8. Graph role
 

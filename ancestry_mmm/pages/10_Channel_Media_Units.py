@@ -44,6 +44,13 @@ from ancestry_mmm.core.activities import (
     ActivityDefinition,
     activity_invalidation,
 )
+from ancestry_mmm.core.search_objects import (
+    SEARCH_OBJECT_STATES,
+    SEARCH_ROLES,
+    SEARCH_UNITS,
+    SearchObjectDefinition,
+    validate_search_object_catalogue,
+)
 from ancestry_mmm.data import detect_column_types
 
 st.set_page_config(
@@ -278,6 +285,112 @@ if st.button("Save required activity governance", type="primary"):
                 )
             else:
                 st.success("Required activity governance saved.")
+
+st.markdown("---")
+st.markdown("### Optional: governed Search objects")
+st.caption(
+    "REQ-SEARCH-001: branded-search demand, Paid Search spend/delivery/cap, "
+    "organic-search capture, and direct-navigation capture are governed as "
+    "distinct objects here - never inferred by name-matching a column. A "
+    "raw column already governed under one Search role cannot also be "
+    "registered under a different one."
+)
+existing_search_object_items = get_state("search_objects") or []
+if existing_search_object_items:
+    search_object_rows = [
+        SearchObjectDefinition.from_dict(item).to_dict()
+        for item in existing_search_object_items
+    ]
+else:
+    search_object_rows = []
+
+search_object_columns = [
+    "market",
+    "search_object_id",
+    "search_role",
+    "source_column",
+    "unit",
+    "currency",
+    "product",
+    "state",
+    "planning_eligibility",
+    "model_input_column",
+    "source",
+    "approval_status",
+    "approved_by",
+    "approved_at",
+]
+search_object_editor = st.data_editor(
+    pd.DataFrame(search_object_rows).reindex(columns=search_object_columns),
+    num_rows="dynamic",
+    width="stretch",
+    key="search_object_governance_editor",
+    column_config={
+        "market": st.column_config.SelectboxColumn(
+            "Market", options=spec.markets, required=True
+        ),
+        "search_role": st.column_config.SelectboxColumn(
+            "Search role", options=sorted(SEARCH_ROLES), required=True
+        ),
+        "unit": st.column_config.SelectboxColumn(
+            "Unit", options=sorted(SEARCH_UNITS), required=True
+        ),
+        "state": st.column_config.SelectboxColumn(
+            "State", options=sorted(SEARCH_OBJECT_STATES), required=True
+        ),
+        "planning_eligibility": st.column_config.SelectboxColumn(
+            "Planning", options=sorted(PLANNING_ELIGIBILITY), required=True
+        ),
+        "approval_status": st.column_config.SelectboxColumn(
+            "Approval", options=sorted(APPROVAL_STATUSES), required=True
+        ),
+    },
+)
+
+search_object_definitions = []
+search_object_errors = []
+for row_number, row in search_object_editor.fillna("").iterrows():
+    if not str(row["search_object_id"]):
+        continue
+    try:
+        search_object_definitions.append(
+            SearchObjectDefinition(
+                search_object_id=str(row["search_object_id"]),
+                search_role=str(row["search_role"]),
+                source_column=str(row["source_column"]),
+                unit=str(row["unit"]),
+                market=str(row["market"] or "*"),
+                product=str(row["product"]),
+                currency=str(row["currency"]),
+                state=str(row["state"] or "observed"),
+                planning_eligibility=str(row["planning_eligibility"] or "excluded"),
+                model_input_column=str(row["model_input_column"]),
+                source=str(row["source"] or "channel & media units UI"),
+                approval_status=str(row["approval_status"] or "draft"),
+                approved_by=str(row["approved_by"]) or None,
+                approved_at=str(row["approved_at"]) or None,
+            )
+        )
+    except ValueError as error:
+        search_object_errors.append(f"Row {row_number + 1}: {error}")
+
+for issue in validate_search_object_catalogue(search_object_definitions):
+    search_object_errors.append(
+        f"{issue.search_object_id} (market {issue.market}): {issue.detail}"
+    )
+
+for error in search_object_errors:
+    st.error(error)
+
+if st.button("Save Search object governance"):
+    if search_object_errors:
+        st.error("Nothing was saved. Resolve every Search object error first.")
+    else:
+        set_state(
+            "search_objects",
+            [definition.to_dict() for definition in search_object_definitions],
+        )
+        st.success("Search object governance saved.")
 
 st.markdown("---")
 st.markdown("### Optional: physical media-unit and cost mapping")

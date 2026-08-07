@@ -69,6 +69,17 @@ Bundle layout (a single zip):
                                           causal_graph_structural_fingerprint
                                           (core.hierarchical_model.FHModelMeta) has
                                           no matching record here.
+    config/search_objects.json         - REQ-SEARCH-001: every governed
+                                          `SearchObjectDefinition` (branded-search
+                                          demand, Paid Search spend/delivery/cap,
+                                          organic-search capture, direct-navigation
+                                          capture - core.search_objects). Absent
+                                          for every bundle exported before this
+                                          capability existed, and for any current
+                                          project with no Search objects governed
+                                          yet - "none governed yet" is a valid,
+                                          not-an-error reading (see
+                                          resolve_imported_search_objects below).
     scenarios/scenario_<i>_predicted.csv
     model/trace.nc                     - fitted posterior (ArviZ InferenceData, NetCDF)
     curve_bank/*.json                  - curve bank + calibration records, if any
@@ -131,8 +142,9 @@ from .schema import ModelSpec
 from .optimization import SpendConstraint
 
 # REQ-GRAPH-001: bumped 11 -> 12 for the project-level causal_graphs bundle
-# file (see export_project()'s docstring).
-PROJECT_BUNDLE_SCHEMA_VERSION = 12
+# file (see export_project()'s docstring). REQ-SEARCH-001: bumped 12 -> 13
+# for the project-level search_objects bundle file.
+PROJECT_BUNDLE_SCHEMA_VERSION = 13
 PROJECT_APP_VERSION = "0.1.0"
 
 
@@ -225,6 +237,7 @@ def export_project(
     currency_context: Optional[dict] = None,
     value_mapping: Optional[dict] = None,
     causal_graphs: Optional[List[dict]] = None,
+    search_objects: Optional[List[dict]] = None,
 ) -> Path:
     output_path = Path(output_path)
     with tempfile.TemporaryDirectory() as tmp_str:
@@ -368,6 +381,13 @@ def export_project(
             (tmp / "config" / "causal_graphs.json").write_text(
                 json.dumps(causal_graphs, indent=2, default=str)
             )
+        # REQ-SEARCH-001: governed Search object definitions (search_demand,
+        # paid_search_spend/delivery/cap, organic_search_capture,
+        # direct_navigation_capture) - see resolve_imported_search_objects.
+        if search_objects is not None:
+            (tmp / "config" / "search_objects.json").write_text(
+                json.dumps(search_objects, indent=2, default=str)
+            )
         if diagnostics is not None:
             for name, value in diagnostics.items():
                 if value is None:
@@ -436,6 +456,7 @@ def export_project(
                 "currency_context": currency_context is not None,
                 "value_mapping": value_mapping is not None,
                 "causal_graphs": causal_graphs is not None and bool(causal_graphs),
+                "search_objects": search_objects is not None and bool(search_objects),
             },
         }
         (tmp / "manifest.json").write_text(json.dumps(manifest, indent=2, default=str))
@@ -531,6 +552,10 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         # existed - "no graph yet" is a valid, not-an-error reading, same
         # convention as funnel_links/media_outcome_pathways above.
         "causal_graphs": None,
+        # REQ-SEARCH-001: None for bundles exported before this capability
+        # existed - "no Search objects governed yet" is a valid,
+        # not-an-error reading, same convention as causal_graphs above.
+        "search_objects": None,
     }
     with tempfile.TemporaryDirectory() as tmp_str:
         tmp = Path(tmp_str)
@@ -670,6 +695,10 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         if (config_dir / "causal_graphs.json").exists():
             result["causal_graphs"] = json.loads(
                 (config_dir / "causal_graphs.json").read_text()
+            )
+        if (config_dir / "search_objects.json").exists():
+            result["search_objects"] = json.loads(
+                (config_dir / "search_objects.json").read_text()
             )
         # G2A.7 (REQ-OUT-002): outcome approvals persisted alongside outcome
         # definitions. Absent in legacy bundles — treated as no approvals on
@@ -859,6 +888,74 @@ def resolve_imported_causal_graphs(
                 f"kept): {exc}"
             )
     return normalised, warnings
+
+
+def resolve_imported_search_objects(
+    imported: Dict[str, Any],
+) -> Tuple[List[dict], List[str]]:
+    """REQ-SEARCH-001: resolve the governed `SearchObjectDefinition` records
+    an imported bundle should use. Each record is round-tripped through
+    `SearchObjectDefinition.from_dict`/`to_dict` for validation - a
+    malformed record is quarantined (dropped), never silently discarded
+    without a trace: it is named by index in `warnings` and excluded from
+    the returned list, mirroring `resolve_imported_causal_graphs`'s
+    never-trust-silently contract. The surviving records are then run
+    through `validate_search_object_catalogue` - a cross-object issue (a
+    duplicate identity, or the same source column claimed by two different
+    search roles) is reported the same way, never silently accepted just
+    because each record was individually well-formed.
+
+    A bundle with no `search_objects.json` file (every bundle exported
+    before this capability existed, and every current project with no
+    Search objects governed yet) resolves to an empty list with no
+    warnings - that is the correct "none governed yet" reading, not an
+    error.
+    """
+    from .search_objects import SearchObjectDefinition, validate_search_object_catalogue
+
+    raw_objects = imported.get("search_objects")
+    warnings: List[str] = []
+    if not raw_objects:
+        return [], warnings
+
+    normalised: List[SearchObjectDefinition] = []
+    for index, item in enumerate(raw_objects):
+        if not isinstance(item, Mapping):
+            input_type = type(item).__name__
+            warnings.append(
+                f"Search object record {index} is not a mapping "
+                f"(type={input_type!r}) and was quarantined "
+                "(dropped, not silently kept)."
+            )
+            continue
+        try:
+            normalised.append(SearchObjectDefinition.from_dict(item))
+        except (TypeError, ValueError, KeyError, AttributeError) as exc:
+            search_object_id = item.get("search_object_id", "<unknown>")
+            warnings.append(
+                f"Search object record {index} "
+                f"(search_object_id={search_object_id!r}) was malformed and "
+                f"was quarantined (dropped, not silently kept): {exc}"
+            )
+
+    catalogue_issues = validate_search_object_catalogue(normalised)
+    if catalogue_issues:
+        quarantined_keys = {
+            (issue.market, issue.search_object_id) for issue in catalogue_issues
+        }
+        warnings.extend(
+            f"Search object {issue.search_object_id!r} (market "
+            f"{issue.market!r}) was quarantined ({issue.issue_type}): "
+            f"{issue.detail}"
+            for issue in catalogue_issues
+        )
+        normalised = [
+            defn
+            for defn in normalised
+            if (defn.market, defn.search_object_id) not in quarantined_keys
+        ]
+
+    return [defn.to_dict() for defn in normalised], warnings
 
 
 def _validate_relative_artifact_path(rel_path: str) -> None:

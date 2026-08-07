@@ -57,6 +57,7 @@ from ancestry_mmm.core.persistence import (
     replace_curve_artifact_store,
     resolve_imported_causal_graphs,
     resolve_imported_outcome_approvals,
+    resolve_imported_search_objects,
     verify_imported_approval,
 )
 from ancestry_mmm.core.predict import extract_posterior_params
@@ -1387,6 +1388,106 @@ def test_resolve_imported_causal_graphs_quarantines_malformed_records():
     assert len(warnings) == 3
     assert any("future-schema" in w for w in warnings)
     assert any("not a mapping" in w for w in warnings)
+
+
+def test_export_then_import_search_objects_round_trip(tmp_path, sample_project):
+    """REQ-SEARCH-001: config/search_objects.json round-trips through
+    export_project/import_project like every other project-level governed
+    file (causal_graphs, counterfactual_policy, ...)."""
+    from ancestry_mmm.core.search_objects import (
+        SEARCH_ROLE_PAID_SPEND,
+        UNIT_MONETARY,
+        SearchObjectDefinition,
+    )
+
+    search_object = SearchObjectDefinition(
+        search_object_id="uk_paid_search_spend",
+        search_role=SEARCH_ROLE_PAID_SPEND,
+        source_column="paid_search_gbp_spend",
+        unit=UNIT_MONETARY,
+        currency="GBP",
+        market="UK",
+        planning_eligibility="optimisable",
+    )
+    project = dict(sample_project)
+    project["search_objects"] = [search_object.to_dict()]
+
+    bundle_path = export_project(tmp_path / "bundle.zip", **project)
+    imported = import_project(bundle_path)
+
+    objects, warnings = resolve_imported_search_objects(imported)
+    assert warnings == []
+    assert len(objects) == 1
+    assert objects[0]["search_object_id"] == "uk_paid_search_spend"
+
+
+def test_import_project_search_objects_absent_for_legacy_bundle(
+    tmp_path, sample_project
+):
+    bundle_path = export_project(tmp_path / "bundle.zip", **sample_project)
+    imported = import_project(bundle_path)
+    assert imported["search_objects"] is None
+    objects, warnings = resolve_imported_search_objects(imported)
+    assert objects == []
+    assert warnings == []
+
+
+def test_resolve_imported_search_objects_quarantines_malformed_records():
+    imported = {
+        "search_objects": [
+            {
+                "search_object_id": "good",
+                "search_role": "paid_search_spend",
+                "source_column": "spend_col",
+                "unit": "monetary",
+                "currency": "GBP",
+                "market": "UK",
+            },
+            {
+                "search_object_id": "bad-role",
+                "search_role": "not_a_real_role",
+                "source_column": "x",
+                "unit": "monetary",
+                "currency": "GBP",
+            },
+            "not-a-mapping",
+            {"source_column": "x"},  # missing required search_object_id
+        ]
+    }
+    objects, warnings = resolve_imported_search_objects(imported)
+    assert len(objects) == 1
+    assert objects[0]["search_object_id"] == "good"
+    assert len(warnings) == 3
+    assert any("bad-role" in w for w in warnings)
+    assert any("not a mapping" in w for w in warnings)
+
+
+def test_resolve_imported_search_objects_quarantines_cross_object_column_alias():
+    """REQ-SEARCH-001 S14: a click column already governed as
+    paid_search_delivery cannot also be registered as paid_search_cap in
+    the same imported bundle."""
+    imported = {
+        "search_objects": [
+            {
+                "search_object_id": "uk_delivery",
+                "search_role": "paid_search_delivery",
+                "source_column": "paid_search_clicks",
+                "unit": "exposure_count",
+                "market": "UK",
+            },
+            {
+                "search_object_id": "uk_cap",
+                "search_role": "paid_search_cap",
+                "source_column": "paid_search_clicks",
+                "unit": "exposure_count",
+                "market": "UK",
+            },
+        ]
+    }
+    objects, warnings = resolve_imported_search_objects(imported)
+    assert objects == []
+    assert len(warnings) == 2
+    assert all("incompatible_column_alias" in w for w in warnings)
 
 
 def test_audit_resumability_officially_resumable_false_without_approvals():

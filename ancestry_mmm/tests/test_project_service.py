@@ -478,6 +478,53 @@ class TestProjectExportInputCausalGraphs:
         assert imported["causal_graphs"] is None
 
 
+class TestProjectExportInputSearchObjects:
+    """REQ-SEARCH-001 work package: search_objects - the new
+    ProjectExportInput field mirroring causal_graphs above, threaded
+    through ProjectService.export() to export_project()."""
+
+    def test_export_passes_field_through_to_the_bundle(
+        self, tmp_path, governed_project
+    ):
+        from ancestry_mmm.core.search_objects import (
+            SEARCH_ROLE_PAID_SPEND,
+            UNIT_MONETARY,
+            SearchObjectDefinition,
+        )
+
+        search_object = SearchObjectDefinition(
+            search_object_id="uk_paid_search_spend",
+            search_role=SEARCH_ROLE_PAID_SPEND,
+            source_column="paid_search_gbp_spend",
+            unit=UNIT_MONETARY,
+            currency="GBP",
+            market="UK",
+            planning_eligibility="optimisable",
+        )
+        governed_project = dict(governed_project)
+        governed_project["search_objects"] = [search_object.to_dict()]
+        exp_input = ProjectExportInput(
+            output_path=str(tmp_path / "bundle.zip"),
+            **governed_project,
+        )
+        result = ProjectService().export(exp_input)
+
+        assert result.success, result.errors
+        imported = import_project(result.actual_export_path)
+        assert imported["search_objects"] == governed_project["search_objects"]
+
+    def test_export_omits_field_when_none(self, tmp_path, governed_project):
+        exp_input = ProjectExportInput(
+            output_path=str(tmp_path / "bundle.zip"),
+            **governed_project,
+        )
+        result = ProjectService().export(exp_input)
+
+        assert result.success, result.errors
+        imported = import_project(result.actual_export_path)
+        assert imported["search_objects"] is None
+
+
 class TestProjectExportInputCurveArtifactStore:
     """PR 96B: curve_artifact_store_source_dir - a new ProjectExportInput
     field mirroring the pre-existing curve_bank_source_dir, threaded
