@@ -146,8 +146,17 @@ requirements brief).
 ## Testing and checks
 
 ```bash
-uv run pytest ancestry_mmm/tests/    # unit + integration tests
+uv run pytest ancestry_mmm/tests/    # unit + integration tests (lenient 30% coverage floor - see below)
 uv run ruff check ancestry_mmm/      # linting
+```
+
+The command above uses `pyproject.toml`'s lenient default coverage floor (30%), which exists only
+so narrow, partial runs (a single test file, one CI job's subset) don't spuriously fail. The
+project's real, blocking floor is 75%, and has one named command that reproduces it exactly as CI
+enforces it:
+
+```powershell
+scripts/run_full_test_suite.ps1
 ```
 
 The suite covers the safe zip-import path (path-traversal protection), project export/import
@@ -185,9 +194,12 @@ Ancestry-specific tool.
 | `mmm_complete_example.ipynb` | Additive | `Sales = Baseline + Media_Effects + Controls`, with adstock, Hill saturation, PyMC model building, convergence diagnostics, and budget optimisation |
 | `mmm_multiplicative_example.ipynb` | Multiplicative | Log-log (elasticity) and lift-factor specifications, plus Shapley decomposition for multiplicative models |
 
-Run them with:
+Jupyter is not installed by a plain `uv sync` - it lives in the `notebook`
+dependency group so the app's runtime install stays free of notebook
+tooling it never uses. Install it, then run:
 
 ```bash
+uv sync --locked --group notebook
 uv run jupyter lab
 ```
 

@@ -20,7 +20,7 @@ import json
 import re
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Mapping, Optional, Tuple
 
 from .outcomes import (
     OutcomeDefinition,
@@ -291,7 +291,7 @@ class OutcomeApproval:
         return values
 
     @classmethod
-    def from_dict(cls, d: dict) -> "OutcomeApproval":
+    def from_dict(cls, d: Mapping[str, object]) -> "OutcomeApproval":
         known = set(cls.__dataclass_fields__)
         payload = {k: v for k, v in d.items() if k in known}
         for tuple_field in (

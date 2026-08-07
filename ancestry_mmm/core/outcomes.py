@@ -27,7 +27,7 @@ input, not `spec.segment_outcomes` directly.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Dict, List, Optional
+from typing import Dict, List, Mapping, Optional
 
 import pandas as pd
 
@@ -426,7 +426,7 @@ class OutcomeDefinition:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, d: dict) -> "OutcomeDefinition":
+    def from_dict(cls, d: Mapping[str, object]) -> "OutcomeDefinition":
         # Migration: a bundle saved before this schema's fields existed
         # simply doesn't have them - dataclass defaults apply automatically
         # (derived `unit`, "primary" `role`, `included_in_fit=True`), so an
