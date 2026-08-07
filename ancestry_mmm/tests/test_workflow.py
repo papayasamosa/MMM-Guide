@@ -21,6 +21,7 @@ EXPECTED_LABELS = [
     "Data Upload",
     "Transform Pipeline",
     "Structure: Segments & Markets",
+    "Causal Graph",
     "Channel & Media Units",
     "Market Descriptors",
     "Model Configuration",
@@ -58,9 +59,9 @@ class TestSidebarEntries:
 
 
 class TestWorkflowStepMetadata:
-    def test_total_steps_is_thirteen(self):
-        assert TOTAL_STEPS == 13
-        assert len(WORKFLOW_STEPS) == 13
+    def test_total_steps_is_fourteen(self):
+        assert TOTAL_STEPS == 14
+        assert len(WORKFLOW_STEPS) == 14
 
     def test_every_step_has_required_fields(self):
         for step in WORKFLOW_STEPS:

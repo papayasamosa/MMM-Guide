@@ -20,6 +20,7 @@ from ancestry_mmm.components import (
     render_drift_status,
 )
 from ancestry_mmm.core.schema import ModelSpec
+from ancestry_mmm.core.causal_graph import GRAPH_STATUS_APPROVED, CausalGraph
 from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
 from ancestry_mmm.core.market_specific_model import build_fh_market_specific_model
 from ancestry_mmm.core.models import fit_model
@@ -91,6 +92,17 @@ if st.button("Build & fit model", type="primary"):
     dna_lag_weeks = get_state("dna_lag_weeks", 4)
     direct_dna_outcome_ids = get_state("direct_dna_outcome_ids") or None
 
+    # REQ-GRAPH-001 work package D/E: an approved causal graph, when one
+    # exists for this project, is the sole authoritative structural input -
+    # resolve_pathway_masks_preferring_graph (inside both builders below)
+    # ignores the raw MediaOutcomePathway catalogue entirely once this is
+    # supplied. None (every project without a graph, or with only a draft
+    # graph) reproduces exactly today's pathway-catalogue-driven behaviour.
+    causal_graph_dict = get_state("causal_graph")
+    causal_graph = None
+    if causal_graph_dict and causal_graph_dict.get("status") == GRAPH_STATUS_APPROVED:
+        causal_graph = CausalGraph.from_dict(causal_graph_dict)
+
     try:
         with st.spinner("Building model..."):
             if model_type == "market_specific":
@@ -101,6 +113,7 @@ if st.button("Build & fit model", type="primary"):
                     prior_config=prior_config,
                     dna_outcome_id=spec.fh_dna_cross_sell_outcome_id,
                     direct_dna_outcome_ids=direct_dna_outcome_ids,
+                    causal_graph=causal_graph,
                 )
             else:
                 model, meta = build_fh_hierarchical_model(
@@ -110,6 +123,7 @@ if st.button("Build & fit model", type="primary"):
                     prior_config=prior_config,
                     dna_outcome_id=spec.fh_dna_cross_sell_outcome_id,
                     direct_dna_outcome_ids=direct_dna_outcome_ids,
+                    causal_graph=causal_graph,
                 )
     except ValueError as e:
         st.error(

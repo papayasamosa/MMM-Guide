@@ -34,6 +34,8 @@ dependencies = [
     "plotly>=5.18.0",
     # Streamlit app (ancestry_mmm/)
     "streamlit>=1.30.0",
+    # REQ-GRAPH-001: drag-and-drop causal graph canvas (wraps React Flow)
+    "streamlit-flow-component>=1.5.0",
     # Statistics and ML utilities
     "scikit-learn>=1.3.0",
     "statsmodels>=0.14.0",

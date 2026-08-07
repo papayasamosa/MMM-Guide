@@ -1676,6 +1676,7 @@ dependencies = [
     { name = "seaborn" },
     { name = "statsmodels" },
     { name = "streamlit" },
+    { name = "streamlit-flow-component" },
     { name = "tqdm" },
 ]
 
@@ -1726,6 +1727,7 @@ requires-dist = [
     { name = "seaborn", specifier = ">=0.13.0" },
     { name = "statsmodels", specifier = ">=0.14.0" },
     { name = "streamlit", specifier = ">=1.30.0" },
+    { name = "streamlit-flow-component", specifier = ">=1.5.0" },
     { name = "tqdm", specifier = ">=4.66.0" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'api'", specifier = ">=0.27.0" },
 ]
@@ -3285,6 +3287,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/91/70/1d488cb07fe8510805233c7128272d6502e621146eb0531420211279a898/streamlit-1.59.1.tar.gz", hash = "sha256:0f75162a43b1cd2542f34bff3168c4ea56c7a151fa80bfea02499913fbfccfca", size = 9770793, upload-time = "2026-07-08T12:57:03.26Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/49/84/732e4c832a6ec79cc3119aea2da367bbc00c376a41a063bc477d62e20077/streamlit-1.59.1-py3-none-any.whl", hash = "sha256:b00d41fa9024d28ab30b81e56ddf07d61cda6ae625231dcb13e0be6c07ef1e0f", size = 10338093, upload-time = "2026-07-08T12:57:00.954Z" },
+]
+
+[[package]]
+name = "streamlit-flow-component"
+version = "1.6.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "streamlit" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/6f/96/67e4d8843debfdbb73ba6a66548e23f3296e0c6c990c65cb37698a94f856/streamlit-flow-component-1.6.1.tar.gz", hash = "sha256:16998d94731f494358d3ce03a73795e127c39fcefa0662666f524bd017493388", size = 2073059, upload-time = "2025-02-28T00:53:17.03Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a0/54/ae94d63815d7bbfd71d7406b43c56b7d666a2dd24702b50ddfdde9b0c724/streamlit_flow_component-1.6.1-py3-none-any.whl", hash = "sha256:1664fc081bf343443e4aca17942434a72808d59e4f55c19d520caa19779bf538", size = 2092632, upload-time = "2025-02-28T00:53:13.318Z" },
 ]
 
 [[package]]

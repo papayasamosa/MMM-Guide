@@ -38,6 +38,24 @@ def init_session_state():
         "media_input_support": [],
         "monetary_spend_support": [],
         "activity_definitions": [],
+        # REQ-GRAPH-001: the current CausalGraph version being edited (draft
+        # or approved), as a dict (core.causal_graph.CausalGraph.to_dict()).
+        # None until a graph is first saved on the Causal Graph page -
+        # every project today, since this is optional and MediaOutcomePathway/
+        # FunnelLink above remain the sole compilation input until a graph
+        # is approved. "causal_graph_versions" is the append-only saved
+        # version history (list of dicts, oldest first). Neither is cleared
+        # by clear_model_state() - a graph is analyst-declared structural
+        # configuration, not a fit-derived artefact, same category as
+        # model_spec/media_outcome_pathways. "causal_graph_compiled_
+        # structural_fingerprint" is the structural fingerprint bound the
+        # last time "Prepare model configuration" succeeded - compared
+        # against the live graph's current structural fingerprint to show
+        # whether the compiled configuration is still current or has gone
+        # stale since a structural edit.
+        "causal_graph": None,
+        "causal_graph_versions": [],
+        "causal_graph_compiled_structural_fingerprint": None,
         # Model configuration
         "prior_config": dict(DEFAULT_FH_PRIORS),
         "dna_lag_weeks": DEFAULT_DNA_LAG_WEEKS,
