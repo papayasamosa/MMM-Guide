@@ -91,9 +91,9 @@ def _select_option(
 
 
 def _click_until_condition(
-    button, condition, *, attempts: int = 5, wait_ms: int = 1200
+    button, condition, *, attempts: int = 5, wait_ms: int = 3000
 ) -> None:
-    """Click `button` and wait `wait_ms`, retrying the whole click if
+    """Click `button` and wait up to `wait_ms`, retrying the whole click if
     `condition()` (a zero-arg callable returning bool) isn't true afterward.
     A handful of this page's mutating buttons have been observed to not
     reliably register their Python-side effect on every single click in
@@ -108,16 +108,30 @@ def _click_until_condition(
     `.click()` would then burn its own ~30s actionability wait and raise
     instead of giving this function a chance to retry. Each attempt here
     uses a short per-click timeout and treats "not there yet" the same as
-    "condition still false", not as a hard failure."""
+    "condition still false", not as a hard failure.
+
+    Each attempt polls `condition()` every 200ms up to `wait_ms` instead of
+    sleeping the full `wait_ms` once and checking - a shared, contended CI
+    runner has been observed to occasionally settle a Streamlit rerun well
+    past the previous fixed 1200ms single check (PR #131, Browser lifecycle
+    journey: `Prepare model configuration` timed out with only 5 * 1200ms =
+    6s of total budget), so budget per attempt is both larger and spent
+    polling rather than in one blind sleep - a fast rerun still returns
+    almost immediately, a slow one now has room to land before this gives
+    up and re-clicks."""
     for _ in range(attempts):
         try:
             button.click(timeout=8_000)
         except PlaywrightTimeoutError:
             button.page.wait_for_timeout(wait_ms)
             continue
-        button.page.wait_for_timeout(wait_ms)
-        if condition():
-            return
+        elapsed_ms = 0
+        poll_interval_ms = 200
+        while elapsed_ms < wait_ms:
+            if condition():
+                return
+            button.page.wait_for_timeout(poll_interval_ms)
+            elapsed_ms += poll_interval_ms
     assert condition(), "condition still false after repeated clicks"
 
 
