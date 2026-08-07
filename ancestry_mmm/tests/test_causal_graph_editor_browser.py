@@ -60,6 +60,10 @@ def _select_option(
     dropdown has been observed to occasionally accept a click without the
     underlying Streamlit widget value actually changing, a step short of
     the already-documented "dropdown fails to open" flakiness alone.
+    A Streamlit rerun can also swap the open listbox out from under the
+    click between the visibility check and the click landing, which raises
+    a PlaywrightTimeoutError (not an AssertionError) from `option.click()`
+    itself - that must be retried the same way, not left to escape.
     `verify_text` overrides what to expect in the combobox afterward when
     `option_name` is a regex (there is no single literal string to compare
     against otherwise)."""
@@ -76,10 +80,10 @@ def _select_option(
                 else page.get_by_role("option", name=option_name)
             )
             expect(option).to_be_visible(timeout=8_000)
-            option.click()
+            option.click(timeout=8_000)
             expect(combobox).to_have_value(expected_text, timeout=5_000)
             return
-        except AssertionError as exc:
+        except (AssertionError, PlaywrightTimeoutError) as exc:
             last_error = exc
             page.keyboard.press("Escape")
     assert last_error is not None
