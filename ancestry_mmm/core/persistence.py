@@ -2040,6 +2040,8 @@ def current_model_identity_fingerprints(
     Callers must check `reconstructed["frame"]`/`reconstructed["posterior_params"]`
     are not None before calling this - it assumes reconstruction succeeded.
     """
+    from .search_objects import search_object_fit_fingerprint
+
     frame = reconstructed["frame"]
     posterior_params = reconstructed["posterior_params"]
     model_meta = reconstructed.get("model_meta")
@@ -2084,6 +2086,17 @@ def current_model_identity_fingerprints(
         activity_fit_fingerprint=(
             activity_fit_fingerprint(imported["activity_definitions"])
             if imported.get("activity_definitions")
+            else None
+        ),
+        search_object_fit_fingerprint=(
+            search_object_fit_fingerprint(
+                imported["search_objects"],
+                consumed_model_input_columns=(imported.get("model_spec") or {}).get(
+                    "channels"
+                )
+                or [],
+            )
+            if imported.get("search_objects")
             else None
         ),
     )

@@ -40,6 +40,10 @@ from ancestry_mmm.core.activities import (
     activity_by_model_input,
     activity_fit_fingerprint,
 )
+from ancestry_mmm.core.search_objects import (
+    SearchObjectDefinition,
+    search_object_fit_fingerprint,
+)
 from ancestry_mmm.application.diagnostics_service import (
     DiagnosticsService,
     DiagnosticsInput,
@@ -146,6 +150,10 @@ dna_lag_weeks = get_state("dna_lag_weeks", 4)
 model_run_id = get_state("model_run_id")
 activity_items = get_state("activity_definitions") or []
 activity_definitions = [ActivityDefinition.from_dict(item) for item in activity_items]
+search_objects = [
+    SearchObjectDefinition.from_dict(item)
+    for item in (get_state("search_objects") or [])
+]
 
 # PR 79A (work package B): the current model run's identity is constructed
 # once, here, and reused as this single object for diagnostics, validation
@@ -190,6 +198,14 @@ if model_run_id and posterior_params is not None and model_spec_dict is not None
                 if meta is not None
                 else "",
                 live_graph_dict=get_state("causal_graph"),
+            ),
+            search_object_fit_fingerprint=(
+                search_object_fit_fingerprint(
+                    search_objects,
+                    consumed_model_input_columns=model_spec_dict.get("channels") or [],
+                )
+                if search_objects
+                else None
             ),
         ),
         posterior_fingerprint=fingerprint_posterior(posterior_params),

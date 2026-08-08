@@ -624,6 +624,166 @@ class TestFingerprintModelSpecActivityFitFingerprint:
         assert fp_a != fp_b
 
 
+class TestFingerprintModelSpecSearchObjectFitFingerprint:
+    """REQ-SEARCH-001 fit-identity closure: including the fit-relevant
+    Search fingerprint (core.search_objects.search_object_fit_fingerprint)
+    in model identity, mirrored on TestFingerprintModelSpecActivityFitFingerprint
+    above."""
+
+    def test_omitting_search_object_fit_fingerprint_is_backward_compatible(self):
+        spec = {"markets": ["UK"]}
+        assert fingerprint_model_spec(spec, {}, 4) == fingerprint_model_spec(
+            spec, {}, 4, search_object_fit_fingerprint=None
+        )
+        assert fingerprint_model_spec(spec, {}, 4) == fingerprint_model_spec(
+            spec, {}, 4, search_object_fit_fingerprint=""
+        )
+
+    def test_a_different_search_object_fit_fingerprint_changes_the_model_spec_fingerprint(
+        self,
+    ):
+        spec = {"markets": ["UK"]}
+        fp_a = fingerprint_model_spec(spec, {}, 4, search_object_fit_fingerprint="fp-a")
+        fp_b = fingerprint_model_spec(spec, {}, 4, search_object_fit_fingerprint="fp-b")
+        assert fp_a != fp_b
+
+    def test_using_the_real_search_object_fit_fingerprint_function_end_to_end(self):
+        from ancestry_mmm.core.search_objects import (
+            SearchObjectDefinition,
+            search_object_fit_fingerprint,
+        )
+
+        spec = {"markets": ["UK"]}
+        consumed_spend = SearchObjectDefinition(
+            search_object_id="uk_paid_search_spend",
+            search_role="paid_search_spend",
+            source_column="paid_search_gbp_spend",
+            unit="monetary",
+            currency="GBP",
+            market="UK",
+            model_input_column="paid_search_gbp_spend",
+        )
+        unconsumed_demand = SearchObjectDefinition(
+            search_object_id="uk_search_demand",
+            search_role="search_demand",
+            source_column="branded_query_index",
+            unit="index",
+            market="UK",
+        )
+        fp_with_spend_only = fingerprint_model_spec(
+            spec,
+            {},
+            4,
+            search_object_fit_fingerprint=search_object_fit_fingerprint(
+                [consumed_spend],
+                consumed_model_input_columns=["paid_search_gbp_spend"],
+            ),
+        )
+        fp_with_both = fingerprint_model_spec(
+            spec,
+            {},
+            4,
+            search_object_fit_fingerprint=search_object_fit_fingerprint(
+                [consumed_spend, unconsumed_demand],
+                consumed_model_input_columns=["paid_search_gbp_spend"],
+            ),
+        )
+        # unconsumed_demand's model_input_column is blank - it is never
+        # consumed, so adding it must not change the fit fingerprint.
+        assert fp_with_spend_only == fp_with_both
+
+    def test_editing_a_consumed_fit_relevant_field_stales_the_fingerprint(self):
+        from ancestry_mmm.core.search_objects import (
+            SearchObjectDefinition,
+            search_object_fit_fingerprint,
+        )
+
+        spec = {"markets": ["UK"]}
+        before = SearchObjectDefinition(
+            search_object_id="uk_paid_search_spend",
+            search_role="paid_search_spend",
+            source_column="paid_search_gbp_spend",
+            unit="monetary",
+            currency="GBP",
+            market="UK",
+            model_input_column="paid_search_gbp_spend",
+        )
+        after = SearchObjectDefinition(
+            search_object_id="uk_paid_search_spend",
+            search_role="paid_search_spend",
+            source_column="a_different_source_column",
+            unit="monetary",
+            currency="GBP",
+            market="UK",
+            model_input_column="paid_search_gbp_spend",
+        )
+        columns = ["paid_search_gbp_spend"]
+        fp_before = fingerprint_model_spec(
+            spec,
+            {},
+            4,
+            search_object_fit_fingerprint=search_object_fit_fingerprint(
+                [before], consumed_model_input_columns=columns
+            ),
+        )
+        fp_after = fingerprint_model_spec(
+            spec,
+            {},
+            4,
+            search_object_fit_fingerprint=search_object_fit_fingerprint(
+                [after], consumed_model_input_columns=columns
+            ),
+        )
+        assert fp_before != fp_after
+
+    def test_editing_an_administrative_field_does_not_stale_the_fingerprint(self):
+        from ancestry_mmm.core.search_objects import (
+            SearchObjectDefinition,
+            search_object_fit_fingerprint,
+        )
+
+        spec = {"markets": ["UK"]}
+        draft = SearchObjectDefinition(
+            search_object_id="uk_paid_search_spend",
+            search_role="paid_search_spend",
+            source_column="paid_search_gbp_spend",
+            unit="monetary",
+            currency="GBP",
+            market="UK",
+            model_input_column="paid_search_gbp_spend",
+        )
+        approved = SearchObjectDefinition(
+            search_object_id="uk_paid_search_spend",
+            search_role="paid_search_spend",
+            source_column="paid_search_gbp_spend",
+            unit="monetary",
+            currency="GBP",
+            market="UK",
+            model_input_column="paid_search_gbp_spend",
+            approval_status="approved",
+            approved_by="reviewer",
+            approved_at="2026-01-01",
+        )
+        columns = ["paid_search_gbp_spend"]
+        fp_draft = fingerprint_model_spec(
+            spec,
+            {},
+            4,
+            search_object_fit_fingerprint=search_object_fit_fingerprint(
+                [draft], consumed_model_input_columns=columns
+            ),
+        )
+        fp_approved = fingerprint_model_spec(
+            spec,
+            {},
+            4,
+            search_object_fit_fingerprint=search_object_fit_fingerprint(
+                [approved], consumed_model_input_columns=columns
+            ),
+        )
+        assert fp_draft == fp_approved
+
+
 class TestFingerprintModelSpecMarketConfig:
     def _config_with(self, *, currency=None, descriptors=None, media_unit=None) -> dict:
         profile = MarketProfile(

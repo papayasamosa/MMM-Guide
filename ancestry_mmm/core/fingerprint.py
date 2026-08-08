@@ -123,6 +123,7 @@ def fingerprint_model_spec(
     media_outcome_pathways: Optional[List[Dict[str, Any]]] = None,
     activity_fit_fingerprint: Optional[str] = None,
     causal_graph_structural_fingerprint: Optional[str] = None,
+    search_object_fit_fingerprint: Optional[str] = None,
 ) -> str:
     """
     Fingerprint the full set of inputs that determine how the model is
@@ -213,23 +214,38 @@ def fingerprint_model_spec(
     this value, so it never stales a bound approval; a structural edit
     always does, the same as every other field in this payload.
 
+    `search_object_fit_fingerprint` (REQ-SEARCH-001 fit-identity closure -
+    `core.search_objects.search_object_fit_fingerprint(search_objects,
+    consumed_model_input_columns=model_spec["channels"])`) covers only the
+    Search objects this fit actually consumes (a current-version, non-blank
+    `model_input_column` matching one of this fit's own channels) and, for
+    those, only their fit-relevant fields (market, search_object_id,
+    search_object_version, search_role, source_column, model_input_column,
+    unit, grain, product) - never `channel`, `effective_period_start`/
+    `effective_period_end`, `state`, `planning_eligibility`,
+    `evidence_status`, approval metadata, `currency`, or `schema_version`,
+    and never a Search object this fit does not consume, or a superseded
+    version of one it does. `""` when omitted (no Search governance data
+    available, or none of it is consumed by this fit).
+
     Note: adding `pipeline_steps`, `market_spec_config`,
     `direct_dna_outcome_ids`, `outcome_catalogue`, `funnel_links`,
-    `media_outcome_pathways`, `activity_fit_fingerprint` and
-    `causal_graph_structural_fingerprint` to this payload is an intentional
-    breaking change to every fingerprint this function produces, including
-    for callers who pass none of them (the payload always carries
-    `"pipeline_steps": []`, `"market_relevant_config": {}`,
-    `"direct_dna_outcome_ids": []`, `"outcome_catalogue": []`,
-    `"funnel_links": []`, `"media_outcome_pathways": []`,
-    `"activity_fit_fingerprint": ""` and
-    `"causal_graph_structural_fingerprint": ""` keys now) - the same pattern
-    used when `model_type` was added (docs/decision_log.md). Every
-    pre-existing approval is invalidated by upgrading to this version, which
-    is correct: an approval bound to a fingerprint that didn't cover the
-    transformation recipe, media-unit/currency config, DNA-kit outcome
-    membership, the full outcome catalogue, fit-relevant activity
-    governance, or the compiled causal graph was never actually binding on
+    `media_outcome_pathways`, `activity_fit_fingerprint`,
+    `causal_graph_structural_fingerprint` and `search_object_fit_fingerprint`
+    to this payload is an intentional breaking change to every fingerprint
+    this function produces, including for callers who pass none of them (the
+    payload always carries `"pipeline_steps": []`,
+    `"market_relevant_config": {}`, `"direct_dna_outcome_ids": []`,
+    `"outcome_catalogue": []`, `"funnel_links": []`,
+    `"media_outcome_pathways": []`, `"activity_fit_fingerprint": ""`,
+    `"causal_graph_structural_fingerprint": ""` and
+    `"search_object_fit_fingerprint": ""` keys now) - the same pattern used
+    when `model_type` was added (docs/decision_log.md). Every pre-existing
+    approval is invalidated by upgrading to this version, which is correct:
+    an approval bound to a fingerprint that didn't cover the transformation
+    recipe, media-unit/currency config, DNA-kit outcome membership, the full
+    outcome catalogue, fit-relevant activity governance, the compiled causal
+    graph, or fit-relevant Search governance was never actually binding on
     them, so forcing re-review is the honest behaviour, not a regression.
 
     Canonical JSON with sorted dict keys, so insertion order never matters;
@@ -275,6 +291,7 @@ def fingerprint_model_spec(
         "activity_fit_fingerprint": activity_fit_fingerprint or "",
         "causal_graph_structural_fingerprint": causal_graph_structural_fingerprint
         or "",
+        "search_object_fit_fingerprint": search_object_fit_fingerprint or "",
     }
     blob = _canonical_json(payload)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
