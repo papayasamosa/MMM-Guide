@@ -594,6 +594,42 @@ class TestSchemaVersionFailClosed:
         with pytest.raises(ValueError):
             SearchObjectDefinition.from_dict(payload)
 
+    @pytest.mark.parametrize(
+        "raw_schema_version",
+        [
+            "2",  # numeric string - int(...) coercion would silently accept this
+            2.5,  # float - int(...) coercion would silently truncate this
+            2.0,  # float equal to a supported version - still not an int
+            True,  # bool is an int subclass in Python - must still be rejected
+            False,
+            0,
+            -1,
+            None,  # explicitly supplied null, distinct from an absent key
+        ],
+    )
+    def test_non_integer_or_out_of_range_schema_version_is_rejected(
+        self, raw_schema_version
+    ):
+        """REQ-SEARCH-001 S11 / Work Package 1 Correction A: `int(...)`
+        coercion is not validation - a numeric string, a float (even one
+        that equals a supported version), a bool, zero, a negative value, or
+        an explicit `null` must all fail closed, never be silently accepted
+        as an actual schema-version integer."""
+        payload = _spend().to_dict()
+        payload["schema_version"] = raw_schema_version
+        with pytest.raises(ValueError):
+            SearchObjectDefinition.from_dict(payload)
+
+    def test_absent_schema_version_key_still_uses_documented_legacy_default(self):
+        """Only a genuinely *missing* schema_version key takes the legacy
+        default - the strict validator above only runs when the key is
+        actually present (including as an explicit null, which is
+        rejected)."""
+        payload = _spend().to_dict()
+        del payload["schema_version"]
+        restored = SearchObjectDefinition.from_dict(payload)
+        assert restored.schema_version == SEARCH_OBJECT_SCHEMA_VERSION
+
     def test_legacy_record_with_no_lifecycle_fields_migrates_cleanly(self):
         """A record predating schema_version 2 (no effective_period_*/
         search_object_version keys at all) is not "unknown" - it is a
@@ -736,20 +772,30 @@ class TestSearchObjectFitFingerprint:
         )
         assert fp_before != fp_after
 
-    def test_definition_version_change_changes_the_fingerprint(self):
-        """REQ-SEARCH-001 S10: two versions of the same lineage can carry
-        identical field values (e.g. a reverted edit) and must still
-        fingerprint differently - the version number itself is fit-relevant."""
+    def test_version_bump_alone_does_not_change_the_fingerprint(self):
+        """Work Package 1 Correction B: `search_object_version` is
+        governance/audit identity, not fit-relevant mathematical identity.
+        Two versions of the same lineage with identical fit-relevant field
+        values (e.g. a version bump with no field changes, or a fit-relevant
+        edit reverted in a later version) correctly fingerprint identically
+        here - the fit-relevant inputs a model would actually be built from
+        are, at that point, literally the same. (Superseded from this test's
+        prior form, which asserted the opposite and was the exact
+        false-staleness contradiction this corrective PR closes: every
+        sanctioned edit via `new_search_object_version` - including a purely
+        administrative one - bumps `search_object_version`, so hashing it
+        here would stale a fit on an administrative-only edit.)"""
         columns = ["paid_search_gbp_spend"]
         v1 = _spend(model_input_column="paid_search_gbp_spend")
         v2 = new_search_object_version(v1)  # no field changes, only version
+        assert v2.search_object_version == 2
         fp_v1 = search_object_fit_fingerprint(
             [v1], consumed_model_input_columns=columns
         )
         fp_v2 = search_object_fit_fingerprint(
             [v2], consumed_model_input_columns=columns
         )
-        assert fp_v1 != fp_v2
+        assert fp_v1 == fp_v2
 
     def test_superseded_version_is_excluded_even_if_still_present_in_input(self):
         """Only the current version of a consumed lineage participates -

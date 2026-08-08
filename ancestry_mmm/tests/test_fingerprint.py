@@ -737,13 +737,21 @@ class TestFingerprintModelSpecSearchObjectFitFingerprint:
         assert fp_before != fp_after
 
     def test_editing_an_administrative_field_does_not_stale_the_fingerprint(self):
+        """Regression for the false-staleness contradiction found in the
+        Work Package 1 corrective review: the original version of this test
+        compared two INDEPENDENTLY constructed version-1 objects (both
+        `search_object_version=1`), which can never expose a bug in how
+        `search_object_version` itself is (or isn't) hashed. Real sanctioned
+        edits always go through `new_search_object_version`, which
+        increments `search_object_version` on every edit - administrative or
+        not. This test now reproduces that real lifecycle."""
         from ancestry_mmm.core.search_objects import (
             SearchObjectDefinition,
+            new_search_object_version,
             search_object_fit_fingerprint,
         )
 
-        spec = {"markets": ["UK"]}
-        draft = SearchObjectDefinition(
+        v1 = SearchObjectDefinition(
             search_object_id="uk_paid_search_spend",
             search_role="paid_search_spend",
             source_column="paid_search_gbp_spend",
@@ -752,36 +760,94 @@ class TestFingerprintModelSpecSearchObjectFitFingerprint:
             market="UK",
             model_input_column="paid_search_gbp_spend",
         )
-        approved = SearchObjectDefinition(
-            search_object_id="uk_paid_search_spend",
-            search_role="paid_search_spend",
-            source_column="paid_search_gbp_spend",
-            unit="monetary",
-            currency="GBP",
-            market="UK",
-            model_input_column="paid_search_gbp_spend",
+        # A real sanctioned administrative-only edit - e.g. approval - via
+        # the one sanctioned lifecycle function, never a second
+        # independently-constructed record.
+        v2 = new_search_object_version(
+            v1,
             approval_status="approved",
             approved_by="reviewer",
             approved_at="2026-01-01",
         )
+        assert v2.search_object_version == 2
+
         columns = ["paid_search_gbp_spend"]
-        fp_draft = fingerprint_model_spec(
-            spec,
+        fp_v1 = fingerprint_model_spec(
+            {"markets": ["UK"]},
             {},
             4,
             search_object_fit_fingerprint=search_object_fit_fingerprint(
-                [draft], consumed_model_input_columns=columns
+                [v1], consumed_model_input_columns=columns
             ),
         )
-        fp_approved = fingerprint_model_spec(
-            spec,
+        fp_v2 = fingerprint_model_spec(
+            {"markets": ["UK"]},
             {},
             4,
             search_object_fit_fingerprint=search_object_fit_fingerprint(
-                [approved], consumed_model_input_columns=columns
+                [v2], consumed_model_input_columns=columns
             ),
         )
-        assert fp_draft == fp_approved
+        assert fp_v1 == fp_v2
+
+    def test_editing_planning_eligibility_via_sanctioned_version_edit_does_not_stale(
+        self,
+    ):
+        """REQ-SEARCH-001 required invariant: an administrative-only
+        sanctioned edit (planning_eligibility here, mirroring the brief's
+        example) must not stale a consumed fit, even though
+        `new_search_object_version` always increments
+        `search_object_version`."""
+        from ancestry_mmm.core.search_objects import (
+            SearchObjectDefinition,
+            new_search_object_version,
+            search_object_fit_fingerprint,
+        )
+
+        v1 = SearchObjectDefinition(
+            search_object_id="uk_paid_search_spend",
+            search_role="paid_search_spend",
+            source_column="paid_search_gbp_spend",
+            unit="monetary",
+            currency="GBP",
+            market="UK",
+            model_input_column="paid_search_gbp_spend",
+            planning_eligibility="excluded",
+        )
+        v2 = new_search_object_version(v1, planning_eligibility="scenario_only")
+        assert v2.search_object_version == 2
+        assert v2.planning_eligibility == "scenario_only"
+
+        columns = ["paid_search_gbp_spend"]
+        assert search_object_fit_fingerprint(
+            [v1], consumed_model_input_columns=columns
+        ) == search_object_fit_fingerprint([v2], consumed_model_input_columns=columns)
+
+    def test_editing_a_fit_relevant_field_via_sanctioned_version_edit_stales(self):
+        """The mirror-image invariant: a sanctioned edit to a fit-relevant
+        field (source_column here) via the same lifecycle function must
+        change the fit fingerprint."""
+        from ancestry_mmm.core.search_objects import (
+            SearchObjectDefinition,
+            new_search_object_version,
+            search_object_fit_fingerprint,
+        )
+
+        v1 = SearchObjectDefinition(
+            search_object_id="uk_paid_search_spend",
+            search_role="paid_search_spend",
+            source_column="paid_search_gbp_spend",
+            unit="monetary",
+            currency="GBP",
+            market="UK",
+            model_input_column="paid_search_gbp_spend",
+        )
+        v2 = new_search_object_version(v1, source_column="a_different_source_column")
+
+        columns = ["paid_search_gbp_spend"]
+        assert search_object_fit_fingerprint(
+            [v1], consumed_model_input_columns=columns
+        ) != search_object_fit_fingerprint([v2], consumed_model_input_columns=columns)
 
 
 class TestFingerprintModelSpecMarketConfig:

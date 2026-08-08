@@ -1596,6 +1596,36 @@ def test_resolve_imported_search_objects_quarantines_malformed_schema_version():
     assert "uk_spend" in warnings[0]
 
 
+@pytest.mark.parametrize(
+    "raw_schema_version",
+    ["2", 2.5, True, False, 0, -1, None],
+)
+def test_resolve_imported_search_objects_quarantines_non_integer_schema_version(
+    raw_schema_version,
+):
+    """Work Package 1 Correction A: a bundle carrying a numeric-string,
+    float, bool, zero/negative, or explicit-null schema_version must be
+    quarantined, never silently coerced into a supported integer version by
+    `int(...)`."""
+    imported = {
+        "search_objects": [
+            {
+                "search_object_id": "uk_spend",
+                "search_role": "paid_search_spend",
+                "source_column": "paid_search_gbp_spend",
+                "unit": "monetary",
+                "currency": "GBP",
+                "market": "UK",
+                "schema_version": raw_schema_version,
+            }
+        ]
+    }
+    objects, warnings = resolve_imported_search_objects(imported)
+    assert objects == []
+    assert len(warnings) == 1
+    assert "uk_spend" in warnings[0]
+
+
 def test_resolve_imported_search_objects_legacy_record_migrates():
     """A record with no schema_version key at all (predating REQ-SEARCH-001
     S10's lifecycle fields) is not "unknown" - it migrates to the documented
