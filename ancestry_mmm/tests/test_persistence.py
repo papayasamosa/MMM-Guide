@@ -1552,6 +1552,124 @@ def test_resolve_imported_search_objects_legacy_cap_without_channel_is_quarantin
     assert "missing_cap_counterpart" in warnings[0]
 
 
+def test_resolve_imported_search_objects_quarantines_future_schema_version():
+    """REQ-SEARCH-001 S11/S10: a Search object declaring a schema_version
+    newer than this build understands fails closed on import - never
+    silently accepted with its unknown fields dropped."""
+    imported = {
+        "search_objects": [
+            {
+                "search_object_id": "uk_spend",
+                "search_role": "paid_search_spend",
+                "source_column": "paid_search_gbp_spend",
+                "unit": "monetary",
+                "currency": "GBP",
+                "market": "UK",
+                "schema_version": 999,
+            }
+        ]
+    }
+    objects, warnings = resolve_imported_search_objects(imported)
+    assert objects == []
+    assert len(warnings) == 1
+    assert "uk_spend" in warnings[0]
+    assert "Unsupported search object schema_version" in warnings[0]
+
+
+def test_resolve_imported_search_objects_quarantines_malformed_schema_version():
+    imported = {
+        "search_objects": [
+            {
+                "search_object_id": "uk_spend",
+                "search_role": "paid_search_spend",
+                "source_column": "paid_search_gbp_spend",
+                "unit": "monetary",
+                "currency": "GBP",
+                "market": "UK",
+                "schema_version": "not-a-number",
+            }
+        ]
+    }
+    objects, warnings = resolve_imported_search_objects(imported)
+    assert objects == []
+    assert len(warnings) == 1
+    assert "uk_spend" in warnings[0]
+
+
+def test_resolve_imported_search_objects_legacy_record_migrates():
+    """A record with no schema_version key at all (predating REQ-SEARCH-001
+    S10's lifecycle fields) is not "unknown" - it migrates to the documented
+    defaults (search_object_version=1, no declared effective period)."""
+    imported = {
+        "search_objects": [
+            {
+                "search_object_id": "uk_spend",
+                "search_role": "paid_search_spend",
+                "source_column": "paid_search_gbp_spend",
+                "unit": "monetary",
+                "currency": "GBP",
+                "market": "UK",
+            }
+        ]
+    }
+    objects, warnings = resolve_imported_search_objects(imported)
+    assert warnings == []
+    assert len(objects) == 1
+    assert objects[0]["search_object_version"] == 1
+    assert objects[0]["effective_period_start"] is None
+    assert objects[0]["effective_period_end"] is None
+
+
+def test_export_then_import_preserves_search_object_version_history(
+    tmp_path, sample_project
+):
+    """REQ-SEARCH-001 S10: an edit creates a new version, and the old,
+    approved version remains auditable across an export/import round trip -
+    never silently collapsed to only the current version."""
+    from ancestry_mmm.core.search_objects import (
+        SEARCH_ROLE_PAID_SPEND,
+        UNIT_MONETARY,
+        SearchObjectDefinition,
+        current_search_object_versions,
+        new_search_object_version,
+        search_object_versions_for_export,
+    )
+
+    v1 = SearchObjectDefinition(
+        search_object_id="uk_paid_search_spend",
+        search_role=SEARCH_ROLE_PAID_SPEND,
+        source_column="paid_search_gbp_spend",
+        unit=UNIT_MONETARY,
+        currency="GBP",
+        market="UK",
+        approval_status="approved",
+        approved_by="analyst",
+        approved_at="2026-01-01",
+    )
+    v2 = new_search_object_version(v1, source_column="revised_spend_column")
+
+    project = dict(sample_project)
+    project["search_objects"] = search_object_versions_for_export(
+        current_definitions=[v2.to_dict()], version_history=[v1.to_dict()]
+    )
+
+    bundle_path = export_project(tmp_path / "bundle.zip", **project)
+    imported = import_project(bundle_path)
+
+    objects, warnings = resolve_imported_search_objects(imported)
+    assert warnings == []
+    versions = {o["search_object_version"]: o for o in objects}
+    assert set(versions) == {1, 2}
+    assert versions[1]["approval_status"] == "approved"
+    assert versions[1]["source_column"] == "paid_search_gbp_spend"
+    assert versions[2]["approval_status"] == "draft"
+    assert versions[2]["source_column"] == "revised_spend_column"
+
+    current = current_search_object_versions(objects)
+    assert len(current) == 1
+    assert current[0].search_object_version == 2
+
+
 def test_audit_resumability_officially_resumable_false_without_approvals():
     imported = {
         "raw_sources": {"source": pd.DataFrame({"x": [1]})},

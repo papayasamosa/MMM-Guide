@@ -32,13 +32,57 @@ issue, both at the `Channel & Media Units` UI and on project import
 (`resolve_imported_search_objects`). A legacy record with no `channel`
 declared is quarantined on import, never fabricated a relationship.
 
+§10's versioning contract is now closed: `SearchObjectDefinition` carries
+`effective_period_start`/`effective_period_end` (mirroring
+`MediaInputSpec`/`GovernedCostMapping`, validated by the same
+start-must-not-be-after-end rule, malformed dates rejected via
+`date.fromisoformat`) and `search_object_version` (an incrementing version
+number within the `(market, search_object_id)` lineage, mirroring
+`core.causal_graph.CausalGraph`'s `graph_id`/`graph_version` immutability
+pattern). `core.search_objects.new_search_object_version` is the only
+sanctioned way to edit a governed record - it always returns a new instance
+with `search_object_version + 1` and resets `approval_status` to draft,
+never mutates the record it was given, and refuses to change the lineage
+identity (`search_object_id`/`market`) or set `search_object_version`
+directly. `current_search_object_versions` resolves, per lineage, the
+current (highest-versioned) record - deterministic and independent of input
+order. `validate_search_object_catalogue`'s cross-object checks (column-alias
+conflicts, cap-counterpart resolution) run only over each lineage's current
+version, so a superseded historical version is never flagged as conflicting
+with its own successor; `duplicate_identity` is now keyed on the full
+`(market, search_object_id, search_object_version)` triple, since two
+distinct versions of the same lineage are legitimate. The `Channel & Media
+Units` page routes an edit to an already-saved row through
+`new_search_object_version` automatically (comparing the edited row against
+the previously saved record for that lineage) and keeps every version in a
+`search_object_versions` history list, mirroring the Causal Graph page's
+Save draft/version-history pattern; `core.search_objects.
+search_object_versions_for_export`/`core.persistence.
+resolve_imported_search_objects` round-trip that full version history
+(never only the current record) through project export/import, mirroring
+`graph_versions_for_export`/`resolve_imported_causal_graphs`.
+
+§11's fail-closed schema contract is now closed for Search objects the same
+way REQ-GRAPH-001 §10 already closed it for `CausalGraph`:
+`SearchObjectDefinition.from_dict` raises `ValueError` for a `schema_version`
+above `SEARCH_OBJECT_SCHEMA_VERSION` (currently 2) or a malformed
+(non-integer) `schema_version`, and `resolve_imported_search_objects`
+quarantines any record that raises, named by id and reason in `warnings` -
+never silently accepted with its unrecognised fields dropped. A legacy
+record predating schema_version 2 (no `effective_period_start`/
+`effective_period_end`/`search_object_version` keys at all) is not treated
+as "unknown" - it migrates to the documented defaults (no declared period,
+version 1).
+
 Not yet implemented: Search demand/capacity mathematics (see Out of scope
 below, unchanged), and binding a Search object's identity into a fitted
 model's governed identity (`core.search_objects.search_objects_fingerprint`
 exists and is tested, but is not yet threaded into
 `core.fingerprint.fingerprint_model_spec` the way `activity_fit_fingerprint`
-already is - deferred to when a fit actually consumes a Search object's
-`model_input_column`).
+already is - deferred to a dependent PR now that this record's versioning
+contract is closed, so that fingerprint's fit-relevant field list can
+include a Search object's `search_object_version`/effective period from the
+start rather than needing a second breaking change).
 
 ### What already exists today (do not duplicate)
 

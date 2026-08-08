@@ -40,8 +40,13 @@ def init_session_state():
         "activity_definitions": [],
         # REQ-SEARCH-001: governed SearchObjectDefinition records (branded-
         # search demand, Paid Search spend/delivery/cap, organic-search
-        # capture, direct-navigation capture) - core.search_objects.
+        # capture, direct-navigation capture) - core.search_objects. This is
+        # always the *current* record per (market, search_object_id) lineage
+        # - "search_object_versions" (REQ-SEARCH-001 S10) is the append-only
+        # saved version history (list of dicts, oldest first), mirroring
+        # "causal_graph"/"causal_graph_versions" below.
         "search_objects": [],
+        "search_object_versions": [],
         # REQ-GRAPH-001: the current CausalGraph version being edited (draft
         # or approved), as a dict (core.causal_graph.CausalGraph.to_dict()).
         # None until a graph is first saved on the Causal Graph page -
