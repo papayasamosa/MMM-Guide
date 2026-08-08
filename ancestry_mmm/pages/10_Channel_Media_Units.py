@@ -293,7 +293,10 @@ st.caption(
     "organic-search capture, and direct-navigation capture are governed as "
     "distinct objects here - never inferred by name-matching a column. A "
     "raw column already governed under one Search role cannot also be "
-    "registered under a different one."
+    "registered under a different one. A paid_search_cap row's Channel must "
+    "exactly match the Channel of the paid_search_spend/paid_search_delivery "
+    "row it constrains, in the same market - a cap with no matching channel "
+    "counterpart is rejected."
 )
 existing_search_object_items = get_state("search_objects") or []
 if existing_search_object_items:
@@ -308,6 +311,7 @@ search_object_columns = [
     "market",
     "search_object_id",
     "search_role",
+    "channel",
     "source_column",
     "unit",
     "currency",
@@ -360,6 +364,7 @@ for row_number, row in search_object_editor.fillna("").iterrows():
                 source_column=str(row["source_column"]),
                 unit=str(row["unit"]),
                 market=str(row["market"] or "*"),
+                channel=str(row["channel"]),
                 product=str(row["product"]),
                 currency=str(row["currency"]),
                 state=str(row["state"] or "observed"),

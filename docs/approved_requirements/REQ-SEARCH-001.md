@@ -19,6 +19,19 @@ action seeds a graph node per §8's role mapping. §1.7 (residual Paid Search
 incrementality) remains exactly `core.brand_search`'s existing mechanism -
 untouched.
 
+§14's last bullet (a `paid_search_cap` record must have a corresponding
+`paid_search_spend`/`paid_search_delivery` record in the same market x
+channel to constrain) is now closed: `SearchObjectDefinition.channel` is an
+explicit, governed field (mirroring `ActivityDefinition.channel`/
+`MediaInputSpec.channel`) that `validate_search_object_catalogue` uses to
+resolve a cap's counterpart by exact `(market, channel)` equality - never by
+name-matching. A cap with no counterpart, a wrong-channel counterpart, or
+more than one cap record bound to the same `(market, channel, unit)` fails
+closed with a specific `missing_cap_counterpart`/`duplicate_cap_relationship`
+issue, both at the `Channel & Media Units` UI and on project import
+(`resolve_imported_search_objects`). A legacy record with no `channel`
+declared is quarantined on import, never fabricated a relationship.
+
 Not yet implemented: Search demand/capacity mathematics (see Out of scope
 below, unchanged), and binding a Search object's identity into a fitted
 model's governed identity (`core.search_objects.search_objects_fingerprint`
