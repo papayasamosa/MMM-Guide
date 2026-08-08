@@ -25,14 +25,18 @@ import arviz as az
 
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
 from ancestry_mmm.core.diagnostics import (
+    error_metrics_by_outcome,
     in_sample_fit,
     posterior_predictive_coverage,
     curve_plausibility_checks,
     expanding_window_backtest,
+    residual_temporal_diagnostics,
 )
 from ancestry_mmm.core.market_specific_diagnostics import (
+    error_metrics_by_outcome_market_specific,
     in_sample_fit_market_specific,
     curve_plausibility_checks_market_specific,
+    residual_temporal_diagnostics_market_specific,
 )
 from ancestry_mmm.core.identification_diagnostics import (
     channel_spend_correlation_matrix,
@@ -127,13 +131,30 @@ class DiagnosticsArtefact:
     diagnostics section rather than headline summaries only. The
     fingerprint covers every material piece of evidence.
 
+    REQ-VAL-001 (UK-pilot evidence expansion): Schema v3 adds
+    ``error_metrics`` (MAE/RMSE/sMAPE/WAPE/bias per outcome_id -
+    core.diagnostics.error_metrics_by_outcome) and
+    ``residual_diagnostics`` (lag-1 autocorrelation/Durbin-Watson per
+    outcome_id - core.diagnostics.residual_temporal_diagnostics) as
+    additional, purely additive evidence sections alongside the existing
+    seven - neither introduces a blocking threshold (evidence computation
+    and approval policy remain separate; an approved policy decides
+    thresholds later, per REQ-VAL-001's "Requirements discipline").
+
     Schema-v1 artefacts loaded via ``from_dict`` are marked
     ``legacy_incomplete`` and cannot support a new official approval.
+    Schema-v2 artefacts are upgraded to v3 with ``error_metrics``/
+    ``residual_diagnostics`` marked ``not_computed`` (that evidence simply
+    did not exist yet when they were computed) - v2 was already complete
+    for the sections it claimed, so it is *not* marked
+    ``legacy_incomplete``: an artefact predating an additive evidence
+    category is a different thing from one that silently dropped evidence
+    it claimed to have (the v1 case).
     """
 
     artefact_id: str = ""
-    diagnostics_version: str = "2.0.0"
-    schema_version: int = 2
+    diagnostics_version: str = "3.0.0"
+    schema_version: int = 3
     model_identity_fingerprint: str = ""
     evaluated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     model_type: str = ""
@@ -159,6 +180,12 @@ class DiagnosticsArtefact:
         default_factory=lambda: DiagnosticSection(status="not_computed", payload=None)
     )
     backtest: DiagnosticSection = field(
+        default_factory=lambda: DiagnosticSection(status="not_computed", payload=None)
+    )
+    error_metrics: DiagnosticSection = field(
+        default_factory=lambda: DiagnosticSection(status="not_computed", payload=None)
+    )
+    residual_diagnostics: DiagnosticSection = field(
         default_factory=lambda: DiagnosticSection(status="not_computed", payload=None)
     )
 
@@ -188,6 +215,8 @@ class DiagnosticsArtefact:
             "identification": self.identification.fingerprint_payload(),
             "coefficient_stability": self.coefficient_stability.fingerprint_payload(),
             "backtest": self.backtest.fingerprint_payload(),
+            "error_metrics": self.error_metrics.fingerprint_payload(),
+            "residual_diagnostics": self.residual_diagnostics.fingerprint_payload(),
             "global_warnings": sorted(self.global_warnings),
             "global_errors": sorted(self.global_errors),
             "settings": tuple(sorted(self.settings)),
@@ -215,6 +244,8 @@ class DiagnosticsArtefact:
             "identification": self.identification.to_dict(),
             "coefficient_stability": self.coefficient_stability.to_dict(),
             "backtest": self.backtest.to_dict(),
+            "error_metrics": self.error_metrics.to_dict(),
+            "residual_diagnostics": self.residual_diagnostics.to_dict(),
             "global_warnings": list(self.global_warnings),
             "global_errors": list(self.global_errors),
             "settings": list(self.settings),
@@ -223,16 +254,43 @@ class DiagnosticsArtefact:
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "DiagnosticsArtefact":
-        """Load from a dict. Supports schema v1 (legacy_incomplete)."""
+        """Load from a dict. Supports schema v1 (legacy_incomplete), v2
+        (upgraded in place to the v3 shape - see the class docstring for why
+        this is not also marked legacy_incomplete) and v3."""
         sv = d.get("schema_version", 1)
         if sv == 1:
             # Schema v1 → wrap summaries into sections, mark legacy_incomplete
             return cls._from_v1(d)
-        if sv == 2:
+        if sv in (2, 3):
+            if sv >= 3:
+                error_metrics_sec = DiagnosticSection.from_dict(
+                    d.get("error_metrics", {})
+                )
+                residual_diagnostics_sec = DiagnosticSection.from_dict(
+                    d.get("residual_diagnostics", {})
+                )
+            else:
+                # REQ-VAL-001: this evidence category did not exist when a
+                # schema-v2 artefact was computed - not_computed, never a
+                # fabricated payload.
+                error_metrics_sec = DiagnosticSection(
+                    status="not_computed",
+                    payload=None,
+                    error="Not available in schema v2 - error-metric "
+                    "evidence (MAE/RMSE/sMAPE/WAPE/bias) was added in "
+                    "schema v3.",
+                )
+                residual_diagnostics_sec = DiagnosticSection(
+                    status="not_computed",
+                    payload=None,
+                    error="Not available in schema v2 - residual temporal "
+                    "diagnostics (lag-1 autocorrelation/Durbin-Watson) "
+                    "were added in schema v3.",
+                )
             return cls(
                 artefact_id=d.get("artefact_id", ""),
                 diagnostics_version=d.get("diagnostics_version", "2.0.0"),
-                schema_version=2,
+                schema_version=sv,
                 model_identity_fingerprint=d.get("model_identity_fingerprint", ""),
                 evaluated_at=datetime.fromisoformat(d["evaluated_at"])
                 if "evaluated_at" in d
@@ -250,6 +308,8 @@ class DiagnosticsArtefact:
                     d.get("coefficient_stability", {})
                 ),
                 backtest=DiagnosticSection.from_dict(d.get("backtest", {})),
+                error_metrics=error_metrics_sec,
+                residual_diagnostics=residual_diagnostics_sec,
                 global_warnings=tuple(d.get("global_warnings", [])),
                 global_errors=tuple(d.get("global_errors", [])),
                 settings=tuple(tuple(x) for x in d.get("settings", [])),
@@ -480,6 +540,50 @@ class DiagnosticsService:
             errors.append(f"In-sample fit computation failed: {exc}")
             fit_sec = DiagnosticSection(status="failed", payload=None, error=str(exc))
 
+        # --- 2b/2c. Error metrics (MAE/RMSE/sMAPE/WAPE/bias) and residual
+        # temporal diagnostics (lag-1 autocorrelation/Durbin-Watson) - REQ-
+        # VAL-001 UK-pilot evidence expansion. Independent single-authoritative
+        # calculations, alongside (never inside) in-sample fit above, so a
+        # failure in one never hides the other. Deliberately reports evidence
+        # only - no blocking threshold is introduced here. ---
+        error_metrics_sec: DiagnosticSection
+        residual_diagnostics_sec: DiagnosticSection
+        try:
+            if diag_input.model_type == "market_specific":
+                market_em_params = extract_market_specific_posterior_params(
+                    diag_input.trace, diag_input.meta
+                )
+                error_df = error_metrics_by_outcome_market_specific(
+                    diag_input.frame, diag_input.meta, market_em_params
+                )
+                residual_df = residual_temporal_diagnostics_market_specific(
+                    diag_input.frame, diag_input.meta, market_em_params
+                )
+            else:
+                shared_em_params = extract_posterior_params(
+                    diag_input.trace, diag_input.meta
+                )
+                error_df = error_metrics_by_outcome(
+                    diag_input.frame, diag_input.meta, shared_em_params
+                )
+                residual_df = residual_temporal_diagnostics(
+                    diag_input.frame, diag_input.meta, shared_em_params
+                )
+            error_metrics_sec = DiagnosticSection(
+                status="computed", payload=error_df.to_dict(orient="records")
+            )
+            residual_diagnostics_sec = DiagnosticSection(
+                status="computed", payload=residual_df.to_dict(orient="records")
+            )
+        except Exception as exc:
+            errors.append(f"Error metrics / residual diagnostics failed: {exc}")
+            error_metrics_sec = DiagnosticSection(
+                status="failed", payload=None, error=str(exc)
+            )
+            residual_diagnostics_sec = DiagnosticSection(
+                status="failed", payload=None, error=str(exc)
+            )
+
         # --- 3. PPC coverage (single authoritative calculation) ---
         ppc_sec: DiagnosticSection
         ppc_details = None
@@ -645,8 +749,8 @@ class DiagnosticsService:
 
         artefact = DiagnosticsArtefact(
             artefact_id=uuid.uuid4().hex,
-            diagnostics_version="2.0.0",
-            schema_version=2,
+            diagnostics_version="3.0.0",
+            schema_version=3,
             model_identity_fingerprint=identity_fp,
             evaluated_at=datetime.now(timezone.utc),
             model_type=diag_input.model_type,
@@ -657,6 +761,8 @@ class DiagnosticsService:
             identification=ident_sec,
             coefficient_stability=stab_sec,
             backtest=bt_sec,
+            error_metrics=error_metrics_sec,
+            residual_diagnostics=residual_diagnostics_sec,
             global_warnings=tuple(warnings),
             global_errors=tuple(errors),
             settings=(
@@ -690,7 +796,7 @@ class DiagnosticsService:
             backtest_results=backtest_results,
             warnings=warnings,
             errors=errors,
-            diagnostics_version="2.0.0",
+            diagnostics_version="3.0.0",
             diagnostics_artefact=artefact,
         )
 

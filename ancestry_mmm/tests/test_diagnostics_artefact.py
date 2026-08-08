@@ -194,18 +194,20 @@ class TestDiagnosticSection:
 # =========================================================================
 
 
-class TestDiagnosticsArtefactV2:
+class TestDiagnosticsArtefactV3:
     def test_default_artefact(self):
         artefact = DiagnosticsArtefact()
-        assert artefact.schema_version == 2
-        assert artefact.diagnostics_version == "2.0.0"
+        assert artefact.schema_version == 3
+        assert artefact.diagnostics_version == "3.0.0"
         assert artefact.convergence.status == "not_computed"
+        assert artefact.error_metrics.status == "not_computed"
+        assert artefact.residual_diagnostics.status == "not_computed"
         assert artefact.legacy_incomplete is False
 
     def test_to_dict_has_all_sections(self):
         artefact = DiagnosticsArtefact(artefact_id="test-id")
         d = artefact.to_dict()
-        assert d["schema_version"] == 2
+        assert d["schema_version"] == 3
         assert d["artefact_id"] == "test-id"
         for section in (
             "convergence",
@@ -215,6 +217,8 @@ class TestDiagnosticsArtefactV2:
             "identification",
             "coefficient_stability",
             "backtest",
+            "error_metrics",
+            "residual_diagnostics",
         ):
             assert section in d
             assert "status" in d[section]
@@ -224,10 +228,18 @@ class TestDiagnosticsArtefactV2:
             status="computed",
             payload={"max_rhat": 1.02, "min_ess": 400, "has_divergences": False},
         )
+        error_metrics = DiagnosticSection(
+            status="computed",
+            payload=[{"outcome_id": "fh_new_gsa", "mae": 1.5, "bias": -0.2}],
+        )
+        residual_diagnostics = DiagnosticSection(
+            status="computed",
+            payload=[{"outcome_id": "fh_new_gsa", "lag1_autocorrelation": 0.1}],
+        )
         original = DiagnosticsArtefact(
             artefact_id=uuid.uuid4().hex,
-            diagnostics_version="2.0.0",
-            schema_version=2,
+            diagnostics_version="3.0.0",
+            schema_version=3,
             model_identity_fingerprint="fp123",
             evaluated_at=datetime(2026, 7, 29, tzinfo=timezone.utc),
             model_type="shared",
@@ -236,6 +248,8 @@ class TestDiagnosticsArtefactV2:
                 status="computed",
                 payload=[{"coverage_pct": 95.0}],
             ),
+            error_metrics=error_metrics,
+            residual_diagnostics=residual_diagnostics,
             global_warnings=("warn1",),
             global_errors=("err1",),
             settings=(("credible_mass", "0.9"),),
@@ -250,6 +264,8 @@ class TestDiagnosticsArtefactV2:
         assert restored.convergence.status == "computed"
         assert restored.convergence.payload["max_rhat"] == 1.02
         assert restored.posterior_predictive.payload[0]["coverage_pct"] == 95.0
+        assert restored.error_metrics.payload[0]["mae"] == 1.5
+        assert restored.residual_diagnostics.payload[0]["lag1_autocorrelation"] == 0.1
         assert restored.global_warnings == ("warn1",)
         assert restored.global_errors == ("err1",)
         assert restored.legacy_incomplete is False
@@ -346,6 +362,82 @@ class TestSchemaV1Compatibility:
     def test_unsupported_schema_raises(self):
         with pytest.raises(ValueError, match="Unsupported schema_version"):
             DiagnosticsArtefact.from_dict({"schema_version": 99})
+
+
+# =========================================================================
+# Schema v2 -> v3 compatibility (REQ-VAL-001 UK-pilot evidence expansion)
+# =========================================================================
+
+
+class TestSchemaV2Compatibility:
+    def _v2_dict(self) -> dict:
+        not_computed = {
+            "status": "not_computed",
+            "payload": None,
+            "error": "",
+            "warnings": [],
+        }
+        return {
+            "artefact_id": "v2-artefact",
+            "diagnostics_version": "2.0.0",
+            "schema_version": 2,
+            "model_identity_fingerprint": "fp-v2",
+            "evaluated_at": "2026-07-29T00:00:00+00:00",
+            "model_type": "shared",
+            "convergence": {
+                "status": "computed",
+                "payload": {"max_rhat": 1.02, "min_ess": 400, "has_divergences": False},
+                "error": "",
+                "warnings": [],
+            },
+            "in_sample_fit": not_computed,
+            "posterior_predictive": not_computed,
+            "plausibility": not_computed,
+            "identification": not_computed,
+            "coefficient_stability": not_computed,
+            "backtest": not_computed,
+            "settings": [],
+            "legacy_incomplete": False,
+        }
+
+    def test_v2_upgrades_with_new_sections_not_computed(self):
+        artefact = DiagnosticsArtefact.from_dict(self._v2_dict())
+        assert artefact.error_metrics.status == "not_computed"
+        assert artefact.residual_diagnostics.status == "not_computed"
+        assert artefact.error_metrics.error != ""
+        assert artefact.residual_diagnostics.error != ""
+
+    def test_v2_upgrade_preserves_schema_version_and_is_not_legacy_incomplete(self):
+        """A schema-v2 artefact predating error_metrics/residual_diagnostics
+        is not the same thing as a v1 artefact that silently dropped
+        evidence it claimed to have - it must not be marked
+        legacy_incomplete, and its stored schema_version is preserved as
+        the truthful record of what evidence it actually has (mirrors how
+        _from_v1 preserves schema_version=1, never bumping it)."""
+        artefact = DiagnosticsArtefact.from_dict(self._v2_dict())
+        assert artefact.schema_version == 2
+        assert artefact.legacy_incomplete is False
+
+    def test_v2_upgrade_preserves_existing_sections(self):
+        artefact = DiagnosticsArtefact.from_dict(self._v2_dict())
+        assert artefact.convergence.status == "computed"
+        assert artefact.convergence.payload["max_rhat"] == 1.02
+
+    def test_v2_upgraded_artefact_still_usable_for_official_canonical_evidence(self):
+        """The >= 2 gate in ValidationService (not == 2) is what makes this
+        forward-compatible - a v2-origin artefact must not be treated as
+        untrustworthy just because it predates this additive category."""
+        artefact = DiagnosticsArtefact.from_dict(self._v2_dict())
+        assert artefact.schema_version >= 2
+        assert not artefact.legacy_incomplete
+
+    def test_v2_round_trip_through_to_dict_is_stable(self):
+        artefact = DiagnosticsArtefact.from_dict(self._v2_dict())
+        d = artefact.to_dict()
+        restored = DiagnosticsArtefact.from_dict(d)
+        assert restored.schema_version == artefact.schema_version
+        assert restored.error_metrics.status == "not_computed"
+        assert restored.fingerprint() == artefact.fingerprint()
 
 
 # =========================================================================

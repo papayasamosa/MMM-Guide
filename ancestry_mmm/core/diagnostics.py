@@ -30,6 +30,138 @@ def _mape(actual: np.ndarray, pred: np.ndarray) -> float:
     return float(np.mean(np.abs((actual[mask] - pred[mask]) / actual[mask])) * 100)
 
 
+def _mae(actual: np.ndarray, pred: np.ndarray) -> float:
+    return float(np.mean(np.abs(actual - pred)))
+
+
+def _rmse(actual: np.ndarray, pred: np.ndarray) -> float:
+    return float(np.sqrt(np.mean((actual - pred) ** 2)))
+
+
+def _smape(actual: np.ndarray, pred: np.ndarray) -> float:
+    """Symmetric MAPE: |actual - pred| / ((|actual| + |pred|) / 2), as a
+    percentage. Unlike MAPE, defined (and 0) when actual == pred == 0;
+    excludes only points where actual and pred are *both* zero (a
+    genuine 0/0 indeterminate form), never points where actual alone is
+    zero - the specific blind spot MAPE has."""
+    denom = (np.abs(actual) + np.abs(pred)) / 2
+    mask = denom != 0
+    if not mask.any():
+        return 0.0
+    return float(np.mean(np.abs(actual[mask] - pred[mask]) / denom[mask]) * 100)
+
+
+def _wape(actual: np.ndarray, pred: np.ndarray) -> float:
+    """Weighted absolute percentage error: sum(|actual - pred|) / sum(|actual|),
+    as a percentage - a single volume-weighted accuracy figure across all
+    observations (unlike MAPE/sMAPE, which average a per-observation ratio
+    and so overweight low-volume periods)."""
+    denom = np.sum(np.abs(actual))
+    if denom == 0:
+        return float("nan")
+    return float(np.sum(np.abs(actual - pred)) / denom * 100)
+
+
+def _bias(actual: np.ndarray, pred: np.ndarray) -> float:
+    """Mean signed error (pred - actual): positive means the model
+    systematically over-predicts, negative means it systematically
+    under-predicts. Unlike MAE/RMSE, signed errors are not folded to
+    magnitude, so a well-calibrated model's bias should be close to zero
+    even if its MAE is not."""
+    return float(np.mean(pred - actual))
+
+
+def error_metrics_by_outcome(
+    frame: Dict, meta: FHModelMeta, params: FHPosteriorParams
+) -> pd.DataFrame:
+    """MAE, RMSE, sMAPE, WAPE and bias per outcome_id, comparing the
+    posterior-mean prediction to actuals - the same (actual, predicted)
+    pair `in_sample_fit` uses for R-squared/MAPE, as a distinct evidence
+    category (a UK validation reviewer wants volume-weighted and
+    symmetric error figures alongside R-squared/MAPE, not instead of
+    them - see REQ-VAL-001)."""
+    mu = predict_mu(frame, meta, params)
+    Y = frame["Y"]
+    rows = []
+    for i, oid in enumerate(meta.outcome_ids):
+        actual, pred = Y[:, i], mu[:, i]
+        rows.append(
+            {
+                "outcome_id": oid,
+                "mae": _mae(actual, pred),
+                "rmse": _rmse(actual, pred),
+                "smape_pct": _smape(actual, pred),
+                "wape_pct": _wape(actual, pred),
+                "bias": _bias(actual, pred),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def residual_temporal_diagnostics(
+    frame: Dict, meta: FHModelMeta, params: FHPosteriorParams
+) -> pd.DataFrame:
+    """Residual (actual - posterior-mean-prediction) temporal structure per
+    outcome_id: lag-1 autocorrelation and the Durbin-Watson statistic.
+
+    Residuals are taken in the row order `frame["Y"]` already carries -
+    callers must pass a chronologically ordered frame (the same one
+    `in_sample_fit`/`predict_mu` are already fed) for these to mean
+    "temporal" structure; this function does not itself sort by date.
+
+    Lag-1 autocorrelation near 0 indicates no obvious temporal
+    autocorrelation left in the residuals; a value well above 0 indicates
+    the model is leaving predictable temporal structure unexplained
+    (under-fit carryover/trend/seasonality). Durbin-Watson is
+    approximately `2 * (1 - lag1_autocorrelation)` - included alongside the
+    raw coefficient since it is the more commonly cited statistic in
+    econometric review, without duplicating the underlying computation.
+
+    Deliberately reports the coefficient and statistic only - no
+    blocking/pass-fail threshold is applied here (REQ-VAL-001: "evidence
+    computation and approval policy are separate"; an approved policy
+    decides thresholds later).
+    """
+    mu = predict_mu(frame, meta, params)
+    Y = frame["Y"]
+    rows = []
+    for i, oid in enumerate(meta.outcome_ids):
+        residuals = Y[:, i] - mu[:, i]
+        lag1_autocorr, durbin_watson = _residual_autocorrelation_stats(residuals)
+        rows.append(
+            {
+                "outcome_id": oid,
+                "n_observations": len(residuals),
+                "lag1_autocorrelation": lag1_autocorr,
+                "durbin_watson": durbin_watson,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _residual_autocorrelation_stats(residuals: np.ndarray) -> Tuple[float, float]:
+    """Lag-1 autocorrelation coefficient and Durbin-Watson statistic for a
+    single residual series, in chronological order. `nan` for either value
+    when it is undefined (fewer than 2 residuals, or a constant - zero
+    variance - lagged/current split for the autocorrelation coefficient, or
+    all-zero residuals for Durbin-Watson)."""
+    n = len(residuals)
+    if n < 2:
+        return float("nan"), float("nan")
+    prev, curr = residuals[:-1], residuals[1:]
+    prev_std, curr_std = prev.std(), curr.std()
+    lag1_autocorr = (
+        float("nan")
+        if prev_std == 0 or curr_std == 0
+        else float(np.corrcoef(prev, curr)[0, 1])
+    )
+    ss_res = np.sum(residuals**2)
+    durbin_watson = (
+        float(np.sum(np.diff(residuals) ** 2) / ss_res) if ss_res > 0 else float("nan")
+    )
+    return lag1_autocorr, durbin_watson
+
+
 def in_sample_fit(
     frame: Dict, meta: FHModelMeta, params: FHPosteriorParams
 ) -> pd.DataFrame:

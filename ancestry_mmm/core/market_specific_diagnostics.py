@@ -15,7 +15,17 @@ from typing import Any, Dict, List, Optional, Tuple
 import arviz as az
 import pandas as pd
 
-from .diagnostics import _mape, _r_squared, posterior_predictive_coverage
+from .diagnostics import (
+    _bias,
+    _mae,
+    _mape,
+    _r_squared,
+    _residual_autocorrelation_stats,
+    _rmse,
+    _smape,
+    _wape,
+    posterior_predictive_coverage,
+)
 from .hierarchical_model import FHModelMeta
 from .market_specific_predict import (
     FHMarketSpecificPosteriorParams,
@@ -42,6 +52,55 @@ def in_sample_fit_market_specific(
                 "mape_pct": _mape(Y[:, i], mu[:, i]),
                 "actual_mean": float(Y[:, i].mean()),
                 "predicted_mean": float(mu[:, i].mean()),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def error_metrics_by_outcome_market_specific(
+    frame: Dict,
+    meta: FHModelMeta,
+    params: FHMarketSpecificPosteriorParams,
+) -> pd.DataFrame:
+    """MAE/RMSE/sMAPE/WAPE/bias per outcome_id - Model C equivalent of
+    core.diagnostics.error_metrics_by_outcome."""
+    mu = predict_mu_market_specific(frame, meta, params)
+    Y = frame["Y"]
+    rows = []
+    for i, oid in enumerate(meta.outcome_ids):
+        actual, pred = Y[:, i], mu[:, i]
+        rows.append(
+            {
+                "outcome_id": oid,
+                "mae": _mae(actual, pred),
+                "rmse": _rmse(actual, pred),
+                "smape_pct": _smape(actual, pred),
+                "wape_pct": _wape(actual, pred),
+                "bias": _bias(actual, pred),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def residual_temporal_diagnostics_market_specific(
+    frame: Dict,
+    meta: FHModelMeta,
+    params: FHMarketSpecificPosteriorParams,
+) -> pd.DataFrame:
+    """Lag-1 autocorrelation/Durbin-Watson per outcome_id - Model C
+    equivalent of core.diagnostics.residual_temporal_diagnostics."""
+    mu = predict_mu_market_specific(frame, meta, params)
+    Y = frame["Y"]
+    rows = []
+    for i, oid in enumerate(meta.outcome_ids):
+        residuals = Y[:, i] - mu[:, i]
+        lag1_autocorr, durbin_watson = _residual_autocorrelation_stats(residuals)
+        rows.append(
+            {
+                "outcome_id": oid,
+                "n_observations": len(residuals),
+                "lag1_autocorrelation": lag1_autocorr,
+                "durbin_watson": durbin_watson,
             }
         )
     return pd.DataFrame(rows)
