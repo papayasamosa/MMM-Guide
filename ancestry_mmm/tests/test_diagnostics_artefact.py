@@ -120,6 +120,7 @@ def _minimal_trace_frame_meta():
     frame = {
         "Y": Y,
         "X_media": rng.uniform(0, 100, size=(n_obs, 1)),
+        "markets": ["UK"],
         "market_bounds": [(0, n_obs)],
         "market_idx": np.zeros(n_obs, dtype=int),
         "promo": np.zeros((n_obs, 1)),
@@ -363,6 +364,41 @@ class TestSchemaV1Compatibility:
         with pytest.raises(ValueError, match="Unsupported schema_version"):
             DiagnosticsArtefact.from_dict({"schema_version": 99})
 
+    @pytest.mark.parametrize(
+        "raw_schema_version",
+        [
+            True,  # bool is an int subclass - True == 1 must not silently
+            # resolve to schema v1 (legacy_incomplete)
+            False,
+            2.0,  # float equal to a supported version - 2.0 == 2/in (2, 3)
+            # must not silently resolve to schema v2
+            3.0,
+            "2",  # numeric string
+            0,
+            -1,
+        ],
+    )
+    def test_non_integer_or_out_of_range_schema_version_is_rejected(
+        self, raw_schema_version
+    ):
+        """Work Package 2 corrective fix: plain `==`/`in` dispatch let a
+        bool or a numerically-equal float silently masquerade as an actual
+        integer schema version (`True == 1`, `2.0 in (2, 3)`). Each of
+        these must fail closed instead."""
+        with pytest.raises(ValueError):
+            DiagnosticsArtefact.from_dict({"schema_version": raw_schema_version})
+
+    def test_absent_schema_version_key_still_uses_documented_legacy_default(self):
+        """A genuinely missing schema_version key (an artefact predating
+        schema versioning entirely) still resolves to the documented v1
+        legacy default - only a *present* schema_version is validated
+        strictly."""
+        artefact = DiagnosticsArtefact.from_dict(
+            {"evaluated_at": "2026-07-29T00:00:00+00:00"}
+        )
+        assert artefact.schema_version == 1
+        assert artefact.legacy_incomplete is True
+
 
 # =========================================================================
 # Schema v2 -> v3 compatibility (REQ-VAL-001 UK-pilot evidence expansion)
@@ -438,6 +474,112 @@ class TestSchemaV2Compatibility:
         assert restored.schema_version == artefact.schema_version
         assert restored.error_metrics.status == "not_computed"
         assert restored.fingerprint() == artefact.fingerprint()
+
+
+# =========================================================================
+# Historical v2 fingerprint/readiness compatibility audit (Work Package 2)
+# =========================================================================
+
+
+class TestHistoricalV2FingerprintCompatibility:
+    """A schema-v2 artefact fixture shaped exactly as it existed before PR
+    #141 added the error_metrics/residual_diagnostics fields to
+    DiagnosticsArtefact - no error_metrics/residual_diagnostics keys in the
+    dict at all (the fixture TestSchemaV2Compatibility._v2_dict() already
+    reproduces this shape). A readiness proof's diagnostic_artefact_fingerprint
+    stored *before* PR #141 was computed under a fingerprint payload that
+    never included error_metrics/residual_diagnostics keys at all. Today's
+    loader always upgrades a v2 dict in memory to carry not_computed
+    sections for both, and DiagnosticsArtefact.fingerprint() always hashes
+    all nine sections - so recomputing today's fingerprint from that exact
+    same v2 evidence can never reproduce a fingerprint computed by the
+    pre-#141 formula. This must never be silently treated as "still
+    verified" - it must fail the existing fingerprint-equality check
+    (core.validation_policy.readiness_matches_current_evidence) and require
+    re-evaluation, exactly like any other evidence drift."""
+
+    @staticmethod
+    def _v2_dict() -> dict:
+        return TestSchemaV2Compatibility()._v2_dict()
+
+    @staticmethod
+    def _pre_pr141_fingerprint(artefact: DiagnosticsArtefact) -> str:
+        """Independently reproduces the exact pre-PR-#141 fingerprint
+        formula: the same payload DiagnosticsArtefact.fingerprint() builds
+        today, minus the error_metrics/residual_diagnostics keys that did
+        not exist in that formula at all - never calling today's
+        .fingerprint() (which would trivially "match itself")."""
+        import hashlib
+        import json
+
+        payload = {
+            "schema_version": artefact.schema_version,
+            "diagnostics_version": artefact.diagnostics_version,
+            "model_identity_fingerprint": artefact.model_identity_fingerprint,
+            "evaluated_at": artefact.evaluated_at.isoformat(),
+            "model_type": artefact.model_type,
+            "market_scope": artefact.market_scope,
+            "convergence": artefact.convergence.fingerprint_payload(),
+            "in_sample_fit": artefact.in_sample_fit.fingerprint_payload(),
+            "posterior_predictive": artefact.posterior_predictive.fingerprint_payload(),
+            "plausibility": artefact.plausibility.fingerprint_payload(),
+            "identification": artefact.identification.fingerprint_payload(),
+            "coefficient_stability": artefact.coefficient_stability.fingerprint_payload(),
+            "backtest": artefact.backtest.fingerprint_payload(),
+            "global_warnings": sorted(artefact.global_warnings),
+            "global_errors": sorted(artefact.global_errors),
+            "settings": tuple(sorted(artefact.settings)),
+            "legacy_incomplete": artefact.legacy_incomplete,
+        }
+        encoded = json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), default=str
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    def test_pre_pr141_fingerprint_does_not_match_current_loader_fingerprint(self):
+        """Documents the identity gap explicitly: loading the exact same v2
+        evidence today produces a different fingerprint than the formula
+        that predated error_metrics/residual_diagnostics."""
+        artefact = DiagnosticsArtefact.from_dict(self._v2_dict())
+        historical_fingerprint = self._pre_pr141_fingerprint(artefact)
+        assert historical_fingerprint != artefact.fingerprint()
+
+    def test_stale_historical_fingerprint_fails_readiness_match_and_requires_reevaluation(
+        self,
+    ):
+        """The one existing generic mechanism that decides whether a stored
+        readiness proof still describes current evidence - a plain
+        fingerprint-equality comparison, no artefact-shape special-casing -
+        already fails this closed: a readiness carrying the pre-#141
+        fingerprint never matches today's recomputation, so it is correctly
+        excluded from being treated as current and must be re-evaluated. No
+        second readiness system is introduced to handle this case."""
+        from ancestry_mmm.core.validation_policy import (
+            ApprovalReadiness,
+            readiness_matches_current_evidence,
+        )
+
+        artefact = DiagnosticsArtefact.from_dict(self._v2_dict())
+        historical_fingerprint = self._pre_pr141_fingerprint(artefact)
+
+        readiness = ApprovalReadiness(
+            readiness_artefact_id="historical-readiness",
+            policy_id="pol-1",
+            policy_version="1.0",
+            policy_fingerprint="policy-fp",
+            model_identity_fingerprint="identity-fp",
+            diagnostic_artefact_fingerprint=historical_fingerprint,
+            overall_ready=True,
+        )
+
+        # Re-verifying against the *same underlying evidence*, recomputed
+        # by today's loader/fingerprint formula - must not match.
+        assert not readiness_matches_current_evidence(
+            readiness,
+            policy_fingerprint="policy-fp",
+            model_identity_fingerprint="identity-fp",
+            diagnostic_artefact_fingerprint=artefact.fingerprint(),
+        )
 
 
 # =========================================================================

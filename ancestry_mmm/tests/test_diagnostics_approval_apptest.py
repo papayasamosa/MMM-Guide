@@ -112,6 +112,7 @@ def _trace_frame_meta():
     frame = {
         "Y": Y,
         "X_media": x_media,
+        "markets": ["UK"],
         "market_bounds": [(0, n_obs)],
         "market_idx": np.zeros(n_obs, dtype=int),
         "promo": np.zeros((n_obs, 1)),

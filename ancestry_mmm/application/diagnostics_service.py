@@ -123,6 +123,28 @@ class DiagnosticSection:
 # ---------------------------------------------------------------------------
 
 
+def _validate_diagnostics_schema_version(raw: Any) -> int:
+    """Strict `schema_version` validation for `DiagnosticsArtefact.from_dict`
+    (Work Package 2 corrective fix, mirroring
+    `core.search_objects._validate_search_object_schema_version`). Plain
+    `==`/`in` dispatch is not validation: `bool` is an `int` subclass in
+    Python (`True == 1`), and `float`/`int` compare equal when numerically
+    equal (`2.0 in (2, 3)`), so either would previously have silently
+    masqueraded as a genuine integer schema version. Only an actual `int`
+    (never `bool`) that is `>= 1` is accepted here; whether a given integer
+    value is a *supported* version is decided by the dispatch that calls
+    this, not here.
+    """
+    if isinstance(raw, bool) or type(raw) is not int:
+        raise ValueError(
+            f"DiagnosticsArtefact schema_version must be an integer, got "
+            f"{raw!r} (type={type(raw).__name__})"
+        )
+    if raw < 1:
+        raise ValueError(f"DiagnosticsArtefact schema_version must be >= 1, got {raw}")
+    return raw
+
+
 @dataclass(frozen=True)
 class DiagnosticsArtefact:
     """Immutable, fingerprinted artefact capturing diagnostics evidence.
@@ -140,6 +162,35 @@ class DiagnosticsArtefact:
     seven - neither introduces a blocking threshold (evidence computation
     and approval policy remain separate; an approved policy decides
     thresholds later, per REQ-VAL-001's "Requirements discipline").
+
+    Work Package 2 corrective fix: ``residual_diagnostics``'s underlying
+    calculation (``core.diagnostics.residual_temporal_diagnostics`` / the
+    market-specific equivalent) changed from one row per outcome_id
+    (computed by concatenating every market's residuals - which formed an
+    invalid cross-market lag pair at each market boundary) to one row per
+    market x outcome_id, computed within each market's own chronological
+    slice. ``schema_version`` stays 3 - the section's serialized *shape* is
+    still a list of JSON-safe records, so this is not a structural schema
+    break requiring a new migration - but ``DiagnosticsService.evaluate()``
+    now stamps newly-computed artefacts with ``diagnostics_version
+    "3.1.0"`` (bumped from ``"3.0.0"``) to record the calculation change.
+    An already-persisted artefact with ``diagnostics_version "3.0.0"``
+    remains loadable exactly as-is (``from_dict`` never reinterprets a
+    stored payload) - its ``residual_diagnostics`` rows are outcome-only,
+    computed by the pre-fix concatenated method, and must never be silently
+    treated as if they were produced by the market-safe method.
+
+    Note: ``diagnostics_version`` is a whole-artefact string, not a
+    per-section calculation identifier - it changes whenever a computed
+    artefact's *calculation methodology* changes materially enough to be
+    worth distinguishing from prior evidence, the same role it already
+    played when schema v3 was introduced (``diagnostics_version`` and
+    ``schema_version`` were bumped together then). ``fingerprint()``'s
+    formula/key set is unchanged - ``diagnostics_version`` was already one
+    of its hashed fields, so bumping it is itself evidence-content drift
+    (a readiness bound to a "3.0.0" artefact already fails to match a
+    freshly-recomputed "3.1.0" fingerprint), not a special exemption from
+    the ordinary fingerprint mechanism.
 
     Schema-v1 artefacts loaded via ``from_dict`` are marked
     ``legacy_incomplete`` and cannot support a new official approval.
@@ -256,8 +307,21 @@ class DiagnosticsArtefact:
     def from_dict(cls, d: Dict[str, Any]) -> "DiagnosticsArtefact":
         """Load from a dict. Supports schema v1 (legacy_incomplete), v2
         (upgraded in place to the v3 shape - see the class docstring for why
-        this is not also marked legacy_incomplete) and v3."""
-        sv = d.get("schema_version", 1)
+        this is not also marked legacy_incomplete) and v3.
+
+        `schema_version` is validated strictly via
+        `_validate_diagnostics_schema_version` when the key is present -
+        Python's `==`/`in` equality would otherwise let a `bool` (`True ==
+        1`) or a `float` (`2.0 in (2, 3)`) silently masquerade as an actual
+        integer schema version (Work Package 2 corrective fix). A genuinely
+        absent `schema_version` key still takes the documented legacy
+        default of 1 (an artefact predating schema versioning entirely).
+        """
+        sv = (
+            _validate_diagnostics_schema_version(d["schema_version"])
+            if "schema_version" in d
+            else 1
+        )
         if sv == 1:
             # Schema v1 → wrap summaries into sections, mark legacy_incomplete
             return cls._from_v1(d)
@@ -749,7 +813,7 @@ class DiagnosticsService:
 
         artefact = DiagnosticsArtefact(
             artefact_id=uuid.uuid4().hex,
-            diagnostics_version="3.0.0",
+            diagnostics_version="3.1.0",
             schema_version=3,
             model_identity_fingerprint=identity_fp,
             evaluated_at=datetime.now(timezone.utc),
@@ -796,7 +860,7 @@ class DiagnosticsService:
             backtest_results=backtest_results,
             warnings=warnings,
             errors=errors,
-            diagnostics_version="3.0.0",
+            diagnostics_version="3.1.0",
             diagnostics_artefact=artefact,
         )
 

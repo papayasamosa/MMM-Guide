@@ -62,17 +62,26 @@ Requires Python 3.11 or 3.12 (see [Deployment](#deployment) below for why there'
   columns via a restricted `ast`-based expression parser (not `eval()`), and validation checks for
   low-variance channels, collinearity, and sparse segments/markets before fitting.
 - **Diagnostics scorecard** (`ancestry_mmm/core/diagnostics.py`): convergence (R-hat/ESS/
-  divergences), in-sample fit, posterior predictive coverage, curve/ROI plausibility flags, and an
-  expanding-window out-of-sample backtest.
+  divergences), in-sample fit, error metrics (MAE/RMSE/sMAPE/WAPE/bias per outcome), residual
+  temporal structure (lag-1 autocorrelation/Durbin-Watson, computed within each market's own
+  chronological slice - never across a market boundary - and reported per market x outcome),
+  posterior predictive coverage, curve/ROI plausibility flags, multicollinearity/weak-identification
+  diagnostics, coefficient stability, and an expanding-window out-of-sample backtest. Every section
+  is computed once and stored in a fingerprinted `DiagnosticsArtefact`; the Diagnostics page renders
+  from that canonical artefact, never a separate live recomputation.
 - **Model approval gate** (`ancestry_mmm/core/approval.py`): a high R-squared isn't a reason to
   accept a model on its own - an explicit approval (reviewer, notes, known limitations, which
   diagnostics were checked) is required before a model's curves can be saved to the curve bank or
   used in the Scenario Planner. Curve bank entries structurally cannot be created without one.
 - **Curve bank** (`ancestry_mmm/core/curve_bank.py`): versioned, JSON-backed, append-only storage
-  of each approved run's curves and segment parameters - one shared curve per channel for Model A,
-  one per (market, channel) for Model C, each carrying its evidence tier - traceable to its data
-  window, approver and run label, plus a geo-test/in-platform-test calibration log with an
-  agree/diverge flag (Model A only).
+  of each approved run's *fitted parameter snapshot* (`CurveBankEntry`) - one shared entry per
+  channel for Model A, one per (market, channel) for Model C, each carrying its evidence tier -
+  traceable to its data window, approver and run label, plus a geo-test/in-platform-test calibration
+  log with an agree/diverge flag (Model A only). A `CurveBankEntry` is a fitted parameter snapshot,
+  not an official evaluated response curve: official evaluated response curves use the canonical
+  posterior-draw path through `application/curve_service.py` and are persisted as official curve
+  artefacts (Official Curve Generation page) - a second, curve-bank-only path is never presented as
+  official.
 - **Attribution** (`ancestry_mmm/core/attribution.py`, `ancestry_mmm/core/market_specific_attribution.py`):
   Shapley-decomposed segment and total-FH contributions (order-independent, sums exactly to the
   model's predicted total), ROAS/CPA by channel x segment, LTV-weighted value - available for both

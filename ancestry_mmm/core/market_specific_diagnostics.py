@@ -87,22 +87,34 @@ def residual_temporal_diagnostics_market_specific(
     meta: FHModelMeta,
     params: FHMarketSpecificPosteriorParams,
 ) -> pd.DataFrame:
-    """Lag-1 autocorrelation/Durbin-Watson per outcome_id - Model C
-    equivalent of core.diagnostics.residual_temporal_diagnostics."""
+    """Lag-1 autocorrelation/Durbin-Watson per market x outcome_id - Model C
+    equivalent of core.diagnostics.residual_temporal_diagnostics. Computed
+    within each market's own `frame["market_bounds"]` slice, never across a
+    market boundary - the same market-safety fix, and the same
+    `frame["markets"]`/`frame["market_bounds"]` convention
+    `curve_plausibility_checks_market_specific` above already uses for its
+    own per-market slicing. Market-specific curve parameters (hill_K/beta)
+    already vary by market; residual temporal evidence must be market-safe
+    for exactly the same reason."""
     mu = predict_mu_market_specific(frame, meta, params)
     Y = frame["Y"]
+    markets = frame["markets"]
+    market_bounds = frame["market_bounds"]
     rows = []
-    for i, oid in enumerate(meta.outcome_ids):
-        residuals = Y[:, i] - mu[:, i]
-        lag1_autocorr, durbin_watson = _residual_autocorrelation_stats(residuals)
-        rows.append(
-            {
-                "outcome_id": oid,
-                "n_observations": len(residuals),
-                "lag1_autocorrelation": lag1_autocorr,
-                "durbin_watson": durbin_watson,
-            }
-        )
+    for m_i, market in enumerate(markets):
+        start, end = market_bounds[m_i]
+        for i, oid in enumerate(meta.outcome_ids):
+            residuals = Y[start:end, i] - mu[start:end, i]
+            lag1_autocorr, durbin_watson = _residual_autocorrelation_stats(residuals)
+            rows.append(
+                {
+                    "market": market,
+                    "outcome_id": oid,
+                    "n_observations": len(residuals),
+                    "lag1_autocorrelation": lag1_autocorr,
+                    "durbin_watson": durbin_watson,
+                }
+            )
     return pd.DataFrame(rows)
 
 

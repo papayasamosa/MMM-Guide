@@ -73,6 +73,26 @@ remains fully valid ``official_canonical`` evidence for the seven sections
 it always had, since ``ValidationService`` gates on ``schema_version >= 2``,
 not ``== 2``.
 
+Work Package 2 corrective fix: `residual_diagnostics`'s underlying
+calculation (`core.diagnostics.residual_temporal_diagnostics` / the
+market-specific equivalent) originally computed lag-1 autocorrelation/
+Durbin-Watson on the full, multi-market-concatenated residual vector per
+outcome_id - since the model frame stacks every market's rows together,
+this formed an invalid lag pair between one market's last observation and a
+different market's first observation. It now computes within each market's
+own chronological slice (`frame["market_bounds"]`) and reports one row per
+market x outcome_id, never across a market boundary. `DiagnosticsArtefact.
+schema_version` is unchanged (still 3 - the section's serialized shape is
+still a list of JSON-safe records); `DiagnosticsService.evaluate()` now
+stamps newly-computed artefacts with `diagnostics_version "3.1.0"` (bumped
+from `"3.0.0"`) to record the calculation change - an already-persisted
+`"3.0.0"` artefact remains loadable exactly as computed, its outcome-only
+residual rows never silently reinterpreted as market-safe evidence. Also
+closed in the same corrective PR: `DiagnosticsArtefact.from_dict`'s
+`schema_version` dispatch used plain `==`/`in` equality, which let a `bool`
+(`True == 1`) or a numerically-equal `float` (`2.0 in (2, 3)`) silently
+masquerade as a genuine integer schema version - now validated strictly.
+
 Not yet implemented (explicitly deferred, not silently dropped): prior
 predictive checks, prior-versus-posterior comparison summaries, and
 predictive log-density. Each requires building and sampling from the actual

@@ -12,6 +12,8 @@ tests.
 
 from __future__ import annotations
 
+import dataclasses
+
 import numpy as np
 import pytest
 
@@ -123,11 +125,182 @@ class TestResidualTemporalDiagnosticsEndToEnd:
         frame = _frame_with_actuals(meta, params)
         result = residual_temporal_diagnostics(frame, meta, params)
         assert set(result["outcome_id"]) == set(OUTCOME_IDS)
+        assert set(result["market"]) == {"UK"}
         assert (result["n_observations"] == len(frame["Y"])).all()
         # All-zero residuals: lag1_autocorrelation and durbin_watson are
         # both undefined (nan), not fabricated zeros.
         assert result["lag1_autocorrelation"].isna().all()
         assert result["durbin_watson"].isna().all()
+
+
+class TestResidualTemporalDiagnosticsMarketSafety:
+    """Work Package 2 corrective fix: residual_temporal_diagnostics must
+    never form a lag pair across a market boundary. The model frame is
+    multi-market; concatenating every market's residuals before computing
+    lag-1 autocorrelation/Durbin-Watson creates a synthetic adjacency
+    between one market's last observation and a different market's first -
+    not a valid time-series lag."""
+
+    @staticmethod
+    def _two_market_meta(base_meta: FHModelMeta) -> FHModelMeta:
+        return dataclasses.replace(base_meta, markets=["UK", "US"])
+
+    @staticmethod
+    def _two_market_params(base_params: FHPosteriorParams) -> FHPosteriorParams:
+        return dataclasses.replace(
+            base_params,
+            market_offset={
+                "UK": {"New": 0.0, "DNA_CrossSell": 0.0},
+                "US": {"New": 1.5, "DNA_CrossSell": -0.5},
+            },
+        )
+
+    @staticmethod
+    def _two_market_frame(meta, params, n_per_market: int = 6):
+        n = n_per_market * 2
+        frame = {
+            "markets": ["UK", "US"],
+            "market_idx": np.array([0] * n_per_market + [1] * n_per_market),
+            "market_bounds": [(0, n_per_market), (n_per_market, n)],
+            "X_media": np.zeros((n, len(CHANNELS))),
+            "promo": np.zeros((n, len(OUTCOME_IDS))),
+            "trend": np.concatenate(
+                [
+                    np.arange(n_per_market, dtype=float),
+                    np.arange(n_per_market, dtype=float),
+                ]
+            ),
+            "fourier": np.zeros((n, 6)),
+            "control_names": [],
+            "X_controls": np.zeros((n, 0)),
+            "outcome_controls": {},
+            "outcome_control_names": {},
+        }
+        frame["Y"] = predict_mu(frame, meta, params)
+        return frame
+
+    def test_cross_market_discontinuity_does_not_change_within_market_statistics(
+        self, meta, params
+    ):
+        """Reproduces the defect (via the internal helper, computed
+        directly on the concatenated vector as the pre-fix production code
+        did) and proves the fix: each market's row from the production
+        function exactly matches that market's own within-slice
+        calculation, unaffected by an extreme discontinuity at the other
+        market's boundary."""
+        n_per_market = 6
+        two_market_meta = self._two_market_meta(meta)
+        two_market_params = self._two_market_params(params)
+        frame = self._two_market_frame(two_market_meta, two_market_params, n_per_market)
+
+        outcome_idx = meta.outcome_ids.index("New")
+        baseline_mu = frame["Y"][:, outcome_idx].copy()
+
+        # Market UK: a mild alternating residual pattern. Market US: the
+        # same pattern shifted by an extreme +500 offset - a deliberately
+        # extreme discontinuity relative to UK's last residual.
+        pattern = np.array([0.0, 5.0, 0.0, 5.0, 0.0, 5.0])
+        uk_residuals = pattern.copy()
+        us_residuals = pattern.copy() + 500.0
+        engineered = np.concatenate([uk_residuals, us_residuals])
+        frame["Y"][:, outcome_idx] = baseline_mu + engineered
+
+        result = residual_temporal_diagnostics(
+            frame, two_market_meta, two_market_params
+        )
+        uk_row = result[
+            (result["market"] == "UK") & (result["outcome_id"] == "New")
+        ].iloc[0]
+        us_row = result[
+            (result["market"] == "US") & (result["outcome_id"] == "New")
+        ].iloc[0]
+
+        expected_uk_lag1, expected_uk_dw = _residual_autocorrelation_stats(uk_residuals)
+        expected_us_lag1, expected_us_dw = _residual_autocorrelation_stats(us_residuals)
+        assert uk_row["lag1_autocorrelation"] == pytest.approx(expected_uk_lag1)
+        assert uk_row["durbin_watson"] == pytest.approx(expected_uk_dw)
+        assert us_row["lag1_autocorrelation"] == pytest.approx(expected_us_lag1)
+        assert us_row["durbin_watson"] == pytest.approx(expected_us_dw)
+        assert uk_row["n_observations"] == n_per_market
+        assert us_row["n_observations"] == n_per_market
+
+        # Reproduce the defect explicitly: the old concatenated-vector
+        # calculation (computed here directly, independent of the now-fixed
+        # production function) disagrees with UK's own true within-market
+        # statistic - proof a cross-market lag pair really did corrupt the
+        # evidence the pre-fix code would have reported.
+        concatenated_lag1, concatenated_dw = _residual_autocorrelation_stats(engineered)
+        assert concatenated_lag1 != pytest.approx(expected_uk_lag1, abs=1e-6)
+        assert concatenated_dw != pytest.approx(expected_uk_dw, abs=1e-6)
+
+    def test_different_markets_retain_different_residual_evidence(self, meta, params):
+        n_per_market = 6
+        two_market_meta = self._two_market_meta(meta)
+        two_market_params = self._two_market_params(params)
+        frame = self._two_market_frame(two_market_meta, two_market_params, n_per_market)
+
+        outcome_idx = meta.outcome_ids.index("New")
+        baseline_mu = frame["Y"][:, outcome_idx].copy()
+        uk_residuals = np.array([0.0, 1.0, 0.0, 1.0, 0.0, 1.0])
+        us_residuals = np.array([0.0, -1.0, 2.0, -3.0, 4.0, -5.0])
+        frame["Y"][:, outcome_idx] = baseline_mu + np.concatenate(
+            [uk_residuals, us_residuals]
+        )
+
+        result = residual_temporal_diagnostics(
+            frame, two_market_meta, two_market_params
+        )
+        uk_lag1 = result.loc[
+            (result["market"] == "UK") & (result["outcome_id"] == "New"),
+            "lag1_autocorrelation",
+        ].iloc[0]
+        us_lag1 = result.loc[
+            (result["market"] == "US") & (result["outcome_id"] == "New"),
+            "lag1_autocorrelation",
+        ].iloc[0]
+        assert uk_lag1 != pytest.approx(us_lag1, abs=1e-6)
+
+    def test_fewer_than_two_observations_in_a_market_is_explicit_nan(
+        self, meta, params
+    ):
+        """A market slice with fewer than two rows cannot define a lag-1
+        pair - explicit NaN, never a fabricated value, and never allowed to
+        borrow a row from a different market to make up the pair."""
+        two_market_meta = self._two_market_meta(meta)
+        two_market_params = self._two_market_params(params)
+        n = 7
+        frame = {
+            "markets": ["UK", "US"],
+            "market_idx": np.array([0] * 6 + [1]),
+            "market_bounds": [(0, 6), (6, 7)],
+            "X_media": np.zeros((n, len(CHANNELS))),
+            "promo": np.zeros((n, len(OUTCOME_IDS))),
+            "trend": np.concatenate([np.arange(6, dtype=float), np.array([0.0])]),
+            "fourier": np.zeros((n, 6)),
+            "control_names": [],
+            "X_controls": np.zeros((n, 0)),
+            "outcome_controls": {},
+            "outcome_control_names": {},
+        }
+        frame["Y"] = predict_mu(frame, two_market_meta, two_market_params)
+        result = residual_temporal_diagnostics(
+            frame, two_market_meta, two_market_params
+        )
+        us_rows = result[result["market"] == "US"]
+        assert (us_rows["n_observations"] == 1).all()
+        assert us_rows["lag1_autocorrelation"].isna().all()
+        assert us_rows["durbin_watson"].isna().all()
+
+    def test_row_count_is_markets_times_outcomes(self, meta, params):
+        two_market_meta = self._two_market_meta(meta)
+        two_market_params = self._two_market_params(params)
+        frame = self._two_market_frame(two_market_meta, two_market_params)
+        result = residual_temporal_diagnostics(
+            frame, two_market_meta, two_market_params
+        )
+        assert len(result) == len(frame["markets"]) * len(meta.outcome_ids)
+        assert set(result["market"]) == {"UK", "US"}
+        assert set(result["outcome_id"]) == set(OUTCOME_IDS)
 
 
 class TestMae:
