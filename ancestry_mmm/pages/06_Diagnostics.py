@@ -276,6 +276,14 @@ if scorecard:
         "from the canonical diagnostics artefact - never recomputed "
         "separately from it."
     )
+    st.caption(
+        "Residual temporal evidence is reported per market x outcome, "
+        "computed within each market's own chronological slice - the "
+        "model frame is multi-market, so lag-1 autocorrelation/"
+        "Durbin-Watson are never computed across a market boundary. Every "
+        "market is shown; no overall figure is derived by concatenating "
+        "markets."
+    )
     error_metrics_section = diag_artefact.error_metrics if diag_artefact else None
     residual_section = diag_artefact.residual_diagnostics if diag_artefact else None
     if error_metrics_section is None or error_metrics_section.status == "not_computed":

@@ -102,12 +102,21 @@ def residual_temporal_diagnostics(
     frame: Dict, meta: FHModelMeta, params: FHPosteriorParams
 ) -> pd.DataFrame:
     """Residual (actual - posterior-mean-prediction) temporal structure per
-    outcome_id: lag-1 autocorrelation and the Durbin-Watson statistic.
+    market x outcome_id: lag-1 autocorrelation and the Durbin-Watson
+    statistic.
 
-    Residuals are taken in the row order `frame["Y"]` already carries -
-    callers must pass a chronologically ordered frame (the same one
-    `in_sample_fit`/`predict_mu` are already fed) for these to mean
-    "temporal" structure; this function does not itself sort by date.
+    Computed separately within each market's own chronological row slice
+    (`frame["market_bounds"]`, the same contiguous per-market row ranges
+    `core.market_specific_diagnostics.curve_plausibility_checks_market_specific`
+    already uses) - never across a market boundary. `frame`'s rows are
+    sorted `[market, date]` by `data.preprocessor.prepare_fh_modeling_frame`,
+    so each market's own slice is chronologically ordered, but the model
+    frame is multi-market: concatenating every market's residuals into one
+    vector before computing a lag-1 pair would form a synthetic adjacency
+    between one market's last observation and a different market's first
+    observation, which is not a valid time-series lag and corrupts the
+    evidence (Work Package 2 corrective fix - the prior per-outcome-only
+    version of this function did exactly that).
 
     Lag-1 autocorrelation near 0 indicates no obvious temporal
     autocorrelation left in the residuals; a value well above 0 indicates
@@ -124,18 +133,23 @@ def residual_temporal_diagnostics(
     """
     mu = predict_mu(frame, meta, params)
     Y = frame["Y"]
+    markets = frame["markets"]
+    market_bounds = frame["market_bounds"]
     rows = []
-    for i, oid in enumerate(meta.outcome_ids):
-        residuals = Y[:, i] - mu[:, i]
-        lag1_autocorr, durbin_watson = _residual_autocorrelation_stats(residuals)
-        rows.append(
-            {
-                "outcome_id": oid,
-                "n_observations": len(residuals),
-                "lag1_autocorrelation": lag1_autocorr,
-                "durbin_watson": durbin_watson,
-            }
-        )
+    for m_i, market in enumerate(markets):
+        start, end = market_bounds[m_i]
+        for i, oid in enumerate(meta.outcome_ids):
+            residuals = Y[start:end, i] - mu[start:end, i]
+            lag1_autocorr, durbin_watson = _residual_autocorrelation_stats(residuals)
+            rows.append(
+                {
+                    "market": market,
+                    "outcome_id": oid,
+                    "n_observations": len(residuals),
+                    "lag1_autocorrelation": lag1_autocorr,
+                    "durbin_watson": durbin_watson,
+                }
+            )
     return pd.DataFrame(rows)
 
 

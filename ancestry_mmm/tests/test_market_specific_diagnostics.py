@@ -7,13 +7,18 @@ import numpy as np
 import pytest
 import arviz as az
 
+from ancestry_mmm.core.diagnostics import _residual_autocorrelation_stats
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
 from ancestry_mmm.core.market_specific_diagnostics import (
     compute_scorecard_market_specific,
     curve_plausibility_checks_market_specific,
     in_sample_fit_market_specific,
+    residual_temporal_diagnostics_market_specific,
 )
-from ancestry_mmm.core.market_specific_predict import FHMarketSpecificPosteriorParams
+from ancestry_mmm.core.market_specific_predict import (
+    FHMarketSpecificPosteriorParams,
+    predict_mu_market_specific,
+)
 from ancestry_mmm.tests.conftest import pathway_strength_from_flat
 
 MARKETS = ["UK", "AU"]
@@ -194,6 +199,75 @@ class TestCurvePlausibilityChecksMarketSpecific:
             trace, meta, frame, roi_bounds=None
         )
         assert all("marginal ROI" not in i["message"] for i in issues)
+
+
+class TestResidualTemporalDiagnosticsMarketSpecificMarketSafety:
+    """Work Package 2 corrective fix: the Model C equivalent must also
+    never form a lag pair across a market boundary - market-specific curve
+    parameters (hill_K/beta) already vary by market, so residuals are not
+    a single time series across markets here either."""
+
+    def test_cross_market_discontinuity_does_not_change_within_market_statistics(
+        self, meta, params
+    ):
+        n_per_market = 6
+        n = n_per_market * 2
+        frame = {
+            "markets": MARKETS,
+            "market_idx": np.array([0] * n_per_market + [1] * n_per_market),
+            "market_bounds": [(0, n_per_market), (n_per_market, n)],
+            "X_media": np.zeros((n, len(CHANNELS))),
+            "Y": np.zeros((n, len(OUTCOME_IDS))),
+            "promo": np.zeros((n, len(OUTCOME_IDS))),
+            "trend": np.concatenate(
+                [
+                    np.arange(n_per_market, dtype=float),
+                    np.arange(n_per_market, dtype=float),
+                ]
+            ),
+            "fourier": np.zeros((n, 4)),
+            "control_names": [],
+            "X_controls": np.zeros((n, 0)),
+            "outcome_controls": {},
+            "outcome_control_names": {},
+        }
+        baseline_mu = predict_mu_market_specific(frame, meta, params)
+        outcome_idx = meta.outcome_ids.index("New")
+
+        # Market UK: a mild alternating residual pattern. Market AU: the
+        # same pattern shifted by an extreme +500 offset - a deliberately
+        # extreme discontinuity relative to UK's last residual.
+        pattern = np.array([0.0, 5.0, 0.0, 5.0, 0.0, 5.0])
+        uk_residuals = pattern.copy()
+        au_residuals = pattern.copy() + 500.0
+        engineered = np.concatenate([uk_residuals, au_residuals])
+        frame["Y"][:, outcome_idx] = baseline_mu[:, outcome_idx] + engineered
+
+        result = residual_temporal_diagnostics_market_specific(frame, meta, params)
+        uk_row = result[
+            (result["market"] == "UK") & (result["outcome_id"] == "New")
+        ].iloc[0]
+        au_row = result[
+            (result["market"] == "AU") & (result["outcome_id"] == "New")
+        ].iloc[0]
+
+        expected_uk_lag1, expected_uk_dw = _residual_autocorrelation_stats(uk_residuals)
+        expected_au_lag1, expected_au_dw = _residual_autocorrelation_stats(au_residuals)
+        assert uk_row["lag1_autocorrelation"] == pytest.approx(expected_uk_lag1)
+        assert uk_row["durbin_watson"] == pytest.approx(expected_uk_dw)
+        assert au_row["lag1_autocorrelation"] == pytest.approx(expected_au_lag1)
+        assert au_row["durbin_watson"] == pytest.approx(expected_au_dw)
+
+        # Reproduce the defect explicitly: the concatenated-vector
+        # calculation disagrees with UK's own true within-market statistic.
+        concatenated_lag1, _ = _residual_autocorrelation_stats(engineered)
+        assert concatenated_lag1 != pytest.approx(expected_uk_lag1, abs=1e-6)
+
+    def test_row_count_is_markets_times_outcomes(self, meta, params, frame):
+        result = residual_temporal_diagnostics_market_specific(frame, meta, params)
+        assert len(result) == len(MARKETS) * len(OUTCOME_IDS)
+        assert set(result["market"]) == set(MARKETS)
+        assert set(result["outcome_id"]) == set(OUTCOME_IDS)
 
 
 class TestComputeScorecardMarketSpecific:
