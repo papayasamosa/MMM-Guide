@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Sequence, Tuple
 
 import arviz as az
 import numpy as np
@@ -80,6 +80,10 @@ from ancestry_mmm.core.planning.value import (
 from ancestry_mmm.core.predict import extract_posterior_params
 from ancestry_mmm.core.scenario_governance import CounterfactualPolicy
 from ancestry_mmm.core.schema import ModelSpec
+from ancestry_mmm.core.search_objects import (
+    SearchObjectDefinition,
+    search_object_fit_fingerprint,
+)
 from ancestry_mmm.core.validation_policy import (
     ApprovalReadiness,
     ThresholdPolicy,
@@ -248,13 +252,28 @@ class FittedModel:
     data_fingerprint: str
     model_spec_fingerprint: str
     posterior_fingerprint: str
+    search_objects: Tuple[SearchObjectDefinition, ...] = ()
 
 
-def build_fitted_model() -> FittedModel:
+def build_fitted_model(
+    *, search_objects: Optional[Sequence[SearchObjectDefinition]] = None
+) -> FittedModel:
     """Deterministically build a complete, internally-consistent fitted
     model: transformed frame, model spec, structurally-valid trace, derived
     posterior params, and the fingerprints that must match for governance
-    (`ModelApproval`, `ApprovalReadiness`) to bind to it."""
+    (`ModelApproval`, `ApprovalReadiness`) to bind to it.
+
+    `search_objects` (Work Package 1 Correction C) is an optional catalogue
+    of governed Search objects at fit time - passed through
+    `core.search_objects.search_object_fit_fingerprint` into
+    `model_spec_fingerprint` exactly like `activity_fit_fingerprint` already
+    is, so a test can prove whether an administrative-only vs a fit-relevant
+    edit to a *consumed* Search object would (correctly) leave this fit's
+    identity unchanged or (correctly) stale it - see
+    `recompute_model_spec_fingerprint` below. Omitting it (the default)
+    reproduces every existing caller's behaviour unchanged: `fingerprint_
+    model_spec`'s own `search_object_fit_fingerprint` parameter already
+    defaults to `None` ("no Search governance data available")."""
     outcome_definition = build_outcome_definition()
     meta = build_meta(outcome_definition)
     trace = build_trace(meta)
@@ -284,6 +303,14 @@ def build_fitted_model() -> FittedModel:
             meta.pathway_catalogue_at_fit
         ),
         activity_fit_fingerprint=activity_fit_fingerprint(activity_definitions),
+        search_object_fit_fingerprint=(
+            search_object_fit_fingerprint(
+                search_objects,
+                consumed_model_input_columns=model_spec_dict.get("channels") or [],
+            )
+            if search_objects
+            else None
+        ),
     )
     posterior_fingerprint = fingerprint_posterior(posterior_params)
 
@@ -302,6 +329,47 @@ def build_fitted_model() -> FittedModel:
         data_fingerprint=data_fingerprint,
         model_spec_fingerprint=model_spec_fingerprint,
         posterior_fingerprint=posterior_fingerprint,
+        search_objects=tuple(search_objects or ()),
+    )
+
+
+def recompute_model_spec_fingerprint(
+    fitted: FittedModel,
+    *,
+    search_objects: Optional[Sequence[SearchObjectDefinition]] = None,
+) -> str:
+    """Recompute `model_spec_fingerprint` exactly the way `build_fitted_model`
+    did, but against a possibly-edited `search_objects` catalogue - lets a
+    test prove whether a specific *sanctioned* Search-object edit (via
+    `core.search_objects.new_search_object_version`) would stale an
+    already-fitted model's identity, without re-fitting anything. Every
+    other input is taken unchanged from `fitted`, so the only thing that can
+    differ from `fitted.model_spec_fingerprint` is the Search catalogue
+    passed here."""
+    consumed_columns = fitted.model_spec_dict.get("channels") or []
+    return fingerprint_model_spec(
+        fitted.model_spec_dict,
+        fitted.prior_config,
+        fitted.dna_lag_weeks,
+        model_type="shared",
+        pipeline_steps=[],
+        market_spec_config=None,
+        direct_dna_outcome_ids=fitted.meta.direct_dna_outcome_ids,
+        outcome_catalogue=outcome_catalogue_fingerprint_payload(
+            fitted.meta.outcome_catalogue_at_fit
+        ),
+        funnel_links=None,
+        media_outcome_pathways=pathway_catalogue_fingerprint_payload(
+            fitted.meta.pathway_catalogue_at_fit
+        ),
+        activity_fit_fingerprint=activity_fit_fingerprint(fitted.activity_definitions),
+        search_object_fit_fingerprint=(
+            search_object_fit_fingerprint(
+                search_objects, consumed_model_input_columns=consumed_columns
+            )
+            if search_objects
+            else None
+        ),
     )
 
 
@@ -601,13 +669,19 @@ class LifecycleProject:
     planning_objective: PlanningObjective
 
 
-def build_lifecycle_project() -> LifecycleProject:
+def build_lifecycle_project(
+    *, search_objects: Optional[Sequence[SearchObjectDefinition]] = None
+) -> LifecycleProject:
     """The one builder that assembles the complete, deterministic,
     already-fitted synthetic project: fitted model, policy-backed model
     approval, approved outcome/activities, cost mapping registry, currency
     context, and official curve governance - everything needed to prove the
-    official curve-to-scenario lifecycle end to end."""
-    fitted = build_fitted_model()
+    official curve-to-scenario lifecycle end to end.
+
+    `search_objects` threads straight through to `build_fitted_model` (Work
+    Package 1 Correction C) - omitted by default, reproducing every existing
+    caller's behaviour unchanged."""
+    fitted = build_fitted_model(search_objects=search_objects)
     policy, readiness, approval, diagnostics = build_policy_backed_governance(
         fitted.model_run_id,
         fitted.data_fingerprint,

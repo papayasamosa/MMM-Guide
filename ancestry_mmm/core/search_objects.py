@@ -109,6 +109,38 @@ def _validate_effective_period(start: Optional[str], end: Optional[str]) -> None
         )
 
 
+def _validate_search_object_schema_version(raw: Any, *, search_object_id: str) -> int:
+    """Strict `schema_version` validation for `SearchObjectDefinition.from_dict`
+    (REQ-SEARCH-001 S11). `int(...)` coercion is not validation - it silently
+    accepts a numeric string (`"2"`), truncates a float (`2.5` -> `2`), and
+    (since `bool` is a `int` subclass in Python) accepts `True`/`False` as
+    `1`/`0`. None of those are a genuine integer schema-version declaration,
+    so each is rejected outright here, named by the record's
+    `search_object_id` and the offending value/type - never silently
+    coerced. Only an actual `int` (never `bool`) that is `>= 1` and
+    `<= SEARCH_OBJECT_SCHEMA_VERSION` is accepted.
+    """
+    if isinstance(raw, bool) or type(raw) is not int:
+        raise ValueError(
+            f"Search object {search_object_id!r} declares a non-integer "
+            f"schema_version {raw!r} (type={type(raw).__name__}) - "
+            "schema_version must be an actual integer, never a bool, float, "
+            "numeric string, or other coercible value."
+        )
+    if raw < 1:
+        raise ValueError(
+            f"Search object {search_object_id!r} declares schema_version "
+            f"{raw} - schema_version must be >= 1."
+        )
+    if raw > SEARCH_OBJECT_SCHEMA_VERSION:
+        raise ValueError(
+            f"Unsupported search object schema_version {raw} - "
+            f"this build only understands up to "
+            f"{SEARCH_OBJECT_SCHEMA_VERSION}."
+        )
+    return raw
+
+
 @dataclass(frozen=True)
 class SearchObjectDefinition:
     """One governed Search object at `market x search_object_id` grain -
@@ -239,31 +271,36 @@ class SearchObjectDefinition:
     @classmethod
     def from_dict(cls, values: Mapping[str, Any]) -> "SearchObjectDefinition":
         """Raises `ValueError` for a `schema_version` newer than this build
-        understands, or a malformed (non-integer) `schema_version` - refuses
-        to guess at an unrecognised future schema (REQ-SEARCH-001 S11/S10),
-        mirroring `core.causal_graph.CausalGraph.from_dict`'s contract.
-        Callers importing untrusted bundle content should catch this
-        alongside TypeError/KeyError/AttributeError and quarantine the
-        record - see `core.persistence.resolve_imported_search_objects`.
+        understands, or a `schema_version` that is not an actual positive
+        integer - refuses to guess at an unrecognised or malformed schema
+        (REQ-SEARCH-001 S11/S10), mirroring
+        `core.causal_graph.CausalGraph.from_dict`'s contract. A bool, float,
+        numeric string, explicit `None`, zero, or negative value is rejected
+        outright by `_validate_search_object_schema_version` - never coerced
+        via `int(...)`. Callers importing untrusted bundle content should
+        catch this alongside TypeError/KeyError/AttributeError and
+        quarantine the record - see
+        `core.persistence.resolve_imported_search_objects`.
 
         A legacy record predating `SEARCH_OBJECT_SCHEMA_VERSION` 2 (no
-        `effective_period_start`/`effective_period_end`/
-        `search_object_version` keys at all) is not "unknown" - those three
-        fields default to `None`/`None`/`1`, the correct reading of "no
-        declared window, first version" for a record that predates this
-        capability entirely.
+        `schema_version` key at all - genuinely absent, the documented
+        migration case) resolves to the current schema version, and its
+        equally-absent `effective_period_start`/`effective_period_end`/
+        `search_object_version` keys default to `None`/`None`/`1`, the
+        correct reading of "no declared window, first version" for a record
+        that predates this capability entirely. A record that *does* supply
+        `schema_version` - including an explicit `null` - is validated
+        strictly; only a genuinely missing key takes the legacy default.
         """
         payload = dict(values)
         payload.setdefault("market", "*")
-        schema_version = int(
-            payload.get("schema_version", SEARCH_OBJECT_SCHEMA_VERSION)
-        )
-        if schema_version > SEARCH_OBJECT_SCHEMA_VERSION:
-            raise ValueError(
-                f"Unsupported search object schema_version {schema_version} - "
-                f"this build only understands up to "
-                f"{SEARCH_OBJECT_SCHEMA_VERSION}."
+        search_object_id = str(payload.get("search_object_id", "<unknown>"))
+        if "schema_version" in payload:
+            schema_version = _validate_search_object_schema_version(
+                payload["schema_version"], search_object_id=search_object_id
             )
+        else:
+            schema_version = SEARCH_OBJECT_SCHEMA_VERSION
         payload["schema_version"] = schema_version
         payload["change_history"] = tuple(payload.get("change_history") or ())
         known = set(cls.__dataclass_fields__)
@@ -614,27 +651,46 @@ def search_object_fit_fingerprint(
     unconsumed Search object never changes this fingerprint.
 
     For each consumed definition, only the fields whose change would alter
-    what that fit's governed Search identity means are hashed: `market`,
-    `search_object_id`, `search_object_version` (REQ-SEARCH-001 S10 - two
-    versions of the same lineage can carry identical field values, e.g. a
-    version created then reverted, and must still fingerprint differently),
-    `search_role`, `source_column`, `model_input_column`, `unit`, `grain`,
-    `product`. Administrative fields - `channel` (a cap-counterpart
-    governance relationship only; no fitting mechanism reads it, mirroring
-    `activity_fit_fingerprint`'s exclusion of `ActivityDefinition.channel`),
-    `effective_period_start`/`effective_period_end` (not yet fit-relevant:
-    no model builder gates which data rows a consumed column contributes by
-    a Search object's declared window - REQ-SEARCH-001 S7's "registration
-    changes no fitting behaviour" applies here too), `state`,
-    `planning_eligibility`, `evidence_status`, `approval_status`,
-    `approved_by`, `approved_at`, `change_history`, `currency`,
-    `schema_version` - are deliberately excluded, mirroring
-    `activity_fit_fingerprint`'s exclusion of `economic_treatment`/
-    `planning_eligibility`/approval metadata. A future PR that makes the
-    effective period or state genuinely gate fitted data must move it to the
-    included side here - the same "move is itself a fingerprint-breaking
-    change" pattern `core.fingerprint.fingerprint_model_spec`'s own
-    docstring documents for `MarketDescriptors`.
+    what that fit's governed Search identity *means* are hashed: `market`,
+    `search_object_id`, `search_role`, `source_column`, `model_input_column`,
+    `unit`, `grain`, `product`. `market`/`search_object_id` are this record's
+    lineage identity (needed to distinguish one consumed object from
+    another); the rest is fit-relevant content.
+
+    `search_object_version` (the governance/audit version counter
+    `new_search_object_version` increments on every sanctioned edit,
+    including a purely administrative one - e.g. `planning_eligibility` or
+    approval metadata) is deliberately **excluded**. It is governance/audit
+    identity, not mathematical fit identity: REQ-SEARCH-001's required
+    invariant is that an administrative-only edit changes the Search
+    object's own governance version and full-catalogue fingerprint
+    (`search_objects_fingerprint`) but never this fit-relevant fingerprint.
+    Hashing `search_object_version` here would break that invariant, because
+    *every* sanctioned edit - administrative or not - bumps it. Two versions
+    of the same lineage that happen to carry identical fit-relevant content
+    (e.g. a fit-relevant field edited then reverted) correctly fingerprint
+    *identically* here: the fit-relevant inputs a model would actually be
+    built from are, at that point, literally the same, so there is nothing
+    for a fit's identity to distinguish - the *governance* record of that
+    round trip still lives in `search_object_version`/`change_history`, just
+    not in this mathematical-identity fingerprint.
+
+    Also excluded, mirroring `activity_fit_fingerprint`'s exclusion of
+    `economic_treatment`/`planning_eligibility`/approval metadata: `channel`
+    (a cap-counterpart governance relationship only; no fitting mechanism
+    reads it, mirroring `activity_fit_fingerprint`'s exclusion of
+    `ActivityDefinition.channel`), `effective_period_start`/
+    `effective_period_end` (not yet fit-relevant: no model builder gates
+    which data rows a consumed column contributes by a Search object's
+    declared window - REQ-SEARCH-001 S7's "registration changes no fitting
+    behaviour" applies here too), `state`, `planning_eligibility`,
+    `evidence_status`, `approval_status`, `approved_by`, `approved_at`,
+    `change_history`, `currency`, `schema_version`. A future PR that makes
+    the effective period, state, or the version counter itself genuinely
+    gate fitted data must move it to the included side here - the same
+    "move is itself a fingerprint-breaking change" pattern
+    `core.fingerprint.fingerprint_model_spec`'s own docstring documents for
+    `MarketDescriptors`.
     """
     consumed = frozenset(column for column in consumed_model_input_columns if column)
     payload = []
@@ -647,7 +703,6 @@ def search_object_fit_fingerprint(
             {
                 "market": definition.market,
                 "search_object_id": definition.search_object_id,
-                "search_object_version": definition.search_object_version,
                 "search_role": definition.search_role,
                 "source_column": definition.source_column,
                 "model_input_column": definition.model_input_column,

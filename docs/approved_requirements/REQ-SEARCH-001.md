@@ -63,16 +63,24 @@ resolve_imported_search_objects` round-trip that full version history
 `graph_versions_for_export`/`resolve_imported_causal_graphs`.
 
 §11's fail-closed schema contract is now closed for Search objects the same
-way REQ-GRAPH-001 §10 already closed it for `CausalGraph`:
-`SearchObjectDefinition.from_dict` raises `ValueError` for a `schema_version`
-above `SEARCH_OBJECT_SCHEMA_VERSION` (currently 2) or a malformed
-(non-integer) `schema_version`, and `resolve_imported_search_objects`
-quarantines any record that raises, named by id and reason in `warnings` -
-never silently accepted with its unrecognised fields dropped. A legacy
-record predating schema_version 2 (no `effective_period_start`/
-`effective_period_end`/`search_object_version` keys at all) is not treated
-as "unknown" - it migrates to the documented defaults (no declared period,
-version 1).
+way REQ-GRAPH-001 §10 already closed it for `CausalGraph`, and hardened
+against a strictness gap the Work Package 1 corrective review found in the
+original closure: `SearchObjectDefinition.from_dict` raises `ValueError` for
+a `schema_version` above `SEARCH_OBJECT_SCHEMA_VERSION` (currently 2), or for
+a `schema_version` that is present but is not an actual positive integer -
+`int(...)` coercion is explicitly not used, since it would silently accept a
+numeric string (`"2"`), truncate a float (`2.5` -> `2`), or (`bool` being an
+`int` subclass in Python) accept `True`/`False` as `1`/`0`. Each of those,
+along with zero, a negative value, and an explicitly-supplied `null`, is
+rejected outright by `_validate_search_object_schema_version`, named by the
+record's `search_object_id` and the offending value/type.
+`resolve_imported_search_objects` quarantines any record that raises, named
+by id and reason in `warnings` - never silently accepted with its
+unrecognised fields dropped. A legacy record predating schema_version 2 (no
+`schema_version` key present at all - the genuinely-absent case) is not
+treated as "unknown" - it migrates to the documented defaults (current
+schema version, no declared period, version 1); a record that *does* supply
+`schema_version` is always validated strictly, with no coercion path.
 
 §13's fit-identity binding is now closed: `core.search_objects.
 search_object_fit_fingerprint` is threaded into
@@ -86,20 +94,46 @@ objects a fit actually *consumes* - a current-version, non-blank
 `ModelSpec.channels` - participate; registering a Search object still
 changes no fitting behaviour by itself (§7, unchanged), so an unconsumed
 Search object's edits never stale a fit. For a consumed object, only
-`market`, `search_object_id`, `search_object_version`, `search_role`,
-`source_column`, `model_input_column`, `unit`, `grain` and `product` are
-fit-relevant; `channel` (governance-only, mirroring
-`activity_fit_fingerprint`'s exclusion of `ActivityDefinition.channel`),
-`effective_period_start`/`effective_period_end` (no model builder yet gates
-consumed data by a declared window), `state`, `planning_eligibility`,
-`evidence_status`, approval metadata, `currency` and `schema_version` are
-administrative and excluded - editing only those on a consumed record never
-stales a fit. `search_object_version` is itself fit-relevant (two versions
-of the same lineage can carry identical field values, e.g. a reverted edit,
-and must still fingerprint differently). No Search mathematics changed by
-this closure - it is fit-identity/staleness wiring only, the same scope
-boundary `activity_fit_fingerprint`/`causal_graph_structural_fingerprint`
-already established.
+`market`, `search_object_id`, `search_role`, `source_column`,
+`model_input_column`, `unit`, `grain` and `product` are fit-relevant;
+`channel` (governance-only, mirroring `activity_fit_fingerprint`'s exclusion
+of `ActivityDefinition.channel`), `effective_period_start`/
+`effective_period_end` (no model builder yet gates consumed data by a
+declared window), `state`, `planning_eligibility`, `evidence_status`,
+approval metadata, `currency`, `schema_version`, and
+**`search_object_version`** are administrative/governance and excluded -
+editing only those on a consumed record never stales a fit.
+
+A Work Package 1 corrective review found and closed a false-staleness
+contradiction in the original closure: `search_object_version` was
+originally hashed as fit-relevant on the reasoning that two versions of the
+same lineage could carry identical field values (e.g. a reverted edit) and
+must still fingerprint differently. That reasoning conflated *governance*
+version identity with *mathematical fit* identity - `new_search_object_
+version` (§10) increments `search_object_version` on **every** sanctioned
+edit, including a purely administrative one (e.g. `planning_eligibility`),
+so hashing it here meant an administrative-only edit to a consumed Search
+object falsely staled the fit it fed, contradicting this record's own
+required invariant that only a fit-relevant edit does. `search_object_
+version` is now excluded from `search_object_fit_fingerprint`: an
+administrative-only sanctioned edit changes the Search object's own
+governance version and full-catalogue fingerprint
+(`search_objects_fingerprint`) but never the fit-relevant fingerprint bound
+into model identity; a sanctioned fit-relevant edit (source mapping, role,
+model-input mapping, unit, or grain) still changes it, staling the bound
+`ModelApproval`, official curve current-use validation, and dependent
+official scenarios via the existing single invalidation path - proved
+end-to-end (model identity, approval matching, official curve current-use,
+scenario dependency validation, export/import reconstruction) in
+`ancestry_mmm/tests/test_search_object_stale_state_integration.py`. Version
+history itself remains fully intact in `search_object_version`/
+`change_history` and continues to drive governance/audit lineage - only its
+participation in the *mathematical* fit fingerprint changed.
+
+No Search mathematics changed by this closure - it is fit-identity/staleness
+wiring only, the same scope boundary
+`activity_fit_fingerprint`/`causal_graph_structural_fingerprint` already
+established.
 
 Not yet implemented: Search demand/capacity mathematics (see Out of scope
 below, unchanged).

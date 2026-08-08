@@ -219,14 +219,17 @@ def fingerprint_model_spec(
     consumed_model_input_columns=model_spec["channels"])`) covers only the
     Search objects this fit actually consumes (a current-version, non-blank
     `model_input_column` matching one of this fit's own channels) and, for
-    those, only their fit-relevant fields (market, search_object_id,
-    search_object_version, search_role, source_column, model_input_column,
-    unit, grain, product) - never `channel`, `effective_period_start`/
-    `effective_period_end`, `state`, `planning_eligibility`,
-    `evidence_status`, approval metadata, `currency`, or `schema_version`,
-    and never a Search object this fit does not consume, or a superseded
-    version of one it does. `""` when omitted (no Search governance data
-    available, or none of it is consumed by this fit).
+    those, only their fit-relevant content fields (market, search_object_id,
+    search_role, source_column, model_input_column, unit, grain, product) -
+    never `channel`, `effective_period_start`/`effective_period_end`,
+    `state`, `planning_eligibility`, `evidence_status`, approval metadata,
+    `currency`, `schema_version`, or `search_object_version` (the
+    governance/audit version counter - excluded so that a purely
+    administrative sanctioned edit, which still bumps it, never stales a
+    fit; see `search_object_fit_fingerprint`'s docstring), and never a
+    Search object this fit does not consume, or a superseded version of one
+    it does. `""` when omitted (no Search governance data available, or
+    none of it is consumed by this fit).
 
     Note: adding `pipeline_steps`, `market_spec_config`,
     `direct_dna_outcome_ids`, `outcome_catalogue`, `funnel_links`,
