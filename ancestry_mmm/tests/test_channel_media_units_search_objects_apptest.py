@@ -140,3 +140,74 @@ def test_incompatible_column_alias_blocks_save():
     save_button.click().run()
     assert not at.exception, f"save click raised: {at.exception}"
     assert any("Nothing was saved" in (s.value or "") for s in at.error)
+
+
+def test_cap_without_channel_counterpart_blocks_save():
+    """REQ-SEARCH-001 S14 last bullet, via the real Save button: a
+    paid_search_cap with no matching-channel spend/delivery record must be
+    rejected, not silently persisted."""
+    df, spec = _base_state()
+    at = _run_at(
+        df,
+        spec,
+        search_objects=[
+            {
+                "search_object_id": "uk_paid_search_cap",
+                "search_role": "paid_search_cap",
+                "source_column": "daily_budget_cap_gbp",
+                "unit": "monetary",
+                "currency": "GBP",
+                "market": "UK",
+                "channel": "paid_search",
+            }
+        ],
+    )
+    assert not at.exception
+    assert any("for it to constrain" in e.value for e in at.error)
+
+    save_button = next(
+        b for b in at.button if b.label == "Save Search object governance"
+    )
+    save_button.click().run()
+    assert not at.exception, f"save click raised: {at.exception}"
+    assert any("Nothing was saved" in (s.value or "") for s in at.error)
+
+
+def test_cap_with_matching_channel_spend_saves():
+    df, spec = _base_state()
+    at = _run_at(
+        df,
+        spec,
+        search_objects=[
+            {
+                "search_object_id": "uk_paid_search_spend",
+                "search_role": "paid_search_spend",
+                "source_column": "paid_search_gbp_spend",
+                "unit": "monetary",
+                "currency": "GBP",
+                "market": "UK",
+                "channel": "paid_search",
+                "planning_eligibility": "optimisable",
+            },
+            {
+                "search_object_id": "uk_paid_search_cap",
+                "search_role": "paid_search_cap",
+                "source_column": "daily_budget_cap_gbp",
+                "unit": "monetary",
+                "currency": "GBP",
+                "market": "UK",
+                "channel": "paid_search",
+            },
+        ],
+    )
+    assert not at.exception
+    assert len(at.error) == 0
+
+    save_button = next(
+        b for b in at.button if b.label == "Save Search object governance"
+    )
+    save_button.click().run()
+    assert not at.exception, f"save click raised: {at.exception}"
+    assert any(s.value == "Search object governance saved." for s in at.success)
+    saved = at.session_state["search_objects"]
+    assert len(saved) == 2

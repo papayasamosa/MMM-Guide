@@ -239,6 +239,7 @@ class TestValidateSearchObjectCatalogue:
             source_column="paid_search_clicks",
             unit=UNIT_EXPOSURE_COUNT,
             market="UK",
+            channel="paid_search",
         )
         cap_reusing_same_column = SearchObjectDefinition(
             search_object_id="uk_paid_search_cap",
@@ -246,6 +247,7 @@ class TestValidateSearchObjectCatalogue:
             source_column="paid_search_clicks",
             unit=UNIT_EXPOSURE_COUNT,
             market="UK",
+            channel="paid_search",
         )
         issues = validate_search_object_catalogue([delivery, cap_reusing_same_column])
         # Both conflicting records are flagged - neither is arbitrarily kept.
@@ -282,6 +284,107 @@ class TestValidateSearchObjectCatalogue:
         au = _demand(search_object_id="au_search_demand", market="AU")
         issues = validate_search_object_catalogue([uk, au])
         assert issues == []
+
+
+def _cap(**overrides):
+    values = dict(
+        search_object_id="uk_paid_search_cap",
+        search_role=SEARCH_ROLE_PAID_CAP,
+        source_column="daily_budget_cap_gbp",
+        unit=UNIT_MONETARY,
+        currency="GBP",
+        market="UK",
+    )
+    values.update(overrides)
+    return SearchObjectDefinition(**values)
+
+
+def _delivery(**overrides):
+    values = dict(
+        search_object_id="uk_paid_search_delivery",
+        search_role=SEARCH_ROLE_PAID_DELIVERY,
+        source_column="paid_search_clicks",
+        unit=UNIT_EXPOSURE_COUNT,
+        market="UK",
+    )
+    values.update(overrides)
+    return SearchObjectDefinition(**values)
+
+
+class TestPaidSearchCapCounterpart:
+    """REQ-SEARCH-001 S14 last bullet: a paid_search_cap record must have a
+    corresponding paid_search_spend or paid_search_delivery record in the
+    same market x channel to constrain."""
+
+    def test_monetary_cap_with_matching_spend_passes(self):
+        cap = _cap(unit=UNIT_MONETARY, currency="GBP", channel="paid_search")
+        spend = _spend(channel="paid_search")
+        assert validate_search_object_catalogue([cap, spend]) == []
+
+    def test_exposure_cap_with_matching_delivery_passes(self):
+        cap = _cap(unit=UNIT_EXPOSURE_COUNT, currency="", channel="paid_search")
+        delivery = _delivery(channel="paid_search")
+        assert validate_search_object_catalogue([cap, delivery]) == []
+
+    def test_cap_with_no_counterpart_fails(self):
+        cap = _cap(channel="paid_search")
+        issues = validate_search_object_catalogue([cap])
+        assert len(issues) == 1
+        assert issues[0].issue_type == "missing_cap_counterpart"
+        assert issues[0].search_object_id == "uk_paid_search_cap"
+
+    def test_cap_with_no_channel_declared_fails(self):
+        cap = _cap()
+        spend = _spend(channel="paid_search")
+        issues = validate_search_object_catalogue([cap, spend])
+        assert any(i.issue_type == "missing_cap_counterpart" for i in issues)
+
+    def test_wrong_channel_counterpart_fails(self):
+        cap = _cap(channel="paid_search_brand")
+        spend = _spend(channel="paid_search_generic")
+        issues = validate_search_object_catalogue([cap, spend])
+        assert len(issues) == 1
+        assert issues[0].issue_type == "missing_cap_counterpart"
+
+    def test_incompatible_cap_unit_fails_when_only_wrong_role_present(self):
+        """A monetary cap is not satisfied merely because a delivery record
+        shares its channel - it needs a paid_search_spend counterpart."""
+        cap = _cap(unit=UNIT_MONETARY, currency="GBP", channel="paid_search")
+        delivery = _delivery(channel="paid_search")
+        issues = validate_search_object_catalogue([cap, delivery])
+        assert len(issues) == 1
+        assert issues[0].issue_type == "missing_cap_counterpart"
+
+    def test_duplicate_cap_relationship_fails(self):
+        cap_a = _cap(channel="paid_search")
+        cap_b = _cap(
+            search_object_id="uk_paid_search_cap_2",
+            source_column="daily_budget_cap_gbp_2",
+            channel="paid_search",
+        )
+        spend = _spend(channel="paid_search")
+        issues = validate_search_object_catalogue([cap_a, cap_b, spend])
+        assert {i.issue_type for i in issues} == {"duplicate_cap_relationship"}
+        assert {i.search_object_id for i in issues} == {
+            "uk_paid_search_cap",
+            "uk_paid_search_cap_2",
+        }
+
+    def test_same_channel_id_in_different_markets_does_not_leak(self):
+        uk_cap = _cap(channel="paid_search")
+        au_spend = _spend(
+            search_object_id="au_paid_search_spend", market="AU", channel="paid_search"
+        )
+        issues = validate_search_object_catalogue([uk_cap, au_spend])
+        assert len(issues) == 1
+        assert issues[0].issue_type == "missing_cap_counterpart"
+        assert issues[0].market == "UK"
+
+    def test_round_trip_preserves_channel(self):
+        cap = _cap(channel="paid_search")
+        restored = SearchObjectDefinition.from_dict(cap.to_dict())
+        assert restored == cap
+        assert restored.channel == "paid_search"
 
 
 class TestSearchObjectsFingerprint:

@@ -98,6 +98,16 @@ class SearchObjectDefinition:
     (REQ-SEARCH-001 S9): a demand-capture role or a cap may never be
     `"optimisable"` - a cap constrains `paid_search_spend`'s optimisation,
     it is never itself an optimisable target.
+
+    `channel` mirrors `core.activities.ActivityDefinition.channel` /
+    `core.media_costs.MediaInputSpec.channel`: an explicit, governed
+    attribute - never inferred from `source_column` or `search_object_id` by
+    name-matching - at `market x channel` grain. It is what
+    `validate_search_object_catalogue` uses to resolve a `paid_search_cap`
+    record's required `paid_search_spend`/`paid_search_delivery` counterpart
+    (REQ-SEARCH-001 S14's last bullet). Left blank, a record simply
+    participates in no channel-scoped relationship - a blank `channel` never
+    matches another blank `channel`.
     """
 
     search_object_id: str
@@ -105,6 +115,7 @@ class SearchObjectDefinition:
     source_column: str
     unit: str
     market: str = "*"
+    channel: str = ""
     product: str = ""
     currency: str = ""
     grain: str = DEFAULT_GRAIN
@@ -205,6 +216,17 @@ class SearchObjectValidationIssue:
     detail: str
 
 
+# Which search role is a valid paid_search_cap counterpart for a given cap
+# unit (REQ-SEARCH-001 S14's last bullet: "a cap record with no
+# corresponding S1.2 or S1.3 record in the same market x channel to
+# constrain"). A monetary cap constrains spend; an exposure cap constrains
+# delivery - the two are never interchangeable counterparts.
+_CAP_COUNTERPART_ROLE_BY_UNIT: Dict[str, str] = {
+    UNIT_MONETARY: SEARCH_ROLE_PAID_SPEND,
+    UNIT_EXPOSURE_COUNT: SEARCH_ROLE_PAID_DELIVERY,
+}
+
+
 def validate_search_object_catalogue(
     definitions: Sequence[SearchObjectDefinition],
 ) -> List[SearchObjectValidationIssue]:
@@ -223,6 +245,13 @@ def validate_search_object_catalogue(
       here can determine which of the conflicting roles is the "correct"
       one; keeping either arbitrarily would be exactly the silent
       collapsing REQ-SEARCH-001 exists to prevent.
+    - every `paid_search_cap` record must have exactly one channel-scoped
+      relationship to the `paid_search_spend`/`paid_search_delivery` record
+      it constrains (REQ-SEARCH-001 S14's last bullet), resolved only by
+      exact `(market, channel)` equality on the governed `channel` field -
+      never by name-matching `search_object_id`/`source_column`, row order,
+      or UI position. A blank `channel` never resolves a relationship: it
+      means "no relationship declared", not "matches every other blank".
     """
     issues: List[SearchObjectValidationIssue] = []
     seen_keys: Dict[Tuple[str, str], SearchObjectDefinition] = {}
@@ -264,6 +293,67 @@ def validate_search_object_catalogue(
                         f"claimed by conflicting search roles: {roles_summary}. "
                         "The same raw column can never serve two different "
                         "Search semantic roles."
+                    ),
+                )
+            )
+
+    caps = [d for d in definitions if d.search_role == SEARCH_ROLE_PAID_CAP]
+    counterparts_by_key: Dict[Tuple[str, str, str], List[SearchObjectDefinition]] = {}
+    for defn in definitions:
+        if not defn.channel or defn.search_role not in (
+            SEARCH_ROLE_PAID_SPEND,
+            SEARCH_ROLE_PAID_DELIVERY,
+        ):
+            continue
+        counterparts_by_key.setdefault(
+            (defn.market, defn.channel, defn.search_role), []
+        ).append(defn)
+
+    caps_by_relationship: Dict[Tuple[str, str, str], List[SearchObjectDefinition]] = {}
+    for cap in caps:
+        if cap.channel:
+            caps_by_relationship.setdefault(
+                (cap.market, cap.channel, cap.unit), []
+            ).append(cap)
+        # __post_init__ already restricts a cap's unit to this mapping's
+        # keys, so a direct lookup is always safe.
+        required_role = _CAP_COUNTERPART_ROLE_BY_UNIT[cap.unit]
+        has_counterpart = bool(cap.channel) and bool(
+            counterparts_by_key.get((cap.market, cap.channel, required_role))
+        )
+        if not has_counterpart:
+            issues.append(
+                SearchObjectValidationIssue(
+                    search_object_id=cap.search_object_id,
+                    market=cap.market,
+                    issue_type="missing_cap_counterpart",
+                    detail=(
+                        f"paid_search_cap {cap.search_object_id!r} declares "
+                        f"channel {cap.channel!r} but no {required_role!r} "
+                        f"record exists at (market={cap.market!r}, "
+                        f"channel={cap.channel!r}) for it to constrain. A cap "
+                        "must reference, via the governed channel field, an "
+                        "existing spend or delivery record in the same "
+                        "market/channel scope - never assumed or fabricated."
+                    ),
+                )
+            )
+
+    for (market, channel, unit), group in caps_by_relationship.items():
+        if len(group) <= 1:
+            continue
+        ids_summary = ", ".join(defn.search_object_id for defn in group)
+        for cap in group:
+            issues.append(
+                SearchObjectValidationIssue(
+                    search_object_id=cap.search_object_id,
+                    market=market,
+                    issue_type="duplicate_cap_relationship",
+                    detail=(
+                        f"channel {channel!r} in market {market!r} has more "
+                        f"than one {unit!r} paid_search_cap record ({ids_summary})"
+                        " - it is ambiguous which one binds. Each "
+                        "(market, channel, unit) may have at most one cap."
                     ),
                 )
             )

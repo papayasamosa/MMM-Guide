@@ -1474,6 +1474,7 @@ def test_resolve_imported_search_objects_quarantines_cross_object_column_alias()
                 "source_column": "paid_search_clicks",
                 "unit": "exposure_count",
                 "market": "UK",
+                "channel": "paid_search",
             },
             {
                 "search_object_id": "uk_cap",
@@ -1481,6 +1482,7 @@ def test_resolve_imported_search_objects_quarantines_cross_object_column_alias()
                 "source_column": "paid_search_clicks",
                 "unit": "exposure_count",
                 "market": "UK",
+                "channel": "paid_search",
             },
         ]
     }
@@ -1488,6 +1490,66 @@ def test_resolve_imported_search_objects_quarantines_cross_object_column_alias()
     assert objects == []
     assert len(warnings) == 2
     assert all("incompatible_column_alias" in w for w in warnings)
+
+
+def test_resolve_imported_search_objects_quarantines_cap_without_counterpart():
+    """REQ-SEARCH-001 S14 last bullet: a paid_search_cap with no
+    corresponding paid_search_spend/paid_search_delivery record in the same
+    market x channel fails closed on import - it is never silently kept nor
+    is a relationship fabricated for it."""
+    imported = {
+        "search_objects": [
+            {
+                "search_object_id": "uk_cap",
+                "search_role": "paid_search_cap",
+                "source_column": "daily_budget_cap_gbp",
+                "unit": "monetary",
+                "currency": "GBP",
+                "market": "UK",
+                "channel": "paid_search",
+            }
+        ]
+    }
+    objects, warnings = resolve_imported_search_objects(imported)
+    assert objects == []
+    assert len(warnings) == 1
+    assert "missing_cap_counterpart" in warnings[0]
+
+
+def test_resolve_imported_search_objects_legacy_cap_without_channel_is_quarantined_not_fabricated():
+    """A cap record persisted before the `channel` field existed (or an
+    analyst-authored record that never declared one) has no evidence of
+    which spend/delivery record it constrains. Import must quarantine it
+    rather than guess a channel from its id, column, or a same-market spend
+    record that happens to be present."""
+    imported = {
+        "search_objects": [
+            {
+                "search_object_id": "uk_cap",
+                "search_role": "paid_search_cap",
+                "source_column": "daily_budget_cap_gbp",
+                "unit": "monetary",
+                "currency": "GBP",
+                "market": "UK",
+                # no "channel" key at all - simulates a pre-REQ-SEARCH-001-S14
+                # export.
+            },
+            {
+                "search_object_id": "uk_spend",
+                "search_role": "paid_search_spend",
+                "source_column": "paid_search_gbp_spend",
+                "unit": "monetary",
+                "currency": "GBP",
+                "market": "UK",
+                "channel": "paid_search",
+            },
+        ]
+    }
+    objects, warnings = resolve_imported_search_objects(imported)
+    assert [o["search_object_id"] for o in objects] == ["uk_spend"]
+    assert len(warnings) == 1
+    assert "uk_cap" in warnings[0]
+    assert "missing_cap_counterpart" in warnings[0]
 
 
 def test_audit_resumability_officially_resumable_false_without_approvals():
