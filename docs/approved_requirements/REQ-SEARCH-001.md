@@ -74,15 +74,35 @@ record predating schema_version 2 (no `effective_period_start`/
 as "unknown" - it migrates to the documented defaults (no declared period,
 version 1).
 
+§13's fit-identity binding is now closed: `core.search_objects.
+search_object_fit_fingerprint` is threaded into
+`core.fingerprint.fingerprint_model_spec` the same way
+`activity_fit_fingerprint` already is, and consumed by `core.persistence.
+current_model_identity_fingerprints` and the same five pages
+`activity_fit_fingerprint` feeds (Diagnostics, Results & Curve Bank,
+Scenario Planner, Project Export, Official Curve Generation). Only Search
+objects a fit actually *consumes* - a current-version, non-blank
+`model_input_column` that exactly matches one of the fit's own
+`ModelSpec.channels` - participate; registering a Search object still
+changes no fitting behaviour by itself (§7, unchanged), so an unconsumed
+Search object's edits never stale a fit. For a consumed object, only
+`market`, `search_object_id`, `search_object_version`, `search_role`,
+`source_column`, `model_input_column`, `unit`, `grain` and `product` are
+fit-relevant; `channel` (governance-only, mirroring
+`activity_fit_fingerprint`'s exclusion of `ActivityDefinition.channel`),
+`effective_period_start`/`effective_period_end` (no model builder yet gates
+consumed data by a declared window), `state`, `planning_eligibility`,
+`evidence_status`, approval metadata, `currency` and `schema_version` are
+administrative and excluded - editing only those on a consumed record never
+stales a fit. `search_object_version` is itself fit-relevant (two versions
+of the same lineage can carry identical field values, e.g. a reverted edit,
+and must still fingerprint differently). No Search mathematics changed by
+this closure - it is fit-identity/staleness wiring only, the same scope
+boundary `activity_fit_fingerprint`/`causal_graph_structural_fingerprint`
+already established.
+
 Not yet implemented: Search demand/capacity mathematics (see Out of scope
-below, unchanged), and binding a Search object's identity into a fitted
-model's governed identity (`core.search_objects.search_objects_fingerprint`
-exists and is tested, but is not yet threaded into
-`core.fingerprint.fingerprint_model_spec` the way `activity_fit_fingerprint`
-already is - deferred to a dependent PR now that this record's versioning
-contract is closed, so that fingerprint's fit-relevant field list can
-include a Search object's `search_object_version`/effective period from the
-start rather than needing a second breaking change).
+below, unchanged).
 
 ### What already exists today (do not duplicate)
 

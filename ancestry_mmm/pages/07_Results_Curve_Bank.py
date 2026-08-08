@@ -37,6 +37,10 @@ from ancestry_mmm.core.validation_policy import (
     load_threshold_policy,
 )
 from ancestry_mmm.core.activities import ActivityDefinition, activity_fit_fingerprint
+from ancestry_mmm.core.search_objects import (
+    SearchObjectDefinition,
+    search_object_fit_fingerprint,
+)
 from ancestry_mmm.core.canonical_curves import (
     resolve_curve_axis_column,
     resolve_curve_axis_label,
@@ -545,6 +549,10 @@ activity_definitions = [
     ActivityDefinition.from_dict(item)
     for item in (get_state("activity_definitions") or [])
 ]
+search_objects = [
+    SearchObjectDefinition.from_dict(item)
+    for item in (get_state("search_objects") or [])
+]
 if trace is None or frame is None or meta is None or params is None:
     st.markdown("---")
     render_empty_state(
@@ -921,6 +929,14 @@ if model_run_id and spec_dict is not None:
                 if meta is not None
                 else "",
                 live_graph_dict=get_state("causal_graph"),
+            ),
+            search_object_fit_fingerprint=(
+                search_object_fit_fingerprint(
+                    search_objects,
+                    consumed_model_input_columns=spec_dict.get("channels") or [],
+                )
+                if search_objects
+                else None
             ),
         ),
         "posterior_fingerprint": fingerprint_posterior(params),

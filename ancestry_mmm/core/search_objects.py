@@ -569,14 +569,12 @@ def validate_search_object_catalogue(
 def search_objects_fingerprint(
     definitions: Iterable[SearchObjectDefinition | Mapping[str, Any]],
 ) -> str:
-    """Deterministic fingerprint of a Search object catalogue - mirrors
-    `core.activities.activity_definitions_fingerprint`. Not yet wired into
-    `core.fingerprint.fingerprint_model_spec`'s current-model-identity
-    payload (that threading is deferred to when a fit actually consumes a
-    Search object's `model_input_column` - REQ-SEARCH-001 explicitly scopes
-    this record to identity/governance, not fit-time mathematics), but is
-    available now so a dependent PR can bind it the same way
-    `activity_fit_fingerprint` already is.
+    """Deterministic fingerprint of the *full* Search object catalogue -
+    mirrors `core.activities.activity_definitions_fingerprint`. Every
+    governed field, every record, regardless of whether a fit consumes it -
+    never bind this whole-catalogue fingerprint into a fitted model's
+    identity; use `search_object_fit_fingerprint` below for that
+    (REQ-SEARCH-001 fit-identity closure).
     """
     payload = [
         item.to_dict()
@@ -587,5 +585,77 @@ def search_objects_fingerprint(
     payload.sort(
         key=lambda item: (str(item.get("market")), str(item.get("search_object_id")))
     )
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def search_object_fit_fingerprint(
+    definitions: Iterable[SearchObjectDefinition | Mapping[str, Any]],
+    consumed_model_input_columns: Iterable[str] = (),
+) -> str:
+    """Fingerprint only the Search objects a fit actually consumes, and only
+    their fit-relevant fields - the Search-object analogue of
+    `core.activities.activity_fit_fingerprint`, for binding into
+    `core.fingerprint.fingerprint_model_spec`.
+
+    A Search object is "consumed" only if its *current* version's
+    `model_input_column` is non-blank and appears, by exact string equality,
+    in `consumed_model_input_columns` (pass a fit's actual
+    `ModelSpec.channels` - never a name/substring heuristic). `definitions`
+    is first resolved to `current_search_object_versions` - a superseded
+    historical version never participates, only the live governed record for
+    each `(market, search_object_id)` lineage. Registering a Search object
+    does not, by itself, make it consumed - REQ-SEARCH-001 S7 is explicit
+    that registration changes no fitting behaviour; a Search object only
+    becomes fit-relevant when an analyst has pointed its `model_input_column`
+    at a column the model spec already fits as an ordinary channel. Every
+    other definition - including every one with a blank `model_input_column`
+    - is excluded from the payload entirely, so editing (or deleting) an
+    unconsumed Search object never changes this fingerprint.
+
+    For each consumed definition, only the fields whose change would alter
+    what that fit's governed Search identity means are hashed: `market`,
+    `search_object_id`, `search_object_version` (REQ-SEARCH-001 S10 - two
+    versions of the same lineage can carry identical field values, e.g. a
+    version created then reverted, and must still fingerprint differently),
+    `search_role`, `source_column`, `model_input_column`, `unit`, `grain`,
+    `product`. Administrative fields - `channel` (a cap-counterpart
+    governance relationship only; no fitting mechanism reads it, mirroring
+    `activity_fit_fingerprint`'s exclusion of `ActivityDefinition.channel`),
+    `effective_period_start`/`effective_period_end` (not yet fit-relevant:
+    no model builder gates which data rows a consumed column contributes by
+    a Search object's declared window - REQ-SEARCH-001 S7's "registration
+    changes no fitting behaviour" applies here too), `state`,
+    `planning_eligibility`, `evidence_status`, `approval_status`,
+    `approved_by`, `approved_at`, `change_history`, `currency`,
+    `schema_version` - are deliberately excluded, mirroring
+    `activity_fit_fingerprint`'s exclusion of `economic_treatment`/
+    `planning_eligibility`/approval metadata. A future PR that makes the
+    effective period or state genuinely gate fitted data must move it to the
+    included side here - the same "move is itself a fingerprint-breaking
+    change" pattern `core.fingerprint.fingerprint_model_spec`'s own
+    docstring documents for `MarketDescriptors`.
+    """
+    consumed = frozenset(column for column in consumed_model_input_columns if column)
+    payload = []
+    for definition in current_search_object_versions(definitions):
+        if not definition.model_input_column:
+            continue
+        if definition.model_input_column not in consumed:
+            continue
+        payload.append(
+            {
+                "market": definition.market,
+                "search_object_id": definition.search_object_id,
+                "search_object_version": definition.search_object_version,
+                "search_role": definition.search_role,
+                "source_column": definition.source_column,
+                "model_input_column": definition.model_input_column,
+                "unit": definition.unit,
+                "grain": definition.grain,
+                "product": definition.product,
+            }
+        )
+    payload.sort(key=lambda item: (item["market"], item["search_object_id"]))
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()

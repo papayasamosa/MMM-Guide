@@ -75,7 +75,9 @@ from ancestry_mmm.core.causal_graph import (
     graph_versions_for_export,
 )
 from ancestry_mmm.core.search_objects import (
+    SearchObjectDefinition,
     current_search_object_versions,
+    search_object_fit_fingerprint,
     search_object_versions_for_export,
 )
 from ancestry_mmm.core.media_units import market_specific_cpa_table
@@ -146,6 +148,10 @@ def _resolve_official_curve_artifact_rows() -> list[dict]:
         ActivityDefinition.from_dict(item)
         for item in (get_state("activity_definitions") or [])
     ]
+    search_objects = [
+        SearchObjectDefinition.from_dict(item)
+        for item in (get_state("search_objects") or [])
+    ]
     model_run_id = get_state("model_run_id")
     prior_config = get_state("prior_config") or {}
     dna_lag_weeks = get_state("dna_lag_weeks", 4)
@@ -193,6 +199,14 @@ def _resolve_official_curve_artifact_rows() -> list[dict]:
                     if meta is not None
                     else "",
                     live_graph_dict=get_state("causal_graph"),
+                ),
+                search_object_fit_fingerprint=(
+                    search_object_fit_fingerprint(
+                        search_objects,
+                        consumed_model_input_columns=spec_dict.get("channels") or [],
+                    )
+                    if search_objects
+                    else None
                 ),
             ),
             "posterior_fingerprint": fingerprint_posterior(params),

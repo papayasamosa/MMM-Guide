@@ -32,6 +32,10 @@ from ancestry_mmm.components import (
     render_empty_state,
 )
 from ancestry_mmm.core.activities import ActivityDefinition, activity_fit_fingerprint
+from ancestry_mmm.core.search_objects import (
+    SearchObjectDefinition,
+    search_object_fit_fingerprint,
+)
 from ancestry_mmm.core.approval import ModelApproval
 from ancestry_mmm.core.canonical_curves import (
     CONTEXT_MODES,
@@ -300,6 +304,10 @@ activity_definitions = [
     ActivityDefinition.from_dict(item)
     for item in (get_state("activity_definitions") or [])
 ]
+search_objects = [
+    SearchObjectDefinition.from_dict(item)
+    for item in (get_state("search_objects") or [])
+]
 approval_dict = get_state("model_approval")
 
 current_identity = None
@@ -334,6 +342,14 @@ if model_run_id and spec_dict is not None:
                 if meta is not None
                 else "",
                 live_graph_dict=get_state("causal_graph"),
+            ),
+            search_object_fit_fingerprint=(
+                search_object_fit_fingerprint(
+                    search_objects,
+                    consumed_model_input_columns=spec_dict.get("channels") or [],
+                )
+                if search_objects
+                else None
             ),
         ),
         "posterior_fingerprint": fingerprint_posterior(params),

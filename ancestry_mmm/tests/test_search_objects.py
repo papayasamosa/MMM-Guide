@@ -25,6 +25,7 @@ from ancestry_mmm.core.search_objects import (
     current_search_object_versions,
     graph_node_role_for_search_object,
     new_search_object_version,
+    search_object_fit_fingerprint,
     search_object_versions_for_export,
     search_objects_fingerprint,
     validate_search_object_catalogue,
@@ -672,3 +673,157 @@ class TestSearchObjectVersionsForExport:
             ("UK", "uk_paid_search_spend", 1),
             ("UK", "uk_paid_search_spend", 2),
         }
+
+
+class TestSearchObjectFitFingerprint:
+    """REQ-SEARCH-001 fit-identity closure: only Search objects a fit
+    actually consumes (a current-version, non-blank model_input_column
+    matching one of the fit's own channels) participate, and only their
+    fit-relevant fields."""
+
+    def test_empty_catalogue_is_deterministic(self):
+        assert search_object_fit_fingerprint([]) == search_object_fit_fingerprint([])
+
+    def test_unconsumed_definition_is_excluded(self):
+        obj = _spend(model_input_column="paid_search_gbp_spend")
+        # consumed_model_input_columns does not include this object's column.
+        fp = search_object_fit_fingerprint(
+            [obj], consumed_model_input_columns=["tv_spend"]
+        )
+        assert fp == search_object_fit_fingerprint([])
+
+    def test_definition_with_blank_model_input_column_is_never_consumed(self):
+        obj = _spend(model_input_column="")
+        fp = search_object_fit_fingerprint(
+            [obj], consumed_model_input_columns=["paid_search_gbp_spend"]
+        )
+        assert fp == search_object_fit_fingerprint([])
+
+    def test_consumed_definition_is_included(self):
+        obj = _spend(model_input_column="paid_search_gbp_spend")
+        fp = search_object_fit_fingerprint(
+            [obj], consumed_model_input_columns=["paid_search_gbp_spend"]
+        )
+        assert fp != search_object_fit_fingerprint([])
+
+    def test_deterministic_and_order_invariant(self):
+        spend = _spend(model_input_column="paid_search_gbp_spend")
+        cap = _cap(model_input_column="daily_budget_cap_gbp")
+        columns = ["paid_search_gbp_spend", "daily_budget_cap_gbp"]
+        a = search_object_fit_fingerprint(
+            [spend, cap], consumed_model_input_columns=columns
+        )
+        b = search_object_fit_fingerprint(
+            [cap, spend], consumed_model_input_columns=columns
+        )
+        assert a == b
+        assert a == search_object_fit_fingerprint(
+            [spend, cap], consumed_model_input_columns=columns
+        )
+
+    def test_fit_relevant_field_change_changes_the_fingerprint(self):
+        columns = ["paid_search_gbp_spend"]
+        before = _spend(model_input_column="paid_search_gbp_spend")
+        after = _spend(
+            model_input_column="paid_search_gbp_spend",
+            source_column="a_different_source_column",
+        )
+        fp_before = search_object_fit_fingerprint(
+            [before], consumed_model_input_columns=columns
+        )
+        fp_after = search_object_fit_fingerprint(
+            [after], consumed_model_input_columns=columns
+        )
+        assert fp_before != fp_after
+
+    def test_definition_version_change_changes_the_fingerprint(self):
+        """REQ-SEARCH-001 S10: two versions of the same lineage can carry
+        identical field values (e.g. a reverted edit) and must still
+        fingerprint differently - the version number itself is fit-relevant."""
+        columns = ["paid_search_gbp_spend"]
+        v1 = _spend(model_input_column="paid_search_gbp_spend")
+        v2 = new_search_object_version(v1)  # no field changes, only version
+        fp_v1 = search_object_fit_fingerprint(
+            [v1], consumed_model_input_columns=columns
+        )
+        fp_v2 = search_object_fit_fingerprint(
+            [v2], consumed_model_input_columns=columns
+        )
+        assert fp_v1 != fp_v2
+
+    def test_superseded_version_is_excluded_even_if_still_present_in_input(self):
+        """Only the current version of a consumed lineage participates -
+        passing both an old and new version (e.g. full export history) must
+        fingerprint identically to passing only the current one."""
+        columns = ["paid_search_gbp_spend"]
+        v1 = _spend(model_input_column="paid_search_gbp_spend")
+        v2 = new_search_object_version(v1, source_column="revised_column")
+        fp_history = search_object_fit_fingerprint(
+            [v1, v2], consumed_model_input_columns=columns
+        )
+        fp_current_only = search_object_fit_fingerprint(
+            [v2], consumed_model_input_columns=columns
+        )
+        assert fp_history == fp_current_only
+
+    def test_channel_change_does_not_change_the_fingerprint(self):
+        """channel is a cap-counterpart governance relationship only - no
+        fitting mechanism reads it, mirroring activity_fit_fingerprint's
+        exclusion of ActivityDefinition.channel."""
+        columns = ["paid_search_gbp_spend"]
+        no_channel = _spend(model_input_column="paid_search_gbp_spend", channel="")
+        with_channel = _spend(
+            model_input_column="paid_search_gbp_spend", channel="paid_search"
+        )
+        fp_a = search_object_fit_fingerprint(
+            [no_channel], consumed_model_input_columns=columns
+        )
+        fp_b = search_object_fit_fingerprint(
+            [with_channel], consumed_model_input_columns=columns
+        )
+        assert fp_a == fp_b
+
+    def test_effective_period_change_does_not_change_the_fingerprint(self):
+        """Not yet fit-relevant: no model builder gates consumed data by a
+        Search object's declared effective period (REQ-SEARCH-001 S7)."""
+        columns = ["paid_search_gbp_spend"]
+        no_period = _spend(model_input_column="paid_search_gbp_spend")
+        with_period = _spend(
+            model_input_column="paid_search_gbp_spend",
+            effective_period_start="2026-01-01",
+            effective_period_end="2026-12-31",
+        )
+        fp_a = search_object_fit_fingerprint(
+            [no_period], consumed_model_input_columns=columns
+        )
+        fp_b = search_object_fit_fingerprint(
+            [with_period], consumed_model_input_columns=columns
+        )
+        assert fp_a == fp_b
+
+    def test_administrative_field_change_does_not_change_the_fingerprint(self):
+        columns = ["paid_search_gbp_spend"]
+        draft = _spend(model_input_column="paid_search_gbp_spend")
+        approved = _spend(
+            model_input_column="paid_search_gbp_spend",
+            planning_eligibility="scenario_only",
+            approval_status="approved",
+            approved_by="reviewer",
+            approved_at="2026-01-01",
+        )
+        fp_draft = search_object_fit_fingerprint(
+            [draft], consumed_model_input_columns=columns
+        )
+        fp_approved = search_object_fit_fingerprint(
+            [approved], consumed_model_input_columns=columns
+        )
+        assert fp_draft == fp_approved
+
+    def test_accepts_plain_dicts(self):
+        obj = _spend(model_input_column="paid_search_gbp_spend")
+        columns = ["paid_search_gbp_spend"]
+        assert search_object_fit_fingerprint(
+            [obj], consumed_model_input_columns=columns
+        ) == search_object_fit_fingerprint(
+            [obj.to_dict()], consumed_model_input_columns=columns
+        )
