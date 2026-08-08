@@ -45,6 +45,48 @@ model identity fingerprints - never trusted blindly, mirroring how
 ``core.persistence.verify_imported_approval`` already treats an imported
 ``model_approval``.
 
+UK-pilot evidence expansion (schema v3): ``DiagnosticsArtefact`` gained two
+additive evidence sections, computed once by ``DiagnosticsService.evaluate``
+alongside the existing seven and rendered by the Diagnostics page from the
+canonical artefact only (never a separate recomputation) -
+
+- ``error_metrics`` (``core.diagnostics.error_metrics_by_outcome`` /
+  ``core.market_specific_diagnostics.error_metrics_by_outcome_market_specific``):
+  MAE, RMSE, sMAPE, WAPE and bias per outcome_id, alongside the existing
+  R-squared/MAPE in ``in_sample_fit`` - sMAPE/WAPE close MAPE's
+  divide-by-zero and volume-weighting blind spots respectively; bias
+  surfaces systematic over/under-prediction that MAE/RMSE (which fold
+  errors to magnitude) cannot.
+- ``residual_diagnostics`` (``core.diagnostics.residual_temporal_diagnostics``
+  / the market-specific equivalent): lag-1 autocorrelation coefficient and
+  the Durbin-Watson statistic on the fit's residuals per outcome_id -
+  evidence of unexplained temporal structure (under-fit carryover/trend/
+  seasonality). No blocking threshold is introduced by either section -
+  REQ-VAL-001's "evidence computation and approval policy are separate" is
+  unchanged; an approved policy decides thresholds later.
+
+Schema v2 artefacts upgrade to v3 with both new sections ``not_computed``
+(the evidence did not exist yet when they were computed) - this is
+deliberately *not* the same as ``legacy_incomplete`` (reserved for schema
+v1, which silently dropped evidence it claimed to have): a v2 artefact
+remains fully valid ``official_canonical`` evidence for the seven sections
+it always had, since ``ValidationService`` gates on ``schema_version >= 2``,
+not ``== 2``.
+
+Not yet implemented (explicitly deferred, not silently dropped): prior
+predictive checks, prior-versus-posterior comparison summaries, and
+predictive log-density. Each requires building and sampling from the actual
+PyMC model specification independently of an already-fitted trace (prior
+predictive: ``pm.sample_prior_predictive`` against
+``core.hierarchical_model``/``core.market_specific_model``'s model-building
+functions; predictive log-density: ArviZ ``psis-loo``/``waic`` against the
+posterior's log-likelihood) - a materially larger integration than the
+purely-deterministic (actual, predicted)/residual-array evidence above, and
+one this record's audit judged should not be bundled into the same PR as
+that evidence without its own scoped review (sampling cost/determinism in
+CI, and the PyMC model-builder surface these would touch is large and
+sensitive). A dependent PR should close this gap as its own scoped package.
+
 ## Requirement
 
 ### 1. Policy objects

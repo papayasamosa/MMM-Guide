@@ -265,6 +265,43 @@ if scorecard:
     st.dataframe(fit_df, width="stretch", column_config=dataframe_column_config(fit_df))
 
     st.markdown("---")
+    st.markdown("### Error metrics & residual temporal structure")
+    st.caption(
+        "REQ-VAL-001: MAE/RMSE (magnitude), sMAPE/WAPE (percentage, "
+        "volume-weighted) and bias (systematic over/under-prediction) "
+        "alongside R-squared/MAPE above - plus lag-1 autocorrelation and "
+        "the Durbin-Watson statistic on the residuals, evidence of "
+        "unexplained temporal structure (no blocking threshold is applied "
+        "here; an approved policy decides thresholds separately). Rendered "
+        "from the canonical diagnostics artefact - never recomputed "
+        "separately from it."
+    )
+    error_metrics_section = diag_artefact.error_metrics if diag_artefact else None
+    residual_section = diag_artefact.residual_diagnostics if diag_artefact else None
+    if error_metrics_section is None or error_metrics_section.status == "not_computed":
+        st.info(
+            error_metrics_section.error
+            if error_metrics_section is not None and error_metrics_section.error
+            else "Not computed. Click 'Compute scorecard' above."
+        )
+    elif error_metrics_section.status == "failed":
+        st.error(f"Error metrics failed: {error_metrics_section.error}")
+    else:
+        error_df = pd.DataFrame(error_metrics_section.payload)
+        st.dataframe(
+            error_df, width="stretch", column_config=dataframe_column_config(error_df)
+        )
+    if residual_section is not None and residual_section.status == "computed":
+        residual_df = pd.DataFrame(residual_section.payload)
+        st.dataframe(
+            residual_df,
+            width="stretch",
+            column_config=dataframe_column_config(residual_df),
+        )
+    elif residual_section is not None and residual_section.status == "failed":
+        st.error(f"Residual temporal diagnostics failed: {residual_section.error}")
+
+    st.markdown("---")
     st.markdown("### Posterior predictive coverage")
     st.caption(
         "% of actual observations falling inside the posterior predictive credible interval - should be close to the target %."
