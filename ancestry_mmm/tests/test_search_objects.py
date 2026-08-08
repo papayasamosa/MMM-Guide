@@ -10,6 +10,7 @@ from ancestry_mmm.core.causal_graph import (
     NODE_ROLE_INTERVENTION,
 )
 from ancestry_mmm.core.search_objects import (
+    SEARCH_OBJECT_SCHEMA_VERSION,
     SEARCH_ROLE_DEMAND,
     SEARCH_ROLE_DIRECT_NAV_CAPTURE,
     SEARCH_ROLE_ORGANIC_CAPTURE,
@@ -21,7 +22,10 @@ from ancestry_mmm.core.search_objects import (
     UNIT_MONETARY,
     UNIT_RESPONSE_COUNT,
     SearchObjectDefinition,
+    current_search_object_versions,
     graph_node_role_for_search_object,
+    new_search_object_version,
+    search_object_versions_for_export,
     search_objects_fingerprint,
     validate_search_object_catalogue,
 )
@@ -409,3 +413,262 @@ class TestSearchObjectsFingerprint:
         assert search_objects_fingerprint([obj]) == search_objects_fingerprint(
             [obj.to_dict()]
         )
+
+
+class TestEffectivePeriod:
+    """REQ-SEARCH-001 S10: every Search object carries an effective-period
+    window, mirroring core.media_costs.MediaInputSpec/GovernedCostMapping."""
+
+    def test_round_trips_exact_values(self):
+        obj = _spend(
+            effective_period_start="2026-01-01", effective_period_end="2026-12-31"
+        )
+        restored = SearchObjectDefinition.from_dict(obj.to_dict())
+        assert restored.effective_period_start == "2026-01-01"
+        assert restored.effective_period_end == "2026-12-31"
+
+    def test_blank_period_is_the_default(self):
+        obj = _spend()
+        assert obj.effective_period_start is None
+        assert obj.effective_period_end is None
+
+    def test_start_after_end_is_rejected(self):
+        with pytest.raises(ValueError, match="must not be after"):
+            _spend(
+                effective_period_start="2026-06-01", effective_period_end="2026-01-01"
+            )
+
+    def test_start_equal_to_end_is_accepted(self):
+        obj = _spend(
+            effective_period_start="2026-01-01", effective_period_end="2026-01-01"
+        )
+        assert obj.effective_period_start == obj.effective_period_end
+
+    def test_malformed_start_date_is_rejected(self):
+        with pytest.raises(ValueError):
+            _spend(effective_period_start="not-a-date")
+
+    def test_malformed_end_date_is_rejected(self):
+        with pytest.raises(ValueError):
+            _spend(effective_period_end="2026-13-40")
+
+    def test_only_start_declared_is_valid(self):
+        obj = _spend(effective_period_start="2026-01-01")
+        assert obj.effective_period_start == "2026-01-01"
+        assert obj.effective_period_end is None
+
+
+class TestVersionLifecycle:
+    """REQ-SEARCH-001 S10: an edit to a governed Search object creates a new
+    version - never an in-place mutation of an approved record."""
+
+    def test_new_definition_starts_at_version_one(self):
+        assert _spend().search_object_version == 1
+
+    def test_new_search_object_version_increments_version(self):
+        original = _spend()
+        edited = new_search_object_version(original, source_column="new_column")
+        assert edited.search_object_version == 2
+        assert original.search_object_version == 1
+
+    def test_new_search_object_version_does_not_mutate_the_original(self):
+        original = _spend(source_column="original_column")
+        new_search_object_version(original, source_column="new_column")
+        assert original.source_column == "original_column"
+
+    def test_editing_an_approved_record_resets_it_to_draft(self):
+        approved = _spend(
+            approval_status="approved", approved_by="analyst", approved_at="2026-01-01"
+        )
+        edited = new_search_object_version(approved, source_column="new_column")
+        assert edited.approval_status == "draft"
+        assert edited.approved_by is None
+        assert edited.approved_at is None
+        # The old, approved version remains exactly as it was - auditable.
+        assert approved.approval_status == "approved"
+        assert approved.search_object_version == 1
+
+    def test_cannot_change_lineage_identity_via_new_version(self):
+        original = _spend()
+        with pytest.raises(ValueError, match="lineage/version identity"):
+            new_search_object_version(original, search_object_id="a_different_id")
+        with pytest.raises(ValueError, match="lineage/version identity"):
+            new_search_object_version(original, market="AU")
+        with pytest.raises(ValueError, match="lineage/version identity"):
+            new_search_object_version(original, search_object_version=5)
+
+    def test_search_object_version_below_one_is_rejected(self):
+        with pytest.raises(ValueError, match="search_object_version must be >= 1"):
+            _spend(search_object_version=0)
+
+    def test_duplicate_version_within_same_lineage_is_flagged(self):
+        a = _spend()
+        b = _spend(source_column="a_different_column")
+        # Both default to search_object_version=1 - a genuine collision.
+        issues = validate_search_object_catalogue([a, b])
+        assert len(issues) == 1
+        assert issues[0].issue_type == "duplicate_identity"
+
+    def test_two_versions_of_the_same_lineage_are_not_a_duplicate_identity_issue(self):
+        v1 = _spend()
+        v2 = new_search_object_version(v1, source_column="new_column")
+        issues = validate_search_object_catalogue([v1, v2])
+        assert not any(i.issue_type == "duplicate_identity" for i in issues)
+
+
+class TestCurrentSearchObjectVersions:
+    """REQ-SEARCH-001 S10: latest/current version resolution."""
+
+    def test_empty_catalogue_resolves_to_empty(self):
+        assert current_search_object_versions([]) == []
+
+    def test_single_version_lineage_resolves_to_itself(self):
+        obj = _spend()
+        assert current_search_object_versions([obj]) == [obj]
+
+    def test_resolves_the_highest_version_per_lineage(self):
+        v1 = _spend()
+        v2 = new_search_object_version(v1, source_column="new_column")
+        v3 = new_search_object_version(v2, source_column="newer_column")
+        current = current_search_object_versions([v1, v2, v3])
+        assert len(current) == 1
+        assert current[0].search_object_version == 3
+        assert current[0].source_column == "newer_column"
+
+    def test_order_independent(self):
+        v1 = _spend()
+        v2 = new_search_object_version(v1, source_column="new_column")
+        forward = current_search_object_versions([v1, v2])
+        backward = current_search_object_versions([v2, v1])
+        assert forward == backward
+
+    def test_resolves_independently_per_lineage(self):
+        spend = _spend()
+        demand = _demand()
+        current = current_search_object_versions([spend, demand])
+        assert {d.search_object_key for d in current} == {
+            spend.search_object_key,
+            demand.search_object_key,
+        }
+
+    def test_accepts_plain_dicts(self):
+        obj = _spend()
+        assert current_search_object_versions([obj.to_dict()]) == [obj]
+
+    def test_superseded_version_never_triggers_a_false_column_alias_conflict(self):
+        """A record edited to a new search_role must not have its own
+        superseded version flagged as conflicting with itself."""
+        v1 = _delivery()
+        v2 = new_search_object_version(v1, search_role=SEARCH_ROLE_PAID_CAP)
+        issues = validate_search_object_catalogue([v1, v2])
+        assert not any(i.issue_type == "incompatible_column_alias" for i in issues)
+
+    def test_superseded_cap_never_counts_toward_duplicate_cap_relationship(self):
+        spend = _spend(channel="paid_search")
+        cap_v1 = _cap(channel="paid_search")
+        cap_v2 = new_search_object_version(cap_v1, source_column="revised_cap_column")
+        issues = validate_search_object_catalogue([spend, cap_v1, cap_v2])
+        assert not any(i.issue_type == "duplicate_cap_relationship" for i in issues)
+        assert not any(i.issue_type == "missing_cap_counterpart" for i in issues)
+
+
+class TestSchemaVersionFailClosed:
+    """REQ-SEARCH-001 S11: a malformed or unknown-schema imported record
+    fails closed."""
+
+    def test_default_schema_version_is_current(self):
+        assert _spend().schema_version == SEARCH_OBJECT_SCHEMA_VERSION
+
+    def test_future_schema_version_is_rejected(self):
+        payload = _spend().to_dict()
+        payload["schema_version"] = SEARCH_OBJECT_SCHEMA_VERSION + 1
+        with pytest.raises(
+            ValueError, match="Unsupported search object schema_version"
+        ):
+            SearchObjectDefinition.from_dict(payload)
+
+    def test_malformed_schema_version_is_rejected(self):
+        payload = _spend().to_dict()
+        payload["schema_version"] = "not-a-number"
+        with pytest.raises(ValueError):
+            SearchObjectDefinition.from_dict(payload)
+
+    def test_legacy_record_with_no_lifecycle_fields_migrates_cleanly(self):
+        """A record predating schema_version 2 (no effective_period_*/
+        search_object_version keys at all) is not "unknown" - it is a
+        legacy record that migrates to the documented defaults."""
+        legacy_payload = {
+            "search_object_id": "uk_paid_search_spend",
+            "search_role": SEARCH_ROLE_PAID_SPEND,
+            "source_column": "paid_search_gbp_spend",
+            "unit": UNIT_MONETARY,
+            "currency": "GBP",
+            "market": "UK",
+            "schema_version": 1,
+        }
+        restored = SearchObjectDefinition.from_dict(legacy_payload)
+        assert restored.effective_period_start is None
+        assert restored.effective_period_end is None
+        assert restored.search_object_version == 1
+        assert restored.schema_version == 1
+
+    def test_no_fabricated_version_evidence_on_legacy_migration(self):
+        """A legacy record must migrate to the documented default (version
+        1, no declared period) - never a fabricated non-default value."""
+        legacy_payload = {
+            "search_object_id": "uk_search_demand",
+            "search_role": SEARCH_ROLE_DEMAND,
+            "source_column": "branded_query_index",
+            "unit": UNIT_INDEX,
+            "market": "UK",
+        }
+        restored = SearchObjectDefinition.from_dict(legacy_payload)
+        assert restored.to_dict() == _demand().to_dict()
+
+
+class TestSearchObjectVersionsForExport:
+    """Mirrors core.causal_graph.graph_versions_for_export's contract."""
+
+    def test_no_history_no_current_is_empty(self):
+        assert (
+            search_object_versions_for_export(
+                current_definitions=None, version_history=None
+            )
+            == []
+        )
+
+    def test_current_only_is_included_when_never_saved(self):
+        current = [_spend().to_dict()]
+        result = search_object_versions_for_export(
+            current_definitions=current, version_history=None
+        )
+        assert result == current
+
+    def test_history_is_authoritative_for_a_key_it_already_contains(self):
+        saved = _spend().to_dict()
+        saved["approval_status"] = "approved"
+        saved["approved_by"] = "analyst"
+        saved["approved_at"] = "2026-01-01"
+        stale_current = _spend().to_dict()  # same key, draft (unsaved edit)
+        result = search_object_versions_for_export(
+            current_definitions=[stale_current], version_history=[saved]
+        )
+        assert len(result) == 1
+        assert result[0]["approval_status"] == "approved"
+
+    def test_history_and_current_versions_are_both_kept(self):
+        v1 = _spend().to_dict()
+        v2 = new_search_object_version(
+            SearchObjectDefinition.from_dict(v1), source_column="new_column"
+        ).to_dict()
+        result = search_object_versions_for_export(
+            current_definitions=[v2], version_history=[v1]
+        )
+        keys = {
+            (item["market"], item["search_object_id"], item["search_object_version"])
+            for item in result
+        }
+        assert keys == {
+            ("UK", "uk_paid_search_spend", 1),
+            ("UK", "uk_paid_search_spend", 2),
+        }

@@ -893,17 +893,30 @@ def resolve_imported_causal_graphs(
 def resolve_imported_search_objects(
     imported: Dict[str, Any],
 ) -> Tuple[List[dict], List[str]]:
-    """REQ-SEARCH-001: resolve the governed `SearchObjectDefinition` records
-    an imported bundle should use. Each record is round-tripped through
+    """REQ-SEARCH-001: resolve the governed `SearchObjectDefinition` version
+    records an imported bundle should use - every saved
+    `search_object_version` per lineage (REQ-SEARCH-001 S10), mirroring
+    `resolve_imported_causal_graphs`'s "resolve every version, let the
+    caller derive current" contract. Each record is round-tripped through
     `SearchObjectDefinition.from_dict`/`to_dict` for validation - a
-    malformed record is quarantined (dropped), never silently discarded
+    malformed record, or one carrying an unrecognised future
+    `schema_version`, is quarantined (dropped), never silently discarded
     without a trace: it is named by index in `warnings` and excluded from
     the returned list, mirroring `resolve_imported_causal_graphs`'s
     never-trust-silently contract. The surviving records are then run
     through `validate_search_object_catalogue` - a cross-object issue (a
-    duplicate identity, or the same source column claimed by two different
-    search roles) is reported the same way, never silently accepted just
-    because each record was individually well-formed.
+    duplicate `(market, search_object_id, search_object_version)`, or the
+    same source column claimed by two different search roles in the
+    *current* version of each lineage) is reported the same way, never
+    silently accepted just because each record was individually
+    well-formed.
+
+    Callers wanting only the current record per lineage (the common case -
+    everywhere except a version-history display) should pass this
+    function's output through
+    `core.search_objects.current_search_object_versions`, mirroring how
+    `core.causal_graph.current_graph_from_resolved_versions` is layered on
+    top of `resolve_imported_causal_graphs`.
 
     A bundle with no `search_objects.json` file (every bundle exported
     before this capability existed, and every current project with no
