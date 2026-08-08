@@ -63,8 +63,23 @@ requirement records. Each needs a decision record before implementation begins:
 - Starting state and terminal state
 - Future-assumption bundles
 - Time-varying baseline
-- Search object model (`REQ-SEARCH-001`)
+- Search demand/capacity mathematics (latent demand estimation, cap-hit
+  probability, captured-versus-unmet demand, joint media/cap optimisation) -
+  `REQ-SEARCH-001` covers Search object separation/governance only (see
+  below); its own approved modelling contract is still a gap
 - Capacity and cap semantics (`REQ-CAP-001`)
 - Experiment translation and recalibration
 - Reporting semantics
 - Background jobs and service boundaries
+
+## Approved requirement records already implemented at governance level
+
+`REQ-SEARCH-001` (Search object separation/governance) is an approved,
+indexed requirement record (`docs/approved_requirements/REQ-SEARCH-001.md`)
+with governance-level implementation: distinct governed objects for
+`search_demand`, `paid_search_spend`, `paid_search_delivery`,
+`paid_search_cap`, `organic_search_capture`, and
+`direct_navigation_capture`, plus cap-counterpart validation, effective
+periods, version history, and persistence. It is not a gap requiring a new
+decision record. What it does *not* cover - Search demand/capacity
+mathematics - remains listed above.

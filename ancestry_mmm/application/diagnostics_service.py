@@ -3,10 +3,11 @@ Diagnostics service — provides model diagnostics and scorecard evaluation
 without Streamlit dependencies.
 
 PR 72B: Canonical diagnostics evidence. Each diagnostic is computed once
-and stored in a schema-v2 DiagnosticsArtefact with full serialisable
-payloads and explicit section statuses. No missing evidence is encoded as
-zero. ValidationService reads metrics from this artefact rather than
-recomputing them.
+and stored in a fingerprinted DiagnosticsArtefact (schema v3, see
+``CURRENT_DIAGNOSTICS_SCHEMA_VERSION`` below - schema v2 at PR 72B's
+original introduction) with full serialisable payloads and explicit
+section statuses. No missing evidence is encoded as zero. ValidationService
+reads metrics from this artefact rather than recomputing them.
 """
 
 from __future__ import annotations
@@ -51,6 +52,27 @@ from ancestry_mmm.core.market_specific_predict import (
     FHMarketSpecificPosteriorParams,
     extract_market_specific_posterior_params,
 )
+
+# ---------------------------------------------------------------------------
+# Diagnostics version authority (Work Package 1)
+# ---------------------------------------------------------------------------
+#
+# Single source of truth for the current diagnostics schema/calculation
+# identity. Every current-code default and every newly-evaluated result
+# must use these constants rather than a separately hardcoded literal -
+# that drift (``DiagnosticsArtefact`` defaulting to "3.0.0",
+# ``DiagnosticsResult`` defaulting to "2.0.0", ``evaluate()`` stamping
+# "3.1.0") is exactly what let a direct construction or an error/no-trace
+# result silently carry an obsolete version distinct from what a
+# successful ``evaluate()`` call produces.
+#
+# Historical persisted evidence is never rewritten: ``DiagnosticsArtefact.
+# from_dict`` keeps its own historical fallbacks ("1.0.0" for schema v1,
+# "2.0.0" for schema v2) exactly as before - those describe what a
+# *pre-existing* artefact was actually computed as, not what current code
+# should default to.
+CURRENT_DIAGNOSTICS_SCHEMA_VERSION = 3
+CURRENT_DIAGNOSTICS_VERSION = "3.1.0"
 
 # ---------------------------------------------------------------------------
 # Section status
@@ -119,7 +141,7 @@ class DiagnosticSection:
 
 
 # ---------------------------------------------------------------------------
-# DiagnosticsArtefact — schema v2
+# DiagnosticsArtefact — schema v3
 # ---------------------------------------------------------------------------
 
 
@@ -192,6 +214,16 @@ class DiagnosticsArtefact:
     freshly-recomputed "3.1.0" fingerprint), not a special exemption from
     the ordinary fingerprint mechanism.
 
+    Work Package 1: this class's ``diagnostics_version``/``schema_version``
+    field defaults now come from the module-level ``CURRENT_DIAGNOSTICS_
+    VERSION``/``CURRENT_DIAGNOSTICS_SCHEMA_VERSION`` constants rather than a
+    separately hardcoded literal, so a directly-constructed artefact (e.g.
+    a test fixture, or ``evaluate()``'s no-trace/error result via
+    ``DiagnosticsResult``'s matching default) can never silently diverge
+    from what a successful ``evaluate()`` call stamps. Imported/historical
+    artefacts are unaffected - ``from_dict`` keeps its own explicit
+    historical fallbacks.
+
     Schema-v1 artefacts loaded via ``from_dict`` are marked
     ``legacy_incomplete`` and cannot support a new official approval.
     Schema-v2 artefacts are upgraded to v3 with ``error_metrics``/
@@ -204,8 +236,8 @@ class DiagnosticsArtefact:
     """
 
     artefact_id: str = ""
-    diagnostics_version: str = "3.0.0"
-    schema_version: int = 3
+    diagnostics_version: str = CURRENT_DIAGNOSTICS_VERSION
+    schema_version: int = CURRENT_DIAGNOSTICS_SCHEMA_VERSION
     model_identity_fingerprint: str = ""
     evaluated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     model_type: str = ""
@@ -487,8 +519,16 @@ class DiagnosticsResult:
     """Structured diagnostics output with governance-relevant metadata.
 
     PR 72B: The ``diagnostics_artefact`` is the authoritative evidence
-    container (schema v2). Legacy summary fields are retained for
-    backward compatibility but derived from the artefact.
+    container. Legacy summary fields are retained for backward
+    compatibility but derived from the artefact.
+
+    Work Package 1: ``diagnostics_version`` defaults to the same
+    ``CURRENT_DIAGNOSTICS_VERSION`` constant ``DiagnosticsArtefact`` uses,
+    so ``DiagnosticsService.evaluate()``'s no-trace/error early-return
+    (which constructs this dataclass without an explicit
+    ``diagnostics_version``) reports the current version rather than a
+    stale hardcoded one - it never carries a computed artefact, but the
+    version identity it reports must still not silently regress.
     """
 
     scorecard: Dict[str, Any]
@@ -500,7 +540,7 @@ class DiagnosticsResult:
     backtest_results: Optional[pd.DataFrame] = None
     warnings: List[str] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
-    diagnostics_version: str = "2.0.0"
+    diagnostics_version: str = CURRENT_DIAGNOSTICS_VERSION
     diagnostics_artefact: Optional[DiagnosticsArtefact] = None
 
     @property
@@ -523,7 +563,7 @@ class DiagnosticsService:
     """
 
     def evaluate(self, diag_input: DiagnosticsInput) -> DiagnosticsResult:
-        """Run diagnostics and return a structured result with a schema-v2 artefact."""
+        """Run diagnostics and return a structured result with a current-schema artefact."""
         errors: List[str] = []
         warnings: List[str] = []
 
@@ -813,8 +853,8 @@ class DiagnosticsService:
 
         artefact = DiagnosticsArtefact(
             artefact_id=uuid.uuid4().hex,
-            diagnostics_version="3.1.0",
-            schema_version=3,
+            diagnostics_version=CURRENT_DIAGNOSTICS_VERSION,
+            schema_version=CURRENT_DIAGNOSTICS_SCHEMA_VERSION,
             model_identity_fingerprint=identity_fp,
             evaluated_at=datetime.now(timezone.utc),
             model_type=diag_input.model_type,
@@ -860,7 +900,7 @@ class DiagnosticsService:
             backtest_results=backtest_results,
             warnings=warnings,
             errors=errors,
-            diagnostics_version="3.1.0",
+            diagnostics_version=CURRENT_DIAGNOSTICS_VERSION,
             diagnostics_artefact=artefact,
         )
 
