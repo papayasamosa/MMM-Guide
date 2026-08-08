@@ -18,9 +18,12 @@ import pytest
 import arviz as az
 
 from ancestry_mmm.application.diagnostics_service import (
+    CURRENT_DIAGNOSTICS_SCHEMA_VERSION,
+    CURRENT_DIAGNOSTICS_VERSION,
     DiagnosticSection,
     DiagnosticsArtefact,
     DiagnosticsInput,
+    DiagnosticsResult,
     DiagnosticsService,
 )
 from ancestry_mmm.application.validation_service import (
@@ -198,8 +201,8 @@ class TestDiagnosticSection:
 class TestDiagnosticsArtefactV3:
     def test_default_artefact(self):
         artefact = DiagnosticsArtefact()
-        assert artefact.schema_version == 3
-        assert artefact.diagnostics_version == "3.0.0"
+        assert artefact.schema_version == CURRENT_DIAGNOSTICS_SCHEMA_VERSION
+        assert artefact.diagnostics_version == CURRENT_DIAGNOSTICS_VERSION
         assert artefact.convergence.status == "not_computed"
         assert artefact.error_metrics.status == "not_computed"
         assert artefact.residual_diagnostics.status == "not_computed"
@@ -259,6 +262,10 @@ class TestDiagnosticsArtefactV3:
         restored = DiagnosticsArtefact.from_dict(d)
         assert restored.artefact_id == original.artefact_id
         assert restored.schema_version == original.schema_version
+        # Work Package 1: an explicit historical "3.0.0" (pre-WP2 residual-
+        # diagnostics fix) must round-trip exactly as persisted, never
+        # silently upgraded to the current-code default.
+        assert restored.diagnostics_version == "3.0.0"
         assert (
             restored.model_identity_fingerprint == original.model_identity_fingerprint
         )
@@ -316,6 +323,87 @@ class TestDiagnosticsArtefactV3:
             convergence=DiagnosticSection(status="failed", payload=None, error="err"),
         )
         assert a1.fingerprint() != a2.fingerprint()
+
+
+# =========================================================================
+# Diagnostics version authority (Work Package 1)
+# =========================================================================
+
+
+class TestDiagnosticsVersionAuthority:
+    """Every current-code diagnostics_version default/emission must trace
+    back to the single CURRENT_DIAGNOSTICS_VERSION/CURRENT_DIAGNOSTICS_
+    SCHEMA_VERSION source of truth - a direct construction, the no-trace/
+    error evaluate() path, and a successful evaluate() call must never be
+    able to silently disagree with each other."""
+
+    def test_current_version_constants_are_consistent(self):
+        assert CURRENT_DIAGNOSTICS_VERSION == "3.1.0"
+        assert CURRENT_DIAGNOSTICS_SCHEMA_VERSION == 3
+
+    def test_default_diagnostics_result_uses_current_version(self):
+        result = DiagnosticsResult(
+            scorecard={},
+            max_rhat=float("nan"),
+            min_ess=float("nan"),
+            has_divergences=False,
+            mean_ppc_coverage_pct=float("nan"),
+        )
+        assert result.diagnostics_version == CURRENT_DIAGNOSTICS_VERSION
+
+    def test_no_trace_error_result_does_not_emit_an_obsolete_version(self):
+        """DiagnosticsService.evaluate()'s no-trace early return builds a
+        DiagnosticsResult without an explicit diagnostics_version - before
+        this fix that silently fell back to the dataclass default "2.0.0",
+        an obsolete version distinct from a successful evaluation's
+        "3.1.0". It must report the current version, not a stale one."""
+        diag_input = DiagnosticsInput(
+            trace=None,
+            frame={},
+            meta=FHModelMeta(
+                markets=["UK"],
+                outcome_ids=["fh_new_gsa"],
+                channels=["TV"],
+                dna_channels=[],
+                dna_channel_idx=[],
+                non_dna_idx=[0],
+                dna_outcome_id="fh_new_gsa",
+                dna_lag_weeks=1,
+                unpooled_markets=[],
+                control_names=[],
+            ),
+        )
+        result = DiagnosticsService().evaluate(diag_input)
+        assert result.errors, "no-trace input should report an error"
+        assert result.diagnostics_artefact is None
+        assert result.diagnostics_version == CURRENT_DIAGNOSTICS_VERSION
+        assert result.diagnostics_version != "2.0.0"
+
+    def test_successful_evaluate_uses_current_version_on_both_result_and_artefact(self):
+        trace, frame, meta = _minimal_trace_frame_meta()
+        diag_input = DiagnosticsInput(trace=trace, frame=frame, meta=meta)
+        result = DiagnosticsService().evaluate(diag_input)
+        assert result.diagnostics_version == CURRENT_DIAGNOSTICS_VERSION
+        assert (
+            result.diagnostics_artefact.diagnostics_version
+            == CURRENT_DIAGNOSTICS_VERSION
+        )
+        assert (
+            result.diagnostics_artefact.schema_version
+            == CURRENT_DIAGNOSTICS_SCHEMA_VERSION
+        )
+
+    def test_historical_v1_version_is_not_upgraded_to_current(self):
+        artefact = DiagnosticsArtefact.from_dict(
+            {"evaluated_at": "2026-07-29T00:00:00+00:00"}
+        )
+        assert artefact.diagnostics_version == "1.0.0"
+        assert artefact.diagnostics_version != CURRENT_DIAGNOSTICS_VERSION
+
+    def test_historical_v2_version_is_not_upgraded_to_current(self):
+        artefact = DiagnosticsArtefact.from_dict(TestSchemaV2Compatibility()._v2_dict())
+        assert artefact.diagnostics_version == "2.0.0"
+        assert artefact.diagnostics_version != CURRENT_DIAGNOSTICS_VERSION
 
 
 # =========================================================================
