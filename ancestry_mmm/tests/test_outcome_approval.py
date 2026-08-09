@@ -711,6 +711,80 @@ class TestAuthorityConsistency:
         assert "applicable stable `AGENTS.md` invariant" in content
         assert "applicable `AGENTS.md`" in content
 
+    @staticmethod
+    def _markdown_table_rows(section_text: str) -> list[list[str]]:
+        """Parse `| a | b | c |` rows from a Markdown section, skipping the
+        header and `---` separator rows."""
+        rows = []
+        for line in section_text.splitlines():
+            stripped = line.strip()
+            if not (stripped.startswith("|") and stripped.endswith("|")):
+                continue
+            cells = [c.strip() for c in stripped.strip("|").split("|")]
+            if all(set(c) <= {"-", ":"} for c in cells):
+                continue  # separator row
+            rows.append(cells)
+        return rows[1:]  # drop the header row
+
+    def test_specification_authority_current_suite_table_states_v1_5(self):
+        """REQ-AUTH-001: the "Current PRD suite" table's Version row (not
+        merely some text elsewhere in the document) names v1.5 - guards
+        against the current-version table regressing to v1.4 while
+        surrounding prose still mentions v1.5."""
+        authority_path = (
+            Path(__file__).parent.parent.parent / "docs" / "specification_authority.md"
+        )
+        content = authority_path.read_text()
+        suite_section = content.split("## Current PRD suite", 1)[1].split("##", 1)[0]
+        rows = {
+            cells[0]: cells[1] for cells in self._markdown_table_rows(suite_section)
+        }
+        assert "Cross-Document Coherent v1.5" in rows["Version"]
+
+    def test_specification_authority_classifies_graph_and_search_correctly(self):
+        """REQ-AUTH-001: `REQ-GRAPH-001`'s and `REQ-SEARCH-001`'s own
+        capability rows in the implementation-gaps table must be classified
+        "requirement exists but capability incomplete", never "no approved
+        requirement/decision yet" - and both records must be named in the
+        "already implemented" section. This asserts each row's actual State
+        column, not merely that the requirement ID string appears somewhere
+        in the document (which a table regression could still satisfy)."""
+        authority_path = (
+            Path(__file__).parent.parent.parent / "docs" / "specification_authority.md"
+        )
+        content = authority_path.read_text()
+
+        gaps_section = content.split(
+            "## Current implementation gaps requiring decision records", 1
+        )[1].split("## Approved requirement records already implemented", 1)[0]
+        gap_rows = self._markdown_table_rows(gaps_section)
+        assert gap_rows, "no rows parsed from the implementation-gaps table"
+
+        no_requirement_state = "No approved requirement/decision yet"
+        incomplete_state = "Requirement exists but capability incomplete"
+
+        # REQ-GRAPH-001's and REQ-SEARCH-001's OWN capability (identified by
+        # the requirement ID appearing in that row's Capability column, not
+        # merely referenced in another row's Notes) must never be
+        # classified as if no requirement record exists.
+        for requirement_id in ("REQ-GRAPH-001", "REQ-SEARCH-001"):
+            own_rows = [row for row in gap_rows if requirement_id in row[0]]
+            for row in own_rows:
+                assert row[1] == incomplete_state, (
+                    f"{requirement_id}'s own capability row is classified "
+                    f"{row[1]!r}, expected {incomplete_state!r}: {row}"
+                )
+
+        implemented_section = content.split(
+            "## Approved requirement records already implemented", 1
+        )[1]
+        for requirement_id in ("REQ-GRAPH-001", "REQ-SEARCH-001"):
+            assert requirement_id in implemented_section
+            assert "implemented" in implemented_section.lower()
+            # Must not simultaneously read as an unclassified gap in that
+            # same section.
+            assert no_requirement_state not in implemented_section
+
 
 # ---------------------------------------------------------------------------
 # OutcomeApproval vocabulary
