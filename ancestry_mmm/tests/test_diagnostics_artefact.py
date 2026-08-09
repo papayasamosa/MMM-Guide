@@ -224,6 +224,7 @@ class TestDiagnosticsArtefactV3:
             "error_metrics",
             "residual_diagnostics",
             "prior_predictive",
+            "predictive_density",
         ):
             assert section in d
             assert "status" in d[section]
@@ -339,8 +340,8 @@ class TestDiagnosticsVersionAuthority:
     able to silently disagree with each other."""
 
     def test_current_version_constants_are_consistent(self):
-        assert CURRENT_DIAGNOSTICS_VERSION == "4.0.0"
-        assert CURRENT_DIAGNOSTICS_SCHEMA_VERSION == 4
+        assert CURRENT_DIAGNOSTICS_VERSION == "5.0.0"
+        assert CURRENT_DIAGNOSTICS_SCHEMA_VERSION == 5
 
     def test_default_diagnostics_result_uses_current_version(self):
         result = DiagnosticsResult(
@@ -657,19 +658,102 @@ class TestSchemaV3ToV4Compatibility:
 
 
 # =========================================================================
-# Schema v4 - a freshly computed artefact carries prior_predictive evidence
+# Schema v4 -> v5 compatibility (REQ-VAL-001 Work Package 3: predictive-
+# density evidence)
 # =========================================================================
 
 
-class TestSchemaV4FreshArtefact:
-    def test_current_defaults_are_schema_v4(self):
-        assert CURRENT_DIAGNOSTICS_SCHEMA_VERSION == 4
-        assert CURRENT_DIAGNOSTICS_VERSION.startswith("4.")
+class TestSchemaV4ToV5Compatibility:
+    def _v4_dict(self) -> dict:
+        not_computed = {
+            "status": "not_computed",
+            "payload": None,
+            "error": "",
+            "warnings": [],
+        }
+        computed_prior_predictive = {
+            "status": "computed",
+            "payload": {"model_type": "shared", "n_samples": 100, "rows": []},
+            "error": "",
+            "warnings": [],
+        }
+        return {
+            "artefact_id": "v4-artefact",
+            "diagnostics_version": "4.0.0",
+            "schema_version": 4,
+            "model_identity_fingerprint": "fp-v4",
+            "evaluated_at": "2026-08-08T00:00:00+00:00",
+            "model_type": "shared",
+            "convergence": {
+                "status": "computed",
+                "payload": {"max_rhat": 1.01, "min_ess": 600, "has_divergences": False},
+                "error": "",
+                "warnings": [],
+            },
+            "in_sample_fit": not_computed,
+            "posterior_predictive": not_computed,
+            "plausibility": not_computed,
+            "identification": not_computed,
+            "coefficient_stability": not_computed,
+            "backtest": not_computed,
+            "error_metrics": not_computed,
+            "residual_diagnostics": not_computed,
+            "prior_predictive": computed_prior_predictive,
+            "settings": [],
+            "legacy_incomplete": False,
+        }
+
+    def test_v4_upgrades_with_predictive_density_not_computed(self):
+        artefact = DiagnosticsArtefact.from_dict(self._v4_dict())
+        assert artefact.predictive_density.status == "not_computed"
+        assert artefact.predictive_density.error != ""
+        assert "schema v5" in artefact.predictive_density.error
+
+    def test_v4_upgrade_preserves_schema_version_and_is_not_legacy_incomplete(self):
+        artefact = DiagnosticsArtefact.from_dict(self._v4_dict())
+        assert artefact.schema_version == 4
+        assert artefact.legacy_incomplete is False
+
+    def test_v4_upgrade_preserves_existing_sections(self):
+        artefact = DiagnosticsArtefact.from_dict(self._v4_dict())
+        assert artefact.convergence.payload["max_rhat"] == 1.01
+        assert artefact.prior_predictive.status == "computed"
+        assert artefact.prior_predictive.payload["n_samples"] == 100
+
+    def test_v4_round_trip_through_to_dict_is_stable(self):
+        artefact = DiagnosticsArtefact.from_dict(self._v4_dict())
+        d = artefact.to_dict()
+        restored = DiagnosticsArtefact.from_dict(d)
+        assert restored.schema_version == artefact.schema_version
+        assert restored.predictive_density.status == "not_computed"
+        assert restored.fingerprint() == artefact.fingerprint()
+
+    def test_historical_v4_version_is_not_upgraded_to_current(self):
+        artefact = DiagnosticsArtefact.from_dict(self._v4_dict())
+        assert artefact.diagnostics_version == "4.0.0"
+        assert artefact.diagnostics_version != CURRENT_DIAGNOSTICS_VERSION
+
+
+# =========================================================================
+# Schema v5 - a freshly computed artefact carries prior_predictive and
+# predictive_density evidence
+# =========================================================================
+
+
+class TestSchemaV5FreshArtefact:
+    def test_current_defaults_are_schema_v5(self):
+        assert CURRENT_DIAGNOSTICS_SCHEMA_VERSION == 5
+        assert CURRENT_DIAGNOSTICS_VERSION.startswith("5.")
 
     def test_freshly_constructed_artefact_has_not_computed_prior_predictive(self):
         artefact = DiagnosticsArtefact()
         assert artefact.schema_version == CURRENT_DIAGNOSTICS_SCHEMA_VERSION
         assert artefact.prior_predictive.status == "not_computed"
+
+    def test_freshly_constructed_artefact_has_not_computed_predictive_density(self):
+        artefact = DiagnosticsArtefact()
+        assert artefact.schema_version == CURRENT_DIAGNOSTICS_SCHEMA_VERSION
+        assert artefact.predictive_density.status == "not_computed"
 
     def test_computed_prior_predictive_round_trips_through_to_dict(self):
         computed = DiagnosticSection(
@@ -705,10 +789,57 @@ class TestSchemaV4FreshArtefact:
         assert restored.prior_predictive.warnings == computed.warnings
         assert restored.fingerprint() == artefact.fingerprint()
 
+    def test_computed_predictive_density_round_trips_through_to_dict(self):
+        computed = DiagnosticSection(
+            status="computed",
+            payload={
+                "model_type": "shared",
+                "elpd_loo": -24.55,
+                "elpd_loo_se": 0.61,
+                "p_loo": 0.8,
+                "loo_good_k_threshold": 0.5,
+                "elpd_waic": -24.56,
+                "elpd_waic_se": 0.61,
+                "p_waic": 0.81,
+                "n_data_points": 12,
+                "rows": [
+                    {
+                        "market": "UK",
+                        "outcome_id": "fh_new",
+                        "n_observations": 3,
+                        "mean_pareto_k": 0.39,
+                        "max_pareto_k": 0.56,
+                        "n_good_pareto_k": 2,
+                        "n_bad_pareto_k": 1,
+                        "n_very_bad_pareto_k": 0,
+                        "mean_elpd_loo_i": -1.93,
+                        "mean_elpd_waic_i": -1.93,
+                    }
+                ],
+            },
+            warnings=("a Pareto-k warning",),
+        )
+        artefact = DiagnosticsArtefact(predictive_density=computed)
+        d = artefact.to_dict()
+        restored = DiagnosticsArtefact.from_dict(d)
+        assert restored.predictive_density.status == "computed"
+        assert restored.predictive_density.payload == computed.payload
+        assert restored.predictive_density.warnings == computed.warnings
+        assert restored.fingerprint() == artefact.fingerprint()
+
     def test_prior_predictive_section_change_is_covered_by_fingerprint(self):
         base = DiagnosticsArtefact()
         with_evidence = DiagnosticsArtefact(
             prior_predictive=DiagnosticSection(status="computed", payload={"rows": []})
+        )
+        assert base.fingerprint() != with_evidence.fingerprint()
+
+    def test_predictive_density_section_change_is_covered_by_fingerprint(self):
+        base = DiagnosticsArtefact()
+        with_evidence = DiagnosticsArtefact(
+            predictive_density=DiagnosticSection(
+                status="computed", payload={"rows": []}
+            )
         )
         assert base.fingerprint() != with_evidence.fingerprint()
 

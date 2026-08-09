@@ -284,6 +284,102 @@ def prior_predictive_summary(
     }
 
 
+def predictive_density_summary(
+    model: pm.Model,
+    trace: az.InferenceData,
+    frame: Dict[str, Any],
+    meta: FHModelMeta,
+) -> Dict[str, Any]:
+    """PSIS-LOO and WAIC predictive-density evidence (REQ-VAL-001 Work
+    Package 3), computed post-hoc against an already-fitted `trace` - no
+    refit. `pm.compute_log_likelihood` requires only the unfit `model` (for
+    the likelihood graph) and the existing posterior draws; feasibility was
+    verified directly against PyMC 5.28.5/ArviZ 0.23.4 (not assumed):
+    `y_obs`'s log-likelihood has dims `("chain", "draw", "obs", "outcome")`,
+    and `az.loo`/`az.waic` with `pointwise=True` return `loo_i`/`waic_i`/
+    `pareto_k` with dims `("obs", "outcome")` - pointwise identity is fully
+    preserved, so it is regrouped to market x outcome_id below the same way
+    `prior_predictive_summary` does (`frame["market_bounds"]`).
+
+    `model` must be an unfit `pm.Model` built by the same builder/frame/spec
+    (or an exact governed rebuild of it) as the fit `trace` came from - the
+    same "which model specification" identity contract
+    `prior_predictive_summary` requires. `trace` is never mutated: a copy is
+    extended with the `log_likelihood` group internally
+    (`pm.compute_log_likelihood(idata, extend_inferencedata=False)` returns
+    a bare `xarray.Dataset`, not a usable `InferenceData` - `az.loo`/
+    `az.waic` require the full `InferenceData` shape, so a defensive
+    `trace.copy()` plus the default `extend_inferencedata=True` is used
+    instead, verified directly rather than assumed).
+
+    PSIS-LOO's leave-one-out approximation is a well-documented general
+    property, not unique to this implementation: it assumes each held-out
+    observation is exchangeable with the rest, which is a weaker
+    approximation for temporally-structured data (this model's adstock
+    carryover/trend/seasonality) than for genuinely independent
+    observations. The Pareto-k diagnostic this function reports is exactly
+    ArviZ's own mechanism for flagging individual observations where that
+    approximation is unreliable - reported here as evidence, never
+    silently hidden or used to assert LOO is unconditionally valid.
+
+    Purely descriptive - no pass/fail threshold. The Pareto-k
+    good/bad/very-bad counts below use ArviZ's own standard descriptive
+    bins (<=0.5 / (0.5, 0.7] / >0.7 - the same bins printed by ArviZ's own
+    `ELPDData.__repr__`, not a threshold invented by this repository) purely
+    as evidence; they gate nothing.
+    """
+    markets: List[str] = frame["markets"]
+    market_bounds: List[tuple] = frame["market_bounds"]
+
+    idata_with_ll = trace.copy()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with model:
+            pm.compute_log_likelihood(
+                idata_with_ll, var_names=["y_obs"], model=model, progressbar=False
+            )
+        loo_result = az.loo(idata_with_ll, pointwise=True, var_name="y_obs")
+        waic_result = az.waic(idata_with_ll, pointwise=True, var_name="y_obs")
+        captured_warnings = [str(w.message) for w in caught]
+
+    pareto_k = loo_result.pareto_k.values
+    loo_i = loo_result.loo_i.values
+    waic_i = waic_result.waic_i.values
+
+    rows: List[Dict[str, Any]] = []
+    for m_i, market in enumerate(markets):
+        start, end = market_bounds[m_i]
+        for o_i, oid in enumerate(meta.outcome_ids):
+            k_slice = pareto_k[start:end, o_i]
+            rows.append(
+                {
+                    "market": market,
+                    "outcome_id": oid,
+                    "n_observations": end - start,
+                    "mean_pareto_k": float(np.mean(k_slice)),
+                    "max_pareto_k": float(np.max(k_slice)),
+                    "n_good_pareto_k": int(np.sum(k_slice <= 0.5)),
+                    "n_bad_pareto_k": int(np.sum((k_slice > 0.5) & (k_slice <= 0.7))),
+                    "n_very_bad_pareto_k": int(np.sum(k_slice > 0.7)),
+                    "mean_elpd_loo_i": float(np.mean(loo_i[start:end, o_i])),
+                    "mean_elpd_waic_i": float(np.mean(waic_i[start:end, o_i])),
+                }
+            )
+
+    return {
+        "elpd_loo": float(loo_result.elpd_loo),
+        "elpd_loo_se": float(loo_result.se),
+        "p_loo": float(loo_result.p_loo),
+        "loo_good_k_threshold": float(loo_result.good_k),
+        "elpd_waic": float(waic_result.elpd_waic),
+        "elpd_waic_se": float(waic_result.se),
+        "p_waic": float(waic_result.p_waic),
+        "n_data_points": int(loo_result.n_data_points),
+        "rows": rows,
+        "warnings": captured_warnings,
+    }
+
+
 def in_sample_fit(
     frame: Dict, meta: FHModelMeta, params: FHPosteriorParams
 ) -> pd.DataFrame:
