@@ -84,7 +84,19 @@ VARIABLE_CLASSES = (
 
 TREATMENT_STATUSES = {"proposed", "approved", "rejected"}
 
-COVERAGE_MATRIX_SCHEMA_VERSION = 1
+# v1: initial VariableCoverageRecord shape (no `approved_for_official_use`;
+#     `treatment_status == "approved"` alone cleared `is_officially_unresolved`).
+# v2: added `VariableCoverageRecord.approved_for_official_use` - a v1 payload
+#     (predating the field entirely) migrates fail-closed, never granted:
+#     `approved_for_official_use` defaults to `False` regardless of any v1
+#     `treatment_status == "approved"` value, so a previously "accepted"
+#     record requires explicit re-approval under the new contract rather
+#     than being silently promoted to (or left assuming) official-fit
+#     eligibility. This is a deliberate migration decision (root AGENTS.md
+#     Persistence: "changes to persistence require migration ... tests" -
+#     see `TestLegacySchemaV1Migration` in `test_coverage.py`), not an
+#     unversioned behaviour change.
+COVERAGE_MATRIX_SCHEMA_VERSION = 2
 
 
 def _validate_period(start: Optional[str], end: Optional[str], *, label: str) -> None:
@@ -402,6 +414,17 @@ class VariableCoverageRecord:
             raise ValueError(
                 "treatment_status='approved' requires approved_treatment, "
                 "treatment_approved_by, and treatment_approved_at"
+            )
+        if type(self.approved_for_official_use) is not bool:
+            raise ValueError(
+                "approved_for_official_use must be an actual bool, got "
+                f"{self.approved_for_official_use!r} (type="
+                f"{type(self.approved_for_official_use).__name__}) - never "
+                "coerced from a truthy string, int, or other value; "
+                "is_officially_unresolved reads this field directly, so a "
+                "non-bool value (e.g. the JSON string 'false', which is "
+                "truthy in Python) could otherwise silently clear the "
+                "official-fit block."
             )
         if self.approved_for_official_use and self.treatment_status != "approved":
             raise ValueError(

@@ -499,7 +499,7 @@ class TestVariableCoverageMatrix:
         payload = self._matrix().to_dict()
         del payload["schema_version"]
         reconstructed = VariableCoverageMatrix.from_dict(payload)
-        assert reconstructed.schema_version == 1
+        assert reconstructed.schema_version == 2
 
     def test_schema_version_above_supported_rejected(self):
         payload = self._matrix().to_dict()
@@ -690,3 +690,95 @@ class TestVariableCoverageRecordsFingerprint:
         assert variable_coverage_records_fingerprint(
             [record_a]
         ) != variable_coverage_records_fingerprint([record_b])
+
+
+# ---------------------------------------------------------------------------
+# Schema v1 -> v2 migration (P2 review finding on an earlier version of this
+# module): approved_for_official_use is a v2 addition. A v1 payload
+# (predating the field entirely) must migrate fail-closed - never silently
+# promoted to official-fit eligibility merely because it once carried
+# treatment_status="approved" under the old (buggy) semantics.
+# ---------------------------------------------------------------------------
+
+
+class TestLegacySchemaV1Migration:
+    def _v1_style_record_dict(self) -> dict:
+        """A record payload shaped exactly like what v1 (pre-`approved_for_
+        official_use`) code would have produced - the key is genuinely
+        absent, not merely `None`/`False`."""
+        payload = _record(
+            treatment_status="approved",
+            approved_treatment="carry_forward_within_publication_window",
+            treatment_approved_by="Analyst",
+            treatment_approved_at="2026-08-01",
+            coverage_segments=(
+                CoverageSegment(
+                    period_start="2025-01-06",
+                    period_end="2025-12-29",
+                    state=STATE_UNKNOWN,
+                ),
+            ),
+        ).to_dict()
+        del payload["approved_for_official_use"]
+        return payload
+
+    def test_legacy_approved_record_defaults_to_not_officially_usable(self):
+        record = VariableCoverageRecord.from_dict(self._v1_style_record_dict())
+        assert record.approved_for_official_use is False
+        assert record.is_officially_unresolved
+
+    def test_legacy_matrix_without_schema_version_migrates_to_v2_fail_closed(self):
+        payload = {
+            "matrix_id": "legacy-matrix",
+            "matrix_version": 1,
+            "generated_at": "2026-01-01T00:00:00Z",
+            "records": [self._v1_style_record_dict()],
+        }
+        matrix = VariableCoverageMatrix.from_dict(payload)
+        assert matrix.schema_version == 2
+        assert len(matrix.blocking_issues) == 1
+
+    def test_schema_version_2_explicitly_declared_round_trips_unchanged(self):
+        payload = self._v1_style_record_dict()
+        payload["approved_for_official_use"] = True
+        record = VariableCoverageRecord.from_dict(payload)
+        assert record.approved_for_official_use is True
+        assert not record.is_officially_unresolved
+
+
+# ---------------------------------------------------------------------------
+# approved_for_official_use strict type validation (P2 review finding)
+# ---------------------------------------------------------------------------
+
+
+class TestApprovedForOfficialUseTypeValidation:
+    def test_string_true_rejected_not_coerced(self):
+        """ "false" (a non-empty string) is truthy in Python - if this were
+        naively accepted, is_officially_unresolved would read it as True
+        and silently clear the official-fit block."""
+        with pytest.raises(ValueError, match="approved_for_official_use"):
+            _record(
+                treatment_status="approved",
+                approved_treatment="x",
+                treatment_approved_by="Analyst",
+                treatment_approved_at="2026-08-09",
+                approved_for_official_use="false",
+            )
+
+    def test_string_true_literal_rejected(self):
+        with pytest.raises(ValueError, match="approved_for_official_use"):
+            _record(
+                treatment_status="approved",
+                approved_treatment="x",
+                treatment_approved_by="Analyst",
+                treatment_approved_at="2026-08-09",
+                approved_for_official_use="true",
+            )
+
+    def test_integer_rejected_not_coerced(self):
+        with pytest.raises(ValueError, match="approved_for_official_use"):
+            _record(approved_for_official_use=1)
+
+    def test_none_rejected(self):
+        with pytest.raises(ValueError, match="approved_for_official_use"):
+            _record(approved_for_official_use=None)
