@@ -382,6 +382,7 @@ class VariableCoverageRecord:
     treatment_status: str = "proposed"
     treatment_approved_by: Optional[str] = None
     treatment_approved_at: Optional[str] = None
+    approved_for_official_use: bool = False
     owner: str = ""
 
     def __post_init__(self) -> None:
@@ -402,6 +403,12 @@ class VariableCoverageRecord:
                 "treatment_status='approved' requires approved_treatment, "
                 "treatment_approved_by, and treatment_approved_at"
             )
+        if self.approved_for_official_use and self.treatment_status != "approved":
+            raise ValueError(
+                "approved_for_official_use=True requires treatment_status="
+                "'approved' - a record cannot be officially fit-eligible "
+                "without an approved treatment behind it"
+            )
         for label, start, end in (
             ("observed", self.observed_start, self.observed_end),
             ("expected", self.expected_start, self.expected_end),
@@ -417,10 +424,16 @@ class VariableCoverageRecord:
     @property
     def is_officially_unresolved(self) -> bool:
         """REQ-COVERAGE-001 S5: unresolved `unknown`/`missing_expected`
-        coverage must not become official fit input silently - a record
-        with any such segment must stay exploratory unless/until its
-        treatment is approved."""
-        if self.treatment_status == "approved":
+        coverage must not become official fit input silently. An *approved*
+        treatment alone is not enough to clear this - approving a treatment
+        of, say, "exploratory_only" is itself a governance decision to keep
+        the record excluded from official use, and treating that approval
+        as if it resolved the blocking state would be exactly the silent
+        promotion this invariant exists to prevent. Only the explicit,
+        separately-gated `approved_for_official_use` flag (which itself
+        requires `treatment_status='approved'`, never the reverse) clears
+        this - approval attribution alone never does."""
+        if self.approved_for_official_use:
             return False
         return any(
             segment.state in UNRESOLVED_BLOCKING_STATES
@@ -437,6 +450,59 @@ class VariableCoverageRecord:
             "frequency": self.frequency.to_dict(),
             "coverage_segments": [s.to_dict() for s in self.coverage_segments],
             "definition_breaks": [b.to_dict() for b in self.definition_breaks],
+        }
+
+    def fit_relevant_fields(self) -> dict:
+        """The subset of this record that actually determines a prepared
+        dataset's values (REQ-COVERAGE-001 S5: "a coverage or treatment
+        change that alters prepared-data semantics must change
+        prepared-data/model identity ... a purely presentational metadata
+        change must not"). Mirrors the boundary rule
+        `core.fingerprint._model_relevant_market_config` already
+        established: a field belongs here the moment a dependent
+        transformation/model-preparation step would read it to decide what
+        numeric value or support boundary to produce.
+
+        Excluded as administrative/audit-only, not calculation-relevant:
+        `owner` (record ownership), `proposed_treatment` (a proposal, not
+        what is actually applied), `treatment_approved_by`/
+        `treatment_approved_at` (attribution, not content),
+        `observed_start`/`observed_end`/`expected_start`/`expected_end`
+        (diagnostic annotations for review - `effective_start`/
+        `effective_end` is what a dependent preparation step actually
+        honours), each `CoverageSegment.justification` (audit text) and
+        each `DefinitionBreak.description`/`approved_by`/`approved_at`
+        (audit text/attribution, not the break's date or whether bridging
+        is permitted)."""
+        return {
+            "variable_id": self.variable_id,
+            "source_id": self.source_id,
+            "source_version": self.source_version,
+            "market": self.market,
+            "product": self.product,
+            "segment": self.segment,
+            "frequency": self.frequency.to_dict(),
+            "coverage_segments": [
+                {
+                    "period_start": s.period_start,
+                    "period_end": s.period_end,
+                    "state": s.state,
+                    "structural_zero": s.structural_zero,
+                }
+                for s in self.coverage_segments
+            ],
+            "definition_breaks": [
+                {
+                    "break_date": b.break_date,
+                    "bridge_treatment_approved": b.bridge_treatment_approved,
+                }
+                for b in self.definition_breaks
+            ],
+            "effective_start": self.effective_start,
+            "effective_end": self.effective_end,
+            "approved_treatment": self.approved_treatment,
+            "treatment_status": self.treatment_status,
+            "approved_for_official_use": self.approved_for_official_use,
         }
 
     @classmethod
@@ -473,8 +539,8 @@ def official_fit_blocking_issues(
             )
             issues.append(
                 f"{record.variable_id!r} ({record.market}) has unresolved "
-                f"{', '.join(blocking_states)} coverage with no approved "
-                "treatment"
+                f"{', '.join(blocking_states)} coverage not approved for "
+                "official use"
             )
     return issues
 
@@ -487,12 +553,16 @@ def variable_coverage_records_fingerprint(
     change prepared-data/model identity through the existing fingerprint
     mechanism (`core.fingerprint.fingerprint_model_spec`); a dependent
     requirement wires this into that mechanism, this module only defines
-    the deterministic payload to hash."""
+    the deterministic payload to hash. Hashes `fit_relevant_fields()`, not
+    `to_dict()` - administrative/audit-only metadata (`owner`,
+    `proposed_treatment`, approval attribution, observed/expected windows,
+    free-text justifications) must not stale a fit merely because it
+    changed."""
     payload = [
         (
-            item.to_dict()
+            item.fit_relevant_fields()
             if isinstance(item, VariableCoverageRecord)
-            else VariableCoverageRecord.from_dict(item).to_dict()
+            else VariableCoverageRecord.from_dict(item).fit_relevant_fields()
         )
         for item in records
     ]

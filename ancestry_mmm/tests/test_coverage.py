@@ -342,7 +342,14 @@ class TestIsOfficiallyUnresolved:
         )
         assert record.is_officially_unresolved
 
-    def test_unresolved_state_with_approved_treatment_is_not_blocking(self):
+    def test_approved_treatment_alone_does_not_clear_the_block(self):
+        """A P2 review finding on an earlier version of this record: an
+        *approved* treatment of e.g. "exploratory_only" is itself a
+        governance decision to keep the record excluded from official use
+        - treating approval attribution alone as clearing the block would
+        silently promote unresolved coverage to fit-eligible, exactly what
+        REQ-COVERAGE-001 S5 forbids. Only the separate
+        `approved_for_official_use` flag may clear it."""
         record = _record(
             coverage_segments=(
                 CoverageSegment(
@@ -356,7 +363,28 @@ class TestIsOfficiallyUnresolved:
             treatment_approved_by="Analyst",
             treatment_approved_at="2026-08-09",
         )
+        assert record.is_officially_unresolved
+
+    def test_approved_for_official_use_clears_the_block(self):
+        record = _record(
+            coverage_segments=(
+                CoverageSegment(
+                    period_start="2025-01-06",
+                    period_end="2025-12-29",
+                    state=STATE_UNKNOWN,
+                ),
+            ),
+            treatment_status="approved",
+            approved_treatment="carry_forward_within_publication_window",
+            treatment_approved_by="Analyst",
+            treatment_approved_at="2026-08-09",
+            approved_for_official_use=True,
+        )
         assert not record.is_officially_unresolved
+
+    def test_approved_for_official_use_requires_approved_treatment_status(self):
+        with pytest.raises(ValueError, match="approved_for_official_use"):
+            _record(approved_for_official_use=True)
 
     def test_resolved_states_never_flagged(self):
         for state in (STATE_OBSERVED_ZERO, STATE_NOT_APPLICABLE, STATE_ESTIMATED):
@@ -537,3 +565,128 @@ class TestVariableCoverageRecordsFingerprint:
         fp_from_instance = variable_coverage_records_fingerprint([record])
         fp_from_dict = variable_coverage_records_fingerprint([record.to_dict()])
         assert fp_from_instance == fp_from_dict
+
+    def test_owner_change_does_not_change_fingerprint(self):
+        """P2 review finding on an earlier version: hashing the full
+        `to_dict()` payload made administrative fields like `owner` part of
+        model identity, so reassigning ownership alone would falsely stale
+        a fit."""
+        record_a = _record(owner="Alice")
+        record_b = _record(owner="Bob")
+        assert variable_coverage_records_fingerprint(
+            [record_a]
+        ) == variable_coverage_records_fingerprint([record_b])
+
+    def test_proposed_treatment_change_does_not_change_fingerprint(self):
+        record_a = _record(proposed_treatment="carry_forward")
+        record_b = _record(proposed_treatment="linear_interpolate")
+        assert variable_coverage_records_fingerprint(
+            [record_a]
+        ) == variable_coverage_records_fingerprint([record_b])
+
+    def test_treatment_approval_attribution_change_does_not_change_fingerprint(self):
+        base = dict(
+            treatment_status="approved",
+            approved_treatment="carry_forward_within_publication_window",
+        )
+        record_a = _record(
+            **base, treatment_approved_by="Alice", treatment_approved_at="2026-08-01"
+        )
+        record_b = _record(
+            **base, treatment_approved_by="Bob", treatment_approved_at="2026-08-09"
+        )
+        assert variable_coverage_records_fingerprint(
+            [record_a]
+        ) == variable_coverage_records_fingerprint([record_b])
+
+    def test_observed_and_expected_window_changes_do_not_change_fingerprint(self):
+        record_a = _record(observed_start="2025-01-06", expected_start="2025-01-06")
+        record_b = _record(observed_start="2025-02-03", expected_start="2025-02-03")
+        assert variable_coverage_records_fingerprint(
+            [record_a]
+        ) == variable_coverage_records_fingerprint([record_b])
+
+    def test_segment_justification_change_does_not_change_fingerprint(self):
+        record_a = _record(
+            coverage_segments=(
+                CoverageSegment(
+                    period_start="2025-01-06",
+                    period_end="2025-03-31",
+                    state=STATE_OBSERVED_ZERO,
+                    structural_zero=True,
+                    justification="pre-launch, channel did not exist yet",
+                ),
+            )
+        )
+        record_b = _record(
+            coverage_segments=(
+                CoverageSegment(
+                    period_start="2025-01-06",
+                    period_end="2025-03-31",
+                    state=STATE_OBSERVED_ZERO,
+                    structural_zero=True,
+                    justification="a differently-worded but equally valid justification",
+                ),
+            )
+        )
+        assert variable_coverage_records_fingerprint(
+            [record_a]
+        ) == variable_coverage_records_fingerprint([record_b])
+
+    def test_definition_break_description_and_attribution_do_not_change_fingerprint(
+        self,
+    ):
+        record_a = _record(
+            definition_breaks=(
+                DefinitionBreak(
+                    break_date="2025-06-01", description="original wording"
+                ),
+            )
+        )
+        record_b = _record(
+            definition_breaks=(
+                DefinitionBreak(break_date="2025-06-01", description="reworded later"),
+            )
+        )
+        assert variable_coverage_records_fingerprint(
+            [record_a]
+        ) == variable_coverage_records_fingerprint([record_b])
+
+    def test_effective_window_change_changes_fingerprint(self):
+        record_a = _record(effective_start="2025-01-06", effective_end="2025-12-29")
+        record_b = _record(effective_start="2025-04-01", effective_end="2025-12-29")
+        assert variable_coverage_records_fingerprint(
+            [record_a]
+        ) != variable_coverage_records_fingerprint([record_b])
+
+    def test_approved_treatment_change_changes_fingerprint(self):
+        base = dict(
+            treatment_status="approved",
+            treatment_approved_by="Analyst",
+            treatment_approved_at="2026-08-09",
+        )
+        record_a = _record(**base, approved_treatment="carry_forward")
+        record_b = _record(**base, approved_treatment="linear_interpolate")
+        assert variable_coverage_records_fingerprint(
+            [record_a]
+        ) != variable_coverage_records_fingerprint([record_b])
+
+    def test_approved_for_official_use_change_changes_fingerprint(self):
+        base = dict(
+            treatment_status="approved",
+            approved_treatment="carry_forward",
+            treatment_approved_by="Analyst",
+            treatment_approved_at="2026-08-09",
+        )
+        record_a = _record(**base, approved_for_official_use=False)
+        record_b = _record(**base, approved_for_official_use=True)
+        assert variable_coverage_records_fingerprint(
+            [record_a]
+        ) != variable_coverage_records_fingerprint([record_b])
+
+    def test_frequency_change_changes_fingerprint(self):
+        record_a = _record(frequency=_frequency(native_frequency="weekly"))
+        record_b = _record(frequency=_frequency(native_frequency="monthly"))
+        assert variable_coverage_records_fingerprint(
+            [record_a]
+        ) != variable_coverage_records_fingerprint([record_b])
