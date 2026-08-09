@@ -4,11 +4,30 @@
 
 | Property | Value |
 |---|---|
-| Suite name | Ancestry In-House MMM PRD Suite |
-| Version | v1.4 |
-| Effective date | 28 July 2026 |
+| Suite name | Ancestry MMM PRD Suite Manifest |
+| Version | Cross-Document Coherent v1.5 |
+| v1.4 baseline effective date | 28 July 2026 |
 | Operating model | Direct internal build by Ancestry Marketing Data Science |
 | Repository | `papayasamosa/MMM-Guide` |
+
+## Version history: v1.4 to v1.5
+
+v1.5 is a **focused update**, not a full-suite rewrite:
+
+- Parts 3, 6, 10 and 11 are updated in v1.5 for the graph-first causal
+  configuration decision (see `REQ-GRAPH-001`).
+- Parts 1, 2, 4, 5, 7, 8 and 9 retain their v1.4 normative content under the
+  v1.5 suite manifest, pending the next full-suite consolidation.
+
+The v1.5 suite manifest describes Family History GSA acquisition (New, DNA
+cross-sell, Winback) as the current primary business acquisition scope. Root
+`AGENTS.md` separately requires that no hard-coded primary Family History
+outcome be assumed without the approved outcome-definition and use-specific
+approval chain (`REQ-OUT-001`, `REQ-OUT-002`). These are compatible only at
+the level that GSA is the current business acquisition scope while its exact
+event definition and permitted uses remain governed by the outcome-approval
+chain — this repository does not hard-code a GSA default, and no change here
+introduces one.
 
 ## Operating model
 
@@ -55,31 +74,46 @@ requirement based on personal judgement.
 
 ## Current implementation gaps requiring decision records
 
-The following PRD v1.4 capabilities have not yet been translated into approved
-requirement records. Each needs a decision record before implementation begins:
+Each row below is one of two distinct states, not to be conflated:
 
-- Governed FX (`REQ-FX-001` through `REQ-FX-006`)
-- Sequential / weekly planning (`REQ-STATE-001`, `REQ-SCEN-001` through `REQ-SCEN-003`)
-- Starting state and terminal state
-- Future-assumption bundles
-- Time-varying baseline
-- Search demand/capacity mathematics (latent demand estimation, cap-hit
-  probability, captured-versus-unmet demand, joint media/cap optimisation) -
-  `REQ-SEARCH-001` covers Search object separation/governance only (see
-  below); its own approved modelling contract is still a gap
-- Capacity and cap semantics (`REQ-CAP-001`)
-- Experiment translation and recalibration
-- Reporting semantics
-- Background jobs and service boundaries
+- **no approved requirement/decision yet** — no indexed `REQ-*` record
+  exists for this capability at all;
+- **requirement exists but capability incomplete** — an approved, indexed
+  `REQ-*` record exists and covers governance, identity, or part of the
+  capability, but the record's own text explicitly reserves the remaining
+  target-state capability for a future, separately-scoped requirement.
 
-## Approved requirement records already implemented at governance level
+| Capability | State | Notes |
+|---|---|---|
+| Governed FX (`REQ-FX-001`–`REQ-FX-006`) | No approved requirement/decision yet | No indexed record exists. |
+| Sequential / weekly planning (`REQ-STATE-001`, `REQ-SCEN-001`–`003`) | No approved requirement/decision yet | No indexed record exists. |
+| Starting state and terminal state | No approved requirement/decision yet | Bundled with sequential/weekly planning above; no indexed record exists. |
+| Future-assumption bundles | No approved requirement/decision yet | No indexed record exists. |
+| Time-varying baseline | No approved requirement/decision yet | No indexed record exists; see `AGENTS.md`'s future-variable-role #5 for the standing invariant any future approval must satisfy. |
+| Search demand/capacity mathematics (latent demand estimation, cap-hit probability, captured-versus-unmet demand, joint media/cap optimisation) | No approved requirement/decision yet | `REQ-SEARCH-001` (approved, implemented — see below) covers Search object separation/governance only and explicitly places this mathematics out of scope; no record yet approves the modelling contract itself. |
+| Capacity and cap semantics (`REQ-CAP-001`) | No approved requirement/decision yet | `AGENTS.md`'s "Capacity and cap invariants" section states the standing business/mathematical invariant; no `REQ-CAP-001` record yet translates it into an approved modelling contract. |
+| Experiment translation and recalibration | No approved requirement/decision yet | No indexed record exists. |
+| Reporting semantics | No approved requirement/decision yet | No indexed record exists. |
+| Background jobs and service boundaries | No approved requirement/decision yet | No indexed record exists. |
+| Prior predictive checks, prior-vs-posterior comparison, and predictive log-density (PSIS-LOO/WAIC) | Requirement exists but capability incomplete | `REQ-VAL-001` is approved and substantially implemented (policy objects, readiness evaluator, nine-section diagnostics artefact). Its own record text explicitly defers these three checks as a separately-scoped dependent package. |
+| Graph-compilable mediated / capacity-constrained / moderated / residual-interaction edges | Requirement exists but capability incomplete | `REQ-GRAPH-001` is approved and implemented for `direct`, `cross_product_halo`, and `excluded_diagnostic_only` edges. The remaining edge roles are valid graph vocabulary but not yet engine-compilable (`core.graph_model_compiler.check_engine_capability` is authoritative on current support). |
 
-`REQ-SEARCH-001` (Search object separation/governance) is an approved,
-indexed requirement record (`docs/approved_requirements/REQ-SEARCH-001.md`)
-with governance-level implementation: distinct governed objects for
-`search_demand`, `paid_search_spend`, `paid_search_delivery`,
-`paid_search_cap`, `organic_search_capture`, and
-`direct_navigation_capture`, plus cap-counterpart validation, effective
-periods, version history, and persistence. It is not a gap requiring a new
-decision record. What it does *not* cover - Search demand/capacity
-mathematics - remains listed above.
+## Approved requirement records already implemented (with documented capability boundaries)
+
+`REQ-GRAPH-001` (graph-authoritative causal configuration) and
+`REQ-SEARCH-001` (Search object separation/governance) are approved,
+indexed requirement records with substantive implementation. Neither is a
+gap requiring a new decision record — each has an explicit, narrower
+capability boundary documented in its own record:
+
+- `REQ-GRAPH-001` (`docs/approved_requirements/REQ-GRAPH-001.md`): the graph
+  domain, versioning, structural/layout fingerprints, deterministic
+  validation, compiler integration, and Streamlit editor are implemented.
+  Engine-compilable edge roles remain limited — see the gaps table above.
+- `REQ-SEARCH-001` (`docs/approved_requirements/REQ-SEARCH-001.md`):
+  distinct governed objects for `search_demand`, `paid_search_spend`,
+  `paid_search_delivery`, `paid_search_cap`, `organic_search_capture`, and
+  `direct_navigation_capture` are implemented, including cap-counterpart
+  validation, effective periods, version history, persistence, and
+  fit-relevant fingerprint integration. Search demand/capacity mathematics
+  is explicitly out of scope for this record — see the gaps table above.

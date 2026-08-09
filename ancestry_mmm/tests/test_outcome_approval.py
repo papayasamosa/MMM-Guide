@@ -711,6 +711,22 @@ class TestAuthorityConsistency:
         assert "applicable stable `AGENTS.md` invariant" in content
         assert "applicable `AGENTS.md`" in content
 
+    def test_specification_authority_names_current_suite_version(self):
+        """REQ-AUTH-001: docs/specification_authority.md names the current
+        PRD suite version, and does not list an approved/indexed requirement
+        record's own capability (REQ-GRAPH-001, REQ-SEARCH-001) as if no
+        requirement record exists for it."""
+        authority_path = (
+            Path(__file__).parent.parent.parent / "docs" / "specification_authority.md"
+        )
+        content = authority_path.read_text()
+        assert "Cross-Document Coherent v1.5" in content
+        for requirement_id in ("REQ-GRAPH-001", "REQ-SEARCH-001"):
+            assert requirement_id in content, (
+                f"{requirement_id} is approved and indexed but not "
+                "referenced in specification_authority.md"
+            )
+
 
 # ---------------------------------------------------------------------------
 # OutcomeApproval vocabulary
