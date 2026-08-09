@@ -95,8 +95,8 @@ Each row below is one of two distinct states, not to be conflated:
 | Experiment translation and recalibration | No approved requirement/decision yet | No indexed record exists. |
 | Reporting semantics | No approved requirement/decision yet | No indexed record exists. |
 | Background jobs and service boundaries | No approved requirement/decision yet | No indexed record exists. |
-| Prior predictive checks, prior-vs-posterior comparison, and predictive log-density (PSIS-LOO/WAIC) | Requirement exists but capability incomplete | `REQ-VAL-001` is approved and substantially implemented (policy objects, readiness evaluator, nine-section diagnostics artefact). Its own record text explicitly defers these three checks as a separately-scoped dependent package. |
-| Graph-compilable mediated / capacity-constrained / moderated / residual-interaction edges | Requirement exists but capability incomplete | `REQ-GRAPH-001` is approved and implemented for `direct`, `cross_product_halo`, and `excluded_diagnostic_only` edges. The remaining edge roles are valid graph vocabulary but not yet engine-compilable (`core.graph_model_compiler.check_engine_capability` is authoritative on current support). |
+| Prior predictive checks, prior-vs-posterior comparison, and predictive log-density (PSIS-LOO/WAIC) — `REQ-VAL-001` remaining scope | Requirement exists but capability incomplete | `REQ-VAL-001` is approved and substantially implemented (policy objects, readiness evaluator, nine-section diagnostics artefact). Its own record text explicitly defers these three checks as a separately-scoped dependent package. |
+| Graph-compilable mediated / capacity-constrained / moderated / residual-interaction edges — `REQ-GRAPH-001` remaining scope | Requirement exists but capability incomplete | `REQ-GRAPH-001` is approved and implemented for `direct`, `cross_product_halo`, and `excluded_diagnostic_only` edges. The remaining edge roles are valid graph vocabulary but not yet engine-compilable (`core.graph_model_compiler.check_engine_capability` is authoritative on current support). |
 
 ## Approved requirement records already implemented (with documented capability boundaries)
 
