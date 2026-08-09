@@ -16,6 +16,7 @@ import pymc as pm
 
 from .models import compute_model_diagnostics
 from .hierarchical_model import FHModelMeta
+from .outcomes import outcome_catalogue_at_fit_by_id
 from .predict import FHPosteriorParams, extract_posterior_params, predict_mu
 
 
@@ -248,6 +249,12 @@ def prior_predictive_summary(
     n_chain, n_draw, n_obs, n_outcome = y_obs.shape
     flat = y_obs.reshape(n_chain * n_draw, n_obs, n_outcome)
 
+    # pages/AGENTS.md "Required labels": outcome evidence must carry its
+    # definition version, not only the bare outcome_id, so persisted
+    # evidence stays unambiguously tied to the governed outcome definition
+    # as definitions evolve (Codex review, PR #148).
+    outcome_definitions_at_fit = outcome_catalogue_at_fit_by_id(meta)
+
     rows: List[Dict[str, Any]] = []
     for m_i, market in enumerate(markets):
         start, end = market_bounds[m_i]
@@ -255,10 +262,16 @@ def prior_predictive_summary(
             cell = flat[:, start:end, o_i].reshape(-1)
             finite = cell[np.isfinite(cell)]
             has_finite = finite.size > 0
+            outcome_definition = outcome_definitions_at_fit.get(oid)
             rows.append(
                 {
                     "market": market,
                     "outcome_id": oid,
+                    "outcome_definition_version": (
+                        outcome_definition.definition_version
+                        if outcome_definition is not None
+                        else ""
+                    ),
                     "n_observations": end - start,
                     "n_draws": int(cell.size),
                     "finite_count": int(finite.size),
@@ -322,11 +335,16 @@ def predictive_density_summary(
     approximation is unreliable - reported here as evidence, never
     silently hidden or used to assert LOO is unconditionally valid.
 
-    Purely descriptive - no pass/fail threshold. The Pareto-k
-    good/bad/very-bad counts below use ArviZ's own standard descriptive
-    bins (<=0.5 / (0.5, 0.7] / >0.7 - the same bins printed by ArviZ's own
-    `ELPDData.__repr__`, not a threshold invented by this repository) purely
-    as evidence; they gate nothing.
+    Purely descriptive - no pass/fail threshold. The Pareto-k good/bad/
+    very-bad counts below are bucketed against ArviZ's own returned,
+    sample-size-adjusted `good_k` threshold (`loo_result.good_k` - "For a
+    sample size S, the threshold is computed as min(1 - 1/log10(S), 0.7)",
+    per ArviZ's own docstring) rather than a hardcoded 0.5, so a row's
+    bucket counts can never contradict `loo_good_k_threshold` reported
+    alongside them (Codex review, PR #148: a fixed 0.5 cutoff would
+    misclassify a k above 0.5 as "bad" even when ArviZ's own adjusted
+    threshold for this sample size says it is still good). >1.0 ("very
+    bad") is ArviZ's own fixed upper bucket, not sample-size-adjusted.
     """
     markets: List[str] = frame["markets"]
     market_bounds: List[tuple] = frame["market_bounds"]
@@ -345,22 +363,35 @@ def predictive_density_summary(
     pareto_k = loo_result.pareto_k.values
     loo_i = loo_result.loo_i.values
     waic_i = waic_result.waic_i.values
+    good_k_threshold = float(loo_result.good_k)
+
+    # pages/AGENTS.md "Required labels": see prior_predictive_summary's
+    # matching comment above.
+    outcome_definitions_at_fit = outcome_catalogue_at_fit_by_id(meta)
 
     rows: List[Dict[str, Any]] = []
     for m_i, market in enumerate(markets):
         start, end = market_bounds[m_i]
         for o_i, oid in enumerate(meta.outcome_ids):
             k_slice = pareto_k[start:end, o_i]
+            outcome_definition = outcome_definitions_at_fit.get(oid)
             rows.append(
                 {
                     "market": market,
                     "outcome_id": oid,
+                    "outcome_definition_version": (
+                        outcome_definition.definition_version
+                        if outcome_definition is not None
+                        else ""
+                    ),
                     "n_observations": end - start,
                     "mean_pareto_k": float(np.mean(k_slice)),
                     "max_pareto_k": float(np.max(k_slice)),
-                    "n_good_pareto_k": int(np.sum(k_slice <= 0.5)),
-                    "n_bad_pareto_k": int(np.sum((k_slice > 0.5) & (k_slice <= 0.7))),
-                    "n_very_bad_pareto_k": int(np.sum(k_slice > 0.7)),
+                    "n_good_pareto_k": int(np.sum(k_slice <= good_k_threshold)),
+                    "n_bad_pareto_k": int(
+                        np.sum((k_slice > good_k_threshold) & (k_slice <= 1.0))
+                    ),
+                    "n_very_bad_pareto_k": int(np.sum(k_slice > 1.0)),
                     "mean_elpd_loo_i": float(np.mean(loo_i[start:end, o_i])),
                     "mean_elpd_waic_i": float(np.mean(waic_i[start:end, o_i])),
                 }
@@ -370,7 +401,7 @@ def predictive_density_summary(
         "elpd_loo": float(loo_result.elpd_loo),
         "elpd_loo_se": float(loo_result.se),
         "p_loo": float(loo_result.p_loo),
-        "loo_good_k_threshold": float(loo_result.good_k),
+        "loo_good_k_threshold": good_k_threshold,
         "elpd_waic": float(waic_result.elpd_waic),
         "elpd_waic_se": float(waic_result.se),
         "p_waic": float(waic_result.p_waic),
