@@ -211,7 +211,7 @@ class TestDiagnosticsArtefactV3:
     def test_to_dict_has_all_sections(self):
         artefact = DiagnosticsArtefact(artefact_id="test-id")
         d = artefact.to_dict()
-        assert d["schema_version"] == 3
+        assert d["schema_version"] == CURRENT_DIAGNOSTICS_SCHEMA_VERSION
         assert d["artefact_id"] == "test-id"
         for section in (
             "convergence",
@@ -223,6 +223,7 @@ class TestDiagnosticsArtefactV3:
             "backtest",
             "error_metrics",
             "residual_diagnostics",
+            "prior_predictive",
         ):
             assert section in d
             assert "status" in d[section]
@@ -338,8 +339,8 @@ class TestDiagnosticsVersionAuthority:
     able to silently disagree with each other."""
 
     def test_current_version_constants_are_consistent(self):
-        assert CURRENT_DIAGNOSTICS_VERSION == "3.1.0"
-        assert CURRENT_DIAGNOSTICS_SCHEMA_VERSION == 3
+        assert CURRENT_DIAGNOSTICS_VERSION == "4.0.0"
+        assert CURRENT_DIAGNOSTICS_SCHEMA_VERSION == 4
 
     def test_default_diagnostics_result_uses_current_version(self):
         result = DiagnosticsResult(
@@ -562,6 +563,154 @@ class TestSchemaV2Compatibility:
         assert restored.schema_version == artefact.schema_version
         assert restored.error_metrics.status == "not_computed"
         assert restored.fingerprint() == artefact.fingerprint()
+
+
+# =========================================================================
+# Schema v3 -> v4 compatibility (REQ-VAL-001 Work Package 2: prior
+# predictive evidence)
+# =========================================================================
+
+
+class TestSchemaV3ToV4Compatibility:
+    def _v3_dict(self) -> dict:
+        not_computed = {
+            "status": "not_computed",
+            "payload": None,
+            "error": "",
+            "warnings": [],
+        }
+        computed_error_metrics = {
+            "status": "computed",
+            "payload": [{"outcome_id": "fh_new", "mae": 1.2}],
+            "error": "",
+            "warnings": [],
+        }
+        return {
+            "artefact_id": "v3-artefact",
+            "diagnostics_version": "3.1.0",
+            "schema_version": 3,
+            "model_identity_fingerprint": "fp-v3",
+            "evaluated_at": "2026-08-01T00:00:00+00:00",
+            "model_type": "shared",
+            "convergence": {
+                "status": "computed",
+                "payload": {"max_rhat": 1.01, "min_ess": 600, "has_divergences": False},
+                "error": "",
+                "warnings": [],
+            },
+            "in_sample_fit": not_computed,
+            "posterior_predictive": not_computed,
+            "plausibility": not_computed,
+            "identification": not_computed,
+            "coefficient_stability": not_computed,
+            "backtest": not_computed,
+            "error_metrics": computed_error_metrics,
+            "residual_diagnostics": not_computed,
+            "settings": [],
+            "legacy_incomplete": False,
+        }
+
+    def test_v3_upgrades_with_prior_predictive_not_computed(self):
+        artefact = DiagnosticsArtefact.from_dict(self._v3_dict())
+        assert artefact.prior_predictive.status == "not_computed"
+        assert artefact.prior_predictive.error != ""
+        assert "schema v4" in artefact.prior_predictive.error
+
+    def test_v3_upgrade_preserves_schema_version_and_is_not_legacy_incomplete(self):
+        """Mirrors the v2 -> v3 precedent directly above: a schema-v3
+        artefact predating prior_predictive evidence is not the same thing
+        as a v1 artefact that silently dropped evidence it claimed to have
+        - its stored schema_version is preserved as the truthful record of
+        what evidence it actually has."""
+        artefact = DiagnosticsArtefact.from_dict(self._v3_dict())
+        assert artefact.schema_version == 3
+        assert artefact.legacy_incomplete is False
+
+    def test_v3_upgrade_preserves_existing_sections(self):
+        artefact = DiagnosticsArtefact.from_dict(self._v3_dict())
+        assert artefact.convergence.status == "computed"
+        assert artefact.convergence.payload["max_rhat"] == 1.01
+        assert artefact.error_metrics.status == "computed"
+        assert artefact.error_metrics.payload == [{"outcome_id": "fh_new", "mae": 1.2}]
+
+    def test_v3_upgraded_artefact_still_usable_for_official_canonical_evidence(self):
+        """The >= 2 gate in ValidationService (not == schema_version) is
+        what makes this forward-compatible - a v3-origin artefact must not
+        be treated as untrustworthy just because it predates prior
+        predictive evidence."""
+        artefact = DiagnosticsArtefact.from_dict(self._v3_dict())
+        assert artefact.schema_version >= 2
+        assert not artefact.legacy_incomplete
+
+    def test_v3_round_trip_through_to_dict_is_stable(self):
+        artefact = DiagnosticsArtefact.from_dict(self._v3_dict())
+        d = artefact.to_dict()
+        restored = DiagnosticsArtefact.from_dict(d)
+        assert restored.schema_version == artefact.schema_version
+        assert restored.prior_predictive.status == "not_computed"
+        assert restored.fingerprint() == artefact.fingerprint()
+
+    def test_historical_v3_version_is_not_upgraded_to_current(self):
+        artefact = DiagnosticsArtefact.from_dict(self._v3_dict())
+        assert artefact.diagnostics_version == "3.1.0"
+        assert artefact.diagnostics_version != CURRENT_DIAGNOSTICS_VERSION
+
+
+# =========================================================================
+# Schema v4 - a freshly computed artefact carries prior_predictive evidence
+# =========================================================================
+
+
+class TestSchemaV4FreshArtefact:
+    def test_current_defaults_are_schema_v4(self):
+        assert CURRENT_DIAGNOSTICS_SCHEMA_VERSION == 4
+        assert CURRENT_DIAGNOSTICS_VERSION.startswith("4.")
+
+    def test_freshly_constructed_artefact_has_not_computed_prior_predictive(self):
+        artefact = DiagnosticsArtefact()
+        assert artefact.schema_version == CURRENT_DIAGNOSTICS_SCHEMA_VERSION
+        assert artefact.prior_predictive.status == "not_computed"
+
+    def test_computed_prior_predictive_round_trips_through_to_dict(self):
+        computed = DiagnosticSection(
+            status="computed",
+            payload={
+                "model_type": "shared",
+                "n_samples": 200,
+                "random_seed": 42,
+                "rows": [
+                    {
+                        "market": "UK",
+                        "outcome_id": "fh_new",
+                        "n_observations": 10,
+                        "n_draws": 2000,
+                        "finite_count": 2000,
+                        "non_finite_count": 0,
+                        "mean": 5.0,
+                        "median": 4.5,
+                        "q05": 1.0,
+                        "q95": 12.0,
+                        "min": 0.0,
+                        "max": 30.0,
+                    }
+                ],
+            },
+            warnings=("a sampling warning",),
+        )
+        artefact = DiagnosticsArtefact(prior_predictive=computed)
+        d = artefact.to_dict()
+        restored = DiagnosticsArtefact.from_dict(d)
+        assert restored.prior_predictive.status == "computed"
+        assert restored.prior_predictive.payload == computed.payload
+        assert restored.prior_predictive.warnings == computed.warnings
+        assert restored.fingerprint() == artefact.fingerprint()
+
+    def test_prior_predictive_section_change_is_covered_by_fingerprint(self):
+        base = DiagnosticsArtefact()
+        with_evidence = DiagnosticsArtefact(
+            prior_predictive=DiagnosticSection(status="computed", payload={"rows": []})
+        )
+        assert base.fingerprint() != with_evidence.fingerprint()
 
 
 # =========================================================================

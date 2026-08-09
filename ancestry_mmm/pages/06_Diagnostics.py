@@ -1,7 +1,7 @@
 """Page 6: model scorecard - convergence, in-sample fit, posterior predictive coverage, plausibility flags, out-of-sample backtest."""
 
 import sys
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -45,6 +45,7 @@ from ancestry_mmm.core.search_objects import (
     search_object_fit_fingerprint,
 )
 from ancestry_mmm.application.diagnostics_service import (
+    DiagnosticSection,
     DiagnosticsService,
     DiagnosticsInput,
 )
@@ -63,7 +64,11 @@ from ancestry_mmm.core.fingerprint import (
     fingerprint_model_spec,
     fingerprint_posterior,
 )
-from ancestry_mmm.core.causal_graph import current_structural_fingerprint_for_identity
+from ancestry_mmm.core.causal_graph import (
+    GRAPH_STATUS_APPROVED,
+    CausalGraph,
+    current_structural_fingerprint_for_identity,
+)
 from ancestry_mmm.core.funnel import FunnelLink, funnel_coherence_diagnostics
 from ancestry_mmm.core.outcomes import (
     outcome_catalogue_fingerprint_payload,
@@ -734,6 +739,111 @@ else:
                         "re-evaluate readiness after fixing failing gates) and "
                         "try again."
                     )
+
+st.markdown("---")
+st.markdown("### Prior predictive check")
+st.caption(
+    "REQ-VAL-001: samples from this model's declared PRIORS only - never its "
+    "posterior, never the observed outcome data - and summarises the "
+    "outcome-scale implication per market x outcome_id before any fitting. "
+    "This is evidence about what the priors imply, not a measure of "
+    "posterior fit quality (see Convergence, PPC coverage and Error metrics "
+    "above for that). Rebuilds this fit's exact model structure (same "
+    "builder, frame, prior configuration, DNA lag, and causal graph) and "
+    "samples fresh from its priors - no MCMC, no refit, and no prior value "
+    "is changed by running this check."
+)
+pp_col1, pp_col2 = st.columns(2)
+pp_n_samples = pp_col1.number_input(
+    "Prior draws", min_value=50, max_value=5000, value=500, step=50
+)
+pp_seed = pp_col2.number_input(
+    "Random seed", min_value=0, max_value=2**31 - 1, value=42, step=1
+)
+
+if st.button("Run prior predictive check"):
+    if diag_artefact is None:
+        st.error("Compute the scorecard first.")
+    else:
+        try:
+            pp_spec = ModelSpec.from_dict(get_state("model_spec"))
+            pp_causal_graph_dict = get_state("causal_graph")
+            pp_causal_graph = None
+            if (
+                pp_causal_graph_dict
+                and pp_causal_graph_dict.get("status") == GRAPH_STATUS_APPROVED
+            ):
+                pp_causal_graph = CausalGraph.from_dict(pp_causal_graph_dict)
+            pp_builder = (
+                build_fh_market_specific_model
+                if model_type == "market_specific"
+                else build_fh_hierarchical_model
+            )
+            pp_model, _pp_meta = pp_builder(
+                frame,
+                pp_spec,
+                dna_lag_weeks=meta.dna_lag_weeks,
+                prior_config=get_state("prior_config"),
+                dna_outcome_id=meta.dna_outcome_id,
+                direct_dna_outcome_ids=meta.direct_dna_outcome_ids,
+                causal_graph=pp_causal_graph,
+            )
+        except Exception as e:
+            # Rebuilding the exact fit-time model structure failed (e.g. no
+            # model_spec available) - reported through the same "failed"
+            # artefact-section path as a sampling failure below, rather than
+            # a page-only ephemeral message, so this outcome is itself
+            # canonical evidence (never fabricated as computed, never
+            # silently dropped) and consistently invalidates governance
+            # evidence the same way any other artefact change does.
+            updated_artefact = replace(
+                diag_artefact,
+                prior_predictive=DiagnosticSection(
+                    status="failed",
+                    payload=None,
+                    error=f"Could not rebuild the model to sample its priors: {e}",
+                ),
+            )
+        else:
+            with st.spinner("Sampling priors..."):
+                updated_artefact = DiagnosticsService().run_prior_predictive_check(
+                    diag_artefact,
+                    model=pp_model,
+                    frame=frame,
+                    meta=meta,
+                    model_type=model_type,
+                    n_samples=int(pp_n_samples),
+                    random_seed=int(pp_seed),
+                )
+        set_state("diagnostics_artefact", updated_artefact)
+        diag_artefact = updated_artefact
+        # The artefact's fingerprint has changed - mirrors the backtest
+        # section below (and the compute-scorecard handler above):
+        # invalidate any readiness/approval evaluated against the
+        # previous artefact in the same action.
+        invalidate_governance_evidence()
+        if updated_artefact.prior_predictive.status == "computed":
+            st.success(
+                "Prior predictive check computed - diagnostics artefact updated."
+            )
+        else:
+            st.error(
+                f"Prior predictive check failed: {updated_artefact.prior_predictive.error}"
+            )
+
+pp_section = diag_artefact.prior_predictive if diag_artefact else None
+if pp_section is not None and pp_section.status == "computed":
+    st.caption(
+        f"Model type: {MODEL_TYPE_LABEL.get(pp_section.payload.get('model_type', ''), pp_section.payload.get('model_type', ''))} | "
+        f"Prior draws: {format_number(pp_section.payload.get('n_samples'))} | "
+        f"Seed: {pp_section.payload.get('random_seed')}"
+    )
+    pp_df = pd.DataFrame(pp_section.payload["rows"])
+    st.dataframe(pp_df, width="stretch", column_config=dataframe_column_config(pp_df))
+    for w in pp_section.warnings:
+        st.caption(f"Sampling warning: {w}")
+elif pp_section is not None and pp_section.status == "failed":
+    st.error(f"Prior predictive check failed: {pp_section.error}")
 
 st.markdown("---")
 st.markdown("### Out-of-sample accuracy (expanding-window backtest)")

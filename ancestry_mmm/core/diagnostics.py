@@ -6,11 +6,13 @@ headline R-squared.
 
 from __future__ import annotations
 
+import warnings
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 import arviz as az
+import pymc as pm
 
 from .models import compute_model_diagnostics
 from .hierarchical_model import FHModelMeta
@@ -174,6 +176,91 @@ def _residual_autocorrelation_stats(residuals: np.ndarray) -> Tuple[float, float
         float(np.sum(np.diff(residuals) ** 2) / ss_res) if ss_res > 0 else float("nan")
     )
     return lag1_autocorr, durbin_watson
+
+
+def prior_predictive_summary(
+    model: pm.Model,
+    frame: Dict[str, Any],
+    meta: FHModelMeta,
+    *,
+    n_samples: int = 500,
+    random_seed: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Sample from `model`'s priors only (never its posterior, never the
+    observed data `Y`) via `pm.sample_prior_predictive`, and summarise the
+    outcome-scale `y_obs` prior predictive distribution per market x
+    outcome_id - the same grain `residual_temporal_diagnostics`/
+    `error_metrics_by_outcome` use (`frame["market_bounds"]`, never
+    aggregated across a market boundary).
+
+    `model` must be an unfit `pm.Model` built by
+    `core.hierarchical_model.build_fh_hierarchical_model` or
+    `core.market_specific_model.build_fh_market_specific_model` (or a
+    structurally identical model exposing an `("obs", "outcome")`-shaped
+    `y_obs` observed variable) - both builders produce an identical `y_obs`
+    shape, so this one function serves Model A and Model C alike; only
+    `hill_K`/`beta`'s internal parameterisation differs between them, and
+    neither is read here.
+
+    Purely descriptive - no pass/fail threshold, no prior is read, changed,
+    or refit (REQ-VAL-001: evidence computation and approval policy are
+    separate; sampling from a model's own declared priors cannot alter
+    them). Raises whatever `pm.sample_prior_predictive` raises on failure -
+    the caller (`application.diagnostics_service.DiagnosticsService.
+    run_prior_predictive_check`) is responsible for turning that into an
+    explicit `failed` `DiagnosticSection` rather than fabricating zero
+    evidence.
+    """
+    markets: List[str] = frame["markets"]
+    market_bounds: List[tuple] = frame["market_bounds"]
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with model:
+            idata = pm.sample_prior_predictive(draws=n_samples, random_seed=random_seed)
+        captured_warnings = [str(w.message) for w in caught]
+
+    # (chain, draw, obs, outcome) -> (chain * draw, obs, outcome); prior
+    # predictive sampling is always a single "chain" of independent draws,
+    # but indexing defensively by shape rather than assuming chain == 1.
+    y_obs = idata.prior_predictive["y_obs"].values
+    n_chain, n_draw, n_obs, n_outcome = y_obs.shape
+    flat = y_obs.reshape(n_chain * n_draw, n_obs, n_outcome)
+
+    rows: List[Dict[str, Any]] = []
+    for m_i, market in enumerate(markets):
+        start, end = market_bounds[m_i]
+        for o_i, oid in enumerate(meta.outcome_ids):
+            cell = flat[:, start:end, o_i].reshape(-1)
+            finite = cell[np.isfinite(cell)]
+            has_finite = finite.size > 0
+            rows.append(
+                {
+                    "market": market,
+                    "outcome_id": oid,
+                    "n_observations": end - start,
+                    "n_draws": int(cell.size),
+                    "finite_count": int(finite.size),
+                    "non_finite_count": int(cell.size - finite.size),
+                    "mean": float(np.mean(finite)) if has_finite else float("nan"),
+                    "median": float(np.median(finite)) if has_finite else float("nan"),
+                    "q05": float(np.quantile(finite, 0.05))
+                    if has_finite
+                    else float("nan"),
+                    "q95": float(np.quantile(finite, 0.95))
+                    if has_finite
+                    else float("nan"),
+                    "min": float(np.min(finite)) if has_finite else float("nan"),
+                    "max": float(np.max(finite)) if has_finite else float("nan"),
+                }
+            )
+
+    return {
+        "n_samples": n_samples,
+        "random_seed": random_seed,
+        "rows": rows,
+        "warnings": captured_warnings,
+    }
 
 
 def in_sample_fit(

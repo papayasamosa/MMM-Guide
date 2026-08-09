@@ -93,19 +93,74 @@ closed in the same corrective PR: `DiagnosticsArtefact.from_dict`'s
 (`True == 1`) or a numerically-equal `float` (`2.0 in (2, 3)`) silently
 masquerade as a genuine integer schema version - now validated strictly.
 
-Not yet implemented (explicitly deferred, not silently dropped): prior
-predictive checks, prior-versus-posterior comparison summaries, and
-predictive log-density. Each requires building and sampling from the actual
-PyMC model specification independently of an already-fitted trace (prior
-predictive: ``pm.sample_prior_predictive`` against
-``core.hierarchical_model``/``core.market_specific_model``'s model-building
-functions; predictive log-density: ArviZ ``psis-loo``/``waic`` against the
-posterior's log-likelihood) - a materially larger integration than the
-purely-deterministic (actual, predicted)/residual-array evidence above, and
-one this record's audit judged should not be bundled into the same PR as
-that evidence without its own scoped review (sampling cost/determinism in
-CI, and the PyMC model-builder surface these would touch is large and
-sensitive). A dependent PR should close this gap as its own scoped package.
+Work Package 2 (schema v4): prior predictive evidence is implemented.
+``core.diagnostics.prior_predictive_summary`` samples an unfit ``pm.Model``
+(built by ``core.hierarchical_model.build_fh_hierarchical_model`` or
+``core.market_specific_model.build_fh_market_specific_model`` - both
+produce a structurally identical ``y_obs`` observed variable with
+``("obs", "outcome")`` dims, so one function serves Model A and Model C
+alike) via ``pymc.sample_prior_predictive`` (PyMC 5.28.5) and summarises the
+outcome-scale ``y_obs`` prior predictive distribution per market x
+outcome_id (``frame["market_bounds"]``, the same grain
+``residual_temporal_diagnostics``/``error_metrics_by_outcome`` already use -
+never aggregated across a market boundary). Upstream reference: PyMC 5.28.5
+``pymc.sample_prior_predictive`` (``draws``, ``random_seed``; returns an
+``InferenceData`` with a ``prior`` group for free RVs/Deterministics and a
+``prior_predictive`` group for observed RVs - consulted via Context7 against
+`pymc-devs/pymc`'s own developer-guide and tutorial-notebook examples, and
+already exercised against this exact model shape in this repository's own
+``tests/test_g111_hotfix.py`` for an unrelated pathway-mask check). Upstream
+provides the sampling primitive only; the Ancestry-specific integration
+(market x outcome_id grain, canonical artefact/schema wiring, governed
+model-rebuild identity, UI labelling distinguishing prior from posterior
+evidence) is necessarily custom.
+
+``application.diagnostics_service.DiagnosticsService.
+run_prior_predictive_check`` is a separate, explicitly-triggered action
+(mirrors ``run_backtest``'s pure/immutable single-section-update contract) -
+never part of the main ``evaluate()`` pass, so ordinary scorecard
+computation pays no extra sampling cost. ``pages/06_Diagnostics.py``
+rebuilds the exact fit-time model structure (same builder, ``frame``,
+``spec``, ``prior_config``, and - read directly from the current fit's
+``FHModelMeta`` for an exact match rather than assuming live session state
+hasn't drifted - ``dna_lag_weeks``/``dna_outcome_id``/
+``direct_dna_outcome_ids``; the current causal graph, mirroring Model
+Training's own rebuild pattern) and passes the resulting unfit ``pm.Model``
+in; no prior-predictive mathematics runs in the page itself. A model-rebuild
+failure and a sampling failure both resolve to the same explicit ``failed``
+``DiagnosticSection`` (never fabricated zero evidence, never a silent
+no-op) and both invalidate any governance evidence bound to the previous
+artefact, the same as any other artefact-changing action on this page.
+
+No prior value is read, changed, or refit by this evidence - purely
+descriptive (mean, median, a 5/95% credible interval, min/max, and
+finite/non-finite draw counts per market x outcome_id cell); no pass/fail
+threshold is introduced, consistent with this record's "evidence
+computation and approval policy are separate" principle.
+
+Discovered but explicitly out of scope for this closure: a single-channel,
+single-market model triggers a pre-existing PyTensor scan shape
+inconsistency in ``core.transformations.pt_geometric_adstock_matrix``,
+reproducible directly against ``build_fh_hierarchical_model`` with no
+prior-predictive, PyMC-Marketing, or Streamlit involvement at all (i.e. it
+would affect an ordinary fit of such a model too, not only this evidence).
+Adstock/saturation changes have their own required upstream-reference
+workflow (root ``AGENTS.md``); not fixed here to keep this PR narrow -
+flagged for a separately-scoped follow-up.
+
+Not yet implemented (explicitly deferred, not silently dropped):
+prior-versus-posterior comparison summaries, and predictive log-density.
+Prior-versus-posterior comparison was assessed for this same PR and
+deferred rather than bundled in - even a purely descriptive comparison
+needs a decision about which fitted-parameter/prior pairs are meaningfully
+comparable (e.g. ``hill_K``/``beta`` have direct prior counterparts;
+``mu``/``y_obs`` do not, since the prior predictive and posterior predictive
+conceptually condition on different things), and this record's audit
+judged that scope creep should not ride on the prior-predictive PR. Predictive
+log-density requires the fitted trace's log-likelihood (ArviZ ``psis-loo``/
+``waic``), which is a separate feasibility question (Work Package 3) from
+prior-only sampling. A dependent PR should close each gap as its own scoped
+package.
 
 ## Requirement
 
