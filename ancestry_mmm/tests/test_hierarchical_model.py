@@ -10,8 +10,14 @@ that's slow and already covered by manual/offline verification
 require a PyMC model: FHModelMeta's own default behaviour and the
 _resolve_direct_dna_outcome_ids helper both builders call before touching
 PyMC at all.
+
+TestSingleChannelSingleMarketSurvivesPmDraw is a deliberate, narrow
+exception to that convention (REQ-VAL-001 corrective package) - see its own
+docstring for why a real `pm.Model` + `pm.draw` (not `pm.sample`) is
+required there.
 """
 
+import numpy as np
 import pytest
 
 from ancestry_mmm.core.hierarchical_model import (
@@ -157,6 +163,60 @@ class TestModelAModelCMetaConstructionParity:
         ):
             assert field_expr in source_a, f"Model A missing: {field_expr}"
             assert field_expr in source_c, f"Model C missing: {field_expr}"
+
+
+class TestSingleChannelSingleMarketSurvivesPmDraw:
+    """REQ-VAL-001 corrective package: a single-channel, single-market frame
+    made the shared `core.transformations.pt_geometric_adstock_matrix`
+    helper's internal `scan` Op raise `TypeError: Inconsistency in the
+    inner graph of scan` whenever PyMC's compile path cloned it (`pm.draw`,
+    or `pm.sample` initialising >1 chain/core) - reproducible against this
+    exact production builder with no prior-predictive, PyMC-Marketing, or
+    Streamlit code involved. Intentionally builds a real `pm.Model` (an
+    exception to this file's module docstring's usual "don't build a PyMC
+    model" convention - a hand-built standalone tensor graph cannot
+    reproduce the RV-into-scan condition that actually triggered this) but
+    stays fast via `pm.draw` rather than `pm.sample`, so it doesn't
+    reintroduce the slow-MCMC concern that convention exists to avoid."""
+
+    @staticmethod
+    def _single_channel_single_market_frame():
+        return {
+            "markets": ["UK"],
+            "market_idx": np.array([0, 0, 0]),
+            "market_bounds": [(0, 3)],
+            "channels": ["TV"],
+            "dna_channel_idx": [],
+            "outcome_ids": ["fh_new"],
+            "X_media": np.array([[100.0], [200.0], [150.0]]),
+            "Y": np.array([[10.0], [12.0], [11.0]]),
+            "promo": np.zeros((3, 1)),
+            "X_controls": np.zeros((3, 0)),
+            "control_names": [],
+            "fourier": np.zeros((3, 2)),
+            "trend": np.array([1.0, 1.1, 1.05]),
+            "unpooled_markets": [],
+        }
+
+    def test_sat_media_survives_pm_draw_cloning(self):
+        import pymc as pm
+
+        from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
+        from ancestry_mmm.core.schema import ModelSpec
+
+        spec = ModelSpec(
+            date_col="date",
+            market_col="market",
+            markets=["UK"],
+            segment_outcomes={"New": "fh_new_gsa"},
+            channels=["TV"],
+        )
+        model, _meta = build_fh_hierarchical_model(
+            self._single_channel_single_market_frame(), spec
+        )
+        with model:
+            val = pm.draw(model.named_vars["sat_media"], draws=1, random_seed=0)
+        assert np.asarray(val).shape == (3, 1)
 
     def test_both_builders_resolve_pathway_masks_identically(self):
         """PR G1 required test case: "Model A and Model C parity" for the

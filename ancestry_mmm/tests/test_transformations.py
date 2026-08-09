@@ -1,10 +1,13 @@
 import numpy as np
+import pytensor
+import pytensor.tensor as pt
 import pytest
 
 from ancestry_mmm.core.transformations import (
     geometric_adstock,
     geometric_adstock_matrix,
     hill_function,
+    pt_geometric_adstock_matrix,
 )
 
 
@@ -91,3 +94,68 @@ def test_hill_function_approaches_zero_and_one_at_extremes():
     result_high = hill_function(np.array([1e9]), K=100.0, S=1.0)
     assert result_low[0] == pytest.approx(0.0, abs=1e-6)
     assert result_high[0] == pytest.approx(1.0, abs=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# REQ-VAL-001 corrective package: pt_geometric_adstock_matrix single-channel
+# scan shape defect (docs/approved_requirements/REQ-VAL-001.md, "Discovered
+# but explicitly out of scope for this closure").
+# ---------------------------------------------------------------------------
+
+
+class TestPtGeometricAdstockMatrixMatchesNumpyReference:
+    """Numeric parity between the PyTensor and NumPy implementations across
+    channel counts, including the single-channel case the scan defect
+    affected. Shape correctness alone would not have caught the original
+    defect (it only surfaced when the scan Op was cloned - see the class
+    below); this guards the actual math the fix must not change."""
+
+    @pytest.mark.parametrize("n_channels", [1, 2, 3, 5])
+    def test_parity(self, n_channels):
+        rng = np.random.default_rng(1)
+        X = rng.uniform(0, 100, size=(20, n_channels))
+        decay_rates = rng.uniform(0.1, 0.9, size=n_channels)
+
+        pt_out = pt_geometric_adstock_matrix(
+            pt.as_tensor_variable(X), pt.as_tensor_variable(decay_rates)
+        )
+        pt_result = pytensor.function([], pt_out)()
+        np_result = geometric_adstock_matrix(X, decay_rates, normalize=True)
+        np.testing.assert_allclose(pt_result, np_result, rtol=1e-10)
+
+
+class TestPtGeometricAdstockMatrixSurvivesScanCloning:
+    """A single-channel `X` made `pt_geometric_adstock_matrix`'s internal
+    `scan` Op raise `TypeError: Inconsistency in the inner graph of scan`
+    whenever that Op was cloned - which a plain `pytensor.function([], out)`
+    call does NOT trigger (that path passed even before the fix), but
+    PyMC's own compile path does whenever the scan's non-sequence is a real
+    PyMC random variable needing its default update spliced in (`pm.draw`,
+    or `pm.sample` initialising a multi-chain/core NUTS run) - exactly what
+    `core.hierarchical_model.build_fh_hierarchical_model`'s `decay_rate =
+    pm.Beta(..., dims="channel")` is. This intentionally builds a minimal
+    real `pm.Model` (an exception to this project's usual "don't build a
+    PyMC model in tests" convention - see `test_hierarchical_model.py`'s
+    module docstring) because that RV-into-scan condition is exactly what a
+    hand-built standalone tensor graph cannot reproduce; it stays fast
+    (`pm.draw`, not `pm.sample`) so it doesn't reintroduce the slow-MCMC
+    concern that convention exists to avoid.
+    """
+
+    @pytest.mark.parametrize("n_channels", [1, 2, 3])
+    def test_pt_geometric_adstock_matrix_survives_pm_draw(self, n_channels):
+        import pymc as pm
+
+        rng = np.random.default_rng(2)
+        X_np = rng.uniform(0, 100, size=(15, n_channels))
+
+        with pm.Model() as model:
+            model.add_coord("channel", [f"ch{i}" for i in range(n_channels)])
+            decay_rate = pm.Beta("decay_rate", mu=0.5, sigma=0.2, dims="channel")
+            X = pt.as_tensor_variable(X_np)
+            out = pt_geometric_adstock_matrix(X, decay_rate, normalize=True)
+            pm.Deterministic("sat_media", out)
+
+            val = pm.draw(model.named_vars["sat_media"], draws=1, random_seed=0)
+
+        assert np.asarray(val).shape == (15, n_channels)
