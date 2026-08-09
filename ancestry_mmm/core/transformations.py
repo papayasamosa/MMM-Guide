@@ -190,10 +190,44 @@ def pt_geometric_adstock_matrix(
     Args:
         X: Spend tensor, shape (n_periods, n_channels)
         decay_rates: Per-channel decay rate tensor, shape (n_channels,)
+
+    A single-channel `X` (n_channels == 1) makes `outputs_info`'s initial
+    carry (`zeros_like(X[0])`) statically shaped `(1,)`, but `scan` does not
+    propagate that static "1" into the per-step sequence slice inside its
+    inner graph, so the step function's own output infers as dynamically
+    shaped `(?,)`. `scan.op.validate_inner_graph` requires the recurrent
+    state's input and output types to match exactly, so this mismatch
+    doesn't surface at graph-construction time - only when the scan Op is
+    cloned (e.g. `pm.draw`, or `pm.sample` with >1 chain/core), where it
+    raises `TypeError: Inconsistency in the inner graph of scan`. This
+    reproduces directly against `build_fh_hierarchical_model` with a real
+    1-market, 1-channel frame - a pre-existing defect independent of any
+    prior-predictive/diagnostics work (REQ-VAL-001). `n_channels >= 2` never
+    hits this: only a statically-known size-1 dimension gets the
+    "broadcastable" treatment that creates the divergent inner-graph types
+    (see PyTensor's broadcasting docs, `doc/tutorial/broadcasting.rst`).
+
+    Fix: re-assert the step output's shape against `X`'s own statically
+    known channel count (`n_channels_static`, `None` if not statically
+    known) via `specify_shape` inside the step function - this narrows the
+    output type to match the input's, rather than trying to broaden the
+    input (which PyTensor does not allow: `specify_shape` can only narrow a
+    type, never discard already-known static shape information, so
+    asserting `(None,)` on the zeros-initialised carry is a no-op and does
+    not fix this). A `None` channel count (X's shape not statically known)
+    makes this `specify_shape` call itself a no-op, leaving that case
+    exactly as before. Verified against the real `build_fh_hierarchical_model`
+    (Model A) and `build_fh_market_specific_model` (Model C) builders for
+    1/2/3-channel, 1/2-market synthetic frames, including full multi-chain
+    `pm.sample` (the path that triggers the Op-cloning that originally
+    raised) - see `ancestry_mmm/tests/test_transformations.py`.
     """
+    n_channels_static = X.type.shape[1]
+    decay_rates = pt.specify_shape(decay_rates, (n_channels_static,))
 
     def step(x_t, adstock_prev, decay):
-        return x_t + decay * adstock_prev
+        result = x_t + decay * adstock_prev
+        return pt.specify_shape(result, (n_channels_static,))
 
     adstocked, _ = pytensor.scan(
         fn=step,
