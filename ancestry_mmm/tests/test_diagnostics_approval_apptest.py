@@ -947,3 +947,68 @@ def test_prior_predictive_check_failure_immediately_clears_approval_and_validati
     assert at.session_state["validation_results"] is None
     assert at.session_state["approval_readiness"] is None
     assert at.session_state["validation_service_result"] is None
+
+
+def test_predictive_density_check_failure_immediately_clears_approval_and_validation_results():
+    """REQ-VAL-001 Work Package 3: mirrors
+    test_prior_predictive_check_failure_immediately_clears_approval_and_
+    validation_results exactly, but for the new "Run predictive density
+    check" section, which shares the same page-level model-rebuild helper
+    (_rebuild_fit_time_model) and so fails for the same reason (the fixture
+    frame is missing keys build_fh_hierarchical_model needs). The success
+    path (real pm.compute_log_likelihood + az.loo/az.waic against a real
+    fitted trace, real Model A and Model C builders) is covered directly in
+    test_predictive_density.py, which uses a genuine small MCMC fit rather
+    than this fixture's hand-built fake trace - a stronger test of the
+    actual computation than an AppTest could give without constructing a
+    second full fake-trace fixture shaped for a build-compatible model; this
+    AppTest instead proves the page's own button/service/governance wiring
+    behaves correctly, sharing the same _rebuild_fit_time_model() helper
+    already proven end-to-end by test_prior_predictive_check_computes_real_
+    evidence_end_to_end above."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_fully_identified_model(at)
+    at.session_state["validation_policy"] = _minimal_gate_policy(
+        policy_id="policy-predictive-density-clear",
+        gates=[
+            {
+                "name": "divergences",
+                "description": "No divergences",
+                "evaluator_id": "divergences",
+                "expected_state": False,
+            }
+        ],
+    )
+    at.run()
+    compute_button = next(b for b in at.button if b.label == "Compute scorecard")
+    compute_button.click().run()
+    readiness_button = next(b for b in at.button if b.label == "Evaluate readiness")
+    readiness_button.click().run()
+    approved_by_input = next(
+        t for t in at.text_input if t.label == "Approved by (name) *"
+    )
+    approved_by_input.set_value("Test Reviewer").run()
+    approve_button = next(
+        b for b in at.button if b.label == "Approve this model for planning"
+    )
+    approve_button.click().run()
+    assert at.session_state["model_approval"] is not None
+    assert at.session_state["validation_results"]
+    assert at.session_state["approval_readiness"] is not None
+
+    predictive_density_button = next(
+        b for b in at.button if b.label == "Run predictive density check"
+    )
+    predictive_density_button.click().run()
+
+    assert not at.exception, f"page raised: {at.exception}"
+    assert any("Predictive density check failed" in (e.value or "") for e in at.error)
+    pd_section = at.session_state["diagnostics_artefact"].predictive_density
+    assert pd_section.status == "failed"
+    assert (
+        "Could not rebuild the model to compute predictive density" in pd_section.error
+    )
+    assert at.session_state["model_approval"] is None
+    assert at.session_state["validation_results"] is None
+    assert at.session_state["approval_readiness"] is None
+    assert at.session_state["validation_service_result"] is None

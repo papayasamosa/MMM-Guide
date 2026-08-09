@@ -738,6 +738,78 @@ else:
                         "try again."
                     )
 
+
+def _rebuild_fit_time_model():
+    """Rebuild the exact unfit `pm.Model` this project's current fit (`meta`,
+    `frame`, `model_type`) was built from - same builder, same frame, live
+    `model_spec`/`prior_config` (mirrors how Model Training/backtest already
+    rebuild a model from these same session-state values), and `meta`'s own
+    `dna_lag_weeks`/`dna_outcome_id`/`direct_dna_outcome_ids` for an exact
+    identity match (rather than possibly-drifted live session state).
+
+    For a graph-backed fit, resolves the *exact* historical causal graph
+    version `meta` recorded as having been used - never the live graph,
+    which may have been edited since (including a layout-only edit, which
+    REQ-GRAPH-001 reverts an approved graph to draft) - and fails closed if
+    that exact version can no longer be reconstructed. Raises on any
+    failure; callers are responsible for turning that into an explicit
+    "failed" artefact section (`DiagnosticsService.
+    record_prior_predictive_failure`/`record_predictive_density_failure`)
+    rather than a page-only ephemeral message, so a rebuild failure is
+    itself canonical evidence, never silently dropped.
+
+    Shared by "Prior predictive check" and "Predictive density" below -
+    both need the identical exact fit-time model structure.
+    """
+    rebuild_spec = ModelSpec.from_dict(get_state("model_spec"))
+    rebuild_causal_graph = None
+    if meta.causal_graph_id:
+        graph_versions = get_state("causal_graph_versions") or []
+        matching_graph_dict = next(
+            (
+                g
+                for g in graph_versions
+                if g.get("graph_id") == meta.causal_graph_id
+                and int(g.get("graph_version", -1)) == meta.causal_graph_version
+            ),
+            None,
+        )
+        if matching_graph_dict is None:
+            raise ValueError(
+                f"This fit used causal graph '{meta.causal_graph_id}' "
+                f"version {meta.causal_graph_version}, but that exact "
+                "version is no longer available in this project's "
+                "saved graph history - cannot reconstruct the exact "
+                "fit-time model structure."
+            )
+        rebuild_causal_graph = CausalGraph.from_dict(matching_graph_dict)
+        if (
+            rebuild_causal_graph.structural_fingerprint()
+            != meta.causal_graph_structural_fingerprint
+        ):
+            raise ValueError(
+                "The saved causal graph version's structural "
+                "fingerprint no longer matches this fit's recorded "
+                "fingerprint - cannot reconstruct the exact fit-time "
+                "model structure."
+            )
+    rebuild_builder = (
+        build_fh_market_specific_model
+        if model_type == "market_specific"
+        else build_fh_hierarchical_model
+    )
+    rebuilt_model, _rebuilt_meta = rebuild_builder(
+        frame,
+        rebuild_spec,
+        dna_lag_weeks=meta.dna_lag_weeks,
+        prior_config=get_state("prior_config"),
+        dna_outcome_id=meta.dna_outcome_id,
+        direct_dna_outcome_ids=meta.direct_dna_outcome_ids,
+        causal_graph=rebuild_causal_graph,
+    )
+    return rebuilt_model
+
+
 st.markdown("---")
 st.markdown("### Prior predictive check")
 st.caption(
@@ -768,58 +840,7 @@ if st.button("Run prior predictive check"):
         st.error("Compute the scorecard first.")
     else:
         try:
-            pp_spec = ModelSpec.from_dict(get_state("model_spec"))
-            pp_causal_graph = None
-            if meta.causal_graph_id:
-                # This fit used an approved causal graph - reconstruct the
-                # exact historical version it was compiled from, never the
-                # live graph (which may have been edited since, including a
-                # layout-only edit that reverts an approved graph to draft -
-                # REQ-GRAPH-001). Every approved/saved version is kept in
-                # "causal_graph_versions" (pages/14_Causal_Graph.py).
-                pp_graph_versions = get_state("causal_graph_versions") or []
-                pp_matching_graph_dict = next(
-                    (
-                        g
-                        for g in pp_graph_versions
-                        if g.get("graph_id") == meta.causal_graph_id
-                        and int(g.get("graph_version", -1)) == meta.causal_graph_version
-                    ),
-                    None,
-                )
-                if pp_matching_graph_dict is None:
-                    raise ValueError(
-                        f"This fit used causal graph '{meta.causal_graph_id}' "
-                        f"version {meta.causal_graph_version}, but that exact "
-                        "version is no longer available in this project's "
-                        "saved graph history - cannot reconstruct the exact "
-                        "fit-time model structure."
-                    )
-                pp_causal_graph = CausalGraph.from_dict(pp_matching_graph_dict)
-                if (
-                    pp_causal_graph.structural_fingerprint()
-                    != meta.causal_graph_structural_fingerprint
-                ):
-                    raise ValueError(
-                        "The saved causal graph version's structural "
-                        "fingerprint no longer matches this fit's recorded "
-                        "fingerprint - cannot reconstruct the exact fit-time "
-                        "model structure."
-                    )
-            pp_builder = (
-                build_fh_market_specific_model
-                if model_type == "market_specific"
-                else build_fh_hierarchical_model
-            )
-            pp_model, _pp_meta = pp_builder(
-                frame,
-                pp_spec,
-                dna_lag_weeks=meta.dna_lag_weeks,
-                prior_config=get_state("prior_config"),
-                dna_outcome_id=meta.dna_outcome_id,
-                direct_dna_outcome_ids=meta.direct_dna_outcome_ids,
-                causal_graph=pp_causal_graph,
-            )
+            pp_model = _rebuild_fit_time_model()
         except Exception as e:
             # Rebuilding the exact fit-time model structure failed (e.g. no
             # model_spec available, or the fit-time causal graph version
@@ -873,6 +894,83 @@ if pp_section is not None and pp_section.status == "computed":
         st.caption(f"Sampling warning: {w}")
 elif pp_section is not None and pp_section.status == "failed":
     st.error(f"Prior predictive check failed: {pp_section.error}")
+
+st.markdown("---")
+st.markdown("### Predictive density (PSIS-LOO / WAIC)")
+st.caption(
+    "REQ-VAL-001: pointwise predictive-density evidence computed post-hoc "
+    "against this fit's actual posterior trace (pm.compute_log_likelihood, "
+    "then ArviZ PSIS-LOO/WAIC) - no refit, no MCMC re-run, and the trace is "
+    "never modified. Rebuilds the exact fit-time model structure (same as "
+    "the prior predictive check above) only to supply the likelihood graph "
+    "compute_log_likelihood needs; every posterior draw it evaluates comes "
+    "from the trace already computed above. PSIS-LOO's leave-one-out "
+    "approximation is a documented general property (Vehtari et al.): it "
+    "assumes each held-out observation is exchangeable with the rest, a "
+    "weaker approximation for this model's temporal structure (adstock "
+    "carryover/trend/seasonality) than for genuinely independent "
+    "observations. The Pareto-k values reported per market x outcome_id "
+    "are ArviZ's own mechanism for flagging where that approximation is "
+    "unreliable - evidence to review, not a pass/fail gate."
+)
+
+if st.button("Run predictive density check"):
+    if diag_artefact is None:
+        st.error("Compute the scorecard first.")
+    else:
+        try:
+            pd_model = _rebuild_fit_time_model()
+        except Exception as e:
+            updated_artefact = DiagnosticsService().record_predictive_density_failure(
+                diag_artefact,
+                f"Could not rebuild the model to compute predictive density: {e}",
+            )
+        else:
+            with st.spinner("Computing log-likelihood and PSIS-LOO/WAIC..."):
+                updated_artefact = DiagnosticsService().run_predictive_density_check(
+                    diag_artefact,
+                    model=pd_model,
+                    trace=trace,
+                    frame=frame,
+                    meta=meta,
+                    model_type=model_type,
+                )
+        set_state("diagnostics_artefact", updated_artefact)
+        diag_artefact = updated_artefact
+        invalidate_governance_evidence()
+        if updated_artefact.predictive_density.status == "computed":
+            st.success(
+                "Predictive density check computed - diagnostics artefact updated."
+            )
+        else:
+            st.error(
+                f"Predictive density check failed: {updated_artefact.predictive_density.error}"
+            )
+
+pd_section = diag_artefact.predictive_density if diag_artefact else None
+if pd_section is not None and pd_section.status == "computed":
+    st.caption(
+        f"Model type: {MODEL_TYPE_LABEL.get(pd_section.payload.get('model_type', ''), pd_section.payload.get('model_type', ''))} | "
+        f"Data points: {format_number(pd_section.payload.get('n_data_points'))} | "
+        f"Good-Pareto-k threshold (ArviZ, sample-size-adjusted): {pd_section.payload.get('loo_good_k_threshold'):.3f}"
+    )
+    c1, c2 = st.columns(2)
+    c1.metric(
+        "elpd_loo",
+        f"{pd_section.payload.get('elpd_loo'):.2f}",
+        help=f"SE: {pd_section.payload.get('elpd_loo_se'):.2f}, p_loo: {pd_section.payload.get('p_loo'):.2f}",
+    )
+    c2.metric(
+        "elpd_waic",
+        f"{pd_section.payload.get('elpd_waic'):.2f}",
+        help=f"SE: {pd_section.payload.get('elpd_waic_se'):.2f}, p_waic: {pd_section.payload.get('p_waic'):.2f}",
+    )
+    pd_df = pd.DataFrame(pd_section.payload["rows"])
+    st.dataframe(pd_df, width="stretch", column_config=dataframe_column_config(pd_df))
+    for w in pd_section.warnings:
+        st.caption(f"Computation warning: {w}")
+elif pd_section is not None and pd_section.status == "failed":
+    st.error(f"Predictive density check failed: {pd_section.error}")
 
 st.markdown("---")
 st.markdown("### Out-of-sample accuracy (expanding-window backtest)")

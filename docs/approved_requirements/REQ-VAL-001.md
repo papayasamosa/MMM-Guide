@@ -148,19 +148,66 @@ Adstock/saturation changes have their own required upstream-reference
 workflow (root ``AGENTS.md``); not fixed here to keep this PR narrow -
 flagged for a separately-scoped follow-up.
 
+Work Package 3 (schema v5): predictive-density evidence is implemented.
+``core.diagnostics.predictive_density_summary`` computes PSIS-LOO and WAIC
+post-hoc against an already-fitted trace - no refit, no MCMC re-run.
+Feasibility was verified directly against the locked versions (PyMC
+5.28.5, ArviZ 0.23.4), not assumed: ``pm.compute_log_likelihood(idata,
+model=model)`` (called on a defensive ``trace.copy()``, never the caller's
+own trace - ``extend_inferencedata=False`` was tested and found to return
+a bare ``xarray.Dataset``, not a usable ``InferenceData``, so the copy
+approach with the default ``extend_inferencedata=True`` is used instead)
+adds a ``log_likelihood`` group with dims ``("chain", "draw", "obs",
+"outcome")`` for ``y_obs``; ``az.loo``/``az.waic`` with ``pointwise=True``
+then return overall ``elpd_loo``/``elpd_waic`` scalars plus ``loo_i``/
+``waic_i``/``pareto_k`` arrays with dims ``("obs", "outcome")`` -
+pointwise identity is fully preserved and regrouped to market x
+outcome_id the same way ``prior_predictive_summary`` does
+(``frame["market_bounds"]``). Verified end-to-end against a real (small)
+fit of ``build_fh_hierarchical_model``, not only against documentation.
+
+``model`` has the same "exact fit-time model specification" identity
+contract prior-predictive evidence requires;
+``pages/06_Diagnostics.py``'s model-rebuild logic (causal-graph-version
+resolution included) was factored out of "Prior predictive check" into a
+single shared ``_rebuild_fit_time_model()`` helper, reused by "Predictive
+density" - both need the identical exact fit-time model structure, and
+duplicating that logic would risk the two checks silently diverging on
+which model structure "this fit" means.
+
+PSIS-LOO's leave-one-out approximation is a well-documented general
+property (Vehtari et al.), not unique to this implementation: it assumes
+each held-out observation is exchangeable with the rest, a weaker
+approximation for this model's temporally-structured data (adstock
+carryover/trend/seasonality) than for genuinely independent observations.
+This is disclosed in the UI caption and the core function's docstring, not
+silently elided. The Pareto-k diagnostic reported per market x outcome_id
+is exactly ArviZ's own mechanism for flagging where that approximation is
+unreliable - reported as evidence only; the "good"/"bad"/"very bad"
+Pareto-k counts use ArviZ's own standard descriptive bins (the same ones
+``ELPDData.__repr__`` prints by default), not a threshold invented by this
+repository, and gate nothing.
+
+``DiagnosticsService.run_predictive_density_check``/
+``record_predictive_density_failure`` mirror
+``run_prior_predictive_check``/``record_prior_predictive_failure``'s
+pure/immutable single-section-update contract exactly, via a shared
+``_upgrade_schema_and_replace`` helper (generalised from Work Package 2's
+``_replace_prior_predictive_section`` during this PR) that upgrades a
+pre-v5 artefact's ``schema_version``/``diagnostics_version`` whenever
+``prior_predictive`` or ``predictive_density`` is replaced - the same
+export/re-import evidence-loss bug Work Package 2's own review caught for
+``prior_predictive`` is prevented here from the start.
+
 Not yet implemented (explicitly deferred, not silently dropped):
-prior-versus-posterior comparison summaries, and predictive log-density.
-Prior-versus-posterior comparison was assessed for this same PR and
-deferred rather than bundled in - even a purely descriptive comparison
-needs a decision about which fitted-parameter/prior pairs are meaningfully
-comparable (e.g. ``hill_K``/``beta`` have direct prior counterparts;
-``mu``/``y_obs`` do not, since the prior predictive and posterior predictive
-conceptually condition on different things), and this record's audit
-judged that scope creep should not ride on the prior-predictive PR. Predictive
-log-density requires the fitted trace's log-likelihood (ArviZ ``psis-loo``/
-``waic``), which is a separate feasibility question (Work Package 3) from
-prior-only sampling. A dependent PR should close each gap as its own scoped
-package.
+prior-versus-posterior comparison summaries. Assessed for the
+prior-predictive PR and deferred rather than bundled in - even a purely
+descriptive comparison needs a decision about which fitted-parameter/prior
+pairs are meaningfully comparable (e.g. ``hill_K``/``beta`` have direct
+prior counterparts; ``mu``/``y_obs`` do not, since the prior predictive and
+posterior predictive conceptually condition on different things), and this
+record's audit judged that scope creep should not ride on either PR. A
+dependent PR should close this gap as its own scoped package.
 
 ## Requirement
 

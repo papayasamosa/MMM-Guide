@@ -32,6 +32,7 @@ from ancestry_mmm.core.diagnostics import (
     posterior_predictive_coverage,
     curve_plausibility_checks,
     expanding_window_backtest,
+    predictive_density_summary,
     prior_predictive_summary,
     residual_temporal_diagnostics,
 )
@@ -85,8 +86,18 @@ from ancestry_mmm.core.market_specific_predict import (
 # not only a calculation-method change, so both the schema version and the
 # diagnostics version are bumped together, the same precedent schema v2 ->
 # v3 set.
-CURRENT_DIAGNOSTICS_SCHEMA_VERSION = 4
-CURRENT_DIAGNOSTICS_VERSION = "4.0.0"
+#
+# Work Package 3 (REQ-VAL-001 predictive-density evidence): schema v4 -> v5
+# adds the ``predictive_density`` section (``core.diagnostics.
+# predictive_density_summary`` - PSIS-LOO/WAIC computed post-hoc against an
+# already-fitted trace via ``pm.compute_log_likelihood`` + ``az.loo``/
+# ``az.waic``, no refit, per market x outcome_id, computed via
+# ``DiagnosticsService.run_predictive_density_check`` - the same separate,
+# explicitly-triggered pure/immutable update pattern as
+# ``run_prior_predictive_check``/``run_backtest``). Another schema *shape*
+# change, same precedent as v3 -> v4.
+CURRENT_DIAGNOSTICS_SCHEMA_VERSION = 5
+CURRENT_DIAGNOSTICS_VERSION = "5.0.0"
 
 # ---------------------------------------------------------------------------
 # Section status
@@ -288,6 +299,9 @@ class DiagnosticsArtefact:
     prior_predictive: DiagnosticSection = field(
         default_factory=lambda: DiagnosticSection(status="not_computed", payload=None)
     )
+    predictive_density: DiagnosticSection = field(
+        default_factory=lambda: DiagnosticSection(status="not_computed", payload=None)
+    )
 
     # Global warnings and errors
     global_warnings: Tuple[str, ...] = ()
@@ -318,6 +332,7 @@ class DiagnosticsArtefact:
             "error_metrics": self.error_metrics.fingerprint_payload(),
             "residual_diagnostics": self.residual_diagnostics.fingerprint_payload(),
             "prior_predictive": self.prior_predictive.fingerprint_payload(),
+            "predictive_density": self.predictive_density.fingerprint_payload(),
             "global_warnings": sorted(self.global_warnings),
             "global_errors": sorted(self.global_errors),
             "settings": tuple(sorted(self.settings)),
@@ -348,6 +363,7 @@ class DiagnosticsArtefact:
             "error_metrics": self.error_metrics.to_dict(),
             "residual_diagnostics": self.residual_diagnostics.to_dict(),
             "prior_predictive": self.prior_predictive.to_dict(),
+            "predictive_density": self.predictive_density.to_dict(),
             "global_warnings": list(self.global_warnings),
             "global_errors": list(self.global_errors),
             "settings": list(self.settings),
@@ -356,10 +372,10 @@ class DiagnosticsArtefact:
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "DiagnosticsArtefact":
-        """Load from a dict. Supports schema v1 (legacy_incomplete), v2 and
-        v3 (each upgraded in place to the current shape - see the class
+        """Load from a dict. Supports schema v1 (legacy_incomplete), v2, v3
+        and v4 (each upgraded in place to the current shape - see the class
         docstring for why this is not also marked legacy_incomplete), and
-        v4.
+        v5.
 
         `schema_version` is validated strictly via
         `_validate_diagnostics_schema_version` when the key is present -
@@ -377,7 +393,7 @@ class DiagnosticsArtefact:
         if sv == 1:
             # Schema v1 → wrap summaries into sections, mark legacy_incomplete
             return cls._from_v1(d)
-        if sv in (2, 3, 4):
+        if sv in (2, 3, 4, 5):
             if sv >= 3:
                 error_metrics_sec = DiagnosticSection.from_dict(
                     d.get("error_metrics", {})
@@ -420,6 +436,22 @@ class DiagnosticsArtefact:
                     "outcome-scale, per market x outcome_id) was added in "
                     "schema v4.",
                 )
+            if sv >= 5:
+                predictive_density_sec = DiagnosticSection.from_dict(
+                    d.get("predictive_density", {})
+                )
+            else:
+                # Work Package 3: predictive-density evidence did not exist
+                # when a schema-v2/v3/v4 artefact was computed -
+                # not_computed, never a fabricated payload (mirrors the
+                # v3 -> v4 pattern directly above).
+                predictive_density_sec = DiagnosticSection(
+                    status="not_computed",
+                    payload=None,
+                    error=f"Not available in schema v{sv} - predictive "
+                    "density evidence (PSIS-LOO/WAIC, per market x "
+                    "outcome_id) was added in schema v5.",
+                )
             return cls(
                 artefact_id=d.get("artefact_id", ""),
                 diagnostics_version=d.get("diagnostics_version", "2.0.0"),
@@ -444,6 +476,7 @@ class DiagnosticsArtefact:
                 error_metrics=error_metrics_sec,
                 residual_diagnostics=residual_diagnostics_sec,
                 prior_predictive=prior_predictive_sec,
+                predictive_density=predictive_density_sec,
                 global_warnings=tuple(d.get("global_warnings", [])),
                 global_errors=tuple(d.get("global_errors", [])),
                 settings=tuple(tuple(x) for x in d.get("settings", [])),
@@ -1035,7 +1068,7 @@ class DiagnosticsService:
             )
         except Exception as exc:
             pp_sec = DiagnosticSection(status="failed", payload=None, error=str(exc))
-        return self._replace_prior_predictive_section(artefact, pp_sec)
+        return self._upgrade_schema_and_replace(artefact, prior_predictive=pp_sec)
 
     def record_prior_predictive_failure(
         self, artefact: DiagnosticsArtefact, error: str
@@ -1045,28 +1078,103 @@ class DiagnosticsService:
         model structure at all) - same schema-upgrade contract as
         `run_prior_predictive_check`'s own failure path, via the same
         shared helper, so both routes can never diverge."""
-        return self._replace_prior_predictive_section(
-            artefact, DiagnosticSection(status="failed", payload=None, error=error)
+        return self._upgrade_schema_and_replace(
+            artefact,
+            prior_predictive=DiagnosticSection(
+                status="failed", payload=None, error=error
+            ),
+        )
+
+    def run_predictive_density_check(
+        self,
+        artefact: DiagnosticsArtefact,
+        *,
+        model: pm.Model,
+        trace: az.InferenceData,
+        frame: Dict[str, Any],
+        meta: FHModelMeta,
+        model_type: str,
+    ) -> DiagnosticsArtefact:
+        """Compute PSIS-LOO/WAIC evidence via `core.diagnostics.
+        predictive_density_summary` (post-hoc against the already-fitted
+        `trace`, no refit) and return a new artefact with only the
+        ``predictive_density`` section replaced - the same pure, immutable
+        update pattern as `run_prior_predictive_check`/`run_backtest`.
+        Every other already-computed section is carried over unchanged.
+        Callers must re-evaluate readiness against the returned artefact,
+        since its fingerprint changes whenever this section changes.
+
+        `model` has the same "exact fit-time model specification" identity
+        contract as `run_prior_predictive_check`'s `model` parameter - see
+        that method's docstring. `trace` is the actual fitted posterior
+        this artefact's other sections were computed from; it is never
+        mutated by this call (`core.diagnostics.predictive_density_summary`
+        works on an internal copy). A failure (e.g. a malformed or
+        incompatible model/trace pair) is caught here and reported as an
+        explicit ``failed`` section - never fabricated zero evidence.
+        """
+        try:
+            result = predictive_density_summary(model, trace, frame, meta)
+            pd_sec = DiagnosticSection(
+                status="computed",
+                payload={
+                    "model_type": model_type,
+                    "elpd_loo": result["elpd_loo"],
+                    "elpd_loo_se": result["elpd_loo_se"],
+                    "p_loo": result["p_loo"],
+                    "loo_good_k_threshold": result["loo_good_k_threshold"],
+                    "elpd_waic": result["elpd_waic"],
+                    "elpd_waic_se": result["elpd_waic_se"],
+                    "p_waic": result["p_waic"],
+                    "n_data_points": result["n_data_points"],
+                    "rows": result["rows"],
+                },
+                warnings=tuple(result["warnings"]),
+            )
+        except Exception as exc:
+            pd_sec = DiagnosticSection(status="failed", payload=None, error=str(exc))
+        return self._upgrade_schema_and_replace(artefact, predictive_density=pd_sec)
+
+    def record_predictive_density_failure(
+        self, artefact: DiagnosticsArtefact, error: str
+    ) -> DiagnosticsArtefact:
+        """For a caller-side failure before predictive-density computation
+        could even be attempted (e.g. `pages/06_Diagnostics.py` failing to
+        rebuild the fit-time model structure at all) - same schema-upgrade
+        contract as `run_predictive_density_check`'s own failure path."""
+        return self._upgrade_schema_and_replace(
+            artefact,
+            predictive_density=DiagnosticSection(
+                status="failed", payload=None, error=error
+            ),
         )
 
     @staticmethod
-    def _replace_prior_predictive_section(
-        artefact: DiagnosticsArtefact, section: DiagnosticSection
+    def _upgrade_schema_and_replace(
+        artefact: DiagnosticsArtefact,
+        *,
+        prior_predictive: Optional[DiagnosticSection] = None,
+        predictive_density: Optional[DiagnosticSection] = None,
     ) -> DiagnosticsArtefact:
-        """Replace `artefact.prior_predictive` and, if `artefact` predates
-        schema v4 (an artefact computed before this section existed, or one
-        just restored from an older imported bundle), upgrade its
-        `schema_version`/`diagnostics_version` to current at the same time.
+        """Replace `prior_predictive` and/or `predictive_density` on
+        `artefact` and, if `artefact` predates the current schema (computed
+        before those sections existed, or just restored from an older
+        imported bundle), upgrade its `schema_version`/`diagnostics_version`
+        to current at the same time. Explicit named parameters (never a
+        generic `**kwargs` splat into `dataclasses.replace`) so mypy can
+        verify each argument against `DiagnosticsArtefact`'s actual field
+        types.
 
-        Without this, `dataclasses.replace` alone would leave a v2/v3
-        artefact's `schema_version` unchanged while it now carries a real
-        `prior_predictive` section - an internally inconsistent object that
-        `to_dict()`/`from_dict()` cannot round-trip: `from_dict` reads the
-        (unchanged, pre-v4) `schema_version` and treats `prior_predictive`
-        as unavailable for that schema, discarding the evidence this call
-        just added. Every code path that touches `prior_predictive` -
-        computed or failed - must go through this helper, never a bare
-        `dataclasses.replace(artefact, prior_predictive=...)`.
+        Without this, `dataclasses.replace` alone would leave an older
+        artefact's `schema_version` unchanged while it now carries real
+        evidence in a section that schema version doesn't recognise - an
+        internally inconsistent object that `to_dict()`/`from_dict()`
+        cannot round-trip: `from_dict` reads the (unchanged, pre-upgrade)
+        `schema_version` and treats the new section as unavailable for that
+        schema, discarding the evidence this call just added (Codex review,
+        PR #147). Every code path that replaces `prior_predictive` or
+        `predictive_density` - computed or failed - must go through this
+        helper, never a bare `dataclasses.replace(artefact, ...)`.
         """
         schema_version = max(
             artefact.schema_version, CURRENT_DIAGNOSTICS_SCHEMA_VERSION
@@ -1078,9 +1186,18 @@ class DiagnosticsService:
         )
         return dataclasses.replace(
             artefact,
-            prior_predictive=section,
             schema_version=schema_version,
             diagnostics_version=diagnostics_version,
+            prior_predictive=(
+                prior_predictive
+                if prior_predictive is not None
+                else artefact.prior_predictive
+            ),
+            predictive_density=(
+                predictive_density
+                if predictive_density is not None
+                else artefact.predictive_density
+            ),
         )
 
     @staticmethod
