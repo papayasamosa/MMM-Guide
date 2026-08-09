@@ -23,6 +23,7 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 
 import pandas as pd
 import arviz as az
+import pymc as pm
 
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
 from ancestry_mmm.core.diagnostics import (
@@ -31,6 +32,7 @@ from ancestry_mmm.core.diagnostics import (
     posterior_predictive_coverage,
     curve_plausibility_checks,
     expanding_window_backtest,
+    prior_predictive_summary,
     residual_temporal_diagnostics,
 )
 from ancestry_mmm.core.market_specific_diagnostics import (
@@ -71,8 +73,20 @@ from ancestry_mmm.core.market_specific_predict import (
 # "2.0.0" for schema v2) exactly as before - those describe what a
 # *pre-existing* artefact was actually computed as, not what current code
 # should default to.
-CURRENT_DIAGNOSTICS_SCHEMA_VERSION = 3
-CURRENT_DIAGNOSTICS_VERSION = "3.1.0"
+#
+# Work Package 2 (REQ-VAL-001 prior predictive evidence): schema v3 -> v4
+# adds the ``prior_predictive`` section (``core.diagnostics.
+# prior_predictive_summary`` - outcome-scale ``pm.sample_prior_predictive``
+# evidence per market x outcome_id, computed via
+# ``DiagnosticsService.run_prior_predictive_check``, never inside
+# ``evaluate()`` itself - mirrors how ``backtest`` is a separate, explicitly
+# triggered action via ``run_backtest``, not part of the main evaluation
+# pass). This is a genuine schema *shape* change (a new serialised section),
+# not only a calculation-method change, so both the schema version and the
+# diagnostics version are bumped together, the same precedent schema v2 ->
+# v3 set.
+CURRENT_DIAGNOSTICS_SCHEMA_VERSION = 4
+CURRENT_DIAGNOSTICS_VERSION = "4.0.0"
 
 # ---------------------------------------------------------------------------
 # Section status
@@ -271,6 +285,9 @@ class DiagnosticsArtefact:
     residual_diagnostics: DiagnosticSection = field(
         default_factory=lambda: DiagnosticSection(status="not_computed", payload=None)
     )
+    prior_predictive: DiagnosticSection = field(
+        default_factory=lambda: DiagnosticSection(status="not_computed", payload=None)
+    )
 
     # Global warnings and errors
     global_warnings: Tuple[str, ...] = ()
@@ -300,6 +317,7 @@ class DiagnosticsArtefact:
             "backtest": self.backtest.fingerprint_payload(),
             "error_metrics": self.error_metrics.fingerprint_payload(),
             "residual_diagnostics": self.residual_diagnostics.fingerprint_payload(),
+            "prior_predictive": self.prior_predictive.fingerprint_payload(),
             "global_warnings": sorted(self.global_warnings),
             "global_errors": sorted(self.global_errors),
             "settings": tuple(sorted(self.settings)),
@@ -329,6 +347,7 @@ class DiagnosticsArtefact:
             "backtest": self.backtest.to_dict(),
             "error_metrics": self.error_metrics.to_dict(),
             "residual_diagnostics": self.residual_diagnostics.to_dict(),
+            "prior_predictive": self.prior_predictive.to_dict(),
             "global_warnings": list(self.global_warnings),
             "global_errors": list(self.global_errors),
             "settings": list(self.settings),
@@ -337,9 +356,10 @@ class DiagnosticsArtefact:
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "DiagnosticsArtefact":
-        """Load from a dict. Supports schema v1 (legacy_incomplete), v2
-        (upgraded in place to the v3 shape - see the class docstring for why
-        this is not also marked legacy_incomplete) and v3.
+        """Load from a dict. Supports schema v1 (legacy_incomplete), v2 and
+        v3 (each upgraded in place to the current shape - see the class
+        docstring for why this is not also marked legacy_incomplete), and
+        v4.
 
         `schema_version` is validated strictly via
         `_validate_diagnostics_schema_version` when the key is present -
@@ -357,7 +377,7 @@ class DiagnosticsArtefact:
         if sv == 1:
             # Schema v1 → wrap summaries into sections, mark legacy_incomplete
             return cls._from_v1(d)
-        if sv in (2, 3):
+        if sv in (2, 3, 4):
             if sv >= 3:
                 error_metrics_sec = DiagnosticSection.from_dict(
                     d.get("error_metrics", {})
@@ -383,6 +403,23 @@ class DiagnosticsArtefact:
                     "diagnostics (lag-1 autocorrelation/Durbin-Watson) "
                     "were added in schema v3.",
                 )
+            if sv >= 4:
+                prior_predictive_sec = DiagnosticSection.from_dict(
+                    d.get("prior_predictive", {})
+                )
+            else:
+                # Work Package 2: prior predictive evidence did not exist
+                # when a schema-v2/v3 artefact was computed - not_computed,
+                # never a fabricated payload (mirrors the v2 -> v3 pattern
+                # directly above).
+                prior_predictive_sec = DiagnosticSection(
+                    status="not_computed",
+                    payload=None,
+                    error=f"Not available in schema v{sv} - prior "
+                    "predictive evidence (pm.sample_prior_predictive, "
+                    "outcome-scale, per market x outcome_id) was added in "
+                    "schema v4.",
+                )
             return cls(
                 artefact_id=d.get("artefact_id", ""),
                 diagnostics_version=d.get("diagnostics_version", "2.0.0"),
@@ -406,6 +443,7 @@ class DiagnosticsArtefact:
                 backtest=DiagnosticSection.from_dict(d.get("backtest", {})),
                 error_metrics=error_metrics_sec,
                 residual_diagnostics=residual_diagnostics_sec,
+                prior_predictive=prior_predictive_sec,
                 global_warnings=tuple(d.get("global_warnings", [])),
                 global_errors=tuple(d.get("global_errors", [])),
                 settings=tuple(tuple(x) for x in d.get("settings", [])),
@@ -939,6 +977,111 @@ class DiagnosticsService:
         except Exception as exc:
             bt_sec = DiagnosticSection(status="failed", payload=None, error=str(exc))
         return dataclasses.replace(artefact, backtest=bt_sec)
+
+    def run_prior_predictive_check(
+        self,
+        artefact: DiagnosticsArtefact,
+        *,
+        model: pm.Model,
+        frame: Dict[str, Any],
+        meta: FHModelMeta,
+        model_type: str,
+        n_samples: int = 500,
+        random_seed: Optional[int] = None,
+    ) -> DiagnosticsArtefact:
+        """Sample `model`'s priors via `core.diagnostics.
+        prior_predictive_summary` and return a new artefact with only the
+        ``prior_predictive`` section replaced - the same pure, immutable
+        update pattern as `run_backtest` above. Every other already-computed
+        section is carried over unchanged, never recomputed. Callers must
+        re-evaluate readiness against the returned artefact, since its
+        fingerprint changes whenever this section changes.
+
+        `model` must be the exact (or an exact governed rebuild of the)
+        unfit `pm.Model` this artefact's fit was built from - REQ-VAL-001's
+        prior predictive evidence must answer "which model specification
+        generated these priors", so the caller is responsible for
+        constructing `model` from the same builder, `frame`, `spec`, and
+        hyperparameters the fit itself used (see
+        `pages/06_Diagnostics.py`). Sampling failure (e.g. a malformed or
+        incompatible model) is caught here and reported as an explicit
+        ``failed`` section - it never becomes fabricated zero evidence, and
+        no prior on `model` is read, changed, or refit by this call.
+
+        Only ``y_obs`` is requested from ``pm.sample_prior_predictive`` -
+        every other free variable/Deterministic this model declares (e.g.
+        the ``(obs, outcome)``-shaped ``mu``) is left unmaterialised, since
+        `core.diagnostics.prior_predictive_summary` only ever reads
+        ``y_obs`` and a large multi-market/multi-year model's other
+        variables would otherwise be retained in memory for no reason.
+        """
+        try:
+            result = prior_predictive_summary(
+                model,
+                frame,
+                meta,
+                n_samples=n_samples,
+                random_seed=random_seed,
+            )
+            pp_sec = DiagnosticSection(
+                status="computed",
+                payload={
+                    "model_type": model_type,
+                    "n_samples": result["n_samples"],
+                    "random_seed": result["random_seed"],
+                    "rows": result["rows"],
+                },
+                warnings=tuple(result["warnings"]),
+            )
+        except Exception as exc:
+            pp_sec = DiagnosticSection(status="failed", payload=None, error=str(exc))
+        return self._replace_prior_predictive_section(artefact, pp_sec)
+
+    def record_prior_predictive_failure(
+        self, artefact: DiagnosticsArtefact, error: str
+    ) -> DiagnosticsArtefact:
+        """For a caller-side failure before sampling could even be attempted
+        (e.g. `pages/06_Diagnostics.py` failing to rebuild the fit-time
+        model structure at all) - same schema-upgrade contract as
+        `run_prior_predictive_check`'s own failure path, via the same
+        shared helper, so both routes can never diverge."""
+        return self._replace_prior_predictive_section(
+            artefact, DiagnosticSection(status="failed", payload=None, error=error)
+        )
+
+    @staticmethod
+    def _replace_prior_predictive_section(
+        artefact: DiagnosticsArtefact, section: DiagnosticSection
+    ) -> DiagnosticsArtefact:
+        """Replace `artefact.prior_predictive` and, if `artefact` predates
+        schema v4 (an artefact computed before this section existed, or one
+        just restored from an older imported bundle), upgrade its
+        `schema_version`/`diagnostics_version` to current at the same time.
+
+        Without this, `dataclasses.replace` alone would leave a v2/v3
+        artefact's `schema_version` unchanged while it now carries a real
+        `prior_predictive` section - an internally inconsistent object that
+        `to_dict()`/`from_dict()` cannot round-trip: `from_dict` reads the
+        (unchanged, pre-v4) `schema_version` and treats `prior_predictive`
+        as unavailable for that schema, discarding the evidence this call
+        just added. Every code path that touches `prior_predictive` -
+        computed or failed - must go through this helper, never a bare
+        `dataclasses.replace(artefact, prior_predictive=...)`.
+        """
+        schema_version = max(
+            artefact.schema_version, CURRENT_DIAGNOSTICS_SCHEMA_VERSION
+        )
+        diagnostics_version = (
+            CURRENT_DIAGNOSTICS_VERSION
+            if schema_version > artefact.schema_version
+            else artefact.diagnostics_version
+        )
+        return dataclasses.replace(
+            artefact,
+            prior_predictive=section,
+            schema_version=schema_version,
+            diagnostics_version=diagnostics_version,
+        )
 
     @staticmethod
     def _check_convergence(trace: az.InferenceData) -> tuple[float, float, int]:

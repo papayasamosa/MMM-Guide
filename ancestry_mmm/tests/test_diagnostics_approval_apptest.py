@@ -786,3 +786,164 @@ def test_backtest_failure_immediately_clears_approval_and_validation_results():
     assert at.session_state["validation_results"] is None
     assert at.session_state["approval_readiness"] is None
     assert at.session_state["validation_service_result"] is None
+
+
+def test_prior_predictive_check_computes_real_evidence_end_to_end():
+    """REQ-VAL-001 Work Package 2: the success path - proving the page's own
+    glue code (spec/causal-graph/dna_lag_weeks/prior_config assembly) is
+    wired correctly end to end, not only that the underlying service/core
+    functions work in isolation (test_prior_predictive.py).
+
+    Uses two channels rather than _trace_frame_meta()'s single-channel
+    fixture: a single-channel, single-market frame triggers a pre-existing
+    PyTensor scan shape inconsistency in
+    core.transformations.pt_geometric_adstock_matrix, reproducible directly
+    against build_fh_hierarchical_model with no PyMC-Marketing or Streamlit
+    involvement at all - a real but separate defect, out of this PR's
+    REQ-VAL-001 scope (adstock/saturation changes have their own required
+    upstream-reference workflow, root AGENTS.md); reported separately.
+    Two channels sidesteps it without masking it."""
+    n_obs = 16
+    rng = np.random.default_rng(11)
+    channels = ["TV", "Radio"]
+    oids = ["fh_new_gsa"]
+    x_media = rng.uniform(0, 100, size=(n_obs, 2))
+
+    at = AppTest.from_file(str(PAGE), default_timeout=120)
+    _seed_fully_identified_model(at)
+    at.session_state["model_spec"] = ModelSpec(
+        date_col="date",
+        market_col="market",
+        markets=["UK"],
+        segment_outcomes={"New": "fh_new_gsa"},
+        channels=channels,
+    ).to_dict()
+    frame = dict(at.session_state["frame"])
+    frame["channels"] = channels
+    frame["dna_channel_idx"] = []
+    frame["X_media"] = x_media
+    frame["X_controls"] = np.zeros((n_obs, 0))
+    frame["control_names"] = []
+    at.session_state["frame"] = frame
+    meta = at.session_state["model_meta"]
+    meta.channels = channels
+    meta.dna_channels = []
+    meta.dna_channel_idx = []
+    meta.non_dna_idx = [0, 1]
+    at.run()
+    compute_button = next(b for b in at.button if b.label == "Compute scorecard")
+    compute_button.click().run()
+    assert not at.exception, f"page raised: {at.exception}"
+
+    # Default "Prior draws" (500) is used as-is - fast enough for this tiny
+    # 1-market/2-channel/1-outcome model with no MCMC involved.
+    prior_predictive_button = next(
+        b for b in at.button if b.label == "Run prior predictive check"
+    )
+    prior_predictive_button.click().run()
+
+    assert not at.exception, f"page raised: {at.exception}"
+    pp_section = at.session_state["diagnostics_artefact"].prior_predictive
+    assert pp_section.status == "computed", pp_section.error
+    assert pp_section.payload["model_type"] == "shared"
+    assert pp_section.payload["n_samples"] == 500
+    assert len(pp_section.payload["rows"]) == len(meta.markets) * len(oids)
+    assert any("Prior predictive check computed" in (s.value or "") for s in at.success)
+
+
+def test_prior_predictive_check_fails_closed_when_fit_time_graph_version_is_unavailable():
+    """Codex review (P1, PR #147): before this fix, the page rebuilt the
+    prior-predictive model from whatever causal graph was *live* in session
+    state, not the exact version `meta` recorded as having been used at fit
+    time - a graph edit since the fit (including a layout-only edit, which
+    REQ-GRAPH-001 reverts an approved graph to draft) silently fell back to
+    the no-graph/legacy-pathway model structure while still being stored as
+    "this fit's" prior evidence. `meta.causal_graph_id` is set here but
+    "causal_graph_versions" has no matching entry, so the exact fit-time
+    version cannot be reconstructed - this must fail closed with a specific
+    message, never silently substitute a different structure."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_fully_identified_model(at)
+    meta = at.session_state["model_meta"]
+    meta.causal_graph_id = "graph-1"
+    meta.causal_graph_version = 2
+    meta.causal_graph_structural_fingerprint = "fp-graph-1-v2"
+    # No "causal_graph_versions" seeded at all - the fit-time version is
+    # unavailable, whether because it was never saved to history or this
+    # project bundle simply doesn't have it.
+    at.run()
+    compute_button = next(b for b in at.button if b.label == "Compute scorecard")
+    compute_button.click().run()
+    assert not at.exception, f"page raised: {at.exception}"
+
+    prior_predictive_button = next(
+        b for b in at.button if b.label == "Run prior predictive check"
+    )
+    prior_predictive_button.click().run()
+
+    assert not at.exception, f"page raised: {at.exception}"
+    pp_section = at.session_state["diagnostics_artefact"].prior_predictive
+    assert pp_section.status == "failed"
+    assert "graph-1" in pp_section.error
+    assert "no longer available" in pp_section.error
+
+
+def test_prior_predictive_check_failure_immediately_clears_approval_and_validation_results():
+    """REQ-VAL-001 Work Package 2: mirrors
+    test_backtest_failure_immediately_clears_approval_and_validation_results
+    above exactly, but for the new "Run prior predictive check" section.
+    _trace_frame_meta()'s hand-built frame (deliberately minimal - just
+    enough for DiagnosticsService.evaluate() and the identification-
+    diagnostics section) has no "channels"/"dna_channel_idx"/"X_controls"/
+    "control_names" keys, so rebuilding the real model raises a KeyError
+    immediately - exercising the page's own rebuild-failure handling and the
+    same governance-evidence invalidation without a real (slower) model
+    build/sample. See test_prior_predictive_check_computes_real_evidence_
+    end_to_end below for the success path against a build-compatible frame."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_fully_identified_model(at)
+    at.session_state["validation_policy"] = _minimal_gate_policy(
+        policy_id="policy-prior-predictive-clear",
+        gates=[
+            {
+                "name": "divergences",
+                "description": "No divergences",
+                "evaluator_id": "divergences",
+                "expected_state": False,
+            }
+        ],
+    )
+    at.run()
+    compute_button = next(b for b in at.button if b.label == "Compute scorecard")
+    compute_button.click().run()
+    readiness_button = next(b for b in at.button if b.label == "Evaluate readiness")
+    readiness_button.click().run()
+    approved_by_input = next(
+        t for t in at.text_input if t.label == "Approved by (name) *"
+    )
+    approved_by_input.set_value("Test Reviewer").run()
+    approve_button = next(
+        b for b in at.button if b.label == "Approve this model for planning"
+    )
+    approve_button.click().run()
+    assert at.session_state["model_approval"] is not None
+    assert at.session_state["validation_results"]
+    assert at.session_state["approval_readiness"] is not None
+
+    prior_predictive_button = next(
+        b for b in at.button if b.label == "Run prior predictive check"
+    )
+    prior_predictive_button.click().run()
+
+    assert not at.exception, f"page raised: {at.exception}"
+    assert any("Prior predictive check failed" in (e.value or "") for e in at.error)
+    # The rebuild failure is itself recorded as explicit "failed" canonical
+    # evidence (never fabricated as computed, never silently dropped as if
+    # nothing happened).
+    pp_section = at.session_state["diagnostics_artefact"].prior_predictive
+    assert pp_section.status == "failed"
+    assert "Could not rebuild the model to sample its priors" in pp_section.error
+    assert at.session_state["model_approval"] is None
+    assert at.session_state["validation_results"] is None
+    assert at.session_state["approval_readiness"] is None
+    assert at.session_state["validation_service_result"] is None
