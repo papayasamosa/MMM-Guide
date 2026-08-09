@@ -186,7 +186,13 @@ them; it must instead require coverage-state and method compatibility
 (§4) before any such operation may produce *official* frequency-aligned
 data, and must record every official transformation's version per §4.
 
-## Out of scope (explicitly, for this and every dependent requirement)
+## Out of scope (not approved by this record)
+
+None of the following is invented or approved by *this* record. Each
+remains available for a future, separately-approved requirement to
+resolve — including a dependent requirement this record itself
+anticipates (§4's approved bridge treatment, §6's modelling-contract
+report) — this section blocks invention now, not approval later:
 
 - Any specific imputation formula, interpolation kernel, or default fill
   method not named in §4.
@@ -200,7 +206,9 @@ data, and must record every official transformation's version per §4.
 - Any future-variable-role assignment not already covered by root
   `AGENTS.md`.
 - Any optimisation-objective change.
-- `FR-MOD-015`'s model-engine mathematics (§6).
+- `FR-MOD-015`'s model-engine mathematics (§6) — remains unresolved until
+  a separately-approved modelling contract exists; not a permanent
+  prohibition on ever resolving it.
 - A new database-extract connector (a future connector feeding an approved
   `DataFrame`/source version through this same contract is in scope for a
   later, separately-approved record; inventing a database dependency now
