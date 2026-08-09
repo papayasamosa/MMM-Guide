@@ -1,6 +1,6 @@
 {
   "schema_version": 3,
-  "generated_at": "2026-08-07",
+  "generated_at": "2026-08-09",
   "requirements": [
     {
       "requirement_id": "REQ-AUTH-001",
@@ -289,6 +289,58 @@
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable"
+      ]
+    },
+    {
+      "requirement_id": "REQ-COVERAGE-001",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-COVERAGE-001.md",
+      "affected_modules": [
+        "docs/specification_authority.md",
+        "docs/approved_requirements/REQ-COVERAGE-001.md",
+        "docs/approved_requirements/index.json",
+        "docs/approved_requirements/README.md"
+      ],
+      "traces_to": [
+        "FR-DAT-006",
+        "FR-DAT-010",
+        "FR-DAT-011",
+        "FR-QLT-010",
+        "FR-QLT-011",
+        "FR-QLT-012",
+        "FR-TRN-003",
+        "FR-TRN-004",
+        "FR-TRN-005",
+        "FR-TRN-013",
+        "FR-TRN-014",
+        "FR-TRN-015",
+        "FR-TRN-016",
+        "FR-TRN-017",
+        "FR-VAR-006",
+        "FR-MOD-015",
+        "Part 3 v1.6 acceptance scenario 26.2"
+      ],
+      "missingness_states": [
+        "observed_zero",
+        "missing_expected",
+        "not_applicable",
+        "unavailable_source",
+        "suppressed",
+        "estimated",
+        "modelled",
+        "unknown"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_part3_v16_overlay_table_scopes_only_part_three",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_req_coverage_001_traces_to_matches_brief_fr_ids",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_req_coverage_001_missingness_states_match_canonical_vocabulary"
       ]
     }
   ]

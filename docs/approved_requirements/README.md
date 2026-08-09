@@ -43,3 +43,4 @@ Coding agents must not independently interpret or reconcile the external Ancestr
 - `REQ-STALE-*` — staleness and invalidation
 - `REQ-GRAPH-*` — graph-authoritative causal configuration
 - `REQ-SEARCH-*` — Search demand/delivery/spend/cap/organic-capture object separation
+- `REQ-COVERAGE-*` — variable coverage, missingness-state, and mixed-frequency data authority
