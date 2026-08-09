@@ -785,6 +785,61 @@ class TestAuthorityConsistency:
             # same section.
             assert no_requirement_state not in implemented_section
 
+        # REQ-COVERAGE-001's own capability row must likewise read as
+        # "requirement exists but capability incomplete", not "no approved
+        # requirement/decision yet" - it is an approved authority record
+        # with no implementation yet, the same status as REQ-VAL-001's
+        # remaining scope.
+        coverage_rows = [row for row in gap_rows if "REQ-COVERAGE-001" in row[0]]
+        assert coverage_rows, "no implementation-gaps row references REQ-COVERAGE-001"
+        for row in coverage_rows:
+            assert row[1] == incomplete_state, (
+                f"REQ-COVERAGE-001's own capability row is classified "
+                f"{row[1]!r}, expected {incomplete_state!r}: {row}"
+            )
+
+        # FR-MOD-015 (ragged/market-specific predictor sets) must remain an
+        # explicit, unresolved gap - never silently folded into
+        # REQ-COVERAGE-001's "incomplete but approved" status, since no
+        # model-engine mathematics is approved by that record (see its §6).
+        mod015_rows = [row for row in gap_rows if "FR-MOD-015" in row[0]]
+        assert mod015_rows, "no implementation-gaps row references FR-MOD-015"
+        for row in mod015_rows:
+            assert row[1] == no_requirement_state, (
+                f"FR-MOD-015's row is classified {row[1]!r}, expected "
+                f"{no_requirement_state!r} (no model-engine mathematics is "
+                f"approved for ragged predictor sets): {row}"
+            )
+
+    def test_part3_v16_overlay_table_scopes_only_part_three(self):
+        """REQ-COVERAGE-001: the Part 3 v1.6 overlay version table names
+        Part 3 as v1.6 and every other part as retained (not v1.6) - a
+        structured, per-row check rather than a substring search, so a
+        regression that bumped an unrelated part's row to v1.6 (or failed to
+        record Part 3's overlay at all) is caught even if the surrounding
+        prose still reads correctly."""
+        authority_path = (
+            Path(__file__).parent.parent.parent / "docs" / "specification_authority.md"
+        )
+        content = authority_path.read_text()
+        overlay_section = content.split(
+            "## Version history: focused Part 3 v1.6 overlay", 1
+        )[1].split("## Operating model", 1)[0]
+        rows = self._markdown_table_rows(overlay_section)
+        assert rows, "no rows parsed from the Part 3 v1.6 overlay table"
+
+        by_part = {cells[0]: cells[1] for cells in rows}
+        assert set(by_part) == {f"Part {n}" for n in range(1, 12)}, sorted(by_part)
+
+        assert "v1.6" in by_part["Part 3"], by_part["Part 3"]
+        for part, version in by_part.items():
+            if part == "Part 3":
+                continue
+            assert "v1.6" not in version, (
+                f"{part}'s row claims v1.6 ({version!r}); only Part 3 is "
+                "overlaid by this brief"
+            )
+
 
 # ---------------------------------------------------------------------------
 # OutcomeApproval vocabulary

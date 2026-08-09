@@ -73,3 +73,82 @@ def test_every_indexed_test_node_is_collectable():
             "One or more index.json required_tests node(s) failed to collect:\n"
             f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
         )
+
+
+# REQ-COVERAGE-001's exact FR-* trace set, as supplied by the task-specific
+# implementation brief that created the record - kept here (not re-derived
+# from the record's Markdown prose) so a regression that silently drops or
+# adds a trace target in index.json is caught by a structured field
+# comparison, not a substring search of the record file.
+_REQ_COVERAGE_001_REQUIRED_TRACES = frozenset(
+    {
+        "FR-DAT-006",
+        "FR-DAT-010",
+        "FR-DAT-011",
+        "FR-QLT-010",
+        "FR-QLT-011",
+        "FR-QLT-012",
+        "FR-TRN-003",
+        "FR-TRN-004",
+        "FR-TRN-005",
+        "FR-TRN-013",
+        "FR-TRN-014",
+        "FR-TRN-015",
+        "FR-TRN-016",
+        "FR-TRN-017",
+        "FR-VAR-006",
+        "FR-MOD-015",
+        "Part 3 v1.6 acceptance scenario 26.2",
+    }
+)
+
+_CANONICAL_MISSINGNESS_STATES = (
+    "observed_zero",
+    "missing_expected",
+    "not_applicable",
+    "unavailable_source",
+    "suppressed",
+    "estimated",
+    "modelled",
+    "unknown",
+)
+
+
+def _find_requirement(data: dict, requirement_id: str) -> dict:
+    matches = [
+        req for req in data["requirements"] if req["requirement_id"] == requirement_id
+    ]
+    assert len(matches) == 1, (
+        f"expected exactly one {requirement_id} entry, found {len(matches)}"
+    )
+    return matches[0]
+
+
+def test_req_coverage_001_traces_to_matches_brief_fr_ids():
+    """REQ-COVERAGE-001: index.json's `traces_to` field for the record must
+    match the brief's exact FR-* trace set - no more, no fewer - checked as
+    a structured field, not by grepping the record's prose."""
+    data = _load_index()
+    req = _find_requirement(data, "REQ-COVERAGE-001")
+    traces_to = req.get("traces_to")
+    assert traces_to, "REQ-COVERAGE-001 has no traces_to field in index.json"
+    assert set(traces_to) == _REQ_COVERAGE_001_REQUIRED_TRACES, (
+        f"traces_to mismatch: missing={_REQ_COVERAGE_001_REQUIRED_TRACES - set(traces_to)}, "
+        f"unexpected={set(traces_to) - _REQ_COVERAGE_001_REQUIRED_TRACES}"
+    )
+
+
+def test_req_coverage_001_missingness_states_match_canonical_vocabulary():
+    """REQ-COVERAGE-001: index.json's `missingness_states` field must
+    exactly match Part 3 v1.6's canonical eight-state vocabulary, in the
+    order the brief and the record define it - a collapsed or reordered set
+    would silently change what a dependent requirement is allowed to
+    represent."""
+    data = _load_index()
+    req = _find_requirement(data, "REQ-COVERAGE-001")
+    states = req.get("missingness_states")
+    assert states, "REQ-COVERAGE-001 has no missingness_states field in index.json"
+    assert tuple(states) == _CANONICAL_MISSINGNESS_STATES, (
+        f"missingness_states mismatch: got {tuple(states)}, "
+        f"expected {_CANONICAL_MISSINGNESS_STATES}"
+    )

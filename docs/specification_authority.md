@@ -29,6 +29,48 @@ event definition and permitted uses remain governed by the outcome-approval
 chain — this repository does not hard-code a GSA default, and no change here
 introduces one.
 
+## Version history: focused Part 3 v1.6 overlay (variable coverage and mixed frequency)
+
+A newer focused source has been supplied, covering Part 3 only:
+
+```text
+Ancestry MMM PRD Part 3
+Cross-Document Coherent v1.6
+Variable Coverage and Mixed Frequency
+```
+
+This is a **focused overlay/replacement for Part 3**, not a full-suite
+version bump. It does not, by itself, move any other part to v1.6. The
+table below is the authoritative per-part version record — a part not
+listed as v1.6 remains at its v1.5-suite-manifest content (v1.4 normative
+content for Parts 1, 2, 4, 5, 7, 8, 9; the v1.5 graph-first update for
+Parts 6, 10, 11, per the table above).
+
+| Part | Version | Notes |
+|---|---|---|
+| Part 1 | v1.4 (within v1.5 suite) | Retained; not updated by this overlay |
+| Part 2 | v1.4 (within v1.5 suite) | Retained; not updated by this overlay |
+| Part 3 | v1.6 focused overlay | Variable coverage and mixed-frequency handling — see `REQ-COVERAGE-001` |
+| Part 4 | v1.4 (within v1.5 suite) | Retained; not updated by this overlay |
+| Part 5 | v1.4 (within v1.5 suite) | Retained; not updated by this overlay |
+| Part 6 | v1.5 (graph-first update) | Retained; not updated by this overlay |
+| Part 7 | v1.4 (within v1.5 suite) | Retained; not updated by this overlay |
+| Part 8 | v1.4 (within v1.5 suite) | Retained; not updated by this overlay |
+| Part 9 | v1.4 (within v1.5 suite) | Retained; not updated by this overlay |
+| Part 10 | v1.5 (graph-first update) | Retained; not updated by this overlay |
+| Part 11 | v1.5 (graph-first update) | Retained; not updated by this overlay |
+
+Do not treat this table as evidence that any part other than Part 3 is now
+v1.6. `REQ-COVERAGE-001` (`docs/approved_requirements/REQ-COVERAGE-001.md`)
+translates the overlay's approved capability set — the v1.6 invariants,
+canonical missingness-state vocabulary, and variable-coverage-matrix
+requirement — into repository authority. It separates what is approved now
+(data/source/coverage semantics, frequency-transformation semantics,
+coverage-matrix UI behaviour) from what still requires an explicit,
+separately-approved modelling contract (representing market-specific/ragged
+predictor sets inside the hierarchical model equations, `FR-MOD-015`) before
+any model-engine mathematics may change.
+
 ## Operating model
 
 Ancestry Marketing Data Science builds and operates the MMM platform directly.
@@ -96,6 +138,8 @@ Each row below is one of two distinct states, not to be conflated:
 | Reporting semantics | No approved requirement/decision yet | No indexed record exists. |
 | Background jobs and service boundaries | No approved requirement/decision yet | No indexed record exists. |
 | Prior-vs-posterior comparison summaries — `REQ-VAL-001` remaining scope | Requirement exists but capability incomplete | `REQ-VAL-001` is approved and substantially implemented, including prior predictive evidence (schema v4, `core.diagnostics.prior_predictive_summary`) and predictive-density evidence (schema v5, `core.diagnostics.predictive_density_summary` — PSIS-LOO/WAIC via `pm.compute_log_likelihood` + `az.loo`/`az.waic`, no refit). Its own record text explicitly defers this remaining check as a separately-scoped dependent package. |
+| Variable coverage / mixed-frequency data contracts (Part 3 v1.6 overlay) — `REQ-COVERAGE-001` implementation scope | Requirement exists but capability incomplete | `REQ-COVERAGE-001` is approved and translates the v1.6 overlay's authority (canonical missingness-state vocabulary, coverage invariants, coverage-matrix requirement) into repository requirements. No source/coverage-matrix domain objects, join diagnostics, frequency-conversion contracts, or market-aware prepared-frame representation are implemented yet — see the record's own "Unresolved decisions" and "Out of scope" sections; dependent, separately-scoped packages implement each. |
+| Market-specific / ragged predictor sets inside the hierarchical model equations (`FR-MOD-015`) | No approved requirement/decision yet | `REQ-COVERAGE-001` explicitly reserves this — no masking, zeroing, missing-data likelihood, or separate-coefficient treatment is approved; the current engine may only compile the rectangular subset it already supports and must fail closed for a requested ragged-predictor treatment it cannot represent. |
 | Graph-compilable mediated / capacity-constrained / moderated / residual-interaction edges — `REQ-GRAPH-001` remaining scope | Requirement exists but capability incomplete | `REQ-GRAPH-001` is approved and implemented for `direct`, `cross_product_halo`, and `excluded_diagnostic_only` edges. The remaining edge roles are valid graph vocabulary but not yet engine-compilable (`core.graph_model_compiler.check_engine_capability` is authoritative on current support). |
 
 ## Approved requirement records already implemented (with documented capability boundaries)
