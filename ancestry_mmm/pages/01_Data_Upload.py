@@ -19,7 +19,12 @@ from ancestry_mmm.components import (
     render_next_step,
     render_empty_state,
 )
-from ancestry_mmm.data import load_file, load_all_sample_sources, get_data_summary
+from ancestry_mmm.data import (
+    load_file_with_source_version,
+    load_all_sample_sources,
+    get_data_summary,
+)
+from ancestry_mmm.core.coverage import SourceVersion
 
 st.set_page_config(
     page_title="Data Upload - Ancestry FH MMM", page_icon="🧬", layout="wide"
@@ -70,21 +75,34 @@ with tab_upload:
         "Source name *", value="media", help="e.g. media, outcomes, controls"
     )
     uploaded = st.file_uploader(
-        "Choose a CSV or Excel file *", type=["csv", "xlsx", "xls"], key="uploader"
+        "Choose a CSV, Excel, or Parquet file *",
+        type=["csv", "xlsx", "xls", "xlsm", "parquet"],
+        key="uploader",
     )
 
     if uploaded is not None and st.button("Add source"):
-        df, err = load_file(uploaded)
+        existing_versions = [
+            SourceVersion.from_dict(v)
+            for v in st.session_state.get("source_versions") or []
+        ]
+        df, source_version, err = load_file_with_source_version(
+            uploaded, source_name, existing_versions
+        )
         if err:
             st.error(err)
         else:
             sources = dict(st.session_state.get("raw_sources") or {})
             sources[source_name] = df
             st.session_state["raw_sources"] = sources
+            st.session_state["source_versions"] = [
+                v.to_dict() for v in existing_versions
+            ] + [source_version.to_dict()]
             st.session_state["data_loaded"] = True
             clear_model_state()
             st.success(
-                f"Loaded {df.shape[0]} rows from {uploaded.name} as source '{source_name}'."
+                f"Loaded {df.shape[0]} rows from {uploaded.name} as source "
+                f"'{source_name}' (v{source_version.version}, checksum "
+                f"{source_version.checksum[:12]}...)."
             )
 
 sources = st.session_state.get("raw_sources") or {}
@@ -95,6 +113,19 @@ if sources:
         with st.expander(
             f"**{name}** - {df.shape[0]} rows x {df.shape[1]} columns", expanded=False
         ):
+            source_versions_for_name = [
+                v
+                for v in st.session_state.get("source_versions") or []
+                if v.get("source_id") == name
+            ]
+            if source_versions_for_name:
+                latest = max(source_versions_for_name, key=lambda v: v["version"])
+                st.caption(
+                    f"Source version v{latest['version']} - "
+                    f"`{latest['original_filename']}` - "
+                    f"checksum `{latest['checksum'][:12]}...` - "
+                    f"uploaded {latest['uploaded_at']}"
+                )
             summary = get_data_summary(df)
             c1, c2, c3 = st.columns(3)
             c1.metric("Rows", f"{summary['rows']:,}")
