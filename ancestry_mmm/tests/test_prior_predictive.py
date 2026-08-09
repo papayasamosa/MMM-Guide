@@ -21,6 +21,8 @@ import numpy as np
 import pytest
 
 from ancestry_mmm.application.diagnostics_service import (
+    CURRENT_DIAGNOSTICS_SCHEMA_VERSION,
+    CURRENT_DIAGNOSTICS_VERSION,
     DiagnosticSection,
     DiagnosticsArtefact,
     DiagnosticsService,
@@ -239,3 +241,94 @@ class TestRunPriorPredictiveCheck:
         )
 
         assert updated.fingerprint() != before_fp
+
+
+class TestPriorPredictiveUpgradesPreV4Artefacts:
+    """Codex review (P1, PR #147): dataclasses.replace alone preserves a
+    pre-existing artefact's schema_version, so adding a real
+    prior_predictive section to a v2/v3-origin artefact without also
+    upgrading schema_version left an internally inconsistent object -
+    to_dict()/from_dict() would then discard that evidence on the next
+    round trip, since from_dict treats prior_predictive as unavailable for
+    schema_version < 4. Both run_prior_predictive_check (computed/failed)
+    and record_prior_predictive_failure (the page's own rebuild-failure
+    path) must upgrade schema_version/diagnostics_version at the same time
+    as replacing the section, and the evidence must survive a real
+    to_dict/from_dict round trip afterwards."""
+
+    def test_computed_result_upgrades_a_v3_origin_artefact_and_survives_round_trip(
+        self,
+    ):
+        frame = _small_frame()
+        spec = _spec()
+        model, meta = build_fh_hierarchical_model(frame, spec)
+        v3_artefact = DiagnosticsArtefact(schema_version=3, diagnostics_version="3.1.0")
+
+        updated = DiagnosticsService().run_prior_predictive_check(
+            v3_artefact,
+            model=model,
+            frame=frame,
+            meta=meta,
+            model_type="shared",
+            n_samples=5,
+            random_seed=1,
+        )
+
+        assert updated.schema_version == CURRENT_DIAGNOSTICS_SCHEMA_VERSION
+        assert updated.diagnostics_version == CURRENT_DIAGNOSTICS_VERSION
+        assert updated.prior_predictive.status == "computed"
+
+        restored = DiagnosticsArtefact.from_dict(updated.to_dict())
+        assert restored.schema_version == CURRENT_DIAGNOSTICS_SCHEMA_VERSION
+        assert restored.prior_predictive.status == "computed"
+        assert restored.prior_predictive.payload == updated.prior_predictive.payload
+        assert restored.fingerprint() == updated.fingerprint()
+
+    def test_failed_result_also_upgrades_a_v2_origin_artefact_and_survives_round_trip(
+        self,
+    ):
+        v2_artefact = DiagnosticsArtefact(schema_version=2, diagnostics_version="2.0.0")
+
+        updated = DiagnosticsService().run_prior_predictive_check(
+            v2_artefact,
+            model=None,  # forces the failure path
+            frame={"markets": [], "market_bounds": []},
+            meta=None,
+            model_type="shared",
+        )
+
+        assert updated.schema_version == CURRENT_DIAGNOSTICS_SCHEMA_VERSION
+        assert updated.diagnostics_version == CURRENT_DIAGNOSTICS_VERSION
+        assert updated.prior_predictive.status == "failed"
+
+        restored = DiagnosticsArtefact.from_dict(updated.to_dict())
+        assert restored.schema_version == CURRENT_DIAGNOSTICS_SCHEMA_VERSION
+        assert restored.prior_predictive.status == "failed"
+        assert restored.prior_predictive.error == updated.prior_predictive.error
+
+    def test_record_prior_predictive_failure_upgrades_a_v3_origin_artefact(self):
+        v3_artefact = DiagnosticsArtefact(schema_version=3, diagnostics_version="3.1.0")
+
+        updated = DiagnosticsService().record_prior_predictive_failure(
+            v3_artefact, "could not rebuild the model"
+        )
+
+        assert updated.schema_version == CURRENT_DIAGNOSTICS_SCHEMA_VERSION
+        assert updated.diagnostics_version == CURRENT_DIAGNOSTICS_VERSION
+        assert updated.prior_predictive.status == "failed"
+        assert updated.prior_predictive.error == "could not rebuild the model"
+
+        restored = DiagnosticsArtefact.from_dict(updated.to_dict())
+        assert restored.schema_version == CURRENT_DIAGNOSTICS_SCHEMA_VERSION
+        assert restored.prior_predictive.status == "failed"
+
+    def test_an_already_current_schema_artefact_is_not_downgraded_or_altered(self):
+        current_artefact = DiagnosticsArtefact()
+        assert current_artefact.schema_version == CURRENT_DIAGNOSTICS_SCHEMA_VERSION
+
+        updated = DiagnosticsService().record_prior_predictive_failure(
+            current_artefact, "x"
+        )
+
+        assert updated.schema_version == CURRENT_DIAGNOSTICS_SCHEMA_VERSION
+        assert updated.diagnostics_version == CURRENT_DIAGNOSTICS_VERSION

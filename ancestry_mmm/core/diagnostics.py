@@ -186,12 +186,25 @@ def prior_predictive_summary(
     n_samples: int = 500,
     random_seed: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Sample from `model`'s priors only (never its posterior, never the
-    observed data `Y`) via `pm.sample_prior_predictive`, and summarise the
-    outcome-scale `y_obs` prior predictive distribution per market x
-    outcome_id - the same grain `residual_temporal_diagnostics`/
+    """Sample from `model`'s declared priors - never its posterior, never
+    fitted (no MCMC, no trace involved) - via `pm.sample_prior_predictive`,
+    and summarise the outcome-scale `y_obs` prior predictive distribution
+    per market x outcome_id - the same grain `residual_temporal_diagnostics`/
     `error_metrics_by_outcome` use (`frame["market_bounds"]`, never
     aggregated across a market boundary).
+
+    This function and `pm.sample_prior_predictive` itself never read the
+    observed outcome data - sampling draws only from whatever priors
+    `model` already declares. Those declared priors can themselves be
+    empirically informed by the observed data at model-*build* time,
+    though: both builders' default `intercept` prior centres its mean on
+    `log(mean(Y))` unless `prior_config["intercept_mu"]` overrides it
+    (`core.hierarchical_model.build_fh_hierarchical_model`/
+    `core.market_specific_model.build_fh_market_specific_model`) - a
+    deliberate, ordinary weakly-informative-prior choice, not something
+    this function does. This evidence describes exactly what `model`'s
+    priors (whatever informed them) imply on the outcome scale, not what a
+    textbook fully-uninformative prior would imply.
 
     `model` must be an unfit `pm.Model` built by
     `core.hierarchical_model.build_fh_hierarchical_model` or
@@ -217,7 +230,15 @@ def prior_predictive_summary(
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         with model:
-            idata = pm.sample_prior_predictive(draws=n_samples, random_seed=random_seed)
+            # var_names=["y_obs"]: only this section's own read target is
+            # materialised - every other free variable/Deterministic this
+            # model declares (e.g. the (obs, outcome)-shaped `mu`, the same
+            # size as `y_obs` itself) would otherwise be sampled and
+            # retained for no reason, needlessly scaling peak memory with a
+            # large multi-market/multi-year model's parameter count.
+            idata = pm.sample_prior_predictive(
+                draws=n_samples, random_seed=random_seed, var_names=["y_obs"]
+            )
         captured_warnings = [str(w.message) for w in caught]
 
     # (chain, draw, obs, outcome) -> (chain * draw, obs, outcome); prior

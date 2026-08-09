@@ -1,7 +1,7 @@
 """Page 6: model scorecard - convergence, in-sample fit, posterior predictive coverage, plausibility flags, out-of-sample backtest."""
 
 import sys
-from dataclasses import asdict, replace
+from dataclasses import asdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -45,7 +45,6 @@ from ancestry_mmm.core.search_objects import (
     search_object_fit_fingerprint,
 )
 from ancestry_mmm.application.diagnostics_service import (
-    DiagnosticSection,
     DiagnosticsService,
     DiagnosticsInput,
 )
@@ -65,7 +64,6 @@ from ancestry_mmm.core.fingerprint import (
     fingerprint_posterior,
 )
 from ancestry_mmm.core.causal_graph import (
-    GRAPH_STATUS_APPROVED,
     CausalGraph,
     current_structural_fingerprint_for_identity,
 )
@@ -743,15 +741,19 @@ else:
 st.markdown("---")
 st.markdown("### Prior predictive check")
 st.caption(
-    "REQ-VAL-001: samples from this model's declared PRIORS only - never its "
-    "posterior, never the observed outcome data - and summarises the "
+    "REQ-VAL-001: samples from this model's declared PRIORS - never its "
+    "posterior, never fitted (no MCMC, no trace) - and summarises the "
     "outcome-scale implication per market x outcome_id before any fitting. "
     "This is evidence about what the priors imply, not a measure of "
     "posterior fit quality (see Convergence, PPC coverage and Error metrics "
     "above for that). Rebuilds this fit's exact model structure (same "
-    "builder, frame, prior configuration, DNA lag, and causal graph) and "
-    "samples fresh from its priors - no MCMC, no refit, and no prior value "
-    "is changed by running this check."
+    "builder, frame, prior configuration, DNA lag, and the exact fit-time "
+    "causal graph version, never a possibly-since-edited live graph) and "
+    "samples fresh from its priors - no prior value is changed by running "
+    "this check. Note: with the default prior configuration, this model's "
+    "intercept prior is itself centred on the observed outcome data at "
+    "build time (log of the mean) - sampling does not condition on that "
+    "data, but the declared prior it samples from can already reflect it."
 )
 pp_col1, pp_col2 = st.columns(2)
 pp_n_samples = pp_col1.number_input(
@@ -767,13 +769,43 @@ if st.button("Run prior predictive check"):
     else:
         try:
             pp_spec = ModelSpec.from_dict(get_state("model_spec"))
-            pp_causal_graph_dict = get_state("causal_graph")
             pp_causal_graph = None
-            if (
-                pp_causal_graph_dict
-                and pp_causal_graph_dict.get("status") == GRAPH_STATUS_APPROVED
-            ):
-                pp_causal_graph = CausalGraph.from_dict(pp_causal_graph_dict)
+            if meta.causal_graph_id:
+                # This fit used an approved causal graph - reconstruct the
+                # exact historical version it was compiled from, never the
+                # live graph (which may have been edited since, including a
+                # layout-only edit that reverts an approved graph to draft -
+                # REQ-GRAPH-001). Every approved/saved version is kept in
+                # "causal_graph_versions" (pages/14_Causal_Graph.py).
+                pp_graph_versions = get_state("causal_graph_versions") or []
+                pp_matching_graph_dict = next(
+                    (
+                        g
+                        for g in pp_graph_versions
+                        if g.get("graph_id") == meta.causal_graph_id
+                        and int(g.get("graph_version", -1)) == meta.causal_graph_version
+                    ),
+                    None,
+                )
+                if pp_matching_graph_dict is None:
+                    raise ValueError(
+                        f"This fit used causal graph '{meta.causal_graph_id}' "
+                        f"version {meta.causal_graph_version}, but that exact "
+                        "version is no longer available in this project's "
+                        "saved graph history - cannot reconstruct the exact "
+                        "fit-time model structure."
+                    )
+                pp_causal_graph = CausalGraph.from_dict(pp_matching_graph_dict)
+                if (
+                    pp_causal_graph.structural_fingerprint()
+                    != meta.causal_graph_structural_fingerprint
+                ):
+                    raise ValueError(
+                        "The saved causal graph version's structural "
+                        "fingerprint no longer matches this fit's recorded "
+                        "fingerprint - cannot reconstruct the exact fit-time "
+                        "model structure."
+                    )
             pp_builder = (
                 build_fh_market_specific_model
                 if model_type == "market_specific"
@@ -790,19 +822,16 @@ if st.button("Run prior predictive check"):
             )
         except Exception as e:
             # Rebuilding the exact fit-time model structure failed (e.g. no
-            # model_spec available) - reported through the same "failed"
-            # artefact-section path as a sampling failure below, rather than
-            # a page-only ephemeral message, so this outcome is itself
-            # canonical evidence (never fabricated as computed, never
+            # model_spec available, or the fit-time causal graph version
+            # could no longer be reconstructed) - reported through the same
+            # "failed" artefact-section path as a sampling failure below,
+            # rather than a page-only ephemeral message, so this outcome is
+            # itself canonical evidence (never fabricated as computed, never
             # silently dropped) and consistently invalidates governance
             # evidence the same way any other artefact change does.
-            updated_artefact = replace(
+            updated_artefact = DiagnosticsService().record_prior_predictive_failure(
                 diag_artefact,
-                prior_predictive=DiagnosticSection(
-                    status="failed",
-                    payload=None,
-                    error=f"Could not rebuild the model to sample its priors: {e}",
-                ),
+                f"Could not rebuild the model to sample its priors: {e}",
             )
         else:
             with st.spinner("Sampling priors..."):

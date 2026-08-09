@@ -1007,6 +1007,13 @@ class DiagnosticsService:
         incompatible model) is caught here and reported as an explicit
         ``failed`` section - it never becomes fabricated zero evidence, and
         no prior on `model` is read, changed, or refit by this call.
+
+        Only ``y_obs`` is requested from ``pm.sample_prior_predictive`` -
+        every other free variable/Deterministic this model declares (e.g.
+        the ``(obs, outcome)``-shaped ``mu``) is left unmaterialised, since
+        `core.diagnostics.prior_predictive_summary` only ever reads
+        ``y_obs`` and a large multi-market/multi-year model's other
+        variables would otherwise be retained in memory for no reason.
         """
         try:
             result = prior_predictive_summary(
@@ -1028,7 +1035,53 @@ class DiagnosticsService:
             )
         except Exception as exc:
             pp_sec = DiagnosticSection(status="failed", payload=None, error=str(exc))
-        return dataclasses.replace(artefact, prior_predictive=pp_sec)
+        return self._replace_prior_predictive_section(artefact, pp_sec)
+
+    def record_prior_predictive_failure(
+        self, artefact: DiagnosticsArtefact, error: str
+    ) -> DiagnosticsArtefact:
+        """For a caller-side failure before sampling could even be attempted
+        (e.g. `pages/06_Diagnostics.py` failing to rebuild the fit-time
+        model structure at all) - same schema-upgrade contract as
+        `run_prior_predictive_check`'s own failure path, via the same
+        shared helper, so both routes can never diverge."""
+        return self._replace_prior_predictive_section(
+            artefact, DiagnosticSection(status="failed", payload=None, error=error)
+        )
+
+    @staticmethod
+    def _replace_prior_predictive_section(
+        artefact: DiagnosticsArtefact, section: DiagnosticSection
+    ) -> DiagnosticsArtefact:
+        """Replace `artefact.prior_predictive` and, if `artefact` predates
+        schema v4 (an artefact computed before this section existed, or one
+        just restored from an older imported bundle), upgrade its
+        `schema_version`/`diagnostics_version` to current at the same time.
+
+        Without this, `dataclasses.replace` alone would leave a v2/v3
+        artefact's `schema_version` unchanged while it now carries a real
+        `prior_predictive` section - an internally inconsistent object that
+        `to_dict()`/`from_dict()` cannot round-trip: `from_dict` reads the
+        (unchanged, pre-v4) `schema_version` and treats `prior_predictive`
+        as unavailable for that schema, discarding the evidence this call
+        just added. Every code path that touches `prior_predictive` -
+        computed or failed - must go through this helper, never a bare
+        `dataclasses.replace(artefact, prior_predictive=...)`.
+        """
+        schema_version = max(
+            artefact.schema_version, CURRENT_DIAGNOSTICS_SCHEMA_VERSION
+        )
+        diagnostics_version = (
+            CURRENT_DIAGNOSTICS_VERSION
+            if schema_version > artefact.schema_version
+            else artefact.diagnostics_version
+        )
+        return dataclasses.replace(
+            artefact,
+            prior_predictive=section,
+            schema_version=schema_version,
+            diagnostics_version=diagnostics_version,
+        )
 
     @staticmethod
     def _check_convergence(trace: az.InferenceData) -> tuple[float, float, int]:

@@ -851,6 +851,43 @@ def test_prior_predictive_check_computes_real_evidence_end_to_end():
     assert any("Prior predictive check computed" in (s.value or "") for s in at.success)
 
 
+def test_prior_predictive_check_fails_closed_when_fit_time_graph_version_is_unavailable():
+    """Codex review (P1, PR #147): before this fix, the page rebuilt the
+    prior-predictive model from whatever causal graph was *live* in session
+    state, not the exact version `meta` recorded as having been used at fit
+    time - a graph edit since the fit (including a layout-only edit, which
+    REQ-GRAPH-001 reverts an approved graph to draft) silently fell back to
+    the no-graph/legacy-pathway model structure while still being stored as
+    "this fit's" prior evidence. `meta.causal_graph_id` is set here but
+    "causal_graph_versions" has no matching entry, so the exact fit-time
+    version cannot be reconstructed - this must fail closed with a specific
+    message, never silently substitute a different structure."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_fully_identified_model(at)
+    meta = at.session_state["model_meta"]
+    meta.causal_graph_id = "graph-1"
+    meta.causal_graph_version = 2
+    meta.causal_graph_structural_fingerprint = "fp-graph-1-v2"
+    # No "causal_graph_versions" seeded at all - the fit-time version is
+    # unavailable, whether because it was never saved to history or this
+    # project bundle simply doesn't have it.
+    at.run()
+    compute_button = next(b for b in at.button if b.label == "Compute scorecard")
+    compute_button.click().run()
+    assert not at.exception, f"page raised: {at.exception}"
+
+    prior_predictive_button = next(
+        b for b in at.button if b.label == "Run prior predictive check"
+    )
+    prior_predictive_button.click().run()
+
+    assert not at.exception, f"page raised: {at.exception}"
+    pp_section = at.session_state["diagnostics_artefact"].prior_predictive
+    assert pp_section.status == "failed"
+    assert "graph-1" in pp_section.error
+    assert "no longer available" in pp_section.error
+
+
 def test_prior_predictive_check_failure_immediately_clears_approval_and_validation_results():
     """REQ-VAL-001 Work Package 2: mirrors
     test_backtest_failure_immediately_clears_approval_and_validation_results
