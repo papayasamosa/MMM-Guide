@@ -35,6 +35,8 @@ from ancestry_mmm.core.brand_search import (
     BrandSearchConfig,
     validate_brand_search_configs,
 )
+from ancestry_mmm.core.coverage import VariableCoverageMatrix
+from ancestry_mmm.core.market_data_capability import check_market_channel_capability
 from ancestry_mmm.data import prepare_fh_modeling_frame
 import pandas as pd
 
@@ -371,6 +373,58 @@ if spec.dna_channels and not spec.fh_dna_cross_sell_outcome_id:
         "Structure page - Model Training will fail to fit until one is chosen there (automatic "
         "name-based inference is no longer used for a live fit)."
     )
+
+st.markdown("---")
+st.markdown("### Data coverage & engine capability")
+st.caption(
+    "REQ-COVERAGE-001 S6: the current engine only validly fits a "
+    "rectangular market x channel matrix - every requested channel "
+    "genuinely observed in every requested market. This never blocks "
+    "preparing or fitting a model (an exploratory fit is always "
+    "available, same as everywhere else in this app), it only reports "
+    "whether this configuration is within what the engine can validly "
+    "support today, using the governed coverage matrix as the source of "
+    "truth - never the prepared data's own zero/null values."
+)
+_coverage_matrix_dict = get_state("variable_coverage_matrix")
+_coverage_matrix = (
+    VariableCoverageMatrix.from_dict(_coverage_matrix_dict)
+    if _coverage_matrix_dict
+    else None
+)
+if _coverage_matrix is None:
+    # No coverage matrix at all is this project's normal starting state
+    # (optional, per the Data Coverage page) - a full "every cell is
+    # unsupported" warning here would fire on every project by default,
+    # drowning out warnings that actually mean something. A calm nudge,
+    # not an alarm.
+    st.info(
+        "No coverage matrix built yet for this project - build one on the "
+        "Data Coverage page to see whether this configuration is within "
+        "the engine's current rectangular capability before fitting."
+    )
+else:
+    _capability = check_market_channel_capability(
+        spec.markets, spec.channels, _coverage_matrix
+    )
+    if _capability.supported:
+        st.success(
+            "Every requested market/channel combination has governed, "
+            "officially-resolved coverage - this configuration is within "
+            "the engine's current rectangular capability."
+        )
+    else:
+        st.warning(
+            "This configuration goes beyond what the engine can validly "
+            "support today - treat any resulting fit as exploratory, not "
+            "official, until every cell below is resolved (Data Coverage "
+            "page) or approved for official use:\n\n"
+            + "\n".join(
+                f"- **{issue.market} / {issue.channel}**: {issue.reason}"
+                for issue in _capability.issues
+            )
+        )
+        st.caption(_capability.decision_report)
 
 if brand_search_errors:
     st.caption(
