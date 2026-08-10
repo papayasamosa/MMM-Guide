@@ -27,7 +27,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import date
 from typing import Any, List, Optional
 
@@ -954,6 +954,66 @@ def build_coverage_matrix_from_frame(
         generated_at=generated_at,
         records=tuple(records),
     )
+
+
+def carry_forward_treatment_decisions(
+    new_records: Iterable[VariableCoverageRecord],
+    previous_records: Iterable[VariableCoverageRecord],
+) -> "tuple[VariableCoverageRecord, ...]":
+    """Re-running `build_coverage_matrix_from_frame` (e.g. after adding a
+    variable, or simply refreshing against updated data) produces entirely
+    fresh `VariableCoverageRecord`s with default (`treatment_status=
+    "proposed"`, `approved_for_official_use=False`) treatment fields -
+    without this, every previously-reviewed and approved treatment decision
+    would be silently discarded on every rebuild, which is exactly what
+    REQ-COVERAGE-001 S1 ("coverage decisions must be versioned and
+    portable") forbids losing.
+
+    For each `new_records` entry, if a `previous_records` entry shares its
+    `variable_key` (`variable_id`, `market`, `product`, `segment`) AND the
+    two agree on every fact a treatment decision was actually made *about*
+    (`frequency`, `coverage_segments`, `source_id`, `source_version`), the
+    previous record's treatment fields (`proposed_treatment`,
+    `approved_treatment`, `treatment_status`, `treatment_approved_by`,
+    `treatment_approved_at`, `approved_for_official_use`, `owner`) are
+    carried onto the new record. When the underlying facts genuinely
+    changed (a different coverage gap, a new source version, ...), the new
+    record keeps its fresh, unresolved default instead - carrying an
+    approval forward across a *changed* set of facts would be exactly the
+    silent promotion REQ-COVERAGE-001 S5 exists to prevent, the mirror
+    image of why `is_officially_unresolved` never trusts `treatment_status`
+    alone. A `new_records` entry with no matching key (a genuinely new
+    variable/market/product/segment combination) is returned unchanged.
+    """
+    previous_by_key = {record.variable_key: record for record in previous_records}
+    carried = []
+    for record in new_records:
+        previous = previous_by_key.get(record.variable_key)
+        if previous is None:
+            carried.append(record)
+            continue
+        same_facts = (
+            record.frequency == previous.frequency
+            and record.coverage_segments == previous.coverage_segments
+            and record.source_id == previous.source_id
+            and record.source_version == previous.source_version
+        )
+        if not same_facts:
+            carried.append(record)
+            continue
+        carried.append(
+            replace(
+                record,
+                proposed_treatment=previous.proposed_treatment,
+                approved_treatment=previous.approved_treatment,
+                treatment_status=previous.treatment_status,
+                treatment_approved_by=previous.treatment_approved_by,
+                treatment_approved_at=previous.treatment_approved_at,
+                approved_for_official_use=previous.approved_for_official_use,
+                owner=previous.owner,
+            )
+        )
+    return tuple(carried)
 
 
 # --- Project export/import portability (REQ-COVERAGE-001 S1: "coverage
