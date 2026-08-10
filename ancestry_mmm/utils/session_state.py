@@ -96,6 +96,16 @@ def init_session_state():
         # causal_graph/search_objects.
         "variable_coverage_matrix": None,
         "variable_coverage_matrix_versions": [],
+        # PR #156: session-only (never exported/imported) fingerprint of
+        # the transformed_data the current variable_coverage_matrix was
+        # actually built against - compared live on the Data Coverage page
+        # against the current transformed_data's own fingerprint to detect
+        # a matrix that has gone stale relative to a later Transform
+        # Pipeline edit, or that was restored from an imported project
+        # bundle (which never carries this key). Mirrors
+        # causal_graph_compiled_structural_fingerprint's live-comparison
+        # staleness pattern.
+        "variable_coverage_matrix_built_against_fingerprint": None,
         # Model configuration
         "prior_config": dict(DEFAULT_FH_PRIORS),
         "dna_lag_weeks": DEFAULT_DNA_LAG_WEEKS,

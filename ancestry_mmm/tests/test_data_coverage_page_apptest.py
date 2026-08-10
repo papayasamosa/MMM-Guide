@@ -210,3 +210,173 @@ def test_unresolved_gap_shows_a_blocking_warning():
     assert not at.exception, f"page raised: {at.exception}"
     assert len(at.warning) >= 1
     assert any("unresolved coverage" in (w.value or "") for w in at.warning)
+
+
+def test_rebuild_without_a_matching_raw_source_still_preserves_prior_provenance():
+    """Review finding (PR #156): with no raw source containing the column
+    (so _default_source_id alone would fall back to "") and no recorded
+    SourceVersion (so known_versions_by_source alone would fall back to 1),
+    a rebuild must still default the metadata editor from the *existing*
+    matrix's own recorded source_id/version - never silently reset to
+    ""/1, which would make carry_forward_treatment_decisions' "same facts"
+    match purely coincidental rather than a real confirmation."""
+    df = _base_df()
+    existing = _matrix_with_one_approved_record("coverage-test")
+    existing = VariableCoverageMatrix.from_dict(
+        {
+            **existing.to_dict(),
+            "records": [
+                {
+                    **existing.records[0].to_dict(),
+                    "source_id": "governed_source",
+                    "source_version": 3,
+                }
+            ],
+        }
+    )
+    at = _run_at(
+        transformed_data=df,
+        date_col="date",
+        market_col="market",
+        raw_sources={},  # no raw source contains "tv_spend" at all
+        variable_coverage_matrix=existing.to_dict(),
+    )
+    build_button = next(b for b in at.button if b.label == "Build coverage matrix")
+    build_button.click().run()
+    assert not at.exception, f"rebuild click raised: {at.exception}"
+
+    matrix = VariableCoverageMatrix.from_dict(
+        at.session_state["variable_coverage_matrix"]
+    )
+    tv_record = next(r for r in matrix.records if r.variable_id == "tv_spend")
+    assert tv_record.source_id == "governed_source"
+    assert tv_record.source_version == 3
+    # Because the facts (including source) matched, the prior approval must
+    # still be carried forward.
+    assert tv_record.treatment_status == "approved"
+    assert tv_record.approved_for_official_use is True
+
+
+def test_no_staleness_warning_immediately_after_building():
+    df = _base_df()
+    at = _run_at(
+        transformed_data=df,
+        date_col="date",
+        market_col="market",
+        raw_sources={"media": df},
+    )
+    build_button = next(b for b in at.button if b.label == "Build coverage matrix")
+    build_button.click().run()
+    assert not at.exception, f"build click raised: {at.exception}"
+    assert not any("may be stale" in (w.value or "") for w in at.warning)
+
+
+def test_staleness_warning_shown_when_built_against_fingerprint_is_missing():
+    """A matrix restored from an imported project bundle never carries the
+    session-only variable_coverage_matrix_built_against_fingerprint key -
+    that must read as "possibly stale", not silently "fine"."""
+    matrix = _matrix_with_one_approved_record("coverage-test")
+    at = _run_at(
+        transformed_data=_base_df(),
+        date_col="date",
+        market_col="market",
+        variable_coverage_matrix=matrix.to_dict(),
+    )
+    assert not at.exception, f"page raised: {at.exception}"
+    assert any("may be stale" in (w.value or "") for w in at.warning)
+
+
+def test_segment_classification_section_saves_and_bumps_version():
+    frequency = FrequencyMetadata(
+        native_frequency="weekly",
+        target_frequency="weekly",
+        variable_class="flow_count",
+    )
+    unresolved_record = VariableCoverageRecord(
+        variable_id="tv_spend",
+        source_id="media",
+        source_version=1,
+        market="UK",
+        frequency=frequency,
+        coverage_segments=(
+            CoverageSegment(
+                period_start="2024-01-01", period_end="2024-01-08", state="unknown"
+            ),
+        ),
+    )
+    matrix = VariableCoverageMatrix(
+        matrix_id="coverage-test",
+        matrix_version=1,
+        generated_at="2026-01-01",
+        records=(unresolved_record,),
+    )
+    at = _run_at(
+        transformed_data=_base_df(),
+        date_col="date",
+        market_col="market",
+        variable_coverage_matrix=matrix.to_dict(),
+    )
+    assert any("Gap segment classification" in (h.value or "") for h in at.markdown)
+    save_button = next(b for b in at.button if b.label == "Save gap classifications")
+    save_button.click().run()
+    assert not at.exception, f"save click raised: {at.exception}"
+    assert any(
+        s.value.startswith("Saved gap classifications as matrix version")
+        for s in at.success
+    )
+    saved = VariableCoverageMatrix.from_dict(
+        at.session_state["variable_coverage_matrix"]
+    )
+    assert saved.matrix_version == 2
+
+
+def test_a_reclassified_segment_no_longer_blocks_official_use():
+    """The mechanism the reviewer flagged as missing: once a segment is
+    reclassified away from unknown/missing_expected, the record must stop
+    appearing in blocking_issues - proven here against an already-
+    reclassified record (AppTest cannot drive a live data_editor cell
+    edit), which exercises the exact same round-trip the Save button uses
+    for a live edit."""
+    frequency = FrequencyMetadata(
+        native_frequency="weekly",
+        target_frequency="weekly",
+        variable_class="flow_count",
+    )
+    reclassified_record = VariableCoverageRecord(
+        variable_id="tv_spend",
+        source_id="media",
+        source_version=1,
+        market="UK",
+        frequency=frequency,
+        coverage_segments=(
+            CoverageSegment(
+                period_start="2024-01-01",
+                period_end="2024-01-08",
+                state="not_applicable",
+            ),
+        ),
+    )
+    matrix = VariableCoverageMatrix(
+        matrix_id="coverage-test",
+        matrix_version=1,
+        generated_at="2026-01-01",
+        records=(reclassified_record,),
+    )
+    at = _run_at(
+        transformed_data=_base_df(),
+        date_col="date",
+        market_col="market",
+        variable_coverage_matrix=matrix.to_dict(),
+    )
+    assert not at.exception, f"page raised: {at.exception}"
+    assert not any("unresolved coverage" in (w.value or "") for w in at.warning)
+
+    save_button = next(b for b in at.button if b.label == "Save gap classifications")
+    save_button.click().run()
+    assert not at.exception, f"save click raised: {at.exception}"
+    saved = VariableCoverageMatrix.from_dict(
+        at.session_state["variable_coverage_matrix"]
+    )
+    tv_record = next(r for r in saved.records if r.variable_id == "tv_spend")
+    assert tv_record.coverage_segments[0].state == "not_applicable"
+    assert saved.blocking_issues == []

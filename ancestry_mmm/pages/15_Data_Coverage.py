@@ -10,6 +10,7 @@ fits/approvals once that consumption exists.
 """
 
 import sys
+from collections import defaultdict
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,8 +34,10 @@ from ancestry_mmm.components import (
     render_empty_state,
 )
 from ancestry_mmm.core.coverage import (
+    COVERAGE_STATES,
     TREATMENT_STATUSES,
     VARIABLE_CLASSES,
+    CoverageSegment,
     FrequencyMetadata,
     VariableCoverageMatrix,
     build_coverage_matrix_from_frame,
@@ -42,6 +45,7 @@ from ancestry_mmm.core.coverage import (
     current_source_versions,
     new_variable_coverage_matrix_version,
 )
+from ancestry_mmm.core.fingerprint import fingerprint_dataframe
 from ancestry_mmm.data import detect_column_types
 
 FREQUENCY_OPTIONS = ["daily", "weekly", "monthly", "quarterly", "irregular"]
@@ -87,6 +91,34 @@ known_versions_by_source = {
     v.source_id: v.version
     for v in current_source_versions(get_state("source_versions") or [])
 }
+existing_matrix_dict_for_defaults = get_state("variable_coverage_matrix")
+existing_matrix_for_defaults = (
+    VariableCoverageMatrix.from_dict(existing_matrix_dict_for_defaults)
+    if existing_matrix_dict_for_defaults
+    else None
+)
+# Review finding (PR #156): re-deriving source_id/version from scratch on
+# every rebuild meant a variable with no recorded SourceVersion (e.g.
+# synthetic demo data) silently defaulted to "1" every time, so
+# carry_forward_treatment_decisions' "same facts" check could spuriously
+# match two rebuilds purely by coincidence, never because the analyst
+# actually confirmed the same provenance. Pre-filling from whatever this
+# variable was already declared as (frequency and source alike) makes the
+# default *stable* across a rebuild instead of re-derived - still fully
+# editable, but no longer a fresh guess every time.
+existing_frequency_by_variable = (
+    {r.variable_id: r.frequency for r in existing_matrix_for_defaults.records}
+    if existing_matrix_for_defaults is not None
+    else {}
+)
+existing_source_by_variable = (
+    {
+        r.variable_id: (r.source_id, r.source_version)
+        for r in existing_matrix_for_defaults.records
+    }
+    if existing_matrix_for_defaults is not None
+    else {}
+)
 
 
 def _default_source_id(column: str) -> str:
@@ -94,6 +126,13 @@ def _default_source_id(column: str) -> str:
         if column in source_df.columns:
             return name
     return ""
+
+
+def _default_source(column: str) -> "tuple[str, int]":
+    if column in existing_source_by_variable:
+        return existing_source_by_variable[column]
+    source_id = _default_source_id(column)
+    return source_id, known_versions_by_source.get(source_id, 1)
 
 
 st.markdown("### 1. Build or refresh the coverage matrix")
@@ -133,15 +172,28 @@ if variable_columns:
     )
     metadata_rows = []
     for column in variable_columns:
-        default_source = _default_source_id(column)
+        default_source_id, default_source_version = _default_source(column)
+        default_frequency = existing_frequency_by_variable.get(column)
         metadata_rows.append(
             {
                 "variable": column,
-                "native_frequency": "weekly",
-                "target_frequency": "weekly",
-                "variable_class": "flow_count",
-                "source_id": default_source,
-                "source_version": known_versions_by_source.get(default_source, 1),
+                "native_frequency": (
+                    default_frequency.native_frequency
+                    if default_frequency
+                    else "weekly"
+                ),
+                "target_frequency": (
+                    default_frequency.target_frequency
+                    if default_frequency
+                    else "weekly"
+                ),
+                "variable_class": (
+                    default_frequency.variable_class
+                    if default_frequency
+                    else "flow_count"
+                ),
+                "source_id": default_source_id,
+                "source_version": default_source_version,
             }
         )
     metadata_editor = st.data_editor(
@@ -184,12 +236,7 @@ if variable_columns:
                 )
                 for _, row in metadata_editor.iterrows()
             }
-            existing_dict = get_state("variable_coverage_matrix")
-            existing = (
-                VariableCoverageMatrix.from_dict(existing_dict)
-                if existing_dict
-                else None
-            )
+            existing = existing_matrix_for_defaults
             matrix_id = (
                 existing.matrix_id
                 if existing is not None
@@ -231,6 +278,17 @@ if variable_columns:
                     records=new_records,
                 )
             set_state("variable_coverage_matrix", new_matrix.to_dict())
+            # Review finding (PR #156): record which joined dataframe this
+            # matrix was actually built against, so a later edit to
+            # Transform Pipeline (or a project import, which never restores
+            # this session-only key) can be detected and flagged as
+            # staleness below - mirrors causal_graph_compiled_structural_
+            # fingerprint's live-comparison pattern rather than baking a
+            # build-environment fingerprint into the portable matrix itself.
+            set_state(
+                "variable_coverage_matrix_built_against_fingerprint",
+                fingerprint_dataframe(df),
+            )
             st.success(
                 f"Built coverage matrix version {new_matrix.matrix_version} "
                 f"with {len(new_matrix.records)} record(s)."
@@ -252,6 +310,25 @@ st.caption(
     f"Matrix `{matrix.matrix_id}` v{matrix.matrix_version} - generated "
     f"{matrix.generated_at} - {len(matrix.records)} record(s)."
 )
+
+# Review finding (PR #156): a matrix built against an earlier Transform
+# Pipeline join (or restored from an imported project bundle, which never
+# carries this session-only key) can silently drift out of sync with the
+# *current* joined data - the observed/expected windows and gap segments
+# below would then describe data that no longer matches what a fit would
+# actually use. Comparing live rather than baking the check into the build
+# step is deliberate: it also catches a data change made *after* this
+# matrix was last built, not only a stale build itself.
+built_against_fingerprint = get_state(
+    "variable_coverage_matrix_built_against_fingerprint"
+)
+if built_against_fingerprint != fingerprint_dataframe(df):
+    st.warning(
+        "This matrix may be stale: the joined data has changed (or this "
+        "matrix was restored from an imported project) since it was last "
+        "built. Rebuild above to confirm the coverage below still matches "
+        "the current data."
+    )
 
 blocking_issues = matrix.blocking_issues
 if blocking_issues:
@@ -286,36 +363,109 @@ summary_rows = [
 ]
 st.dataframe(pd.DataFrame(summary_rows), width="stretch", hide_index=True)
 
-with st.expander("Gap segment detail"):
-    any_segments = False
-    for record in matrix.records:
-        if not record.coverage_segments:
-            continue
-        any_segments = True
-        label = record.variable_id + f" ({record.market}"
-        if record.product:
-            label += f" / {record.product}"
-        if record.segment:
-            label += f" / {record.segment}"
-        label += ")"
-        st.markdown(f"**{label}**")
-        st.dataframe(
-            pd.DataFrame(
-                [
-                    {
-                        "period_start": s.period_start,
-                        "period_end": s.period_end,
-                        "state": s.state,
-                        "structural_zero": s.structural_zero,
-                    }
-                    for s in record.coverage_segments
-                ]
-            ),
-            width="stretch",
-            hide_index=True,
+st.markdown("#### Gap segment classification")
+st.caption(
+    "A gap is never inferred as anything beyond 'unknown' (REQ-COVERAGE-001 "
+    "S1/S2) - reclassify each one here to the state that actually applies "
+    "(missing_expected, not_applicable, unavailable_source, suppressed, "
+    "estimated, modelled, or a genuine structural observed_zero) before "
+    "approving a treatment for it below. A structural-zero segment requires "
+    "state='observed_zero' and a non-empty justification - pre-launch may "
+    "be structural zero only when the activity genuinely did not exist, "
+    "never merely because a source lacks history."
+)
+segment_rows = []
+segment_record_indices = []
+for record_index, record in enumerate(matrix.records):
+    for segment in record.coverage_segments:
+        segment_rows.append(
+            {
+                "variable": record.variable_id,
+                "market": record.market,
+                "product": record.product or "",
+                "segment": record.segment or "",
+                "period_start": segment.period_start,
+                "period_end": segment.period_end,
+                "state": segment.state,
+                "structural_zero": segment.structural_zero,
+                "justification": segment.justification,
+            }
         )
-    if not any_segments:
-        st.caption("Every variable is fully covered - no gap segments.")
+        segment_record_indices.append(record_index)
+
+if not segment_rows:
+    st.caption("Every variable is fully covered - no gap segments to classify.")
+else:
+    segment_editor = st.data_editor(
+        pd.DataFrame(segment_rows),
+        width="stretch",
+        hide_index=True,
+        disabled=[
+            "variable",
+            "market",
+            "product",
+            "segment",
+            "period_start",
+            "period_end",
+        ],
+        key="coverage_segment_editor",
+        column_config={
+            "state": st.column_config.SelectboxColumn(
+                "State", options=sorted(COVERAGE_STATES), required=True
+            ),
+        },
+    )
+
+    if st.button("Save gap classifications", type="primary"):
+        segment_errors = []
+        segments_by_record: "dict[int, list[CoverageSegment]]" = defaultdict(list)
+        for record_index, (_, row) in zip(
+            segment_record_indices, segment_editor.fillna("").iterrows()
+        ):
+            try:
+                segments_by_record[record_index].append(
+                    CoverageSegment(
+                        period_start=str(row["period_start"]),
+                        period_end=str(row["period_end"]),
+                        state=str(row["state"]),
+                        structural_zero=bool(row["structural_zero"]),
+                        justification=str(row["justification"]),
+                    )
+                )
+            except ValueError as e:
+                offending = matrix.records[record_index]
+                segment_errors.append(
+                    f"{offending.variable_id} ({offending.market}) "
+                    f"{row['period_start']}..{row['period_end']}: {e}"
+                )
+        for error in segment_errors:
+            st.error(error)
+        if not segment_errors:
+            new_records = [
+                (
+                    replace(
+                        record,
+                        coverage_segments=tuple(segments_by_record[record_index]),
+                    )
+                    if record_index in segments_by_record
+                    else record
+                )
+                for record_index, record in enumerate(matrix.records)
+            ]
+            generated_at = datetime.now(timezone.utc).isoformat()
+            new_matrix = new_variable_coverage_matrix_version(
+                matrix, records=tuple(new_records), generated_at=generated_at
+            )
+            set_state(
+                "variable_coverage_matrix_versions",
+                (get_state("variable_coverage_matrix_versions") or [])
+                + [matrix.to_dict()],
+            )
+            set_state("variable_coverage_matrix", new_matrix.to_dict())
+            st.success(
+                f"Saved gap classifications as matrix version "
+                f"{new_matrix.matrix_version}."
+            )
 
 st.markdown("---")
 st.markdown("### 3. Propose and approve treatments")
