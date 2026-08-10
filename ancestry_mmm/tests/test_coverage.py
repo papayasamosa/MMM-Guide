@@ -26,6 +26,7 @@ from ancestry_mmm.core.coverage import (
     VariableCoverageMatrix,
     VariableCoverageRecord,
     build_coverage_matrix_from_frame,
+    carry_forward_treatment_decisions,
     compute_checksum,
     current_source_versions,
     current_variable_coverage_matrix_from_resolved_versions,
@@ -524,6 +525,72 @@ class TestVariableCoverageMatrix:
         payload["schema_version"] = "1"
         with pytest.raises(ValueError, match="non-integer"):
             VariableCoverageMatrix.from_dict(payload)
+
+
+class TestCarryForwardTreatmentDecisions:
+    """A rebuild (build_coverage_matrix_from_frame, run again after e.g.
+    adding a variable) produces fresh, unresolved-by-default records -
+    carry_forward_treatment_decisions is what stops that from silently
+    discarding every previously-approved treatment (REQ-COVERAGE-001 S1)."""
+
+    def _approved_record(self, **overrides) -> VariableCoverageRecord:
+        defaults = dict(
+            proposed_treatment="use as-is",
+            approved_treatment="use as-is",
+            treatment_status="approved",
+            treatment_approved_by="reviewer",
+            treatment_approved_at="2026-01-01",
+            approved_for_official_use=True,
+            owner="analyst-a",
+        )
+        defaults.update(overrides)
+        return _record(**defaults)
+
+    def test_new_variable_with_no_previous_match_keeps_its_default(self):
+        fresh = _record(variable_id="brand_new")
+        result = carry_forward_treatment_decisions([fresh], [])
+        assert result == (fresh,)
+
+    def test_identical_facts_carries_the_previous_treatment_forward(self):
+        previous = self._approved_record()
+        fresh = _record()  # same variable_key + facts, default treatment
+        assert fresh.variable_key == previous.variable_key
+        (result,) = carry_forward_treatment_decisions([fresh], [previous])
+        assert result.treatment_status == "approved"
+        assert result.approved_for_official_use is True
+        assert result.approved_treatment == "use as-is"
+        assert result.treatment_approved_by == "reviewer"
+        assert result.owner == "analyst-a"
+        # The fresh record's own (rebuilt) facts are kept, not overwritten.
+        assert result.coverage_segments == fresh.coverage_segments
+
+    def test_changed_coverage_segments_resets_to_default_not_carried(self):
+        previous = self._approved_record()
+        changed = _record(
+            coverage_segments=(
+                CoverageSegment(
+                    period_start="2025-01-06",
+                    period_end="2025-12-29",
+                    state=STATE_UNKNOWN,
+                ),
+            )
+        )
+        (result,) = carry_forward_treatment_decisions([changed], [previous])
+        assert result.treatment_status == "proposed"
+        assert result.approved_for_official_use is False
+
+    def test_changed_source_version_resets_to_default_not_carried(self):
+        previous = self._approved_record()
+        changed = _record(source_version=2)
+        (result,) = carry_forward_treatment_decisions([changed], [previous])
+        assert result.treatment_status == "proposed"
+        assert result.approved_for_official_use is False
+
+    def test_different_market_is_not_matched(self):
+        previous = self._approved_record(market="UK")
+        other_market = _record(market="AU")
+        (result,) = carry_forward_treatment_decisions([other_market], [previous])
+        assert result.treatment_status == "proposed"
 
 
 class TestNewVariableCoverageMatrixVersion:
