@@ -720,21 +720,60 @@ def _observed_dates_for_market(
     return {pd.Timestamp(d) for d in observed}
 
 
+# Recognised target_frequency labels this builder can turn into a
+# governed calendar of expected periods (REQ-COVERAGE-001 S4's
+# variable-class-specific handling extended to frequency labels). An
+# unrecognised or genuinely irregular frequency has no fixed step to
+# construct a calendar from - see _expected_periods's fallback.
+_FREQUENCY_TO_PANDAS_ALIAS = {
+    "daily": "D",
+    "weekly": "W-MON",
+    "monthly": "MS",
+    "quarterly": "QS",
+}
+
+
+def _expected_periods(
+    target_frequency: str,
+    project_start: pd.Timestamp,
+    project_end: pd.Timestamp,
+    project_dates: list,
+) -> list:
+    """The full calendar of periods a variable at `target_frequency` is
+    expected to have between the project's own start/end - constructed
+    from the *governed frequency*, not merely from whatever dates happen
+    to appear in the uploaded rows. A period missing from every source
+    (e.g. a week no source has any row for at all) is still a real gap;
+    deriving the expected calendar only from observed rows would make it
+    invisible (P1 review finding on an earlier version of this builder).
+
+    An unrecognised `target_frequency` (including "irregular", which
+    REQ-COVERAGE-001 S1 explicitly names as a valid case) has no fixed
+    step to construct a calendar from - it falls back to the project's
+    own observed dates, the best obtainable basis, rather than raising or
+    guessing a step.
+    """
+    alias = _FREQUENCY_TO_PANDAS_ALIAS.get(target_frequency.strip().lower())
+    if alias is None:
+        return project_dates
+    return list(pd.date_range(start=project_start, end=project_end, freq=alias))
+
+
 def _gap_segments(
-    all_dates: list, observed_dates: set
+    expected_periods: list, observed_dates: set
 ) -> tuple["CoverageSegment", ...]:
-    """Group every date in `all_dates` that is NOT in `observed_dates` into
-    contiguous runs (by position in the project's own sorted date list, not
-    by calendar arithmetic - this makes no frequency assumption) and return
-    one `unknown` `CoverageSegment` per run. `unknown` - never a guessed
-    state - is the only state this function ever assigns: REQ-COVERAGE-001
-    S1 forbids inferring `not_applicable`/`unavailable_source`/structural
-    `observed_zero` merely from an absent value; a human must reclassify
-    each gap this function surfaces."""
+    """Group every period in `expected_periods` that is NOT in
+    `observed_dates` into contiguous runs (by position in the sorted
+    expected-periods list) and return one `unknown` `CoverageSegment` per
+    run. `unknown` - never a guessed state - is the only state this
+    function ever assigns: REQ-COVERAGE-001 S1 forbids inferring
+    `not_applicable`/`unavailable_source`/structural `observed_zero`
+    merely from an absent value; a human must reclassify each gap this
+    function surfaces."""
     segments = []
     run_start = None
     previous_date = None
-    for current_date in all_dates:
+    for current_date in sorted(expected_periods):
         if current_date in observed_dates:
             if run_start is not None:
                 # previous_date was set on every prior loop iteration, and
@@ -773,11 +812,12 @@ def build_coverage_matrix_from_frame(
     market_col: str,
     variable_columns: Iterable[str],
     frequency_metadata: Mapping[str, FrequencyMetadata],
-    source_id: str,
-    source_version: int,
+    variable_sources: Mapping[str, "tuple[str, int]"],
     matrix_id: str,
     matrix_version: int,
     generated_at: str,
+    product_col: Optional[str] = None,
+    segment_col: Optional[str] = None,
 ) -> VariableCoverageMatrix:
     """Generate a `VariableCoverageMatrix` from an already-joined DataFrame -
     the missing link between the Phase 1 domain contracts and real data
@@ -789,10 +829,13 @@ def build_coverage_matrix_from_frame(
     market - v1.6's "never truncate to the narrowest common window" reread
     the other way: a market missing early history is measured against the
     *project's* window, not shrunk down to its own), `observed_start`/
-    `observed_end` (this market's own non-null date range for the
-    variable, `None` if entirely absent), and gap segments (every date the
-    project has that this market/variable does not, grouped into
-    contiguous `unknown` runs via `_gap_segments`).
+    `observed_end` (this market/product/segment's own non-null date range
+    for the variable, `None` if entirely absent), and gap segments (every
+    period the variable's own governed frequency expects that this
+    market/product/segment does not have, grouped into contiguous
+    `unknown` runs via `_gap_segments`/`_expected_periods`) - a period
+    missing from every source entirely is still checked, not merely
+    whatever dates happen to appear in the uploaded rows.
 
     What this function deliberately does NOT do: classify *why* a gap
     exists (`not_applicable` vs `unavailable_source` vs a genuine
@@ -803,10 +846,22 @@ def build_coverage_matrix_from_frame(
     vocabulary describes exceptions, not confirmation that ordinary data
     is present.
 
-    `frequency_metadata` must supply an entry for every `variable_columns`
-    entry - REQ-COVERAGE-001 S4 forbids a single default conversion
-    method/variable-class assumption, so there is no fallback here: a
-    missing entry raises rather than guessing.
+    `frequency_metadata` and `variable_sources` must each supply an entry
+    for every `variable_columns` entry - REQ-COVERAGE-001 S4 forbids a
+    single default conversion method/variable-class assumption, and a
+    joined frame routinely combines several distinct uploads (e.g. media
+    from one source, controls from another), so provenance can never be a
+    single value applied to every variable either. Both raise rather than
+    guessing when an entry is missing.
+
+    `product_col`/`segment_col` (optional): when a joined frame stacks
+    more than one product or segment's data under shared variable column
+    names (rather than each product/segment already being its own
+    distinctly-named column, this app's more common shape), pass the
+    discriminator column(s) so coverage is computed per
+    `market x product x segment` grain, not silently unioned across them -
+    a value present for one product/segment must never hide that the same
+    variable is entirely absent for another.
     """
     variable_columns = list(variable_columns)
     missing_frequency = [v for v in variable_columns if v not in frequency_metadata]
@@ -817,40 +872,81 @@ def build_coverage_matrix_from_frame(
             "governed FrequencyMetadata (REQ-COVERAGE-001 S4), never a "
             "default assumption."
         )
+    missing_sources = [v for v in variable_columns if v not in variable_sources]
+    if missing_sources:
+        raise ValueError(
+            "variable_sources is missing an entry for: "
+            f"{missing_sources} - every variable requires its own explicit "
+            "(source_id, source_version), never a single provenance value "
+            "assumed for every variable in a joined frame."
+        )
 
-    all_dates = sorted({pd.Timestamp(d) for d in df[date_col].unique()})
-    if not all_dates:
+    project_dates = sorted({pd.Timestamp(d) for d in df[date_col].unique()})
+    if not project_dates:
         raise ValueError("df has no dates to build a coverage matrix from.")
-    expected_start = all_dates[0].strftime("%Y-%m-%d")
-    expected_end = all_dates[-1].strftime("%Y-%m-%d")
+    project_start = project_dates[0]
+    project_end = project_dates[-1]
+    expected_start = project_start.strftime("%Y-%m-%d")
+    expected_end = project_end.strftime("%Y-%m-%d")
+
+    scope_cols = [c for c in (product_col, segment_col) if c is not None]
 
     records = []
     for market in sorted(df[market_col].astype(str).unique()):
         market_frame = df[df[market_col].astype(str) == market]
-        for variable in variable_columns:
-            observed_dates = _observed_dates_for_market(
-                market_frame, date_col, variable
+        if scope_cols:
+            scopes = list(
+                market_frame[scope_cols]
+                .drop_duplicates()
+                .itertuples(index=False, name=None)
             )
-            observed_start = (
-                min(observed_dates).strftime("%Y-%m-%d") if observed_dates else None
-            )
-            observed_end = (
-                max(observed_dates).strftime("%Y-%m-%d") if observed_dates else None
-            )
-            records.append(
-                VariableCoverageRecord(
-                    variable_id=variable,
-                    source_id=source_id,
-                    source_version=source_version,
-                    market=market,
-                    frequency=frequency_metadata[variable],
-                    coverage_segments=_gap_segments(all_dates, observed_dates),
-                    observed_start=observed_start,
-                    observed_end=observed_end,
-                    expected_start=expected_start,
-                    expected_end=expected_end,
+        else:
+            scopes = [()]
+
+        for scope in scopes:
+            scoped_frame = market_frame
+            product = segment = None
+            remaining = list(scope)
+            if product_col is not None:
+                product = remaining.pop(0)
+                scoped_frame = scoped_frame[scoped_frame[product_col] == product]
+            if segment_col is not None:
+                segment = remaining.pop(0)
+                scoped_frame = scoped_frame[scoped_frame[segment_col] == segment]
+
+            for variable in variable_columns:
+                target_frequency = frequency_metadata[variable].target_frequency
+                expected_periods = _expected_periods(
+                    target_frequency, project_start, project_end, project_dates
                 )
-            )
+                observed_dates = _observed_dates_for_market(
+                    scoped_frame, date_col, variable
+                )
+                observed_start = (
+                    min(observed_dates).strftime("%Y-%m-%d") if observed_dates else None
+                )
+                observed_end = (
+                    max(observed_dates).strftime("%Y-%m-%d") if observed_dates else None
+                )
+                source_id, source_version = variable_sources[variable]
+                records.append(
+                    VariableCoverageRecord(
+                        variable_id=variable,
+                        source_id=source_id,
+                        source_version=source_version,
+                        market=market,
+                        product=product,
+                        segment=segment,
+                        frequency=frequency_metadata[variable],
+                        coverage_segments=_gap_segments(
+                            expected_periods, observed_dates
+                        ),
+                        observed_start=observed_start,
+                        observed_end=observed_end,
+                        expected_start=expected_start,
+                        expected_end=expected_end,
+                    )
+                )
 
     return VariableCoverageMatrix(
         matrix_id=matrix_id,

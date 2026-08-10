@@ -832,8 +832,7 @@ class TestBuildCoverageMatrixFromFrame:
             market_col="market",
             variable_columns=["TV_spend"],
             frequency_metadata=freq,
-            source_id="media",
-            source_version=1,
+            variable_sources={"TV_spend": ("media", 1)},
             matrix_id="m1",
             matrix_version=1,
             generated_at="2026-08-10T00:00:00Z",
@@ -850,8 +849,7 @@ class TestBuildCoverageMatrixFromFrame:
             market_col="market",
             variable_columns=["TV_spend"],
             frequency_metadata=freq,
-            source_id="media",
-            source_version=1,
+            variable_sources={"TV_spend": ("media", 1)},
             matrix_id="m1",
             matrix_version=1,
             generated_at="2026-08-10T00:00:00Z",
@@ -879,8 +877,7 @@ class TestBuildCoverageMatrixFromFrame:
                 market_col="market",
                 variable_columns=["TV_spend"],
                 frequency_metadata={},
-                source_id="media",
-                source_version=1,
+                variable_sources={"TV_spend": ("media", 1)},
                 matrix_id="m1",
                 matrix_version=1,
                 generated_at="2026-08-10T00:00:00Z",
@@ -911,8 +908,7 @@ class TestBuildCoverageMatrixFromFrame:
             market_col="market",
             variable_columns=["NewChannel_spend"],
             frequency_metadata=freq,
-            source_id="media",
-            source_version=1,
+            variable_sources={"NewChannel_spend": ("media", 1)},
             matrix_id="m1",
             matrix_version=1,
             generated_at="2026-08-10T00:00:00Z",
@@ -941,8 +937,7 @@ class TestBuildCoverageMatrixFromFrame:
             market_col="market",
             variable_columns=["UK_only_control"],
             frequency_metadata=freq,
-            source_id="media",
-            source_version=1,
+            variable_sources={"UK_only_control": ("media", 1)},
             matrix_id="m1",
             matrix_version=1,
             generated_at="2026-08-10T00:00:00Z",
@@ -967,8 +962,7 @@ class TestBuildCoverageMatrixFromFrame:
             market_col="market",
             variable_columns=["TV_spend"],
             frequency_metadata=freq,
-            source_id="media",
-            source_version=1,
+            variable_sources={"TV_spend": ("media", 1)},
             matrix_id="m1",
             matrix_version=1,
             generated_at="2026-08-10T00:00:00Z",
@@ -984,13 +978,159 @@ class TestBuildCoverageMatrixFromFrame:
             market_col="market",
             variable_columns=["TV_spend"],
             frequency_metadata=freq,
-            source_id="media",
-            source_version=1,
+            variable_sources={"TV_spend": ("media", 1)},
             matrix_id="m1",
             matrix_version=1,
             generated_at="2026-08-10T00:00:00Z",
         )
         assert len(matrix.blocking_issues) == 1  # the AU gap record
+
+    def test_missing_variable_sources_entry_raises_rather_than_defaulting(self):
+        df, freq = _frame_and_freq()
+        with pytest.raises(ValueError, match="variable_sources"):
+            build_coverage_matrix_from_frame(
+                df,
+                date_col="date",
+                market_col="market",
+                variable_columns=["TV_spend"],
+                frequency_metadata=freq,
+                variable_sources={},
+                matrix_id="m1",
+                matrix_version=1,
+                generated_at="2026-08-10T00:00:00Z",
+            )
+
+    def test_period_missing_from_every_row_is_still_a_gap(self):
+        """P1 review finding on an earlier version of this builder: a
+        period with NO row anywhere in df (not even a null value - the row
+        itself is absent) must still be checked against the variable's
+        governed weekly calendar, not silently skipped because it never
+        appears in df[date_col]."""
+        all_weeks = _weekly_dates(6)
+        skip_week_2 = [d for i, d in enumerate(all_weeks) if i != 2]
+        df = pd.DataFrame(
+            {
+                "date": skip_week_2,
+                "market": ["UK"] * len(skip_week_2),
+                "TV_spend": [100.0] * len(skip_week_2),
+            }
+        )
+        freq = {
+            "TV_spend": FrequencyMetadata(
+                native_frequency="weekly",
+                target_frequency="weekly",
+                variable_class="flow_count",
+            )
+        }
+        matrix = build_coverage_matrix_from_frame(
+            df,
+            date_col="date",
+            market_col="market",
+            variable_columns=["TV_spend"],
+            frequency_metadata=freq,
+            variable_sources={"TV_spend": ("media", 1)},
+            matrix_id="m1",
+            matrix_version=1,
+            generated_at="2026-08-10T00:00:00Z",
+        )
+        record = matrix.records[0]
+        assert len(record.coverage_segments) == 1
+        assert record.coverage_segments[0].period_start == all_weeks[2].strftime(
+            "%Y-%m-%d"
+        )
+        assert record.coverage_segments[0].period_end == all_weeks[2].strftime(
+            "%Y-%m-%d"
+        )
+
+    def test_product_and_segment_grouping_does_not_union_observed_dates(self):
+        """P1 review finding on an earlier version of this builder: a value
+        present for one segment must never hide that the same variable is
+        entirely absent for another segment sharing the same column name
+        and market."""
+        dates = _weekly_dates(4)
+        rows = []
+        for segment in ("New", "DNA_CrossSell"):
+            for i, d in enumerate(dates):
+                rows.append(
+                    {
+                        "date": d,
+                        "market": "UK",
+                        "segment": segment,
+                        "shared_control": 5.0 if segment == "New" else np.nan,
+                    }
+                )
+        df = pd.DataFrame(rows)
+        freq = {
+            "shared_control": FrequencyMetadata(
+                native_frequency="weekly",
+                target_frequency="weekly",
+                variable_class="flow_count",
+            )
+        }
+        matrix = build_coverage_matrix_from_frame(
+            df,
+            date_col="date",
+            market_col="market",
+            variable_columns=["shared_control"],
+            frequency_metadata=freq,
+            variable_sources={"shared_control": ("controls", 1)},
+            matrix_id="m1",
+            matrix_version=1,
+            generated_at="2026-08-10T00:00:00Z",
+            segment_col="segment",
+        )
+        assert len(matrix.records) == 2
+        new_record = next(r for r in matrix.records if r.segment == "New")
+        dna_record = next(r for r in matrix.records if r.segment == "DNA_CrossSell")
+        assert new_record.coverage_segments == ()
+        assert len(dna_record.coverage_segments) == 1
+        assert dna_record.observed_start is None
+
+    def test_per_variable_source_provenance_is_not_conflated(self):
+        """P2 review finding on an earlier version of this builder: two
+        variables from genuinely different uploads must keep their own
+        distinct source_id/source_version, never a single value stamped
+        across a whole joined frame."""
+        dates = _weekly_dates(4)
+        df = pd.DataFrame(
+            {
+                "date": dates,
+                "market": ["UK"] * 4,
+                "media_var": [1.0, 2.0, 3.0, 4.0],
+                "control_var": [5.0, 6.0, 7.0, 8.0],
+            }
+        )
+        freq = {
+            v: FrequencyMetadata(
+                native_frequency="weekly",
+                target_frequency="weekly",
+                variable_class="flow_count",
+            )
+            for v in ("media_var", "control_var")
+        }
+        matrix = build_coverage_matrix_from_frame(
+            df,
+            date_col="date",
+            market_col="market",
+            variable_columns=["media_var", "control_var"],
+            frequency_metadata=freq,
+            variable_sources={
+                "media_var": ("media", 2),
+                "control_var": ("controls", 5),
+            },
+            matrix_id="m1",
+            matrix_version=1,
+            generated_at="2026-08-10T00:00:00Z",
+        )
+        media_record = next(r for r in matrix.records if r.variable_id == "media_var")
+        control_record = next(
+            r for r in matrix.records if r.variable_id == "control_var"
+        )
+        assert (media_record.source_id, media_record.source_version) == ("media", 2)
+        assert (control_record.source_id, control_record.source_version) == (
+            "controls",
+            5,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1063,8 +1203,7 @@ class TestPart3V16AcceptanceScenario262:
             market_col="market",
             variable_columns=list(self._frequency_metadata()),
             frequency_metadata=self._frequency_metadata(),
-            source_id="media",
-            source_version=1,
+            variable_sources={v: ("media", 1) for v in self._frequency_metadata()},
             matrix_id="scenario-26-2",
             matrix_version=1,
             generated_at="2026-08-10T00:00:00Z",
