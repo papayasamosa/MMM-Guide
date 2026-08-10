@@ -8,9 +8,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+import pandas as pd
 import streamlit as st
 
-from ancestry_mmm.utils import init_session_state, get_state, set_state, format_number
+from ancestry_mmm.utils import (
+    init_session_state,
+    get_state,
+    set_state,
+    format_number,
+    dataframe_column_config,
+)
 from ancestry_mmm.components import (
     apply_theme,
     render_sidebar,
@@ -32,7 +39,13 @@ from ancestry_mmm.core.model_comparison import ModelComparisonCandidate
 from ancestry_mmm.core.market_specific_diagnostics import (
     compute_scorecard_market_specific,
 )
-from ancestry_mmm.core.diagnostics import compute_scorecard
+from ancestry_mmm.core.diagnostics import compute_scorecard, prior_predictive_summary
+from ancestry_mmm.core.fingerprint import fingerprint_dataframe, fingerprint_model_spec
+from ancestry_mmm.core.outcomes import outcome_catalogue_fingerprint_payload
+from ancestry_mmm.core.pathways import pathway_catalogue_fingerprint_payload
+from ancestry_mmm.core.activities import activity_fit_fingerprint
+from ancestry_mmm.core.search_objects import search_object_fit_fingerprint
+from ancestry_mmm.core.coverage import VariableCoverageMatrix
 
 MODEL_TYPE_LABELS = {
     "shared": "Model A - shared curve",
@@ -87,11 +100,8 @@ st.info(
     "depending on data size and hardware - this does not block the rest of the app once started."
 )
 
-if st.button("Build & fit model", type="primary"):
-    prior_config = get_state("prior_config")
-    dna_lag_weeks = get_state("dna_lag_weeks", 4)
-    direct_dna_outcome_ids = get_state("direct_dna_outcome_ids") or None
 
+def _resolve_causal_graph():
     # REQ-GRAPH-001 work package D/E: an approved causal graph, when one
     # exists for this project, is the sole authoritative structural input -
     # resolve_pathway_masks_preferring_graph (inside both builders below)
@@ -99,32 +109,207 @@ if st.button("Build & fit model", type="primary"):
     # supplied. None (every project without a graph, or with only a draft
     # graph) reproduces exactly today's pathway-catalogue-driven behaviour.
     causal_graph_dict = get_state("causal_graph")
-    causal_graph = None
     if causal_graph_dict and causal_graph_dict.get("status") == GRAPH_STATUS_APPROVED:
-        causal_graph = CausalGraph.from_dict(causal_graph_dict)
+        return CausalGraph.from_dict(causal_graph_dict)
+    return None
 
+
+def _build_proposed_model(build_model_type: str):
+    """Build the unfit `(model, meta)` for the CURRENT proposed
+    configuration (live `model_spec`/`prior_config`/`dna_lag_weeks`/causal
+    graph) - the exact same builder call "Build & fit model" below uses,
+    just never followed by `fit_model`. Shared by the pre-fit prior
+    predictive preview and the real fit so they can never silently diverge
+    on what "the proposed model" means."""
+    prior_config = get_state("prior_config")
+    dna_lag_weeks = get_state("dna_lag_weeks", 4)
+    direct_dna_outcome_ids = get_state("direct_dna_outcome_ids") or None
+    causal_graph = _resolve_causal_graph()
+    builder = (
+        build_fh_market_specific_model
+        if build_model_type == "market_specific"
+        else build_fh_hierarchical_model
+    )
+    return builder(
+        frame,
+        spec,
+        dna_lag_weeks=dna_lag_weeks,
+        prior_config=prior_config,
+        dna_outcome_id=spec.fh_dna_cross_sell_outcome_id,
+        direct_dna_outcome_ids=direct_dna_outcome_ids,
+        causal_graph=causal_graph,
+    )
+
+
+def _proposed_model_fingerprint(fingerprint_model_type: str) -> str:
+    """The pre-fit analogue of `06_Diagnostics.py`'s `ModelIdentity`
+    construction - the same `fingerprint_model_spec` call it uses for
+    `model_spec_fingerprint`, fed with exactly the values a build right now
+    would use (read directly from live session state and `frame`'s own
+    snapshotted `outcomes`/`media_outcome_pathways` -
+    `core.hierarchical_model.build_fh_hierarchical_model` derives
+    `outcome_catalogue_at_fit`/`pathway_catalogue_at_fit` from those exact
+    frame keys, never from live `get_state` directly), combined with
+    `fingerprint_dataframe(frame["df"])` - the same `data_fingerprint`
+    component `ModelIdentity` binds separately alongside `model_spec_
+    fingerprint`. Both matter here: the builders derive the default
+    intercept prior from `Y`, and the sampled prior predictive distribution
+    depends on the frame's media/controls too, so a spec/prior match alone
+    is not enough to certify this preview still describes the current
+    proposal - a re-uploaded or re-transformed dataset with an unchanged
+    spec must also mark a previous preview stale. Cheap to recompute on
+    every rerun (hashing only, no PyMC model build) purely to detect
+    whether the proposal has since changed."""
+    causal_graph = _resolve_causal_graph()
+    activity_definitions = get_state("activity_definitions") or []
+    search_objects = get_state("search_objects") or []
+    coverage_matrix_dict = get_state("variable_coverage_matrix")
+    model_spec_fingerprint = fingerprint_model_spec(
+        spec_dict,
+        get_state("prior_config") or {},
+        int(get_state("dna_lag_weeks", 4)),
+        model_type=fingerprint_model_type,
+        pipeline_steps=get_state("pipeline_steps") or [],
+        market_spec_config=get_state("market_spec_config"),
+        direct_dna_outcome_ids=get_state("direct_dna_outcome_ids") or None,
+        outcome_catalogue=outcome_catalogue_fingerprint_payload(
+            frame.get("outcomes") or []
+        ),
+        funnel_links=get_state("funnel_links"),
+        media_outcome_pathways=pathway_catalogue_fingerprint_payload(
+            frame.get("media_outcome_pathways") or []
+        ),
+        activity_fit_fingerprint=(
+            activity_fit_fingerprint(activity_definitions)
+            if activity_definitions
+            else None
+        ),
+        causal_graph_structural_fingerprint=(
+            causal_graph.structural_fingerprint() if causal_graph is not None else ""
+        ),
+        search_object_fit_fingerprint=(
+            search_object_fit_fingerprint(
+                search_objects, consumed_model_input_columns=spec.channels
+            )
+            if search_objects
+            else None
+        ),
+        variable_coverage_fingerprint=(
+            VariableCoverageMatrix.from_dict(coverage_matrix_dict).fingerprint()
+            if coverage_matrix_dict
+            else None
+        ),
+    )
+    return f"{fingerprint_dataframe(frame['df'])}:{model_spec_fingerprint}"
+
+
+st.markdown("---")
+st.markdown("### Preview: prior predictive check (before fitting)")
+st.caption(
+    "Samples from the PROPOSED model's declared priors - never a "
+    "posterior, no MCMC, no trace - before committing to the fit below, "
+    "reusing REQ-VAL-001's prior-predictive sampling function in a new "
+    "pre-fit context. Builds the model from the current spec/prior "
+    "configuration exactly as 'Build & fit model' would, but stops after "
+    "sampling priors; this preview is never written as this project's "
+    "official fit-time evidence (see Diagnostics' own 'Prior predictive "
+    "check', computed against the actual fitted model, for that) and is "
+    "not itself an approved REQ-VAL-001 work package."
+)
+preview_col1, preview_col2 = st.columns(2)
+preview_n_samples = preview_col1.number_input(
+    "Prior draws",
+    min_value=50,
+    max_value=5000,
+    value=500,
+    step=50,
+    key="preview_prior_predictive_n_samples",
+)
+preview_seed = preview_col2.number_input(
+    "Random seed",
+    min_value=0,
+    max_value=2**31 - 1,
+    value=42,
+    step=1,
+    key="preview_prior_predictive_seed",
+)
+if st.button("Preview prior predictive (no fitting)"):
+    try:
+        with st.spinner("Building proposed model..."):
+            preview_model, preview_meta = _build_proposed_model(model_type)
+    except ValueError as e:
+        set_state(
+            "prior_predictive_preview",
+            {
+                "status": "failed",
+                "error": f"Could not build the proposed model: {e} Set the FH DNA cross-sell outcome on the Structure page if needed, and try again.",
+            },
+        )
+    else:
+        try:
+            with st.spinner("Sampling priors..."):
+                preview_result = prior_predictive_summary(
+                    preview_model,
+                    frame,
+                    preview_meta,
+                    n_samples=int(preview_n_samples),
+                    random_seed=int(preview_seed),
+                )
+        except Exception as e:
+            set_state(
+                "prior_predictive_preview",
+                {
+                    "status": "failed",
+                    "error": f"Prior predictive sampling failed: {e}",
+                },
+            )
+        else:
+            set_state(
+                "prior_predictive_preview",
+                {
+                    "status": "computed",
+                    "model_type": model_type,
+                    "payload": preview_result,
+                    "proposed_model_fingerprint": _proposed_model_fingerprint(
+                        model_type
+                    ),
+                },
+            )
+
+_preview = get_state("prior_predictive_preview")
+if _preview and _preview.get("status") == "failed":
+    st.error(_preview["error"])
+elif _preview and _preview.get("status") == "computed":
+    if _preview.get("proposed_model_fingerprint") != _proposed_model_fingerprint(
+        model_type
+    ):
+        st.warning(
+            "This preview no longer reflects the current proposed "
+            "configuration - the spec, priors, DNA lag, causal graph, or "
+            "another model-identity input changed since it was run. "
+            "Re-run the preview above to see priors for what would "
+            "actually be fit now."
+        )
+    else:
+        _preview_payload = _preview["payload"]
+        st.caption(
+            f"Model type: {MODEL_TYPE_LABELS.get(_preview['model_type'], _preview['model_type'])} | "
+            f"Prior draws: {format_number(_preview_payload.get('n_samples'))} | "
+            f"Seed: {_preview_payload.get('random_seed')}"
+        )
+        _preview_df = pd.DataFrame(_preview_payload["rows"])
+        st.dataframe(
+            _preview_df,
+            width="stretch",
+            column_config=dataframe_column_config(_preview_df),
+        )
+        for w in _preview_payload.get("warnings", []):
+            st.caption(f"Sampling warning: {w}")
+
+if st.button("Build & fit model", type="primary"):
     try:
         with st.spinner("Building model..."):
-            if model_type == "market_specific":
-                model, meta = build_fh_market_specific_model(
-                    frame,
-                    spec,
-                    dna_lag_weeks=dna_lag_weeks,
-                    prior_config=prior_config,
-                    dna_outcome_id=spec.fh_dna_cross_sell_outcome_id,
-                    direct_dna_outcome_ids=direct_dna_outcome_ids,
-                    causal_graph=causal_graph,
-                )
-            else:
-                model, meta = build_fh_hierarchical_model(
-                    frame,
-                    spec,
-                    dna_lag_weeks=dna_lag_weeks,
-                    prior_config=prior_config,
-                    dna_outcome_id=spec.fh_dna_cross_sell_outcome_id,
-                    direct_dna_outcome_ids=direct_dna_outcome_ids,
-                    causal_graph=causal_graph,
-                )
+            model, meta = _build_proposed_model(model_type)
     except ValueError as e:
         st.error(
             f"Could not build the model: {e} Set the FH DNA cross-sell outcome on the Structure page if needed, and try again."
