@@ -26,6 +26,15 @@ def init_session_state():
         # history here - a SourceVersion is a permanent record of what was
         # uploaded, not of what is currently in use.
         "source_versions": [],
+        # {source_id: version} - which SourceVersion (if any) actually
+        # produced the CURRENT raw_sources[source_id] frame. Distinct from
+        # "the latest history entry for this name": loading synthetic demo
+        # data replaces raw_sources wholesale without a real upload, so a
+        # name that previously had a real upload must not keep displaying
+        # that upload's provenance against the now-demo frame. Cleared for
+        # a name whenever that name's active frame stops being backed by a
+        # real upload (demo load, remove).
+        "active_source_upload_version": {},
         "joined_data": None,
         "data_loaded": False,
         "project_name": "ancestry-fh-uk",

@@ -67,6 +67,7 @@ class ProjectExportInput:
     value_mapping: Optional[dict] = None
     causal_graphs: Optional[List[dict]] = None
     search_objects: Optional[List[dict]] = None
+    source_versions: Optional[List[dict]] = None
     include_excel: bool = False
     excel_sheets: Optional[Dict[str, Optional[pd.DataFrame]]] = None
     excel_output_path: Optional[str] = None
@@ -177,6 +178,7 @@ class ProjectService:
                 value_mapping=exp_input.value_mapping,
                 causal_graphs=exp_input.causal_graphs,
                 search_objects=exp_input.search_objects,
+                source_versions=exp_input.source_versions,
             )
         except Exception as exc:
             errors.append(f"Project export failed: {exc}")

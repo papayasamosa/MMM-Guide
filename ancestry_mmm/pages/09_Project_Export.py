@@ -32,6 +32,7 @@ from ancestry_mmm.core.persistence import (
     resolve_imported_outcome_approvals,
     resolve_imported_causal_graphs,
     resolve_imported_search_objects,
+    resolve_imported_source_versions,
     verify_imported_approval,
     UnsafeZipEntryError,
     audit_project_resumability,
@@ -434,6 +435,12 @@ if st.button("Build export bundle", type="primary"):
                 current_definitions=get_state("search_objects") or [],
                 version_history=get_state("search_object_versions"),
             ),
+            # REQ-COVERAGE-001 S3: the full append-only immutable
+            # SourceVersion history - never only the latest per source_id,
+            # since it is a permanent upload record, not current-use state
+            # (mirrors search_objects/causal_graphs above, which also
+            # export their full version history, not just what's current).
+            source_versions=get_state("source_versions") or [],
         )
     st.success(f"Project bundle built: {output_path}")
     with open(output_path, "rb") as f:
@@ -572,6 +579,17 @@ if uploaded_zip is not None and st.button("Import bundle"):
         )
         for _search_object_warning in _search_object_warnings:
             st.warning(_search_object_warning)
+        # REQ-COVERAGE-001 S3: restore the quarantine-checked immutable
+        # SourceVersion history in full - a bundle with no
+        # source_versions.json (every bundle exported before this
+        # capability existed, or a project with no real-upload provenance
+        # recorded yet) resolves to an empty list, never fabricated.
+        _resolved_source_versions, _source_version_warnings = (
+            resolve_imported_source_versions(imported)
+        )
+        set_state("source_versions", _resolved_source_versions)
+        for _source_version_warning in _source_version_warnings:
+            st.warning(_source_version_warning)
         set_state("migration_review", imported.get("migration_review"))
         # PR 125A: restore the project-level planning dependencies so a
         # resumed session's Scenario Planner selection (and any newly

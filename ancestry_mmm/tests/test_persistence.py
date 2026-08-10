@@ -58,6 +58,7 @@ from ancestry_mmm.core.persistence import (
     resolve_imported_causal_graphs,
     resolve_imported_outcome_approvals,
     resolve_imported_search_objects,
+    resolve_imported_source_versions,
     verify_imported_approval,
 )
 from ancestry_mmm.core.predict import extract_posterior_params
@@ -1698,6 +1699,121 @@ def test_export_then_import_preserves_search_object_version_history(
     current = current_search_object_versions(objects)
     assert len(current) == 1
     assert current[0].search_object_version == 2
+
+
+# ---------------------------------------------------------------------------
+# REQ-COVERAGE-001 S3: source_versions round trip (P1 review finding on an
+# earlier version of the WP3 Phase 2 upload flow - a re-uploaded source
+# would collide with a prior version's identity if this history didn't
+# survive export/import, since the next-version calculation only looks at
+# whatever history the caller has in hand).
+# ---------------------------------------------------------------------------
+
+
+def test_export_then_import_source_versions_round_trip(tmp_path, sample_project):
+    from ancestry_mmm.core.coverage import SourceVersion, compute_checksum
+
+    source_version = SourceVersion(
+        source_id="media",
+        version=1,
+        original_filename="media.csv",
+        checksum=compute_checksum(b"media-bytes"),
+        size_bytes=11,
+        uploaded_at="2026-08-01T00:00:00+00:00",
+        parsed_representation_version="pandas-test",
+    )
+    project = dict(sample_project)
+    project["source_versions"] = [source_version.to_dict()]
+
+    bundle_path = export_project(tmp_path / "bundle.zip", **project)
+    imported = import_project(bundle_path)
+
+    versions, warnings = resolve_imported_source_versions(imported)
+    assert warnings == []
+    assert len(versions) == 1
+    assert versions[0]["source_id"] == "media"
+    assert versions[0]["checksum"] == source_version.checksum
+
+
+def test_import_project_source_versions_absent_for_legacy_bundle(
+    tmp_path, sample_project
+):
+    bundle_path = export_project(tmp_path / "bundle.zip", **sample_project)
+    imported = import_project(bundle_path)
+    assert imported["source_versions"] is None
+    versions, warnings = resolve_imported_source_versions(imported)
+    assert versions == []
+    assert warnings == []
+
+
+def test_export_then_import_preserves_full_source_version_history_not_only_latest(
+    tmp_path, sample_project
+):
+    """A re-uploaded source's next-version calculation
+    (data.loader.load_file_with_source_version) depends on seeing every
+    prior version, not only the latest - never silently collapsed."""
+    from ancestry_mmm.core.coverage import SourceVersion, compute_checksum
+
+    v1 = SourceVersion(
+        source_id="media",
+        version=1,
+        original_filename="media_v1.csv",
+        checksum=compute_checksum(b"v1"),
+        size_bytes=2,
+        uploaded_at="2026-08-01T00:00:00+00:00",
+        parsed_representation_version="pandas-test",
+    )
+    v2 = SourceVersion(
+        source_id="media",
+        version=2,
+        original_filename="media_v2.csv",
+        checksum=compute_checksum(b"v2"),
+        size_bytes=2,
+        uploaded_at="2026-08-02T00:00:00+00:00",
+        parsed_representation_version="pandas-test",
+    )
+    project = dict(sample_project)
+    project["source_versions"] = [v1.to_dict(), v2.to_dict()]
+
+    bundle_path = export_project(tmp_path / "bundle.zip", **project)
+    imported = import_project(bundle_path)
+
+    versions, warnings = resolve_imported_source_versions(imported)
+    assert warnings == []
+    assert {v["version"] for v in versions} == {1, 2}
+
+
+def test_resolve_imported_source_versions_quarantines_malformed_records():
+    imported = {
+        "source_versions": [
+            {
+                "source_id": "media",
+                "version": 1,
+                "original_filename": "media.csv",
+                "checksum": "a" * 64,
+                "size_bytes": 10,
+                "uploaded_at": "2026-08-01T00:00:00+00:00",
+                "parsed_representation_version": "pandas-test",
+            },
+            {
+                "source_id": "bad",
+                "version": 1,
+                "original_filename": "bad.csv",
+                "checksum": "not-a-checksum",
+                "size_bytes": 10,
+                "uploaded_at": "2026-08-01T00:00:00+00:00",
+                "parsed_representation_version": "pandas-test",
+            },
+            "not-a-mapping",
+            {"source_id": "incomplete"},
+        ]
+    }
+    versions, warnings = resolve_imported_source_versions(imported)
+    assert len(versions) == 1
+    assert versions[0]["source_id"] == "media"
+    assert len(warnings) == 3
+    assert any("bad" in w for w in warnings)
+    assert any("not a mapping" in w for w in warnings)
 
 
 def test_audit_resumability_officially_resumable_false_without_approvals():
