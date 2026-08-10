@@ -82,6 +82,20 @@ def init_session_state():
         "causal_graph": None,
         "causal_graph_versions": [],
         "causal_graph_compiled_structural_fingerprint": None,
+        # REQ-COVERAGE-001 S1/S3: the current VariableCoverageMatrix version
+        # (core.coverage.VariableCoverageMatrix.to_dict()), reviewable before
+        # model preparation. None until first built on the Data Coverage
+        # page - every project today, since this is optional and nothing
+        # downstream yet consumes it to alter prepared data (WP5/
+        # FR-MOD-015 is unresolved - see REQ-COVERAGE-001 S6).
+        # "variable_coverage_matrix_versions" is the append-only saved
+        # version history (list of dicts, oldest first), mirroring
+        # "causal_graph"/"causal_graph_versions" above. Neither is cleared
+        # by clear_model_state() - a coverage matrix is analyst-declared
+        # data governance, not a fit-derived artefact, same category as
+        # causal_graph/search_objects.
+        "variable_coverage_matrix": None,
+        "variable_coverage_matrix_versions": [],
         # Model configuration
         "prior_config": dict(DEFAULT_FH_PRIORS),
         "dna_lag_weeks": DEFAULT_DNA_LAG_WEEKS,

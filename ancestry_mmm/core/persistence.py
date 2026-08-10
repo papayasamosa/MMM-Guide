@@ -80,6 +80,18 @@ Bundle layout (a single zip):
                                           yet - "none governed yet" is a valid,
                                           not-an-error reading (see
                                           resolve_imported_search_objects below).
+    config/variable_coverage_matrices.json - REQ-COVERAGE-001 S1: every
+                                          `VariableCoverageMatrix` version worth
+                                          keeping (core.coverage.
+                                          variable_coverage_matrix_versions_for_export),
+                                          if any have been built or are currently
+                                          in progress. Absent for every bundle
+                                          exported before this capability existed,
+                                          and for any current project with no
+                                          coverage matrix built yet - "none built
+                                          yet" is a valid, not-an-error reading
+                                          (see resolve_imported_variable_coverage_
+                                          matrices below).
     scenarios/scenario_<i>_predicted.csv
     model/trace.nc                     - fitted posterior (ArviZ InferenceData, NetCDF)
     curve_bank/*.json                  - curve bank + calibration records, if any
@@ -143,8 +155,9 @@ from .optimization import SpendConstraint
 
 # REQ-GRAPH-001: bumped 11 -> 12 for the project-level causal_graphs bundle
 # file (see export_project()'s docstring). REQ-SEARCH-001: bumped 12 -> 13
-# for the project-level search_objects bundle file.
-PROJECT_BUNDLE_SCHEMA_VERSION = 13
+# for the project-level search_objects bundle file. REQ-COVERAGE-001: bumped
+# 13 -> 14 for the project-level variable_coverage_matrices bundle file.
+PROJECT_BUNDLE_SCHEMA_VERSION = 14
 PROJECT_APP_VERSION = "0.1.0"
 
 
@@ -239,6 +252,7 @@ def export_project(
     causal_graphs: Optional[List[dict]] = None,
     search_objects: Optional[List[dict]] = None,
     source_versions: Optional[List[dict]] = None,
+    variable_coverage_matrices: Optional[List[dict]] = None,
 ) -> Path:
     output_path = Path(output_path)
     with tempfile.TemporaryDirectory() as tmp_str:
@@ -399,6 +413,13 @@ def export_project(
             (tmp / "config" / "source_versions.json").write_text(
                 json.dumps(source_versions, indent=2, default=str)
             )
+        # REQ-COVERAGE-001 S1: every VariableCoverageMatrix version worth
+        # keeping (core.coverage.variable_coverage_matrix_versions_for_export),
+        # mirroring causal_graphs above.
+        if variable_coverage_matrices is not None:
+            (tmp / "config" / "variable_coverage_matrices.json").write_text(
+                json.dumps(variable_coverage_matrices, indent=2, default=str)
+            )
         if diagnostics is not None:
             for name, value in diagnostics.items():
                 if value is None:
@@ -470,6 +491,8 @@ def export_project(
                 "search_objects": search_objects is not None and bool(search_objects),
                 "source_versions": source_versions is not None
                 and bool(source_versions),
+                "variable_coverage_matrices": variable_coverage_matrices is not None
+                and bool(variable_coverage_matrices),
             },
         }
         (tmp / "manifest.json").write_text(json.dumps(manifest, indent=2, default=str))
@@ -574,6 +597,11 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         # a valid, not-an-error reading, same convention as causal_graphs/
         # search_objects above.
         "source_versions": None,
+        # REQ-COVERAGE-001 S1: None for bundles exported before this
+        # capability existed - "no coverage matrix built yet" is a valid,
+        # not-an-error reading, same convention as causal_graphs/
+        # search_objects/source_versions above.
+        "variable_coverage_matrices": None,
     }
     with tempfile.TemporaryDirectory() as tmp_str:
         tmp = Path(tmp_str)
@@ -721,6 +749,10 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         if (config_dir / "source_versions.json").exists():
             result["source_versions"] = json.loads(
                 (config_dir / "source_versions.json").read_text()
+            )
+        if (config_dir / "variable_coverage_matrices.json").exists():
+            result["variable_coverage_matrices"] = json.loads(
+                (config_dir / "variable_coverage_matrices.json").read_text()
             )
         # G2A.7 (REQ-OUT-002): outcome approvals persisted alongside outcome
         # definitions. Absent in legacy bundles — treated as no approvals on
@@ -1040,6 +1072,58 @@ def resolve_imported_source_versions(
                 f"Source version record {index} (source_id={source_id!r}) "
                 f"was malformed and was quarantined (dropped, not silently "
                 f"kept): {exc}"
+            )
+    return normalised, warnings
+
+
+def resolve_imported_variable_coverage_matrices(
+    imported: Dict[str, Any],
+) -> Tuple[List[dict], List[str]]:
+    """REQ-COVERAGE-001 S1: resolve the `VariableCoverageMatrix` version
+    records an imported bundle should use - every saved version, mirroring
+    `resolve_imported_causal_graphs`'s "resolve every version, let the
+    caller derive current" contract (`core.coverage.
+    current_variable_coverage_matrix_from_resolved_versions` is layered on
+    top of this, the same way `current_graph_from_resolved_versions` is
+    layered on top of `resolve_imported_causal_graphs`). Each record is
+    round-tripped through `VariableCoverageMatrix.from_dict`/`to_dict` for
+    validation - a malformed record, or one carrying an unrecognised future
+    `schema_version`, is quarantined (dropped), never silently discarded
+    without a trace: it is named by index in `warnings` and excluded from
+    the returned list, mirroring `resolve_imported_causal_graphs`/
+    `resolve_imported_search_objects`'s never-trust-silently contract.
+
+    A bundle with no `variable_coverage_matrices.json` file (every bundle
+    exported before this capability existed, and every current project with
+    no coverage matrix built yet) resolves to an empty list with no
+    warnings - that is the correct "no coverage matrix yet" reading, not an
+    error.
+    """
+    from .coverage import VariableCoverageMatrix
+
+    raw_matrices = imported.get("variable_coverage_matrices")
+    warnings: List[str] = []
+    if not raw_matrices:
+        return [], warnings
+
+    normalised: List[dict] = []
+    for index, item in enumerate(raw_matrices):
+        if not isinstance(item, Mapping):
+            input_type = type(item).__name__
+            warnings.append(
+                f"Variable coverage matrix record {index} is not a mapping "
+                f"(type={input_type!r}) and was quarantined "
+                "(dropped, not silently kept)."
+            )
+            continue
+        try:
+            normalised.append(VariableCoverageMatrix.from_dict(item).to_dict())
+        except (TypeError, ValueError, KeyError, AttributeError) as exc:
+            matrix_id = item.get("matrix_id", "<unknown>")
+            warnings.append(
+                f"Variable coverage matrix record {index} "
+                f"(matrix_id={matrix_id!r}) was malformed and was "
+                f"quarantined (dropped, not silently kept): {exc}"
             )
     return normalised, warnings
 
@@ -2113,6 +2197,10 @@ def current_model_identity_fingerprints(
     Callers must check `reconstructed["frame"]`/`reconstructed["posterior_params"]`
     are not None before calling this - it assumes reconstruction succeeded.
     """
+    from .coverage import (
+        VariableCoverageMatrix,
+        current_variable_coverage_matrix_from_resolved_versions,
+    )
     from .search_objects import search_object_fit_fingerprint
 
     frame = reconstructed["frame"]
@@ -2138,6 +2226,20 @@ def current_model_identity_fingerprints(
     # a fit is "built from").
     pathway_catalogue_at_fit = (
         getattr(model_meta, "pathway_catalogue_at_fit", None) or []
+    )
+    # REQ-COVERAGE-001 S5: the imported bundle's own coverage-matrix history
+    # (quarantine-checked, mirroring how search_objects/causal_graphs are
+    # never trusted un-validated), reduced to the single current version the
+    # same way the Data Coverage/Project Export pages derive "current" from
+    # "every saved version" - see current_variable_coverage_matrix_from_
+    # resolved_versions's docstring.
+    _resolved_coverage_matrices, _ = resolve_imported_variable_coverage_matrices(
+        imported
+    )
+    current_coverage_matrix_dict = (
+        current_variable_coverage_matrix_from_resolved_versions(
+            _resolved_coverage_matrices
+        )
     )
     spec_fp = fingerprint_model_spec(
         imported.get("model_spec") or {},
@@ -2170,6 +2272,11 @@ def current_model_identity_fingerprints(
                 or [],
             )
             if imported.get("search_objects")
+            else None
+        ),
+        variable_coverage_fingerprint=(
+            VariableCoverageMatrix.from_dict(current_coverage_matrix_dict).fingerprint()
+            if current_coverage_matrix_dict
             else None
         ),
     )

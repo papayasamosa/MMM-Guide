@@ -850,6 +850,144 @@ class TestFingerprintModelSpecSearchObjectFitFingerprint:
         ) != search_object_fit_fingerprint([v2], consumed_model_input_columns=columns)
 
 
+class TestFingerprintModelSpecVariableCoverageFingerprint:
+    """REQ-COVERAGE-001 S5: including the fit-relevant coverage-matrix
+    fingerprint (core.coverage.VariableCoverageMatrix.fingerprint()) in
+    model identity, mirrored on TestFingerprintModelSpecSearchObjectFitFingerprint
+    above - except this parameter is a simple pass-through of the whole
+    matrix's fingerprint (mirroring causal_graph_structural_fingerprint),
+    not filtered by per-fit consumption the way search_object_fit_fingerprint
+    is - see fingerprint_model_spec's docstring for why."""
+
+    def test_omitting_variable_coverage_fingerprint_is_backward_compatible(self):
+        spec = {"markets": ["UK"]}
+        assert fingerprint_model_spec(spec, {}, 4) == fingerprint_model_spec(
+            spec, {}, 4, variable_coverage_fingerprint=None
+        )
+        assert fingerprint_model_spec(spec, {}, 4) == fingerprint_model_spec(
+            spec, {}, 4, variable_coverage_fingerprint=""
+        )
+
+    def test_a_different_variable_coverage_fingerprint_changes_the_model_spec_fingerprint(
+        self,
+    ):
+        spec = {"markets": ["UK"]}
+        fp_a = fingerprint_model_spec(spec, {}, 4, variable_coverage_fingerprint="fp-a")
+        fp_b = fingerprint_model_spec(spec, {}, 4, variable_coverage_fingerprint="fp-b")
+        assert fp_a != fp_b
+
+    def test_using_the_real_variable_coverage_matrix_fingerprint_end_to_end(self):
+        from ancestry_mmm.core.coverage import (
+            CoverageSegment,
+            FrequencyMetadata,
+            VariableCoverageMatrix,
+            VariableCoverageRecord,
+        )
+
+        frequency = FrequencyMetadata(
+            native_frequency="weekly",
+            target_frequency="weekly",
+            variable_class="flow_count",
+        )
+        record = VariableCoverageRecord(
+            variable_id="tv_spend",
+            source_id="media_source",
+            source_version=1,
+            market="UK",
+            frequency=frequency,
+            coverage_segments=(
+                CoverageSegment(
+                    period_start="2026-01-01",
+                    period_end="2026-01-07",
+                    state="unknown",
+                ),
+            ),
+        )
+        matrix_before = VariableCoverageMatrix(
+            matrix_id="m1",
+            matrix_version=1,
+            generated_at="2026-01-01",
+            records=(record,),
+        )
+        matrix_after = VariableCoverageMatrix(
+            matrix_id="m1", matrix_version=1, generated_at="2026-01-01", records=()
+        )
+        spec = {"markets": ["UK"]}
+        fp_before = fingerprint_model_spec(
+            spec,
+            {},
+            4,
+            variable_coverage_fingerprint=matrix_before.fingerprint(),
+        )
+        fp_after = fingerprint_model_spec(
+            spec,
+            {},
+            4,
+            variable_coverage_fingerprint=matrix_after.fingerprint(),
+        )
+        assert fp_before != fp_after
+
+    def test_editing_an_administrative_field_does_not_stale_the_fingerprint(self):
+        """A change confined to `fit_relevant_fields()`-excluded fields
+        (here, `owner`) must not change the matrix's own fingerprint, and
+        therefore must not stale `fingerprint_model_spec` either."""
+        from ancestry_mmm.core.coverage import (
+            CoverageSegment,
+            FrequencyMetadata,
+            VariableCoverageMatrix,
+            VariableCoverageRecord,
+        )
+
+        frequency = FrequencyMetadata(
+            native_frequency="weekly",
+            target_frequency="weekly",
+            variable_class="flow_count",
+        )
+        segments = (
+            CoverageSegment(
+                period_start="2026-01-01", period_end="2026-01-07", state="unknown"
+            ),
+        )
+        record_a = VariableCoverageRecord(
+            variable_id="tv_spend",
+            source_id="media_source",
+            source_version=1,
+            market="UK",
+            frequency=frequency,
+            coverage_segments=segments,
+            owner="analyst-a",
+        )
+        record_b = VariableCoverageRecord(
+            variable_id="tv_spend",
+            source_id="media_source",
+            source_version=1,
+            market="UK",
+            frequency=frequency,
+            coverage_segments=segments,
+            owner="analyst-b",
+        )
+        matrix_a = VariableCoverageMatrix(
+            matrix_id="m1",
+            matrix_version=1,
+            generated_at="2026-01-01",
+            records=(record_a,),
+        )
+        matrix_b = VariableCoverageMatrix(
+            matrix_id="m1",
+            matrix_version=1,
+            generated_at="2026-01-01",
+            records=(record_b,),
+        )
+        spec = {"markets": ["UK"]}
+        fp_a = fingerprint_model_spec(
+            spec, {}, 4, variable_coverage_fingerprint=matrix_a.fingerprint()
+        )
+        fp_b = fingerprint_model_spec(
+            spec, {}, 4, variable_coverage_fingerprint=matrix_b.fingerprint()
+        )
+        assert fp_a == fp_b
+
+
 class TestFingerprintModelSpecMarketConfig:
     def _config_with(self, *, currency=None, descriptors=None, media_unit=None) -> dict:
         profile = MarketProfile(

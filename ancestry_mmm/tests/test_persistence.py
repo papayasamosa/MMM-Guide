@@ -59,6 +59,7 @@ from ancestry_mmm.core.persistence import (
     resolve_imported_outcome_approvals,
     resolve_imported_search_objects,
     resolve_imported_source_versions,
+    resolve_imported_variable_coverage_matrices,
     verify_imported_approval,
 )
 from ancestry_mmm.core.predict import extract_posterior_params
@@ -1814,6 +1815,101 @@ def test_resolve_imported_source_versions_quarantines_malformed_records():
     assert len(warnings) == 3
     assert any("bad" in w for w in warnings)
     assert any("not a mapping" in w for w in warnings)
+
+
+def _sample_coverage_matrix(matrix_version: int = 1):
+    from ancestry_mmm.core.coverage import (
+        CoverageSegment,
+        FrequencyMetadata,
+        VariableCoverageMatrix,
+        VariableCoverageRecord,
+    )
+
+    return VariableCoverageMatrix(
+        matrix_id="m1",
+        matrix_version=matrix_version,
+        generated_at="2026-08-01T00:00:00+00:00",
+        records=(
+            VariableCoverageRecord(
+                variable_id="TV_spend",
+                source_id="media",
+                source_version=1,
+                market="UK",
+                frequency=FrequencyMetadata(
+                    native_frequency="weekly",
+                    target_frequency="weekly",
+                    variable_class="flow_count",
+                ),
+                coverage_segments=(
+                    CoverageSegment(
+                        period_start="2026-01-05",
+                        period_end="2026-01-11",
+                        state="unknown",
+                    ),
+                ),
+            ),
+        ),
+    )
+
+
+def test_export_then_import_variable_coverage_matrices_round_trip(
+    tmp_path, sample_project
+):
+    matrix = _sample_coverage_matrix()
+    project = dict(sample_project)
+    project["variable_coverage_matrices"] = [matrix.to_dict()]
+
+    bundle_path = export_project(tmp_path / "bundle.zip", **project)
+    imported = import_project(bundle_path)
+
+    matrices, warnings = resolve_imported_variable_coverage_matrices(imported)
+    assert warnings == []
+    assert len(matrices) == 1
+    assert matrices[0]["matrix_id"] == "m1"
+    assert matrices[0]["records"][0]["variable_id"] == "TV_spend"
+
+
+def test_import_project_variable_coverage_matrices_absent_for_legacy_bundle(
+    tmp_path, sample_project
+):
+    bundle_path = export_project(tmp_path / "bundle.zip", **sample_project)
+    imported = import_project(bundle_path)
+    assert imported["variable_coverage_matrices"] is None
+    matrices, warnings = resolve_imported_variable_coverage_matrices(imported)
+    assert matrices == []
+    assert warnings == []
+
+
+def test_export_then_import_preserves_full_coverage_matrix_history_not_only_latest(
+    tmp_path, sample_project
+):
+    v1 = _sample_coverage_matrix(matrix_version=1)
+    v2 = _sample_coverage_matrix(matrix_version=2)
+    project = dict(sample_project)
+    project["variable_coverage_matrices"] = [v1.to_dict(), v2.to_dict()]
+
+    bundle_path = export_project(tmp_path / "bundle.zip", **project)
+    imported = import_project(bundle_path)
+
+    matrices, warnings = resolve_imported_variable_coverage_matrices(imported)
+    assert warnings == []
+    assert {m["matrix_version"] for m in matrices} == {1, 2}
+
+
+def test_resolve_imported_variable_coverage_matrices_quarantines_malformed_records():
+    imported = {
+        "variable_coverage_matrices": [
+            _sample_coverage_matrix().to_dict(),
+            "not-a-mapping",
+            {"matrix_id": "incomplete"},
+        ]
+    }
+    matrices, warnings = resolve_imported_variable_coverage_matrices(imported)
+    assert len(matrices) == 1
+    assert matrices[0]["matrix_id"] == "m1"
+    assert len(warnings) == 2
+    assert any("not a mapping" in w for w in warnings)
+    assert any("incomplete" in w for w in warnings)
 
 
 def test_audit_resumability_officially_resumable_false_without_approvals():

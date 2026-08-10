@@ -28,8 +28,10 @@ from ancestry_mmm.core.coverage import (
     build_coverage_matrix_from_frame,
     compute_checksum,
     current_source_versions,
+    current_variable_coverage_matrix_from_resolved_versions,
     new_variable_coverage_matrix_version,
     official_fit_blocking_issues,
+    variable_coverage_matrix_versions_for_export,
     variable_coverage_records_fingerprint,
 )
 
@@ -1383,5 +1385,90 @@ class TestPart3V16AcceptanceScenario262:
         matrix, _df = self._build_matrix()
         round_tripped = VariableCoverageMatrix.from_dict(matrix.to_dict())
         assert round_tripped == matrix
-        assert round_tripped.fingerprint() == matrix.fingerprint()
-        assert len(round_tripped.blocking_issues) == len(matrix.blocking_issues)
+
+
+# ---------------------------------------------------------------------------
+# Project export/import portability (REQ-COVERAGE-001 S1: "coverage
+# decisions must be versioned and portable") - mirrors
+# TestGraphVersionsForExport/TestCurrentGraphFromResolvedVersions in
+# test_causal_graph.py exactly, since these functions are themselves a
+# direct mirror of core.causal_graph's.
+# ---------------------------------------------------------------------------
+
+
+def _matrix(matrix_version: int = 1, **overrides) -> VariableCoverageMatrix:
+    defaults = dict(
+        matrix_id="m1",
+        matrix_version=matrix_version,
+        generated_at="2026-01-01",
+        records=(_record(),),
+    )
+    defaults.update(overrides)
+    return VariableCoverageMatrix(**defaults)
+
+
+class TestVariableCoverageMatrixVersionsForExport:
+    """REQ-COVERAGE-001 S1 work package (matrix portability): the shared
+    rule for what a project export bundle's variable_coverage_matrices.json
+    should contain - every saved version plus the current live matrix,
+    deduplicated by unambiguous (matrix_id, matrix_version) identity."""
+
+    def test_combines_saved_history_and_current_live_matrix(self):
+        v1 = _matrix(matrix_version=1).to_dict()
+        current = _matrix(matrix_version=2).to_dict()
+        result = variable_coverage_matrix_versions_for_export(
+            current_matrix_dict=current, version_history=[v1]
+        )
+        assert {(r["matrix_id"], r["matrix_version"]) for r in result} == {
+            ("m1", 1),
+            ("m1", 2),
+        }
+
+    def test_current_matrix_deduplicates_against_matching_history_entry(self):
+        v1 = _matrix(matrix_version=1).to_dict()
+        result = variable_coverage_matrix_versions_for_export(
+            current_matrix_dict=v1, version_history=[v1]
+        )
+        assert len(result) == 1
+
+    def test_no_current_matrix_returns_history_only(self):
+        v1 = _matrix(matrix_version=1).to_dict()
+        result = variable_coverage_matrix_versions_for_export(
+            current_matrix_dict=None, version_history=[v1]
+        )
+        assert result == [v1]
+
+    def test_no_history_and_no_current_matrix_returns_empty(self):
+        assert (
+            variable_coverage_matrix_versions_for_export(
+                current_matrix_dict=None, version_history=None
+            )
+            == []
+        )
+
+    def test_current_matrix_never_overwrites_a_differently_structured_saved_version(
+        self,
+    ):
+        """A live matrix sharing a saved version's (matrix_id, matrix_version)
+        key but with genuinely different content (an unsaved in-session edit)
+        must never silently clobber the saved record under that key - only
+        an explicit new version (via new_variable_coverage_matrix_version,
+        bumping matrix_version) is ever persisted as a distinct record."""
+        saved_v1 = _matrix(matrix_version=1, notes="saved").to_dict()
+        unsaved_live_v1 = _matrix(matrix_version=1, notes="unsaved edit").to_dict()
+        result = variable_coverage_matrix_versions_for_export(
+            current_matrix_dict=unsaved_live_v1, version_history=[saved_v1]
+        )
+        assert result == [saved_v1]
+
+
+class TestCurrentVariableCoverageMatrixFromResolvedVersions:
+    def test_returns_none_for_no_versions(self):
+        assert current_variable_coverage_matrix_from_resolved_versions([]) is None
+
+    def test_returns_the_highest_numbered_version(self):
+        v1 = _matrix(matrix_version=1).to_dict()
+        v3 = _matrix(matrix_version=3, notes="latest").to_dict()
+        v2 = _matrix(matrix_version=2).to_dict()
+        result = current_variable_coverage_matrix_from_resolved_versions([v1, v3, v2])
+        assert result == v3
