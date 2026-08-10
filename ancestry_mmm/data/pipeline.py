@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import ast
 import operator as _op
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from dataclasses import asdict, dataclass, field
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -278,6 +278,120 @@ def join_sources(
         merged = merged.merge(other, on=keys, how=how)
 
     return merged.sort_values(keys).reset_index(drop=True)
+
+
+# ---------------------------------------------------------------------------
+# Join-loss diagnostics (REQ-COVERAGE-001 S4: "A join across sources of
+# differing native frequency must not silently collapse to an
+# inner-intersection window - join mode, unmatched-row policy, and
+# resulting coverage loss must be explicit and diagnosable before the
+# joined data is used officially.")
+#
+# join_sources() itself is unchanged (REQ-COVERAGE-001's own "do not
+# duplicate" note: "a dependent requirement must add explicit join
+# semantics and diagnostics on top of this function, not replace it
+# wholesale") - join_sources_with_diagnostics() below calls it directly and
+# additionally reports, per source, how many of that source's own
+# (date[, market]) keys did not survive into the joined result. The
+# default `how` is deliberately left at "inner" (unchanged from
+# join_sources) rather than silently switched to something else - this
+# record approves making the loss explicit and diagnosable, not a specific
+# new default join mode.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SourceJoinDiagnostic:
+    """One source's contribution to, and loss from, a join."""
+
+    source_name: str
+    input_rows: int
+    input_keys: int
+    matched_keys: int
+    dropped_keys: int
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class JoinDiagnostics:
+    """The full picture of what a `join_sources(..., how=join_mode)` call
+    actually did - which join mode was used, how many rows the join
+    produced, and, per source, how many of that source's own keys were
+    dropped (present in the source, absent from the joined result)."""
+
+    join_mode: str
+    keys: Tuple[str, ...]
+    output_rows: int
+    per_source: Tuple[SourceJoinDiagnostic, ...]
+
+    @property
+    def has_loss(self) -> bool:
+        return any(s.dropped_keys > 0 for s in self.per_source)
+
+    def to_dict(self) -> dict:
+        return {
+            "join_mode": self.join_mode,
+            "keys": list(self.keys),
+            "output_rows": self.output_rows,
+            "per_source": [s.to_dict() for s in self.per_source],
+        }
+
+
+def join_sources_with_diagnostics(
+    frames: Dict[str, pd.DataFrame],
+    date_col: str,
+    market_col: Optional[str] = None,
+    how: str = "inner",
+) -> Tuple[pd.DataFrame, JoinDiagnostics]:
+    """
+    `join_sources(frames, date_col, market_col, how)`, plus a `JoinDiagnostics`
+    report of what that join mode actually did to each source - REQ-COVERAGE-001
+    S4's "join mode, unmatched-row policy, and resulting coverage loss must be
+    explicit and diagnosable before the joined data is used officially."
+
+    A dropped key is a (date[, market]) combination present in a given
+    source's own rows that does not appear at all in the final joined
+    result - never inferred from column-level nulls (an "outer"/"left"/
+    "right" join can introduce nulls for columns from a non-matching source
+    while still keeping that row's key; that is not a dropped key, and
+    reported separately as zero `dropped_keys` for that source unless the
+    key itself is genuinely absent from the output).
+    """
+    keys = [date_col] + ([market_col] if market_col else [])
+    names = list(frames.keys())
+    if not names:
+        raise ValueError("No source frames provided.")
+
+    input_rows: Dict[str, int] = {}
+    key_sets: Dict[str, set] = {}
+    for name, frame in frames.items():
+        typed = frame.copy()
+        typed[date_col] = pd.to_datetime(typed[date_col])
+        input_rows[name] = len(typed)
+        key_sets[name] = set(typed[keys].itertuples(index=False, name=None))
+
+    joined = join_sources(frames, date_col=date_col, market_col=market_col, how=how)
+    joined_keys = set(joined[keys].itertuples(index=False, name=None))
+
+    per_source = tuple(
+        SourceJoinDiagnostic(
+            source_name=name,
+            input_rows=input_rows[name],
+            input_keys=len(key_sets[name]),
+            matched_keys=len(key_sets[name] & joined_keys),
+            dropped_keys=len(key_sets[name] - joined_keys),
+        )
+        for name in names
+    )
+    diagnostics = JoinDiagnostics(
+        join_mode=how,
+        keys=tuple(keys),
+        output_rows=len(joined),
+        per_source=per_source,
+    )
+    return joined, diagnostics
 
 
 # ---------------------------------------------------------------------------

@@ -5,6 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+import pandas as pd
 import streamlit as st
 
 from ancestry_mmm.utils import (
@@ -25,7 +26,7 @@ from ancestry_mmm.components import (
     render_empty_state,
 )
 from ancestry_mmm.data import (
-    join_sources,
+    join_sources_with_diagnostics,
     TransformStep,
     SUPPORTED_OPS,
     apply_pipeline,
@@ -33,6 +34,20 @@ from ancestry_mmm.data import (
     pipeline_from_json,
     UnsafeExpressionError,
 )
+
+JOIN_MODE_OPTIONS = ["inner", "outer", "left", "right"]
+JOIN_MODE_HELP = {
+    "inner": "Keep only rows whose date (and market) exists in every source - "
+    "any row unique to one source is dropped. Default, matches this app's "
+    "previous behaviour.",
+    "outer": "Keep every row from every source, filling missing values with "
+    "blanks where a source has no matching row (REQ-COVERAGE-001: never "
+    "automatically truncate to the narrowest common window).",
+    "left": "Keep every row from the first-listed source, dropping rows from "
+    "later sources that don't match it.",
+    "right": "Keep every row from the last-listed source, dropping rows from "
+    "earlier sources that don't match it.",
+}
 
 st.set_page_config(
     page_title="Transform Pipeline - Ancestry FH MMM", page_icon="🧬", layout="wide"
@@ -74,10 +89,23 @@ if has_market:
         format_func=readable_label,
     )
 
+join_mode = st.selectbox(
+    "Join mode *",
+    JOIN_MODE_OPTIONS,
+    index=0,
+    format_func=lambda m: m.capitalize(),
+    help="REQ-COVERAGE-001 S4: the join mode and any resulting row loss must "
+    "be an explicit, diagnosable choice, never a silent default.\n\n"
+    + "\n\n".join(f"**{m.capitalize()}**: {h}" for m, h in JOIN_MODE_HELP.items()),
+)
+
 if st.button("Join sources", type="primary"):
     try:
-        joined = join_sources(sources, date_col=date_col, market_col=market_col)
+        joined, join_diagnostics = join_sources_with_diagnostics(
+            sources, date_col=date_col, market_col=market_col, how=join_mode
+        )
         set_state("joined_data", joined)
+        set_state("join_diagnostics", join_diagnostics.to_dict())
         set_state("date_col", date_col)
         set_state("market_col", market_col)
         clear_model_state()
@@ -93,6 +121,28 @@ joined = get_state("joined_data")
 if joined is None:
     st.info("Join your sources above to continue.")
     st.stop()
+
+join_diagnostics = get_state("join_diagnostics")
+if join_diagnostics:
+    st.markdown("#### Join diagnostics")
+    st.caption(
+        f"Join mode: **{join_diagnostics['join_mode']}** - "
+        f"{join_diagnostics['output_rows']} row(s) in the joined result."
+    )
+    diagnostics_df = pd.DataFrame(join_diagnostics["per_source"])
+    st.dataframe(diagnostics_df, width="stretch", hide_index=True)
+    lossy_sources = [s for s in join_diagnostics["per_source"] if s["dropped_keys"] > 0]
+    if lossy_sources:
+        st.warning(
+            "This join dropped rows that existed in at least one source "
+            "(REQ-COVERAGE-001 S4: coverage loss must be explicit and "
+            "diagnosable before the joined data is used officially): "
+            + "; ".join(
+                f"{s['source_name']} lost {s['dropped_keys']} of "
+                f"{s['input_keys']} row(s)"
+                for s in lossy_sources
+            )
+        )
 
 st.dataframe(
     joined.head(10),
