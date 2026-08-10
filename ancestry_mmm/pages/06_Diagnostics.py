@@ -45,6 +45,7 @@ from ancestry_mmm.core.search_objects import (
     search_object_fit_fingerprint,
 )
 from ancestry_mmm.core.coverage import VariableCoverageMatrix
+from ancestry_mmm.core.market_data_capability import check_market_channel_capability
 from ancestry_mmm.application.diagnostics_service import (
     DiagnosticsService,
     DiagnosticsInput,
@@ -537,6 +538,37 @@ st.markdown("---")
 st.markdown("### Model approval")
 st.caption(FIELD_HELP["approval"])
 render_glossary(["Prior", "Posterior", "Approval"])
+
+# REQ-COVERAGE-001 S6, Work Package 5 (review finding, PR #158): surface the
+# same rectangular-engine capability check used on Model Config here too, so
+# an approver can see whether this fit's market/channel combination is
+# within what the engine can validly support before approving it.
+# Deliberately informational only, not a gate on approval itself - REQ-
+# COVERAGE-001 S6 authorises reporting the capability result, never
+# specifies that official approval must be blocked on it, and inventing
+# that additional governance rule here (which approvals get blocked, under
+# what waiver process, etc.) is exactly the kind of FR-MOD-015-adjacent
+# business decision this PR declines to invent.
+if model_spec_dict is not None:
+    _diagnostics_spec = ModelSpec.from_dict(model_spec_dict)
+    _diagnostics_capability = check_market_channel_capability(
+        _diagnostics_spec.markets,
+        _diagnostics_spec.channels,
+        VariableCoverageMatrix.from_dict(coverage_matrix_dict)
+        if coverage_matrix_dict
+        else None,
+    )
+    if not _diagnostics_capability.supported:
+        st.info(
+            "This fit's market/channel combination goes beyond what the "
+            "engine can validly support today per the governed coverage "
+            "matrix (REQ-COVERAGE-001 S6) - informational only, this does "
+            "not block approval:\n\n"
+            + "\n".join(
+                f"- **{issue.market} / {issue.channel}**: {issue.reason}"
+                for issue in _diagnostics_capability.issues
+            )
+        )
 
 activity_governance_errors = []
 if not activity_definitions:
