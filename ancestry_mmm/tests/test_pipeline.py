@@ -245,11 +245,14 @@ class TestJoinSourcesWithDiagnostics:
         assert diagnostics.join_mode == "inner"
         assert diagnostics.output_rows == 3
         assert diagnostics.has_loss is False
+        assert diagnostics.has_coverage_gaps is False
         by_name = {s.source_name: s for s in diagnostics.per_source}
         assert by_name["media"].input_rows == 3
         assert by_name["media"].matched_keys == 3
         assert by_name["media"].dropped_keys == 0
+        assert by_name["media"].unmatched_keys == 0
         assert by_name["outcomes"].dropped_keys == 0
+        assert by_name["outcomes"].unmatched_keys == 0
 
     def test_inner_join_reports_the_dropped_keys_per_source(self):
         # media has 2024-01-01..03; outcomes only has 2024-01-02..04 - an
@@ -270,7 +273,9 @@ class TestJoinSourcesWithDiagnostics:
         assert by_name["media"].input_keys == 3
         assert by_name["media"].matched_keys == 2
         assert by_name["media"].dropped_keys == 1
+        assert by_name["media"].unmatched_keys == 1
         assert by_name["outcomes"].dropped_keys == 1
+        assert by_name["outcomes"].unmatched_keys == 1
 
     def test_outer_join_reports_zero_loss_for_the_same_mismatched_dates(self):
         """The same mismatched-date scenario as the inner-join test above -
@@ -291,6 +296,39 @@ class TestJoinSourcesWithDiagnostics:
         by_name = {s.source_name: s for s in diagnostics.per_source}
         assert by_name["media"].dropped_keys == 0
         assert by_name["outcomes"].dropped_keys == 0
+
+    def test_outer_join_still_reports_coverage_gaps_review_finding(self):
+        """Review finding (PR #157): an outer join reports zero dropped_keys
+        for every source by construction (nothing is ever dropped), which
+        would make a row that survived with null columns from a
+        non-matching source look indistinguishable from a fully-matched
+        row unless tracked separately. media covers weeks 1-4, outcomes
+        covers weeks 2-5 - media's week 1 and outcomes' week 5 each lack a
+        counterpart in the other source and must be surfaced as
+        unmatched_keys even though outer keeps both rows."""
+        media = pd.DataFrame(
+            {
+                "date": pd.date_range("2024-01-01", periods=4, freq="W"),
+                "TV": [1, 2, 3, 4],
+            }
+        )
+        outcomes = pd.DataFrame(
+            {
+                "date": pd.date_range("2024-01-08", periods=4, freq="W"),
+                "GSAs": [5, 6, 7, 8],
+            }
+        )
+        joined, diagnostics = join_sources_with_diagnostics(
+            {"media": media, "outcomes": outcomes}, date_col="date", how="outer"
+        )
+        assert len(joined) == 5
+        assert diagnostics.has_loss is False
+        assert diagnostics.has_coverage_gaps is True
+        by_name = {s.source_name: s for s in diagnostics.per_source}
+        assert by_name["media"].dropped_keys == 0
+        assert by_name["media"].unmatched_keys == 1
+        assert by_name["outcomes"].dropped_keys == 0
+        assert by_name["outcomes"].unmatched_keys == 1
 
     def test_join_mode_defaults_to_inner_matching_join_sources(self):
         media = pd.DataFrame(

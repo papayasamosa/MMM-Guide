@@ -92,6 +92,21 @@ Bundle layout (a single zip):
                                           yet" is a valid, not-an-error reading
                                           (see resolve_imported_variable_coverage_
                                           matrices below).
+    config/join_config.json            - REQ-COVERAGE-001 S4 (Work Package 4):
+                                          the join key columns, join mode and
+                                          resulting data.pipeline.JoinDiagnostics
+                                          from the most recent "Join sources"
+                                          click ({"date_col", "market_col",
+                                          "join_mode", "join_diagnostics"}), so a
+                                          re-imported project can show what
+                                          produced its transformed_data instead
+                                          of silently reverting to the page's
+                                          "inner" default on the analyst's next
+                                          visit. Absent for every bundle exported
+                                          before this capability existed, and for
+                                          any current project with no sources
+                                          joined yet - "not joined yet" is a
+                                          valid, not-an-error reading.
     scenarios/scenario_<i>_predicted.csv
     model/trace.nc                     - fitted posterior (ArviZ InferenceData, NetCDF)
     curve_bank/*.json                  - curve bank + calibration records, if any
@@ -156,8 +171,9 @@ from .optimization import SpendConstraint
 # REQ-GRAPH-001: bumped 11 -> 12 for the project-level causal_graphs bundle
 # file (see export_project()'s docstring). REQ-SEARCH-001: bumped 12 -> 13
 # for the project-level search_objects bundle file. REQ-COVERAGE-001: bumped
-# 13 -> 14 for the project-level variable_coverage_matrices bundle file.
-PROJECT_BUNDLE_SCHEMA_VERSION = 14
+# 13 -> 14 for the project-level variable_coverage_matrices bundle file, and
+# 14 -> 15 for the project-level join_config bundle file (Work Package 4).
+PROJECT_BUNDLE_SCHEMA_VERSION = 15
 PROJECT_APP_VERSION = "0.1.0"
 
 
@@ -253,6 +269,7 @@ def export_project(
     search_objects: Optional[List[dict]] = None,
     source_versions: Optional[List[dict]] = None,
     variable_coverage_matrices: Optional[List[dict]] = None,
+    join_config: Optional[dict] = None,
 ) -> Path:
     output_path = Path(output_path)
     with tempfile.TemporaryDirectory() as tmp_str:
@@ -420,6 +437,14 @@ def export_project(
             (tmp / "config" / "variable_coverage_matrices.json").write_text(
                 json.dumps(variable_coverage_matrices, indent=2, default=str)
             )
+        # REQ-COVERAGE-001 S4 (Work Package 4): the join key columns, mode
+        # and resulting diagnostics from the most recent join, so a
+        # re-imported project doesn't silently revert to the page's
+        # "inner" default - see this module's docstring.
+        if join_config is not None:
+            (tmp / "config" / "join_config.json").write_text(
+                json.dumps(join_config, indent=2, default=str)
+            )
         if diagnostics is not None:
             for name, value in diagnostics.items():
                 if value is None:
@@ -493,6 +518,7 @@ def export_project(
                 and bool(source_versions),
                 "variable_coverage_matrices": variable_coverage_matrices is not None
                 and bool(variable_coverage_matrices),
+                "join_config": join_config is not None and bool(join_config),
             },
         }
         (tmp / "manifest.json").write_text(json.dumps(manifest, indent=2, default=str))
@@ -602,6 +628,11 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         # not-an-error reading, same convention as causal_graphs/
         # search_objects/source_versions above.
         "variable_coverage_matrices": None,
+        # REQ-COVERAGE-001 S4 (Work Package 4): None for bundles exported
+        # before this capability existed, and for any current project with
+        # no sources joined yet - "not joined yet" is a valid, not-an-error
+        # reading, same convention as the other config keys above.
+        "join_config": None,
     }
     with tempfile.TemporaryDirectory() as tmp_str:
         tmp = Path(tmp_str)
@@ -753,6 +784,10 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         if (config_dir / "variable_coverage_matrices.json").exists():
             result["variable_coverage_matrices"] = json.loads(
                 (config_dir / "variable_coverage_matrices.json").read_text()
+            )
+        if (config_dir / "join_config.json").exists():
+            result["join_config"] = json.loads(
+                (config_dir / "join_config.json").read_text()
             )
         # G2A.7 (REQ-OUT-002): outcome approvals persisted alongside outcome
         # definitions. Absent in legacy bundles — treated as no approvals on

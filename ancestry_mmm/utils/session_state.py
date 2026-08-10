@@ -36,10 +36,15 @@ def init_session_state():
         # real upload (demo load, remove).
         "active_source_upload_version": {},
         "joined_data": None,
-        # REQ-COVERAGE-001 S4: the join mode and resulting per-source row
-        # loss from the most recent "Join sources" click (data.pipeline.
-        # JoinDiagnostics.to_dict()) - never surfaced only implicitly via
-        # the joined row count. None until a join has been run.
+        # REQ-COVERAGE-001 S4: the join mode ("inner"/"outer"/"left"/
+        # "right") chosen on the most recent "Join sources" click - read
+        # back to default the page's Join mode selectbox to what was
+        # actually used last time, rather than always resetting to
+        # "inner". "join_diagnostics" is the resulting per-source row
+        # loss/coverage-gap report (data.pipeline.JoinDiagnostics.to_dict())
+        # - never surfaced only implicitly via the joined row count. Both
+        # None until a join has been run.
+        "join_mode": None,
         "join_diagnostics": None,
         "data_loaded": False,
         "project_name": "ancestry-fh-uk",

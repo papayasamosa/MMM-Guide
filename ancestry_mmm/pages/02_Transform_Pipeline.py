@@ -89,10 +89,15 @@ if has_market:
         format_func=readable_label,
     )
 
+_saved_join_mode = get_state("join_mode")
 join_mode = st.selectbox(
     "Join mode *",
     JOIN_MODE_OPTIONS,
-    index=0,
+    index=(
+        JOIN_MODE_OPTIONS.index(_saved_join_mode)
+        if _saved_join_mode in JOIN_MODE_OPTIONS
+        else 0
+    ),
     format_func=lambda m: m.capitalize(),
     help="REQ-COVERAGE-001 S4: the join mode and any resulting row loss must "
     "be an explicit, diagnosable choice, never a silent default.\n\n"
@@ -105,6 +110,7 @@ if st.button("Join sources", type="primary"):
             sources, date_col=date_col, market_col=market_col, how=join_mode
         )
         set_state("joined_data", joined)
+        set_state("join_mode", join_mode)
         set_state("join_diagnostics", join_diagnostics.to_dict())
         set_state("date_col", date_col)
         set_state("market_col", market_col)
@@ -141,6 +147,29 @@ if join_diagnostics:
                 f"{s['source_name']} lost {s['dropped_keys']} of "
                 f"{s['input_keys']} row(s)"
                 for s in lossy_sources
+            )
+        )
+    # Review finding (PR #157): an "outer"/"left"/"right" join can keep
+    # every row while still leaving some of them without a counterpart in
+    # every source (null columns from whichever source didn't have that
+    # row) - dropped_keys alone would report this join as loss-free, which
+    # is technically true but hides exactly the coverage gap REQ-COVERAGE-001
+    # S4 requires be diagnosable. Surfaced as a separate warning from row
+    # loss, since "the row is missing" and "the row is present but
+    # incomplete" call for different analyst action.
+    gappy_sources = [
+        s for s in join_diagnostics["per_source"] if s["unmatched_keys"] > 0
+    ]
+    if gappy_sources:
+        st.warning(
+            "Some rows in the joined result have no counterpart in every "
+            "source, so at least one source's columns will be null for "
+            "them: "
+            + "; ".join(
+                f"{s['source_name']} has {s['unmatched_keys']} of "
+                f"{s['input_keys']} row(s) without a match in every "
+                "other source"
+                for s in gappy_sources
             )
         )
 

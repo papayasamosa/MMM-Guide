@@ -104,3 +104,20 @@ def test_switching_to_outer_join_preserves_every_row_and_reports_no_loss():
 
     joined = at.session_state["joined_data"]
     assert len(joined) == 5
+
+
+def test_outer_join_still_warns_about_rows_without_a_counterpart_in_every_source():
+    """Review finding (PR #157): outer keeps every row, but media's week 1
+    and outcomes' week 5 still lack a counterpart in the other source -
+    that must surface as its own warning, distinct from row loss."""
+    at = _run_at(raw_sources=_mismatched_sources())
+    join_mode_sb = next(sb for sb in at.selectbox if sb.label == "Join mode *")
+    join_mode_sb.select("outer").run()
+
+    join_button = next(b for b in at.button if b.label == "Join sources")
+    join_button.click().run()
+    assert not at.exception, f"join click raised: {at.exception}"
+
+    diagnostics = at.session_state["join_diagnostics"]
+    assert any(s["unmatched_keys"] > 0 for s in diagnostics["per_source"])
+    assert any("no counterpart" in (w.value or "") for w in at.warning)

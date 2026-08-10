@@ -302,13 +302,26 @@ def join_sources(
 
 @dataclass(frozen=True)
 class SourceJoinDiagnostic:
-    """One source's contribution to, and loss from, a join."""
+    """One source's contribution to, and loss from, a join.
+
+    `dropped_keys` and `unmatched_keys` are deliberately distinct
+    (review finding on an earlier version of this diagnostic): a key can
+    survive into the joined output (e.g. under `how="outer"`, which drops
+    nothing) while still lacking a counterpart in every other source - an
+    "outer" join reporting only `dropped_keys` would show zero loss for
+    exactly the rows REQ-COVERAGE-001 S4 requires be diagnosable, since
+    the row appears present while several of its columns are actually
+    null. `dropped_keys` answers "did this row survive the join at all";
+    `unmatched_keys` answers "does this row have a counterpart in every
+    other source", independently of which `how` was chosen.
+    """
 
     source_name: str
     input_rows: int
     input_keys: int
     matched_keys: int
     dropped_keys: int
+    unmatched_keys: int
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -319,7 +332,10 @@ class JoinDiagnostics:
     """The full picture of what a `join_sources(..., how=join_mode)` call
     actually did - which join mode was used, how many rows the join
     produced, and, per source, how many of that source's own keys were
-    dropped (present in the source, absent from the joined result)."""
+    dropped (present in the source, absent from the joined result) or
+    left without a counterpart in every other source (present in the
+    result, but with at least one other source's columns null for that
+    row)."""
 
     join_mode: str
     keys: Tuple[str, ...]
@@ -329,6 +345,10 @@ class JoinDiagnostics:
     @property
     def has_loss(self) -> bool:
         return any(s.dropped_keys > 0 for s in self.per_source)
+
+    @property
+    def has_coverage_gaps(self) -> bool:
+        return any(s.unmatched_keys > 0 for s in self.per_source)
 
     def to_dict(self) -> dict:
         return {
@@ -357,7 +377,12 @@ def join_sources_with_diagnostics(
     "right" join can introduce nulls for columns from a non-matching source
     while still keeping that row's key; that is not a dropped key, and
     reported separately as zero `dropped_keys` for that source unless the
-    key itself is genuinely absent from the output).
+    key itself is genuinely absent from the output). An unmatched key is a
+    (date[, market]) combination present in a given source's own rows that
+    is absent from at least one *other* source - computed from the input
+    key sets alone, independently of `how`, so it stays accurate even for
+    "outer"/"left"/"right" modes where the row itself survives into the
+    output with null columns rather than being dropped.
     """
     keys = [date_col] + ([market_col] if market_col else [])
     names = list(frames.keys())
@@ -374,6 +399,7 @@ def join_sources_with_diagnostics(
 
     joined = join_sources(frames, date_col=date_col, market_col=market_col, how=how)
     joined_keys = set(joined[keys].itertuples(index=False, name=None))
+    keys_in_every_source = set.intersection(*key_sets.values())
 
     per_source = tuple(
         SourceJoinDiagnostic(
@@ -382,6 +408,7 @@ def join_sources_with_diagnostics(
             input_keys=len(key_sets[name]),
             matched_keys=len(key_sets[name] & joined_keys),
             dropped_keys=len(key_sets[name] - joined_keys),
+            unmatched_keys=len(key_sets[name] - keys_in_every_source),
         )
         for name in names
     )

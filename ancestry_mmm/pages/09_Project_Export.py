@@ -461,6 +461,22 @@ if st.button("Build export bundle", type="primary"):
                 current_matrix_dict=get_state("variable_coverage_matrix"),
                 version_history=get_state("variable_coverage_matrix_versions"),
             ),
+            # REQ-COVERAGE-001 S4 (Work Package 4): the join key columns,
+            # mode and resulting diagnostics from the most recent "Join
+            # sources" click, so a re-imported project doesn't silently
+            # revert to the page's "inner" default on the analyst's next
+            # visit. None (omitted from the bundle) until sources have
+            # actually been joined.
+            join_config=(
+                {
+                    "date_col": get_state("date_col"),
+                    "market_col": get_state("market_col"),
+                    "join_mode": get_state("join_mode"),
+                    "join_diagnostics": get_state("join_diagnostics"),
+                }
+                if get_state("date_col")
+                else None
+            ),
         )
     st.success(f"Project bundle built: {output_path}")
     with open(output_path, "rb") as f:
@@ -630,6 +646,17 @@ if uploaded_zip is not None and st.button("Import bundle"):
         )
         for _coverage_matrix_warning in _coverage_matrix_warnings:
             st.warning(_coverage_matrix_warning)
+        # REQ-COVERAGE-001 S4 (Work Package 4): restore the join key
+        # columns, mode and diagnostics from the most recent "Join
+        # sources" click - a bundle with no join_config.json (every bundle
+        # exported before this capability existed, or a project with no
+        # sources joined yet) resolves every key to None, "not joined yet"
+        # restored as not joined yet, never fabricated.
+        _join_config = imported.get("join_config") or {}
+        set_state("date_col", _join_config.get("date_col"))
+        set_state("market_col", _join_config.get("market_col"))
+        set_state("join_mode", _join_config.get("join_mode"))
+        set_state("join_diagnostics", _join_config.get("join_diagnostics"))
         set_state("migration_review", imported.get("migration_review"))
         # PR 125A: restore the project-level planning dependencies so a
         # resumed session's Scenario Planner selection (and any newly
