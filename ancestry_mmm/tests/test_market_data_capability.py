@@ -9,6 +9,12 @@ check).
 from ancestry_mmm.core.coverage import (
     CoverageSegment,
     FrequencyMetadata,
+    STATE_ESTIMATED,
+    STATE_MODELLED,
+    STATE_NOT_APPLICABLE,
+    STATE_OBSERVED_ZERO,
+    STATE_SUPPRESSED,
+    STATE_UNAVAILABLE_SOURCE,
     STATE_UNKNOWN,
     VariableCoverageMatrix,
     VariableCoverageRecord,
@@ -93,7 +99,7 @@ class TestCheckMarketChannelCapability:
         matrix = _matrix(_unresolved_record("TV", "UK"))
         result = check_market_channel_capability(["UK"], ["TV"], matrix)
         assert result.supported is False
-        assert "unresolved coverage" in result.issues[0].reason
+        assert "not a genuinely observed number" in result.issues[0].reason
 
     def test_approved_for_official_use_clears_an_unresolved_gap(self):
         record = _resolved_record(
@@ -190,3 +196,77 @@ class TestCheckMarketChannelCapability:
         result = check_market_channel_capability([], [], None)
         assert result.supported is True
         assert result.issues == ()
+
+
+class TestNonObservedStatesAreUnsupported:
+    """Review finding on PR #158: `is_officially_unresolved` only blocks
+    `unknown`/`missing_expected` - a coverage segment recorded as
+    `not_applicable`/`unavailable_source`/`suppressed`/`estimated`/
+    `modelled` is equally not a genuinely observed source number
+    (REQ-COVERAGE-001 S1, S2), and must be reported unsupported here too,
+    not silently treated as fine to fit on."""
+
+    def test_observed_zero_is_supported(self):
+        matrix = _matrix(
+            _resolved_record(
+                "TV",
+                "UK",
+                coverage_segments=(
+                    CoverageSegment(
+                        period_start="2026-01-01",
+                        period_end="2026-01-08",
+                        state=STATE_OBSERVED_ZERO,
+                    ),
+                ),
+            )
+        )
+        result = check_market_channel_capability(["UK"], ["TV"], matrix)
+        assert result.supported is True
+
+    def test_not_applicable_unavailable_suppressed_estimated_modelled_are_unsupported(
+        self,
+    ):
+        for state in (
+            STATE_NOT_APPLICABLE,
+            STATE_UNAVAILABLE_SOURCE,
+            STATE_SUPPRESSED,
+            STATE_ESTIMATED,
+            STATE_MODELLED,
+        ):
+            matrix = _matrix(
+                _resolved_record(
+                    "TV",
+                    "UK",
+                    coverage_segments=(
+                        CoverageSegment(
+                            period_start="2026-01-01",
+                            period_end="2026-01-08",
+                            state=state,
+                        ),
+                    ),
+                )
+            )
+            result = check_market_channel_capability(["UK"], ["TV"], matrix)
+            assert result.supported is False, state
+
+    def test_approved_for_official_use_clears_a_non_observed_state_too(self):
+        record = _resolved_record(
+            "TV",
+            "UK",
+            coverage_segments=(
+                CoverageSegment(
+                    period_start="2026-01-01",
+                    period_end="2026-01-08",
+                    state=STATE_ESTIMATED,
+                ),
+            ),
+            proposed_treatment="use governed estimate",
+            approved_treatment="use governed estimate",
+            treatment_status="approved",
+            treatment_approved_by="reviewer",
+            treatment_approved_at="2026-01-01",
+            approved_for_official_use=True,
+        )
+        matrix = _matrix(record)
+        result = check_market_channel_capability(["UK"], ["TV"], matrix)
+        assert result.supported is True

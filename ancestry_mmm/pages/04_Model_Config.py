@@ -36,6 +36,7 @@ from ancestry_mmm.core.brand_search import (
     validate_brand_search_configs,
 )
 from ancestry_mmm.core.coverage import VariableCoverageMatrix
+from ancestry_mmm.core.fingerprint import fingerprint_dataframe
 from ancestry_mmm.core.market_data_capability import check_market_channel_capability
 from ancestry_mmm.data import prepare_fh_modeling_frame
 import pandas as pd
@@ -392,39 +393,60 @@ _coverage_matrix = (
     if _coverage_matrix_dict
     else None
 )
+# Review finding (PR #158): always run the same check, even with no matrix
+# at all - "no coverage matrix" must be classified exploratory/unsupported
+# (REQ-COVERAGE-001 S6 point 3), not silently skipped. The no-matrix branch
+# below stays a calm st.info (not st.warning) since this is every project's
+# normal starting state (Data Coverage is optional) - severity is about
+# tone, not about hiding that the configuration is genuinely unsupported.
+_capability = check_market_channel_capability(
+    spec.markets, spec.channels, _coverage_matrix
+)
 if _coverage_matrix is None:
-    # No coverage matrix at all is this project's normal starting state
-    # (optional, per the Data Coverage page) - a full "every cell is
-    # unsupported" warning here would fire on every project by default,
-    # drowning out warnings that actually mean something. A calm nudge,
-    # not an alarm.
     st.info(
-        "No coverage matrix built yet for this project - build one on the "
-        "Data Coverage page to see whether this configuration is within "
-        "the engine's current rectangular capability before fitting."
+        "No coverage matrix built yet for this project - every requested "
+        "market/channel combination is therefore exploratory/unsupported "
+        "today (REQ-COVERAGE-001 S6). Build one on the Data Coverage page "
+        "to see whether this configuration is within the engine's current "
+        "rectangular capability before fitting."
     )
-else:
-    _capability = check_market_channel_capability(
-        spec.markets, spec.channels, _coverage_matrix
+elif _capability.supported:
+    # Review finding (PR #158): a matrix built against an earlier Transform
+    # Pipeline join (or restored from an imported project bundle) can drift
+    # out of sync with the *current* joined data - mirrors the live
+    # fingerprint comparison on the Data Coverage page (pages/15_Data_
+    # Coverage.py) rather than baking a build-time fingerprint into the
+    # portable matrix itself, so it also catches a data change made after
+    # the matrix was last built.
+    _built_against_fingerprint = get_state(
+        "variable_coverage_matrix_built_against_fingerprint"
     )
-    if _capability.supported:
+    if _built_against_fingerprint != fingerprint_dataframe(df):
+        st.warning(
+            "This configuration's coverage matrix may be stale: the joined "
+            "data has changed (or this matrix was restored from an "
+            "imported project) since it was last built. Rebuild it on the "
+            "Data Coverage page to confirm this configuration is still "
+            "within the engine's current rectangular capability."
+        )
+    else:
         st.success(
             "Every requested market/channel combination has governed, "
             "officially-resolved coverage - this configuration is within "
             "the engine's current rectangular capability."
         )
-    else:
-        st.warning(
-            "This configuration goes beyond what the engine can validly "
-            "support today - treat any resulting fit as exploratory, not "
-            "official, until every cell below is resolved (Data Coverage "
-            "page) or approved for official use:\n\n"
-            + "\n".join(
-                f"- **{issue.market} / {issue.channel}**: {issue.reason}"
-                for issue in _capability.issues
-            )
+else:
+    st.warning(
+        "This configuration goes beyond what the engine can validly "
+        "support today - treat any resulting fit as exploratory, not "
+        "official, until every cell below is resolved (Data Coverage "
+        "page) or approved for official use:\n\n"
+        + "\n".join(
+            f"- **{issue.market} / {issue.channel}**: {issue.reason}"
+            for issue in _capability.issues
         )
-        st.caption(_capability.decision_report)
+    )
+    st.caption(_capability.decision_report)
 
 if brand_search_errors:
     st.caption(

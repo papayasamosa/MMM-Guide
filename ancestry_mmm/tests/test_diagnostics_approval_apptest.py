@@ -19,6 +19,11 @@ import streamlit as st
 from streamlit.testing.v1 import AppTest
 
 from ancestry_mmm.core.activities import ActivityDefinition
+from ancestry_mmm.core.coverage import (
+    FrequencyMetadata,
+    VariableCoverageMatrix,
+    VariableCoverageRecord,
+)
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
 from ancestry_mmm.core.identification_diagnostics import (
     channel_spend_correlation_matrix,
@@ -947,6 +952,80 @@ def test_prior_predictive_check_failure_immediately_clears_approval_and_validati
     assert at.session_state["validation_results"] is None
     assert at.session_state["approval_readiness"] is None
     assert at.session_state["validation_service_result"] is None
+
+
+# ---------------------------------------------------------------------------
+# REQ-COVERAGE-001 S6, Work Package 5 (review finding, PR #158): informational
+# engine-capability display in the Model approval section.
+# ---------------------------------------------------------------------------
+
+
+def test_unsupported_capability_shows_informational_message_and_does_not_block_approval():
+    """No coverage matrix at all means this fit's (market, channel)
+    combination is unsupported (REQ-COVERAGE-001 S6) - the page must say so
+    near approval, but purely informationally: approval itself must still
+    succeed, since hard-gating official use on this check is a business
+    decision this PR declines to invent."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_fully_identified_model(at)
+    at.session_state["validation_policy"] = _minimal_gate_policy(
+        policy_id="policy-capability-info",
+        gates=[
+            {
+                "name": "divergences",
+                "description": "No divergences",
+                "evaluator_id": "divergences",
+                "expected_state": False,
+            }
+        ],
+    )
+    at.run()
+    compute_button = next(b for b in at.button if b.label == "Compute scorecard")
+    compute_button.click().run()
+    assert not at.exception, f"page raised: {at.exception}"
+    assert any(
+        "goes beyond what the engine can validly support" in (i.value or "")
+        for i in at.info
+    )
+
+    readiness_button = next(b for b in at.button if b.label == "Evaluate readiness")
+    readiness_button.click().run()
+    approved_by_input = next(
+        t for t in at.text_input if t.label == "Approved by (name) *"
+    )
+    approved_by_input.set_value("Test Reviewer").run()
+    approve_button = next(
+        b for b in at.button if b.label == "Approve this model for planning"
+    )
+    approve_button.click().run()
+    assert not at.exception, f"page raised after approving: {at.exception}"
+    assert at.session_state["model_approval"] is not None
+
+
+def test_supported_capability_shows_no_informational_message():
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_fully_identified_model(at)
+    record = VariableCoverageRecord(
+        variable_id="TV",
+        source_id="media",
+        source_version=1,
+        market="UK",
+        frequency=FrequencyMetadata(
+            native_frequency="weekly",
+            target_frequency="weekly",
+            variable_class="flow_count",
+        ),
+        coverage_segments=(),
+    )
+    at.session_state["variable_coverage_matrix"] = VariableCoverageMatrix(
+        matrix_id="m1", matrix_version=1, generated_at="2026-01-01", records=(record,)
+    ).to_dict()
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    assert not any(
+        "goes beyond what the engine can validly support" in (i.value or "")
+        for i in at.info
+    )
 
 
 def test_predictive_density_check_failure_immediately_clears_approval_and_validation_results():

@@ -16,6 +16,7 @@ from ancestry_mmm.core.coverage import (
     VariableCoverageMatrix,
     VariableCoverageRecord,
 )
+from ancestry_mmm.core.fingerprint import fingerprint_dataframe
 from ancestry_mmm.core.outcomes import FAMILY_HISTORY, METRIC_GSA, OutcomeDefinition
 from ancestry_mmm.core.schema import ModelSpec
 
@@ -109,10 +110,16 @@ def _run_at(**extra_state):
 def test_no_coverage_matrix_shows_a_calm_nudge_not_a_warning():
     """A project that has never touched the (optional) Data Coverage page
     is this app's normal starting state - it must not produce a scary
-    "every cell unsupported" warning by default, only a calm nudge."""
+    "every cell unsupported" warning by default, only a calm nudge. It
+    must still honestly say the configuration is exploratory/unsupported
+    (review finding, PR #158) rather than staying silent about it."""
     at = _run_at()
     assert not at.exception, f"page raised: {at.exception}"
-    assert any("No coverage matrix built yet" in (i.value or "") for i in at.info)
+    assert any(
+        "exploratory/unsupported" in (i.value or "")
+        and "No coverage matrix" in (i.value or "")
+        for i in at.info
+    )
     assert not any(
         "goes beyond what the engine can validly support" in (w.value or "")
         for w in at.warning
@@ -120,7 +127,11 @@ def test_no_coverage_matrix_shows_a_calm_nudge_not_a_warning():
 
 
 def test_fully_resolved_coverage_shows_supported_success():
-    at = _run_at(variable_coverage_matrix=_resolved_matrix().to_dict())
+    df, _, _ = _base_state()
+    at = _run_at(
+        variable_coverage_matrix=_resolved_matrix().to_dict(),
+        variable_coverage_matrix_built_against_fingerprint=fingerprint_dataframe(df),
+    )
     assert not at.exception, f"page raised: {at.exception}"
     assert any(
         "within the engine's current rectangular capability" in (s.value or "")
@@ -129,6 +140,24 @@ def test_fully_resolved_coverage_shows_supported_success():
     assert not any(
         "goes beyond what the engine can validly support" in (w.value or "")
         for w in at.warning
+    )
+    assert not any("may be stale" in (w.value or "") for w in at.warning)
+
+
+def test_resolved_coverage_with_stale_fingerprint_shows_stale_warning_not_success():
+    """Review finding (PR #158): a matrix built against an earlier joined
+    frame (or restored from an imported project bundle) must not be
+    reported as confidently "supported" once the underlying data has
+    since changed."""
+    at = _run_at(
+        variable_coverage_matrix=_resolved_matrix().to_dict(),
+        variable_coverage_matrix_built_against_fingerprint="stale-fingerprint",
+    )
+    assert not at.exception, f"page raised: {at.exception}"
+    assert any("may be stale" in (w.value or "") for w in at.warning)
+    assert not any(
+        "within the engine's current rectangular capability" in (s.value or "")
+        for s in at.success
     )
 
 

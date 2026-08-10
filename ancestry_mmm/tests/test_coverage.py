@@ -426,6 +426,83 @@ class TestIsOfficiallyUnresolved:
         assert official_fit_blocking_issues([_record()]) == []
 
 
+class TestHasUnapprovedNonObservedCoverage:
+    """Review finding on core.market_data_capability (PR #158):
+    is_officially_unresolved only blocks unknown/missing_expected - a
+    consumer that needs "is every segment a genuinely observed, directly
+    usable number" needs this stricter property instead, since REQ-
+    COVERAGE-001 S1/S2 make clear that not_applicable/unavailable_source/
+    suppressed/estimated/modelled are equally not real observed facts."""
+
+    def test_no_segments_at_all_is_not_flagged(self):
+        assert not _record(coverage_segments=()).has_unapproved_non_observed_coverage
+
+    def test_observed_zero_segment_is_not_flagged(self):
+        record = _record(
+            coverage_segments=(
+                CoverageSegment(
+                    period_start="2025-01-06",
+                    period_end="2025-12-29",
+                    state=STATE_OBSERVED_ZERO,
+                ),
+            )
+        )
+        assert not record.has_unapproved_non_observed_coverage
+
+    def test_every_non_observed_zero_state_is_flagged_without_approval(self):
+        for state in (
+            STATE_UNKNOWN,
+            STATE_MISSING_EXPECTED,
+            STATE_NOT_APPLICABLE,
+            STATE_UNAVAILABLE_SOURCE,
+            STATE_ESTIMATED,
+        ):
+            record = _record(
+                coverage_segments=(
+                    CoverageSegment(
+                        period_start="2025-01-06",
+                        period_end="2025-12-29",
+                        state=state,
+                    ),
+                )
+            )
+            assert record.has_unapproved_non_observed_coverage, state
+
+    def test_approved_for_official_use_clears_it_for_any_state(self):
+        record = _record(
+            coverage_segments=(
+                CoverageSegment(
+                    period_start="2025-01-06",
+                    period_end="2025-12-29",
+                    state=STATE_ESTIMATED,
+                ),
+            ),
+            treatment_status="approved",
+            approved_treatment="use governed estimate",
+            treatment_approved_by="Analyst",
+            treatment_approved_at="2026-08-09",
+            approved_for_official_use=True,
+        )
+        assert not record.has_unapproved_non_observed_coverage
+
+    def test_mixed_observed_zero_and_estimated_segments_still_flagged(self):
+        record = _record(
+            coverage_segments=(
+                CoverageSegment(
+                    period_start="2025-01-06",
+                    period_end="2025-06-29",
+                    state=STATE_OBSERVED_ZERO,
+                ),
+                CoverageSegment(
+                    period_start="2025-07-06",
+                    period_end="2025-12-29",
+                    state=STATE_ESTIMATED,
+                ),
+            )
+        )
+        assert record.has_unapproved_non_observed_coverage
+
+
 # ---------------------------------------------------------------------------
 # VariableCoverageMatrix
 # ---------------------------------------------------------------------------

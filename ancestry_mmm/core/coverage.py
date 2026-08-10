@@ -465,6 +465,31 @@ class VariableCoverageRecord:
             for segment in self.coverage_segments
         )
 
+    @property
+    def has_unapproved_non_observed_coverage(self) -> bool:
+        """Broader than `is_officially_unresolved` (review finding on
+        core.market_data_capability, PR #158): that property only blocks
+        `unknown`/`missing_expected` specifically (REQ-COVERAGE-001 S5's
+        named blocking states for the Data Coverage review UI). A consumer
+        that needs to know whether every segment is a genuinely observed,
+        directly-usable numeric fact - never a state that stands in for
+        one - needs a stricter question: is every segment `observed_zero`
+        (the only state that is itself a confirmed, real value - REQ-
+        COVERAGE-001 S1: "missing is not zero", "unavailable source is not
+        zero", "not applicable is not zero"; S2: "a latent/modelled value
+        [estimated/modelled] must never be stored or displayed as though
+        it were an observed source fact"), or does the record have an
+        explicit `approved_for_official_use` treatment covering it?
+        `not_applicable`/`unavailable_source`/`suppressed`/`estimated`/
+        `modelled` all fail this the same way `unknown`/`missing_expected`
+        do - none of them is a real, directly observed number without an
+        approved treatment behind it."""
+        if self.approved_for_official_use:
+            return False
+        return any(
+            segment.state != STATE_OBSERVED_ZERO for segment in self.coverage_segments
+        )
+
     def to_dict(self) -> dict:
         return {
             **{

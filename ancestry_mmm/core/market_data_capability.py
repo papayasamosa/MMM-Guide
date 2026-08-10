@@ -127,10 +127,18 @@ def check_market_channel_capability(
       variable coverage matrix before fitting" - a channel the coverage
       matrix was never built for cannot be certified as genuinely
       observed, whatever values happen to sit in the prepared frame); or
-    - every matching record's `is_officially_unresolved` is true
-      (REQ-COVERAGE-001 S5: unresolved `unknown`/`missing_expected`
-      coverage, or a gap with no `approved_for_official_use` treatment,
-      must not become official fit input silently).
+    - any matching record's `has_unapproved_non_observed_coverage` is true.
+      Deliberately broader than `is_officially_unresolved` (REQ-COVERAGE-001
+      S5's narrower "unknown/missing_expected must not become official fit
+      input silently" check for the Data Coverage review UI): this capability
+      report needs "is every segment a genuinely observed, directly usable
+      number", so `not_applicable`/`unavailable_source`/`suppressed`/
+      `estimated`/`modelled` all count as unsupported the same way `unknown`/
+      `missing_expected` do (REQ-COVERAGE-001 S1: "missing is not zero",
+      "unavailable source is not zero", "not applicable is not zero"; S2: "a
+      latent/modelled value must never be stored or displayed as though it
+      were an observed source fact") - unless the record has an explicit
+      `approved_for_official_use` treatment.
 
     When a coverage matrix has product/segment-scoped records for the same
     (channel, market) key (the Data Coverage page's optional `product_col`/
@@ -190,16 +198,21 @@ def check_market_channel_capability(
                     )
                 )
                 continue
-            unresolved = [r for r in matching if r.is_officially_unresolved]
+            unresolved = [r for r in matching if r.has_unapproved_non_observed_coverage]
             if unresolved:
                 issues.append(
                     MarketChannelCapabilityIssue(
                         market=market,
                         channel=channel,
                         reason=(
-                            f"'{channel}' in market '{market}' has unresolved "
-                            "coverage not yet approved for official use "
-                            "(REQ-COVERAGE-001 S5)."
+                            f"'{channel}' in market '{market}' has coverage that "
+                            "is not a genuinely observed number (or approved "
+                            "for official use) for every segment - unresolved "
+                            "unknown/missing_expected coverage, or a "
+                            "not_applicable/unavailable_source/suppressed/"
+                            "estimated/modelled segment without an approved "
+                            "treatment, must not become official fit input "
+                            "silently (REQ-COVERAGE-001 S1, S2, S5)."
                         ),
                     )
                 )
