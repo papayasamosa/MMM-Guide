@@ -1,10 +1,12 @@
 """AppTest coverage for the Model Training page's pre-fit "Preview: prior
-predictive check (before fitting)" section (REQ-VAL-001 Work Package 4):
-binds the existing prior-predictive validation service to the pre-fit
-workflow via a proposed-model-identity fingerprint, so a user can inspect
-what the PROPOSED model's declared priors imply before committing to a
-(potentially long) MCMC fit - and is warned, not silently shown stale
-evidence, if the proposal changes after previewing.
+predictive check (before fitting)" section: binds the existing (REQ-VAL-001)
+prior-predictive validation service to the pre-fit workflow via a
+proposed-model-identity fingerprint, so a user can inspect what the
+PROPOSED model's declared priors imply before committing to a (potentially
+long) MCMC fit - and is warned, not silently shown stale evidence, if the
+proposal changes after previewing. Not itself an approved REQ-VAL-001 work
+package - see the task-specific implementation brief for this addition's
+authority.
 
 Two channels (never one) throughout: a single-channel, single-market frame
 triggers a pre-existing PyTensor scan shape inconsistency in
@@ -140,6 +142,28 @@ def test_preview_becomes_stale_after_prior_config_changes():
     changed_priors = dict(at.session_state["prior_config"])
     changed_priors["decay_mu"] = 0.9
     at.session_state["prior_config"] = changed_priors
+    at.run()
+
+    assert not at.exception, f"page raised: {at.exception}"
+    assert any("no longer reflects" in (w.value or "") for w in at.warning)
+
+
+def test_preview_becomes_stale_after_the_underlying_data_changes():
+    """Review finding (PR #159): the builders derive the default intercept
+    prior from `Y`, and the sampled prior predictive distribution depends
+    on the frame's media/controls too - a re-uploaded or re-transformed
+    dataset (a new `frame`) with an otherwise UNCHANGED spec/priors/graph
+    must still mark a previous preview stale, since the spec/prior
+    fingerprint alone would stay identical."""
+    at = _run_at()
+    at = _click_preview(at)
+    assert not at.exception, f"preview click raised: {at.exception}"
+    assert not any("no longer reflects" in (w.value or "") for w in at.warning)
+
+    replacement_frame = _frame()
+    replacement_frame["df"] = replacement_frame["df"].copy()
+    replacement_frame["df"]["TV"] = replacement_frame["df"]["TV"] * 3 + 500
+    at.session_state["frame"] = replacement_frame
     at.run()
 
     assert not at.exception, f"page raised: {at.exception}"

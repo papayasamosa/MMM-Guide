@@ -40,7 +40,7 @@ from ancestry_mmm.core.market_specific_diagnostics import (
     compute_scorecard_market_specific,
 )
 from ancestry_mmm.core.diagnostics import compute_scorecard, prior_predictive_summary
-from ancestry_mmm.core.fingerprint import fingerprint_model_spec
+from ancestry_mmm.core.fingerprint import fingerprint_dataframe, fingerprint_model_spec
 from ancestry_mmm.core.outcomes import outcome_catalogue_fingerprint_payload
 from ancestry_mmm.core.pathways import pathway_catalogue_fingerprint_payload
 from ancestry_mmm.core.activities import activity_fit_fingerprint
@@ -120,7 +120,7 @@ def _build_proposed_model(build_model_type: str):
     graph) - the exact same builder call "Build & fit model" below uses,
     just never followed by `fit_model`. Shared by the pre-fit prior
     predictive preview and the real fit so they can never silently diverge
-    on what "the proposed model" means (REQ-VAL-001 Work Package 4)."""
+    on what "the proposed model" means."""
     prior_config = get_state("prior_config")
     dna_lag_weeks = get_state("dna_lag_weeks", 4)
     direct_dna_outcome_ids = get_state("direct_dna_outcome_ids") or None
@@ -142,21 +142,29 @@ def _build_proposed_model(build_model_type: str):
 
 
 def _proposed_model_fingerprint(fingerprint_model_type: str) -> str:
-    """The pre-fit analogue of `06_Diagnostics.py`'s `ModelIdentity.
-    model_spec_fingerprint` construction (same `fingerprint_model_spec`
-    call) - fed with exactly the values a build right now would use, read
-    directly from live session state and `frame`'s own snapshotted
-    `outcomes`/`media_outcome_pathways` (what `_build_proposed_model` would
-    actually consume - `core.hierarchical_model.build_fh_hierarchical_model`
-    derives `outcome_catalogue_at_fit`/`pathway_catalogue_at_fit` from
-    those exact frame keys, never from live `get_state` directly), so this
-    can be recomputed cheaply on every rerun - no PyMC model build - purely
-    to detect whether the proposal has since changed."""
+    """The pre-fit analogue of `06_Diagnostics.py`'s `ModelIdentity`
+    construction - the same `fingerprint_model_spec` call it uses for
+    `model_spec_fingerprint`, fed with exactly the values a build right now
+    would use (read directly from live session state and `frame`'s own
+    snapshotted `outcomes`/`media_outcome_pathways` -
+    `core.hierarchical_model.build_fh_hierarchical_model` derives
+    `outcome_catalogue_at_fit`/`pathway_catalogue_at_fit` from those exact
+    frame keys, never from live `get_state` directly), combined with
+    `fingerprint_dataframe(frame["df"])` - the same `data_fingerprint`
+    component `ModelIdentity` binds separately alongside `model_spec_
+    fingerprint`. Both matter here: the builders derive the default
+    intercept prior from `Y`, and the sampled prior predictive distribution
+    depends on the frame's media/controls too, so a spec/prior match alone
+    is not enough to certify this preview still describes the current
+    proposal - a re-uploaded or re-transformed dataset with an unchanged
+    spec must also mark a previous preview stale. Cheap to recompute on
+    every rerun (hashing only, no PyMC model build) purely to detect
+    whether the proposal has since changed."""
     causal_graph = _resolve_causal_graph()
     activity_definitions = get_state("activity_definitions") or []
     search_objects = get_state("search_objects") or []
     coverage_matrix_dict = get_state("variable_coverage_matrix")
-    return fingerprint_model_spec(
+    model_spec_fingerprint = fingerprint_model_spec(
         spec_dict,
         get_state("prior_config") or {},
         int(get_state("dna_lag_weeks", 4)),
@@ -192,18 +200,21 @@ def _proposed_model_fingerprint(fingerprint_model_type: str) -> str:
             else None
         ),
     )
+    return f"{fingerprint_dataframe(frame['df'])}:{model_spec_fingerprint}"
 
 
 st.markdown("---")
 st.markdown("### Preview: prior predictive check (before fitting)")
 st.caption(
-    "REQ-VAL-001 Work Package 4: samples from the PROPOSED model's declared "
-    "priors - never a posterior, no MCMC, no trace - before committing to "
-    "the fit below. Builds the model from the current spec/prior "
+    "Samples from the PROPOSED model's declared priors - never a "
+    "posterior, no MCMC, no trace - before committing to the fit below, "
+    "reusing REQ-VAL-001's prior-predictive sampling function in a new "
+    "pre-fit context. Builds the model from the current spec/prior "
     "configuration exactly as 'Build & fit model' would, but stops after "
     "sampling priors; this preview is never written as this project's "
     "official fit-time evidence (see Diagnostics' own 'Prior predictive "
-    "check', computed against the actual fitted model, for that)."
+    "check', computed against the actual fitted model, for that) and is "
+    "not itself an approved REQ-VAL-001 work package."
 )
 preview_col1, preview_col2 = st.columns(2)
 preview_n_samples = preview_col1.number_input(
