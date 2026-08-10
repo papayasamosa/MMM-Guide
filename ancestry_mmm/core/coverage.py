@@ -26,10 +26,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import date
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 import pandas as pd
 
@@ -954,3 +954,64 @@ def build_coverage_matrix_from_frame(
         generated_at=generated_at,
         records=tuple(records),
     )
+
+
+# --- Project export/import portability (REQ-COVERAGE-001 S1: "coverage
+# decisions must be versioned and portable - survive project export/import
+# exactly") - mirrors `core.causal_graph`'s single-lineage version-history
+# pattern (`graph_versions_for_export`/`current_graph_from_resolved_versions`)
+# exactly, since `VariableCoverageMatrix` deliberately mirrors `CausalGraph`'s
+# "whole artefact is one lineage, not each record independently versioned"
+# shape (see this module's docstring). -------------------------------------
+
+
+def current_variable_coverage_matrix_from_resolved_versions(
+    resolved_versions: Sequence[Mapping[str, Any]],
+) -> Optional[dict]:
+    """Which restored matrix version becomes "current" after importing a
+    project bundle (`core.persistence.resolve_imported_variable_coverage_
+    matrices`'s output) - the highest-numbered version, this project's
+    single coverage-matrix lineage's most recently saved state. `None` when
+    no matrix versions were resolved at all - "no coverage matrix" restores
+    to "no coverage matrix", never fabricated. Mirrors `core.causal_graph.
+    current_graph_from_resolved_versions`."""
+    if not resolved_versions:
+        return None
+    best = max(resolved_versions, key=lambda m: int(m.get("matrix_version", 0)))
+    return dict(best)
+
+
+def variable_coverage_matrix_versions_for_export(
+    *,
+    current_matrix_dict: Optional[Mapping[str, Any]],
+    version_history: Optional[Sequence[Mapping[str, Any]]],
+) -> List[dict]:
+    """The coverage-matrix version records worth persisting in a project
+    export bundle (`core.persistence.export_project`'s
+    `variable_coverage_matrices` argument): every explicitly saved version
+    (`version_history` - appended whenever the coverage-matrix review page
+    saves a new version) plus the current live matrix, so a brand-new,
+    never-yet-saved matrix is not silently lost across an export/import
+    round trip. Mirrors `core.causal_graph.graph_versions_for_export`
+    exactly, including its collision rule: `version_history` is always
+    authoritative for a `(matrix_id, matrix_version)` key it already
+    contains; the current live matrix is added only when its key is new or
+    identical in content to the already-saved record under that key - a
+    live matrix that shares a key with a saved record but has *different*
+    content is an unsaved edit that must never silently overwrite the saved
+    record it collided with, dropped from the export the same way any other
+    unsaved widget edit elsewhere in the app already isn't durable until
+    explicitly saved."""
+    history_by_key: "dict[tuple[str, int], dict]" = {}
+    for item in version_history or []:
+        key = (str(item.get("matrix_id", "")), int(item.get("matrix_version", 0)))
+        history_by_key[key] = dict(item)
+    if current_matrix_dict:
+        key = (
+            str(current_matrix_dict.get("matrix_id", "")),
+            int(current_matrix_dict.get("matrix_version", 0)),
+        )
+        existing = history_by_key.get(key)
+        if existing is None or existing == dict(current_matrix_dict):
+            history_by_key[key] = dict(current_matrix_dict)
+    return list(history_by_key.values())

@@ -33,6 +33,7 @@ from ancestry_mmm.core.persistence import (
     resolve_imported_causal_graphs,
     resolve_imported_search_objects,
     resolve_imported_source_versions,
+    resolve_imported_variable_coverage_matrices,
     verify_imported_approval,
     UnsafeZipEntryError,
     audit_project_resumability,
@@ -80,6 +81,11 @@ from ancestry_mmm.core.search_objects import (
     current_search_object_versions,
     search_object_fit_fingerprint,
     search_object_versions_for_export,
+)
+from ancestry_mmm.core.coverage import (
+    VariableCoverageMatrix,
+    current_variable_coverage_matrix_from_resolved_versions,
+    variable_coverage_matrix_versions_for_export,
 )
 from ancestry_mmm.core.media_units import market_specific_cpa_table
 from ancestry_mmm.core.outcome_approval import OutcomeApproval
@@ -153,6 +159,7 @@ def _resolve_official_curve_artifact_rows() -> list[dict]:
         SearchObjectDefinition.from_dict(item)
         for item in (get_state("search_objects") or [])
     ]
+    coverage_matrix_dict = get_state("variable_coverage_matrix")
     model_run_id = get_state("model_run_id")
     prior_config = get_state("prior_config") or {}
     dna_lag_weeks = get_state("dna_lag_weeks", 4)
@@ -207,6 +214,11 @@ def _resolve_official_curve_artifact_rows() -> list[dict]:
                         consumed_model_input_columns=spec_dict.get("channels") or [],
                     )
                     if search_objects
+                    else None
+                ),
+                variable_coverage_fingerprint=(
+                    VariableCoverageMatrix.from_dict(coverage_matrix_dict).fingerprint()
+                    if coverage_matrix_dict
                     else None
                 ),
             ),
@@ -441,6 +453,14 @@ if st.button("Build export bundle", type="primary"):
             # (mirrors search_objects/causal_graphs above, which also
             # export their full version history, not just what's current).
             source_versions=get_state("source_versions") or [],
+            # REQ-COVERAGE-001 S1: every saved coverage-matrix version plus
+            # the current live (possibly unsaved) matrix - see
+            # variable_coverage_matrix_versions_for_export's docstring
+            # (mirrors search_objects/causal_graphs above).
+            variable_coverage_matrices=variable_coverage_matrix_versions_for_export(
+                current_matrix_dict=get_state("variable_coverage_matrix"),
+                version_history=get_state("variable_coverage_matrix_versions"),
+            ),
         )
     st.success(f"Project bundle built: {output_path}")
     with open(output_path, "rb") as f:
@@ -590,6 +610,26 @@ if uploaded_zip is not None and st.button("Import bundle"):
         set_state("source_versions", _resolved_source_versions)
         for _source_version_warning in _source_version_warnings:
             st.warning(_source_version_warning)
+        # REQ-COVERAGE-001 S1: restore every quarantine-checked coverage-
+        # matrix version as history, and derive the current matrix the same
+        # way the causal graph import above derives `causal_graph` from
+        # `causal_graph_versions`. A bundle with no
+        # variable_coverage_matrices.json (every bundle exported before this
+        # capability existed, or a project with no coverage matrix built
+        # yet) resolves to an empty list - "no matrix yet" is restored as no
+        # matrix, never fabricated.
+        _resolved_coverage_matrices, _coverage_matrix_warnings = (
+            resolve_imported_variable_coverage_matrices(imported)
+        )
+        set_state("variable_coverage_matrix_versions", _resolved_coverage_matrices)
+        set_state(
+            "variable_coverage_matrix",
+            current_variable_coverage_matrix_from_resolved_versions(
+                _resolved_coverage_matrices
+            ),
+        )
+        for _coverage_matrix_warning in _coverage_matrix_warnings:
+            st.warning(_coverage_matrix_warning)
         set_state("migration_review", imported.get("migration_review"))
         # PR 125A: restore the project-level planning dependencies so a
         # resumed session's Scenario Planner selection (and any newly

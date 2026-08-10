@@ -42,6 +42,7 @@ from ancestry_mmm.core.search_objects import (
     SearchObjectDefinition,
     search_object_fit_fingerprint,
 )
+from ancestry_mmm.core.coverage import VariableCoverageMatrix
 from ancestry_mmm.core.fingerprint import (
     fingerprint_dataframe,
     fingerprint_model_spec,
@@ -129,6 +130,7 @@ search_objects = [
     SearchObjectDefinition.from_dict(item)
     for item in (get_state("search_objects") or [])
 ]
+coverage_matrix_dict = get_state("variable_coverage_matrix")
 cost_mapping_registry = CostMappingRegistry.from_dict(get_state("media_cost_mappings"))
 governed_cost_registry = (
     cost_mapping_registry if cost_mapping_registry.to_dict()["mappings"] else None
@@ -198,6 +200,11 @@ if model_run_id and spec_dict is not None:
                     consumed_model_input_columns=spec_dict.get("channels") or [],
                 )
                 if search_objects
+                else None
+            ),
+            variable_coverage_fingerprint=(
+                VariableCoverageMatrix.from_dict(coverage_matrix_dict).fingerprint()
+                if coverage_matrix_dict
                 else None
             ),
         ),

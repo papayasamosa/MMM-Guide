@@ -68,6 +68,7 @@ class ProjectExportInput:
     causal_graphs: Optional[List[dict]] = None
     search_objects: Optional[List[dict]] = None
     source_versions: Optional[List[dict]] = None
+    variable_coverage_matrices: Optional[List[dict]] = None
     include_excel: bool = False
     excel_sheets: Optional[Dict[str, Optional[pd.DataFrame]]] = None
     excel_output_path: Optional[str] = None
@@ -179,6 +180,7 @@ class ProjectService:
                 causal_graphs=exp_input.causal_graphs,
                 search_objects=exp_input.search_objects,
                 source_versions=exp_input.source_versions,
+                variable_coverage_matrices=exp_input.variable_coverage_matrices,
             )
         except Exception as exc:
             errors.append(f"Project export failed: {exc}")

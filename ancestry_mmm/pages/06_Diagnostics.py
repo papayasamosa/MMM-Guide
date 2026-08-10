@@ -44,6 +44,7 @@ from ancestry_mmm.core.search_objects import (
     SearchObjectDefinition,
     search_object_fit_fingerprint,
 )
+from ancestry_mmm.core.coverage import VariableCoverageMatrix
 from ancestry_mmm.application.diagnostics_service import (
     DiagnosticsService,
     DiagnosticsInput,
@@ -157,6 +158,7 @@ search_objects = [
     SearchObjectDefinition.from_dict(item)
     for item in (get_state("search_objects") or [])
 ]
+coverage_matrix_dict = get_state("variable_coverage_matrix")
 
 # PR 79A (work package B): the current model run's identity is constructed
 # once, here, and reused as this single object for diagnostics, validation
@@ -208,6 +210,11 @@ if model_run_id and posterior_params is not None and model_spec_dict is not None
                     consumed_model_input_columns=model_spec_dict.get("channels") or [],
                 )
                 if search_objects
+                else None
+            ),
+            variable_coverage_fingerprint=(
+                VariableCoverageMatrix.from_dict(coverage_matrix_dict).fingerprint()
+                if coverage_matrix_dict
                 else None
             ),
         ),

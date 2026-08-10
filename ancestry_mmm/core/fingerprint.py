@@ -124,6 +124,7 @@ def fingerprint_model_spec(
     activity_fit_fingerprint: Optional[str] = None,
     causal_graph_structural_fingerprint: Optional[str] = None,
     search_object_fit_fingerprint: Optional[str] = None,
+    variable_coverage_fingerprint: Optional[str] = None,
 ) -> str:
     """
     Fingerprint the full set of inputs that determine how the model is
@@ -231,25 +232,53 @@ def fingerprint_model_spec(
     it does. `""` when omitted (no Search governance data available, or
     none of it is consumed by this fit).
 
+    `variable_coverage_fingerprint` (REQ-COVERAGE-001 S5 - pass
+    `core.coverage.VariableCoverageMatrix.fingerprint()`, which already
+    hashes only `VariableCoverageRecord.fit_relevant_fields()`, never
+    administrative/audit-only fields such as `owner`, `proposed_treatment`,
+    approval attribution, observed/expected diagnostic windows, or free-text
+    justifications - see that method's docstring for the full boundary) is a
+    simple pass-through, like `causal_graph_structural_fingerprint`, not a
+    consumption-filtered value like `search_object_fit_fingerprint`: unlike
+    Search objects (which map onto specific model-input columns this fit
+    either does or doesn't consume), the coverage matrix has no such
+    per-fit consumption relationship yet - nothing in the current data
+    pipeline reads a variable's coverage/treatment classification to decide
+    what value to prepare (that binding is `FR-MOD-015`'s job, explicitly
+    unresolved - REQ-COVERAGE-001 S6). Passing the live matrix's fingerprint
+    here today therefore does exactly what REQ-COVERAGE-001 S5 requires, no
+    more and no less: "a coverage or treatment change that alters
+    prepared-data semantics must change prepared-data/model identity ... a
+    purely presentational metadata change must not" - `fit_relevant_fields()`
+    already strips the presentational fields, so every remaining change this
+    fingerprint reacts to is calculation-relevant by construction, and once
+    a future package makes coverage/treatment decisions actually change what
+    gets fitted, this same wiring already staled every approval bound to the
+    old, unaware fingerprint. `""` when omitted (no coverage matrix governed
+    yet for this project).
+
     Note: adding `pipeline_steps`, `market_spec_config`,
     `direct_dna_outcome_ids`, `outcome_catalogue`, `funnel_links`,
     `media_outcome_pathways`, `activity_fit_fingerprint`,
-    `causal_graph_structural_fingerprint` and `search_object_fit_fingerprint`
-    to this payload is an intentional breaking change to every fingerprint
-    this function produces, including for callers who pass none of them (the
-    payload always carries `"pipeline_steps": []`,
-    `"market_relevant_config": {}`, `"direct_dna_outcome_ids": []`,
-    `"outcome_catalogue": []`, `"funnel_links": []`,
-    `"media_outcome_pathways": []`, `"activity_fit_fingerprint": ""`,
-    `"causal_graph_structural_fingerprint": ""` and
-    `"search_object_fit_fingerprint": ""` keys now) - the same pattern used
+    `causal_graph_structural_fingerprint`, `search_object_fit_fingerprint`
+    and `variable_coverage_fingerprint` to this payload is an intentional
+    breaking change to every fingerprint this function produces, including
+    for callers who pass none of them (the payload always carries
+    `"pipeline_steps": []`, `"market_relevant_config": {}`,
+    `"direct_dna_outcome_ids": []`, `"outcome_catalogue": []`,
+    `"funnel_links": []`, `"media_outcome_pathways": []`,
+    `"activity_fit_fingerprint": ""`,
+    `"causal_graph_structural_fingerprint": ""`,
+    `"search_object_fit_fingerprint": ""` and
+    `"variable_coverage_fingerprint": ""` keys now) - the same pattern used
     when `model_type` was added (docs/decision_log.md). Every pre-existing
     approval is invalidated by upgrading to this version, which is correct:
     an approval bound to a fingerprint that didn't cover the transformation
     recipe, media-unit/currency config, DNA-kit outcome membership, the full
     outcome catalogue, fit-relevant activity governance, the compiled causal
-    graph, or fit-relevant Search governance was never actually binding on
-    them, so forcing re-review is the honest behaviour, not a regression.
+    graph, fit-relevant Search governance, or the governed coverage matrix
+    was never actually binding on them, so forcing re-review is the honest
+    behaviour, not a regression.
 
     Canonical JSON with sorted dict keys, so insertion order never matters;
     list order is preserved (json.dumps does not reorder lists), since list
@@ -295,6 +324,7 @@ def fingerprint_model_spec(
         "causal_graph_structural_fingerprint": causal_graph_structural_fingerprint
         or "",
         "search_object_fit_fingerprint": search_object_fit_fingerprint or "",
+        "variable_coverage_fingerprint": variable_coverage_fingerprint or "",
     }
     blob = _canonical_json(payload)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
