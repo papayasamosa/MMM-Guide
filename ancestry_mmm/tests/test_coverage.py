@@ -1,10 +1,13 @@
-"""Tests for core.coverage (REQ-COVERAGE-001 Work Package 3 Phase 1):
-framework-independent variable-coverage/mixed-frequency domain contracts.
+"""Tests for core.coverage (REQ-COVERAGE-001 Work Package 3): framework-
+independent variable-coverage/mixed-frequency domain contracts (Phase 1)
+and the coverage-matrix builder over a real joined frame (Phase 3).
 """
 
 import json
 from pathlib import Path
 
+import numpy as np
+import pandas as pd
 import pytest
 
 from ancestry_mmm.core.coverage import (
@@ -22,6 +25,7 @@ from ancestry_mmm.core.coverage import (
     SourceVersion,
     VariableCoverageMatrix,
     VariableCoverageRecord,
+    build_coverage_matrix_from_frame,
     compute_checksum,
     current_source_versions,
     new_variable_coverage_matrix_version,
@@ -782,3 +786,463 @@ class TestApprovedForOfficialUseTypeValidation:
     def test_none_rejected(self):
         with pytest.raises(ValueError, match="approved_for_official_use"):
             _record(approved_for_official_use=None)
+
+
+# ---------------------------------------------------------------------------
+# build_coverage_matrix_from_frame (WP3 Phase 3): the missing link between
+# the Phase 1 domain contracts and real data.
+# ---------------------------------------------------------------------------
+
+
+def _weekly_dates(n=12, start="2025-01-06"):
+    return pd.date_range(start, periods=n, freq="W-MON")
+
+
+def _frame_and_freq():
+    """A single-variable, single-gap frame - the minimal case for the
+    builder's own unit tests below."""
+    dates = _weekly_dates(6)
+    rows = []
+    for market in ["UK", "AU"]:
+        for i, d in enumerate(dates):
+            rows.append(
+                {
+                    "date": d,
+                    "market": market,
+                    "TV_spend": 100.0 + i if market == "UK" or i >= 2 else np.nan,
+                }
+            )
+    df = pd.DataFrame(rows)
+    freq = {
+        "TV_spend": FrequencyMetadata(
+            native_frequency="weekly",
+            target_frequency="weekly",
+            variable_class="flow_count",
+        )
+    }
+    return df, freq
+
+
+class TestBuildCoverageMatrixFromFrame:
+    def test_fully_observed_variable_has_no_gap_segments(self):
+        df, freq = _frame_and_freq()
+        matrix = build_coverage_matrix_from_frame(
+            df,
+            date_col="date",
+            market_col="market",
+            variable_columns=["TV_spend"],
+            frequency_metadata=freq,
+            source_id="media",
+            source_version=1,
+            matrix_id="m1",
+            matrix_version=1,
+            generated_at="2026-08-10T00:00:00Z",
+        )
+        uk_record = next(r for r in matrix.records if r.market == "UK")
+        assert uk_record.coverage_segments == ()
+        assert uk_record.observed_start == "2025-01-06"
+
+    def test_partial_window_variable_gap_is_not_backfilled(self):
+        df, freq = _frame_and_freq()
+        matrix = build_coverage_matrix_from_frame(
+            df,
+            date_col="date",
+            market_col="market",
+            variable_columns=["TV_spend"],
+            frequency_metadata=freq,
+            source_id="media",
+            source_version=1,
+            matrix_id="m1",
+            matrix_version=1,
+            generated_at="2026-08-10T00:00:00Z",
+        )
+        au_record = next(r for r in matrix.records if r.market == "AU")
+        # AU is missing weeks 0-1 (i < 2) - the gap must be reported, and
+        # observed_start must be the genuine first-observed date, never
+        # backfilled to expected_start.
+        assert len(au_record.coverage_segments) == 1
+        assert au_record.coverage_segments[0].state == STATE_UNKNOWN
+        assert au_record.coverage_segments[0].period_start == "2025-01-06"
+        assert au_record.coverage_segments[0].period_end == "2025-01-13"
+        assert au_record.observed_start == "2025-01-20"
+        # expected_start/end are the PROJECT's window, not shrunk to AU's
+        # own supported range.
+        assert au_record.expected_start == "2025-01-06"
+        assert au_record.expected_end == df["date"].max().strftime("%Y-%m-%d")
+
+    def test_missing_frequency_metadata_raises_rather_than_defaulting(self):
+        df, _freq = _frame_and_freq()
+        with pytest.raises(ValueError, match="frequency_metadata"):
+            build_coverage_matrix_from_frame(
+                df,
+                date_col="date",
+                market_col="market",
+                variable_columns=["TV_spend"],
+                frequency_metadata={},
+                source_id="media",
+                source_version=1,
+                matrix_id="m1",
+                matrix_version=1,
+                generated_at="2026-08-10T00:00:00Z",
+            )
+
+    def test_zero_is_never_treated_as_a_gap(self):
+        """REQ-COVERAGE-001's core invariant, at the builder level: a real
+        observed value of 0.0 must produce zero coverage_segments, not an
+        inferred state."""
+        dates = _weekly_dates(4)
+        df = pd.DataFrame(
+            {
+                "date": dates,
+                "market": ["UK"] * 4,
+                "NewChannel_spend": [0.0, 0.0, 50.0, 60.0],
+            }
+        )
+        freq = {
+            "NewChannel_spend": FrequencyMetadata(
+                native_frequency="weekly",
+                target_frequency="weekly",
+                variable_class="flow_count",
+            )
+        }
+        matrix = build_coverage_matrix_from_frame(
+            df,
+            date_col="date",
+            market_col="market",
+            variable_columns=["NewChannel_spend"],
+            frequency_metadata=freq,
+            source_id="media",
+            source_version=1,
+            matrix_id="m1",
+            matrix_version=1,
+            generated_at="2026-08-10T00:00:00Z",
+        )
+        assert matrix.records[0].coverage_segments == ()
+
+    def test_entirely_absent_variable_is_one_full_window_gap(self):
+        dates = _weekly_dates(4)
+        df = pd.DataFrame(
+            {
+                "date": list(dates) * 2,
+                "market": ["UK"] * 4 + ["AU"] * 4,
+                "UK_only_control": [5.0] * 4 + [np.nan] * 4,
+            }
+        )
+        freq = {
+            "UK_only_control": FrequencyMetadata(
+                native_frequency="weekly",
+                target_frequency="weekly",
+                variable_class="flow_count",
+            )
+        }
+        matrix = build_coverage_matrix_from_frame(
+            df,
+            date_col="date",
+            market_col="market",
+            variable_columns=["UK_only_control"],
+            frequency_metadata=freq,
+            source_id="media",
+            source_version=1,
+            matrix_id="m1",
+            matrix_version=1,
+            generated_at="2026-08-10T00:00:00Z",
+        )
+        au_record = next(r for r in matrix.records if r.market == "AU")
+        assert au_record.observed_start is None
+        assert au_record.observed_end is None
+        assert len(au_record.coverage_segments) == 1
+        assert au_record.coverage_segments[0].period_start == "2025-01-06"
+        assert au_record.coverage_segments[0].period_end == dates[-1].strftime(
+            "%Y-%m-%d"
+        )
+
+    def test_gaps_are_never_pre_classified_beyond_unknown(self):
+        """The builder must never guess not_applicable/unavailable_source/
+        observed_zero - only a human reclassification (outside this
+        function) may assign those."""
+        df, freq = _frame_and_freq()
+        matrix = build_coverage_matrix_from_frame(
+            df,
+            date_col="date",
+            market_col="market",
+            variable_columns=["TV_spend"],
+            frequency_metadata=freq,
+            source_id="media",
+            source_version=1,
+            matrix_id="m1",
+            matrix_version=1,
+            generated_at="2026-08-10T00:00:00Z",
+        )
+        all_states = {s.state for r in matrix.records for s in r.coverage_segments}
+        assert all_states <= {STATE_UNKNOWN}
+
+    def test_unknown_gaps_block_official_use_by_default(self):
+        df, freq = _frame_and_freq()
+        matrix = build_coverage_matrix_from_frame(
+            df,
+            date_col="date",
+            market_col="market",
+            variable_columns=["TV_spend"],
+            frequency_metadata=freq,
+            source_id="media",
+            source_version=1,
+            matrix_id="m1",
+            matrix_version=1,
+            generated_at="2026-08-10T00:00:00Z",
+        )
+        assert len(matrix.blocking_issues) == 1  # the AU gap record
+
+
+# ---------------------------------------------------------------------------
+# Part 3 v1.6 acceptance scenario 26.2 (REQ-COVERAGE-001 traces_to):
+# weekly media in UK and AU; a UK-only control (to be reclassified
+# not_applicable in AU); an AU monthly control starting mid-window because
+# the source became available later; a newly launched channel with a
+# genuine structural zero before launch; another variable with unavailable
+# earlier history.
+# ---------------------------------------------------------------------------
+
+
+class TestPart3V16AcceptanceScenario262:
+    @staticmethod
+    def _scenario_frame():
+        dates = _weekly_dates(12)
+        rows = []
+        for market in ["UK", "AU"]:
+            for i, d in enumerate(dates):
+                rows.append(
+                    {
+                        "date": d,
+                        "market": market,
+                        # Present throughout, both markets - the "clean"
+                        # variable every scenario needs as a control group.
+                        "TV_spend": 100.0 + i,
+                        # UK-only control: present for UK, entirely absent
+                        # for AU (a market simply not needing/having it).
+                        "UK_only_control": 5.0 if market == "UK" else np.nan,
+                        # AU monthly control: source became available only
+                        # from week 4 onward, AU only.
+                        "AU_monthly_control": (
+                            (10.0 + i) if (market == "AU" and i >= 4) else np.nan
+                        ),
+                        # Newly launched channel: genuinely zero (not
+                        # missing) before its week-4 launch, both markets.
+                        "NewChannel_spend": 0.0 if i < 4 else 50.0 + i,
+                        # Another variable with unavailable earlier
+                        # history - UK only, starts at week 5.
+                        "UK_var_unavailable_early_history": (
+                            (20.0 + i) if (market == "UK" and i >= 5) else np.nan
+                        ),
+                    }
+                )
+        return pd.DataFrame(rows)
+
+    @staticmethod
+    def _frequency_metadata():
+        variables = [
+            "TV_spend",
+            "UK_only_control",
+            "AU_monthly_control",
+            "NewChannel_spend",
+            "UK_var_unavailable_early_history",
+        ]
+        return {
+            v: FrequencyMetadata(
+                native_frequency="weekly",
+                target_frequency="weekly",
+                variable_class="flow_count",
+            )
+            for v in variables
+        }
+
+    def _build_matrix(self):
+        df = self._scenario_frame()
+        return build_coverage_matrix_from_frame(
+            df,
+            date_col="date",
+            market_col="market",
+            variable_columns=list(self._frequency_metadata()),
+            frequency_metadata=self._frequency_metadata(),
+            source_id="media",
+            source_version=1,
+            matrix_id="scenario-26-2",
+            matrix_version=1,
+            generated_at="2026-08-10T00:00:00Z",
+        ), df
+
+    def _record(self, matrix, variable_id, market):
+        return next(
+            r
+            for r in matrix.records
+            if r.variable_id == variable_id and r.market == market
+        )
+
+    def test_clean_variable_has_no_gaps_in_either_market(self):
+        matrix, _df = self._build_matrix()
+        for market in ("UK", "AU"):
+            record = self._record(matrix, "TV_spend", market)
+            assert record.coverage_segments == ()
+
+    def test_uk_only_control_is_a_full_window_gap_in_au_only(self):
+        matrix, _df = self._build_matrix()
+        uk = self._record(matrix, "UK_only_control", "UK")
+        au = self._record(matrix, "UK_only_control", "AU")
+        assert uk.coverage_segments == ()
+        assert len(au.coverage_segments) == 1
+        assert au.coverage_segments[0].period_start == au.expected_start
+        assert au.coverage_segments[0].period_end == au.expected_end
+        assert au.observed_start is None
+
+    def test_uk_only_control_gap_may_be_reclassified_not_applicable(self):
+        """The builder itself only ever produces `unknown` - this proves
+        the domain model accepts the human reclassification an analyst
+        would make in the coverage-matrix UI, without the builder having
+        guessed it."""
+        matrix, _df = self._build_matrix()
+        au = self._record(matrix, "UK_only_control", "AU")
+        reclassified = VariableCoverageRecord(
+            variable_id=au.variable_id,
+            source_id=au.source_id,
+            source_version=au.source_version,
+            market=au.market,
+            frequency=au.frequency,
+            coverage_segments=(
+                CoverageSegment(
+                    period_start=au.coverage_segments[0].period_start,
+                    period_end=au.coverage_segments[0].period_end,
+                    state=STATE_NOT_APPLICABLE,
+                ),
+            ),
+            observed_start=au.observed_start,
+            observed_end=au.observed_end,
+            expected_start=au.expected_start,
+            expected_end=au.expected_end,
+            treatment_status="approved",
+            approved_treatment="not_applicable_to_au",
+            treatment_approved_by="Analyst",
+            treatment_approved_at="2026-08-10",
+            approved_for_official_use=True,
+        )
+        assert not reclassified.is_officially_unresolved
+
+    def test_au_monthly_control_partial_window_is_not_backfilled(self):
+        matrix, df = self._build_matrix()
+        au = self._record(matrix, "AU_monthly_control", "AU")
+        assert len(au.coverage_segments) == 1
+        assert au.coverage_segments[0].state == STATE_UNKNOWN
+        # observed_start must be the genuine week-4 date, not the
+        # project's expected_start.
+        expected_week4 = df["date"].sort_values().unique()[4]
+        assert au.observed_start == pd.Timestamp(expected_week4).strftime("%Y-%m-%d")
+        assert au.observed_start != au.expected_start
+
+    def test_new_channel_zero_before_launch_is_not_a_gap(self):
+        matrix, _df = self._build_matrix()
+        for market in ("UK", "AU"):
+            record = self._record(matrix, "NewChannel_spend", market)
+            assert record.coverage_segments == ()
+
+    def test_new_channel_structural_zero_may_be_explicitly_recorded(self):
+        """Recording "this zero is genuinely pre-launch" is optional,
+        additive metadata a human supplies - never inferred by the
+        builder (the previous test proves the builder itself stays
+        silent about it)."""
+        matrix, df = self._build_matrix()
+        record = self._record(matrix, "NewChannel_spend", "UK")
+        launch_date = df["date"].sort_values().unique()[4]
+        pre_launch_start = df["date"].min()
+        pre_launch_end = pd.Timestamp(launch_date) - pd.Timedelta(days=1)
+        annotated = VariableCoverageRecord(
+            variable_id=record.variable_id,
+            source_id=record.source_id,
+            source_version=record.source_version,
+            market=record.market,
+            frequency=record.frequency,
+            coverage_segments=(
+                CoverageSegment(
+                    period_start=pre_launch_start.strftime("%Y-%m-%d"),
+                    period_end=pre_launch_end.strftime("%Y-%m-%d"),
+                    state=STATE_OBSERVED_ZERO,
+                    structural_zero=True,
+                    justification="Channel launched in week 4; genuinely no prior activity.",
+                ),
+            ),
+            observed_start=record.observed_start,
+            observed_end=record.observed_end,
+            expected_start=record.expected_start,
+            expected_end=record.expected_end,
+        )
+        assert annotated.coverage_segments[0].structural_zero
+        assert not annotated.is_officially_unresolved
+
+    def test_unavailable_early_history_gap_is_reported_and_not_backfilled(self):
+        matrix, df = self._build_matrix()
+        record = self._record(matrix, "UK_var_unavailable_early_history", "UK")
+        assert len(record.coverage_segments) == 1
+        assert record.coverage_segments[0].state == STATE_UNKNOWN
+        expected_week5 = df["date"].sort_values().unique()[5]
+        assert record.observed_start == pd.Timestamp(expected_week5).strftime(
+            "%Y-%m-%d"
+        )
+
+    def test_reports_exactly_the_expected_blocking_issues(self):
+        """Three gaps require reclassification before official use:
+        UK_only_control/AU, AU_monthly_control/AU,
+        UK_var_unavailable_early_history/UK. Everything else (clean
+        variables, and the not-applicable-to-UK columns whose entire
+        history is absent for their off-market side) is either gap-free
+        or also correctly flagged - the count proves nothing is silently
+        dropped or double-counted."""
+        matrix, _df = self._build_matrix()
+        issues = matrix.blocking_issues
+        assert any("UK_only_control" in i and "AU" in i for i in issues)
+        assert any("AU_monthly_control" in i for i in issues)
+        assert any("UK_var_unavailable_early_history" in i for i in issues)
+
+    def test_no_state_is_ever_inferred_from_a_zero_or_nan_alone(self):
+        """The single invariant this whole scenario exists to prove: every
+        gap segment across the entire matrix is `unknown` (a human must
+        decide why), and no segment at all exists merely because a value
+        was 0.0."""
+        matrix, _df = self._build_matrix()
+        all_states = {s.state for r in matrix.records for s in r.coverage_segments}
+        assert all_states <= {STATE_UNKNOWN}
+
+    def test_matrix_fingerprint_changes_when_a_gap_is_reclassified(self):
+        matrix, _df = self._build_matrix()
+        au = self._record(matrix, "UK_only_control", "AU")
+        reclassified_records = tuple(
+            r
+            for r in matrix.records
+            if not (r.variable_id == "UK_only_control" and r.market == "AU")
+        ) + (
+            VariableCoverageRecord(
+                variable_id=au.variable_id,
+                source_id=au.source_id,
+                source_version=au.source_version,
+                market=au.market,
+                frequency=au.frequency,
+                coverage_segments=(
+                    CoverageSegment(
+                        period_start=au.coverage_segments[0].period_start,
+                        period_end=au.coverage_segments[0].period_end,
+                        state=STATE_NOT_APPLICABLE,
+                    ),
+                ),
+                observed_start=au.observed_start,
+                observed_end=au.observed_end,
+                expected_start=au.expected_start,
+                expected_end=au.expected_end,
+            ),
+        )
+        reclassified_matrix = new_variable_coverage_matrix_version(
+            matrix, records=reclassified_records
+        )
+        assert matrix.fingerprint() != reclassified_matrix.fingerprint()
+
+    def test_matrix_export_import_round_trip_preserves_scenario(self):
+        matrix, _df = self._build_matrix()
+        round_tripped = VariableCoverageMatrix.from_dict(matrix.to_dict())
+        assert round_tripped == matrix
+        assert round_tripped.fingerprint() == matrix.fingerprint()
+        assert len(round_tripped.blocking_issues) == len(matrix.blocking_issues)

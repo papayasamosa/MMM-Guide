@@ -31,6 +31,8 @@ from dataclasses import asdict, dataclass
 from datetime import date
 from typing import Any, Optional
 
+import pandas as pd
+
 # --- Canonical missingness-state vocabulary (REQ-COVERAGE-001 S2) ----------
 #
 # Never collapse into a nullable boolean or a single generic "missing" flag.
@@ -700,3 +702,159 @@ def asdict_shallow(matrix: VariableCoverageMatrix) -> dict:
     plain dicts) - `new_variable_coverage_matrix_version` needs the actual
     frozen-dataclass instances back, not a JSON-shaped copy."""
     return {f: getattr(matrix, f) for f in matrix.__dataclass_fields__}
+
+
+# --- Coverage-matrix generation from a real joined frame (WP3 Phase 3) -----
+
+
+def _observed_dates_for_market(
+    market_frame: pd.DataFrame, date_col: str, variable: str
+) -> set:
+    """The subset of `market_frame`'s own dates where `variable` has a
+    genuinely non-null value - a row that doesn't exist for this market at
+    all is already absent from `market_frame`, so it can never appear
+    here, exactly like a row whose value is null."""
+    if variable not in market_frame.columns:
+        return set()
+    observed = market_frame.loc[market_frame[variable].notna(), date_col]
+    return {pd.Timestamp(d) for d in observed}
+
+
+def _gap_segments(
+    all_dates: list, observed_dates: set
+) -> tuple["CoverageSegment", ...]:
+    """Group every date in `all_dates` that is NOT in `observed_dates` into
+    contiguous runs (by position in the project's own sorted date list, not
+    by calendar arithmetic - this makes no frequency assumption) and return
+    one `unknown` `CoverageSegment` per run. `unknown` - never a guessed
+    state - is the only state this function ever assigns: REQ-COVERAGE-001
+    S1 forbids inferring `not_applicable`/`unavailable_source`/structural
+    `observed_zero` merely from an absent value; a human must reclassify
+    each gap this function surfaces."""
+    segments = []
+    run_start = None
+    previous_date = None
+    for current_date in all_dates:
+        if current_date in observed_dates:
+            if run_start is not None:
+                # previous_date was set on every prior loop iteration, and
+                # a run only starts inside this loop, so it is always
+                # non-None here - mypy cannot see that cross-iteration
+                # invariant on its own.
+                assert previous_date is not None
+                segments.append(
+                    CoverageSegment(
+                        period_start=run_start.strftime("%Y-%m-%d"),
+                        period_end=previous_date.strftime("%Y-%m-%d"),
+                        state=STATE_UNKNOWN,
+                    )
+                )
+                run_start = None
+        else:
+            if run_start is None:
+                run_start = current_date
+        previous_date = current_date
+    if run_start is not None:
+        assert previous_date is not None
+        segments.append(
+            CoverageSegment(
+                period_start=run_start.strftime("%Y-%m-%d"),
+                period_end=previous_date.strftime("%Y-%m-%d"),
+                state=STATE_UNKNOWN,
+            )
+        )
+    return tuple(segments)
+
+
+def build_coverage_matrix_from_frame(
+    df: pd.DataFrame,
+    *,
+    date_col: str,
+    market_col: str,
+    variable_columns: Iterable[str],
+    frequency_metadata: Mapping[str, FrequencyMetadata],
+    source_id: str,
+    source_version: int,
+    matrix_id: str,
+    matrix_version: int,
+    generated_at: str,
+) -> VariableCoverageMatrix:
+    """Generate a `VariableCoverageMatrix` from an already-joined DataFrame -
+    the missing link between the Phase 1 domain contracts and real data
+    (REQ-COVERAGE-001 S3: "every candidate model must expose a variable
+    coverage matrix before fitting").
+
+    Only mechanically observable facts are computed: `expected_start`/
+    `expected_end` (the project's own full date range, across every
+    market - v1.6's "never truncate to the narrowest common window" reread
+    the other way: a market missing early history is measured against the
+    *project's* window, not shrunk down to its own), `observed_start`/
+    `observed_end` (this market's own non-null date range for the
+    variable, `None` if entirely absent), and gap segments (every date the
+    project has that this market/variable does not, grouped into
+    contiguous `unknown` runs via `_gap_segments`).
+
+    What this function deliberately does NOT do: classify *why* a gap
+    exists (`not_applicable` vs `unavailable_source` vs a genuine
+    structural pre-launch `observed_zero`) - every gap is `unknown` until
+    a human reclassifies it, matching this record's core invariant that a
+    state must never be inferred merely because a value is absent. It also
+    never assigns a state to an *observed* value - the eight-state
+    vocabulary describes exceptions, not confirmation that ordinary data
+    is present.
+
+    `frequency_metadata` must supply an entry for every `variable_columns`
+    entry - REQ-COVERAGE-001 S4 forbids a single default conversion
+    method/variable-class assumption, so there is no fallback here: a
+    missing entry raises rather than guessing.
+    """
+    variable_columns = list(variable_columns)
+    missing_frequency = [v for v in variable_columns if v not in frequency_metadata]
+    if missing_frequency:
+        raise ValueError(
+            "frequency_metadata is missing an entry for: "
+            f"{missing_frequency} - every variable requires an explicit, "
+            "governed FrequencyMetadata (REQ-COVERAGE-001 S4), never a "
+            "default assumption."
+        )
+
+    all_dates = sorted({pd.Timestamp(d) for d in df[date_col].unique()})
+    if not all_dates:
+        raise ValueError("df has no dates to build a coverage matrix from.")
+    expected_start = all_dates[0].strftime("%Y-%m-%d")
+    expected_end = all_dates[-1].strftime("%Y-%m-%d")
+
+    records = []
+    for market in sorted(df[market_col].astype(str).unique()):
+        market_frame = df[df[market_col].astype(str) == market]
+        for variable in variable_columns:
+            observed_dates = _observed_dates_for_market(
+                market_frame, date_col, variable
+            )
+            observed_start = (
+                min(observed_dates).strftime("%Y-%m-%d") if observed_dates else None
+            )
+            observed_end = (
+                max(observed_dates).strftime("%Y-%m-%d") if observed_dates else None
+            )
+            records.append(
+                VariableCoverageRecord(
+                    variable_id=variable,
+                    source_id=source_id,
+                    source_version=source_version,
+                    market=market,
+                    frequency=frequency_metadata[variable],
+                    coverage_segments=_gap_segments(all_dates, observed_dates),
+                    observed_start=observed_start,
+                    observed_end=observed_end,
+                    expected_start=expected_start,
+                    expected_end=expected_end,
+                )
+            )
+
+    return VariableCoverageMatrix(
+        matrix_id=matrix_id,
+        matrix_version=matrix_version,
+        generated_at=generated_at,
+        records=tuple(records),
+    )
