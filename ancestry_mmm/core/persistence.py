@@ -238,6 +238,7 @@ def export_project(
     value_mapping: Optional[dict] = None,
     causal_graphs: Optional[List[dict]] = None,
     search_objects: Optional[List[dict]] = None,
+    source_versions: Optional[List[dict]] = None,
 ) -> Path:
     output_path = Path(output_path)
     with tempfile.TemporaryDirectory() as tmp_str:
@@ -388,6 +389,16 @@ def export_project(
             (tmp / "config" / "search_objects.json").write_text(
                 json.dumps(search_objects, indent=2, default=str)
             )
+        # REQ-COVERAGE-001 S3: append-only immutable SourceVersion history
+        # (core.coverage.SourceVersion.to_dict() dicts) - never pruned on
+        # export; a bundle preserves every recorded upload's provenance so
+        # a re-uploaded source resumes version numbering correctly rather
+        # than colliding with a prior version's checksum identity (P1
+        # review finding on an earlier version of this capability).
+        if source_versions is not None:
+            (tmp / "config" / "source_versions.json").write_text(
+                json.dumps(source_versions, indent=2, default=str)
+            )
         if diagnostics is not None:
             for name, value in diagnostics.items():
                 if value is None:
@@ -457,6 +468,8 @@ def export_project(
                 "value_mapping": value_mapping is not None,
                 "causal_graphs": causal_graphs is not None and bool(causal_graphs),
                 "search_objects": search_objects is not None and bool(search_objects),
+                "source_versions": source_versions is not None
+                and bool(source_versions),
             },
         }
         (tmp / "manifest.json").write_text(json.dumps(manifest, indent=2, default=str))
@@ -556,6 +569,11 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         # existed - "no Search objects governed yet" is a valid,
         # not-an-error reading, same convention as causal_graphs above.
         "search_objects": None,
+        # REQ-COVERAGE-001 S3: None for bundles exported before this
+        # capability existed - "no source-version history recorded yet" is
+        # a valid, not-an-error reading, same convention as causal_graphs/
+        # search_objects above.
+        "source_versions": None,
     }
     with tempfile.TemporaryDirectory() as tmp_str:
         tmp = Path(tmp_str)
@@ -699,6 +717,10 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         if (config_dir / "search_objects.json").exists():
             result["search_objects"] = json.loads(
                 (config_dir / "search_objects.json").read_text()
+            )
+        if (config_dir / "source_versions.json").exists():
+            result["source_versions"] = json.loads(
+                (config_dir / "source_versions.json").read_text()
             )
         # G2A.7 (REQ-OUT-002): outcome approvals persisted alongside outcome
         # definitions. Absent in legacy bundles — treated as no approvals on
@@ -969,6 +991,57 @@ def resolve_imported_search_objects(
         ]
 
     return [defn.to_dict() for defn in normalised], warnings
+
+
+def resolve_imported_source_versions(
+    imported: Dict[str, Any],
+) -> Tuple[List[dict], List[str]]:
+    """REQ-COVERAGE-001 S3: resolve the immutable `SourceVersion` history an
+    imported bundle should use - every recorded upload (never only the
+    latest per `source_id`; a version history is a permanent audit record,
+    not a "current state" the way `resolve_imported_search_objects`'
+    per-lineage current record is). Each record is round-tripped through
+    `SourceVersion.from_dict`/`to_dict` for validation - a malformed
+    record is quarantined (dropped), never silently discarded without a
+    trace, mirroring `resolve_imported_causal_graphs`/
+    `resolve_imported_search_objects`'s never-trust-silently contract.
+
+    A bundle with no `source_versions.json` file (every bundle exported
+    before this capability existed, and every current project with no
+    real-upload provenance recorded yet) resolves to an empty list with no
+    warnings - that is the correct "no history recorded yet" reading, not
+    an error. Callers resuming an upload (deciding the next `version`
+    number for a given `source_id`) should pass this function's output to
+    `core.coverage.current_source_versions` to find the highest recorded
+    version per lineage.
+    """
+    from .coverage import SourceVersion
+
+    raw_versions = imported.get("source_versions")
+    warnings: List[str] = []
+    if not raw_versions:
+        return [], warnings
+
+    normalised: List[dict] = []
+    for index, item in enumerate(raw_versions):
+        if not isinstance(item, Mapping):
+            input_type = type(item).__name__
+            warnings.append(
+                f"Source version record {index} is not a mapping "
+                f"(type={input_type!r}) and was quarantined "
+                "(dropped, not silently kept)."
+            )
+            continue
+        try:
+            normalised.append(SourceVersion.from_dict(item).to_dict())
+        except (TypeError, ValueError, KeyError, AttributeError) as exc:
+            source_id = item.get("source_id", "<unknown>")
+            warnings.append(
+                f"Source version record {index} (source_id={source_id!r}) "
+                f"was malformed and was quarantined (dropped, not silently "
+                f"kept): {exc}"
+            )
+    return normalised, warnings
 
 
 def _validate_relative_artifact_path(rel_path: str) -> None:

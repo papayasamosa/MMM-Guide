@@ -1,15 +1,18 @@
 """Data loading and validation utilities."""
 
 import warnings
+from datetime import datetime, timezone
 
 import pandas as pd
 from pathlib import Path
-from typing import Optional, Tuple, List, Dict, Any
+from typing import Iterable, Optional, Tuple, List, Dict, Any
+
+from ancestry_mmm.core.coverage import SourceVersion, compute_checksum
 
 
 def load_file(uploaded_file) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
     """
-    Load a CSV or Excel file into a DataFrame.
+    Load a CSV, Excel (.xlsx/.xls/.xlsm), or Parquet file into a DataFrame.
 
     Returns:
         Tuple of (DataFrame, error_message). If successful, error_message is None.
@@ -19,8 +22,10 @@ def load_file(uploaded_file) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
 
         if filename.endswith(".csv"):
             df = pd.read_csv(uploaded_file)
-        elif filename.endswith((".xlsx", ".xls")):
+        elif filename.endswith((".xlsx", ".xls", ".xlsm")):
             df = pd.read_excel(uploaded_file)
+        elif filename.endswith(".parquet"):
+            df = pd.read_parquet(uploaded_file)
         else:
             return None, f"Unsupported file format: {filename}"
 
@@ -31,6 +36,56 @@ def load_file(uploaded_file) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
 
     except Exception as e:
         return None, f"Error loading file: {str(e)}"
+
+
+def load_file_with_source_version(
+    uploaded_file,
+    source_id: str,
+    existing_versions: Optional[Iterable[SourceVersion]] = None,
+) -> Tuple[Optional[pd.DataFrame], Optional[SourceVersion], Optional[str]]:
+    """REQ-COVERAGE-001 S3: capture an immutable `SourceVersion` alongside
+    the parsed `DataFrame` from a real upload, from a sha256 checksum of the
+    raw uploaded bytes - never the parsed representation treated as if it
+    were the original file.
+
+    `uploaded_file` must expose `.name` (used by `load_file` for format
+    detection) and `.getvalue()` returning the complete raw bytes without
+    consuming/moving whatever read position a subsequent parse uses -
+    Streamlit's `UploadedFile` (an `io.BytesIO` subclass) and a plain
+    `io.BytesIO` both satisfy this; `.getvalue()` is called before
+    `load_file` parses the same object, so parsing always sees the file
+    from its start regardless of call order.
+
+    `existing_versions` is this `source_id`'s already-known version history
+    (e.g. from session state) - `version` is `max(existing) + 1`, or `1` for
+    a genuinely new source_id. This function does not persist anything
+    itself; the caller is responsible for storing the returned
+    `SourceVersion` (e.g. appending it to session state / a project
+    bundle).
+
+    Returns `(None, None, error)` if `load_file` itself fails - no
+    `SourceVersion` is fabricated for a file that failed to parse.
+    """
+    raw_bytes = uploaded_file.getvalue()
+    df, err = load_file(uploaded_file)
+    if err:
+        return None, None, err
+
+    current_for_source = [
+        v for v in (existing_versions or ()) if v.source_id == source_id
+    ]
+    next_version = max((v.version for v in current_for_source), default=0) + 1
+
+    source_version = SourceVersion(
+        source_id=source_id,
+        version=next_version,
+        original_filename=uploaded_file.name,
+        checksum=compute_checksum(raw_bytes),
+        size_bytes=len(raw_bytes),
+        uploaded_at=datetime.now(timezone.utc).isoformat(),
+        parsed_representation_version=f"pandas-{pd.__version__}",
+    )
+    return df, source_version, None
 
 
 SAMPLE_DATA_DIR = Path(__file__).parent.parent / "sample_data"

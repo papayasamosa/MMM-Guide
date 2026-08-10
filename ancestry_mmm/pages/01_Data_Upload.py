@@ -19,7 +19,12 @@ from ancestry_mmm.components import (
     render_next_step,
     render_empty_state,
 )
-from ancestry_mmm.data import load_file, load_all_sample_sources, get_data_summary
+from ancestry_mmm.data import (
+    load_file_with_source_version,
+    load_all_sample_sources,
+    get_data_summary,
+)
+from ancestry_mmm.core.coverage import SourceVersion
 
 st.set_page_config(
     page_title="Data Upload - Ancestry FH MMM", page_icon="🧬", layout="wide"
@@ -56,6 +61,12 @@ with tab_demo:
             st.session_state["sample_ltv"] = {
                 row.segment: row.ltv for row in ltv_df.itertuples()
             }
+            # Demo sources are not real uploads and have no genuine
+            # checksum/provenance - wholesale-replacing raw_sources this
+            # way must not leave a prior real upload's provenance appearing
+            # to describe the now-demo frame for a reused name (e.g. a
+            # previous "media" upload).
+            st.session_state["active_source_upload_version"] = {}
             st.session_state["data_loaded"] = True
             clear_model_state()
             st.success(
@@ -70,22 +81,43 @@ with tab_upload:
         "Source name *", value="media", help="e.g. media, outcomes, controls"
     )
     uploaded = st.file_uploader(
-        "Choose a CSV or Excel file *", type=["csv", "xlsx", "xls"], key="uploader"
+        "Choose a CSV, Excel, or Parquet file *",
+        type=["csv", "xlsx", "xls", "xlsm", "parquet"],
+        key="uploader",
     )
 
     if uploaded is not None and st.button("Add source"):
-        df, err = load_file(uploaded)
-        if err:
-            st.error(err)
+        if not source_name.strip():
+            st.error("Source name is required.")
         else:
-            sources = dict(st.session_state.get("raw_sources") or {})
-            sources[source_name] = df
-            st.session_state["raw_sources"] = sources
-            st.session_state["data_loaded"] = True
-            clear_model_state()
-            st.success(
-                f"Loaded {df.shape[0]} rows from {uploaded.name} as source '{source_name}'."
+            existing_versions = [
+                SourceVersion.from_dict(v)
+                for v in st.session_state.get("source_versions") or []
+            ]
+            df, source_version, err = load_file_with_source_version(
+                uploaded, source_name, existing_versions
             )
+            if err:
+                st.error(err)
+            else:
+                sources = dict(st.session_state.get("raw_sources") or {})
+                sources[source_name] = df
+                st.session_state["raw_sources"] = sources
+                st.session_state["source_versions"] = [
+                    v.to_dict() for v in existing_versions
+                ] + [source_version.to_dict()]
+                active = dict(
+                    st.session_state.get("active_source_upload_version") or {}
+                )
+                active[source_name] = source_version.version
+                st.session_state["active_source_upload_version"] = active
+                st.session_state["data_loaded"] = True
+                clear_model_state()
+                st.success(
+                    f"Loaded {df.shape[0]} rows from {uploaded.name} as source "
+                    f"'{source_name}' (v{source_version.version}, checksum "
+                    f"{source_version.checksum[:12]}...)."
+                )
 
 sources = st.session_state.get("raw_sources") or {}
 if sources:
@@ -95,6 +127,29 @@ if sources:
         with st.expander(
             f"**{name}** - {df.shape[0]} rows x {df.shape[1]} columns", expanded=False
         ):
+            # Look up the *specific* version that actually produced this
+            # name's current frame (never "the latest history entry for
+            # this name" - a prior real upload's provenance must not be
+            # displayed against a frame that isn't actually that upload,
+            # e.g. after loading demo data under a reused name).
+            active_version = (
+                st.session_state.get("active_source_upload_version") or {}
+            ).get(name)
+            active_record = next(
+                (
+                    v
+                    for v in st.session_state.get("source_versions") or []
+                    if v.get("source_id") == name and v.get("version") == active_version
+                ),
+                None,
+            )
+            if active_record is not None:
+                st.caption(
+                    f"Source version v{active_record['version']} - "
+                    f"`{active_record['original_filename']}` - "
+                    f"checksum `{active_record['checksum'][:12]}...` - "
+                    f"uploaded {active_record['uploaded_at']}"
+                )
             summary = get_data_summary(df)
             c1, c2, c3 = st.columns(3)
             c1.metric("Rows", f"{summary['rows']:,}")
@@ -107,6 +162,11 @@ if sources:
             if st.button(f"Remove '{name}'", key=f"remove_{name}"):
                 sources.pop(name)
                 st.session_state["raw_sources"] = sources
+                active = dict(
+                    st.session_state.get("active_source_upload_version") or {}
+                )
+                active.pop(name, None)
+                st.session_state["active_source_upload_version"] = active
                 st.rerun()
 
     render_next_step("data_upload")

@@ -26,10 +26,28 @@ gap regardless of whether the test environment runs pandas 2.x or 3.x.
 """
 
 import datetime
+import io
 
 import pandas as pd
 
-from ancestry_mmm.data.loader import detect_column_types
+from ancestry_mmm.core.coverage import SourceVersion, compute_checksum
+from ancestry_mmm.data.loader import (
+    detect_column_types,
+    load_file,
+    load_file_with_source_version,
+)
+
+
+class _FakeUploadedFile(io.BytesIO):
+    """Minimal stand-in for Streamlit's `UploadedFile`: an `io.BytesIO`
+    with a `.name` attribute, exposing `.getvalue()` without consuming the
+    read position `pd.read_csv`/`read_excel`/`read_parquet` use - matches
+    the real `UploadedFile`'s contract `load_file_with_source_version`
+    depends on."""
+
+    def __init__(self, name: str, data: bytes):
+        super().__init__(data)
+        self.name = name
 
 
 def _frame():
@@ -152,3 +170,130 @@ def test_dna_and_promo_hints_are_detected_on_numeric_columns():
     result = detect_column_types(df)
     assert "DNA_Media_spend" in result["potential_dna"]
     assert "promo_flag" in result["potential_promo"]
+
+
+# ---------------------------------------------------------------------------
+# REQ-COVERAGE-001 S3/S6 (WP3 Phase 2): Parquet/XLSM import support, and
+# immutable SourceVersion capture from a real upload's raw bytes.
+# ---------------------------------------------------------------------------
+
+
+def _csv_upload(name: str = "media.csv") -> _FakeUploadedFile:
+    df = _frame()
+    return _FakeUploadedFile(name, df.to_csv(index=False).encode())
+
+
+def _parquet_upload(name: str = "media.parquet") -> _FakeUploadedFile:
+    df = _frame()
+    buf = io.BytesIO()
+    df.to_parquet(buf, index=False)
+    return _FakeUploadedFile(name, buf.getvalue())
+
+
+def _xlsm_upload(name: str = "media.xlsm") -> _FakeUploadedFile:
+    df = _frame()
+    buf = io.BytesIO()
+    df.to_excel(buf, index=False, engine="openpyxl")
+    return _FakeUploadedFile(name, buf.getvalue())
+
+
+class TestParquetAndXlsmSupport:
+    def test_parquet_file_loads(self):
+        df, err = load_file(_parquet_upload())
+        assert err is None
+        assert df is not None
+        assert list(df.columns) == list(_frame().columns)
+
+    def test_xlsm_file_loads(self):
+        df, err = load_file(_xlsm_upload())
+        assert err is None
+        assert df is not None
+        assert list(df.columns) == list(_frame().columns)
+
+    def test_still_unsupported_format_rejected(self):
+        df, err = load_file(_FakeUploadedFile("media.json", b"{}"))
+        assert df is None
+        assert "Unsupported file format" in err
+
+
+class TestLoadFileWithSourceVersion:
+    def test_returns_a_source_version_with_correct_checksum(self):
+        upload = _csv_upload()
+        raw_bytes = upload.getvalue()
+        upload.seek(0)
+        df, source_version, err = load_file_with_source_version(upload, "media")
+        assert err is None
+        assert df is not None
+        assert source_version.source_id == "media"
+        assert source_version.version == 1
+        assert source_version.checksum == compute_checksum(raw_bytes)
+        assert source_version.size_bytes == len(raw_bytes)
+        assert source_version.original_filename == "media.csv"
+
+    def test_no_source_version_produced_on_parse_failure(self):
+        df, source_version, err = load_file_with_source_version(
+            _FakeUploadedFile("media.json", b"{}"), "media"
+        )
+        assert df is None
+        assert source_version is None
+        assert err is not None
+
+    def test_version_increments_from_existing_history(self):
+        existing = [
+            SourceVersion(
+                source_id="media",
+                version=1,
+                original_filename="media_v1.csv",
+                checksum=compute_checksum(b"v1"),
+                size_bytes=2,
+                uploaded_at="2026-08-01T00:00:00+00:00",
+                parsed_representation_version="pandas-test",
+            ),
+            SourceVersion(
+                source_id="media",
+                version=2,
+                original_filename="media_v2.csv",
+                checksum=compute_checksum(b"v2"),
+                size_bytes=2,
+                uploaded_at="2026-08-02T00:00:00+00:00",
+                parsed_representation_version="pandas-test",
+            ),
+        ]
+        _df, source_version, _err = load_file_with_source_version(
+            _csv_upload(), "media", existing
+        )
+        assert source_version.version == 3
+
+    def test_different_source_id_starts_at_version_one_even_with_other_history(self):
+        existing = [
+            SourceVersion(
+                source_id="outcomes",
+                version=5,
+                original_filename="outcomes.csv",
+                checksum=compute_checksum(b"x"),
+                size_bytes=1,
+                uploaded_at="2026-08-01T00:00:00+00:00",
+                parsed_representation_version="pandas-test",
+            ),
+        ]
+        _df, source_version, _err = load_file_with_source_version(
+            _csv_upload(), "media", existing
+        )
+        assert source_version.version == 1
+
+    def test_parsed_representation_version_records_pandas_version(self):
+        _df, source_version, _err = load_file_with_source_version(
+            _csv_upload(), "media"
+        )
+        assert (
+            source_version.parsed_representation_version == f"pandas-{pd.__version__}"
+        )
+
+    def test_parquet_upload_produces_a_valid_source_version(self):
+        upload = _parquet_upload()
+        raw_bytes = upload.getvalue()
+        upload.seek(0)
+        df, source_version, err = load_file_with_source_version(upload, "media")
+        assert err is None
+        assert df is not None
+        assert source_version.checksum == compute_checksum(raw_bytes)

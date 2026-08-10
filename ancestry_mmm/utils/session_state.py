@@ -18,6 +18,23 @@ def init_session_state():
     defaults = {
         # Raw sources: {"media": df, "outcomes": df, "controls": df, ...}
         "raw_sources": {},
+        # REQ-COVERAGE-001 S3: append-only immutable source-version history
+        # (core.coverage.SourceVersion.to_dict() dicts, any order) - one
+        # entry per real upload (never for synthetic demo data, which has no
+        # meaningful checksum/provenance to capture). Removing a source from
+        # "raw_sources" (the active working set) does not remove its
+        # history here - a SourceVersion is a permanent record of what was
+        # uploaded, not of what is currently in use.
+        "source_versions": [],
+        # {source_id: version} - which SourceVersion (if any) actually
+        # produced the CURRENT raw_sources[source_id] frame. Distinct from
+        # "the latest history entry for this name": loading synthetic demo
+        # data replaces raw_sources wholesale without a real upload, so a
+        # name that previously had a real upload must not keep displaying
+        # that upload's provenance against the now-demo frame. Cleared for
+        # a name whenever that name's active frame stops being backed by a
+        # real upload (demo load, remove).
+        "active_source_upload_version": {},
         "joined_data": None,
         "data_loaded": False,
         "project_name": "ancestry-fh-uk",
