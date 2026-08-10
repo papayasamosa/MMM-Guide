@@ -7,6 +7,7 @@ from ancestry_mmm.data.pipeline import (
     apply_pipeline,
     apply_step,
     join_sources,
+    join_sources_with_diagnostics,
     safe_eval_expression,
 )
 
@@ -221,3 +222,179 @@ def test_join_sources_merges_on_date():
     joined = join_sources({"media": media, "outcomes": outcomes}, date_col="date")
     assert list(joined.columns) == ["date", "TV", "GSAs"]
     assert len(joined) == 2
+
+
+# ---------------------------------------------------------------------------
+# join_sources_with_diagnostics (REQ-COVERAGE-001 S4: join mode, unmatched-
+# row policy and resulting coverage loss must be explicit and diagnosable)
+# ---------------------------------------------------------------------------
+
+
+class TestJoinSourcesWithDiagnostics:
+    def test_matching_dates_report_zero_loss_on_every_source(self):
+        media = pd.DataFrame(
+            {"date": pd.date_range("2024-01-01", periods=3), "TV": [1, 2, 3]}
+        )
+        outcomes = pd.DataFrame(
+            {"date": pd.date_range("2024-01-01", periods=3), "GSAs": [4, 5, 6]}
+        )
+        joined, diagnostics = join_sources_with_diagnostics(
+            {"media": media, "outcomes": outcomes}, date_col="date"
+        )
+        assert len(joined) == 3
+        assert diagnostics.join_mode == "inner"
+        assert diagnostics.output_rows == 3
+        assert diagnostics.has_loss is False
+        assert diagnostics.has_coverage_gaps is False
+        by_name = {s.source_name: s for s in diagnostics.per_source}
+        assert by_name["media"].input_rows == 3
+        assert by_name["media"].matched_keys == 3
+        assert by_name["media"].dropped_keys == 0
+        assert by_name["media"].unmatched_keys == 0
+        assert by_name["outcomes"].dropped_keys == 0
+        assert by_name["outcomes"].unmatched_keys == 0
+
+    def test_inner_join_reports_the_dropped_keys_per_source(self):
+        # media has 2024-01-01..03; outcomes only has 2024-01-02..04 - an
+        # inner join keeps only 01-02/01-03, silently dropping media's
+        # 01-01 and outcomes' 01-04 unless this is diagnosed.
+        media = pd.DataFrame(
+            {"date": pd.date_range("2024-01-01", periods=3), "TV": [1, 2, 3]}
+        )
+        outcomes = pd.DataFrame(
+            {"date": pd.date_range("2024-01-02", periods=3), "GSAs": [4, 5, 6]}
+        )
+        joined, diagnostics = join_sources_with_diagnostics(
+            {"media": media, "outcomes": outcomes}, date_col="date", how="inner"
+        )
+        assert len(joined) == 2
+        assert diagnostics.has_loss is True
+        by_name = {s.source_name: s for s in diagnostics.per_source}
+        assert by_name["media"].input_keys == 3
+        assert by_name["media"].matched_keys == 2
+        assert by_name["media"].dropped_keys == 1
+        assert by_name["media"].unmatched_keys == 1
+        assert by_name["outcomes"].dropped_keys == 1
+        assert by_name["outcomes"].unmatched_keys == 1
+
+    def test_outer_join_reports_zero_loss_for_the_same_mismatched_dates(self):
+        """The same mismatched-date scenario as the inner-join test above -
+        an outer join keeps every key from every source, so nothing is
+        dropped (REQ-COVERAGE-001 S1: never automatically truncate to the
+        narrowest common window)."""
+        media = pd.DataFrame(
+            {"date": pd.date_range("2024-01-01", periods=3), "TV": [1, 2, 3]}
+        )
+        outcomes = pd.DataFrame(
+            {"date": pd.date_range("2024-01-02", periods=3), "GSAs": [4, 5, 6]}
+        )
+        joined, diagnostics = join_sources_with_diagnostics(
+            {"media": media, "outcomes": outcomes}, date_col="date", how="outer"
+        )
+        assert len(joined) == 4
+        assert diagnostics.has_loss is False
+        by_name = {s.source_name: s for s in diagnostics.per_source}
+        assert by_name["media"].dropped_keys == 0
+        assert by_name["outcomes"].dropped_keys == 0
+
+    def test_outer_join_still_reports_coverage_gaps_review_finding(self):
+        """Review finding (PR #157): an outer join reports zero dropped_keys
+        for every source by construction (nothing is ever dropped), which
+        would make a row that survived with null columns from a
+        non-matching source look indistinguishable from a fully-matched
+        row unless tracked separately. media covers weeks 1-4, outcomes
+        covers weeks 2-5 - media's week 1 and outcomes' week 5 each lack a
+        counterpart in the other source and must be surfaced as
+        unmatched_keys even though outer keeps both rows."""
+        media = pd.DataFrame(
+            {
+                "date": pd.date_range("2024-01-01", periods=4, freq="W"),
+                "TV": [1, 2, 3, 4],
+            }
+        )
+        outcomes = pd.DataFrame(
+            {
+                "date": pd.date_range("2024-01-08", periods=4, freq="W"),
+                "GSAs": [5, 6, 7, 8],
+            }
+        )
+        joined, diagnostics = join_sources_with_diagnostics(
+            {"media": media, "outcomes": outcomes}, date_col="date", how="outer"
+        )
+        assert len(joined) == 5
+        assert diagnostics.has_loss is False
+        assert diagnostics.has_coverage_gaps is True
+        by_name = {s.source_name: s for s in diagnostics.per_source}
+        assert by_name["media"].dropped_keys == 0
+        assert by_name["media"].unmatched_keys == 1
+        assert by_name["outcomes"].dropped_keys == 0
+        assert by_name["outcomes"].unmatched_keys == 1
+
+    def test_join_mode_defaults_to_inner_matching_join_sources(self):
+        media = pd.DataFrame(
+            {"date": pd.date_range("2024-01-01", periods=2), "TV": [1, 2]}
+        )
+        outcomes = pd.DataFrame(
+            {"date": pd.date_range("2024-01-01", periods=2), "GSAs": [3, 4]}
+        )
+        _, diagnostics = join_sources_with_diagnostics(
+            {"media": media, "outcomes": outcomes}, date_col="date"
+        )
+        assert diagnostics.join_mode == "inner"
+
+    def test_diagnostics_and_join_sources_produce_the_same_joined_frame(self):
+        media = pd.DataFrame(
+            {"date": pd.date_range("2024-01-01", periods=3), "TV": [1, 2, 3]}
+        )
+        outcomes = pd.DataFrame(
+            {"date": pd.date_range("2024-01-02", periods=3), "GSAs": [4, 5, 6]}
+        )
+        directly = join_sources({"media": media, "outcomes": outcomes}, date_col="date")
+        via_diagnostics, _ = join_sources_with_diagnostics(
+            {"media": media, "outcomes": outcomes}, date_col="date"
+        )
+        pd.testing.assert_frame_equal(directly, via_diagnostics)
+
+    def test_market_scoped_keys_are_diagnosed_per_date_and_market(self):
+        media = pd.DataFrame(
+            {
+                "date": list(pd.date_range("2024-01-01", periods=2)) * 2,
+                "market": ["UK", "UK", "AU", "AU"],
+                "TV": [1, 2, 3, 4],
+            }
+        )
+        outcomes = pd.DataFrame(
+            {
+                "date": list(pd.date_range("2024-01-01", periods=2)),
+                "market": ["UK", "UK"],
+                "GSAs": [5, 6],
+            }
+        )
+        joined, diagnostics = join_sources_with_diagnostics(
+            {"media": media, "outcomes": outcomes},
+            date_col="date",
+            market_col="market",
+            how="inner",
+        )
+        assert len(joined) == 2
+        by_name = {s.source_name: s for s in diagnostics.per_source}
+        # AU's 2 media rows never appear in outcomes at all - both dropped.
+        assert by_name["media"].dropped_keys == 2
+        assert by_name["outcomes"].dropped_keys == 0
+
+    def test_to_dict_is_json_shaped(self):
+        media = pd.DataFrame(
+            {"date": pd.date_range("2024-01-01", periods=2), "TV": [1, 2]}
+        )
+        outcomes = pd.DataFrame(
+            {"date": pd.date_range("2024-01-01", periods=2), "GSAs": [3, 4]}
+        )
+        _, diagnostics = join_sources_with_diagnostics(
+            {"media": media, "outcomes": outcomes}, date_col="date"
+        )
+        payload = diagnostics.to_dict()
+        assert payload["join_mode"] == "inner"
+        assert payload["keys"] == ["date"]
+        assert payload["output_rows"] == 2
+        assert isinstance(payload["per_source"], list)
+        assert payload["per_source"][0]["source_name"] in {"media", "outcomes"}

@@ -1912,6 +1912,48 @@ def test_resolve_imported_variable_coverage_matrices_quarantines_malformed_recor
     assert any("incomplete" in w for w in warnings)
 
 
+def test_export_then_import_join_config_round_trip(tmp_path, sample_project):
+    """REQ-COVERAGE-001 S4 (Work Package 4, review finding on PR #157): the
+    join key columns, mode and diagnostics from the most recent "Join
+    sources" click must survive a project export/import round trip -
+    without this, a re-imported project silently reverts to the page's
+    "inner" default with no record of what actually produced its
+    transformed_data."""
+    join_config = {
+        "date_col": "date",
+        "market_col": "market",
+        "join_mode": "outer",
+        "join_diagnostics": {
+            "join_mode": "outer",
+            "keys": ["date", "market"],
+            "output_rows": 12,
+            "per_source": [
+                {
+                    "source_name": "media",
+                    "input_rows": 10,
+                    "input_keys": 10,
+                    "matched_keys": 10,
+                    "dropped_keys": 0,
+                    "unmatched_keys": 2,
+                }
+            ],
+        },
+    }
+    project = dict(sample_project)
+    project["join_config"] = join_config
+
+    bundle_path = export_project(tmp_path / "bundle.zip", **project)
+    imported = import_project(bundle_path)
+
+    assert imported["join_config"] == join_config
+
+
+def test_import_project_join_config_absent_for_legacy_bundle(tmp_path, sample_project):
+    bundle_path = export_project(tmp_path / "bundle.zip", **sample_project)
+    imported = import_project(bundle_path)
+    assert imported["join_config"] is None
+
+
 def test_audit_resumability_officially_resumable_false_without_approvals():
     imported = {
         "raw_sources": {"source": pd.DataFrame({"x": [1]})},
