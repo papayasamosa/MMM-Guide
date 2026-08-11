@@ -184,14 +184,20 @@ class TestDiagnosticsServiceComputesCapabilitySection:
         assert section.status == "not_applicable"
 
     def test_unsupported_without_a_coverage_matrix(self):
-        spec = ModelSpec(date_col="date", market_col="market", markets=["UK"], channels=["TV"])
-        result = DiagnosticsService().evaluate(_diag_input(spec=spec, coverage_matrix=None))
+        spec = ModelSpec(
+            date_col="date", market_col="market", markets=["UK"], channels=["TV"]
+        )
+        result = DiagnosticsService().evaluate(
+            _diag_input(spec=spec, coverage_matrix=None)
+        )
         section = result.diagnostics_artefact.market_channel_capability
         assert section.status == "computed"
         assert section.payload["supported"] is False
 
     def test_supported_with_a_matching_coverage_matrix(self):
-        spec = ModelSpec(date_col="date", market_col="market", markets=["UK"], channels=["TV"])
+        spec = ModelSpec(
+            date_col="date", market_col="market", markets=["UK"], channels=["TV"]
+        )
         result = DiagnosticsService().evaluate(
             _diag_input(spec=spec, coverage_matrix=_supported_matrix())
         )
@@ -201,7 +207,9 @@ class TestDiagnosticsServiceComputesCapabilitySection:
         assert section.payload["issues"] == []
 
     def test_schema_version_is_6(self):
-        spec = ModelSpec(date_col="date", market_col="market", markets=["UK"], channels=["TV"])
+        spec = ModelSpec(
+            date_col="date", market_col="market", markets=["UK"], channels=["TV"]
+        )
         result = DiagnosticsService().evaluate(
             _diag_input(spec=spec, coverage_matrix=_supported_matrix())
         )
@@ -262,7 +270,9 @@ class TestValidationServiceReadsCapabilityMetric:
             ),
         )
         with pytest.raises(MalformedArtefactEvidenceError):
-            ValidationService._get_artefact_metric("market_channel_capability", artefact)
+            ValidationService._get_artefact_metric(
+                "market_channel_capability", artefact
+            )
 
     def test_non_bool_supported_value_raises_malformed(self):
         from ancestry_mmm.application.diagnostics_service import (
@@ -278,7 +288,9 @@ class TestValidationServiceReadsCapabilityMetric:
             ),
         )
         with pytest.raises(MalformedArtefactEvidenceError):
-            ValidationService._get_artefact_metric("market_channel_capability", artefact)
+            ValidationService._get_artefact_metric(
+                "market_channel_capability", artefact
+            )
 
 
 # ---------------------------------------------------------------------------

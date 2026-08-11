@@ -231,8 +231,7 @@ class ValidationService:
             supported = section.payload["supported"]
             if not isinstance(supported, bool):
                 raise MalformedArtefactEvidenceError(
-                    f"market_channel_capability.supported is not a bool: "
-                    f"{supported!r}"
+                    f"market_channel_capability.supported is not a bool: {supported!r}"
                 )
             return 1.0 if supported else 0.0
 
