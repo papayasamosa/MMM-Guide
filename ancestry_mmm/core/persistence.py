@@ -1135,12 +1135,21 @@ def resolve_imported_source_definitions(
     imported: Dict[str, Any],
 ) -> Tuple[List[dict], List[str]]:
     """REQ-DATAIN-001: resolve the governed `SourceDefinition` records an
-    imported bundle should use - every record, mirroring
-    `resolve_imported_source_versions`'s "every recorded entry, not only
-    current" contract. Each record is round-tripped through
-    `SourceDefinition.from_dict`/`to_dict` for validation; a malformed
+    imported bundle should use.
+
+    Unlike `resolve_imported_source_versions` (an intentional append-only
+    history - many `SourceVersion` records per `source_id` over time), a
+    `SourceDefinition` is *current governed state*: exactly one record per
+    `source_id`. Each record is first round-tripped through
+    `SourceDefinition.from_dict`/`to_dict` for validation - a malformed
     record is quarantined (dropped), never silently discarded without a
-    trace.
+    trace. Records are then grouped by `source_id`; if two individually-
+    valid records for the same `source_id` disagree on any field (most
+    importantly `logical_domain` - review finding: two conflicting domain
+    classifications must not be silently resolved by list/ZIP-entry order),
+    every record for that `source_id` is quarantined rather than guessing
+    which one is authoritative - that `source_id` reads as unclassified
+    until the conflict is resolved by a fresh upload.
 
     A bundle with no `source_definitions.json` file (every bundle exported
     before this capability existed) resolves to an empty list with no
@@ -1173,7 +1182,25 @@ def resolve_imported_source_definitions(
                 f"was malformed and was quarantined (dropped, not silently "
                 f"kept): {exc}"
             )
-    return normalised, warnings
+
+    by_source_id: Dict[str, List[dict]] = {}
+    for record in normalised:
+        by_source_id.setdefault(record["source_id"], []).append(record)
+
+    resolved: List[dict] = []
+    for source_id, records in by_source_id.items():
+        distinct = {json.dumps(r, sort_keys=True, default=str) for r in records}
+        if len(distinct) > 1:
+            warnings.append(
+                f"Source definition records for source_id={source_id!r} "
+                f"disagree ({len(records)} record(s), {len(distinct)} "
+                "distinct definitions) and were all quarantined (dropped) "
+                "rather than resolved by list order."
+            )
+            continue
+        resolved.append(records[0])
+
+    return resolved, warnings
 
 
 def resolve_imported_variable_coverage_matrices(

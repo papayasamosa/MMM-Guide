@@ -249,13 +249,22 @@ class SourceDefinition:
     one of `LOGICAL_SOURCE_DOMAINS`. A source with no `SourceDefinition` at
     all (e.g. every upload made before this field existed) is not assigned
     a default domain here - `resolve_source_logical_domain` reports that as
-    an explicit "unclassified" state, never guessed."""
+    an explicit "unclassified" state, never guessed.
+
+    ``schema_version`` (review finding): explicit per-record version,
+    mirroring `ActivityDefinition.schema_version`/`VariableCoverageMatrix.
+    schema_version` (root `AGENTS.md` Persistence: "Dataclasses and model
+    metadata written to bundles must have explicit schema versions ...
+    migrations") - a future shape change to this record can be
+    distinguished from today's shape rather than guessed from field
+    presence."""
 
     source_id: str
     name: str
     logical_domain: str
     owner: str = ""
     description: str = ""
+    schema_version: int = 1
 
     def __post_init__(self) -> None:
         if not self.source_id or not self.name:

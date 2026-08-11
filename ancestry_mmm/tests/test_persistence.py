@@ -1882,6 +1882,46 @@ def test_resolve_imported_source_definitions_quarantines_malformed_records():
     assert any("not a mapping" in w for w in warnings)
 
 
+def test_resolve_imported_source_definitions_quarantines_conflicting_domains():
+    """Review finding: two individually-valid records sharing a source_id
+    but disagreeing on logical_domain must not be silently resolved by
+    list/ZIP-entry order - both are quarantined instead."""
+    imported = {
+        "source_definitions": [
+            {
+                "source_id": "media",
+                "name": "media",
+                "logical_domain": "activity_and_media",
+            },
+            {
+                "source_id": "media",
+                "name": "media",
+                "logical_domain": "outcomes",
+            },
+        ]
+    }
+    definitions, warnings = resolve_imported_source_definitions(imported)
+    assert definitions == []
+    assert len(warnings) == 1
+    assert "media" in warnings[0]
+    assert "disagree" in warnings[0]
+
+
+def test_resolve_imported_source_definitions_dedupes_true_duplicates():
+    """Two genuinely identical records for the same source_id (e.g. a
+    round-trip quirk) are not a conflict - they collapse to one, silently
+    (no warning, since nothing is actually in dispute)."""
+    record = {
+        "source_id": "media",
+        "name": "media",
+        "logical_domain": "activity_and_media",
+    }
+    imported = {"source_definitions": [record, dict(record)]}
+    definitions, warnings = resolve_imported_source_definitions(imported)
+    assert len(definitions) == 1
+    assert warnings == []
+
+
 def _sample_coverage_matrix(matrix_version: int = 1):
     from ancestry_mmm.core.coverage import (
         CoverageSegment,

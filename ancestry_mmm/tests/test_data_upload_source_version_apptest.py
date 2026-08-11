@@ -168,3 +168,25 @@ def test_shows_unclassified_for_a_source_with_no_recorded_domain():
 
     captions = [c.value for c in at.caption]
     assert any("Unclassified" in c for c in captions)
+
+
+def test_domain_selectbox_defaults_to_an_unselected_placeholder():
+    """Review finding: a Streamlit selectbox pre-selects its first option,
+    so listing the four real domains directly would let "Add source" be
+    clicked without the analyst ever making the required classification.
+    The default value must be a non-domain placeholder, never a real
+    logical domain (which would silently persist an unauthorized default
+    classification)."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.run()
+    assert not at.exception, f"page load raised: {at.exception}"
+
+    domain_selectbox = next(
+        sb for sb in at.selectbox if sb.label == "Logical source domain *"
+    )
+    assert domain_selectbox.value not in (
+        "outcomes",
+        "activity_and_media",
+        "context_and_external_factors",
+        "experiment_evidence",
+    )

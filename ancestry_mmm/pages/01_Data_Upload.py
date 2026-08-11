@@ -117,10 +117,19 @@ with tab_upload:
     source_name = st.text_input(
         "Source name *", value="media", help="e.g. media, outcomes, controls"
     )
-    logical_domain = st.selectbox(
+    # REQ-DATAIN-001 (review finding): a Streamlit selectbox pre-selects
+    # its first option, so listing LOGICAL_SOURCE_DOMAINS directly would
+    # let "Add source" be clicked without the analyst ever making this
+    # required business classification - silently persisting an
+    # unauthorized default domain (worse still, paired with the adjacent
+    # "media" source-name default, defaulting to "Outcomes" would be
+    # actively wrong). An explicit, non-domain placeholder is the default
+    # instead, and "Add source" blocks until a real domain is chosen.
+    _DOMAIN_PLACEHOLDER = "— Select a logical domain —"
+    logical_domain_choice = st.selectbox(
         "Logical source domain *",
-        LOGICAL_SOURCE_DOMAINS,
-        format_func=lambda d: _DOMAIN_LABELS[d],
+        [_DOMAIN_PLACEHOLDER, *LOGICAL_SOURCE_DOMAINS],
+        format_func=lambda d: _DOMAIN_LABELS.get(d, d),
         help=(
             "REQ-DATAIN-001: every source belongs to one governed logical "
             "domain. Outcomes, Activity and Media, and Context and "
@@ -137,6 +146,8 @@ with tab_upload:
     if uploaded is not None and st.button("Add source"):
         if not source_name.strip():
             st.error("Source name is required.")
+        elif logical_domain_choice == _DOMAIN_PLACEHOLDER:
+            st.error("Choose a logical source domain before adding this source.")
         else:
             existing_versions = [
                 SourceVersion.from_dict(v)
@@ -173,7 +184,7 @@ with tab_upload:
                     SourceDefinition(
                         source_id=source_name,
                         name=source_name,
-                        logical_domain=logical_domain,
+                        logical_domain=logical_domain_choice,
                     ).to_dict()
                 )
                 st.session_state["source_definitions"] = definitions

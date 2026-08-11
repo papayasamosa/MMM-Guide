@@ -302,6 +302,22 @@ class TestSourceDefinition:
         restored = SourceDefinition.from_dict(d.to_dict())
         assert restored == d
 
+    def test_schema_version_defaults_to_1(self):
+        """Review finding: an explicit per-record schema_version, so a
+        future shape change can be distinguished from today's shape rather
+        than guessed from field presence."""
+        assert self._definition().schema_version == 1
+
+    def test_from_dict_defaults_schema_version_for_a_legacy_payload(self):
+        """A payload predating this field entirely (dict with no
+        schema_version key at all) resolves to 1, not an error."""
+        payload = {
+            "source_id": "media",
+            "name": "media",
+            "logical_domain": DOMAIN_ACTIVITY_AND_MEDIA,
+        }
+        assert SourceDefinition.from_dict(payload).schema_version == 1
+
 
 class TestResolveSourceLogicalDomain:
     def test_returns_domain_for_a_known_source(self):
