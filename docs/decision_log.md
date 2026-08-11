@@ -2006,3 +2006,35 @@ empty and every real alignment request still resolves to
 `unsupported_no_approved_method`.
 **Owner:** Platform engineering.
 **Status:** Accepted; implemented in PR #163.
+
+## Data Input Contract approval (Work Package E gate)
+
+**Date:** 2026-08-11
+**Decision:** Adopt the "Ancestry MMM Data Input Contract and Repository Alignment Review"
+(external, previously Draft) as approved, per explicit user approval in-session, and translate
+it into repository authority as `REQ-DATAIN-001`: three required logical source domains
+(Outcomes; Activity and Media; Context and External Factors), one optional domain (Experiment
+Evidence), and `pooling_group_id` as a stable cross-market activity identity that never
+automatically forces parameter pooling.
+**Reason:** The task-specific brief explicitly required this approval gate before implementing
+any of the amendment's draft-only decisions - a coding agent inventing this business decision
+unilaterally, or silently promoting draft text into approved behaviour, is exactly what root
+`AGENTS.md`'s requirements-authority hierarchy prohibits. The user supplied that approval
+directly, in this session, including two specific clarifications (the exact three required
+domains, and that `pooling_group_id` must not imply pooling) that resolve what would otherwise
+have been ambiguous in the summarised external document.
+**Alternatives considered:** Treating the user's approval as covering only the two explicitly
+clarified points, leaving the rest of the summarised proposal (arbitrary physical file counts
+per domain, market-as-row, separate spend/response-unit semantics, paid/owned/earned unification,
+native-frequency upload acceptance, template packs) still in draft (rejected - the user's first
+sentence approves "the ... Review as the approved source-input contract" as a whole; the two
+clarifications read as resolving specific ambiguities within that approval, not narrowing its
+scope). Implementing the external document's literal example schema verbatim (rejected -
+REQ-DATAIN-001 explicitly requires implementation "against current architecture," mirroring
+`REQ-COVERAGE-001`'s own precedent that existing registries like `core.media_costs`/
+`core.media_units`/`ActivityDefinition.activity_ownership` must not be duplicated).
+**Impact:** New `docs/approved_requirements/REQ-DATAIN-001.md`, `index.json` entry, `README.md`
+category. No `ancestry_mmm/` source, schema, or model behaviour changes in this record itself -
+dependent, separately-scoped implementation packages (Work Package E1-E6) build against it.
+**Owner:** Data Science / Platform engineering (user-approved).
+**Status:** Accepted; implemented in PR #164.
