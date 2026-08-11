@@ -24,6 +24,8 @@ from ancestry_mmm.components import (
     render_page_header,
     render_next_step,
     render_empty_state,
+    SectionCard,
+    InfoPanel,
 )
 from ancestry_mmm.data import (
     join_sources_with_diagnostics,
@@ -55,9 +57,25 @@ st.set_page_config(
 init_session_state()
 apply_theme()
 render_sidebar("transform_pipeline")
-render_page_header("transform_pipeline")
 
+# Header badge reflects where this page's own workflow actually is:
+# nothing loaded yet (blocked, checked below), joined but not yet
+# transformed (in progress), or a transformed dataset already exists.
 sources = get_state("raw_sources") or {}
+if get_state("transformed_data") is not None:
+    _header_badges = ["ready"]
+elif get_state("joined_data") is not None:
+    _header_badges = ["current"]
+elif sources:
+    _header_badges = ["not_started"]
+else:
+    _header_badges = ["awaiting_data"]
+
+render_page_header(
+    "transform_pipeline",
+    badges=_header_badges,
+)
+
 if not sources:
     st.markdown("---")
     render_empty_state(
@@ -68,60 +86,65 @@ if not sources:
     st.stop()
 
 st.markdown("---")
-st.markdown("### 1. Join sources")
-all_columns = sorted(set(c for df in sources.values() for c in df.columns))
-c1, c2 = st.columns(2)
-date_col = c1.selectbox(
-    "Shared date column *",
-    all_columns,
-    index=all_columns.index("date") if "date" in all_columns else 0,
-    format_func=readable_label,
-)
-has_market = c2.checkbox(
-    "Data has a market/geography column", value="market" in all_columns
-)
-market_col = None
-if has_market:
-    market_col = c2.selectbox(
-        "Shared market column *",
+with SectionCard(
+    "1. Source alignment and join configuration",
+    description="Choose the shared keys and an explicit join mode - "
+    "REQ-COVERAGE-001 S4: join mode and any resulting coverage loss must "
+    "be diagnosable, never a silent default.",
+):
+    all_columns = sorted(set(c for df in sources.values() for c in df.columns))
+    c1, c2 = st.columns(2)
+    date_col = c1.selectbox(
+        "Shared date column *",
         all_columns,
-        index=all_columns.index("market") if "market" in all_columns else 0,
+        index=all_columns.index("date") if "date" in all_columns else 0,
         format_func=readable_label,
     )
+    has_market = c2.checkbox(
+        "Data has a market/geography column", value="market" in all_columns
+    )
+    market_col = None
+    if has_market:
+        market_col = c2.selectbox(
+            "Shared market column *",
+            all_columns,
+            index=all_columns.index("market") if "market" in all_columns else 0,
+            format_func=readable_label,
+        )
 
-_saved_join_mode = get_state("join_mode")
-join_mode = st.selectbox(
-    "Join mode *",
-    JOIN_MODE_OPTIONS,
-    index=(
-        JOIN_MODE_OPTIONS.index(_saved_join_mode)
-        if _saved_join_mode in JOIN_MODE_OPTIONS
-        else 0
-    ),
-    format_func=lambda m: m.capitalize(),
-    help="REQ-COVERAGE-001 S4: the join mode and any resulting row loss must "
-    "be an explicit, diagnosable choice, never a silent default.\n\n"
-    + "\n\n".join(f"**{m.capitalize()}**: {h}" for m, h in JOIN_MODE_HELP.items()),
-)
+    _saved_join_mode = get_state("join_mode")
+    join_mode = st.selectbox(
+        "Join mode *",
+        JOIN_MODE_OPTIONS,
+        index=(
+            JOIN_MODE_OPTIONS.index(_saved_join_mode)
+            if _saved_join_mode in JOIN_MODE_OPTIONS
+            else 0
+        ),
+        format_func=lambda m: m.capitalize(),
+        help="REQ-COVERAGE-001 S4: the join mode and any resulting row loss must "
+        "be an explicit, diagnosable choice, never a silent default.\n\n"
+        + "\n\n".join(f"**{m.capitalize()}**: {h}" for m, h in JOIN_MODE_HELP.items()),
+    )
 
-if st.button("Join sources", type="primary"):
-    try:
-        joined, join_diagnostics = join_sources_with_diagnostics(
-            sources, date_col=date_col, market_col=market_col, how=join_mode
-        )
-        set_state("joined_data", joined)
-        set_state("join_mode", join_mode)
-        set_state("join_diagnostics", join_diagnostics.to_dict())
-        set_state("date_col", date_col)
-        set_state("market_col", market_col)
-        clear_model_state()
-        st.success(
-            f"Joined {len(sources)} source(s) into {joined.shape[0]} rows x {joined.shape[1]} columns."
-        )
-    except ValueError as e:
-        st.error(
-            f"Could not join sources: {e} Check that the selected date/market columns exist in every source."
-        )
+    if st.button("Join sources", type="primary"):
+        try:
+            joined, join_diagnostics = join_sources_with_diagnostics(
+                sources, date_col=date_col, market_col=market_col, how=join_mode
+            )
+            set_state("joined_data", joined)
+            set_state("join_mode", join_mode)
+            set_state("join_diagnostics", join_diagnostics.to_dict())
+            set_state("date_col", date_col)
+            set_state("market_col", market_col)
+            clear_model_state()
+            st.success(
+                f"Joined {len(sources)} source(s) into {joined.shape[0]} rows x {joined.shape[1]} columns."
+            )
+        except ValueError as e:
+            st.error(
+                f"Could not join sources: {e} Check that the selected date/market columns exist in every source."
+            )
 
 joined = get_state("joined_data")
 if joined is None:
@@ -130,49 +153,56 @@ if joined is None:
 
 join_diagnostics = get_state("join_diagnostics")
 if join_diagnostics:
-    st.markdown("#### Join diagnostics")
-    st.caption(
-        f"Join mode: **{join_diagnostics['join_mode']}** - "
-        f"{join_diagnostics['output_rows']} row(s) in the joined result."
-    )
-    diagnostics_df = pd.DataFrame(join_diagnostics["per_source"])
-    st.dataframe(diagnostics_df, width="stretch", hide_index=True)
-    lossy_sources = [s for s in join_diagnostics["per_source"] if s["dropped_keys"] > 0]
-    if lossy_sources:
-        st.warning(
-            "This join dropped rows that existed in at least one source "
-            "(REQ-COVERAGE-001 S4: coverage loss must be explicit and "
-            "diagnosable before the joined data is used officially): "
-            + "; ".join(
-                f"{s['source_name']} lost {s['dropped_keys']} of "
-                f"{s['input_keys']} row(s)"
-                for s in lossy_sources
-            )
+    with SectionCard(
+        "Join mode and diagnostics",
+        description="Row loss and coverage gaps from the join above, kept "
+        "visually separate from the join controls themselves.",
+    ):
+        st.caption(
+            f"Join mode: **{join_diagnostics['join_mode']}** - "
+            f"{join_diagnostics['output_rows']} row(s) in the joined result."
         )
-    # Review finding (PR #157): an "outer"/"left"/"right" join can keep
-    # every row while still leaving some of them without a counterpart in
-    # every source (null columns from whichever source didn't have that
-    # row) - dropped_keys alone would report this join as loss-free, which
-    # is technically true but hides exactly the coverage gap REQ-COVERAGE-001
-    # S4 requires be diagnosable. Surfaced as a separate warning from row
-    # loss, since "the row is missing" and "the row is present but
-    # incomplete" call for different analyst action.
-    gappy_sources = [
-        s for s in join_diagnostics["per_source"] if s["unmatched_keys"] > 0
-    ]
-    if gappy_sources:
-        st.warning(
-            "Some rows in the joined result have no counterpart in every "
-            "source, so at least one source's columns will be null for "
-            "them: "
-            + "; ".join(
-                f"{s['source_name']} has {s['unmatched_keys']} of "
-                f"{s['input_keys']} row(s) without a match in every "
-                "other source"
-                for s in gappy_sources
+        diagnostics_df = pd.DataFrame(join_diagnostics["per_source"])
+        st.dataframe(diagnostics_df, width="stretch", hide_index=True)
+        lossy_sources = [
+            s for s in join_diagnostics["per_source"] if s["dropped_keys"] > 0
+        ]
+        if lossy_sources:
+            st.warning(
+                "This join dropped rows that existed in at least one source "
+                "(REQ-COVERAGE-001 S4: coverage loss must be explicit and "
+                "diagnosable before the joined data is used officially): "
+                + "; ".join(
+                    f"{s['source_name']} lost {s['dropped_keys']} of "
+                    f"{s['input_keys']} row(s)"
+                    for s in lossy_sources
+                )
             )
-        )
+        # Review finding (PR #157): an "outer"/"left"/"right" join can keep
+        # every row while still leaving some of them without a counterpart in
+        # every source (null columns from whichever source didn't have that
+        # row) - dropped_keys alone would report this join as loss-free, which
+        # is technically true but hides exactly the coverage gap REQ-COVERAGE-001
+        # S4 requires be diagnosable. Surfaced as a separate warning from row
+        # loss, since "the row is missing" and "the row is present but
+        # incomplete" call for different analyst action.
+        gappy_sources = [
+            s for s in join_diagnostics["per_source"] if s["unmatched_keys"] > 0
+        ]
+        if gappy_sources:
+            st.warning(
+                "Some rows in the joined result have no counterpart in every "
+                "source, so at least one source's columns will be null for "
+                "them: "
+                + "; ".join(
+                    f"{s['source_name']} has {s['unmatched_keys']} of "
+                    f"{s['input_keys']} row(s) without a match in every "
+                    "other source"
+                    for s in gappy_sources
+                )
+            )
 
+st.caption("Joined preview (first 10 rows)")
 st.dataframe(
     joined.head(10),
     width="stretch",
@@ -280,30 +310,50 @@ with st.expander("+ Add a transformation", expanded=len(steps) == 0):
             )
 
 if steps:
-    st.markdown("#### Current pipeline")
-    for i, step in enumerate(steps):
-        c1, c2 = st.columns([5, 1])
-        c1.markdown(
-            f"**{i + 1}.** {OPERATION_LABELS.get(step.op, step.op)} - {step.description or step.params}"
-        )
-        if c2.button("Remove", key=f"remove_step_{i}"):
-            steps.pop(i)
-            set_state("pipeline_steps", pipeline_to_json(steps))
-            st.rerun()
+    with SectionCard(
+        "Ordered transformation steps",
+        description="The exact sequence applied, in order - each step is "
+        "saved and replayed in this order, never reordered implicitly.",
+    ):
+        for i, step in enumerate(steps):
+            c1, c2 = st.columns([5, 1])
+            c1.markdown(
+                f"**{i + 1}.** `{OPERATION_LABELS.get(step.op, step.op)}` - "
+                f"{step.description or step.params}"
+            )
+            if c2.button("Remove", key=f"remove_step_{i}"):
+                steps.pop(i)
+                set_state("pipeline_steps", pipeline_to_json(steps))
+                st.rerun()
 
 try:
     transformed = apply_pipeline(joined, steps)
     set_state("transformed_data", transformed)
     st.markdown("---")
-    st.markdown("### 3. Preview transformed data")
-    st.dataframe(
-        transformed.head(10),
-        width="stretch",
-        column_config=dataframe_column_config(transformed.head(10)),
-    )
-    st.caption(
-        f"{transformed.shape[0]:,} rows x {transformed.shape[1]} columns after {len(steps)} step(s)."
-    )
+    with SectionCard(
+        "3. Transformed preview",
+        description="The result of applying every step above, in order, to "
+        "the joined data.",
+    ):
+        st.dataframe(
+            transformed.head(10),
+            width="stretch",
+            column_config=dataframe_column_config(transformed.head(10)),
+        )
+        st.caption(
+            f"{transformed.shape[0]:,} rows x {transformed.shape[1]} columns after {len(steps)} step(s)."
+        )
+
+    with InfoPanel(
+        "Save and replay",
+        description="This pipeline is saved automatically as you add or remove steps.",
+    ):
+        st.caption(
+            "Every step above is stored with the project (pipeline_steps) "
+            "and replayed in order whenever this page reruns or the "
+            "project is re-imported on Project Export & Recovery - it is "
+            "never a one-off, throwaway edit."
+        )
 
     render_next_step("transform_pipeline")
 except (KeyError, ValueError, UnsafeExpressionError) as e:
