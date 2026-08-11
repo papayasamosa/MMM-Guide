@@ -7,10 +7,12 @@ from pathlib import Path
 
 from ancestry_mmm.utils.workflow import (
     HOME_KEY,
+    NAV_GROUPS,
     TOTAL_STEPS,
     WORKFLOW_STEPS,
     get_step,
     home_workflow_lines,
+    nav_groups,
     next_step_key,
     sidebar_entries,
     step_number,
@@ -137,6 +139,54 @@ class TestHomeWorkflowLines:
             lines[-1]
             == f"{len(WORKFLOW_STEPS) + 1}. **Extra Step** - A test-only step."
         )
+
+
+class TestNavGroups:
+    """Phase 1 UI overhaul (docs/decision_log.md): NAV_GROUPS is a purely
+    visual grouping of the same WORKFLOW_STEPS/HOME_KEY keys for the sidebar
+    - it must never invent a key, drop a page, duplicate one across groups,
+    or change any route/label sidebar_entries() already governs."""
+
+    def _all_registry_keys(self):
+        return {HOME_KEY} | {step["key"] for step in WORKFLOW_STEPS}
+
+    def test_every_nav_group_key_exists_in_the_registry(self):
+        registry_keys = self._all_registry_keys()
+        for group in NAV_GROUPS:
+            for key in group["keys"]:
+                assert key in registry_keys, (
+                    f"unknown key {key!r} in group {group['label']!r}"
+                )
+
+    def test_every_registry_key_appears_in_exactly_one_group(self):
+        registry_keys = self._all_registry_keys()
+        seen = []
+        for group in NAV_GROUPS:
+            seen.extend(group["keys"])
+        assert sorted(seen) == sorted(registry_keys), (
+            "nav groups must cover every page exactly once"
+        )
+        assert len(seen) == len(set(seen)), (
+            "no page may appear in more than one nav group"
+        )
+
+    def test_group_labels_are_non_empty_and_unique(self):
+        labels = [g["label"] for g in NAV_GROUPS]
+        assert all(labels)
+        assert len(labels) == len(set(labels))
+
+    def test_home_is_alone_in_the_first_group(self):
+        assert NAV_GROUPS[0]["keys"] == [HOME_KEY]
+
+    def test_nav_groups_resolves_keys_to_full_step_metadata(self):
+        resolved = nav_groups()
+        assert len(resolved) == len(NAV_GROUPS)
+        for group, resolved_group in zip(NAV_GROUPS, resolved):
+            assert resolved_group["label"] == group["label"]
+            assert len(resolved_group["entries"]) == len(group["keys"])
+            for key, entry in zip(group["keys"], resolved_group["entries"]):
+                assert entry["key"] == key
+                assert entry == get_step(key)
 
 
 class TestNextStepMapping:

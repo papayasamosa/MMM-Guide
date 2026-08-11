@@ -21,7 +21,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from ancestry_mmm.utils import init_session_state, get_state
 from ancestry_mmm.utils.workflow import home_workflow_lines
-from ancestry_mmm.components import apply_theme, render_sidebar, render_status_card
+from ancestry_mmm.components import (
+    apply_theme,
+    render_sidebar,
+    render_context_bar,
+    render_status_card,
+)
 
 
 def setup_page_config():
@@ -38,6 +43,7 @@ def main():
     init_session_state()
     apply_theme()
     render_sidebar("home")
+    render_context_bar()
 
     st.title("Marketing Mix Modelling & Scenario Planner")
     st.markdown(

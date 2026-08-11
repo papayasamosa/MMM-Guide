@@ -269,6 +269,53 @@ def sidebar_entries() -> List[Dict[str, Any]]:
     return [_HOME] + WORKFLOW_STEPS
 
 
+# Phase 1 UI overhaul (see docs/decision_log.md): a purely visual grouping
+# of the same WORKFLOW_STEPS keys into workflow areas for the sidebar nav.
+# This is presentation grouping only - it changes no route, key, or label,
+# and every key here must already exist in WORKFLOW_STEPS/HOME_KEY (enforced
+# by TestNavGroups in tests/test_workflow.py). Do not hand-maintain a
+# second copy of page order/labels here; only the grouping itself lives in
+# this list.
+NAV_GROUPS: List[Dict[str, Any]] = [
+    {"label": "OVERVIEW", "keys": [HOME_KEY]},
+    {
+        "label": "DATA",
+        "keys": ["data_upload", "transform_pipeline", "data_coverage"],
+    },
+    {
+        "label": "MODEL DESIGN",
+        "keys": [
+            "structure",
+            "causal_graph",
+            "channel_media_units",
+            "market_descriptors",
+            "model_config",
+        ],
+    },
+    {
+        "label": "FIT & VALIDATE",
+        "keys": ["model_training", "compare_models", "diagnostics"],
+    },
+    {
+        "label": "DECISION SUPPORT",
+        "keys": ["curve_bank", "official_curve_generation", "scenario_planner"],
+    },
+    {"label": "OPERATIONS", "keys": ["export"]},
+]
+
+
+def nav_groups() -> List[Dict[str, Any]]:
+    """NAV_GROUPS with each key resolved to its full step-metadata dict
+    (via get_step), in group order. Unknown keys are skipped defensively
+    rather than raising, since this is presentation-only grouping."""
+    resolved = []
+    for group in NAV_GROUPS:
+        entries = [get_step(k) for k in group["keys"]]
+        entries = [e for e in entries if e is not None]
+        resolved.append({"label": group["label"], "entries": entries})
+    return resolved
+
+
 def home_workflow_lines() -> List[str]:
     """Numbered '**Label** - purpose.' lines for the Home page's workflow
     summary, derived directly from WORKFLOW_STEPS so it can never drift out
