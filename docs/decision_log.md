@@ -1869,3 +1869,107 @@ resolved with their delivering PR. No `ancestry_mmm/` source, schema, or
 model behaviour changes.
 **Owner:** Platform engineering.
 **Status:** Accepted; implemented in this PR.
+
+## Coverage official-use gate (Work Package B)
+
+**Date:** 2026-08-11
+**Decision:** Add `core.market_data_capability.check_market_channel_capability`'s
+result as an optional, non-waivable `market_channel_capability` validation-policy
+gate that participates in the existing `evaluate_approval_readiness`/
+`create_policy_backed_model_approval` mechanism, rather than inventing a
+bespoke governance rule or a new waiver system. Whether the gate is active is
+entirely policy-driven - this app ships no default `ThresholdPolicy` (PR
+79A/WP7), so nothing is forced on an existing project.
+**Reason:** REQ-COVERAGE-001 S6's capability report was informational only
+(`pages/04_Model_Config.py`, `pages/06_Diagnostics.py`) - nothing stopped a
+policy-backed official approval from being granted for a market/channel
+combination the current rectangular engine cannot validly support. The
+existing `ValidationGate(waivable=False, blocking=True, required=True)`
+mechanism already provides exactly the fail-closed, non-waivable semantics
+needed, and reusing it means the gate is automatically enforced everywhere
+approval is created or re-verified (`core.approval.
+create_policy_backed_model_approval`/`require_matching_approval`,
+`core.persistence.verify_imported_approval`) with zero changes to those
+modules.
+**Alternatives considered:** A bespoke approval-blocking check hard-coded
+into `06_Diagnostics.py`'s Approve button (rejected - Streamlit-only,
+contradicts the brief's explicit "do not implement the gate only in
+Streamlit" requirement, and duplicates logic the policy/readiness system
+already generalises). Forcing this gate into every policy by default
+(rejected - this app has deliberately shipped no default policy since PR
+79A; inventing one now, or special-casing this one gate to bypass that
+convention, is a bigger decision than this package's scope).
+**Correction (same PR, pre-merge):** an automated review caught two P1
+defects in the initial version: (1) the gate's evaluator had the opposite
+boolean polarity from `classify_boolean_gate`'s default, so a policy
+configured without `expected_state=True` would silently treat an
+*unsupported* result as passing - fixed by adding
+`EvaluatorMeta.required_expected_state`, enforced by `validate_gate_config`.
+(2) the capability section trusted `check_market_channel_capability`'s
+per-cell result even when the coverage matrix was stale relative to the
+currently joined data (it never reads the joined data itself) - fixed by
+threading `coverage_matrix_built_against_fingerprint`/
+`joined_dataframe_fingerprint` through `DiagnosticsInput` and forcing
+`supported=False` when they are absent or mismatched, mirroring the
+existing informational freshness check on `pages/04_Model_Config.py` but
+making it authoritative for the gate.
+**Impact:** `DiagnosticsArtefact` schema v5 → v6 (`market_channel_
+capability` section); `core.validation_policy` gains the
+`market_channel_capability` evaluator/alias/`required_expected_state`
+mechanism; `application.validation_service` reads the new section;
+`pages/06_Diagnostics.py` threads the coverage matrix and both freshness
+fingerprints through. No `FR-MOD-015` model-engine mathematics changed.
+Deferred to a later phase: generalising beyond market x channel to every
+fit-consumed variable, and dedicated AppTest/Playwright coverage of the
+visible approval-blocking journey.
+**Owner:** Platform engineering.
+**Status:** Accepted; implemented in PR #161.
+
+## Canonical-calendar and mixed-frequency alignment contracts (Work Package C)
+
+**Date:** 2026-08-11
+**Decision:** Add `core.frequency_alignment` as a pure-contracts module -
+`AlignmentSpecification` (the versioned, typed conversion decision REQ-
+COVERAGE-001 S4 requires), a conversion-method registry that is left
+genuinely empty, publication-leakage/definition-break/support-boundary
+checks, and `resolve_canonical_calendar` (fails closed with
+`CalendarResolutionRequiredError` rather than inferring a calendar from raw
+source intersection). Not wired into `data.pipeline`, `data.loader`, or any
+Streamlit page in this PR.
+**Reason:** REQ-COVERAGE-001 S4 authorises variable-class-specific
+conversion semantics but approves no concrete method for any class ("Out of
+scope": "any specific imputation formula, interpolation kernel, or default
+fill method not named in S4"). This repository also has no governed
+project-calendar configuration object anywhere (`core.market_config.
+MarketSpecConfig` has no `project_start`/`project_end`/target-frequency
+field) - `resolve_canonical_calendar` therefore cannot resolve anything
+without the caller supplying an explicit governed decision, and raises
+naming exactly what is missing rather than guessing (e.g. from whichever
+source has the shortest history). This mirrors `core.coverage`'s own
+precedent of shipping pure vocabulary/contracts before any dependent
+package wires them into the live pipeline (see that module's "Work Package
+3 Phase 1 of N" docstring).
+**Alternatives considered:** Wiring `resolve_canonical_calendar`/
+`evaluate_alignment_request` into `data.pipeline.join_sources_with_
+diagnostics` or the Transform Pipeline page now (rejected - with the method
+registry genuinely empty, every mixed-frequency variable would become
+permanently blocked with no path forward until a method is approved,
+trading one silent behaviour for an equally unhelpful one; the explicit
+join-mode/join-loss diagnostics PR #157 already delivered keep working
+unchanged). Choosing a default project calendar from existing session
+state or the join's own date range (rejected - REQ-COVERAGE-001 S1's "never
+truncate to the narrowest common window" / "never infer a calendar from
+whichever source has the shortest history" apply here exactly as they do to
+join intersection).
+**Impact:** New `core.frequency_alignment` module and
+`ancestry_mmm/tests/test_frequency_alignment.py` (34 tests). No
+`ancestry_mmm/` behaviour changes outside this new module - `data.pipeline`,
+`core.coverage`, and every Streamlit page are unchanged.
+**Unresolved decisions carried forward:** where a project's governed
+calendar configuration should actually live (a new `MarketSpecConfig`
+field, a project-level setting, or elsewhere) - this record does not invent
+it; any concrete frequency-conversion method for any variable class (this
+brief's Work Package D); wiring this module into official data preparation
+once at least one method is approved.
+**Owner:** Platform engineering.
+**Status:** Accepted; implemented in PR #162.

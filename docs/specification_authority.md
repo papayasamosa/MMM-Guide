@@ -138,7 +138,7 @@ Each row below is one of two distinct states, not to be conflated:
 | Reporting semantics | No approved requirement/decision yet | No indexed record exists. |
 | Background jobs and service boundaries | No approved requirement/decision yet | No indexed record exists. |
 | Prior-vs-posterior comparison summaries — `REQ-VAL-001` remaining scope | Requirement exists but capability incomplete | `REQ-VAL-001` is approved and substantially implemented, including prior predictive evidence (schema v4, `core.diagnostics.prior_predictive_summary`) and predictive-density evidence (schema v5, `core.diagnostics.predictive_density_summary` — PSIS-LOO/WAIC via `pm.compute_log_likelihood` + `az.loo`/`az.waic`, no refit). Its own record text explicitly defers this remaining check as a separately-scoped dependent package. |
-| Variable coverage / mixed-frequency data contracts (Part 3 v1.6 overlay) — `REQ-COVERAGE-001` implementation scope | Requirement exists but capability incomplete | `REQ-COVERAGE-001` is approved and translates the v1.6 overlay's authority (canonical missingness-state vocabulary, coverage invariants, coverage-matrix requirement) into repository requirements. Delivered incrementally in PRs #151-#159 (2026-08-09 to 2026-08-11): source/coverage-matrix domain objects (`core.coverage`), immutable source-version capture on upload, the coverage-matrix builder and Data Coverage review UI, explicit join-mode and join-loss/unmatched-key diagnostics (`data.pipeline.join_sources_with_diagnostics`), and a market x channel engine-capability report (`core.market_data_capability`) bound into model fingerprinting, project export/import, and the pre-fit prior-predictive workflow — see "Approved requirement records already implemented" below. Still not implemented: execution of an approved frequency-conversion method (no method is approved by this record — see its own "Out of scope"), a canonical-calendar mixed-frequency alignment service, a fit-consumed-variable capability report beyond market x channel, and an official-use governance gate on coverage/capability (current results are informational only). `FR-MOD-015` remains explicitly unresolved (record §6). |
+| Variable coverage / mixed-frequency data contracts (Part 3 v1.6 overlay) — `REQ-COVERAGE-001` implementation scope | Requirement exists but capability incomplete | `REQ-COVERAGE-001` is approved and translates the v1.6 overlay's authority (canonical missingness-state vocabulary, coverage invariants, coverage-matrix requirement) into repository requirements. Delivered incrementally in PRs #151-#161 (2026-08-09 to 2026-08-11): source/coverage-matrix domain objects (`core.coverage`), immutable source-version capture on upload, the coverage-matrix builder and Data Coverage review UI, explicit join-mode and join-loss/unmatched-key diagnostics (`data.pipeline.join_sources_with_diagnostics`), a market x channel engine-capability report (`core.market_data_capability`) bound into model fingerprinting, project export/import, and the pre-fit prior-predictive workflow, an official-use governance gate binding that capability report (plus coverage-matrix freshness) to policy-backed model approval as an optional validation-policy gate, and canonical-calendar/mixed-frequency alignment contracts (`core.frequency_alignment`) — see "Approved requirement records already implemented" below. Still not implemented: execution of an approved frequency-conversion method (no method is approved by this record — see its own "Out of scope" — the conversion-method registry is currently empty), wiring the canonical-calendar contracts into actual data preparation, and a fit-consumed-variable capability report beyond market x channel. `FR-MOD-015` remains explicitly unresolved (record §6). |
 | Market-specific / ragged predictor sets inside the hierarchical model equations (`FR-MOD-015`) | No approved requirement/decision yet | `REQ-COVERAGE-001` explicitly reserves this — no masking, zeroing, missing-data likelihood, or separate-coefficient treatment is approved; the current engine may only compile the rectangular subset it already supports and must fail closed for a requested ragged-predictor treatment it cannot represent. |
 | Graph-compilable mediated / capacity-constrained / moderated / residual-interaction edges — `REQ-GRAPH-001` remaining scope | Requirement exists but capability incomplete | `REQ-GRAPH-001` is approved and implemented for `direct`, `cross_product_halo`, and `excluded_diagnostic_only` edges. The remaining edge roles are valid graph vocabulary but not yet engine-compilable (`core.graph_model_compiler.check_engine_capability` is authoritative on current support). |
 
@@ -171,13 +171,25 @@ capability boundary documented in its own record:
   fit-relevant versus presentation-only coverage fingerprinting bound into
   model identity and project export/import, explicit join-mode and
   join-loss/unmatched-key diagnostics (`data.pipeline.
-  join_sources_with_diagnostics`), and a market x channel
-  engine-capability report (`core.market_data_capability.
-  check_market_channel_capability`) bound into model staleness and the
-  pre-fit prior-predictive workflow are implemented. Frequency-conversion
+  join_sources_with_diagnostics`), a market x channel engine-capability
+  report (`core.market_data_capability.check_market_channel_capability`)
+  bound into model staleness and the pre-fit prior-predictive workflow, an
+  official-use governance gate binding that capability report (plus
+  coverage-matrix freshness against the current joined data) to
+  policy-backed model approval as an optional, non-waivable
+  `market_channel_capability` validation gate (`core.validation_policy`,
+  `DiagnosticsArtefact.market_channel_capability`), and canonical-calendar/
+  mixed-frequency alignment contracts (`core.frequency_alignment`:
+  `AlignmentSpecification`, a conversion-method registry that starts
+  genuinely empty, publication-leakage/definition-break/support-boundary
+  checks, and `resolve_canonical_calendar` — fails closed with
+  `CalendarResolutionRequiredError` rather than inferring a calendar from
+  raw source intersection) are implemented. Frequency-conversion
   *execution* (no method is approved by this record — see its own "Out of
-  scope"), a canonical-calendar mixed-frequency alignment service, a
-  fit-consumed-variable capability report beyond market x channel, and an
-  official-use governance gate remain unimplemented — see the gaps table
-  above. `FR-MOD-015` (market-specific/ragged predictor sets) remains
-  explicitly unresolved (record §6).
+  scope" — the conversion-method registry above is therefore still empty),
+  wiring the canonical-calendar contracts into actual data preparation
+  (`data.pipeline`/Transform Pipeline), and a fit-consumed-variable
+  capability report beyond market x channel (outcome source columns,
+  controls, promotions) remain unimplemented — see the gaps table above.
+  `FR-MOD-015` (market-specific/ragged predictor sets) remains explicitly
+  unresolved (record §6).
