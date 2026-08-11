@@ -194,9 +194,19 @@ behaviour changes as a result of this record.
   against `LOGICAL_SOURCE_DOMAINS`; a source with no `SourceDefinition` at
   all resolves to the explicit "unclassified" state via
   `resolve_source_logical_domain`, never a guessed domain.
-- The exact `pooling_group_id` field shape on `ActivityDefinition`
-  (optional string, its validation rules, uniqueness scope) and its
-  schema-version bump/migration — deferred to Work Package E3.
+- ~~The exact `pooling_group_id` field shape on `ActivityDefinition`~~
+  **Resolved in Work Package E3 (2026-08-11):** an optional
+  `pooling_group_id: str | None = None` field (no uniqueness/format
+  validation beyond the existing pattern for sibling optional identity
+  fields — `approved_by`/`supersedes_activity_id`), `schema_version`
+  bumped 2 → 3. Deliberately excluded from `_INVALIDATION_MATRIX`
+  (editing it triggers no refit/rebuild flag) and from
+  `activity_fit_fingerprint` (never influences what is actually fit) —
+  its presence never forces, implies, or defaults to pooling, matching
+  the approved invariant exactly. Still included in the general
+  `activity_definitions_fingerprint` (the curve-artifact governance-state
+  audit hash), since that is a broader "does the activity record still
+  match" signal, not a refit trigger.
 - ~~The exact response-unit-mapping field(s) distinct from
   `model_input_column`, and how they integrate with `core.media_units`~~
   **Resolved in Work Package E2 (2026-08-11):** `core.market_config.

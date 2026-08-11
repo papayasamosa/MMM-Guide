@@ -41,6 +41,16 @@ class ActivityDefinition:
     ``channel`` is the reporting family; ``model_input_column`` is the fitted
     predictor. Multiple activities may share a channel when they have distinct
     model-input columns (for example paid and organic social).
+
+    ``pooling_group_id`` (REQ-DATAIN-001, schema v3): an optional, stable
+    identity marking "the same activity across markets" for cross-market
+    reporting/analysis. Deliberately excluded from ``_INVALIDATION_MATRIX``
+    below (editing it triggers no refit/rebuild flag) and never read by any
+    modelling code in this module or elsewhere - its presence must never,
+    by itself, force, imply, or default to parameter pooling for the
+    activity in any model. Pooling remains governed exclusively by the
+    model's own hierarchy configuration
+    (``core.market_specific_model``/``docs/market_hierarchy.md``).
     """
 
     activity_id: str
@@ -56,6 +66,7 @@ class ActivityDefinition:
     product_advertised: str = ""
     message_type: str = ""
     model_input_column: str = ""
+    pooling_group_id: str | None = None
     pathway_ids: tuple[str, ...] = ()
     evidence_status: str = "not_assessed"
     evidence_source: str = ""
@@ -69,7 +80,7 @@ class ActivityDefinition:
     approved_at: str | None = None
     change_history: tuple[Mapping[str, Any], ...] = ()
     supersedes_activity_id: str | None = None
-    schema_version: int = 2
+    schema_version: int = 3
 
     def __post_init__(self) -> None:
         if not self.activity_id or not self.channel or not self.source:
@@ -144,6 +155,12 @@ class ActivityDefinition:
             "model_input_column",
             str(payload.get("channel", "")),
         )
+        # A payload with no schema_version key at all predates versioning
+        # entirely - treat it as the last-known pre-versioning floor (2),
+        # never the current default (3, REQ-DATAIN-001's pooling_group_id).
+        # It naturally has no pooling_group_id key either, so it already
+        # resolves to None via the dataclass default - this setdefault only
+        # fixes the recorded version number, not the field values.
         payload.setdefault("schema_version", 2)
         payload["pathway_ids"] = tuple(payload.get("pathway_ids") or ())
         payload["change_history"] = tuple(payload.get("change_history") or ())
@@ -257,6 +274,15 @@ _INVALIDATION_MATRIX = {
     "model_role": (True, True, True, True),
     "model_input_column": (True, True, True, True),
     "pathway_ids": (True, True, True, True),
+    # pooling_group_id (REQ-DATAIN-001) is deliberately absent here - it is
+    # descriptive/identity metadata never read by modelling code, so
+    # editing it must never trigger a refit or rebuild prompt (which would
+    # itself imply the field has a fit-relevant effect, contradicting the
+    # approved invariant that its presence never forces/implies pooling).
+    # It is still covered by activity_definitions_fingerprint's general
+    # governance-state hash (unlike this fit-relevant invalidation matrix),
+    # since that is a broader "does this curve's activity metadata still
+    # match current state" audit signal, not a refit/rebuild trigger.
 }
 
 
