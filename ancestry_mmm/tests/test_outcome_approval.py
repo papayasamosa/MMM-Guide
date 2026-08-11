@@ -858,7 +858,7 @@ class TestAuthorityConsistency:
         assert coverage_rows, "no implementation-gaps row references REQ-COVERAGE-001"
         for row in coverage_rows:
             notes = row[2]
-            assert "#151" in notes and "#159" in notes, (
+            assert "#151" in notes and "#161" in notes, (
                 f"REQ-COVERAGE-001's gap-table Notes must cite the delivering "
                 f"PR range: {notes}"
             )
