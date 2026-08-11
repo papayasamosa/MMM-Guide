@@ -20,17 +20,144 @@ marginal CPA number from," not a substitute for real posterior uncertainty.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from dataclasses import dataclass
+from typing import Dict, Iterable, List, Optional
 
 import numpy as np
 import pandas as pd
 
+from .activities import ActivityDefinition
 from .hierarchical_model import FHModelMeta
-from .market_config import ChannelMediaUnitConfig
+from .market_config import ChannelMediaUnitConfig, MarketSpecConfig
 from .market_specific_predict import (
     FHMarketSpecificPosteriorParams,
     generate_market_channel_curve,
 )
+
+
+# ---------------------------------------------------------------------------
+# Activity source-column mapping (REQ-DATAIN-001 item 5, Work Package E2)
+# ---------------------------------------------------------------------------
+#
+# REQ-DATAIN-001 requires an activity's model-input, spend, and response-
+# unit semantics to be distinct, explicitly-mapped fields - never inferred
+# from one column serving double duty - and requires integrating with
+# core.media_units/core.media_costs rather than duplicating them.
+# ChannelMediaUnitConfig (core.market_config) already separates
+# spend_column from response_unit_column at market x channel grain; this
+# section resolves an ActivityDefinition (market x activity_id grain) onto
+# its channel's existing mapping rather than adding a second, competing
+# mapping surface on ActivityDefinition itself.
+
+
+@dataclass(frozen=True)
+class ActivitySourceMapping:
+    """An activity's model-input, spend, and response-unit columns for one
+    specific market, resolved as three distinct fields - REQ-DATAIN-001
+    item 5.
+
+    `spend_column`/`response_unit_column`/`unit_type` are all `None` when
+    no `ChannelMediaUnitConfig` is configured for this (market, channel) -
+    "no mapping configured" is a valid state (a channel may remain
+    spend-only, or entirely unmapped), never inferred from
+    `model_input_column` doing double duty.
+
+    `is_ambiguous` (review finding): `True` when another `ActivityDefinition`
+    also applies to this exact (market, channel) - `ChannelMediaUnitConfig`
+    is governed at market x channel grain, coarser than an activity's own
+    market x activity_id grain ("multiple activities may share a channel
+    when they have distinct model-input columns", e.g. paid versus organic
+    social under the same reporting channel). Attaching the same
+    channel-level spend/response-unit columns to two distinct activities
+    would silently misattribute one activity's spend/delivery to the
+    other. When ambiguous, `spend_column`/`response_unit_column`/
+    `unit_type` are all `None` rather than a guessed/shared value - the
+    caller must resolve the ambiguity (e.g. a governed per-activity
+    mapping) before this can be trusted.
+
+    `model_input_column_is_explicit` (review finding): `False` when
+    `activity.model_input_column` was empty and this fell back to
+    `activity.resolved_model_input_column` (`channel`) - the same fallback
+    the rest of the app already uses for actual model fitting (so
+    `model_input_column` itself is not changed to diverge from that
+    established value), but REQ-DATAIN-001's explicit-mapping requirement
+    means a caller of *this* record needs to be able to tell an explicitly
+    configured mapping from an inferred one, rather than the two looking
+    identical.
+    """
+
+    activity_id: str
+    market: str
+    model_input_column: str
+    model_input_column_is_explicit: bool
+    spend_column: Optional[str]
+    response_unit_column: Optional[str]
+    unit_type: Optional[str]
+    is_ambiguous: bool = False
+
+    @property
+    def has_response_unit_mapping(self) -> bool:
+        return bool(self.response_unit_column)
+
+
+def resolve_activity_source_mapping(
+    activity: ActivityDefinition,
+    market: str,
+    market_spec_config: Optional[MarketSpecConfig],
+    *,
+    all_activities: Iterable[ActivityDefinition] = (),
+) -> ActivitySourceMapping:
+    """Resolve `activity`'s spend/response-unit columns for `market` via its
+    channel's governed `ChannelMediaUnitConfig`.
+
+    `market` is passed explicitly rather than read from `activity.market`,
+    since an activity's own `market` may be `"*"` (all markets) while a
+    media-unit mapping is always market-specific - mirrors
+    `ActivityDefinition.applies_to_market`'s pattern of resolving against
+    one caller-supplied market at a time, never picking one market out of
+    a wildcard activity's scope on its own.
+
+    `all_activities` (review finding): every other governed activity the
+    caller knows about, used only to detect whether another activity also
+    applies to this exact (market, channel) - see `ActivitySourceMapping.
+    is_ambiguous`. Omitting it (the default, an empty tuple) is equivalent
+    to asserting no other activity shares this channel; a caller resolving
+    a full activity roster should always pass the complete set.
+    """
+    siblings = [
+        other
+        for other in all_activities
+        if other.activity_id != activity.activity_id
+        and other.channel == activity.channel
+        and other.applies_to_market(market)
+    ]
+    is_ambiguous = bool(siblings)
+
+    config = (
+        market_spec_config.get_media_unit_config(market, activity.channel)
+        if market_spec_config is not None and not is_ambiguous
+        else None
+    )
+    # A non-cost-bearing activity (response_only/not_applicable) must never
+    # receive a spend_column even when the channel mapping is unambiguous -
+    # it consumes no spend by definition (ActivityDefinition.economic_
+    # treatment), so a shared channel's spend column is not this
+    # activity's spend.
+    spend_column = (
+        config.spend_column if config is not None and activity.is_cost_bearing else None
+    )
+    return ActivitySourceMapping(
+        activity_id=activity.activity_id,
+        market=market,
+        model_input_column=activity.resolved_model_input_column,
+        model_input_column_is_explicit=bool(activity.model_input_column),
+        spend_column=spend_column,
+        response_unit_column=(
+            config.response_unit_column if config is not None else None
+        ),
+        unit_type=config.unit_type if config is not None else None,
+        is_ambiguous=is_ambiguous,
+    )
 
 
 def compute_cpa(

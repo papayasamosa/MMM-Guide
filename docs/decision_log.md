@@ -2074,3 +2074,38 @@ decisions" marked resolved. No existing schema/model/persisted-artefact behaviou
 `SourceDefinition` was previously unused everywhere.
 **Owner:** Platform engineering.
 **Status:** Accepted; implemented in PR #165.
+
+## Activity source-column mapping (Work Package E2)
+
+**Date:** 2026-08-11
+**Decision:** Add `core.media_units.resolve_activity_source_mapping(activity, market,
+market_spec_config) -> ActivitySourceMapping`, resolving an `ActivityDefinition`'s
+model-input, spend, and response-unit columns as three distinct fields for one
+caller-supplied market, by looking up its channel's existing
+`core.market_config.ChannelMediaUnitConfig` (`spend_column`/`response_unit_column`,
+already separated at market x channel grain). No new persisted field was added to
+`ActivityDefinition` itself.
+**Reason:** REQ-DATAIN-001 item 5 requires these three semantics to be distinct,
+explicitly-mapped fields, and requires integrating with `core.media_units`/`core.media_costs`
+rather than duplicating them. Investigation found `ChannelMediaUnitConfig` already fully
+satisfies the spend/response-unit half of that requirement (it has separated these two fields
+since the market-specific redesign, docs/media_units_and_inflation.md) - what was actually
+missing was a governed link from `ActivityDefinition` (market x activity_id grain, finer than
+`ChannelMediaUnitConfig`'s market x channel grain, since "multiple activities may share a
+channel when they have distinct model-input columns") to that existing registry. A resolution
+helper closes that gap without inventing a second mapping surface.
+**Alternatives considered:** Adding `spend_column`/`response_unit_column` fields directly to
+`ActivityDefinition` (rejected - `REQ-DATAIN-001` explicitly requires integrating with
+existing registries "rather than inventing a second, competing mapping surface"; two
+activities sharing a channel would also need those fields to agree with the channel's own
+config or the model becomes internally inconsistent about a shared channel's units - a
+resolution function reading the single channel-level source of truth avoids that entirely).
+Resolving from `activity.market` directly instead of a caller-supplied market (rejected - an
+activity's own `market` may be `"*"` (all markets), which does not correspond to any single
+`ChannelMediaUnitConfig` row; mirrors `ActivityDefinition.applies_to_market`'s existing
+one-market-at-a-time pattern).
+**Impact:** New `core.media_units.ActivitySourceMapping`/`resolve_activity_source_mapping`.
+One `REQ-DATAIN-001` "Unresolved decision" marked resolved. No existing schema, persisted
+field, or model behaviour changes.
+**Owner:** Platform engineering.
+**Status:** Accepted; implemented in PR #166.
