@@ -12,6 +12,12 @@ import pytest
 
 from ancestry_mmm.core.coverage import (
     COVERAGE_STATES,
+    DOMAIN_ACTIVITY_AND_MEDIA,
+    DOMAIN_CONTEXT_AND_EXTERNAL_FACTORS,
+    DOMAIN_EXPERIMENT_EVIDENCE,
+    DOMAIN_OUTCOMES,
+    LOGICAL_SOURCE_DOMAINS,
+    REQUIRED_LOGICAL_SOURCE_DOMAINS,
     STATE_ESTIMATED,
     STATE_MISSING_EXPECTED,
     STATE_NOT_APPLICABLE,
@@ -22,6 +28,7 @@ from ancestry_mmm.core.coverage import (
     CoverageSegment,
     DefinitionBreak,
     FrequencyMetadata,
+    SourceDefinition,
     SourceVersion,
     VariableCoverageMatrix,
     VariableCoverageRecord,
@@ -32,6 +39,7 @@ from ancestry_mmm.core.coverage import (
     current_variable_coverage_matrix_from_resolved_versions,
     new_variable_coverage_matrix_version,
     official_fit_blocking_issues,
+    resolve_source_logical_domain,
     variable_coverage_matrix_versions_for_export,
     variable_coverage_records_fingerprint,
 )
@@ -252,6 +260,99 @@ class TestSourceVersion:
         current = current_source_versions([v1, v2, other])
         by_source = {v.source_id: v.version for v in current}
         assert by_source == {"src-1": 2, "src-2": 1}
+
+
+# ---------------------------------------------------------------------------
+# SourceDefinition / logical source domains (REQ-DATAIN-001)
+# ---------------------------------------------------------------------------
+
+
+class TestSourceDefinition:
+    def _definition(self, **overrides) -> SourceDefinition:
+        defaults = dict(
+            source_id="media",
+            name="media",
+            logical_domain=DOMAIN_ACTIVITY_AND_MEDIA,
+        )
+        defaults.update(overrides)
+        return SourceDefinition(**defaults)
+
+    def test_valid_construction(self):
+        d = self._definition()
+        assert d.logical_domain == DOMAIN_ACTIVITY_AND_MEDIA
+
+    def test_requires_source_id_and_name(self):
+        with pytest.raises(ValueError, match="source_id and name"):
+            self._definition(source_id="")
+
+    def test_rejects_invalid_logical_domain(self):
+        with pytest.raises(ValueError, match="invalid logical_domain"):
+            self._definition(logical_domain="not_a_real_domain")
+
+    def test_all_four_domains_are_valid(self):
+        for domain in LOGICAL_SOURCE_DOMAINS:
+            assert self._definition(logical_domain=domain).logical_domain == domain
+
+    def test_required_domains_are_a_subset_of_all_domains(self):
+        assert set(REQUIRED_LOGICAL_SOURCE_DOMAINS) <= set(LOGICAL_SOURCE_DOMAINS)
+        assert DOMAIN_EXPERIMENT_EVIDENCE not in REQUIRED_LOGICAL_SOURCE_DOMAINS
+
+    def test_to_dict_from_dict_round_trip(self):
+        d = self._definition(owner="Data Science", description="TV/digital spend")
+        restored = SourceDefinition.from_dict(d.to_dict())
+        assert restored == d
+
+    def test_schema_version_defaults_to_1(self):
+        """Review finding: an explicit per-record schema_version, so a
+        future shape change can be distinguished from today's shape rather
+        than guessed from field presence."""
+        assert self._definition().schema_version == 1
+
+    def test_from_dict_defaults_schema_version_for_a_legacy_payload(self):
+        """A payload predating this field entirely (dict with no
+        schema_version key at all) resolves to 1, not an error."""
+        payload = {
+            "source_id": "media",
+            "name": "media",
+            "logical_domain": DOMAIN_ACTIVITY_AND_MEDIA,
+        }
+        assert SourceDefinition.from_dict(payload).schema_version == 1
+
+
+class TestResolveSourceLogicalDomain:
+    def test_returns_domain_for_a_known_source(self):
+        definitions = [
+            SourceDefinition(
+                source_id="media",
+                name="media",
+                logical_domain=DOMAIN_ACTIVITY_AND_MEDIA,
+            ),
+            SourceDefinition(
+                source_id="outcomes", name="outcomes", logical_domain=DOMAIN_OUTCOMES
+            ),
+        ]
+        assert resolve_source_logical_domain("media", definitions) == (
+            DOMAIN_ACTIVITY_AND_MEDIA
+        )
+        assert resolve_source_logical_domain("outcomes", definitions) == DOMAIN_OUTCOMES
+
+    def test_returns_none_for_an_unrecorded_source_never_guessed(self):
+        """REQ-DATAIN-001: a source with no SourceDefinition (e.g. a bundle
+        imported before this capability existed) must resolve to the
+        explicit "unclassified" state (None), never a guessed domain."""
+        assert resolve_source_logical_domain("media", []) is None
+
+    def test_accepts_plain_dicts_as_well_as_dataclass_instances(self):
+        definitions = [
+            SourceDefinition(
+                source_id="controls",
+                name="controls",
+                logical_domain=DOMAIN_CONTEXT_AND_EXTERNAL_FACTORS,
+            ).to_dict()
+        ]
+        assert resolve_source_logical_domain("controls", definitions) == (
+            DOMAIN_CONTEXT_AND_EXTERNAL_FACTORS
+        )
 
 
 # ---------------------------------------------------------------------------

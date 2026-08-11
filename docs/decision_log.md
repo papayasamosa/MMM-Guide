@@ -2038,3 +2038,39 @@ category. No `ancestry_mmm/` source, schema, or model behaviour changes in this 
 dependent, separately-scoped implementation packages (Work Package E1-E6) build against it.
 **Owner:** Data Science / Platform engineering (user-approved).
 **Status:** Accepted; implemented in PR #164.
+
+## Logical source domains (Work Package E1)
+
+**Date:** 2026-08-11
+**Decision:** `core.coverage.SourceDefinition` gains a required `logical_domain` field
+validated against the four `REQ-DATAIN-001` domains (Outcomes, Activity and Media, Context
+and External Factors, Experiment Evidence). A source with no `SourceDefinition` at all
+resolves to the explicit "unclassified" state via `resolve_source_logical_domain`, never a
+guessed domain. `pages/01_Data_Upload.py` gains a domain selector on the upload tab and
+displays each loaded source's resolved domain; the synthetic demo's own source names (media,
+outcomes, controls) map unambiguously onto their domains. `core.persistence`/
+`application.project_service` gain `source_definitions` export/import, mirroring
+`source_versions` exactly (`resolve_imported_source_definitions`).
+**Reason:** `REQ-DATAIN-001` deferred the concrete domain-object shape and legacy-migration
+rule to this package. `SourceDefinition` already existed (`core.coverage`) as an unused,
+unwired dataclass for exactly this purpose ("a named, stable source identity... distinct from
+any one upload of it") - extending it, rather than inventing a second object or a
+session-state-only field, avoids duplicating `SourceVersion`'s established
+identity/provenance pattern and gets versioned export/import for free by mirroring that
+pattern precisely.
+**Alternatives considered:** A new, separate domain-object type instead of extending
+`SourceDefinition` (rejected - `SourceDefinition` was defined for exactly this "stable source
+identity" purpose and was simply never wired up; a second object would duplicate it).
+Defaulting an unclassified legacy source into one of the four domains by inference (e.g. from
+its name) (rejected - `REQ-COVERAGE-001`'s "never guess" precedent applies here identically;
+an explicit "Unclassified" state is honest, an inferred default is not).
+**Impact:** `core.coverage.SourceDefinition`/`LOGICAL_SOURCE_DOMAINS`/
+`resolve_source_logical_domain` (new); `core.persistence.resolve_imported_source_definitions`
+and `export_project`/`import_project` `source_definitions` wiring;
+`application.project_service.ProjectExportInput.source_definitions`;
+`pages/01_Data_Upload.py`'s domain selector and display;
+`pages/09_Project_Export.py`'s export/import wiring. Two `REQ-DATAIN-001` "Unresolved
+decisions" marked resolved. No existing schema/model/persisted-artefact behaviour changes -
+`SourceDefinition` was previously unused everywhere.
+**Owner:** Platform engineering.
+**Status:** Accepted; implemented in PR #165.

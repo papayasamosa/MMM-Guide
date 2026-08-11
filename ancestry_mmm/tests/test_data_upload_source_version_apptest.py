@@ -16,7 +16,12 @@ import pandas as pd
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
-from ancestry_mmm.core.coverage import SourceVersion, compute_checksum
+from ancestry_mmm.core.coverage import (
+    SourceVersion,
+    SourceDefinition,
+    DOMAIN_ACTIVITY_AND_MEDIA,
+    compute_checksum,
+)
 
 st.page_link = lambda *a, **k: None
 
@@ -121,3 +126,67 @@ def test_demo_data_does_not_inherit_a_prior_real_uploads_provenance():
     captions = [c.value for c in at.caption]
     assert not any("Source version" in c for c in captions)
     assert not any("media_v1.csv" in c for c in captions)
+
+
+# ---------------------------------------------------------------------------
+# REQ-DATAIN-001: logical source domain display
+# ---------------------------------------------------------------------------
+
+
+def test_shows_the_recorded_logical_domain_for_a_source():
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.session_state["raw_sources"] = {"media": _media_frame()}
+    at.session_state["source_versions"] = []
+    at.session_state["active_source_upload_version"] = {}
+    at.session_state["source_definitions"] = [
+        SourceDefinition(
+            source_id="media",
+            name="media",
+            logical_domain=DOMAIN_ACTIVITY_AND_MEDIA,
+        ).to_dict()
+    ]
+    at.session_state["data_loaded"] = True
+    at.run()
+    assert not at.exception, f"page load raised: {at.exception}"
+
+    captions = [c.value for c in at.caption]
+    assert any("Activity and Media" in c for c in captions)
+
+
+def test_shows_unclassified_for_a_source_with_no_recorded_domain():
+    """A source with no SourceDefinition (e.g. a bundle imported before
+    REQ-DATAIN-001 existed) must read as explicitly unclassified, never a
+    guessed domain."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.session_state["raw_sources"] = {"media": _media_frame()}
+    at.session_state["source_versions"] = []
+    at.session_state["active_source_upload_version"] = {}
+    at.session_state["source_definitions"] = []
+    at.session_state["data_loaded"] = True
+    at.run()
+    assert not at.exception, f"page load raised: {at.exception}"
+
+    captions = [c.value for c in at.caption]
+    assert any("Unclassified" in c for c in captions)
+
+
+def test_domain_selectbox_defaults_to_an_unselected_placeholder():
+    """Review finding: a Streamlit selectbox pre-selects its first option,
+    so listing the four real domains directly would let "Add source" be
+    clicked without the analyst ever making the required classification.
+    The default value must be a non-domain placeholder, never a real
+    logical domain (which would silently persist an unauthorized default
+    classification)."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.run()
+    assert not at.exception, f"page load raised: {at.exception}"
+
+    domain_selectbox = next(
+        sb for sb in at.selectbox if sb.label == "Logical source domain *"
+    )
+    assert domain_selectbox.value not in (
+        "outcomes",
+        "activity_and_media",
+        "context_and_external_factors",
+        "experiment_evidence",
+    )

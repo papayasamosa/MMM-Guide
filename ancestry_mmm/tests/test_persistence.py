@@ -58,6 +58,7 @@ from ancestry_mmm.core.persistence import (
     resolve_imported_causal_graphs,
     resolve_imported_outcome_approvals,
     resolve_imported_search_objects,
+    resolve_imported_source_definitions,
     resolve_imported_source_versions,
     resolve_imported_variable_coverage_matrices,
     verify_imported_approval,
@@ -1815,6 +1816,110 @@ def test_resolve_imported_source_versions_quarantines_malformed_records():
     assert len(warnings) == 3
     assert any("bad" in w for w in warnings)
     assert any("not a mapping" in w for w in warnings)
+
+
+# ---------------------------------------------------------------------------
+# REQ-DATAIN-001: source_definitions round trip (mirrors the source_versions
+# tests directly above).
+# ---------------------------------------------------------------------------
+
+
+def test_export_then_import_source_definitions_round_trip(tmp_path, sample_project):
+    from ancestry_mmm.core.coverage import SourceDefinition
+
+    definition = SourceDefinition(
+        source_id="media",
+        name="media",
+        logical_domain="activity_and_media",
+        owner="Data Science",
+    )
+    project = dict(sample_project)
+    project["source_definitions"] = [definition.to_dict()]
+
+    bundle_path = export_project(tmp_path / "bundle.zip", **project)
+    imported = import_project(bundle_path)
+
+    definitions, warnings = resolve_imported_source_definitions(imported)
+    assert warnings == []
+    assert len(definitions) == 1
+    assert definitions[0]["source_id"] == "media"
+    assert definitions[0]["logical_domain"] == "activity_and_media"
+
+
+def test_import_project_source_definitions_absent_for_legacy_bundle(
+    tmp_path, sample_project
+):
+    bundle_path = export_project(tmp_path / "bundle.zip", **sample_project)
+    imported = import_project(bundle_path)
+    assert imported["source_definitions"] is None
+    definitions, warnings = resolve_imported_source_definitions(imported)
+    assert definitions == []
+    assert warnings == []
+
+
+def test_resolve_imported_source_definitions_quarantines_malformed_records():
+    imported = {
+        "source_definitions": [
+            {
+                "source_id": "media",
+                "name": "media",
+                "logical_domain": "activity_and_media",
+            },
+            {
+                "source_id": "bad",
+                "name": "bad",
+                "logical_domain": "not_a_real_domain",
+            },
+            "not-a-mapping",
+            {"source_id": "incomplete"},
+        ]
+    }
+    definitions, warnings = resolve_imported_source_definitions(imported)
+    assert len(definitions) == 1
+    assert definitions[0]["source_id"] == "media"
+    assert len(warnings) == 3
+    assert any("bad" in w for w in warnings)
+    assert any("not a mapping" in w for w in warnings)
+
+
+def test_resolve_imported_source_definitions_quarantines_conflicting_domains():
+    """Review finding: two individually-valid records sharing a source_id
+    but disagreeing on logical_domain must not be silently resolved by
+    list/ZIP-entry order - both are quarantined instead."""
+    imported = {
+        "source_definitions": [
+            {
+                "source_id": "media",
+                "name": "media",
+                "logical_domain": "activity_and_media",
+            },
+            {
+                "source_id": "media",
+                "name": "media",
+                "logical_domain": "outcomes",
+            },
+        ]
+    }
+    definitions, warnings = resolve_imported_source_definitions(imported)
+    assert definitions == []
+    assert len(warnings) == 1
+    assert "media" in warnings[0]
+    assert "disagree" in warnings[0]
+
+
+def test_resolve_imported_source_definitions_dedupes_true_duplicates():
+    """Two genuinely identical records for the same source_id (e.g. a
+    round-trip quirk) are not a conflict - they collapse to one, silently
+    (no warning, since nothing is actually in dispute)."""
+    record = {
+        "source_id": "media",
+        "name": "media",
+        "logical_domain": "activity_and_media",
+    }
+    imported = {"source_definitions": [record, dict(record)]}
+    definitions, warnings = resolve_imported_source_definitions(imported)
+    assert len(definitions) == 1
+    assert warnings == []
 
 
 def _sample_coverage_matrix(matrix_version: int = 1):

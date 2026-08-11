@@ -24,7 +24,27 @@ from ancestry_mmm.data import (
     load_all_sample_sources,
     get_data_summary,
 )
-from ancestry_mmm.core.coverage import SourceVersion
+from ancestry_mmm.core.coverage import (
+    SourceVersion,
+    SourceDefinition,
+    LOGICAL_SOURCE_DOMAINS,
+    DOMAIN_OUTCOMES,
+    DOMAIN_ACTIVITY_AND_MEDIA,
+    DOMAIN_CONTEXT_AND_EXTERNAL_FACTORS,
+    DOMAIN_EXPERIMENT_EVIDENCE,
+    resolve_source_logical_domain,
+)
+
+# REQ-DATAIN-001: human-readable labels for the four governed logical
+# source domains - Outcomes/Activity and Media/Context and External
+# Factors are required for a complete project; Experiment Evidence is
+# optional.
+_DOMAIN_LABELS = {
+    DOMAIN_OUTCOMES: "Outcomes",
+    DOMAIN_ACTIVITY_AND_MEDIA: "Activity and Media",
+    DOMAIN_CONTEXT_AND_EXTERNAL_FACTORS: "Context and External Factors",
+    DOMAIN_EXPERIMENT_EVIDENCE: "Experiment Evidence (optional)",
+}
 
 st.set_page_config(
     page_title="Data Upload - Ancestry FH MMM", page_icon="🧬", layout="wide"
@@ -67,6 +87,23 @@ with tab_demo:
             # to describe the now-demo frame for a reused name (e.g. a
             # previous "media" upload).
             st.session_state["active_source_upload_version"] = {}
+            # REQ-DATAIN-001: the demo fixture's own source names map
+            # unambiguously onto the governed logical domains - this is a
+            # naming-obvious classification of this repository's own
+            # synthetic sample data, not an invented business rule for
+            # real Ancestry sources.
+            _demo_domains = {
+                "media": DOMAIN_ACTIVITY_AND_MEDIA,
+                "outcomes": DOMAIN_OUTCOMES,
+                "controls": DOMAIN_CONTEXT_AND_EXTERNAL_FACTORS,
+            }
+            st.session_state["source_definitions"] = [
+                SourceDefinition(
+                    source_id=name, name=name, logical_domain=domain
+                ).to_dict()
+                for name, domain in _demo_domains.items()
+                if name in frames
+            ]
             st.session_state["data_loaded"] = True
             clear_model_state()
             st.success(
@@ -80,6 +117,26 @@ with tab_upload:
     source_name = st.text_input(
         "Source name *", value="media", help="e.g. media, outcomes, controls"
     )
+    # REQ-DATAIN-001 (review finding): a Streamlit selectbox pre-selects
+    # its first option, so listing LOGICAL_SOURCE_DOMAINS directly would
+    # let "Add source" be clicked without the analyst ever making this
+    # required business classification - silently persisting an
+    # unauthorized default domain (worse still, paired with the adjacent
+    # "media" source-name default, defaulting to "Outcomes" would be
+    # actively wrong). An explicit, non-domain placeholder is the default
+    # instead, and "Add source" blocks until a real domain is chosen.
+    _DOMAIN_PLACEHOLDER = "— Select a logical domain —"
+    logical_domain_choice = st.selectbox(
+        "Logical source domain *",
+        [_DOMAIN_PLACEHOLDER, *LOGICAL_SOURCE_DOMAINS],
+        format_func=lambda d: _DOMAIN_LABELS.get(d, d),
+        help=(
+            "REQ-DATAIN-001: every source belongs to one governed logical "
+            "domain. Outcomes, Activity and Media, and Context and "
+            "External Factors are required for a complete project; "
+            "Experiment Evidence is optional."
+        ),
+    )
     uploaded = st.file_uploader(
         "Choose a CSV, Excel, or Parquet file *",
         type=["csv", "xlsx", "xls", "xlsm", "parquet"],
@@ -89,6 +146,8 @@ with tab_upload:
     if uploaded is not None and st.button("Add source"):
         if not source_name.strip():
             st.error("Source name is required.")
+        elif logical_domain_choice == _DOMAIN_PLACEHOLDER:
+            st.error("Choose a logical source domain before adding this source.")
         else:
             existing_versions = [
                 SourceVersion.from_dict(v)
@@ -111,6 +170,24 @@ with tab_upload:
                 )
                 active[source_name] = source_version.version
                 st.session_state["active_source_upload_version"] = active
+                # REQ-DATAIN-001: record/update this source_id's governed
+                # SourceDefinition - one record per source_id, replaced
+                # (not appended) if the analyst re-adds the same name with
+                # a different domain, since a source has exactly one
+                # current logical domain.
+                definitions = [
+                    d
+                    for d in (st.session_state.get("source_definitions") or [])
+                    if d.get("source_id") != source_name
+                ]
+                definitions.append(
+                    SourceDefinition(
+                        source_id=source_name,
+                        name=source_name,
+                        logical_domain=logical_domain_choice,
+                    ).to_dict()
+                )
+                st.session_state["source_definitions"] = definitions
                 st.session_state["data_loaded"] = True
                 clear_model_state()
                 st.success(
@@ -150,6 +227,17 @@ if sources:
                     f"checksum `{active_record['checksum'][:12]}...` - "
                     f"uploaded {active_record['uploaded_at']}"
                 )
+            # REQ-DATAIN-001: a source with no recorded SourceDefinition
+            # (e.g. a bundle imported from before this capability existed)
+            # reads as "Unclassified", never a guessed domain.
+            domain = resolve_source_logical_domain(
+                name, st.session_state.get("source_definitions") or []
+            )
+            st.caption(
+                f"Logical domain: **"
+                f"{_DOMAIN_LABELS.get(domain, 'Unclassified (no domain recorded)')}"
+                "**"
+            )
             summary = get_data_summary(df)
             c1, c2, c3 = st.columns(3)
             c1.metric("Rows", f"{summary['rows']:,}")
