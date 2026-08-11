@@ -340,8 +340,8 @@ class TestDiagnosticsVersionAuthority:
     able to silently disagree with each other."""
 
     def test_current_version_constants_are_consistent(self):
-        assert CURRENT_DIAGNOSTICS_VERSION == "5.0.0"
-        assert CURRENT_DIAGNOSTICS_SCHEMA_VERSION == 5
+        assert CURRENT_DIAGNOSTICS_VERSION == "6.0.0"
+        assert CURRENT_DIAGNOSTICS_SCHEMA_VERSION == 6
 
     def test_default_diagnostics_result_uses_current_version(self):
         result = DiagnosticsResult(
@@ -741,9 +741,12 @@ class TestSchemaV4ToV5Compatibility:
 
 
 class TestSchemaV5FreshArtefact:
-    def test_current_defaults_are_schema_v5(self):
-        assert CURRENT_DIAGNOSTICS_SCHEMA_VERSION == 5
-        assert CURRENT_DIAGNOSTICS_VERSION.startswith("5.")
+    def test_current_defaults_are_at_least_schema_v5(self):
+        """Schema v5 introduced prior_predictive/predictive_density; a later
+        Work Package B bump to v6 (market_channel_capability) does not
+        regress those - CURRENT_DIAGNOSTICS_SCHEMA_VERSION only ever moves
+        forward from the version this class's name documents."""
+        assert CURRENT_DIAGNOSTICS_SCHEMA_VERSION >= 5
 
     def test_freshly_constructed_artefact_has_not_computed_prior_predictive(self):
         artefact = DiagnosticsArtefact()
@@ -847,6 +850,130 @@ class TestSchemaV5FreshArtefact:
 # =========================================================================
 # Historical v2 fingerprint/readiness compatibility audit (Work Package 2)
 # =========================================================================
+
+
+# =========================================================================
+# Schema v5 -> v6 compatibility (Work Package B, REQ-COVERAGE-001 S6):
+# market_channel_capability added
+# =========================================================================
+
+
+class TestSchemaV5ToV6Compatibility:
+    def _v5_dict(self) -> dict:
+        not_computed = {
+            "status": "not_computed",
+            "payload": None,
+            "error": "",
+            "warnings": [],
+        }
+        computed_predictive_density = {
+            "status": "computed",
+            "payload": {"model_type": "shared", "rows": []},
+            "error": "",
+            "warnings": [],
+        }
+        return {
+            "artefact_id": "v5-artefact",
+            "diagnostics_version": "5.0.0",
+            "schema_version": 5,
+            "model_identity_fingerprint": "fp-v5",
+            "evaluated_at": "2026-08-09T00:00:00+00:00",
+            "model_type": "shared",
+            "convergence": {
+                "status": "computed",
+                "payload": {"max_rhat": 1.01, "min_ess": 600, "has_divergences": False},
+                "error": "",
+                "warnings": [],
+            },
+            "in_sample_fit": not_computed,
+            "posterior_predictive": not_computed,
+            "plausibility": not_computed,
+            "identification": not_computed,
+            "coefficient_stability": not_computed,
+            "backtest": not_computed,
+            "error_metrics": not_computed,
+            "residual_diagnostics": not_computed,
+            "prior_predictive": not_computed,
+            "predictive_density": computed_predictive_density,
+            "settings": [],
+            "legacy_incomplete": False,
+        }
+
+    def test_v5_upgrades_with_market_channel_capability_not_computed(self):
+        artefact = DiagnosticsArtefact.from_dict(self._v5_dict())
+        assert artefact.market_channel_capability.status == "not_computed"
+        assert artefact.market_channel_capability.error != ""
+        assert "schema v6" in artefact.market_channel_capability.error
+
+    def test_v5_upgrade_preserves_schema_version_and_is_not_legacy_incomplete(self):
+        artefact = DiagnosticsArtefact.from_dict(self._v5_dict())
+        assert artefact.schema_version == 5
+        assert artefact.legacy_incomplete is False
+
+    def test_v5_upgrade_preserves_existing_sections(self):
+        artefact = DiagnosticsArtefact.from_dict(self._v5_dict())
+        assert artefact.convergence.payload["max_rhat"] == 1.01
+        assert artefact.predictive_density.status == "computed"
+
+    def test_v5_round_trip_through_to_dict_is_stable(self):
+        artefact = DiagnosticsArtefact.from_dict(self._v5_dict())
+        d = artefact.to_dict()
+        restored = DiagnosticsArtefact.from_dict(d)
+        assert restored.schema_version == artefact.schema_version
+        assert restored.market_channel_capability.status == "not_computed"
+        assert restored.fingerprint() == artefact.fingerprint()
+
+    def test_historical_v5_version_is_not_upgraded_to_current(self):
+        artefact = DiagnosticsArtefact.from_dict(self._v5_dict())
+        assert artefact.diagnostics_version == "5.0.0"
+        assert artefact.diagnostics_version != CURRENT_DIAGNOSTICS_VERSION
+
+
+class TestSchemaV6FreshArtefact:
+    def test_current_defaults_are_schema_v6(self):
+        assert CURRENT_DIAGNOSTICS_SCHEMA_VERSION == 6
+        assert CURRENT_DIAGNOSTICS_VERSION.startswith("6.")
+
+    def test_freshly_constructed_artefact_has_not_computed_market_channel_capability(
+        self,
+    ):
+        artefact = DiagnosticsArtefact()
+        assert artefact.schema_version == CURRENT_DIAGNOSTICS_SCHEMA_VERSION
+        assert artefact.market_channel_capability.status == "not_computed"
+
+    def test_computed_market_channel_capability_round_trips_through_to_dict(self):
+        computed = DiagnosticSection(
+            status="computed",
+            payload={
+                "engine": "pymc_hierarchical_rectangular",
+                "markets": ["UK"],
+                "channels": ["TV"],
+                "supported": False,
+                "issues": [
+                    {
+                        "market": "UK",
+                        "channel": "TV",
+                        "reason": "No coverage record for 'TV' in market 'UK'.",
+                    }
+                ],
+                "decision_report": "FR-MOD-015 is not resolved...",
+            },
+        )
+        artefact = DiagnosticsArtefact(market_channel_capability=computed)
+        d = artefact.to_dict()
+        restored = DiagnosticsArtefact.from_dict(d)
+        assert restored.market_channel_capability.status == "computed"
+        assert restored.market_channel_capability.payload == computed.payload
+        assert restored.fingerprint() == artefact.fingerprint()
+
+    def test_market_channel_capability_section_change_is_covered_by_fingerprint(self):
+        base = DiagnosticsArtefact()
+        with_evidence = DiagnosticsArtefact(
+            market_channel_capability=DiagnosticSection(
+                status="computed", payload={"supported": True}
+            )
+        )
+        assert base.fingerprint() != with_evidence.fingerprint()
 
 
 class TestHistoricalV2FingerprintCompatibility:

@@ -235,6 +235,14 @@ if st.button("Compute scorecard", type="primary"):
             meta=meta,
             model_type=model_type,
             model_identity=current_model_identity,
+            raw_model_spec=(
+                ModelSpec.from_dict(model_spec_dict) if model_spec_dict else None
+            ),
+            coverage_matrix=(
+                VariableCoverageMatrix.from_dict(coverage_matrix_dict)
+                if coverage_matrix_dict
+                else None
+            ),
         )
         diag_result = diag_service.evaluate(diag_input)
         scorecard = diag_result.scorecard
@@ -542,13 +550,17 @@ render_glossary(["Prior", "Posterior", "Approval"])
 # REQ-COVERAGE-001 S6, Work Package 5 (review finding, PR #158): surface the
 # same rectangular-engine capability check used on Model Config here too, so
 # an approver can see whether this fit's market/channel combination is
-# within what the engine can validly support before approving it.
-# Deliberately informational only, not a gate on approval itself - REQ-
-# COVERAGE-001 S6 authorises reporting the capability result, never
-# specifies that official approval must be blocked on it, and inventing
-# that additional governance rule here (which approvals get blocked, under
-# what waiver process, etc.) is exactly the kind of FR-MOD-015-adjacent
-# business decision this PR declines to invent.
+# within what the engine can validly support before approving it. This
+# display by itself is informational only - it never blocks the "Approve"
+# button directly. Work Package B additionally registers this fact as an
+# optional policy gate (evaluator_id="market_channel_capability", see
+# core.validation_policy) computed into DiagnosticsArtefact.
+# market_channel_capability above: an active policy that includes this gate
+# (expected_state=True, waivable=False) DOES block policy-backed approval
+# through the ordinary readiness/evaluate_approval_readiness mechanism when
+# unsupported - not a separate governance rule invented here, and exploratory
+# review of this display remains available regardless of whether the active
+# policy includes that gate.
 if model_spec_dict is not None:
     _diagnostics_spec = ModelSpec.from_dict(model_spec_dict)
     _diagnostics_capability = check_market_channel_capability(
@@ -562,8 +574,10 @@ if model_spec_dict is not None:
         st.info(
             "This fit's market/channel combination goes beyond what the "
             "engine can validly support today per the governed coverage "
-            "matrix (REQ-COVERAGE-001 S6) - informational only, this does "
-            "not block approval:\n\n"
+            "matrix (REQ-COVERAGE-001 S6). Exploratory review remains "
+            "available; whether this blocks policy-backed approval depends "
+            "on whether the active validation policy includes the "
+            "market_channel_capability gate:\n\n"
             + "\n".join(
                 f"- **{issue.market} / {issue.channel}**: {issue.reason}"
                 for issue in _diagnostics_capability.issues

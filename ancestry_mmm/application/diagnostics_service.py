@@ -48,6 +48,8 @@ from ancestry_mmm.core.identification_diagnostics import (
     identification_report,
     posterior_coefficient_stability,
 )
+from ancestry_mmm.core.coverage import VariableCoverageMatrix
+from ancestry_mmm.core.market_data_capability import check_market_channel_capability
 from ancestry_mmm.core.model_identity import ModelIdentity
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.predict import FHPosteriorParams, extract_posterior_params
@@ -96,8 +98,17 @@ from ancestry_mmm.core.market_specific_predict import (
 # explicitly-triggered pure/immutable update pattern as
 # ``run_prior_predictive_check``/``run_backtest``). Another schema *shape*
 # change, same precedent as v3 -> v4.
-CURRENT_DIAGNOSTICS_SCHEMA_VERSION = 5
-CURRENT_DIAGNOSTICS_VERSION = "5.0.0"
+#
+# Work Package B (REQ-COVERAGE-001 S6, official-use coverage gate): schema
+# v5 -> v6 adds the ``market_channel_capability`` section
+# (``core.market_data_capability.check_market_channel_capability`` -
+# whether every requested (market, channel) cell has governed,
+# officially-resolved variable coverage under the current rectangular
+# engine, computed by ``DiagnosticsService.evaluate()`` from
+# ``raw_model_spec``/``coverage_matrix`` when both are supplied). Another
+# schema *shape* change, same precedent as v4 -> v5.
+CURRENT_DIAGNOSTICS_SCHEMA_VERSION = 6
+CURRENT_DIAGNOSTICS_VERSION = "6.0.0"
 
 # ---------------------------------------------------------------------------
 # Section status
@@ -302,6 +313,9 @@ class DiagnosticsArtefact:
     predictive_density: DiagnosticSection = field(
         default_factory=lambda: DiagnosticSection(status="not_computed", payload=None)
     )
+    market_channel_capability: DiagnosticSection = field(
+        default_factory=lambda: DiagnosticSection(status="not_computed", payload=None)
+    )
 
     # Global warnings and errors
     global_warnings: Tuple[str, ...] = ()
@@ -333,6 +347,7 @@ class DiagnosticsArtefact:
             "residual_diagnostics": self.residual_diagnostics.fingerprint_payload(),
             "prior_predictive": self.prior_predictive.fingerprint_payload(),
             "predictive_density": self.predictive_density.fingerprint_payload(),
+            "market_channel_capability": self.market_channel_capability.fingerprint_payload(),
             "global_warnings": sorted(self.global_warnings),
             "global_errors": sorted(self.global_errors),
             "settings": tuple(sorted(self.settings)),
@@ -364,6 +379,7 @@ class DiagnosticsArtefact:
             "residual_diagnostics": self.residual_diagnostics.to_dict(),
             "prior_predictive": self.prior_predictive.to_dict(),
             "predictive_density": self.predictive_density.to_dict(),
+            "market_channel_capability": self.market_channel_capability.to_dict(),
             "global_warnings": list(self.global_warnings),
             "global_errors": list(self.global_errors),
             "settings": list(self.settings),
@@ -393,7 +409,7 @@ class DiagnosticsArtefact:
         if sv == 1:
             # Schema v1 → wrap summaries into sections, mark legacy_incomplete
             return cls._from_v1(d)
-        if sv in (2, 3, 4, 5):
+        if sv in (2, 3, 4, 5, 6):
             if sv >= 3:
                 error_metrics_sec = DiagnosticSection.from_dict(
                     d.get("error_metrics", {})
@@ -452,6 +468,22 @@ class DiagnosticsArtefact:
                     "density evidence (PSIS-LOO/WAIC, per market x "
                     "outcome_id) was added in schema v5.",
                 )
+            if sv >= 6:
+                market_channel_capability_sec = DiagnosticSection.from_dict(
+                    d.get("market_channel_capability", {})
+                )
+            else:
+                # Work Package B: market x channel engine-capability
+                # evidence did not exist when a schema-v2..v5 artefact was
+                # computed - not_computed, never a fabricated payload
+                # (mirrors the v4 -> v5 pattern directly above).
+                market_channel_capability_sec = DiagnosticSection(
+                    status="not_computed",
+                    payload=None,
+                    error=f"Not available in schema v{sv} - market x "
+                    "channel engine-capability evidence "
+                    "(REQ-COVERAGE-001 S6) was added in schema v6.",
+                )
             return cls(
                 artefact_id=d.get("artefact_id", ""),
                 diagnostics_version=d.get("diagnostics_version", "2.0.0"),
@@ -477,6 +509,7 @@ class DiagnosticsArtefact:
                 residual_diagnostics=residual_diagnostics_sec,
                 prior_predictive=prior_predictive_sec,
                 predictive_density=predictive_density_sec,
+                market_channel_capability=market_channel_capability_sec,
                 global_warnings=tuple(d.get("global_warnings", [])),
                 global_errors=tuple(d.get("global_errors", [])),
                 settings=tuple(tuple(x) for x in d.get("settings", [])),
@@ -583,6 +616,11 @@ class DiagnosticsInput:
     # Canonical data for backtest: raw chronological DataFrame + model spec
     raw_model_dataframe: Optional[pd.DataFrame] = None
     raw_model_spec: Optional[ModelSpec] = None
+    # Work Package B (REQ-COVERAGE-001 S6): the governed variable coverage
+    # matrix, when one has been built on the Data Coverage page. Enables the
+    # market_channel_capability section below; absent this, that section
+    # stays not_computed rather than assuming support.
+    coverage_matrix: Optional[VariableCoverageMatrix] = None
 
 
 @dataclass
@@ -915,6 +953,40 @@ class DiagnosticsService:
                 error="Backtest not requested (backtest_folds <= 0 or no fit_fold_fn).",
             )
 
+        # --- 8. Market x channel engine-capability (REQ-COVERAGE-001 S6,
+        # Work Package B) - a deterministic, cheap check computed inline
+        # (unlike prior_predictive/predictive_density, which need an
+        # explicit separately-triggered MCMC-adjacent run). Requires both a
+        # raw ModelSpec (for spec.markets/spec.channels) and a coverage
+        # matrix; either being absent leaves this not_applicable rather than
+        # assuming support - "no coverage matrix" must never read as "no
+        # problem" (mirrors check_market_channel_capability's own
+        # coverage_matrix=None handling). ---
+        capability_sec: DiagnosticSection
+        if diag_input.raw_model_spec is None:
+            capability_sec = DiagnosticSection(
+                status="not_applicable",
+                payload=None,
+                error="No ModelSpec available (raw_model_spec is required "
+                "to know which markets/channels to check).",
+            )
+        else:
+            try:
+                capability_result = check_market_channel_capability(
+                    diag_input.raw_model_spec.markets,
+                    diag_input.raw_model_spec.channels,
+                    diag_input.coverage_matrix,
+                )
+                capability_sec = DiagnosticSection(
+                    status="computed",
+                    payload=capability_result.to_dict(),
+                )
+            except Exception as exc:
+                errors.append(f"Market x channel capability check failed: {exc}")
+                capability_sec = DiagnosticSection(
+                    status="failed", payload=None, error=str(exc)
+                )
+
         # --- Build fingerprinted artefact ---
         identity_fp = (
             diag_input.model_identity.fingerprint()
@@ -938,6 +1010,7 @@ class DiagnosticsService:
             backtest=bt_sec,
             error_metrics=error_metrics_sec,
             residual_diagnostics=residual_diagnostics_sec,
+            market_channel_capability=capability_sec,
             global_warnings=tuple(warnings),
             global_errors=tuple(errors),
             settings=(
