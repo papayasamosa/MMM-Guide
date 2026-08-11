@@ -139,6 +139,104 @@ class TestPageReadiness:
         assert ui_module.page_readiness("not_a_real_page") == "not_started"
 
 
+class TestGroupReadiness:
+    """Phase 2 Home overview (docs/decision_log.md): group_readiness() is a
+    pure aggregation over page_readiness() results - it introduces no new
+    readiness source of its own."""
+
+    def test_empty_keys_is_not_started(self):
+        assert ui_module.group_readiness([]) == "not_started"
+
+    def test_all_optional_is_not_started(self, monkeypatch):
+        monkeypatch.setattr(ui_module, "page_readiness", lambda k: "optional")
+        assert ui_module.group_readiness(["a", "b"]) == "not_started"
+
+    def test_all_ready_is_ready(self, monkeypatch):
+        monkeypatch.setattr(ui_module, "page_readiness", lambda k: "ready")
+        assert ui_module.group_readiness(["a", "b"]) == "ready"
+
+    def test_some_ready_is_current(self, monkeypatch):
+        statuses = {"a": "ready", "b": "not_started"}
+        monkeypatch.setattr(ui_module, "page_readiness", lambda k: statuses[k])
+        assert ui_module.group_readiness(["a", "b"]) == "current"
+
+    def test_none_ready_but_one_blocked_is_blocked(self, monkeypatch):
+        statuses = {"a": "blocked", "b": "not_started"}
+        monkeypatch.setattr(ui_module, "page_readiness", lambda k: statuses[k])
+        assert ui_module.group_readiness(["a", "b"]) == "blocked"
+
+    def test_none_ready_none_blocked_is_not_started(self, monkeypatch):
+        monkeypatch.setattr(ui_module, "page_readiness", lambda k: "not_started")
+        assert ui_module.group_readiness(["a", "b"]) == "not_started"
+
+    def test_optional_pages_do_not_count_against_a_ready_group(self, monkeypatch):
+        statuses = {"a": "ready", "b": "optional"}
+        monkeypatch.setattr(ui_module, "page_readiness", lambda k: statuses[k])
+        assert ui_module.group_readiness(["a", "b"]) == "ready"
+
+
+class TestNextRecommendedStepKey:
+    """Phase 2 Home overview: next_recommended_step_key() is the single
+    "what should I do next" signal, derived purely from page_readiness()
+    over WORKFLOW_STEPS in canonical order."""
+
+    @staticmethod
+    def _patch_state(monkeypatch, state):
+        monkeypatch.setattr(
+            ui_module, "get_state", lambda key, default=None: state.get(key, default)
+        )
+
+    def test_no_data_recommends_data_upload_first(self, monkeypatch):
+        self._patch_state(monkeypatch, {})
+        assert ui_module.next_recommended_step_key() == "data_upload"
+
+    def test_after_data_loaded_recommends_transform_pipeline(self, monkeypatch):
+        self._patch_state(monkeypatch, {"data_loaded": True})
+        assert ui_module.next_recommended_step_key() == "transform_pipeline"
+
+    def test_skips_optional_pages(self, monkeypatch):
+        # transformed data + a saved model_spec makes causal_graph
+        # (optional) the next WORKFLOW_STEPS entry after structure, but it
+        # must never be recommended - channel_media_units/market_descriptors
+        # (also optional) come next, then model_config should be recommended.
+        self._patch_state(
+            monkeypatch,
+            {
+                "data_loaded": True,
+                "transformed_data": object(),
+                "variable_coverage_matrix": object(),
+                "model_spec": {"markets": ["UK"]},
+            },
+        )
+        assert ui_module.next_recommended_step_key() == "model_config"
+
+    def test_returns_none_once_every_ready_capable_page_is_ready(self, monkeypatch):
+        # page_readiness("official_curve_generation") has no "ready" branch
+        # at all (components/ui.py) - only "blocked"/"not_started" - since
+        # no session-state signal exists yet for "an artifact was
+        # generated" (a pre-existing Phase 1 gap, not invented here per the
+        # Phase 2 brief's "never invent a new session-state key" rule). A
+        # fully-progressed project therefore still surfaces this page as
+        # the next recommended action rather than fabricating "ready" -
+        # this test documents that honestly rather than assuming otherwise.
+        self._patch_state(
+            monkeypatch,
+            {
+                "data_loaded": True,
+                "transformed_data": object(),
+                "variable_coverage_matrix": object(),
+                "model_spec": {"markets": ["UK"]},
+                "frame": object(),
+                "model_trained": True,
+                "scorecard": {"ok": True},
+                "model_approval": {"status": "approved"},
+                "curve_bank_entry_id": "entry-1",
+                "scenarios": [{"a": 1}],
+            },
+        )
+        assert ui_module.next_recommended_step_key() == "official_curve_generation"
+
+
 _HEADER_SCRIPT = """
 import streamlit as st
 from ancestry_mmm.utils.session_state import init_session_state

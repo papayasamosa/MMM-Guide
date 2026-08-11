@@ -26,6 +26,7 @@ from ancestry_mmm.utils.session_state import get_state, get_workflow_progress
 from ancestry_mmm.utils.workflow import (
     HOME_KEY,
     TOTAL_STEPS,
+    WORKFLOW_STEPS,
     get_step,
     nav_groups,
     next_step_key,
@@ -136,6 +137,54 @@ def page_readiness(key: str) -> str:
     if key == "export":
         return "ready" if data_loaded else "not_started"
     return "not_started"
+
+
+def group_readiness(keys: Iterable[str]) -> str:
+    """Aggregate several pages' ``page_readiness()`` results into one
+    status for a workflow area (Phase 2 Home overview - project-topology
+    view, docs/decision_log.md). A pure, deterministic aggregation of the
+    existing per-page readiness signal - it never introduces a new
+    readiness source of its own:
+
+    - no non-optional page in the group -> "not_started" (nothing to show)
+    - every non-optional page "ready" -> "ready"
+    - at least one "ready" but not all -> "current" (in progress)
+    - none ready, at least one "blocked" -> "blocked"
+    - otherwise (every non-optional page "not_started") -> "not_started"
+
+    Returns a key from ``ancestry_mmm.components.status.STATUS_BADGES``.
+    """
+    scored = [s for s in (page_readiness(k) for k in keys) if s != "optional"]
+    if not scored:
+        return "not_started"
+    ready = sum(1 for s in scored if s == "ready")
+    if ready == len(scored):
+        return "ready"
+    if ready > 0:
+        return "current"
+    if any(s == "blocked" for s in scored):
+        return "blocked"
+    return "not_started"
+
+
+def next_recommended_step_key() -> Optional[str]:
+    """The single "what should I do next" signal for the Home overview
+    (Phase 2, docs/decision_log.md): the first workflow page in canonical
+    ``WORKFLOW_STEPS`` order whose ``page_readiness()`` is not yet
+    "ready", skipping optional pages entirely. Because a page can only be
+    "blocked" when an earlier, non-optional prerequisite page is itself
+    not "ready" (see ``page_readiness``'s per-key rules above), an
+    in-order scan always surfaces that earlier "not_started" prerequisite
+    first - so this never recommends a page the user cannot act on yet.
+
+    Returns ``None`` once every non-optional page is "ready" - a
+    legitimate terminal state, not a missing signal.
+    """
+    for step in WORKFLOW_STEPS:
+        status = page_readiness(step["key"])
+        if status in ("not_started", "blocked"):
+            return step["key"]
+    return None
 
 
 def render_sidebar(active_key: str) -> None:
