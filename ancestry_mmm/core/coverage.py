@@ -286,7 +286,9 @@ def resolve_source_logical_domain(
     defaulted into any of the four domains)."""
     for item in source_definitions:
         definition = (
-            item if isinstance(item, SourceDefinition) else SourceDefinition.from_dict(item)
+            item
+            if isinstance(item, SourceDefinition)
+            else SourceDefinition.from_dict(item)
         )
         if definition.source_id == source_id:
             return definition.logical_domain
