@@ -189,6 +189,19 @@ activity_editor = st.data_editor(
     },
 )
 
+# REQ-DATAIN-001 review finding: pooling_group_id is not an editable
+# column in this grid (activity_columns above), so reconstructing every
+# row's ActivityDefinition without carrying it forward would silently wipe
+# a previously-set cross-market identity on *any* unrelated edit through
+# this page. Look it up by (market, activity_id) - the same key already
+# used for duplicate detection below - from the pre-edit roster.
+_existing_pooling_group_ids = {
+    (str(item.get("market", "*")), str(item.get("activity_id", ""))): item.get(
+        "pooling_group_id"
+    )
+    for item in existing_activity_items
+}
+
 activity_definitions = []
 activity_errors = []
 seen_keys = set()
@@ -217,6 +230,7 @@ for row_number, row in activity_editor.fillna("").iterrows():
                 model_role=str(row["model_role"]),
                 economic_treatment=str(row["economic_treatment"]),
                 planning_eligibility=str(row["planning_eligibility"]),
+                pooling_group_id=_existing_pooling_group_ids.get(activity_key),
                 pathway_ids=tuple(
                     item.strip()
                     for item in str(row["pathway_ids"]).split(",")

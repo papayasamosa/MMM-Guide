@@ -177,12 +177,24 @@ class ActivityDefinition:
 def activity_definitions_fingerprint(
     definitions: Iterable[ActivityDefinition | Mapping[str, object]],
 ) -> str:
+    """Fingerprint activity governance state for curve/scenario staleness gates.
+
+    Excludes ``pooling_group_id`` (REQ-DATAIN-001): this fingerprint is a
+    hard blocking gate (``CurveArtifactService.validate_for_use``,
+    ``core.optimization`` scenario staleness), not a soft audit signal.
+    Including a field the approved invariant says must never force a
+    rebuild would silently invalidate curves/scenarios on an edit that
+    changes nothing fit-relevant - use ``activity_fit_fingerprint`` or
+    ``_INVALIDATION_MATRIX`` for anything that should actually gate.
+    """
     payload = [
         item.to_dict()
         if isinstance(item, ActivityDefinition)
         else ActivityDefinition.from_dict(item).to_dict()
         for item in definitions
     ]
+    for item in payload:
+        item.pop("pooling_group_id", None)
     payload.sort(
         key=lambda item: (
             str(item.get("market")),
@@ -279,10 +291,11 @@ _INVALIDATION_MATRIX = {
     # editing it must never trigger a refit or rebuild prompt (which would
     # itself imply the field has a fit-relevant effect, contradicting the
     # approved invariant that its presence never forces/implies pooling).
-    # It is still covered by activity_definitions_fingerprint's general
-    # governance-state hash (unlike this fit-relevant invalidation matrix),
-    # since that is a broader "does this curve's activity metadata still
-    # match current state" audit signal, not a refit/rebuild trigger.
+    # It is also excluded from activity_definitions_fingerprint (the
+    # curve-artifact/scenario staleness gate) for the same reason - that
+    # fingerprint blocks curve use and marks scenarios stale on mismatch,
+    # so including a field that must never gate a rebuild would silently
+    # invalidate artifacts on a no-op-for-fitting edit.
 }
 
 

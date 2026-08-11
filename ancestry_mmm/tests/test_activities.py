@@ -168,13 +168,15 @@ class TestPoolingGroupId:
         after = [_activity(pooling_group_id="tv-brand-uk-au")]
         assert activity_fit_fingerprint(before) == activity_fit_fingerprint(after)
 
-    def test_included_in_general_governance_fingerprint(self):
-        """Unlike the fit fingerprint, the general governance-state
-        fingerprint (stamped onto curve artifacts for audit purposes) must
-        still detect a pooling_group_id change - it is a broader "does the
-        activity record still match" signal, not a refit trigger."""
+    def test_excluded_from_general_governance_fingerprint(self):
+        """activity_definitions_fingerprint is a hard blocking gate for
+        curve-artifact use (CurveArtifactService.validate_for_use) and
+        scenario staleness (core.optimization), not a soft audit signal -
+        it must not change when only pooling_group_id changes, or a
+        pooling-identity edit would silently invalidate curves/scenarios
+        that changed nothing fit-relevant."""
         before = [_activity(pooling_group_id=None)]
         after = [_activity(pooling_group_id="tv-brand-uk-au")]
         assert activity_definitions_fingerprint(
             before
-        ) != activity_definitions_fingerprint(after)
+        ) == activity_definitions_fingerprint(after)
