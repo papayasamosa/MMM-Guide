@@ -120,16 +120,114 @@ class TestResolveActivitySourceMapping:
     def test_uses_resolved_model_input_column_when_unset(self):
         """ActivityDefinition.resolved_model_input_column falls back to
         `channel` when `model_input_column` is empty - the mapping must use
-        the same resolution, not the raw (possibly empty) field."""
+        the same resolution (matching how the rest of the app already
+        determines model input), not the raw (possibly empty) field."""
         activity = _activity(model_input_column="")
         mapping = resolve_activity_source_mapping(activity, "UK", None)
         assert mapping.model_input_column == "TV"
+
+    def test_model_input_column_is_explicit_flag(self):
+        """Review finding: a caller must be able to tell an explicitly
+        configured model-input column from an inferred (channel) fallback,
+        even though the resolved value is the same as the rest of the app
+        already uses."""
+        explicit = resolve_activity_source_mapping(_activity(), "UK", None)
+        assert explicit.model_input_column_is_explicit is True
+
+        inferred = resolve_activity_source_mapping(
+            _activity(model_input_column=""), "UK", None
+        )
+        assert inferred.model_input_column_is_explicit is False
 
     def test_result_type_is_activity_source_mapping(self):
         mapping = resolve_activity_source_mapping(_activity(), "UK", None)
         assert isinstance(mapping, ActivitySourceMapping)
         assert mapping.activity_id == "tv-paid"
         assert mapping.market == "UK"
+
+    def test_non_cost_bearing_activity_never_receives_a_spend_column(self):
+        """Review finding: a response-only activity must never receive the
+        channel's spend column even when the mapping is otherwise
+        unambiguous - it does not consume spend by definition."""
+        config = MarketSpecConfig()
+        config.set_media_unit_config(
+            ChannelMediaUnitConfig(
+                market="UK",
+                channel="Social",
+                spend_column="Social_paid_spend",
+                response_unit_column="Social_organic_impressions",
+            )
+        )
+        organic = _activity(
+            activity_id="social-organic",
+            channel="Social",
+            activity_ownership="owned",
+            economic_treatment="response_only",
+            model_role="intervention",
+            model_input_column="Social_organic",
+        )
+        mapping = resolve_activity_source_mapping(organic, "UK", config)
+        assert mapping.spend_column is None
+        # response_unit_column is not spend-gated - an organic activity can
+        # legitimately have its own delivery metric (e.g. impressions).
+        assert mapping.response_unit_column == "Social_organic_impressions"
+
+    def test_two_activities_sharing_a_channel_are_ambiguous(self):
+        """Review finding: paid and organic activities sharing one
+        reporting channel must not both silently receive the same
+        channel-level spend/response-unit columns - ChannelMediaUnitConfig
+        is governed at market x channel grain, coarser than an activity's
+        own market x activity_id grain."""
+        config = MarketSpecConfig()
+        config.set_media_unit_config(
+            ChannelMediaUnitConfig(
+                market="UK", channel="Social", spend_column="Social_spend"
+            )
+        )
+        paid = _activity(
+            activity_id="social-paid",
+            channel="Social",
+            model_input_column="Social_paid",
+        )
+        organic = _activity(
+            activity_id="social-organic",
+            channel="Social",
+            activity_ownership="owned",
+            economic_treatment="response_only",
+            model_input_column="Social_organic",
+        )
+        mapping = resolve_activity_source_mapping(
+            paid, "UK", config, all_activities=[paid, organic]
+        )
+        assert mapping.is_ambiguous is True
+        assert mapping.spend_column is None
+        assert mapping.response_unit_column is None
+
+    def test_no_sibling_on_a_different_channel_is_not_ambiguous(self):
+        config = MarketSpecConfig()
+        config.set_media_unit_config(
+            ChannelMediaUnitConfig(market="UK", channel="TV", spend_column="TV_spend")
+        )
+        tv = _activity(activity_id="tv-paid", channel="TV")
+        other_channel = _activity(activity_id="radio-paid", channel="Radio")
+        mapping = resolve_activity_source_mapping(
+            tv, "UK", config, all_activities=[tv, other_channel]
+        )
+        assert mapping.is_ambiguous is False
+        assert mapping.spend_column == "TV_spend"
+
+    def test_sibling_in_a_different_market_is_not_ambiguous(self):
+        config = MarketSpecConfig()
+        config.set_media_unit_config(
+            ChannelMediaUnitConfig(market="UK", channel="TV", spend_column="TV_spend")
+        )
+        uk_activity = _activity(activity_id="tv-uk", channel="TV", market="UK")
+        au_activity = _activity(activity_id="tv-au", channel="TV", market="Australia")
+        mapping = resolve_activity_source_mapping(
+            uk_activity, "UK", config, all_activities=[uk_activity, au_activity]
+        )
+        assert mapping.is_ambiguous is False
+        assert mapping.spend_column == "TV_spend"
 
 
 class TestComputeCpa:
