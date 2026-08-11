@@ -317,6 +317,13 @@ behaviour changes as a result of this record.
 - `FR-MOD-015`'s model-engine mathematics (§6) — deferred to a
   separately-approved modelling contract; the brief's Work Package 5 stops
   and reports the decision options rather than choosing one.
+- §4's frequency-conversion method, per variable class — deferred to a
+  separately-approved modelling/statistics contract; the brief's Work
+  Package D produced a decision-support survey of candidate methods
+  (`docs/frequency_conversion_method_options.md`) without selecting one,
+  mirroring the FR-MOD-015 precedent above. `core.frequency_alignment`'s
+  conversion-method registry (Work Package C, PR #162) remains empty
+  until that decision is made.
 - The exact domain-object shape for `SourceDefinition`/`SourceVersion`/
   `VariableCoverageRecord`/`VariableCoverageMatrix` (field types, storage
   location, persistence file layout) — deferred to the dependent
