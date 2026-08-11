@@ -20,17 +20,88 @@ marginal CPA number from," not a substitute for real posterior uncertainty.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
 
+from .activities import ActivityDefinition
 from .hierarchical_model import FHModelMeta
-from .market_config import ChannelMediaUnitConfig
+from .market_config import ChannelMediaUnitConfig, MarketSpecConfig
 from .market_specific_predict import (
     FHMarketSpecificPosteriorParams,
     generate_market_channel_curve,
 )
+
+
+# ---------------------------------------------------------------------------
+# Activity source-column mapping (REQ-DATAIN-001 item 5, Work Package E2)
+# ---------------------------------------------------------------------------
+#
+# REQ-DATAIN-001 requires an activity's model-input, spend, and response-
+# unit semantics to be distinct, explicitly-mapped fields - never inferred
+# from one column serving double duty - and requires integrating with
+# core.media_units/core.media_costs rather than duplicating them.
+# ChannelMediaUnitConfig (core.market_config) already separates
+# spend_column from response_unit_column at market x channel grain; this
+# section resolves an ActivityDefinition (market x activity_id grain) onto
+# its channel's existing mapping rather than adding a second, competing
+# mapping surface on ActivityDefinition itself.
+
+
+@dataclass(frozen=True)
+class ActivitySourceMapping:
+    """An activity's model-input, spend, and response-unit columns for one
+    specific market, resolved as three distinct fields - REQ-DATAIN-001
+    item 5. `spend_column`/`response_unit_column`/`unit_type` are all
+    `None` when no `ChannelMediaUnitConfig` is configured for this
+    (market, channel) - "no mapping configured" is a valid state (a
+    channel may remain spend-only, or entirely unmapped), never inferred
+    from `model_input_column` doing double duty."""
+
+    activity_id: str
+    market: str
+    model_input_column: str
+    spend_column: Optional[str]
+    response_unit_column: Optional[str]
+    unit_type: Optional[str]
+
+    @property
+    def has_response_unit_mapping(self) -> bool:
+        return bool(self.response_unit_column)
+
+
+def resolve_activity_source_mapping(
+    activity: ActivityDefinition,
+    market: str,
+    market_spec_config: Optional[MarketSpecConfig],
+) -> ActivitySourceMapping:
+    """Resolve `activity`'s spend/response-unit columns for `market` via its
+    channel's governed `ChannelMediaUnitConfig`.
+
+    `market` is passed explicitly rather than read from `activity.market`,
+    since an activity's own `market` may be `"*"` (all markets) while a
+    media-unit mapping is always market-specific - mirrors
+    `ActivityDefinition.applies_to_market`'s pattern of resolving against
+    one caller-supplied market at a time, never picking one market out of
+    a wildcard activity's scope on its own.
+    """
+    config = (
+        market_spec_config.get_media_unit_config(market, activity.channel)
+        if market_spec_config is not None
+        else None
+    )
+    return ActivitySourceMapping(
+        activity_id=activity.activity_id,
+        market=market,
+        model_input_column=activity.resolved_model_input_column,
+        spend_column=config.spend_column if config is not None else None,
+        response_unit_column=(
+            config.response_unit_column if config is not None else None
+        ),
+        unit_type=config.unit_type if config is not None else None,
+    )
 
 
 def compute_cpa(

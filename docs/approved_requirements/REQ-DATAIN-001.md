@@ -197,9 +197,18 @@ behaviour changes as a result of this record.
 - The exact `pooling_group_id` field shape on `ActivityDefinition`
   (optional string, its validation rules, uniqueness scope) and its
   schema-version bump/migration — deferred to Work Package E3.
-- The exact response-unit-mapping field(s) distinct from
-  `model_input_column`, and how they integrate with `core.media_units` —
-  deferred to Work Package E2.
+- ~~The exact response-unit-mapping field(s) distinct from
+  `model_input_column`, and how they integrate with `core.media_units`~~
+  **Resolved in Work Package E2 (2026-08-11):** `core.market_config.
+  ChannelMediaUnitConfig` already separated `spend_column` from
+  `response_unit_column` at market x channel grain (existing capability,
+  not added by E2). `core.media_units.resolve_activity_source_mapping`
+  resolves an `ActivityDefinition` (market x activity_id grain) onto its
+  channel's existing mapping for one caller-supplied market, returning a
+  distinct `ActivitySourceMapping(model_input_column, spend_column,
+  response_unit_column, unit_type)` - no new field was added to
+  `ActivityDefinition` itself, avoiding a second, competing mapping
+  surface.
 - The exact template-pack file formats, column layouts, and download
   mechanism — deferred to Work Package E4.
 - ~~The exact legacy-project migration/defaulting rule for sources
