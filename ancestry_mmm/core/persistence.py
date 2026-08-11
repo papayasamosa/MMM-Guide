@@ -268,6 +268,7 @@ def export_project(
     causal_graphs: Optional[List[dict]] = None,
     search_objects: Optional[List[dict]] = None,
     source_versions: Optional[List[dict]] = None,
+    source_definitions: Optional[List[dict]] = None,
     variable_coverage_matrices: Optional[List[dict]] = None,
     join_config: Optional[dict] = None,
 ) -> Path:
@@ -430,6 +431,14 @@ def export_project(
             (tmp / "config" / "source_versions.json").write_text(
                 json.dumps(source_versions, indent=2, default=str)
             )
+        # REQ-DATAIN-001: governed SourceDefinition records (logical_domain
+        # per source_id) - mirrors source_versions above; a source with no
+        # SourceDefinition here resolves to "unclassified" on import
+        # (resolve_source_logical_domain), never a guessed domain.
+        if source_definitions is not None:
+            (tmp / "config" / "source_definitions.json").write_text(
+                json.dumps(source_definitions, indent=2, default=str)
+            )
         # REQ-COVERAGE-001 S1: every VariableCoverageMatrix version worth
         # keeping (core.coverage.variable_coverage_matrix_versions_for_export),
         # mirroring causal_graphs above.
@@ -516,6 +525,8 @@ def export_project(
                 "search_objects": search_objects is not None and bool(search_objects),
                 "source_versions": source_versions is not None
                 and bool(source_versions),
+                "source_definitions": source_definitions is not None
+                and bool(source_definitions),
                 "variable_coverage_matrices": variable_coverage_matrices is not None
                 and bool(variable_coverage_matrices),
                 "join_config": join_config is not None and bool(join_config),
@@ -623,6 +634,11 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         # a valid, not-an-error reading, same convention as causal_graphs/
         # search_objects above.
         "source_versions": None,
+        # REQ-DATAIN-001: None for bundles exported before this capability
+        # existed - "no governed source definitions recorded yet" is a
+        # valid, not-an-error reading, same convention as source_versions
+        # above.
+        "source_definitions": None,
         # REQ-COVERAGE-001 S1: None for bundles exported before this
         # capability existed - "no coverage matrix built yet" is a valid,
         # not-an-error reading, same convention as causal_graphs/
@@ -780,6 +796,10 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         if (config_dir / "source_versions.json").exists():
             result["source_versions"] = json.loads(
                 (config_dir / "source_versions.json").read_text()
+            )
+        if (config_dir / "source_definitions.json").exists():
+            result["source_definitions"] = json.loads(
+                (config_dir / "source_definitions.json").read_text()
             )
         if (config_dir / "variable_coverage_matrices.json").exists():
             result["variable_coverage_matrices"] = json.loads(
@@ -1105,6 +1125,51 @@ def resolve_imported_source_versions(
             source_id = item.get("source_id", "<unknown>")
             warnings.append(
                 f"Source version record {index} (source_id={source_id!r}) "
+                f"was malformed and was quarantined (dropped, not silently "
+                f"kept): {exc}"
+            )
+    return normalised, warnings
+
+
+def resolve_imported_source_definitions(
+    imported: Dict[str, Any],
+) -> Tuple[List[dict], List[str]]:
+    """REQ-DATAIN-001: resolve the governed `SourceDefinition` records an
+    imported bundle should use - every record, mirroring
+    `resolve_imported_source_versions`'s "every recorded entry, not only
+    current" contract. Each record is round-tripped through
+    `SourceDefinition.from_dict`/`to_dict` for validation; a malformed
+    record is quarantined (dropped), never silently discarded without a
+    trace.
+
+    A bundle with no `source_definitions.json` file (every bundle exported
+    before this capability existed) resolves to an empty list with no
+    warnings - every source in that bundle is "unclassified"
+    (`resolve_source_logical_domain` returns `None`), not an error.
+    """
+    from .coverage import SourceDefinition
+
+    raw_definitions = imported.get("source_definitions")
+    warnings: List[str] = []
+    if not raw_definitions:
+        return [], warnings
+
+    normalised: List[dict] = []
+    for index, item in enumerate(raw_definitions):
+        if not isinstance(item, Mapping):
+            input_type = type(item).__name__
+            warnings.append(
+                f"Source definition record {index} is not a mapping "
+                f"(type={input_type!r}) and was quarantined "
+                "(dropped, not silently kept)."
+            )
+            continue
+        try:
+            normalised.append(SourceDefinition.from_dict(item).to_dict())
+        except (TypeError, ValueError, KeyError, AttributeError) as exc:
+            source_id = item.get("source_id", "<unknown>")
+            warnings.append(
+                f"Source definition record {index} (source_id={source_id!r}) "
                 f"was malformed and was quarantined (dropped, not silently "
                 f"kept): {exc}"
             )

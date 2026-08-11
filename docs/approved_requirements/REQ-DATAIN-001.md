@@ -188,10 +188,12 @@ behaviour changes as a result of this record.
 
 ## Unresolved decisions
 
-- The exact domain-object shape for a logical-source-domain field (which
-  object owns it — `SourceDefinition`, a new object, or session
-  configuration — and its persistence/migration representation) —
-  deferred to the dependent implementation package (Work Package E1).
+- ~~The exact domain-object shape for a logical-source-domain field~~
+  **Resolved in Work Package E1 (2026-08-11):** `core.coverage.
+  SourceDefinition` gains a required `logical_domain` field, validated
+  against `LOGICAL_SOURCE_DOMAINS`; a source with no `SourceDefinition` at
+  all resolves to the explicit "unclassified" state via
+  `resolve_source_logical_domain`, never a guessed domain.
 - The exact `pooling_group_id` field shape on `ActivityDefinition`
   (optional string, its validation rules, uniqueness scope) and its
   schema-version bump/migration — deferred to Work Package E3.
@@ -200,9 +202,14 @@ behaviour changes as a result of this record.
   deferred to Work Package E2.
 - The exact template-pack file formats, column layouts, and download
   mechanism — deferred to Work Package E4.
-- The exact legacy-project migration/defaulting rule for sources uploaded
-  before logical domains existed — deferred to the dependent
-  implementation package that adds the domain field.
+- ~~The exact legacy-project migration/defaulting rule for sources
+  uploaded before logical domains existed~~ **Resolved in Work Package E1
+  (2026-08-11):** a source with no recorded `SourceDefinition` — every
+  source uploaded before this capability existed, and every bundle
+  exported before it existed — resolves to "unclassified"
+  (`resolve_source_logical_domain` returns `None`), displayed as such on
+  the Data Upload page; it is never silently defaulted into one of the
+  four governed domains.
 
 ## Owner
 

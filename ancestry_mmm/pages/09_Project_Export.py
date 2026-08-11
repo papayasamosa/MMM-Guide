@@ -33,6 +33,7 @@ from ancestry_mmm.core.persistence import (
     resolve_imported_causal_graphs,
     resolve_imported_search_objects,
     resolve_imported_source_versions,
+    resolve_imported_source_definitions,
     resolve_imported_variable_coverage_matrices,
     verify_imported_approval,
     UnsafeZipEntryError,
@@ -453,6 +454,10 @@ if st.button("Build export bundle", type="primary"):
             # (mirrors search_objects/causal_graphs above, which also
             # export their full version history, not just what's current).
             source_versions=get_state("source_versions") or [],
+            # REQ-DATAIN-001: governed SourceDefinition records
+            # (logical_domain per source_id) - mirrors source_versions
+            # above.
+            source_definitions=get_state("source_definitions") or [],
             # REQ-COVERAGE-001 S1: every saved coverage-matrix version plus
             # the current live (possibly unsaved) matrix - see
             # variable_coverage_matrix_versions_for_export's docstring
@@ -626,6 +631,18 @@ if uploaded_zip is not None and st.button("Import bundle"):
         set_state("source_versions", _resolved_source_versions)
         for _source_version_warning in _source_version_warnings:
             st.warning(_source_version_warning)
+        # REQ-DATAIN-001: restore the quarantine-checked governed
+        # SourceDefinition records - a bundle with no
+        # source_definitions.json (every bundle exported before this
+        # capability existed) resolves to an empty list, so every source in
+        # it reads as unclassified (resolve_source_logical_domain returns
+        # None), never fabricated.
+        _resolved_source_definitions, _source_definition_warnings = (
+            resolve_imported_source_definitions(imported)
+        )
+        set_state("source_definitions", _resolved_source_definitions)
+        for _source_definition_warning in _source_definition_warnings:
+            st.warning(_source_definition_warning)
         # REQ-COVERAGE-001 S1: restore every quarantine-checked coverage-
         # matrix version as history, and derive the current matrix the same
         # way the causal graph import above derives `causal_graph` from

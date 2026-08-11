@@ -210,20 +210,61 @@ class FrequencyMetadata:
         return cls(**{k: v for k, v in values.items() if k in known})
 
 
+# --- Logical source domains (REQ-DATAIN-001, user-approved 2026-08-11) ----
+#
+# Every SourceDefinition declares exactly one of these. "Required"/
+# "optional" (Outcomes/Activity and Media/Context and External Factors are
+# required; Experiment Evidence is optional) describes whether a *complete*
+# project needs at least one source in that domain - a dependent UI/
+# completeness check's job, not a constraint this vocabulary itself
+# enforces; all four are equally valid values for any single
+# SourceDefinition.
+
+DOMAIN_OUTCOMES = "outcomes"
+DOMAIN_ACTIVITY_AND_MEDIA = "activity_and_media"
+DOMAIN_CONTEXT_AND_EXTERNAL_FACTORS = "context_and_external_factors"
+DOMAIN_EXPERIMENT_EVIDENCE = "experiment_evidence"
+
+LOGICAL_SOURCE_DOMAINS = (
+    DOMAIN_OUTCOMES,
+    DOMAIN_ACTIVITY_AND_MEDIA,
+    DOMAIN_CONTEXT_AND_EXTERNAL_FACTORS,
+    DOMAIN_EXPERIMENT_EVIDENCE,
+)
+
+REQUIRED_LOGICAL_SOURCE_DOMAINS = (
+    DOMAIN_OUTCOMES,
+    DOMAIN_ACTIVITY_AND_MEDIA,
+    DOMAIN_CONTEXT_AND_EXTERNAL_FACTORS,
+)
+
+
 @dataclass(frozen=True)
 class SourceDefinition:
     """A named, stable source identity - `core.activities.ActivityDefinition.
     source`-style provenance made a first-class governed object, distinct
-    from any one upload of it (see `SourceVersion`)."""
+    from any one upload of it (see `SourceVersion`).
+
+    ``logical_domain`` (REQ-DATAIN-001): every source belongs to exactly
+    one of `LOGICAL_SOURCE_DOMAINS`. A source with no `SourceDefinition` at
+    all (e.g. every upload made before this field existed) is not assigned
+    a default domain here - `resolve_source_logical_domain` reports that as
+    an explicit "unclassified" state, never guessed."""
 
     source_id: str
     name: str
+    logical_domain: str
     owner: str = ""
     description: str = ""
 
     def __post_init__(self) -> None:
         if not self.source_id or not self.name:
             raise ValueError("source_id and name are required")
+        if self.logical_domain not in LOGICAL_SOURCE_DOMAINS:
+            raise ValueError(
+                f"invalid logical_domain {self.logical_domain!r}; must be "
+                f"one of {LOGICAL_SOURCE_DOMAINS}"
+            )
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -232,6 +273,24 @@ class SourceDefinition:
     def from_dict(cls, values: Mapping[str, Any]) -> "SourceDefinition":
         known = set(cls.__dataclass_fields__)
         return cls(**{k: v for k, v in values.items() if k in known})
+
+
+def resolve_source_logical_domain(
+    source_id: str,
+    source_definitions: Iterable["SourceDefinition | Mapping[str, Any]"],
+) -> Optional[str]:
+    """The logical domain governed for ``source_id``, or ``None`` if no
+    `SourceDefinition` exists for it - the explicit "unclassified" state
+    (REQ-DATAIN-001's legacy-source handling: a source uploaded before
+    logical domains existed, or never assigned one, is not silently
+    defaulted into any of the four domains)."""
+    for item in source_definitions:
+        definition = (
+            item if isinstance(item, SourceDefinition) else SourceDefinition.from_dict(item)
+        )
+        if definition.source_id == source_id:
+            return definition.logical_domain
+    return None
 
 
 @dataclass(frozen=True)
