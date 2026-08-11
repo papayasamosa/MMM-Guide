@@ -18,6 +18,9 @@ from ancestry_mmm.components import (
     render_page_header,
     render_next_step,
     render_empty_state,
+    render_status_badges,
+    SectionCard,
+    WarningPanel,
 )
 from ancestry_mmm.data import (
     load_file_with_source_version,
@@ -28,6 +31,7 @@ from ancestry_mmm.core.coverage import (
     SourceVersion,
     SourceDefinition,
     LOGICAL_SOURCE_DOMAINS,
+    REQUIRED_LOGICAL_SOURCE_DOMAINS,
     DOMAIN_OUTCOMES,
     DOMAIN_ACTIVITY_AND_MEDIA,
     DOMAIN_CONTEXT_AND_EXTERNAL_FACTORS,
@@ -52,7 +56,37 @@ st.set_page_config(
 init_session_state()
 apply_theme()
 render_sidebar("data_upload")
-render_page_header("data_upload")
+
+# REQ-DATAIN-001: header badge reflects whether every required logical
+# domain (Outcomes, Activity and Media, Context and External Factors) has
+# at least one supplied source yet - never a guess, computed the same way
+# the "Sources by logical domain" section below computes it.
+_sources_at_load = st.session_state.get("raw_sources") or {}
+_definitions_at_load = st.session_state.get("source_definitions") or []
+_domains_supplied_at_load = {
+    resolve_source_logical_domain(name, _definitions_at_load)
+    for name in _sources_at_load
+}
+_required_missing_at_load = [
+    d for d in REQUIRED_LOGICAL_SOURCE_DOMAINS if d not in _domains_supplied_at_load
+]
+if not _sources_at_load:
+    _header_badges = ["awaiting_data"]
+elif not _required_missing_at_load:
+    _header_badges = ["ready"]
+else:
+    _header_badges = ["current"]
+
+render_page_header(
+    "data_upload",
+    description=(
+        "Load data under each governed logical domain (REQ-DATAIN-001: "
+        "Outcomes, Activity and Media, and Context and External Factors "
+        "are required; Experiment Evidence is optional), or start from the "
+        "synthetic demo."
+    ),
+    badges=_header_badges,
+)
 
 st.markdown("---")
 st.session_state.setdefault("project_name", "ancestry-fh-uk")
@@ -197,68 +231,150 @@ with tab_upload:
                 )
 
 sources = st.session_state.get("raw_sources") or {}
+
+
+def _render_source_detail(name: str, df) -> None:
+    """One physical source's expander: version/provenance, logical domain,
+    row/column summary and preview - identical content regardless of which
+    domain group it's rendered under, so several physical files can share
+    one logical domain's card without duplicating this logic per domain."""
+    with st.expander(
+        f"**{name}** - {df.shape[0]} rows x {df.shape[1]} columns", expanded=False
+    ):
+        # Look up the *specific* version that actually produced this name's
+        # current frame (never "the latest history entry for this name" - a
+        # prior real upload's provenance must not be displayed against a
+        # frame that isn't actually that upload, e.g. after loading demo
+        # data under a reused name).
+        active_version = (
+            st.session_state.get("active_source_upload_version") or {}
+        ).get(name)
+        active_record = next(
+            (
+                v
+                for v in st.session_state.get("source_versions") or []
+                if v.get("source_id") == name and v.get("version") == active_version
+            ),
+            None,
+        )
+        st.caption(
+            "Uploaded data" if active_record is not None else "Synthetic demo data"
+        )
+        if active_record is not None:
+            st.caption(
+                f"Source version v{active_record['version']} - "
+                f"`{active_record['original_filename']}` - "
+                f"checksum `{active_record['checksum'][:12]}...` - "
+                f"uploaded {active_record['uploaded_at']}"
+            )
+        # REQ-DATAIN-001: a source with no recorded SourceDefinition (e.g. a
+        # bundle imported from before this capability existed) reads as
+        # "Unclassified", never a guessed domain.
+        domain = resolve_source_logical_domain(
+            name, st.session_state.get("source_definitions") or []
+        )
+        st.caption(
+            f"Logical domain: **"
+            f"{_DOMAIN_LABELS.get(domain, 'Unclassified (no domain recorded)')}"
+            "**"
+        )
+        summary = get_data_summary(df)
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Rows", f"{summary['rows']:,}")
+        c2.metric("Columns", summary["columns"])
+        c3.metric("Missing values", f"{int(summary['missing_values']):,}")
+        preview = df.head(20)
+        st.dataframe(
+            preview, width="stretch", column_config=dataframe_column_config(preview)
+        )
+        if st.button(f"Remove '{name}'", key=f"remove_{name}"):
+            remaining = dict(st.session_state.get("raw_sources") or {})
+            remaining.pop(name, None)
+            st.session_state["raw_sources"] = remaining
+            active = dict(st.session_state.get("active_source_upload_version") or {})
+            active.pop(name, None)
+            st.session_state["active_source_upload_version"] = active
+            st.rerun()
+
+
 if sources:
     st.markdown("---")
-    st.markdown("### Loaded sources")
+    st.markdown("### Sources by logical domain")
+    st.caption(
+        "REQ-DATAIN-001: a logical domain is not a physical file - any "
+        "number of physical source files/versions may exist under one "
+        "domain. A source belongs to exactly one of the three required "
+        "domains (Outcomes, Activity and Media, Context and External "
+        "Factors) or the optional Experiment Evidence domain."
+    )
+
+    definitions = st.session_state.get("source_definitions") or []
+    sources_by_domain: "dict[str | None, list]" = {}
     for name, df in sources.items():
-        with st.expander(
-            f"**{name}** - {df.shape[0]} rows x {df.shape[1]} columns", expanded=False
+        domain = resolve_source_logical_domain(name, definitions)
+        sources_by_domain.setdefault(domain, []).append((name, df))
+
+    missing_required_labels = []
+    for domain in REQUIRED_LOGICAL_SOURCE_DOMAINS:
+        supplied = sources_by_domain.get(domain) or []
+        with SectionCard(
+            _DOMAIN_LABELS[domain],
+            description="Required for a complete project.",
         ):
-            # Look up the *specific* version that actually produced this
-            # name's current frame (never "the latest history entry for
-            # this name" - a prior real upload's provenance must not be
-            # displayed against a frame that isn't actually that upload,
-            # e.g. after loading demo data under a reused name).
-            active_version = (
-                st.session_state.get("active_source_upload_version") or {}
-            ).get(name)
-            active_record = next(
-                (
-                    v
-                    for v in st.session_state.get("source_versions") or []
-                    if v.get("source_id") == name and v.get("version") == active_version
-                ),
-                None,
-            )
-            if active_record is not None:
+            render_status_badges(["ready" if supplied else "blocked"])
+            if not supplied:
+                missing_required_labels.append(_DOMAIN_LABELS[domain])
+                st.caption("No source supplied yet for this required domain.")
+            else:
                 st.caption(
-                    f"Source version v{active_record['version']} - "
-                    f"`{active_record['original_filename']}` - "
-                    f"checksum `{active_record['checksum'][:12]}...` - "
-                    f"uploaded {active_record['uploaded_at']}"
+                    f"{len(supplied)} physical source file(s) supplied under "
+                    "this domain."
                 )
-            # REQ-DATAIN-001: a source with no recorded SourceDefinition
-            # (e.g. a bundle imported from before this capability existed)
-            # reads as "Unclassified", never a guessed domain.
-            domain = resolve_source_logical_domain(
-                name, st.session_state.get("source_definitions") or []
-            )
+                for name, df in supplied:
+                    _render_source_detail(name, df)
+
+    optional_supplied = sources_by_domain.get(DOMAIN_EXPERIMENT_EVIDENCE) or []
+    with SectionCard(
+        _DOMAIN_LABELS[DOMAIN_EXPERIMENT_EVIDENCE],
+        description="Optional - not required for a complete project.",
+    ):
+        render_status_badges(["ready" if optional_supplied else "optional"])
+        if optional_supplied:
             st.caption(
-                f"Logical domain: **"
-                f"{_DOMAIN_LABELS.get(domain, 'Unclassified (no domain recorded)')}"
-                "**"
+                f"{len(optional_supplied)} physical source file(s) supplied "
+                "under this domain."
             )
-            summary = get_data_summary(df)
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Rows", f"{summary['rows']:,}")
-            c2.metric("Columns", summary["columns"])
-            c3.metric("Missing values", f"{int(summary['missing_values']):,}")
-            preview = df.head(20)
-            st.dataframe(
-                preview, width="stretch", column_config=dataframe_column_config(preview)
-            )
-            if st.button(f"Remove '{name}'", key=f"remove_{name}"):
-                sources.pop(name)
-                st.session_state["raw_sources"] = sources
-                active = dict(
-                    st.session_state.get("active_source_upload_version") or {}
-                )
-                active.pop(name, None)
-                st.session_state["active_source_upload_version"] = active
-                st.rerun()
+            for name, df in optional_supplied:
+                _render_source_detail(name, df)
+        else:
+            st.caption("No experiment-evidence source supplied.")
+
+    unclassified = sources_by_domain.get(None) or []
+    if unclassified:
+        with WarningPanel(
+            "Unclassified sources",
+            description="No SourceDefinition recorded - never guessed into "
+            "one of the four governed domains.",
+        ):
+            for name, df in unclassified:
+                _render_source_detail(name, df)
+
+    if missing_required_labels:
+        st.warning(
+            "Missing required logical domain(s): "
+            + ", ".join(missing_required_labels)
+            + ". **Next action:** upload at least one source under each "
+            "missing domain above before continuing."
+        )
 
     render_next_step("data_upload")
 else:
     render_empty_state(
-        "No sources loaded yet. Load the demo data or upload a file above to get started."
+        "No sources loaded yet. Load the demo data or upload a file above to get started.",
+        what_for=(
+            "Loading source data under the three required logical domains "
+            "(Outcomes; Activity and Media; Context and External Factors) "
+            "plus the optional Experiment Evidence domain, per REQ-DATAIN-001."
+        ),
+        next_action="Load the synthetic demo data, or upload a file and choose its logical domain above.",
     )
