@@ -19,12 +19,53 @@ what the task-specific brief itself already translated.
 
 ## Capability status
 
-Not implemented. This record establishes the authority/vocabulary contract
-only. It approves *what may be built* and *how the vocabulary is defined*;
-it builds no code. Dependent, separately-scoped packages implement the
-domain objects, transformation contracts, UI, and (where an approved
-modelling contract permits) engine changes against this record — not
-against the PRD text directly.
+**Status at approval (2026-08-09):** Not implemented. This record
+establishes the authority/vocabulary contract only. It approves *what may
+be built* and *how the vocabulary is defined*; it builds no code.
+Dependent, separately-scoped packages implement the domain objects,
+transformation contracts, UI, and (where an approved modelling contract
+permits) engine changes against this record — not against the PRD text
+directly. The "What already exists today (do not duplicate)" subsection
+below describes the baseline as of this approval date; see the
+2026-08-11 update immediately below for what has since been built on top
+of it.
+
+**Status as of 2026-08-11 (after PRs #151-#159):** Substantially
+implemented. Dependent, separately-scoped packages have delivered:
+
+- `core.coverage`: `SourceDefinition`, `SourceVersion`, `FrequencyMetadata`,
+  `DefinitionBreak`, `VariableCoverageRecord`, `VariableCoverageMatrix`,
+  strict `schema_version` guards, and `build_coverage_matrix_from_frame`
+  (generates a coverage matrix from a real joined frame, classifying every
+  gap `unknown` until a human reclassifies it — never inferring
+  `not_applicable`/`unavailable_source`/structural `observed_zero` from an
+  absent value).
+- `variable_coverage_records_fingerprint`/`VariableCoverageRecord.
+  fit_relevant_fields`: a fit-relevant versus presentation-only coverage
+  fingerprint, bound into model identity and project export/import.
+- immutable source-version capture on upload (checksum, original filename,
+  size, parsed-representation version; CSV/XLS/XLSX/XLSM/Parquet) — see
+  `data.loader` and `compute_checksum`.
+- explicit join-mode and join-loss/unmatched-key diagnostics —
+  `data.pipeline.join_sources_with_diagnostics` (§4's join-diagnosability
+  invariant). `join_sources` itself, and its `how="inner"` default, are
+  unchanged, per this record's own "do not duplicate" note below.
+- the Data Coverage review UI (`pages/15_Data_Coverage.py`): coverage-state
+  review, treatment proposal/approval, and versioned matrix save.
+- `core.market_data_capability.check_market_channel_capability`: a
+  deterministic market x channel engine-capability report (§6 point 3),
+  bound into model staleness and the pre-fit prior-predictive workflow.
+
+Not yet implemented: execution of any approved frequency-conversion method
+(§4 — no method is approved by this record itself; see "Out of scope"
+below), a canonical-calendar mixed-frequency alignment service, a
+fit-consumed-variable capability report beyond market x channel (outcome
+source columns, controls, promotions, and other compiled predictors), and
+an official-use governance gate binding coverage/capability results to
+policy-backed model approval (current results are informational only).
+`FR-MOD-015` (§6) remains explicitly unresolved — no masking strategy,
+missing-data likelihood, or per-market predictor-set restructuring is
+approved.
 
 ### What already exists today (do not duplicate)
 
@@ -281,14 +322,40 @@ behaviour changes as a result of this record.
   location, persistence file layout) — deferred to the dependent
   data-contract implementation package; this record fixes the *vocabulary
   and invariants* those objects must satisfy (§1–§5), not their concrete
-  representation.
+  representation. **Resolved in PR #151 (2026-08-09):** see `core.coverage`
+  for the concrete shape.
 - Whether/how an approved database-extract connector is added — explicitly
   deferred (see "Out of scope").
 - Exact structural-zero governance mechanism (how a "genuine pre-launch"
   decision is recorded and by whom) — deferred to the dependent
   implementation package; §1's invariant ("pre-launch may be structural
   zero only when the activity genuinely did not exist") is binding
-  regardless of which mechanism is chosen.
+  regardless of which mechanism is chosen. **Resolved in PR #151
+  (2026-08-09):** `core.coverage.CoverageSegment.structural_zero`, gated on
+  a required non-empty `justification`.
+
+## Work Package A update (2026-08-11)
+
+This section records a documentation-only reconciliation PR, distinct from
+the record's original 2026-08-09 approval (see "Affected modules"/
+"Required tests"/"Migration impact" above, which describe that original
+PR's own scope and remain historically accurate for it).
+
+Additional affected modules:
+
+- `docs/decision_log.md` (new entry recording this reconciliation)
+- `ancestry_mmm/tests/test_outcome_approval.py` (new
+  `TestAuthorityConsistency` tests below)
+- `README.md` (workflow order and feature-list corrections)
+
+Additional required tests:
+
+- `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_req_coverage_001_gap_row_reflects_delivered_capability`
+- `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_req_coverage_001_named_in_implemented_section`
+- `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_req_coverage_001_record_states_dated_implementation_history`
+
+No `ancestry_mmm/` source, schema, model, or persisted-artefact behaviour
+changes as a result of this update either — documentation and tests only.
 
 ## Owner
 

@@ -1826,3 +1826,46 @@ diagnostics are part of the curve contract.
 
 **Scope:** This is the mathematical correction to G2A only. Response horizons,
 year-on-year reporting, stakeholder UI, and dynamic planning remain deferred.
+
+## Coverage authority reconciliation (Work Package A)
+
+**Date:** 2026-08-11
+**Decision:** Reconcile `docs/specification_authority.md` and
+`docs/approved_requirements/REQ-COVERAGE-001.md` with what PRs #151-#159
+actually implemented, without rewriting either document's historical
+approval-time text as though the capability existed on 2026-08-09.
+**Reason:** Both documents are implementation authority that coding agents
+are instructed to treat as current fact (`AGENTS.md` requirements-authority
+hierarchy). By 2026-08-11 they still stated "No source/coverage-matrix
+domain objects, join diagnostics, frequency-conversion contracts, or
+market-aware prepared-frame representation are implemented yet" and
+"Capability status: Not implemented", even though `core.coverage`,
+`data.pipeline.join_sources_with_diagnostics`, `core.market_data_
+capability`, the Data Coverage review UI, and the pre-fit prior-predictive
+binding had all since been merged (PRs #151-#159). Leaving this
+uncorrected risks a future coding agent re-implementing already-delivered
+work, or trusting a stale "not implemented" status over the actual code.
+**Alternatives considered:** Rewriting the original "Capability status: Not
+implemented" sentence and the implementation-gaps table row in place to
+read as already-implemented (rejected - would misrepresent what was true
+at approval time and erase the historical record of incremental delivery).
+Leaving the documents as-is and relying on this decision-log entry alone
+to correct the record (rejected - `AGENTS.md` and `docs/specification_
+authority.md` are the documents coding agents are told to read directly;
+an easily-missed decision-log entry is not an adequate substitute).
+**Impact:** `docs/specification_authority.md`'s REQ-COVERAGE-001
+implementation-gaps row now names the specific delivered capabilities and
+PR range while keeping its State column unchanged ("Requirement exists but
+capability incomplete" - `FR-MOD-015` and several other invariants remain
+genuinely unresolved); REQ-COVERAGE-001 gains a bullet in "Approved
+requirement records already implemented" alongside `REQ-GRAPH-001`/
+`REQ-SEARCH-001`, the same established pattern for an approved record with
+a documented, narrower-than-full capability boundary. `docs/approved_
+requirements/REQ-COVERAGE-001.md`'s "Capability status" section gains a
+dated 2026-08-11 status update *in addition to*, not instead of, the
+2026-08-09 approval-time text; two "Unresolved decisions" bullets
+(domain-object shape, structural-zero governance mechanism) are marked
+resolved with their delivering PR. No `ancestry_mmm/` source, schema, or
+model behaviour changes.
+**Owner:** Platform engineering.
+**Status:** Accepted; implemented in this PR.
