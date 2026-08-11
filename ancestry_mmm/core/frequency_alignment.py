@@ -54,11 +54,13 @@ brief's own Work Package C/D boundary):
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import date
 from typing import Dict, Optional, Tuple
 
-from .coverage import VARIABLE_CLASSES, DefinitionBreak
+import pandas as pd
+
+from .coverage import VARIABLE_CLASSES, DefinitionBreak, _FREQUENCY_TO_PANDAS_ALIAS
 
 # --- Conversion-method registry (starts empty - see module docstring) -----
 
@@ -161,7 +163,25 @@ class AlignmentSpecification:
     variable_class: str
     publication_lag_periods: int = 0
     method_id: Optional[str] = None
+    # The version of *this decision*, distinct from `source_version` (which
+    # identifies the input source, not the alignment decision made about
+    # it) - review finding: without this, two materially different
+    # conversions of the same method_id (different parameters, different
+    # effective period) would be indistinguishable in a persisted record.
+    decision_version: int = 1
+    # Method-specific configuration (e.g. an allocation weighting scheme's
+    # parameters) - REQ-COVERAGE-001 S4 lists "parameters" as part of the
+    # required decision record, distinct from the method identity itself.
+    parameters: Dict[str, object] = field(default_factory=dict)
     reconciliation_rule: str = ""
+    # The period *this specific alignment decision* applies to - distinct
+    # from support_start/support_end below, which describe the underlying
+    # variable's own observed/supported window (REQ-COVERAGE-001 S4 lists
+    # "effective period" and "support boundary" as separate required
+    # fields). Mirrors `core.search_objects`' effective-period convention
+    # for governed, versioned decisions.
+    effective_start: Optional[str] = None
+    effective_end: Optional[str] = None
     support_start: Optional[str] = None
     support_end: Optional[str] = None
     definition_breaks: Tuple[DefinitionBreak, ...] = ()
@@ -180,11 +200,14 @@ class AlignmentSpecification:
             )
         if self.publication_lag_periods < 0:
             raise ValueError("publication_lag_periods must be >= 0")
-        if self.support_start and self.support_end:
-            if date.fromisoformat(self.support_start) > date.fromisoformat(
-                self.support_end
-            ):
-                raise ValueError("support_start must not be after support_end")
+        if self.decision_version < 1:
+            raise ValueError("decision_version must be >= 1")
+        for label, start, end in (
+            ("support", self.support_start, self.support_end),
+            ("effective", self.effective_start, self.effective_end),
+        ):
+            if start and end and date.fromisoformat(start) > date.fromisoformat(end):
+                raise ValueError(f"{label}_start must not be after {label}_end")
 
     def to_dict(self) -> dict:
         return {
@@ -197,7 +220,11 @@ class AlignmentSpecification:
 
 
 def check_publication_leakage(
-    *, reconstructed_period_end: str, as_of: str, publication_lag_periods: int
+    *,
+    reconstructed_period_end: str,
+    as_of: str,
+    native_frequency: str,
+    publication_lag_periods: int,
 ) -> bool:
     """REQ-COVERAGE-001 S4: "a historical transformation may only use
     information that was actually available as of the reconstructed
@@ -206,14 +233,33 @@ def check_publication_leakage(
     Returns ``True`` if using this variable to reconstruct
     ``reconstructed_period_end`` as of ``as_of`` would leak future
     information - i.e. the value would not actually have been published
-    yet. ``publication_lag_periods`` is a period count, not a calendar
-    unit conversion - this function only compares dates directly; a
-    dependent caller resolves ``publication_lag_periods`` into an actual
-    lagged date using the variable's own governed frequency before calling
-    this, since a "period" means something different at weekly versus
-    monthly native frequency.
+    yet, given ``publication_lag_periods`` full periods of
+    ``native_frequency`` must elapse after ``reconstructed_period_end``
+    before the value is available (review finding: an earlier version of
+    this function accepted ``publication_lag_periods`` but never actually
+    used it, always comparing against the bare period end - silently
+    admitting values before their governed release date).
+
+    Reuses the same native-frequency alias mapping `core.coverage.
+    build_coverage_matrix_from_frame` already uses for its own expected-
+    calendar construction, and the same `pd.date_range`-based step
+    counting, rather than inventing separate offset arithmetic. An
+    unrecognised/irregular ``native_frequency`` has no fixed step to
+    advance by - this fails closed (reports leakage) rather than assuming
+    the lag has already elapsed.
     """
-    return date.fromisoformat(as_of) < date.fromisoformat(reconstructed_period_end)
+    period_end = pd.Timestamp(reconstructed_period_end)
+    as_of_ts = pd.Timestamp(as_of)
+    if publication_lag_periods <= 0:
+        return bool(as_of_ts < period_end)
+    alias = _FREQUENCY_TO_PANDAS_ALIAS.get(native_frequency.strip().lower())
+    if alias is None:
+        return True
+    schedule = pd.date_range(
+        start=period_end, periods=publication_lag_periods + 1, freq=alias
+    )
+    available_from = schedule[-1]
+    return bool(as_of_ts < available_from)
 
 
 def check_definition_break_crossing(
@@ -261,8 +307,18 @@ def check_support_boundary(
 ALIGNMENT_STATUSES = (
     "unsupported_no_approved_method",
     "unsupported_definition_break",
-    "exploratory_unsupported",
+    "unsupported_leakage",
+    "method_available",
 )
+
+# The only statuses that represent a genuinely usable outcome. Review
+# finding: an earlier version hardcoded `AlignmentResult.supported` to
+# always be `False`, so even the (then-unreachable) "a method was found"
+# branch still reported unsupported - the extension point this module
+# promises ("register a method, nothing else needs to change") was not
+# actually honoured. `supported` is now derived from `status`, so the two
+# can never disagree.
+_SUPPORTED_STATUSES = frozenset({"method_available"})
 
 
 @dataclass(frozen=True)
@@ -271,11 +327,17 @@ class AlignmentResult:
     resolved today (mirrors `core.market_data_capability.
     EngineCapabilityResult`'s shape for the same reason: never silently
     drop, approximate, or mask what cannot be officially converted; always
-    name the specific reason). ``status="exploratory_unsupported"`` is
-    reserved for a future dependent package that wires this into the
-    existing exploratory Transform Pipeline fill operations (REQ-
-    COVERAGE-001 S7) - this module's own `evaluate_alignment_request`
-    never returns it, since it only ever resolves the *official* path."""
+    name the specific reason).
+
+    ``status="method_available"`` means an approved conversion method is
+    registered for ``spec.variable_class`` and no known blocker (a
+    definition break, or - when checkable - publication leakage) applies.
+    It does NOT mean data has actually been converted: this module reports
+    feasibility only, never executes a conversion - a dependent execution
+    service (this brief's Work Package D and beyond) performs that,
+    reading the resolved `ConversionMethodSpec` this result implies via
+    `resolve_conversion_method`.
+    """
 
     spec: AlignmentSpecification
     status: str
@@ -289,7 +351,7 @@ class AlignmentResult:
 
     @property
     def supported(self) -> bool:
-        return False
+        return self.status in _SUPPORTED_STATUSES
 
     def to_dict(self) -> dict:
         return {
@@ -305,19 +367,27 @@ def evaluate_alignment_request(
     *,
     period_start: Optional[str] = None,
     period_end: Optional[str] = None,
+    as_of: Optional[str] = None,
 ) -> AlignmentResult:
-    """Resolve ``spec`` against the current (empty) method registry and,
-    when a period is supplied, the definition-break check.
+    """Resolve ``spec`` against the current method registry and, when
+    enough information is supplied, the definition-break and
+    publication-leakage checks.
 
-    Always returns an ``unsupported_*`` result today - see module
-    docstring: no conversion method is approved for any variable class
-    yet, so `resolve_conversion_method` never returns one. This function
-    exists so a dependent caller has one deterministic, typed entry point
-    to call regardless of whether Work Package D has landed yet; it will
-    start returning a genuinely converted result only once
-    `register_conversion_method` has been called by an approved dependent
-    package - `evaluate_alignment_request`'s own logic does not change
-    when that happens.
+    In production, this returns ``unsupported_no_approved_method`` for
+    every request today - see module docstring: no conversion method is
+    approved for any variable class yet, so `resolve_conversion_method`
+    never returns one there. Unlike an earlier version of this function,
+    that is a live consequence of the registry being empty, not a
+    hardcoded fallback: once a dependent, separately-approved package
+    calls `register_conversion_method` with `approved=True`, this
+    function's own logic already returns ``status="method_available"``
+    for a matching request without needing to be rewritten.
+
+    Checks run in this order, each capable of blocking independently of
+    whether a method is ever approved: a definition break inside
+    ``[period_start, period_end]`` (only checked when both are supplied);
+    publication leakage as of ``as_of`` (only checked when ``as_of`` and
+    ``period_end`` are both supplied); finally, method resolution.
     """
     if period_start is not None and period_end is not None:
         blocking_break = check_definition_break_crossing(
@@ -336,6 +406,26 @@ def evaluate_alignment_request(
                 ),
             )
 
+    if period_end is not None and as_of is not None:
+        leaks = check_publication_leakage(
+            reconstructed_period_end=period_end,
+            as_of=as_of,
+            native_frequency=spec.native_frequency,
+            publication_lag_periods=spec.publication_lag_periods,
+        )
+        if leaks:
+            return AlignmentResult(
+                spec=spec,
+                status="unsupported_leakage",
+                reason=(
+                    f"Reconstructing the period ending {period_end} as of "
+                    f"{as_of} would use information not yet published given "
+                    f"{spec.publication_lag_periods} period(s) of publication "
+                    "lag at this variable's native frequency "
+                    f"({spec.native_frequency!r}) (REQ-COVERAGE-001 S4)."
+                ),
+            )
+
     method = resolve_conversion_method(spec.variable_class, spec.method_id)
     if method is None:
         return AlignmentResult(
@@ -350,13 +440,15 @@ def evaluate_alignment_request(
                 "required before this alignment can be resolved officially."
             ),
         )
-    # Unreachable while _METHOD_REGISTRY stays empty (see module docstring);
-    # kept so a future approved method has a defined return contract to
-    # extend rather than requiring this function's shape to change.
-    return AlignmentResult(  # pragma: no cover
+    return AlignmentResult(
         spec=spec,
-        status="unsupported_no_approved_method",
-        reason="unreachable while no conversion method is registered",
+        status="method_available",
+        reason=(
+            f"Approved method {method.method_id!r} v{method.version} is "
+            f"registered for variable class {spec.variable_class!r}. This "
+            "module reports feasibility only - it does not execute the "
+            "conversion; a dependent execution service performs that."
+        ),
     )
 
 

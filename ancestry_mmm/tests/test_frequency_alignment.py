@@ -201,6 +201,44 @@ class TestAlignmentSpecification:
         d = spec.to_dict()
         assert d["definition_breaks"][0]["break_date"] == "2026-03-01"
 
+    def test_rejects_decision_version_below_one(self):
+        with pytest.raises(ValueError, match="decision_version must be >= 1"):
+            _spec(decision_version=0)
+
+    def test_rejects_effective_start_after_effective_end(self):
+        with pytest.raises(ValueError, match="effective_start must not be after"):
+            _spec(effective_start="2026-06-01", effective_end="2026-01-01")
+
+    def test_default_parameters_is_an_empty_dict_not_shared_across_instances(self):
+        """A mutable default_factory, not a shared mutable default -
+        mutating one instance's parameters must never leak into another."""
+        spec_a = _spec()
+        spec_b = _spec()
+        assert spec_a.parameters == {}
+        assert spec_a.parameters is not spec_b.parameters
+
+    def test_decision_version_and_parameters_distinguish_otherwise_identical_specs(
+        self,
+    ):
+        """Review finding: source_version identifies the input source, not
+        the alignment decision - two specs sharing method_id must still be
+        distinguishable by decision_version/parameters."""
+        spec_v1 = _spec(method_id="m1", decision_version=1, parameters={"weight": 0.5})
+        spec_v2 = _spec(method_id="m1", decision_version=2, parameters={"weight": 0.7})
+        assert spec_v1.to_dict() != spec_v2.to_dict()
+
+    def test_effective_period_is_distinct_from_support_boundary(self):
+        spec = _spec(
+            support_start="2020-01-01",
+            support_end="2026-12-31",
+            effective_start="2026-01-01",
+            effective_end="2026-06-30",
+        )
+        d = spec.to_dict()
+        assert d["support_start"] == "2020-01-01"
+        assert d["effective_start"] == "2026-01-01"
+        assert d["support_start"] != d["effective_start"]
+
 
 # ---------------------------------------------------------------------------
 # Checks
@@ -208,21 +246,23 @@ class TestAlignmentSpecification:
 
 
 class TestPublicationLeakageCheck:
-    def test_leaks_when_as_of_is_before_period_end(self):
+    def test_leaks_when_as_of_is_before_period_end_and_no_lag(self):
         assert (
             check_publication_leakage(
                 reconstructed_period_end="2026-06-30",
                 as_of="2026-06-15",
+                native_frequency="monthly",
                 publication_lag_periods=0,
             )
             is True
         )
 
-    def test_no_leak_when_as_of_is_on_or_after_period_end(self):
+    def test_no_leak_when_as_of_is_on_or_after_period_end_and_no_lag(self):
         assert (
             check_publication_leakage(
                 reconstructed_period_end="2026-06-30",
                 as_of="2026-06-30",
+                native_frequency="monthly",
                 publication_lag_periods=0,
             )
             is False
@@ -231,9 +271,49 @@ class TestPublicationLeakageCheck:
             check_publication_leakage(
                 reconstructed_period_end="2026-06-30",
                 as_of="2026-07-15",
+                native_frequency="monthly",
                 publication_lag_periods=0,
             )
             is False
+        )
+
+    def test_lag_is_actually_honoured(self):
+        """Review finding: an earlier version accepted
+        publication_lag_periods but never used it - a monthly value
+        released one month after period end must still leak at July 15
+        even though July 15 is after the June 30 period end."""
+        assert (
+            check_publication_leakage(
+                reconstructed_period_end="2026-06-30",
+                as_of="2026-07-15",
+                native_frequency="monthly",
+                publication_lag_periods=1,
+            )
+            is True
+        )
+
+    def test_no_leak_once_the_lag_has_elapsed(self):
+        assert (
+            check_publication_leakage(
+                reconstructed_period_end="2026-06-30",
+                as_of="2026-08-01",
+                native_frequency="monthly",
+                publication_lag_periods=1,
+            )
+            is False
+        )
+
+    def test_unrecognised_frequency_fails_closed(self):
+        """No fixed step to advance by - report leakage rather than
+        assume the lag has already elapsed."""
+        assert (
+            check_publication_leakage(
+                reconstructed_period_end="2026-06-30",
+                as_of="2027-01-01",
+                native_frequency="irregular",
+                publication_lag_periods=2,
+            )
+            is True
         )
 
 
@@ -339,6 +419,72 @@ class TestEvaluateAlignmentRequest:
         d = result.to_dict()
         assert d["supported"] is False
         assert d["status"] == "unsupported_no_approved_method"
+
+    def test_leakage_blocks_before_method_resolution(self):
+        spec = _spec(native_frequency="monthly", publication_lag_periods=1)
+        result = evaluate_alignment_request(
+            spec, period_end="2026-06-30", as_of="2026-07-15"
+        )
+        assert result.status == "unsupported_leakage"
+        assert result.supported is False
+
+    def test_no_leakage_falls_through_to_method_resolution(self):
+        spec = _spec(native_frequency="monthly", publication_lag_periods=1)
+        result = evaluate_alignment_request(
+            spec, period_end="2026-06-30", as_of="2026-08-01"
+        )
+        assert result.status == "unsupported_no_approved_method"
+
+    def test_method_available_once_registered_and_approved(self):
+        """Review finding: registering an approved method must be
+        sufficient on its own - evaluate_alignment_request's own logic
+        must not need rewriting to actually honour it."""
+        register_conversion_method(
+            ConversionMethodSpec(
+                method_id="test-only-eval-method",
+                version=1,
+                variable_class="flow_count",
+                description="approved, registered for this test only",
+                approved=True,
+                approved_by="Jane",
+                approved_at="2026-08-11",
+            )
+        )
+        try:
+            result = evaluate_alignment_request(_spec())
+            assert result.status == "method_available"
+            assert result.supported is True
+            assert "test-only-eval-method" in result.reason
+        finally:
+            from ancestry_mmm.core import frequency_alignment as fa
+
+            fa._METHOD_REGISTRY.pop(("flow_count", "test-only-eval-method"), None)
+
+    def test_definition_break_still_blocks_an_approved_method(self):
+        register_conversion_method(
+            ConversionMethodSpec(
+                method_id="test-only-eval-method-2",
+                version=1,
+                variable_class="flow_count",
+                description="approved, registered for this test only",
+                approved=True,
+                approved_by="Jane",
+                approved_at="2026-08-11",
+            )
+        )
+        breaks = (
+            DefinitionBreak(break_date="2026-01-15", description="methodology change"),
+        )
+        try:
+            spec = _spec(definition_breaks=breaks)
+            result = evaluate_alignment_request(
+                spec, period_start="2026-01-01", period_end="2026-01-31"
+            )
+            assert result.status == "unsupported_definition_break"
+        finally:
+            from ancestry_mmm.core import frequency_alignment as fa
+
+            fa._METHOD_REGISTRY.pop(("flow_count", "test-only-eval-method-2"), None)
 
 
 # ---------------------------------------------------------------------------
