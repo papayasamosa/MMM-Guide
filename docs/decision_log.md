@@ -1973,3 +1973,36 @@ brief's Work Package D); wiring this module into official data preparation
 once at least one method is approved.
 **Owner:** Platform engineering.
 **Status:** Accepted; implemented in PR #162.
+
+## Frequency-conversion method decision options (Work Package D)
+
+**Date:** 2026-08-11
+**Decision:** Publish `docs/frequency_conversion_method_options.md`, a decision-support survey
+of candidate frequency-conversion methods for each of `core.coverage.VARIABLE_CLASSES`'s five
+variable classes (flow/count, stock/level, rate/index, survey/measurement, event/flag),
+assessed against nine dimensions (constancy assumption, reconciliation, publication-lag
+behaviour, revision-vintage behaviour, boundary behaviour, uncertainty implication, backtest
+reconstruction implication, artificial-variation risk, attenuation/overconfidence risk) per
+the brief's Work Package D. No candidate is marked approved; nothing is registered in
+`core.frequency_alignment`'s conversion-method registry.
+**Reason:** REQ-COVERAGE-001 S4 authorises variable-class-specific conversion semantics but
+explicitly does not approve one method for any class, and forbids inventing "any specific
+imputation formula, interpolation kernel, or default fill method not named in S4." A coding
+agent choosing a method unilaterally - even a defensible one - would be exactly the invented
+business/statistics decision root `AGENTS.md`'s requirements-authority hierarchy prohibits.
+Mirrors the existing `docs/curve_authority_gap_analysis.md` precedent: a plain options-analysis
+document that is the evidence base for a future human approval, not itself a `REQ-*` record.
+**Alternatives considered:** Selecting one "reasonable default" method per class now (e.g.
+step/LOCF everywhere) to unblock `core.frequency_alignment`'s pipeline wiring sooner (rejected
+- explicitly forbidden by REQ-COVERAGE-001 S4's "Out of scope", and every candidate surveyed
+carries real, class-specific tradeoffs that a reviewer with domain context should weigh, not a
+coding agent). Waiting to produce this document until a modelling contract already exists
+(rejected - the brief's Work Package D exists precisely to give a reviewer the structured
+options needed to *reach* that contract).
+**Impact:** New `docs/frequency_conversion_method_options.md`. `docs/approved_requirements/
+REQ-COVERAGE-001.md`'s "Unresolved decisions" gains a pointer to it. No `ancestry_mmm/`
+source, schema, or model behaviour changes - `core.frequency_alignment`'s registry remains
+empty and every real alignment request still resolves to
+`unsupported_no_approved_method`.
+**Owner:** Platform engineering.
+**Status:** Accepted; implemented in PR #163.
