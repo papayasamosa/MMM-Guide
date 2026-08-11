@@ -840,6 +840,66 @@ class TestAuthorityConsistency:
                 "overlaid by this brief"
             )
 
+    def test_req_coverage_001_gap_row_reflects_delivered_capability(self):
+        """REQ-COVERAGE-001's own gap-table row must name the PR range that
+        delivered its implemented capability and must not still claim no
+        domain objects/join diagnostics exist (Work Package A reconciliation,
+        2026-08-11) - a structured check on the row's own Notes column, not a
+        substring search of the whole document."""
+        authority_path = (
+            Path(__file__).parent.parent.parent / "docs" / "specification_authority.md"
+        )
+        content = authority_path.read_text()
+        gaps_section = content.split(
+            "## Current implementation gaps requiring decision records", 1
+        )[1].split("## Approved requirement records already implemented", 1)[0]
+        gap_rows = self._markdown_table_rows(gaps_section)
+        coverage_rows = [row for row in gap_rows if "REQ-COVERAGE-001" in row[0]]
+        assert coverage_rows, "no implementation-gaps row references REQ-COVERAGE-001"
+        for row in coverage_rows:
+            notes = row[2]
+            assert "#151" in notes and "#159" in notes, (
+                f"REQ-COVERAGE-001's gap-table Notes must cite the delivering "
+                f"PR range: {notes}"
+            )
+            assert "No source/coverage-matrix domain objects" not in notes, (
+                "REQ-COVERAGE-001's gap-table Notes still claims no domain "
+                "objects are implemented, contradicting core.coverage"
+            )
+
+    def test_req_coverage_001_named_in_implemented_section(self):
+        """REQ-COVERAGE-001 must appear in the 'already implemented' section
+        alongside REQ-GRAPH-001/REQ-SEARCH-001 - the established pattern for
+        an approved record with substantive but bounded implementation."""
+        authority_path = (
+            Path(__file__).parent.parent.parent / "docs" / "specification_authority.md"
+        )
+        content = authority_path.read_text()
+        implemented_section = content.split(
+            "## Approved requirement records already implemented", 1
+        )[1]
+        assert "REQ-COVERAGE-001" in implemented_section
+        assert "core.coverage" in implemented_section
+
+    def test_req_coverage_001_record_states_dated_implementation_history(self):
+        """REQ-COVERAGE-001.md's own Capability status section must record
+        both its approval-time status and a dated update reflecting what was
+        actually delivered - never silently rewritten as though the
+        capability existed at approval time."""
+        record_path = (
+            Path(__file__).parent.parent.parent
+            / "docs"
+            / "approved_requirements"
+            / "REQ-COVERAGE-001.md"
+        )
+        content = record_path.read_text()
+        status_section = content.split("## Capability status", 1)[1].split(
+            "### What already exists today", 1
+        )[0]
+        assert "2026-08-09" in status_section
+        assert "2026-08-11" in status_section
+        assert "#151" in status_section and "#159" in status_section
+
 
 # ---------------------------------------------------------------------------
 # OutcomeApproval vocabulary

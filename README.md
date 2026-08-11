@@ -25,9 +25,13 @@ uv run streamlit run ancestry_mmm/app.py
 
 Opens at `http://localhost:8501`. From there: **Data Upload** → click "Load synthetic demo
 sources" for a working UK/Australia/Canada dataset with no setup required, then work through the
-sidebar in order (Transform Pipeline → Structure → Causal Graph → Channel & Media Units → Market
-Descriptors → Model Configuration → Model Training → Compare Models → Diagnostics → Results &
-Curve Bank → Scenario Planner → Project Export & Recovery). Causal Graph is optional - build and
+sidebar in order (Transform Pipeline → Data Coverage → Structure → Causal Graph → Channel & Media
+Units → Market Descriptors → Model Configuration → Model Training → Compare Models → Diagnostics →
+Results & Curve Bank → Official Curve Generation → Scenario Planner → Project Export & Recovery).
+Data Coverage is optional - review each variable's missingness/coverage state and build a versioned
+coverage matrix there (REQ-COVERAGE-001); skip it and later pages behave as before, though a market
+x channel engine-capability report bound to that matrix is informational only today (see below), not
+a blocking gate. Causal Graph is optional - build and
 approve a variable-level causal graph there and it becomes the sole authoritative structural input
 to model compilation (REQ-GRAPH-001); skip it and Model Training falls back to the
 `MediaOutcomePathway` catalogue configured on Structure exactly as before.
@@ -61,6 +65,16 @@ Requires Python 3.11 or 3.12 (see [Deployment](#deployment) below for why there'
   controls) joined on date + market, an ordered and replayable transformation pipeline, calculated
   columns via a restricted `ast`-based expression parser (not `eval()`), and validation checks for
   low-variance channels, collinearity, and sparse segments/markets before fitting.
+- **Variable coverage** (`ancestry_mmm/core/coverage.py`, `ancestry_mmm/core/market_data_capability.py`,
+  Data Coverage page): an eight-state missingness vocabulary (`observed_zero`/`missing_expected`/
+  `not_applicable`/`unavailable_source`/`suppressed`/`estimated`/`modelled`/`unknown` - never
+  collapsed into a nullable flag), a versioned, portable variable coverage matrix built per
+  market/product/segment before fitting, immutable source-version capture on upload (checksum,
+  filename, size), explicit join-mode and join-loss/unmatched-key diagnostics
+  (`data.pipeline.join_sources_with_diagnostics`), and a market x channel engine-capability report
+  bound into model identity and the pre-fit prior-predictive check (REQ-COVERAGE-001). Frequency
+  conversion, a canonical mixed-frequency calendar, and an official-use governance gate on coverage
+  are not yet implemented - see `docs/approved_requirements/REQ-COVERAGE-001.md`.
 - **Diagnostics scorecard** (`ancestry_mmm/core/diagnostics.py`): convergence (R-hat/ESS/
   divergences), in-sample fit, error metrics (MAE/RMSE/sMAPE/WAPE/bias per outcome), residual
   temporal structure (lag-1 autocorrelation/Durbin-Watson, computed within each market's own
@@ -128,8 +142,11 @@ pathway, and segment-specific promo sensitivity.
 PowerPoint export, real Australia/Canada market builds (the geo hierarchy machinery is implemented
 and exercised by the synthetic 3-market demo, but needs real data to mean anything), a live feed
 from geo-tests/in-platform tests into the curve bank (the comparison/logging workflow exists; the
-feed is manual), and Stage 2 media x context interaction terms (explicitly out of scope per the
-requirements brief).
+feed is manual), Stage 2 media x context interaction terms (explicitly out of scope per the
+requirements brief), executable frequency conversion and a canonical mixed-frequency calendar for
+variable coverage, and an official-use governance gate that blocks model approval on unsupported
+coverage (today's coverage/capability results are informational only - see
+`docs/approved_requirements/REQ-COVERAGE-001.md`).
 
 ## Project structure
 
