@@ -2109,3 +2109,44 @@ One `REQ-DATAIN-001` "Unresolved decision" marked resolved. No existing schema, 
 field, or model behaviour changes.
 **Owner:** Platform engineering.
 **Status:** Accepted; implemented in PR #166.
+
+## pooling_group_id on ActivityDefinition (Work Package E3)
+
+**Date:** 2026-08-11
+**Decision:** Add `ActivityDefinition.pooling_group_id: str | None = None` (schema v2 → v3),
+per the user's explicit approval: a stable cross-market activity identity that must never
+automatically force parameter pooling. Deliberately excluded from `_INVALIDATION_MATRIX`
+(no refit/rebuild flag on edit), `activity_fit_fingerprint` (never influences what is fit),
+and - per the 2026-08-11 correction below - `activity_definitions_fingerprint` too.
+**Reason:** The user's own approval text was explicit and unambiguous on this exact point -
+"pooling_group_id should be used as the stable cross-market activity identity, without
+automatically forcing pooling" - so the implementation choice was mechanical (add the field,
+wire it to never touch modelling code) rather than a fresh design decision. Excluding it from
+the invalidation matrix specifically encodes the "never forces/implies pooling" invariant as
+code, not merely as a comment - if editing it prompted a refit/rebuild, that would itself
+contradict the approved invariant by implying the field has a fit-relevant effect.
+**Alternatives considered:** Including `pooling_group_id` in `_INVALIDATION_MATRIX` with all
+`False` impacts (rejected as redundant with simply omitting it - the matrix already treats an
+absent key as "no invalidation" via `activity_invalidation`'s `changed` computation, which
+only iterates `_INVALIDATION_MATRIX`'s own keys).
+**Impact:** `ActivityDefinition.pooling_group_id`/`schema_version=3`. One `REQ-DATAIN-001`
+"Unresolved decision" marked resolved. No existing persisted-field values change meaning; a
+legacy payload with no `pooling_group_id` key resolves to `None`, never fabricated.
+**Owner:** Platform engineering (field shape/behaviour), Data Science (user-approved
+semantics).
+**Status:** Accepted; implemented in PR #167.
+
+**Correction (2026-08-11, same-PR review fix):** The original decision above kept
+`pooling_group_id` inside `activity_definitions_fingerprint`'s hashed payload, reasoned as "a
+distinct, broader governance/audit signal, not a refit trigger." PR #167 review verified this
+was factually wrong: `activity_definitions_fingerprint` is not a soft audit signal - it is a
+hard blocking gate, read by `CurveArtifactService.validate_for_use` (raises
+`CurveUseNotAuthorizedError` on mismatch) and `core.optimization`'s scenario-staleness check
+(marks a saved scenario `"stale"` on mismatch). Leaving `pooling_group_id` in that hash meant a
+pure identity edit - changing nothing fit-relevant - would silently invalidate existing curve
+artifacts and mark scenarios stale, contradicting the approved "never forces, implies, or
+defaults to" invariant just as directly as including it in `_INVALIDATION_MATRIX` would have.
+Fixed by excluding `pooling_group_id` from `activity_definitions_fingerprint`'s hashed payload,
+the same way it was already excluded from `activity_fit_fingerprint`. See
+`docs/approved_requirements/REQ-DATAIN-001.md`'s E3 resolved-decision note for the corrected
+description.

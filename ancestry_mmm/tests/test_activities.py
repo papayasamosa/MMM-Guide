@@ -3,6 +3,8 @@ import pytest
 from ancestry_mmm.core.activities import (
     ActivityDefinition,
     activity_definitions_fingerprint,
+    activity_fit_fingerprint,
+    activity_invalidation,
 )
 from ancestry_mmm.core.media_costs import monetary_governance_fingerprint
 
@@ -102,3 +104,79 @@ def test_monetary_governance_fingerprint_covers_every_economic_input():
         changed = dict(base)
         changed[field] = replacement
         assert monetary_governance_fingerprint(**changed) != original
+
+
+# ---------------------------------------------------------------------------
+# REQ-DATAIN-001: pooling_group_id (schema v3)
+# ---------------------------------------------------------------------------
+
+
+class TestPoolingGroupId:
+    def test_defaults_to_none(self):
+        assert _activity().pooling_group_id is None
+
+    def test_current_schema_version_is_3(self):
+        assert _activity().schema_version == 3
+
+    def test_accepts_an_explicit_value(self):
+        activity = _activity(pooling_group_id="tv-brand-uk-au")
+        assert activity.pooling_group_id == "tv-brand-uk-au"
+
+    def test_to_dict_from_dict_round_trip(self):
+        activity = _activity(pooling_group_id="tv-brand-uk-au")
+        restored = ActivityDefinition.from_dict(activity.to_dict())
+        assert restored == activity
+        assert restored.pooling_group_id == "tv-brand-uk-au"
+
+    def test_legacy_payload_with_no_key_at_all_resolves_to_none(self):
+        """A payload predating this field entirely (dict with no
+        pooling_group_id key) resolves to None, not fabricated, and its
+        schema_version resolves to the pre-existing legacy floor (2), not
+        the current default (3)."""
+        payload = {
+            "activity_id": "organic-social",
+            "channel": "Organic Social",
+            "activity_ownership": "owned",
+            "model_role": "intervention",
+            "economic_treatment": "response_only",
+            "planning_eligibility": "scenario_only",
+            "source": "social analytics",
+        }
+        restored = ActivityDefinition.from_dict(payload)
+        assert restored.pooling_group_id is None
+        assert restored.schema_version == 2
+
+    def test_does_not_trigger_any_invalidation_flag(self):
+        """REQ-DATAIN-001: pooling_group_id's presence must never, by
+        itself, force, imply, or default to parameter pooling - editing it
+        alone must never trigger a refit/rebuild prompt, which would
+        itself imply the field has a fit-relevant effect."""
+        before = _activity(pooling_group_id=None)
+        after = _activity(pooling_group_id="tv-brand-uk-au")
+        result = activity_invalidation(before, after)
+        assert result.refit_model is False
+        assert result.rebuild_curves is False
+        assert result.rebuild_economics is False
+        assert result.rebuild_scenarios is False
+        assert result.changed_fields == ()
+
+    def test_excluded_from_fit_fingerprint(self):
+        """pooling_group_id must never influence what actually gets fit -
+        activity_fit_fingerprint (which gates model refit) must not change
+        when only pooling_group_id changes."""
+        before = [_activity(pooling_group_id=None)]
+        after = [_activity(pooling_group_id="tv-brand-uk-au")]
+        assert activity_fit_fingerprint(before) == activity_fit_fingerprint(after)
+
+    def test_excluded_from_general_governance_fingerprint(self):
+        """activity_definitions_fingerprint is a hard blocking gate for
+        curve-artifact use (CurveArtifactService.validate_for_use) and
+        scenario staleness (core.optimization), not a soft audit signal -
+        it must not change when only pooling_group_id changes, or a
+        pooling-identity edit would silently invalidate curves/scenarios
+        that changed nothing fit-relevant."""
+        before = [_activity(pooling_group_id=None)]
+        after = [_activity(pooling_group_id="tv-brand-uk-au")]
+        assert activity_definitions_fingerprint(
+            before
+        ) == activity_definitions_fingerprint(after)

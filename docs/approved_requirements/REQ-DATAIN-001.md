@@ -194,9 +194,23 @@ behaviour changes as a result of this record.
   against `LOGICAL_SOURCE_DOMAINS`; a source with no `SourceDefinition` at
   all resolves to the explicit "unclassified" state via
   `resolve_source_logical_domain`, never a guessed domain.
-- The exact `pooling_group_id` field shape on `ActivityDefinition`
-  (optional string, its validation rules, uniqueness scope) and its
-  schema-version bump/migration — deferred to Work Package E3.
+- ~~The exact `pooling_group_id` field shape on `ActivityDefinition`~~
+  **Resolved in Work Package E3 (2026-08-11):** an optional
+  `pooling_group_id: str | None = None` field (no uniqueness/format
+  validation beyond the existing pattern for sibling optional identity
+  fields — `approved_by`/`supersedes_activity_id`), `schema_version`
+  bumped 2 → 3. Deliberately excluded from `_INVALIDATION_MATRIX`
+  (editing it triggers no refit/rebuild flag), `activity_fit_fingerprint`
+  (never influences what is actually fit), **and**
+  `activity_definitions_fingerprint` (corrected in the same PR after
+  review: that fingerprint is a hard blocking gate for curve-artifact use
+  and scenario staleness, not a soft audit signal, so including it there
+  would have let a pure identity edit silently invalidate curves and
+  scenarios that changed nothing fit-relevant — see
+  `docs/decision_log.md`'s 2026-08-11 correction). Its presence never
+  forces, implies, or defaults to pooling, and now never triggers a
+  rebuild/invalidation of any kind, matching the approved invariant
+  exactly.
 - ~~The exact response-unit-mapping field(s) distinct from
   `model_input_column`, and how they integrate with `core.media_units`~~
   **Resolved in Work Package E2 (2026-08-11):** `core.market_config.
