@@ -57,6 +57,7 @@ from ancestry_mmm.core.validation_policy import (
     ValidationGate,
     ValidationWaiverReference,
     evaluate_approval_readiness,
+    validate_gate_config,
 )
 
 _IDENTITY = ModelIdentity("run-1", "data-1", "spec-1", "post-1")
@@ -141,8 +142,16 @@ def _minimal_trace() -> az.InferenceData:
 
 
 def _diag_input(
-    *, spec: ModelSpec | None, coverage_matrix: VariableCoverageMatrix | None
+    *,
+    spec: ModelSpec | None,
+    coverage_matrix: VariableCoverageMatrix | None,
+    fresh: bool | None = True,
 ) -> DiagnosticsInput:
+    """``fresh=True`` supplies matching built-against/current fingerprints
+    (the normal case once the coverage matrix has been (re)built against the
+    active joined data). ``fresh=False`` supplies mismatched fingerprints
+    (a stale matrix). ``fresh=None`` supplies neither (unverifiable - the
+    caller never wired the freshness pair through at all)."""
     meta = FHModelMeta(
         markets=["UK"],
         outcome_ids=["fh_new_gsa"],
@@ -160,6 +169,12 @@ def _diag_input(
         "market_idx": np.array([0, 0, 0]),
         "X_media": np.zeros((3, 1)),
     }
+    if fresh is True:
+        built_against, joined = "joined-fp-1", "joined-fp-1"
+    elif fresh is False:
+        built_against, joined = "joined-fp-OLD", "joined-fp-1"
+    else:
+        built_against, joined = None, None
     return DiagnosticsInput(
         trace=_minimal_trace(),
         frame=frame,
@@ -167,6 +182,8 @@ def _diag_input(
         model_identity=_IDENTITY,
         raw_model_spec=spec,
         coverage_matrix=coverage_matrix,
+        coverage_matrix_built_against_fingerprint=built_against,
+        joined_dataframe_fingerprint=joined,
     )
 
 
@@ -199,12 +216,44 @@ class TestDiagnosticsServiceComputesCapabilitySection:
             date_col="date", market_col="market", markets=["UK"], channels=["TV"]
         )
         result = DiagnosticsService().evaluate(
-            _diag_input(spec=spec, coverage_matrix=_supported_matrix())
+            _diag_input(spec=spec, coverage_matrix=_supported_matrix(), fresh=True)
         )
         section = result.diagnostics_artefact.market_channel_capability
         assert section.status == "computed"
         assert section.payload["supported"] is True
+        assert section.payload["stale"] is False
         assert section.payload["issues"] == []
+
+    def test_unsupported_when_coverage_matrix_is_stale(self):
+        """Review finding: a coverage matrix built against a different
+        (or since-changed) joined dataset must not report supported=True
+        merely because check_market_channel_capability's per-cell result
+        looks fine - it never sees the joined data at all."""
+        spec = ModelSpec(
+            date_col="date", market_col="market", markets=["UK"], channels=["TV"]
+        )
+        result = DiagnosticsService().evaluate(
+            _diag_input(spec=spec, coverage_matrix=_supported_matrix(), fresh=False)
+        )
+        section = result.diagnostics_artefact.market_channel_capability
+        assert section.status == "computed"
+        assert section.payload["supported"] is False
+        assert section.payload["stale"] is True
+        assert section.payload["issues"]
+
+    def test_unsupported_when_freshness_cannot_be_verified(self):
+        """No built-against/current fingerprint pair supplied at all (a
+        caller that never wired the freshness check through) is treated the
+        same as unverifiable - fail closed, never "no problem"."""
+        spec = ModelSpec(
+            date_col="date", market_col="market", markets=["UK"], channels=["TV"]
+        )
+        result = DiagnosticsService().evaluate(
+            _diag_input(spec=spec, coverage_matrix=_supported_matrix(), fresh=None)
+        )
+        section = result.diagnostics_artefact.market_channel_capability
+        assert section.payload["supported"] is False
+        assert section.payload["stale"] is True
 
     def test_schema_version_is_6(self):
         spec = ModelSpec(
@@ -490,3 +539,80 @@ class TestPolicyBackedApprovalFailsClosed:
             posterior_fingerprint=_IDENTITY.posterior_fingerprint,
         )
         assert approval.validation_policy_id == policy.policy_id
+
+
+# ---------------------------------------------------------------------------
+# 5. validate_gate_config rejects the wrong polarity (review finding)
+# ---------------------------------------------------------------------------
+
+
+class TestGateConfigRequiresCorrectPolarity:
+    """Without expected_state=True, classify_boolean_gate's default
+    polarity (a falsy value passes) would treat supported=False
+    (unsupported) as a *pass* - silently inverting this gate's meaning.
+    validate_gate_config must reject any other configuration outright."""
+
+    def test_missing_expected_state_is_rejected(self):
+        gate = ValidationGate(
+            name="market_channel_capability",
+            description="misconfigured - no expected_state",
+            evaluator_id="market_channel_capability",
+            scope="all_models",
+            acceptable_range=None,
+            direction="higher_is_better",
+            blocking=True,
+            waivable=False,
+            required=True,
+        )
+        errors = validate_gate_config(gate)
+        assert errors
+        assert any("expected_state" in e for e in errors)
+
+    def test_wrong_expected_state_is_rejected(self):
+        gate = ValidationGate(
+            name="market_channel_capability",
+            description="misconfigured - inverted expected_state",
+            evaluator_id="market_channel_capability",
+            scope="all_models",
+            acceptable_range=None,
+            expected_state=False,
+            direction="higher_is_better",
+            blocking=True,
+            waivable=False,
+            required=True,
+        )
+        errors = validate_gate_config(gate)
+        assert errors
+        assert any("expected_state" in e for e in errors)
+
+    def test_correct_expected_state_is_accepted(self):
+        gate = _capability_gate()
+        assert gate.expected_state is True
+        assert validate_gate_config(gate) == []
+
+    def test_misconfigured_gate_blocks_readiness_via_config_errors(self):
+        """End-to-end: a misconfigured gate must never silently grant
+        overall_ready=True through evaluate_approval_readiness's
+        validate_policy_config pre-check."""
+        misconfigured_gate = ValidationGate(
+            name="market_channel_capability",
+            description="misconfigured - no expected_state",
+            evaluator_id="market_channel_capability",
+            scope="all_models",
+            acceptable_range=None,
+            direction="higher_is_better",
+            blocking=True,
+            waivable=False,
+            required=True,
+        )
+        policy = _policy(misconfigured_gate)
+        readiness = evaluate_approval_readiness(
+            [],
+            policy,
+            _IDENTITY,
+            diagnostic_artefact_id="diag-1",
+            diagnostic_artefact_fingerprint="diag-fp-1",
+            evidence_context=_context(policy),
+        )
+        assert readiness.overall_ready is False
+        assert readiness.config_errors

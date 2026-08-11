@@ -621,6 +621,21 @@ class DiagnosticsInput:
     # market_channel_capability section below; absent this, that section
     # stays not_computed rather than assuming support.
     coverage_matrix: Optional[VariableCoverageMatrix] = None
+    # Freshness pair (review finding on this PR's initial version): the
+    # session-recorded `fingerprint_dataframe(joined_df)` the matrix was
+    # actually built against (`variable_coverage_matrix_built_against_
+    # fingerprint`), and the *current* joined dataframe's fingerprint. A
+    # coverage matrix built against an earlier Transform Pipeline join (or
+    # restored from an imported project bundle) can drift out of sync with
+    # the data actually being fit now, even though the matrix's own content
+    # is unchanged - `check_market_channel_capability`'s per-cell result
+    # alone cannot see this, since it never reads the joined data. Mirrors
+    # the live fingerprint comparison already surfaced (informationally) on
+    # `pages/04_Model_Config.py`/`pages/15_Data_Coverage.py`, but here it is
+    # authoritative: the market_channel_capability section reports
+    # unsupported when these are absent or mismatched, never merely warns.
+    coverage_matrix_built_against_fingerprint: Optional[str] = None
+    joined_dataframe_fingerprint: Optional[str] = None
 
 
 @dataclass
@@ -977,9 +992,53 @@ class DiagnosticsService:
                     diag_input.raw_model_spec.channels,
                     diag_input.coverage_matrix,
                 )
+                capability_payload = capability_result.to_dict()
+                # Freshness override (review finding): a per-cell "supported"
+                # result is only trustworthy if the coverage matrix was
+                # actually built against the joined data currently being
+                # fit. Absent or mismatched fingerprints force unsupported,
+                # regardless of what check_market_channel_capability itself
+                # reported - never silently trusted as "no problem" the way
+                # REQ-COVERAGE-001 forbids elsewhere. Only matters when the
+                # raw result would otherwise be supported; an already-
+                # unsupported result stays unsupported either way.
+                is_stale = (
+                    diag_input.coverage_matrix is not None
+                    and capability_payload["supported"]
+                    and (
+                        not diag_input.coverage_matrix_built_against_fingerprint
+                        or not diag_input.joined_dataframe_fingerprint
+                        or diag_input.coverage_matrix_built_against_fingerprint
+                        != diag_input.joined_dataframe_fingerprint
+                    )
+                )
+                if is_stale:
+                    capability_payload = {
+                        **capability_payload,
+                        "supported": False,
+                        "stale": True,
+                        "issues": [
+                            {
+                                "market": "*",
+                                "channel": "*",
+                                "reason": (
+                                    "Coverage matrix freshness could not be "
+                                    "verified against the current joined "
+                                    "data (built_against_fingerprint="
+                                    f"{diag_input.coverage_matrix_built_against_fingerprint!r}, "
+                                    "current="
+                                    f"{diag_input.joined_dataframe_fingerprint!r}) "
+                                    "- rebuild the coverage matrix on the "
+                                    "Data Coverage page."
+                                ),
+                            }
+                        ],
+                    }
+                else:
+                    capability_payload = {**capability_payload, "stale": False}
                 capability_sec = DiagnosticSection(
                     status="computed",
-                    payload=capability_result.to_dict(),
+                    payload=capability_payload,
                 )
             except Exception as exc:
                 errors.append(f"Market x channel capability check failed: {exc}")

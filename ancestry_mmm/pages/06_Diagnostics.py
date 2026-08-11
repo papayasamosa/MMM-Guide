@@ -243,6 +243,16 @@ if st.button("Compute scorecard", type="primary"):
                 if coverage_matrix_dict
                 else None
             ),
+            # Review finding: the market_channel_capability gate must not
+            # trust a coverage matrix that was built against a different
+            # (or since-changed) joined dataset - mirrors the freshness
+            # check already surfaced on Model Config/Data Coverage, but
+            # threaded through so it is authoritative for the official gate,
+            # not merely a page-level warning.
+            coverage_matrix_built_against_fingerprint=get_state(
+                "variable_coverage_matrix_built_against_fingerprint"
+            ),
+            joined_dataframe_fingerprint=fingerprint_dataframe(frame["df"]),
         )
         diag_result = diag_service.evaluate(diag_input)
         scorecard = diag_result.scorecard

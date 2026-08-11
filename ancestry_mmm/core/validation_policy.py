@@ -1992,6 +1992,18 @@ class EvaluatorMeta:
         Whether the evaluator produces the same output for the same inputs.
     description : str
         Human-readable description of what this evaluator checks.
+    required_expected_state : bool | None
+        For a boolean evaluator whose passing value is ``True`` (the
+        opposite of ``classify_boolean_gate``'s default "falsy value
+        passes" convention, e.g. ``divergences``'s "no divergences"):
+        the exact ``ValidationGate.expected_state`` ``validate_gate_config``
+        requires the gate to declare. ``None`` means no constraint - the
+        evaluator's own passing state is already falsy, so the default
+        polarity is correct and a gate author cannot silently invert it by
+        omission (Work Package B correction: without this, a
+        market_channel_capability gate configured with no
+        ``expected_state`` would classify an *unsupported* result as
+        passing).
     """
 
     evaluator_id: str
@@ -2002,6 +2014,7 @@ class EvaluatorMeta:
     required_inputs: tuple[str, ...] = ("trace",)
     is_deterministic: bool = True
     description: str = ""
+    required_expected_state: Optional[bool] = None
 
 
 # Type alias for evaluator callables
@@ -2089,6 +2102,19 @@ def validate_gate_config(gate: ValidationGate) -> list[str]:
         errors.append(
             f"Gate '{gate.name}' is boolean but has acceptable_range configured. "
             f"Use expected_state instead."
+        )
+
+    if (
+        meta.required_expected_state is not None
+        and gate.expected_state != meta.required_expected_state
+    ):
+        errors.append(
+            f"Gate '{gate.name}' uses evaluator '{meta.evaluator_id}', which "
+            f"requires expected_state={meta.required_expected_state!r} "
+            f"(got {gate.expected_state!r}). Omitting it, or setting a "
+            f"different value, would let classify_boolean_gate's default "
+            f"polarity (a falsy value passes) silently treat the wrong "
+            f"boolean value as passing for this evaluator."
         )
 
     return errors
@@ -2489,11 +2515,11 @@ register_evaluator(
             "officially-resolved variable coverage under the current "
             "rectangular engine (REQ-COVERAGE-001 S6). Resolved from a "
             "diagnostics artefact; not computable live from trace/frame/"
-            "meta. Configure the gate with expected_state=True - "
-            "classify_boolean_gate's default (no expected_state) treats a "
-            "falsy value as passing, which is the wrong polarity here "
-            "(supported=True is the passing state, not supported=False)."
+            "meta. Must be configured with expected_state=True - "
+            "validate_gate_config rejects any other value (see "
+            "required_expected_state)."
         ),
+        required_expected_state=True,
     ),
 )(_evaluate_market_channel_capability)
 
