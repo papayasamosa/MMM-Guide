@@ -27,6 +27,8 @@ from ancestry_mmm.components import (
     render_next_step,
     render_empty_state,
     render_glossary,
+    page_readiness,
+    SectionCard,
 )
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.market_config import (
@@ -43,7 +45,10 @@ st.set_page_config(
 init_session_state()
 apply_theme()
 render_sidebar("market_descriptors")
-render_page_header("market_descriptors")
+render_page_header(
+    "market_descriptors",
+    badges=[page_readiness("market_descriptors")],
+)
 
 spec_dict = get_state("model_spec")
 df = get_state("transformed_data")
@@ -103,75 +108,89 @@ for market in spec.markets:
             )
 
         profile = market_config.get_profile(market)
-        st.markdown("**Currency**")
-        c1, c2 = st.columns(2)
-        local_currency = c1.text_input(
-            "Local currency (ISO code)",
-            value=profile.currency.local_currency,
-            key=f"currency_{market}",
-        )
-        reporting_currency = c2.text_input(
-            "Reporting currency (optional)",
-            value=profile.currency.reporting_currency or "",
-            key=f"reporting_currency_{market}",
-        )
+        with SectionCard(
+            "Currency",
+            description="Feeds monetary curves/CPA and the model-specification fingerprint once set.",
+        ):
+            c1, c2 = st.columns(2)
+            local_currency = c1.text_input(
+                "Local currency (ISO code)",
+                value=profile.currency.local_currency,
+                key=f"currency_{market}",
+            )
+            reporting_currency = c2.text_input(
+                "Reporting currency (optional)",
+                value=profile.currency.reporting_currency or "",
+                key=f"reporting_currency_{market}",
+            )
 
-        st.markdown("**Market descriptors** (all optional)")
-        d = profile.descriptors
-        c1, c2, c3 = st.columns(3)
-        population = c1.number_input(
-            "Population",
-            min_value=0.0,
-            value=float(d.population or 0.0),
-            key=f"population_{market}",
-        )
-        addressable_audience = c2.number_input(
-            "Addressable audience",
-            min_value=0.0,
-            value=float(d.addressable_audience or 0.0),
-            key=f"audience_{market}",
-        )
-        subscriber_base = c3.number_input(
-            "Subscriber base",
-            min_value=0.0,
-            value=float(d.subscriber_base or 0.0),
-            key=f"subs_{market}",
-        )
-        c1, c2, c3 = st.columns(3)
-        brand_penetration = c1.number_input(
-            "Brand penetration (%)",
-            min_value=0.0,
-            max_value=100.0,
-            value=float(d.brand_penetration or 0.0),
-            key=f"brandpen_{market}",
-        )
-        aided_awareness = c2.number_input(
-            "Aided awareness (%)",
-            min_value=0.0,
-            max_value=100.0,
-            value=float(d.aided_awareness or 0.0),
-            key=f"aided_{market}",
-        )
-        unaided_awareness = c3.number_input(
-            "Unaided awareness (%)",
-            min_value=0.0,
-            max_value=100.0,
-            value=float(d.unaided_awareness or 0.0),
-            key=f"unaided_{market}",
-        )
-        c1, c2, c3 = st.columns(3)
-        market_maturity = c1.selectbox(
-            "Market maturity",
-            ["(unset)", "Emerging", "Growing", "Mature"],
-            index=["(unset)", "Emerging", "Growing", "Mature"].index(d.market_maturity)
-            if d.market_maturity in ["Emerging", "Growing", "Mature"]
-            else 0,
-            key=f"maturity_{market}",
-        )
-        region = c2.text_input("Region", value=d.region or "", key=f"region_{market}")
-        language_group = c3.text_input(
-            "Language group", value=d.language_group or "", key=f"language_{market}"
-        )
+        with SectionCard(
+            "Market descriptors (all optional)",
+            description=(
+                "Informational context only - population, audience, penetration, awareness, "
+                "maturity. Not yet used to explain market-level curve differences and does not "
+                "affect modelling readiness above."
+            ),
+        ):
+            d = profile.descriptors
+            c1, c2, c3 = st.columns(3)
+            population = c1.number_input(
+                "Population",
+                min_value=0.0,
+                value=float(d.population or 0.0),
+                key=f"population_{market}",
+            )
+            addressable_audience = c2.number_input(
+                "Addressable audience",
+                min_value=0.0,
+                value=float(d.addressable_audience or 0.0),
+                key=f"audience_{market}",
+            )
+            subscriber_base = c3.number_input(
+                "Subscriber base",
+                min_value=0.0,
+                value=float(d.subscriber_base or 0.0),
+                key=f"subs_{market}",
+            )
+            c1, c2, c3 = st.columns(3)
+            brand_penetration = c1.number_input(
+                "Brand penetration (%)",
+                min_value=0.0,
+                max_value=100.0,
+                value=float(d.brand_penetration or 0.0),
+                key=f"brandpen_{market}",
+            )
+            aided_awareness = c2.number_input(
+                "Aided awareness (%)",
+                min_value=0.0,
+                max_value=100.0,
+                value=float(d.aided_awareness or 0.0),
+                key=f"aided_{market}",
+            )
+            unaided_awareness = c3.number_input(
+                "Unaided awareness (%)",
+                min_value=0.0,
+                max_value=100.0,
+                value=float(d.unaided_awareness or 0.0),
+                key=f"unaided_{market}",
+            )
+            c1, c2, c3 = st.columns(3)
+            market_maturity = c1.selectbox(
+                "Market maturity",
+                ["(unset)", "Emerging", "Growing", "Mature"],
+                index=["(unset)", "Emerging", "Growing", "Mature"].index(
+                    d.market_maturity
+                )
+                if d.market_maturity in ["Emerging", "Growing", "Mature"]
+                else 0,
+                key=f"maturity_{market}",
+            )
+            region = c2.text_input(
+                "Region", value=d.region or "", key=f"region_{market}"
+            )
+            language_group = c3.text_input(
+                "Language group", value=d.language_group or "", key=f"language_{market}"
+            )
 
         if st.button(f"Save {market} profile", key=f"save_{market}"):
             market_config.set_profile(

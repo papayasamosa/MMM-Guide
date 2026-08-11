@@ -28,6 +28,9 @@ from ancestry_mmm.components import (
     render_next_step,
     render_empty_state,
     render_glossary,
+    page_readiness,
+    SectionCard,
+    InfoPanel,
 )
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.market_config import (
@@ -61,7 +64,10 @@ st.set_page_config(
 init_session_state()
 apply_theme()
 render_sidebar("channel_media_units")
-render_page_header("channel_media_units")
+render_page_header(
+    "channel_media_units",
+    badges=[page_readiness("channel_media_units")],
+)
 
 spec_dict = get_state("model_spec")
 df = get_state("transformed_data")
@@ -78,13 +84,16 @@ spec = ModelSpec.from_dict(spec_dict)
 render_glossary(["Response curve"])
 
 st.markdown("---")
-st.info(
-    "**Activity and causal-role governance is required before model approval.** "
-    "Physical media-unit and cost mapping is a separate optional section."
-)
-st.caption(
-    "See docs/media_units_and_inflation.md for the full design this mapping feeds into."
-)
+with InfoPanel(
+    "How this page is organised",
+    description="Each of these stays a visually distinct concept below - never one generic 'channel metric'.",
+):
+    st.markdown(
+        "- **Fitted model input** and **causal role/economic treatment** (required, section 1)\n"
+        "- **Search objects** - demand, delivery, cap, organic/direct (optional, section 2)\n"
+        "- **Physical delivery** and **cost mapping**, separate from monetary spend (optional, section 3)\n\n"
+        "See docs/media_units_and_inflation.md for the full design this mapping feeds into."
+    )
 
 hints = detect_column_types(df)
 numeric_cols = hints["numeric"]
@@ -93,7 +102,14 @@ config_dict = get_state("market_spec_config")
 market_config = MarketSpecConfig.from_dict(config_dict)
 existing_activity_items = get_state("activity_definitions") or []
 
-st.markdown("### Required: activity and causal-role governance")
+_activity_section = SectionCard(
+    "Required: activity & causal-role governance",
+    description=(
+        "Required before model approval - the fitted model-input column, ownership, causal "
+        "role, economic treatment and planning eligibility for each activity."
+    ),
+)
+_activity_section.__enter__()
 st.caption(
     "Use one row per market and activity. Add rows to distinguish paid and "
     "organic social, promotional/lifecycle/transactional CRM, PR campaigns, "
@@ -301,9 +317,17 @@ if st.button("Save required activity governance", type="primary"):
                 )
             else:
                 st.success("Required activity governance saved.")
+_activity_section.__exit__(None, None, None)
 
 st.markdown("---")
-st.markdown("### Optional: governed Search objects")
+_search_section = SectionCard(
+    "Optional: governed Search objects",
+    description=(
+        "Branded-search demand, Paid Search spend/delivery/cap, organic-search and "
+        "direct-navigation capture - distinct governed objects, never inferred by name."
+    ),
+)
+_search_section.__enter__()
 st.caption(
     "REQ-SEARCH-001: branded-search demand, Paid Search spend/delivery/cap, "
     "organic-search capture, and direct-navigation capture are governed as "
@@ -484,13 +508,18 @@ with st.expander("Search object version history"):
             f"v{_version.get('search_object_version')} - "
             f"{_version.get('approval_status')}"
         )
+_search_section.__exit__(None, None, None)
 
 st.markdown("---")
-st.markdown("### Optional: physical media-unit and cost mapping")
-st.caption(
-    "Record impressions, GRPs, clicks, cost basis, and currency where these "
-    "are available. Response-only activity does not need an artificial cost."
+_media_unit_section = SectionCard(
+    "Optional: physical media-unit & cost mapping",
+    description=(
+        "Physical delivery (impressions, GRPs, clicks) and cost basis/currency, kept separate "
+        "from monetary spend and from the fitted model-input column above. Response-only "
+        "activity does not need an artificial cost."
+    ),
 )
+_media_unit_section.__enter__()
 
 for market in spec.markets:
     with st.expander(f"Market: {market}", expanded=len(spec.markets) == 1):
@@ -557,5 +586,6 @@ if st.button("Save optional media-unit mapping"):
         f"{len(spec.markets) * len(spec.channels)} channel/market "
         "combinations have a media-unit mapping."
     )
+_media_unit_section.__exit__(None, None, None)
 
 render_next_step("channel_media_units")

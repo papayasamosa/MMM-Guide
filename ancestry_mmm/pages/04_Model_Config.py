@@ -23,6 +23,8 @@ from ancestry_mmm.components import (
     render_next_step,
     render_empty_state,
     render_drift_status,
+    page_readiness,
+    SectionCard,
 )
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.outcomes import (
@@ -47,7 +49,10 @@ st.set_page_config(
 init_session_state()
 apply_theme()
 render_sidebar("model_config")
-render_page_header("model_config")
+render_page_header(
+    "model_config",
+    badges=[page_readiness("model_config")],
+)
 
 spec_dict = get_state("model_spec")
 df = get_state("transformed_data")
@@ -63,16 +68,23 @@ if not spec_dict or df is None:
 spec = ModelSpec.from_dict(spec_dict)
 
 st.markdown("---")
-st.markdown("### Geo hierarchy")
-st.info(
-    f"Markets: {', '.join(spec.markets)}. "
-    f"Partially pooled: {', '.join(m for m in spec.markets if m not in spec.unpooled_markets) or '(none)'}. "
-    f"Unpooled: {', '.join(spec.unpooled_markets) or '(none)'} "
-    "- change this back on the Structure page."
-)
+with SectionCard(
+    "Market hierarchy & pooling context",
+    description="Read-only here - change markets/pooling on the Structure page.",
+):
+    st.info(
+        f"Markets: {', '.join(spec.markets)}. "
+        f"Partially pooled: {', '.join(m for m in spec.markets if m not in spec.unpooled_markets) or '(none)'}. "
+        f"Unpooled: {', '.join(spec.unpooled_markets) or '(none)'} "
+        "- change this back on the Structure page."
+    )
 
 st.markdown("---")
-st.markdown("### Model structure")
+_model_structure_section = SectionCard(
+    "Model family & architecture",
+    description="Shared curve across markets, or market-specific partially-pooled curves.",
+)
+_model_structure_section.__enter__()
 n_markets = len(spec.markets)
 model_type_options = ["shared", "market_specific"]
 model_type_labels = {
@@ -106,9 +118,15 @@ st.caption(
     if model_type == "market_specific"
     else FIELD_HELP["model_type_shared"]
 )
+_model_structure_section.__exit__(None, None, None)
 
 st.markdown("---")
-st.markdown("### Shared adstock & saturation curve priors")
+_priors_section = SectionCard(
+    "Priors & transformations",
+    description="Adstock/saturation, segment pooling, DNA halo, promo sensitivity, and Brand Search treatment.",
+)
+_priors_section.__enter__()
+st.markdown("#### Shared adstock & saturation curve priors")
 st.caption(
     FIELD_HELP["priors"]
     + " Stage 1 core: geometric adstock + Hill saturation, shared across segments and markets per channel."
@@ -153,8 +171,7 @@ with c2:
         0.5,
     )
 
-st.markdown("---")
-st.markdown("### Segment partial pooling & DNA halo")
+st.markdown("#### Segment partial pooling & DNA halo")
 c1, c2 = st.columns(2)
 with c1:
     prior_config["pooling_sigma_prior"] = st.slider(
@@ -201,8 +218,7 @@ with c2:
         help=FIELD_HELP["dna_halo_lag"],
     )
 
-st.markdown("---")
-st.markdown("### Promotional sensitivity prior")
+st.markdown("#### Promotional sensitivity prior")
 prior_config["promo_sigma"] = st.slider(
     "Promo sensitivity prior sd (per segment)",
     0.05,
@@ -211,8 +227,7 @@ prior_config["promo_sigma"] = st.slider(
     0.05,
 )
 
-st.markdown("---")
-st.markdown("### Brand Search treatment mode")
+st.markdown("#### Brand Search treatment mode")
 st.caption(
     "How each Brand Search channel's known ambiguity (some of its response is genuinely incremental, "
     "some is upper-funnel demand it just happens to capture last-click) is treated - four explicit "
@@ -300,9 +315,10 @@ brand_search_errors = validate_brand_search_configs(
 )
 for e in brand_search_errors:
     st.error(e)
+_priors_section.__exit__(None, None, None)
 
 st.markdown("---")
-with st.expander("Advanced settings: MCMC sampling"):
+with st.expander("Advanced settings: MCMC sampling", expanded=False):
     st.caption(
         "Reasonable defaults are pre-filled. Increase draws/tune for a more reliable fit; reduce them for a quicker check."
     )
@@ -353,6 +369,11 @@ dna_kit_outcomes = {
 excluded_dna_outcomes = [o for o in outcome_definitions if not o.included_in_fit]
 
 st.markdown("---")
+_included_outcomes_section = SectionCard(
+    "Included outcomes for this fit",
+    description="Which outcomes and DNA-kit segments this fit will actually cover.",
+)
+_included_outcomes_section.__enter__()
 if excluded_dna_outcomes:
     st.caption(
         f"Excluded from this fit (see Structure): {', '.join(o.outcome_id for o in excluded_dna_outcomes)}."
@@ -374,9 +395,14 @@ if spec.dna_channels and not spec.fh_dna_cross_sell_outcome_id:
         "Structure page - Model Training will fail to fit until one is chosen there (automatic "
         "name-based inference is no longer used for a live fit)."
     )
+_included_outcomes_section.__exit__(None, None, None)
 
 st.markdown("---")
-st.markdown("### Data coverage & engine capability")
+_coverage_section = SectionCard(
+    "Data coverage & engine capability",
+    description="Whether this market x channel configuration is within the engine's current rectangular capability.",
+)
+_coverage_section.__enter__()
 st.caption(
     "REQ-COVERAGE-001 S6: the current engine only validly fits a "
     "rectangular market x channel matrix - every requested channel "
@@ -447,7 +473,14 @@ else:
         )
     )
     st.caption(_capability.decision_report)
+_coverage_section.__exit__(None, None, None)
 
+st.markdown("---")
+_prepare_frame_section = SectionCard(
+    "Prepared-frame readiness",
+    description="Prepare the modelling frame once structure, priors and coverage above are set.",
+)
+_prepare_frame_section.__enter__()
 if brand_search_errors:
     st.caption(
         "Fix the Brand Search configuration errors above before preparing the modelling frame."
@@ -482,6 +515,7 @@ elif st.button("Prepare modelling frame", type="primary"):
         st.error(
             f"Could not prepare the modelling frame: {e} Review the structure and try again."
         )
+_prepare_frame_section.__exit__(None, None, None)
 
 if get_state("frame") is not None:
     render_next_step("model_config")

@@ -24,6 +24,8 @@ from ancestry_mmm.components import (
     render_next_step,
     render_empty_state,
     render_drift_status,
+    page_readiness,
+    SectionCard,
 )
 from ancestry_mmm.core.schema import ModelSpec, DEFAULT_SEGMENTS
 
@@ -84,11 +86,16 @@ st.set_page_config(
 init_session_state()
 apply_theme()
 render_sidebar("structure")
-render_page_header("structure")
+render_page_header(
+    "structure",
+    badges=[page_readiness("structure")],
+)
 st.caption(
     "Markets and FH segments (New, DNA cross-sell, Winback) are explicit structural dimensions "
     "here - not just filter values - because the joint hierarchical model needs to know them to "
-    "share curves correctly and keep each segment's economics visible throughout."
+    "share curves correctly and keep each segment's economics visible throughout. Sections below "
+    "are grouped by topic: market selection, media/activity selection, outcome/segment mapping, "
+    "promotions/controls/value inputs, and a final validation summary."
 )
 
 df = get_state("transformed_data")
@@ -107,7 +114,11 @@ hints = detect_column_types(df)
 numeric_cols = hints["numeric"]
 
 st.markdown("---")
-st.markdown("### Markets")
+_markets_section = SectionCard(
+    "Market selection",
+    description="Which markets this project fits, pooled or unpooled.",
+)
+_markets_section.__enter__()
 if market_col:
     available_markets = sorted(df[market_col].dropna().unique().tolist())
     markets = st.multiselect(
@@ -127,9 +138,14 @@ else:
     market_col = "_market"
     markets = ["default"]
     unpooled_markets = []
+_markets_section.__exit__(None, None, None)
 
 st.markdown("---")
-st.markdown("### Media channels")
+_media_section = SectionCard(
+    "Media & activity selection",
+    description="Channel spend columns and which of them drive the DNA halo pathway.",
+)
+_media_section.__enter__()
 # Default to every numeric column that doesn't look like a promo flag, price,
 # index/confidence-style control, or a DNA kit purchase outcome - channel
 # names rarely contain the literal words "spend"/"cost"/"budget" (e.g.
@@ -160,9 +176,14 @@ dna_channels = st.multiselect(
     format_func=readable_label,
     help="Which of these channels drive the explicit DNA halo pathway to other segments.",
 )
+_media_section.__exit__(None, None, None)
 
 st.markdown("---")
-st.markdown("### Outcome catalogue")
+_outcome_section = SectionCard(
+    "Outcome & segment mapping",
+    description="The primary catalogue of what this project fits, plus funnel links and net bill-through completeness.",
+)
+_outcome_section.__enter__()
 st.caption(
     "The **primary workflow** for what this project actually fits (PR E.2) - one row per measurable "
     "outcome, not one weekly GSA column per segment. A sign-up KPI and a GSA KPI on the same segment "
@@ -435,9 +456,14 @@ fh_dna_cross_sell_outcome_id = st.selectbox(
 fh_dna_cross_sell_outcome_id = (
     None if fh_dna_cross_sell_outcome_id == "(none)" else fh_dna_cross_sell_outcome_id
 )
+_outcome_section.__exit__(None, None, None)
 
 st.markdown("---")
-st.markdown("### Funnel links (optional)")
+_funnel_section = SectionCard(
+    "Funnel links (optional)",
+    description="Diagnostics/warnings only - not a constrained funnel model.",
+)
+_funnel_section.__enter__()
 st.caption(
     "Declare which sign-up and GSA outcomes (or any other upstream/downstream pair) form a funnel, "
     "e.g. a sign-up that later converts to a GSA. Sign-ups and GSAs are still fitted as independent "
@@ -486,9 +512,14 @@ else:
                 st.session_state["funnel_links"].pop(i)
                 st.rerun()
 funnel_links = [FunnelLink.from_dict(fl) for fl in st.session_state["funnel_links"]]
+_funnel_section.__exit__(None, None, None)
 
 st.markdown("---")
-st.markdown("### Media-outcome pathway catalogue")
+_pathway_section = SectionCard(
+    "Media-outcome pathway catalogue",
+    description="Which (channel, target outcome) relationships this project believes exist, and their governance.",
+)
+_pathway_section.__enter__()
 st.caption(
     "Declares which `(channel, target outcome)` relationships this project believes exist - a "
     "primary direct effect, a trusted delayed cross-product effect (e.g. DNA media's halo onto FH), "
@@ -877,9 +908,14 @@ if get_state("model_meta") is not None and st.session_state["media_outcome_pathw
             )
             with st.expander("Pathway drift detail"):
                 st.dataframe(_pathway_drift_df, width="stretch")
+_pathway_section.__exit__(None, None, None)
 
 st.markdown("---")
-st.markdown("### Net bill-through completeness")
+_nbt_section = SectionCard(
+    "Net bill-through completeness",
+    description="Only shown when a net bill-through outcome is configured above.",
+)
+_nbt_section.__enter__()
 st.caption(
     "Family History net bill-through is supplied as an authoritative weekly count. Configure and validate its completeness at upload; the app never reconstructs it from customer or billing events."
 )
@@ -926,6 +962,7 @@ if _has_nbt:
     }
 else:
     st.caption("No fitted net bill-through outcome is currently configured.")
+_nbt_section.__exit__(None, None, None)
 
 # `segment_outcomes`/`segment_ltv` (ModelSpec migration fields) and per-segment
 # promo/control mappings are now derived from the catalogue's own segments,
@@ -952,7 +989,12 @@ _catalogue_segments = sorted(
 )
 
 st.markdown("---")
-st.markdown("### Promotional flags (per segment, optional)")
+_promo_controls_section = SectionCard(
+    "Promotions, controls & value inputs",
+    description="Promo columns/calendar, global/product/segment controls, and per-outcome overrides - all optional.",
+)
+_promo_controls_section.__enter__()
+st.markdown("#### Promotional flags (per segment, optional)")
 promo_cols = {}
 for seg in _catalogue_segments:
     col = st.selectbox(
@@ -976,8 +1018,7 @@ for seg in _catalogue_segments:
     if col != "(none)":
         promo_cols[seg] = col
 
-st.markdown("---")
-st.markdown("### Controls")
+st.markdown("#### Controls")
 remaining_numeric = [
     c for c in numeric_cols if c not in channels and c not in promo_cols.values()
 ]
@@ -1027,8 +1068,7 @@ _multi_outcome_segments = {
 outcome_promo_cols = {}
 outcome_control_cols = {}
 if _multi_outcome_segments:
-    st.markdown("---")
-    st.markdown("### Outcome-level promo & control overrides (optional)")
+    st.markdown("#### Outcome-level promo & control overrides (optional)")
     st.caption(
         "Segment-level mappings above apply to every outcome sharing that segment by default "
         "(legacy behaviour). Override per outcome_id here when two KPIs on the same segment (e.g. a "
@@ -1079,8 +1119,7 @@ dna_segment_names = [
 dna_promo_cols = {}
 dna_segment_control_cols = {}
 if dna_segment_names:
-    st.markdown("---")
-    st.markdown("### DNA promotion calendar (optional, structured)")
+    st.markdown("#### DNA promotion calendar (optional, structured)")
     st.caption(
         "Alternative to a hand-built promo column above: define named promotion events (dates, "
         "discount depth, sale price) and a weekly intensity series is derived automatically - "
@@ -1136,8 +1175,14 @@ if dna_segment_names:
     )
 else:
     dna_promo_events_df = pd.DataFrame()
+_promo_controls_section.__exit__(None, None, None)
 
 st.markdown("---")
+_validation_section = SectionCard(
+    "Save & validate structure",
+    description="Saves this structure and shows validation flags plus the current outcome catalogue status.",
+)
+_validation_section.__enter__()
 if st.button("Save structure and validate", type="primary"):
     dna_promotion_events = []
     for row in dna_promo_events_df.to_dict("records"):
@@ -1368,6 +1413,7 @@ if st.button("Save structure and validate", type="primary"):
             width="stretch",
             column_config=dataframe_column_config(outcomes_df),
         )
+_validation_section.__exit__(None, None, None)
 
 if get_state("model_spec"):
     render_next_step("structure")
