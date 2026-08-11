@@ -200,13 +200,17 @@ behaviour changes as a result of this record.
   validation beyond the existing pattern for sibling optional identity
   fields — `approved_by`/`supersedes_activity_id`), `schema_version`
   bumped 2 → 3. Deliberately excluded from `_INVALIDATION_MATRIX`
-  (editing it triggers no refit/rebuild flag) and from
-  `activity_fit_fingerprint` (never influences what is actually fit) —
-  its presence never forces, implies, or defaults to pooling, matching
-  the approved invariant exactly. Still included in the general
-  `activity_definitions_fingerprint` (the curve-artifact governance-state
-  audit hash), since that is a broader "does the activity record still
-  match" signal, not a refit trigger.
+  (editing it triggers no refit/rebuild flag), `activity_fit_fingerprint`
+  (never influences what is actually fit), **and**
+  `activity_definitions_fingerprint` (corrected in the same PR after
+  review: that fingerprint is a hard blocking gate for curve-artifact use
+  and scenario staleness, not a soft audit signal, so including it there
+  would have let a pure identity edit silently invalidate curves and
+  scenarios that changed nothing fit-relevant — see
+  `docs/decision_log.md`'s 2026-08-11 correction). Its presence never
+  forces, implies, or defaults to pooling, and now never triggers a
+  rebuild/invalidation of any kind, matching the approved invariant
+  exactly.
 - ~~The exact response-unit-mapping field(s) distinct from
   `model_input_column`, and how they integrate with `core.media_units`~~
   **Resolved in Work Package E2 (2026-08-11):** `core.market_config.
