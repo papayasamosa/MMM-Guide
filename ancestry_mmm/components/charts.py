@@ -4,9 +4,11 @@ import plotly.graph_objects as go
 import plotly.express as px
 import numpy as np
 import pandas as pd
-from typing import List, Optional
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from ancestry_mmm.utils import CHART_COLORS, THEME_COLORS
+from ancestry_mmm.core.coverage import COVERAGE_STATES
+from ancestry_mmm.core.coverage_fabric import FABRIC_LABEL_COVERED, FabricCell
 
 
 def create_time_series_chart(
@@ -337,4 +339,147 @@ def create_waterfall_chart(
         height=height,
     )
 
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# Coverage fabric (Phase 3 UI overhaul, REQ-COVERAGE-001 - see
+# docs/decision_log.md and ancestry_mmm.core.coverage_fabric). A "categorical
+# heatmap made unusually good" rather than a Components v2 build: Plotly's
+# own grouped-bar/legend/hover machinery already gives every state its own
+# toggleable legend entry, and each bar additionally carries a short glyph
+# label - so no missingness state is ever colour-only (root AGENTS.md /
+# pages/AGENTS.md accessibility rule: "distinguish states by more than
+# colour alone"). Never a purple/blue hue (tokens.py's existing "no
+# purple/blue AI-gradient accent" convention, extended here): "unknown" -
+# the one state that has not even been triaged yet - instead gets the one
+# stand-out *light* cell against this app's otherwise dark palette, which
+# reads as "flag for review" without borrowing a severity colour that would
+# misrepresent it as a confirmed problem the way "missing_expected" (red) is.
+# ---------------------------------------------------------------------------
+
+# state -> (display label, short in-cell glyph, hex colour). Every entry in
+# core.coverage.COVERAGE_STATES plus the FABRIC_LABEL_COVERED sentinel must
+# appear here (enforced by test_charts_coverage_fabric.py) - a chart must
+# never silently drop a governed state for lack of a colour/glyph.
+STATE_VISUALS: Dict[str, Tuple[str, str, str]] = {
+    FABRIC_LABEL_COVERED: ("Covered (no recorded gap)", "·", "#22301F"),
+    "observed_zero": ("Observed zero", "0", CHART_COLORS["chart_1"]),
+    "estimated": ("Estimated", "~", CHART_COLORS["chart_2"]),
+    "modelled": ("Modelled", "M", CHART_COLORS["chart_5"]),
+    "not_applicable": ("Not applicable", "–", CHART_COLORS["chart_6"]),
+    "suppressed": ("Suppressed", "S", "#7A6A57"),
+    "unavailable_source": ("Unavailable source", "U", CHART_COLORS["chart_3"]),
+    "missing_expected": ("Missing (expected)", "!", CHART_COLORS["error"]),
+    "unknown": ("Unknown - not yet triaged", "?", THEME_COLORS["foreground"]),
+}
+# Text colour per state's glyph - the light "unknown"/"covered" cells need
+# dark glyph text to stay legible; every other (dark) cell keeps light text.
+_DARK_GLYPH_STATES = {FABRIC_LABEL_COVERED, "unknown"}
+
+assert set(STATE_VISUALS) == set(COVERAGE_STATES) | {FABRIC_LABEL_COVERED}, (
+    "STATE_VISUALS must cover exactly every core.coverage.COVERAGE_STATES "
+    "entry plus FABRIC_LABEL_COVERED - see test_charts_coverage_fabric.py"
+)
+
+
+def create_coverage_fabric_chart(
+    cells: Sequence[FabricCell],
+    *,
+    row_order: Optional[Sequence[str]] = None,
+    height: int = 480,
+) -> go.Figure:
+    """A time x variable-market fabric: one horizontal row per governed
+    variable/market (``FabricCell.row.row_label``), with one coloured,
+    glyph-labelled segment per recorded state run along a real date axis.
+    One Plotly trace per state (never one trace per cell) so Plotly's own
+    legend does the "never colour alone" accessibility work for free - every
+    state is independently togglable and always paired with its text label.
+
+    ``row_order`` fixes the row (y-axis) order top-to-bottom; omitted rows
+    default to first-seen order in ``cells``, which already reflects the
+    coverage matrix's own market/variable ordering.
+    """
+    if row_order is None:
+        seen: List[str] = []
+        for cell in cells:
+            if cell.row.row_label not in seen:
+                seen.append(cell.row.row_label)
+        row_order = seen
+
+    fig = go.Figure()
+    for state in STATE_VISUALS:
+        state_cells = [c for c in cells if c.state == state]
+        if not state_cells:
+            continue
+        label, glyph, color = STATE_VISUALS[state]
+        starts = [pd.Timestamp(c.period_start) for c in state_cells]
+        ends = [pd.Timestamp(c.period_end) + pd.Timedelta(days=1) for c in state_cells]
+        durations_ms = [(e - s).total_seconds() * 1000 for s, e in zip(starts, ends)]
+        customdata = [
+            (
+                label,
+                c.record.frequency.native_frequency,
+                c.record.source_id,
+                c.record.source_version,
+                c.period_start,
+                c.period_end,
+                c.record.observed_start or "n/a",
+                c.record.observed_end or "n/a",
+                c.record.treatment_status,
+                "Yes" if c.record.approved_for_official_use else "No",
+            )
+            for c in state_cells
+        ]
+        fig.add_trace(
+            go.Bar(
+                name=label,
+                x=durations_ms,
+                base=starts,
+                y=[c.row.row_label for c in state_cells],
+                orientation="h",
+                marker=dict(
+                    color=color, line=dict(color=THEME_COLORS["border"], width=1)
+                ),
+                text=[glyph] * len(state_cells),
+                textposition="inside",
+                insidetextanchor="middle",
+                textfont=dict(
+                    color=(
+                        THEME_COLORS["background"]
+                        if state in _DARK_GLYPH_STATES
+                        else THEME_COLORS["foreground"]
+                    )
+                ),
+                customdata=customdata,
+                hovertemplate=(
+                    "<b>%{y}</b><br>"
+                    "State: %{customdata[0]}<br>"
+                    "Native frequency: %{customdata[1]}<br>"
+                    "Source: %{customdata[2]} v%{customdata[3]}<br>"
+                    "Period: %{customdata[4]} to %{customdata[5]}<br>"
+                    "Observed window: %{customdata[6]} to %{customdata[7]}<br>"
+                    "Treatment status: %{customdata[8]}<br>"
+                    "Approved for official use: %{customdata[9]}"
+                    "<extra></extra>"
+                ),
+            )
+        )
+
+    fig.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        barmode="overlay",
+        height=height,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        xaxis=dict(type="date", title="Period"),
+        yaxis=dict(
+            title=None,
+            categoryorder="array",
+            categoryarray=list(row_order),
+            autorange="reversed",
+        ),
+        margin=dict(l=10, r=10, t=40, b=10),
+    )
     return fig

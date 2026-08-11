@@ -8,6 +8,8 @@ from .charts import (
     create_correlation_heatmap,
     create_response_curve,
     create_waterfall_chart,
+    create_coverage_fabric_chart,
+    STATE_VISUALS,
 )
 from .ui import (
     apply_theme,
@@ -43,6 +45,8 @@ __all__ = [
     "create_correlation_heatmap",
     "create_response_curve",
     "create_waterfall_chart",
+    "create_coverage_fabric_chart",
+    "STATE_VISUALS",
     "apply_theme",
     "render_sidebar",
     "render_context_bar",

@@ -33,6 +33,9 @@ from ancestry_mmm.components import (
     render_next_step,
     render_empty_state,
     SectionCard,
+    InfoPanel,
+    create_coverage_fabric_chart,
+    STATE_VISUALS,
 )
 from ancestry_mmm.core.coverage import (
     COVERAGE_STATES,
@@ -45,6 +48,12 @@ from ancestry_mmm.core.coverage import (
     carry_forward_treatment_decisions,
     current_source_versions,
     new_variable_coverage_matrix_version,
+)
+from ancestry_mmm.core.coverage_fabric import (
+    build_fabric_cells,
+    cells_matching_points,
+    fabric_summary_sentences,
+    filter_cells_by_states,
 )
 from ancestry_mmm.core.fingerprint import fingerprint_dataframe
 from ancestry_mmm.data import detect_column_types
@@ -330,7 +339,89 @@ if current_matrix_dict is None:
 matrix = VariableCoverageMatrix.from_dict(current_matrix_dict)
 
 st.markdown("---")
-st.markdown("### 2. Review coverage")
+st.markdown("### 2. Coverage fabric")
+st.caption(
+    "A time x variable x market visual surface built from the coverage "
+    "matrix above (REQ-COVERAGE-001 S2's canonical missingness-state "
+    "vocabulary). Selecting or filtering here never changes governance "
+    "state - state classification and treatment approval remain the "
+    "explicit controls in section 4 below."
+)
+
+_fabric_cells = build_fabric_cells(matrix)
+_fabric_summary = fabric_summary_sentences(matrix)
+if _fabric_summary:
+    with InfoPanel("Coverage summary"):
+        st.markdown("\n".join(f"- {s}" for s in _fabric_summary))
+
+if not _fabric_cells:
+    st.caption(
+        "No coverage-fabric cells to render yet - every governed variable's "
+        "expected window (or, absent one, every recorded gap segment) is "
+        "empty for this matrix."
+    )
+else:
+    _fabric_states_present = sorted({c.state for c in _fabric_cells})
+    _fabric_state_labels = {s: STATE_VISUALS[s][0] for s in _fabric_states_present}
+    _fabric_selected_states = st.multiselect(
+        "Isolate state(s)",
+        _fabric_states_present,
+        format_func=lambda s: _fabric_state_labels[s],
+        help="Filter the fabric below to only the selected state(s) - e.g. "
+        "unresolved (unknown/missing_expected), unavailable_source, or "
+        "estimated evidence. This never changes governance state, only "
+        "what's shown.",
+        key="coverage_fabric_state_filter",
+    )
+    _fabric_filtered_cells = filter_cells_by_states(
+        _fabric_cells, _fabric_selected_states
+    )
+    _fabric_fig = create_coverage_fabric_chart(_fabric_filtered_cells)
+    _fabric_event = st.plotly_chart(
+        _fabric_fig,
+        width="stretch",
+        on_select="rerun",
+        selection_mode="points",
+        key="coverage_fabric_chart",
+    )
+    _fabric_points = (
+        (_fabric_event.get("selection") or {}).get("points") or []
+        if _fabric_event
+        else []
+    )
+    _fabric_selected_cells = cells_matching_points(
+        _fabric_filtered_cells, _fabric_points
+    )
+    if _fabric_selected_cells:
+        _inspected = _fabric_selected_cells[0]
+        _r = _inspected.record
+        with SectionCard(f"Inspector: {_inspected.row.row_label}"):
+            st.caption(
+                f"Segment {_inspected.period_start} to {_inspected.period_end} - "
+                f"state **{STATE_VISUALS.get(_inspected.state, (_inspected.state,))[0]}**"
+            )
+            ic1, ic2, ic3 = st.columns(3)
+            ic1.metric("Native frequency", _r.frequency.native_frequency)
+            ic1.metric("Target frequency", _r.frequency.target_frequency)
+            ic2.metric("Source", f"{_r.source_id} v{_r.source_version}")
+            ic2.metric(
+                "Observed window",
+                f"{_r.observed_start or 'n/a'} to {_r.observed_end or 'n/a'}",
+            )
+            ic3.metric("Treatment status", _r.treatment_status)
+            ic3.metric(
+                "Approved for official use",
+                "Yes" if _r.approved_for_official_use else "No",
+            )
+            if _r.approved_treatment:
+                st.caption(f"Approved treatment: {_r.approved_treatment}")
+    else:
+        st.caption(
+            "Click or box-select a segment above to inspect its full detail here."
+        )
+
+st.markdown("---")
+st.markdown("### 3. Review coverage")
 st.caption(
     f"Matrix `{matrix.matrix_id}` v{matrix.matrix_version} - generated "
     f"{matrix.generated_at} - {len(matrix.records)} record(s)."
@@ -494,7 +585,7 @@ else:
 
 st.markdown("---")
 _treatment_section = SectionCard(
-    "3. Propose and approve treatments",
+    "4. Propose and approve treatments",
     description=(
         "Unresolved unknown/missing_expected coverage never becomes official "
         "fit input silently (REQ-COVERAGE-001 S5) - a variable stays "
