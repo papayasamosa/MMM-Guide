@@ -369,10 +369,17 @@ def test_causal_graph_editor_journey_in_browser(
     _add_edge(page, "TV_Brand", "New", "direct")
 
     # --- inspect the model-plan preview -------------------------------------
-    expect(page.get_by_text("Outcome ordering", exact=True)).to_be_visible(
+    # `.first` (same pattern as the "draft" status-badge check above): a
+    # Streamlit rerun can transiently render both the old and new fragment
+    # of the model-plan preview for one frame, which a strict-mode
+    # `get_by_text(..., exact=True)` treats as an ambiguous match (a real
+    # duplicate-element error) rather than a timing artifact - `.first`
+    # asserts the same content is visible without being sensitive to that
+    # transient double-render.
+    expect(page.get_by_text("Outcome ordering", exact=True).first).to_be_visible(
         timeout=15_000
     )
-    expect(page.get_by_text("Modelling columns", exact=True)).to_be_visible(
+    expect(page.get_by_text("Modelling columns", exact=True).first).to_be_visible(
         timeout=15_000
     )
 

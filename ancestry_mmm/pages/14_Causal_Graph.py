@@ -37,6 +37,10 @@ from ancestry_mmm.components import (
     render_next_step,
     render_page_header,
     render_sidebar,
+    page_readiness,
+    SectionCard,
+    InfoPanel,
+    WarningPanel,
 )
 from ancestry_mmm.core.causal_graph import (
     CAUSAL_GRAPH_SCHEMA_VERSION,
@@ -214,6 +218,29 @@ def _reset_property_panel_selection() -> None:
     st.session_state.pop("cg_selected_edge", None)
 
 
+def _graph_change_state(
+    graph: CausalGraph, versions: list
+) -> "tuple[bool, bool, bool]":
+    """Presentation-only derivation of "has this draft changed since it was
+    last saved, and was that change structural or layout-only" - reads only
+    the two independent fingerprints REQ-GRAPH-001 S3 already defines
+    (structural_fingerprint/layout_fingerprint), never a third invented
+    notion of change. Compares against the most recently saved version in
+    `causal_graph_versions` (Save draft/Approve both append to it); with no
+    saved version yet, the current in-memory draft counts as having
+    unsaved structural content the moment it has any node or edge.
+
+    Returns (has_unsaved_structural_change, has_unsaved_layout_change,
+    has_any_saved_version).
+    """
+    if not versions:
+        return (bool(graph.nodes or graph.edges), bool(graph.layout.positions), False)
+    last = CausalGraph.from_dict(versions[-1])
+    structural_changed = graph.structural_fingerprint() != last.structural_fingerprint()
+    layout_changed = graph.layout_fingerprint() != last.layout_fingerprint()
+    return (structural_changed, layout_changed, True)
+
+
 st.set_page_config(
     page_title="Causal Graph - Ancestry FH MMM",
     page_icon="🕸️",
@@ -222,30 +249,99 @@ st.set_page_config(
 init_session_state()
 apply_theme()
 render_sidebar("causal_graph")
-render_page_header("causal_graph")
-st.caption(
-    "REQ-GRAPH-001: build the variable-level causal graph node by node and "
-    "edge by edge. Every canvas capability also has a keyboard-accessible, "
-    "non-drag equivalent below (the Add-node form and the structured "
-    "property panel) - nothing here exists only as a mouse-drag gesture."
-)
 
 graph = _graph_from_state()
 # Tombstone set: every edge_id ever explicitly removed via the property
 # panel this session - see _reconcile_graph_from_flow_state's docstring.
 removed_edge_ids = set(get_state("cg_removed_edge_ids") or [])
+_saved_versions = get_state("causal_graph_versions") or []
+_structural_unsaved, _layout_unsaved, _has_saved_version = _graph_change_state(
+    graph, _saved_versions
+)
+
+render_page_header(
+    "causal_graph",
+    badges=[page_readiness("causal_graph"), graph.status],
+)
+st.caption(
+    "REQ-GRAPH-001: build the variable-level causal graph node by node and "
+    "edge by edge. Every canvas capability also has a keyboard-accessible, "
+    "non-drag equivalent below (the Add-node form and the structured "
+    "property panel) - nothing here exists only as a mouse-drag gesture. "
+    "The workbench below is a three-pane layout - variable library, canvas, "
+    "and inspector - all reading and writing the exact same graph state; "
+    "the model-plan preview and save/approve/compile controls are full-width "
+    "sections beneath it."
+)
+
+with InfoPanel(
+    "Graph status",
+    description="Draft/approved lifecycle and whether this session's edits are structural (would restale a compiled configuration) or layout-only.",
+):
+    status_summary_cols = st.columns(4)
+    status_summary_cols[0].metric("Status", graph.status)
+    status_summary_cols[0].caption(
+        "draft = editable, not authoritative; approved = authoritative for compilation"
+    )
+    status_summary_cols[1].metric("Version", graph.graph_version)
+    if not _has_saved_version:
+        status_summary_cols[2].metric(
+            "Structural change",
+            "Unsaved (new)" if graph.nodes or graph.edges else "None",
+        )
+    else:
+        status_summary_cols[2].metric(
+            "Structural change",
+            "Unsaved" if _structural_unsaved else "None since last save",
+        )
+    status_summary_cols[2].caption(
+        "Structural = stales any compiled model configuration once saved/approved."
+    )
+    if not _has_saved_version:
+        status_summary_cols[3].metric(
+            "Layout change", "Unsaved (new)" if graph.layout.positions else "None"
+        )
+    else:
+        status_summary_cols[3].metric(
+            "Layout change", "Unsaved" if _layout_unsaved else "None since last save"
+        )
+    status_summary_cols[3].caption(
+        "Layout-only = canvas position only, never stales a compiled configuration."
+    )
+
+if _structural_unsaved:
+    with WarningPanel(
+        "Unsaved structural changes",
+        description="This edit is continuously kept in the project's session state, but no explicit graph version has recorded it yet.",
+    ):
+        st.caption(
+            "Use Save draft (section 3 below) to record an auditable version, "
+            "or Approve once validation and engine readiness both pass."
+        )
 
 st.markdown("---")
 st.markdown("### 1. Nodes and edges")
 st.caption(
     "Drag from a node's edge handle to another node to draw a new edge "
-    "(defaults to role 'direct' - set its real role in the property panel "
-    "below), or drag a node to reposition it. Use the property panel below "
+    "(defaults to role 'direct' - set its real role in the inspector), "
+    "or drag a node to reposition it. Use the inspector's property panel "
     "to edit a role or lag, or to remove a node or edge - removal always "
     "goes through the property panel, never the canvas directly, so it is "
     "never lost to a delayed canvas update. The Add-node/Add-edge forms "
-    "and the property panel work fully with a keyboard or screen reader."
+    "and the property panel work fully with a keyboard or screen reader. "
+    "Three panes below - variable library, canvas, inspector - all read "
+    "and write the exact same graph state."
 )
+_workbench_lib_col, _workbench_canvas_col, _workbench_inspector_col = st.columns(
+    [1, 1.6, 1.4]
+)
+
+_lib_section = SectionCard(
+    "Variable library",
+    description="Keyboard-accessible node/edge creation - equivalent to a canvas drop or drag-to-connect.",
+)
+_workbench_lib_col.__enter__()
+_lib_section.__enter__()
 
 with st.expander("Seed nodes from current Structure (optional)"):
     spec_dict = get_state("model_spec")
@@ -380,6 +476,15 @@ with st.form("cg_add_edge_form", clear_on_submit=True):
             st.session_state.pop(f"cg_flow_state_{graph.graph_id}", None)
             _reset_property_panel_selection()
             st.rerun()
+_lib_section.__exit__(None, None, None)
+_workbench_lib_col.__exit__(None, None, None)
+
+_canvas_section = SectionCard(
+    "Canvas",
+    description="Drag from a node's edge handle to another node to draw a new edge (defaults to role 'direct' - set its real role in the inspector), or drag a node to reposition it.",
+)
+_workbench_canvas_col.__enter__()
+_canvas_section.__enter__()
 
 # Keyed by structural fingerprint (never layout fingerprint) so the
 # bidirectional canvas component fully remounts - discarding any stale,
@@ -412,9 +517,16 @@ reconciled = _reconcile_graph_from_flow_state(
 if reconciled != graph:
     graph = mark_draft_if_approved(reconciled)
     _persist_graph(graph)
+_canvas_section.__exit__(None, None, None)
+_workbench_canvas_col.__exit__(None, None, None)
 
-st.markdown("---")
-st.markdown("### 2. Property panel")
+_inspector_section = SectionCard(
+    "Inspector",
+    description="Selected node/edge properties, validation, and engine readiness - reads and writes the exact same graph state as the canvas.",
+)
+_workbench_inspector_col.__enter__()
+_inspector_section.__enter__()
+st.markdown("#### Property panel")
 st.caption(
     "Structured, keyboard-accessible editing for the selected node or edge "
     "- reads and writes the exact same graph state as the canvas."
@@ -540,7 +652,7 @@ else:
     st.caption("No nodes/edges of this kind yet.")
 
 st.markdown("---")
-st.markdown("### 3. Validation")
+st.markdown("#### Validation")
 validation = validate_causal_graph(graph)
 if validation.is_valid:
     st.success("Graph passes deterministic validation.")
@@ -573,9 +685,11 @@ else:
         "compile it - fix these before approving:\n\n"
         + "\n".join(f"- {reason}" for reason in approval_eligibility.capability_reasons)
     )
+_inspector_section.__exit__(None, None, None)
+_workbench_inspector_col.__exit__(None, None, None)
 
 st.markdown("---")
-st.markdown("### 4. Model-plan preview")
+st.markdown("### 2. Model-plan preview")
 st.caption(
     "A pure preview of what this graph would compile to - no engine "
     "capability check yet (see section 6 for that)."
@@ -595,7 +709,7 @@ else:
     st.info("Fix validation errors above to see the model-plan preview.")
 
 st.markdown("---")
-st.markdown("### 5. Save, approve and compile")
+st.markdown("### 3. Save, approve and compile")
 status_cols = st.columns(3)
 status_cols[0].metric("Status", graph.status)
 status_cols[1].metric("Version", graph.graph_version)
