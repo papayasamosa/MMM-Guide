@@ -32,6 +32,7 @@ from ancestry_mmm.components import (
     render_page_header,
     render_next_step,
     render_empty_state,
+    SectionCard,
 )
 from ancestry_mmm.core.coverage import (
     COVERAGE_STATES,
@@ -56,12 +57,30 @@ st.set_page_config(
 init_session_state()
 apply_theme()
 render_sidebar("data_coverage")
-render_page_header("data_coverage")
 
 df = get_state("transformed_data")
 date_col = get_state("date_col")
 market_col = get_state("market_col")
-if df is None or not date_col or not market_col:
+_data_ready = df is not None and bool(date_col) and bool(market_col)
+_matrix_exists = get_state("variable_coverage_matrix") is not None
+if not _data_ready:
+    _header_badges = ["awaiting_data"]
+elif _matrix_exists:
+    _header_badges = ["ready"]
+else:
+    _header_badges = ["not_started"]
+
+render_page_header(
+    "data_coverage",
+    description=(
+        "Review each governed variable's coverage and missingness by "
+        "market, then propose and approve a treatment before this data is "
+        "eligible for official use."
+    ),
+    badges=_header_badges,
+)
+
+if not _data_ready:
     st.markdown("---")
     render_empty_state(
         "No joined data with a market column yet. Complete Transform "
@@ -69,6 +88,12 @@ if df is None or not date_col or not market_col:
         "market column is required.",
         button_label="Go to Transform Pipeline",
         target_key="transform_pipeline",
+        what_for=(
+            "Reviewing each governed variable's coverage and missingness "
+            "by market before defining model structure (REQ-COVERAGE-001)."
+        ),
+        dependency="A joined dataset with a market column (Transform Pipeline).",
+        next_action="Go to Transform Pipeline to join your sources and select a market column.",
     )
     st.stop()
 
@@ -468,14 +493,23 @@ else:
             )
 
 st.markdown("---")
-st.markdown("### 3. Propose and approve treatments")
-st.caption(
-    "Unresolved unknown/missing_expected coverage never becomes official "
-    "fit input silently (REQ-COVERAGE-001 S5) - a variable stays "
-    "exploratory until you approve a treatment for it here. "
-    "'Approved for official use' requires an approved treatment, an "
-    "approver and an approval date."
+_treatment_section = SectionCard(
+    "3. Propose and approve treatments",
+    description=(
+        "Unresolved unknown/missing_expected coverage never becomes official "
+        "fit input silently (REQ-COVERAGE-001 S5) - a variable stays "
+        "exploratory until you approve a treatment for it here. "
+        "'Approved for official use' requires an approved treatment, an "
+        "approver and an approval date."
+    ),
 )
+# Manual __enter__/__exit__ (matched below, before the version-history
+# expander) rather than an indented `with` block - this section's existing
+# button/data_editor code is already deeply nested with early-exit
+# branches; re-indenting all of it to fit under a `with` would balloon this
+# migration's diff for a purely cosmetic wrapper. SectionCard's context
+# manager protocol is unchanged either way (see components/ui.py).
+_treatment_section.__enter__()
 treatment_rows = [
     {
         "variable": record.variable_id,
@@ -540,6 +574,7 @@ if st.button("Save treatment decisions", type="primary"):
         st.success(
             f"Saved treatment decisions as matrix version {new_matrix.matrix_version}."
         )
+_treatment_section.__exit__(None, None, None)
 
 with st.expander("Coverage matrix version history"):
     history = get_state("variable_coverage_matrix_versions") or []
