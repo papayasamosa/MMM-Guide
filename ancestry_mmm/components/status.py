@@ -34,6 +34,11 @@ STATUS_BADGES: Dict[str, Tuple[str, str, str]] = {
     "validated": ("Validated", "✓", "positive"),
     "approved_for_reporting": ("Approved for reporting", "✓", "positive"),
     "approved_for_planning": ("Approved for planning", "✓", "positive"),
+    # Generic lifecycle states (e.g. core.causal_graph.GRAPH_STATUSES) that
+    # are not specifically about outcome-use approval - additive, presentational
+    # only, no existing call site used these keys before.
+    "approved": ("Approved", "✓", "positive"),
+    "deprecated": ("Deprecated", "×", "negative"),
     "stale": ("Stale", "!", "caution"),
     "superseded": ("Superseded", "»", "neutral"),
     "not_configured": ("Not configured", "○", "neutral"),
