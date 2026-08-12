@@ -22,9 +22,12 @@ from ancestry_mmm.components import (
     render_page_header,
     render_next_step,
     render_glossary,
+    SectionCard,
+    render_status_badge,
 )
 from ancestry_mmm.core.model_comparison import (
     ModelComparisonCandidate,
+    candidates_decision_summary_dataframe,
     candidates_to_dataframe,
 )
 
@@ -61,41 +64,82 @@ if not candidate_dicts:
     )
 else:
     candidates = [ModelComparisonCandidate.from_dict(d) for d in candidate_dicts]
-    table = candidates_to_dataframe(candidates)
-    st.markdown("### Candidates")
-    st.dataframe(table, width="stretch", column_config=dataframe_column_config(table))
+
+    with SectionCard(
+        "Candidates at a glance",
+        description=(
+            "The dimensions that help decide what to inspect next - not a ranking. Deeper "
+            "evidence (R-hat, ESS, mean R-squared/MAPE, PPC coverage) is available below."
+        ),
+    ):
+        summary_table = candidates_decision_summary_dataframe(candidates)
+        st.dataframe(
+            summary_table,
+            width="stretch",
+            column_config=dataframe_column_config(summary_table),
+        )
+        st.caption(
+            "Shown separately by design: convergence, predictive fit, and plausibility are "
+            "independent dimensions - a model that converges cleanly can still fit poorly, and a "
+            "model that fits well can still raise plausibility flags. No composite score collapses "
+            "them into one ranking number."
+        )
+
+    with st.expander(
+        "Full comparison table (R-hat, ESS, mean R-squared/MAPE, PPC coverage)"
+    ):
+        table = candidates_to_dataframe(candidates)
+        st.dataframe(
+            table, width="stretch", column_config=dataframe_column_config(table)
+        )
 
     st.markdown("---")
     st.markdown("### Candidate detail")
     labels = [c.label for c in candidates]
     chosen_label = st.selectbox("Candidate", labels)
     chosen = next(c for c in candidates if c.label == chosen_label)
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric(
-        "Max R-hat",
-        f"{chosen.convergence.get('rhat_max', float('nan')):.3f}"
-        if chosen.convergence.get("rhat_max") is not None
-        else "n/a",
-    )
-    c2.metric(
-        "Min ESS",
-        f"{chosen.convergence.get('ess_min', 0):.0f}"
-        if chosen.convergence.get("ess_min") is not None
-        else "n/a",
-    )
-    c3.metric("Divergences", chosen.convergence.get("divergences", "n/a"))
-    c4.metric("Converged", "Yes" if chosen.convergence.get("converged") else "No")
-
-    if chosen.in_sample_fit:
-        st.markdown("**In-sample fit**")
-        st.dataframe(pd.DataFrame(chosen.in_sample_fit), width="stretch")
-    if chosen.ppc_coverage:
-        st.markdown("**Posterior predictive coverage**")
-        st.dataframe(pd.DataFrame(chosen.ppc_coverage), width="stretch")
     st.caption(
         f"Model run: `{chosen.model_run_id[:8]}` - {chosen.n_plausibility_flags} plausibility flag(s)."
     )
+
+    tab_conv, tab_fit, tab_ppc = st.tabs(
+        ["Convergence", "In-sample fit", "Posterior predictive coverage"]
+    )
+    with tab_conv:
+        render_status_badge(
+            "validated" if chosen.convergence.get("converged") else "failed",
+            label="Converged"
+            if chosen.convergence.get("converged")
+            else "Not converged",
+        )
+        c1, c2, c3 = st.columns(3)
+        c1.metric(
+            "Max R-hat",
+            f"{chosen.convergence.get('rhat_max', float('nan')):.3f}"
+            if chosen.convergence.get("rhat_max") is not None
+            else "n/a",
+        )
+        c2.metric(
+            "Min ESS",
+            f"{chosen.convergence.get('ess_min', 0):.0f}"
+            if chosen.convergence.get("ess_min") is not None
+            else "n/a",
+        )
+        c3.metric("Divergences", chosen.convergence.get("divergences", "n/a"))
+
+    with tab_fit:
+        if chosen.in_sample_fit:
+            st.dataframe(pd.DataFrame(chosen.in_sample_fit), width="stretch")
+        else:
+            st.info("No in-sample fit evidence recorded for this candidate.")
+
+    with tab_ppc:
+        if chosen.ppc_coverage:
+            st.dataframe(pd.DataFrame(chosen.ppc_coverage), width="stretch")
+        else:
+            st.info(
+                "No posterior predictive coverage evidence recorded for this candidate."
+            )
 
     if st.button(f"Remove '{chosen_label}'"):
         candidate_dicts = [d for d in candidate_dicts if d.get("label") != chosen_label]

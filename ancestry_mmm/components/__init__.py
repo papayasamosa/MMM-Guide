@@ -36,6 +36,11 @@ from .status import (
     badge_html,
 )
 from .tokens import SPACING, RADIUS, SURFACE, TEXT, STATUS_COLOR, shell_css
+from .diagnostics_rail import (
+    render_top_line,
+    render_primary_concern,
+    render_domain_health_rail,
+)
 
 __all__ = [
     "create_time_series_chart",
@@ -73,4 +78,7 @@ __all__ = [
     "TEXT",
     "STATUS_COLOR",
     "shell_css",
+    "render_top_line",
+    "render_primary_concern",
+    "render_domain_health_rail",
 ]

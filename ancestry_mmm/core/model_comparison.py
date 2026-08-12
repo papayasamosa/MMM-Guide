@@ -131,6 +131,30 @@ class ModelComparisonCandidate:
         )
 
 
+def candidates_decision_summary_dataframe(candidates: list) -> pd.DataFrame:
+    """The small, decision-oriented set of dimensions a reader needs to
+    decide which candidate to inspect further - deliberately not the full
+    metrics table (``candidates_to_dataframe``, still available as deeper
+    evidence): label, model type, market, whether it converged, and how
+    many plausibility flags it raised. No composite score is computed here
+    or anywhere else in this module - convergence, predictive fit, and
+    plausibility stay visually and numerically separate dimensions, never
+    collapsed into one ranking number (Phase 5 of the Streamlit UI/UX
+    overhaul, docs/decision_log.md)."""
+    rows = []
+    for c in candidates:
+        rows.append(
+            {
+                "label": c.label,
+                "model_type": c.model_type,
+                "market": c.market or "(all)",
+                "converged": c.convergence.get("converged"),
+                "plausibility_flags": c.n_plausibility_flags,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def candidates_to_dataframe(candidates: list) -> pd.DataFrame:
     """Side-by-side comparison table: one row per candidate, with mean
     in-sample R-squared/MAPE and mean PPC coverage collapsed across segments
