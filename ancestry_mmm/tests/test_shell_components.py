@@ -12,6 +12,7 @@ that need a real Streamlit script context use AppTest.from_string(), the
 pattern already used in test_session_state_contract.py.
 """
 
+from streamlit.string_util import validate_icon_or_emoji
 from streamlit.testing.v1 import AppTest
 
 from ancestry_mmm.components import status as status_module
@@ -38,6 +39,12 @@ class TestTokens:
     def test_status_color_covers_every_semantic_key_status_badges_uses(self):
         used_color_keys = {c for (_, _, c) in status_module.STATUS_BADGES.values()}
         assert used_color_keys <= set(tokens_module.STATUS_COLOR.keys())
+
+
+class TestSidebarIcons:
+    def test_readiness_icons_are_valid_streamlit_page_link_icons(self):
+        for status_key, icon in ui_module._READINESS_ICON.items():
+            validate_icon_or_emoji(icon)
 
 
 class TestStatusBadges:
