@@ -1,7 +1,7 @@
 """Page 9: project export/import bundle (Parquet + JSON + NetCDF) and Excel export for portability and recovery.
 
 Phase 7 of the Streamlit UI/UX overhaul (docs/decision_log.md) applies the
-shared shell (SectionCard/InfoPanel, page-header badges, a "Project status"
+shared shell (SectionCard, page-header badges, a "Project status"
 summary) to this page - the last one not yet migrated. Presentation only:
 every value shown is read from existing session-state getters or from the
 bundle's own manifest.json ("contains" dict, written by
@@ -37,7 +37,6 @@ from ancestry_mmm.components import (
     render_drift_status,
     page_readiness,
     SectionCard,
-    InfoPanel,
 )
 from ancestry_mmm.core.persistence import (
     export_project,
@@ -399,6 +398,7 @@ apply_theme()
 render_sidebar("export")
 render_page_header(
     "export",
+    task_prompt="Can this project be resumed from a durable bundle?",
     badges=[page_readiness("export")],
 )
 st.info(
@@ -1333,25 +1333,6 @@ with SectionCard(
                 "Download report (.html)", f, file_name=html_path.name, mime="text/html"
             )
 
-st.markdown("---")
-with InfoPanel("What's out of scope"):
-    st.markdown("""
-Per `docs/project_objectives.md` and `docs/limitations.md`, deliberately **not** built:
-
-- **CPA/inflation as first-class optimiser objectives** - "minimise CPA," "maintain response/delivery
-  under inflation" from the original redesign brief; `avg_cpa`/`dna_avg_cpa` are reported as output
-  metrics, not optimisation targets themselves. What *is* built: explicit, product-aware optimisation
-  objectives (maximise FH GSAs, DNA kits, or LTV-weighted expected value) that never silently combine
-  Family History GSAs and DNA kit sales into one "volume" number.
-- **Media-unit spend constraints** (locked/min/max media units) - `SpendConstraint` still operates in
-  spend terms only.
-- **PowerPoint export** - Excel + the project bundle + this report cover portability and recovery today.
-- **Automating currency conversion** - the tool stores exchange-rate context but never silently
-  converts or applies an inflation assumption without it being visible in the UI.
-- **Stage 2 media x context interactions** - explicitly out of scope for the core model per the brief.
-""")
-
-st.markdown("---")
 st.caption(
     "This is the last step in the workflow. Revisit any page from the sidebar to refine the model or plans."
 )

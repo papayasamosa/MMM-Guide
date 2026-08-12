@@ -273,6 +273,7 @@ init_session_state()
 render_page_header(
     "data_coverage",
     description="Custom one-sentence description.",
+    task_prompt="Which coverage treatment is ready to approve?",
     badges=["ready", "stale"],
     primary_action={"label": "Primary go", "target_key": "structure"},
     secondary_actions=[{"label": "Secondary go"}],
@@ -321,12 +322,16 @@ class TestRenderPageHeader:
         assert any(
             "Custom one-sentence description" in (m.value or "") for m in at.markdown
         )
+        assert any(
+            "Which coverage treatment is ready to approve?" in (m.value or "")
+            for m in at.markdown
+        )
         assert any("Ready" in (m.value or "") for m in at.markdown)
         assert any(b.label == "Primary go" for b in at.button)
         assert any(b.label == "Secondary go" for b in at.button)
-        # Detailed step-by-step guidance moves into a collapsed expander
-        # (Phase 1 item #4), never dropped.
-        assert any("Step-by-step guidance" in e.label for e in at.expander)
+        # Workflow steps remain metadata for Home/navigation; the shared
+        # header must not add a generic tutorial expander to every page.
+        assert not any("Step-by-step guidance" in e.label for e in at.expander)
 
     def test_header_with_no_new_args_still_renders_title(self):
         script = """

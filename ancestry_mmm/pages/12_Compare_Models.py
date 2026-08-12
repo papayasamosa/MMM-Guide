@@ -39,7 +39,10 @@ st.set_page_config(
 init_session_state()
 apply_theme()
 render_sidebar("compare_models")
-render_page_header("compare_models")
+render_page_header(
+    "compare_models",
+    task_prompt="Which fitted candidate should be taken forward?",
+)
 render_glossary(
     ["Model comparison", "Market-specific curve", "Shrinkage", "Partial pooling"]
 )

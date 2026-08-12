@@ -6,8 +6,7 @@ own header/sidebar/footer markup, so behaviour and styling stay consistent.
 
 Phase 1 of the Streamlit UI/UX overhaul (see docs/decision_log.md) added:
 grouped nav with per-page readiness indicators, the project context bar, a
-compact page header (title/description/badges/actions, with detailed
-step-by-step guidance moved into a collapsed expander), and the
+compact page header (title/description/task prompt/badges/actions), and the
 SectionCard/InfoPanel/WarningPanel/BlockingPanel container primitives. All
 of it is presentation only - readiness/context signals are read from
 existing session-state getters (ancestry_mmm.utils.session_state), never
@@ -239,21 +238,23 @@ def render_page_header(
     key: str,
     *,
     description: Optional[str] = None,
+    task_prompt: Optional[str] = None,
     badges: Optional[Iterable[str]] = None,
     primary_action: Optional[Dict[str, Any]] = None,
     secondary_actions: Optional[Iterable[Dict[str, Any]]] = None,
 ) -> None:
-    """Compact top-of-page block (Phase 1 item #4): workflow context, title,
-    one-sentence task description, status badges, and up to one dominant
-    primary action plus optional secondary actions - without a multi-step
-    tutorial dumped above the workspace on every visit. Detailed
-    step-by-step guidance moves into a collapsed "Step-by-step guidance"
-    expander, still available, never removed.
+    """Compact top-of-page block: workflow context, title, one-sentence task
+    description, an optional page-specific task prompt, status badges, and up
+    to one dominant primary action plus optional secondary actions.
+
+    Workflow metadata retains its detailed steps for navigation and Home's
+    overview, but the shared header does not render a generic tutorial on
+    every page. Guidance belongs beside the decision it explains.
 
     Every parameter is optional and additive - `render_page_header(key)`
-    behaves the same as every existing call site (title/description/steps),
-    just with the steps list collapsed. `badges`/`primary_action`/
-    `secondary_actions` are opt-in for pages that want the fuller header.
+    behaves the same as existing title/description call sites.
+    `task_prompt`, `badges`, `primary_action`, and `secondary_actions` are
+    opt-in for pages that need the fuller header.
 
     `primary_action`/entries in `secondary_actions` are plain dicts:
     ``{"label": str, "target_key": Optional[str], "on_click": Optional[Callable[[], None]], "key": Optional[str]}``.
@@ -294,6 +295,11 @@ def render_page_header(
             st.markdown(
                 f'<div class="mmm-header-desc">{desc}</div>', unsafe_allow_html=True
             )
+        if task_prompt:
+            st.markdown(
+                f'<div class="mmm-task-prompt"><span>Focus</span>{_html.escape(task_prompt)}</div>',
+                unsafe_allow_html=True,
+            )
         if badge_keys:
             render_status_badges(badge_keys)
 
@@ -303,12 +309,6 @@ def render_page_header(
                 _render_header_action(primary_action, primary=True, idx=0)
             for i, action in enumerate(secondary_actions or [], start=1):
                 _render_header_action(action, primary=False, idx=i)
-
-    if step.get("steps"):
-        with st.expander("Step-by-step guidance", expanded=False):
-            st.markdown(
-                "\n".join(f"{i}. {s}" for i, s in enumerate(step["steps"], start=1))
-            )
 
 
 def _render_header_action(action: Dict[str, Any], *, primary: bool, idx: int) -> None:
@@ -380,12 +380,17 @@ def BlockingPanel(title: str, *, description: Optional[str] = None):
 
 
 def render_next_step(key: str, *, key_suffix: str = "") -> None:
-    """Bottom-of-page block: the next recommended action and one primary button."""
+    """Bottom-of-page next action without another full-width divider or card."""
     step = get_step(key)
     if step is None or not step.get("next"):
         return
-    st.markdown("---")
-    st.caption(f"Next: {step['next']}")
+    st.markdown(
+        '<div class="mmm-next-step">'
+        '<span class="mmm-next-step-label">NEXT STEP</span>'
+        f'<span class="mmm-next-step-copy">{_html.escape(step["next"])}</span>'
+        "</div>",
+        unsafe_allow_html=True,
+    )
     nxt_key = next_step_key(key)
     if nxt_key is not None:
         nxt = get_step(nxt_key)
@@ -448,12 +453,18 @@ def render_status_card(label: str, value: str, ready: bool) -> None:
 
 
 def render_glossary(terms: Optional[Iterable[str]] = None) -> None:
-    """Compact glossary expander. Pass `terms` to show a subset relevant to
-    the current page; omit it to show the full glossary."""
+    """On-demand definitions for the current workspace.
+
+    Callers should pass only terms that affect the current decision. The full
+    glossary remains available to code that needs it, but is not presented as
+    routine page furniture.
+    """
     entries: Dict[str, Any] = (
         {t: GLOSSARY[t] for t in terms if t in GLOSSARY} if terms else GLOSSARY
     )
-    with st.expander("Glossary"):
+    if not entries:
+        return
+    with st.expander("Relevant definitions", expanded=False):
         for term, definition in entries.items():
             st.markdown(f"**{term}** - {definition}")
 

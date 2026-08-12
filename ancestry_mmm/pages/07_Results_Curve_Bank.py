@@ -124,7 +124,10 @@ st.set_page_config(
 init_session_state()
 apply_theme()
 render_sidebar("curve_bank")
-render_page_header("curve_bank")
+render_page_header(
+    "curve_bank",
+    task_prompt="Which response evidence is ready for analysis or governed use?",
+)
 
 
 def _render_curve_with_cpa(

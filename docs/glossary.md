@@ -1,6 +1,6 @@
 # Glossary
 
-The in-app glossary (`ancestry_mmm.utils.display.GLOSSARY`, shown via the "Glossary" expander on
+The in-app definitions (`ancestry_mmm.utils.display.GLOSSARY`, shown via the "Relevant definitions" expander on
 several pages) covers the core modelling/planning terms. This is the same set, plus the
 market-specific-redesign terms that aren't in the app yet because the functionality they describe
 isn't built yet.

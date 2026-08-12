@@ -262,6 +262,7 @@ _structural_unsaved, _layout_unsaved, _has_saved_version = _graph_change_state(
 
 render_page_header(
     "causal_graph",
+    task_prompt="Which causal pathways are approved for model compilation?",
     badges=[page_readiness("causal_graph"), graph.status],
 )
 st.caption(

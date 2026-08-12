@@ -30,7 +30,6 @@ from ancestry_mmm.components import (
     render_glossary,
     page_readiness,
     SectionCard,
-    InfoPanel,
 )
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.market_config import (
@@ -68,6 +67,7 @@ apply_theme()
 render_sidebar("channel_media_units")
 render_page_header(
     "channel_media_units",
+    task_prompt="Are model inputs, delivery measures, and caps mapped as separate objects?",
     badges=[page_readiness("channel_media_units")],
 )
 
@@ -84,18 +84,10 @@ if not spec_dict or df is None:
 
 spec = ModelSpec.from_dict(spec_dict)
 render_glossary(["Response curve"])
-
-st.markdown("---")
-with InfoPanel(
-    "How this page is organised",
-    description="Each of these stays a visually distinct concept below - never one generic 'channel metric'.",
-):
-    st.markdown(
-        "- **Fitted model input** and **causal role/economic treatment** (required, section 1)\n"
-        "- **Search objects** - demand, delivery, cap, organic/direct (optional, section 2)\n"
-        "- **Physical delivery** and **cost mapping**, separate from monetary spend (optional, section 3)\n\n"
-        "See docs/media_units_and_inflation.md for the full design this mapping feeds into."
-    )
+st.caption(
+    "Keep fitted inputs, Search demand/delivery/caps, and physical delivery or cost mappings "
+    "separate. These fields answer different causal and reporting questions."
+)
 
 hints = detect_column_types(df)
 numeric_cols = hints["numeric"]

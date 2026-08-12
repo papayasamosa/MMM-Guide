@@ -90,6 +90,7 @@ apply_theme()
 render_sidebar("structure")
 render_page_header(
     "structure",
+    task_prompt="Which outcomes, segments, markets, and activities belong in this model?",
     badges=[page_readiness("structure")],
 )
 st.caption(

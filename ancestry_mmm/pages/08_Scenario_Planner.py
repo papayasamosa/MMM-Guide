@@ -114,7 +114,10 @@ st.set_page_config(
 init_session_state()
 apply_theme()
 render_sidebar("scenario_planner")
-render_page_header("scenario_planner")
+render_page_header(
+    "scenario_planner",
+    task_prompt="What spend decision should be evaluated under current evidence?",
+)
 st.info(
     "**Steady-state monthly approximation.** Predicted outcomes hold spend constant within a "
     "month and treat it as having reached its adstock steady state, so a month's outcome is a "
