@@ -25,6 +25,7 @@ from ancestry_mmm.components import (
     render_next_step,
     render_empty_state,
     render_drift_status,
+    render_workspace_note,
     SectionCard,
 )
 from ancestry_mmm.core.approval import (
@@ -127,6 +128,11 @@ render_sidebar("curve_bank")
 render_page_header(
     "curve_bank",
     task_prompt="Which response evidence is ready for analysis or governed use?",
+)
+render_workspace_note(
+    "Evidence and authority",
+    "Inspect observed support, uncertainty, and evidence tier before using a curve; official artifacts are governed separately from exploratory snapshots.",
+    kind="governed",
 )
 
 
