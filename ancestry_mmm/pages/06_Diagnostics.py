@@ -27,6 +27,14 @@ from ancestry_mmm.components import (
     render_empty_state,
     render_glossary,
     render_drift_status,
+    render_top_line,
+    render_primary_concern,
+    render_domain_health_rail,
+)
+from ancestry_mmm.application.diagnostics_summary import (
+    compute_domain_health,
+    compute_top_line_status,
+    derive_primary_concern,
 )
 from ancestry_mmm.core.approval import (
     ApprovalMismatchError,
@@ -268,184 +276,22 @@ if st.button("Compute scorecard", type="primary"):
 # Retrieve artefact for governance display
 diag_artefact = get_state("diagnostics_artefact")
 diag_result = get_state("diag_result")
-
 scorecard = get_state("scorecard")
-if scorecard:
-    st.markdown("### Convergence")
-    conv = scorecard["convergence"]
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Max R-hat", f"{conv['max_rhat']:.3f}", help="Should be < 1.01")
-    c2.metric(
-        "Min ESS",
-        format_number(round(conv["min_ess"])),
-        help="Effective sample size; higher is better",
-    )
-    c3.metric("Divergences", format_number(conv["divergences"]))
-    c4.metric("Converged", "Yes" if conv["converged"] else "No")
-    if not conv["converged"]:
-        st.warning(
-            "Convergence diagnostics are outside typical thresholds. Consider more draws/tune, "
-            "a higher target_accept, or simplifying the hierarchy before trusting these results."
-        )
 
-    st.markdown("---")
-    st.markdown("### In-sample fit")
-    fit_df = pd.DataFrame(scorecard["in_sample_fit"])
-    st.dataframe(fit_df, width="stretch", column_config=dataframe_column_config(fit_df))
-
-    st.markdown("---")
-    st.markdown("### Error metrics & residual temporal structure")
-    st.caption(
-        "REQ-VAL-001: MAE/RMSE (magnitude), sMAPE/WAPE (percentage, "
-        "volume-weighted) and bias (systematic over/under-prediction) "
-        "alongside R-squared/MAPE above - plus lag-1 autocorrelation and "
-        "the Durbin-Watson statistic on the residuals, evidence of "
-        "unexplained temporal structure (no blocking threshold is applied "
-        "here; an approved policy decides thresholds separately). Rendered "
-        "from the canonical diagnostics artefact - never recomputed "
-        "separately from it."
-    )
-    st.caption(
-        "Residual temporal evidence is reported per market x outcome, "
-        "computed within each market's own chronological slice - the "
-        "model frame is multi-market, so lag-1 autocorrelation/"
-        "Durbin-Watson are never computed across a market boundary. Every "
-        "market is shown; no overall figure is derived by concatenating "
-        "markets."
-    )
-    error_metrics_section = diag_artefact.error_metrics if diag_artefact else None
-    residual_section = diag_artefact.residual_diagnostics if diag_artefact else None
-    if error_metrics_section is None or error_metrics_section.status == "not_computed":
-        st.info(
-            error_metrics_section.error
-            if error_metrics_section is not None and error_metrics_section.error
-            else "Not computed. Click 'Compute scorecard' above."
-        )
-    elif error_metrics_section.status == "failed":
-        st.error(f"Error metrics failed: {error_metrics_section.error}")
-    else:
-        error_df = pd.DataFrame(error_metrics_section.payload)
-        st.dataframe(
-            error_df, width="stretch", column_config=dataframe_column_config(error_df)
-        )
-    if residual_section is not None and residual_section.status == "computed":
-        residual_df = pd.DataFrame(residual_section.payload)
-        st.dataframe(
-            residual_df,
-            width="stretch",
-            column_config=dataframe_column_config(residual_df),
-        )
-    elif residual_section is not None and residual_section.status == "failed":
-        st.error(f"Residual temporal diagnostics failed: {residual_section.error}")
-
-    st.markdown("---")
-    st.markdown("### Posterior predictive coverage")
-    st.caption(
-        "% of actual observations falling inside the posterior predictive credible interval - should be close to the target %."
-    )
-    ppc_df = pd.DataFrame(scorecard["ppc_coverage"])
-    st.dataframe(ppc_df, width="stretch", column_config=dataframe_column_config(ppc_df))
-
-    st.markdown("---")
-    st.markdown("### Curve & ROI plausibility flags")
-    flags = scorecard["plausibility_flags"]
-    if not flags:
-        st.info("No plausibility flags raised.")
-    else:
-        for f in flags:
-            (st.warning if f["level"] == "warning" else st.error)(
-                f"**{f.get('channel', '')}**: {f['message']}"
-            )
-
-    st.markdown("---")
-    st.markdown("### Multicollinearity & weak-identification diagnostics")
-    st.caption(
-        "Whether this fit's channel coefficients are trustworthy enough to plan against at all - "
-        "independent of convergence, in-sample fit or PPC coverage above, since a model can score "
-        "well on all three while still having two channels whose effects the data can't tell apart. "
-        "core.identification_diagnostics - a leave-one-channel-out refit sensitivity check is not run "
-        "here (it needs a full model refit per channel, too slow for an interactive page); the three "
-        "signals below need no refit."
-    )
-    # PR 82B: rendered from the canonical artefact section only - the page
-    # never calls identification_report()/channel_spend_correlation_matrix()/
-    # design_matrix_condition_number()/posterior_coefficient_stability()
-    # directly, so displayed evidence and artefact evidence can never
-    # diverge (DiagnosticsService computes each of these exactly once).
-    ident_section = diag_artefact.identification if diag_artefact else None
-    if ident_section is None or ident_section.status == "not_computed":
-        st.info("Not computed. Click 'Compute scorecard' above.")
-    elif ident_section.status == "failed":
-        st.error(f"Identification diagnostics failed: {ident_section.error}")
-    else:
-        id_flags = ident_section.payload["flags"]
-        if not id_flags:
-            st.info("No multicollinearity or weak-identification flags raised.")
-        else:
-            for f in id_flags:
-                (st.error if f["level"] == "error" else st.warning)(
-                    f"**{f['channel']}**: {f['message']}"
-                )
-
-        with st.expander("Channel spend correlation matrix"):
-            corr_df = pd.DataFrame(ident_section.payload["correlation_matrix"]).T
-            st.dataframe(
-                corr_df, width="stretch", column_config=dataframe_column_config(corr_df)
-            )
-
-        with st.expander(
-            "Design matrix condition number & posterior coefficient stability"
-        ):
-            cond = ident_section.payload["condition_number"]
-            st.metric(
-                "Condition number",
-                f"{cond:,.1f}" if isinstance(cond, (int, float)) else str(cond),
-                help="Elevated above ~30, severe above ~100 - the standard econometric rule-of-thumb thresholds.",
-            )
-            stab_section = diag_artefact.coefficient_stability
-            if stab_section.status == "computed":
-                stability_df = pd.DataFrame(stab_section.payload)
-                st.dataframe(
-                    stability_df,
-                    width="stretch",
-                    column_config=dataframe_column_config(stability_df),
-                )
-            elif stab_section.status == "failed":
-                st.error(f"Coefficient stability failed: {stab_section.error}")
-
-st.markdown("---")
-st.markdown("### Validation readiness")
-st.caption(
-    "Evaluate diagnostics against a validation policy. This shows which gates pass, "
-    "fail, or need review — and the overall approval readiness state."
-)
-
+# --- Phase 5 (REQ-VAL-001): resolve the current policy and readiness once,
+# here - reused by both the new top-line summary/domain-health rail below
+# and the "Validation readiness" section further down, so the two can never
+# disagree about what "current" readiness means. This is exactly the same
+# staleness check that section has always performed (a stored readiness
+# whose policy/model-identity/diagnostics-artefact fingerprints no longer
+# match is never treated as current); it is only evaluated once now,
+# earlier, instead of being duplicated further down the page.
 validation_policy_dict = get_state("validation_policy")
-# PR 79A (WP9): state contract - "validation_service_result" holds the full
-# ValidationService wrapper (readiness object, errors, warnings) for this
-# page's own transient UI messages; "approval_readiness" holds only the
-# serialised (JSON-safe dict) ApprovalReadiness domain object, which is what
-# any other page or persistence layer should read - never the wrapper
-# itself under an "*_readiness" name.
-validation_service_result = get_state("validation_service_result")
-
-# Load policy for later use. A configured policy must deserialize through
-# ThresholdPolicy.from_dict() — a malformed policy is a blocking error, not
-# a silent downgrade to an empty policy (an empty policy would pass every
-# gate by having none to evaluate). PR 88A: routed through the shared
-# fail-closed loader (also used by Curve Bank, Scenario Planner, and Project
-# Import) so a malformed policy is handled identically everywhere - never an
-# uncaught TypeError/KeyError/AttributeError crashing the page.
 _current_policy, _policy_config_error = load_threshold_policy(validation_policy_dict)
 
-# PR 82B: a stored readiness may no longer reflect the current policy,
-# model identity, or diagnostics artefact - the policy could have been
-# edited, the model retrained without going through clear_model_state()
-# (e.g. a fresh page load after a project import), or a backtest could
-# have just replaced the artefact's backtest section. Stale readiness must
-# never keep being displayed or relied on as current; it is cleared here
-# rather than left for the user to notice it's out of date.
+validation_service_result = get_state("validation_service_result")
 approval_readiness_dict = get_state("approval_readiness")
+_readiness_was_invalidated = False
 if approval_readiness_dict:
     # PR 88A: fail-closed - a malformed stored readiness is treated as
     # absent (never current) rather than crashing the page.
@@ -465,18 +311,258 @@ if approval_readiness_dict:
         )
     )
     if not _evidence_current:
-        # PR 91A: previously cleared only approval_readiness and
-        # validation_service_result, leaving validation_results and
-        # model_approval stale - the same gap invalidate_governance_evidence()
-        # was introduced (PR 88A) to close for the compute-scorecard and
-        # run-backtest paths above. Route through the same shared helper so
-        # all four governance-evidence keys are cleared atomically here too.
         invalidate_governance_evidence()
         validation_service_result = None
-        st.info(
-            "Previously evaluated readiness no longer matches the current policy, "
-            "model, or diagnostics evidence - click 'Evaluate readiness' again."
+        _readiness_was_invalidated = True
+
+# REQ-COVERAGE-001 S6: the same engine-capability check the Model approval
+# section below displays in detail, resolved here too so the top-line
+# summary/domain-health rail's "Coverage capability" row can use it -
+# never a second, divergent computation of the same check.
+_capability_result = None
+if model_spec_dict is not None:
+    _capability_spec = ModelSpec.from_dict(model_spec_dict)
+    _capability_result = check_market_channel_capability(
+        _capability_spec.markets,
+        _capability_spec.channels,
+        VariableCoverageMatrix.from_dict(coverage_matrix_dict)
+        if coverage_matrix_dict
+        else None,
+    )
+
+# A placeholder, not an immediate render: "Evaluate readiness" (further
+# down this same script) can mutate validation_service_result/
+# approval_readiness later in this same run. Rendering here immediately
+# would use the pre-click value for that one run (Streamlit reruns
+# top-to-bottom once per interaction; a later mutation doesn't retroactively
+# update code that already ran above it). st.empty() reserves this visual
+# slot at the top of the page now; _render_summary_into() (below) fills it
+# with the freshest state once every same-run mutation this page can make
+# has already happened - so the top-line answer is never one click behind.
+_summary_slot = st.empty()
+
+
+def _render_summary_into(slot) -> None:
+    current_readiness = (
+        get_state("validation_service_result").readiness
+        if get_state("validation_service_result")
+        else None
+    )
+    with slot.container():
+        render_top_line(
+            compute_top_line_status(
+                readiness=current_readiness, scorecard_computed=bool(scorecard)
+            )
         )
+        render_domain_health_rail(
+            compute_domain_health(
+                scorecard=scorecard,
+                diag_artefact=diag_artefact,
+                capability_result=_capability_result,
+                readiness=current_readiness,
+                policy=_current_policy,
+            )
+        )
+        render_primary_concern(
+            derive_primary_concern(
+                readiness=current_readiness,
+                diag_artefact=diag_artefact,
+                scorecard=scorecard,
+                capability_result=_capability_result,
+            )
+        )
+
+
+# First fill, using whatever readiness evidence already exists as of the
+# start of this run (correct for every run except one where "Evaluate
+# readiness" is about to be clicked later in this exact script pass - the
+# second fill below, after that button's handler, corrects that case).
+_render_summary_into(_summary_slot)
+
+st.markdown("---")
+st.markdown("### Full diagnostic detail")
+st.caption(
+    "Detail behind the summary above, grouped by evidence domain - not "
+    "rendered flat and simultaneously. A domain's detail here is the same "
+    "canonical evidence the rail above reads; nothing below recomputes it "
+    "separately."
+)
+if scorecard:
+    tab_conv, tab_fit, tab_ppc, tab_plaus, tab_ident = st.tabs(
+        [
+            "Convergence",
+            "In-sample fit & error metrics",
+            "Posterior predictive coverage",
+            "Plausibility flags",
+            "Identification & collinearity",
+        ]
+    )
+    with tab_conv:
+        conv = scorecard["convergence"]
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Max R-hat", f"{conv['max_rhat']:.3f}", help="Should be < 1.01")
+        c2.metric(
+            "Min ESS",
+            format_number(round(conv["min_ess"])),
+            help="Effective sample size; higher is better",
+        )
+        c3.metric("Divergences", format_number(conv["divergences"]))
+        c4.metric("Converged", "Yes" if conv["converged"] else "No")
+        if not conv["converged"]:
+            st.warning(
+                "Convergence diagnostics are outside typical thresholds. Consider more draws/tune, "
+                "a higher target_accept, or simplifying the hierarchy before trusting these results."
+            )
+
+    with tab_fit:
+        st.markdown("#### In-sample fit")
+        fit_df = pd.DataFrame(scorecard["in_sample_fit"])
+        st.dataframe(fit_df, width="stretch", column_config=dataframe_column_config(fit_df))
+
+        st.markdown("#### Error metrics & residual temporal structure")
+        st.caption(
+            "REQ-VAL-001: MAE/RMSE (magnitude), sMAPE/WAPE (percentage, "
+            "volume-weighted) and bias (systematic over/under-prediction) "
+            "alongside R-squared/MAPE above - plus lag-1 autocorrelation and "
+            "the Durbin-Watson statistic on the residuals, evidence of "
+            "unexplained temporal structure (no blocking threshold is applied "
+            "here; an approved policy decides thresholds separately). Rendered "
+            "from the canonical diagnostics artefact - never recomputed "
+            "separately from it."
+        )
+        st.caption(
+            "Residual temporal evidence is reported per market x outcome, "
+            "computed within each market's own chronological slice - the "
+            "model frame is multi-market, so lag-1 autocorrelation/"
+            "Durbin-Watson are never computed across a market boundary. Every "
+            "market is shown; no overall figure is derived by concatenating "
+            "markets."
+        )
+        error_metrics_section = diag_artefact.error_metrics if diag_artefact else None
+        residual_section = diag_artefact.residual_diagnostics if diag_artefact else None
+        if error_metrics_section is None or error_metrics_section.status == "not_computed":
+            st.info(
+                error_metrics_section.error
+                if error_metrics_section is not None and error_metrics_section.error
+                else "Not computed. Click 'Compute scorecard' above."
+            )
+        elif error_metrics_section.status == "failed":
+            st.error(f"Error metrics failed: {error_metrics_section.error}")
+        else:
+            error_df = pd.DataFrame(error_metrics_section.payload)
+            st.dataframe(
+                error_df, width="stretch", column_config=dataframe_column_config(error_df)
+            )
+        if residual_section is not None and residual_section.status == "computed":
+            residual_df = pd.DataFrame(residual_section.payload)
+            st.dataframe(
+                residual_df,
+                width="stretch",
+                column_config=dataframe_column_config(residual_df),
+            )
+        elif residual_section is not None and residual_section.status == "failed":
+            st.error(f"Residual temporal diagnostics failed: {residual_section.error}")
+
+    with tab_ppc:
+        st.caption(
+            "% of actual observations falling inside the posterior predictive credible interval - should be close to the target %."
+        )
+        ppc_df = pd.DataFrame(scorecard["ppc_coverage"])
+        st.dataframe(ppc_df, width="stretch", column_config=dataframe_column_config(ppc_df))
+
+    with tab_plaus:
+        flags = scorecard["plausibility_flags"]
+        if not flags:
+            st.info("No plausibility flags raised.")
+        else:
+            for f in flags:
+                (st.warning if f["level"] == "warning" else st.error)(
+                    f"**{f.get('channel', '')}**: {f['message']}"
+                )
+
+    with tab_ident:
+        st.caption(
+            "Whether this fit's channel coefficients are trustworthy enough to plan against at all - "
+            "independent of convergence, in-sample fit or PPC coverage above, since a model can score "
+            "well on all three while still having two channels whose effects the data can't tell apart. "
+            "core.identification_diagnostics - a leave-one-channel-out refit sensitivity check is not run "
+            "here (it needs a full model refit per channel, too slow for an interactive page); the three "
+            "signals below need no refit."
+        )
+        # PR 82B: rendered from the canonical artefact section only - the page
+        # never calls identification_report()/channel_spend_correlation_matrix()/
+        # design_matrix_condition_number()/posterior_coefficient_stability()
+        # directly, so displayed evidence and artefact evidence can never
+        # diverge (DiagnosticsService computes each of these exactly once).
+        ident_section = diag_artefact.identification if diag_artefact else None
+        if ident_section is None or ident_section.status == "not_computed":
+            st.info("Not computed. Click 'Compute scorecard' above.")
+        elif ident_section.status == "failed":
+            st.error(f"Identification diagnostics failed: {ident_section.error}")
+        else:
+            id_flags = ident_section.payload["flags"]
+            if not id_flags:
+                st.info("No multicollinearity or weak-identification flags raised.")
+            else:
+                for f in id_flags:
+                    (st.error if f["level"] == "error" else st.warning)(
+                        f"**{f['channel']}**: {f['message']}"
+                    )
+
+            with st.expander("Channel spend correlation matrix"):
+                corr_df = pd.DataFrame(ident_section.payload["correlation_matrix"]).T
+                st.dataframe(
+                    corr_df, width="stretch", column_config=dataframe_column_config(corr_df)
+                )
+
+            with st.expander(
+                "Design matrix condition number & posterior coefficient stability"
+            ):
+                cond = ident_section.payload["condition_number"]
+                st.metric(
+                    "Condition number",
+                    f"{cond:,.1f}" if isinstance(cond, (int, float)) else str(cond),
+                    help="Elevated above ~30, severe above ~100 - the standard econometric rule-of-thumb thresholds.",
+                )
+                stab_section = diag_artefact.coefficient_stability
+                if stab_section.status == "computed":
+                    stability_df = pd.DataFrame(stab_section.payload)
+                    st.dataframe(
+                        stability_df,
+                        width="stretch",
+                        column_config=dataframe_column_config(stability_df),
+                    )
+                elif stab_section.status == "failed":
+                    st.error(f"Coefficient stability failed: {stab_section.error}")
+else:
+    st.info("Compute the scorecard above to see full diagnostic detail by domain.")
+
+st.markdown("---")
+st.markdown("### Validation readiness")
+st.caption(
+    "Evaluate diagnostics against a validation policy. This shows which gates pass, "
+    "fail, or need review — and the overall approval readiness state."
+)
+
+# PR 79A (WP9): state contract - "validation_service_result" holds the full
+# ValidationService wrapper (readiness object, errors, warnings) for this
+# page's own transient UI messages; "approval_readiness" holds only the
+# serialised (JSON-safe dict) ApprovalReadiness domain object, which is what
+# any other page or persistence layer should read - never the wrapper
+# itself under an "*_readiness" name.
+#
+# Phase 5 (REQ-VAL-001): policy loading and the staleness check below were
+# already evaluated once, earlier on this page (right after "Compute
+# scorecard"), so the new top-line summary/domain-health rail could use
+# them - `_current_policy`, `_policy_config_error`, `validation_service_result`
+# and `_readiness_was_invalidated` are reused here as-is, never recomputed a
+# second time (which risked the two disagreeing about what "current"
+# readiness means).
+if _readiness_was_invalidated:
+    st.info(
+        "Previously evaluated readiness no longer matches the current policy, "
+        "model, or diagnostics evidence - click 'Evaluate readiness' again."
+    )
 
 if st.button("Evaluate readiness", type="secondary"):
     with st.spinner("Evaluating policy gates..."):
@@ -523,6 +609,13 @@ if st.button("Evaluate readiness", type="secondary"):
             # a project bundle's validation_results was always None even
             # after a real "Evaluate readiness" click.
             set_state("validation_results", [r.to_dict() for r in val_result.results])
+            # Phase 5 (REQ-VAL-001): re-fill the top-line/domain-rail summary
+            # placeholder now that readiness has just been evaluated in this
+            # same run - reads session state fresh (not the possibly-stale
+            # `validation_service_result` local variable captured earlier in
+            # this script, before this click's own mutation), so the summary
+            # never shows a click-behind "not yet evaluated" state.
+            _render_summary_into(_summary_slot)
 
 if validation_service_result:
     rd = validation_service_result.readiness
@@ -571,28 +664,22 @@ render_glossary(["Prior", "Posterior", "Approval"])
 # unsupported - not a separate governance rule invented here, and exploratory
 # review of this display remains available regardless of whether the active
 # policy includes that gate.
-if model_spec_dict is not None:
-    _diagnostics_spec = ModelSpec.from_dict(model_spec_dict)
-    _diagnostics_capability = check_market_channel_capability(
-        _diagnostics_spec.markets,
-        _diagnostics_spec.channels,
-        VariableCoverageMatrix.from_dict(coverage_matrix_dict)
-        if coverage_matrix_dict
-        else None,
-    )
-    if not _diagnostics_capability.supported:
-        st.info(
-            "This fit's market/channel combination goes beyond what the "
-            "engine can validly support today per the governed coverage "
-            "matrix (REQ-COVERAGE-001 S6). Exploratory review remains "
-            "available; whether this blocks policy-backed approval depends "
-            "on whether the active validation policy includes the "
-            "market_channel_capability gate:\n\n"
-            + "\n".join(
-                f"- **{issue.market} / {issue.channel}**: {issue.reason}"
-                for issue in _diagnostics_capability.issues
-            )
+# Phase 5 (REQ-VAL-001): reuses `_capability_result`, resolved once earlier
+# on this page (right after "Compute scorecard") for the domain-health
+# rail's "Coverage capability" row - never a second, divergent computation.
+if _capability_result is not None and not _capability_result.supported:
+    st.info(
+        "This fit's market/channel combination goes beyond what the "
+        "engine can validly support today per the governed coverage "
+        "matrix (REQ-COVERAGE-001 S6). Exploratory review remains "
+        "available; whether this blocks policy-backed approval depends "
+        "on whether the active validation policy includes the "
+        "market_channel_capability gate:\n\n"
+        + "\n".join(
+            f"- **{issue.market} / {issue.channel}**: {issue.reason}"
+            for issue in _capability_result.issues
         )
+    )
 
 activity_governance_errors = []
 if not activity_definitions:
@@ -935,6 +1022,7 @@ if st.button("Run prior predictive check"):
         # invalidate any readiness/approval evaluated against the
         # previous artefact in the same action.
         invalidate_governance_evidence()
+        _render_summary_into(_summary_slot)
         if updated_artefact.prior_predictive.status == "computed":
             st.success(
                 "Prior predictive check computed - diagnostics artefact updated."
@@ -1001,6 +1089,7 @@ if st.button("Run predictive density check"):
         set_state("diagnostics_artefact", updated_artefact)
         diag_artefact = updated_artefact
         invalidate_governance_evidence()
+        _render_summary_into(_summary_slot)
         if updated_artefact.predictive_density.status == "computed":
             st.success(
                 "Predictive density check computed - diagnostics artefact updated."
@@ -1144,6 +1233,7 @@ if st.button("Run backtest"):
         # catch it - PR 88A: this previously left model_approval and
         # validation_results stale for one extra rerun).
         invalidate_governance_evidence()
+        _render_summary_into(_summary_slot)
         if updated_artefact.backtest.status == "computed":
             # Legacy mirror for the project-export bundle (PR 82D wires
             # diagnostics_artefact into export directly) - not the

@@ -43,6 +43,16 @@ STATUS_BADGES: Dict[str, Tuple[str, str, str]] = {
     "superseded": ("Superseded", "»", "neutral"),
     "not_configured": ("Not configured", "○", "neutral"),
     "awaiting_data": ("Awaiting data", "○", "neutral"),
+    # Diagnostics domain-health rail (Phase 5, REQ-VAL-001): additive,
+    # presentational only. "pass"/"review"/"fail" reuse
+    # core.validation_policy.VALIDATION_STATUS_VALUES's own three-value
+    # vocabulary verbatim - not a new domain-status concept invented here.
+    # "reported" is for evidence that exists but carries no threshold/gate
+    # (e.g. residual diagnostics) - descriptive, deliberately never pass/fail.
+    "pass": ("Pass", "✓", "positive"),
+    "review": ("Review", "⚑", "caution"),
+    "fail": ("Fail", "✕", "negative"),
+    "reported": ("Reported", "•", "info"),
     # Readiness states reused by the grouped sidebar nav (components/ui.py)
     # so a page's nav indicator and its own header badge always agree.
     "ready": ("Ready", "✓", "positive"),
