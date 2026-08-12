@@ -35,7 +35,7 @@ class TestTokens:
             "mmm-panel-marker-negative",
         ]:
             assert cls in css
-        assert "#F6F3F0" in css
+        assert "#F4F1EC" in css
         assert "mmm-brand-lockup" in css
         assert "#0E1512" not in css
 
@@ -65,7 +65,7 @@ render_sidebar("home")
         assert not at.exception, f"sidebar script raised: {at.exception}"
         rendered = " ".join((m.value or "") for m in at.markdown)
         assert "Family History &amp; DNA MMM" in rendered
-        assert "Marketing measurement &amp; planning" in rendered
+        assert "Marketing Measurement &amp; Planning" in rendered
         assert "Marketing Mix Modelling" not in rendered
         assert "DNA cross-sell" not in rendered
 
@@ -348,7 +348,7 @@ render_page_header("data_coverage")
         at = AppTest.from_string(script)
         at.run()
         assert not at.exception, f"header script raised: {at.exception}"
-        assert at.title[0].value == "Data Coverage"
+        assert at.title[0].value == "Coverage & Gaps"
 
 
 class TestPanelPrimitives:

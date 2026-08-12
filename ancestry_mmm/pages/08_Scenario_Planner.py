@@ -109,7 +109,6 @@ from ancestry_mmm.data.preprocessor import create_fourier_features_from_calendar
 
 st.set_page_config(
     page_title="Scenario Planner | Ancestry Family History & DNA MMM",
-    page_icon="🧬",
     layout="wide",
 )
 init_session_state()
@@ -363,7 +362,7 @@ with SectionCard(
                 st.caption(
                     "One or more channels above are a **transferred estimate** for this market - "
                     "not enough local data to estimate a market-specific curve confidently. Plan "
-                    "against these with extra caution (`docs/market_hierarchy.md` section 4)."
+                    "against these with extra caution until more local evidence is available."
                 )
 
 month_dates = pd.date_range(pd.Timestamp(start_month), periods=n_months, freq="MS")
@@ -1109,8 +1108,7 @@ except (ValueError, PlanningGovernanceError) as e:
 
 st.caption(
     "Each objective states exactly what it maximises - Family History GSAs, Family History sign-ups "
-    "and DNA kit sales are never silently combined into one generic 'volume' number "
-    "(docs/dna_fh_causal_structure.md). "
+    "and DNA kit sales are never silently combined into one generic 'volume' number. "
     "**Official planning requires each target outcome to have an approved definition "
     "(Structure → Outcome Governance).**"
 )
@@ -1349,7 +1347,7 @@ with tab_manual:
                             "Fraction of paired posterior draws where this plan's total predicted value "
                             "exceeds the recent-average-spend baseline's - the same draw index is used "
                             "for both plans in each comparison, so the result isn't inflated by "
-                            "independently-resampled noise (docs/decision_log.md)."
+                            "independently-resampled noise."
                         ),
                     )
                 st.caption(

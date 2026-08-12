@@ -44,8 +44,8 @@ JOIN_MODE_HELP = {
     "any row unique to one source is dropped. Default, matches this app's "
     "previous behaviour.",
     "outer": "Keep every row from every source, filling missing values with "
-    "blanks where a source has no matching row (REQ-COVERAGE-001: never "
-    "automatically truncate to the narrowest common window).",
+    "blanks where a source has no matching row. This keeps the full time "
+    "window visible for review.",
     "left": "Keep every row from the first-listed source, dropping rows from "
     "later sources that don't match it.",
     "right": "Keep every row from the last-listed source, dropping rows from "
@@ -53,8 +53,7 @@ JOIN_MODE_HELP = {
 }
 
 st.set_page_config(
-    page_title="Transform Pipeline | Ancestry Family History & DNA MMM",
-    page_icon="🧬",
+    page_title="Prepare Data | Ancestry Family History & DNA MMM",
     layout="wide",
 )
 init_session_state()
@@ -97,10 +96,8 @@ if not sources:
 
 st.markdown("---")
 with SectionCard(
-    "1. Source alignment and join configuration",
-    description="Choose the shared keys and an explicit join mode - "
-    "REQ-COVERAGE-001 S4: join mode and any resulting coverage loss must "
-    "be diagnosable, never a silent default.",
+    "1. Join setup",
+    description="Choose shared keys and an explicit join mode so row loss and gaps can be reviewed.",
 ):
     all_columns = sorted(set(c for df in sources.values() for c in df.columns))
     c1, c2 = st.columns(2)
@@ -132,8 +129,7 @@ with SectionCard(
             else 0
         ),
         format_func=lambda m: m.capitalize(),
-        help="REQ-COVERAGE-001 S4: the join mode and any resulting row loss must "
-        "be an explicit, diagnosable choice, never a silent default.\n\n"
+        help="The join mode is an explicit choice. Review row loss and gaps before using the joined data.\n\n"
         + "\n\n".join(f"**{m.capitalize()}**: {h}" for m, h in JOIN_MODE_HELP.items()),
     )
 
@@ -179,9 +175,8 @@ if join_diagnostics:
         ]
         if lossy_sources:
             st.warning(
-                "This join dropped rows that existed in at least one source "
-                "(REQ-COVERAGE-001 S4: coverage loss must be explicit and "
-                "diagnosable before the joined data is used officially): "
+                "This join dropped rows that existed in at least one source. "
+                "Review the loss before using the joined data: "
                 + "; ".join(
                     f"{s['source_name']} lost {s['dropped_keys']} of "
                     f"{s['input_keys']} row(s)"
@@ -361,7 +356,7 @@ try:
         st.caption(
             "Every step above is stored with the project (pipeline_steps) "
             "and replayed in order whenever this page reruns or the "
-            "project is re-imported on Project Export & Recovery - it is "
+            "project is re-imported on Export & Recovery - it is "
             "never a one-off, throwaway edit."
         )
 

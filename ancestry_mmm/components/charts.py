@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from ancestry_mmm.utils import CHART_COLORS, THEME_COLORS
+from ancestry_mmm.utils import CHART_CATEGORICAL, CHART_COLORS, THEME_COLORS
 from ancestry_mmm.core.coverage import COVERAGE_STATES
 from ancestry_mmm.core.coverage_fabric import FABRIC_LABEL_COVERED, FabricCell
 
@@ -16,23 +16,23 @@ def _apply_chart_theme(fig: go.Figure) -> go.Figure:
 
     fig.update_layout(
         template="plotly_white",
-        paper_bgcolor=THEME_COLORS["card"],
-        plot_bgcolor=THEME_COLORS["card"],
-        font=dict(color=THEME_COLORS["foreground"]),
+        paper_bgcolor=THEME_COLORS["surface"],
+        plot_bgcolor=THEME_COLORS["surface"],
+        font=dict(color=THEME_COLORS["text_primary"]),
         hoverlabel=dict(
-            bgcolor=THEME_COLORS["card"],
-            bordercolor=THEME_COLORS["border"],
-            font=dict(color=THEME_COLORS["foreground"]),
+            bgcolor=THEME_COLORS["surface"],
+            bordercolor=THEME_COLORS["border_subtle"],
+            font=dict(color=THEME_COLORS["text_primary"]),
         ),
     )
     fig.update_xaxes(
         gridcolor=THEME_COLORS["grid"],
-        linecolor=THEME_COLORS["border"],
+        linecolor=THEME_COLORS["border_subtle"],
         zeroline=False,
     )
     fig.update_yaxes(
         gridcolor=THEME_COLORS["grid"],
-        linecolor=THEME_COLORS["border"],
+        linecolor=THEME_COLORS["border_subtle"],
         zeroline=False,
     )
     return fig
@@ -48,7 +48,7 @@ def create_time_series_chart(
     """Create a multi-line time series chart."""
     fig = go.Figure()
 
-    colors = list(CHART_COLORS.values())
+    colors = list(CHART_CATEGORICAL)
 
     for i, col in enumerate(y_cols):
         fig.add_trace(
@@ -85,7 +85,7 @@ def create_bar_chart_with_ci(
     """Create a bar chart with confidence intervals."""
     fig = go.Figure()
 
-    colors = list(CHART_COLORS.values())
+    colors = list(CHART_CATEGORICAL)
 
     for i, (cat, val, lower, upper) in enumerate(
         zip(categories, values, lower_ci, upper_ci)
@@ -128,9 +128,7 @@ def create_stacked_area_chart(
     """Create a stacked area chart for decomposition."""
     fig = go.Figure()
 
-    colors = [THEME_COLORS["foreground_muted"]] + list(
-        CHART_COLORS.values()
-    )  # Baseline + channels
+    colors = [THEME_COLORS["text_secondary"]] + list(CHART_CATEGORICAL)
 
     for i, col in enumerate(y_cols):
         fig.add_trace(
@@ -166,7 +164,7 @@ def create_pie_chart(
     hole: float = 0.4,
 ) -> go.Figure:
     """Create a donut/pie chart."""
-    colors = list(CHART_COLORS.values())
+    colors = list(CHART_CATEGORICAL)
 
     fig = go.Figure(
         data=[
@@ -437,10 +435,10 @@ def create_annotated_response_curve(
             align="left",
             text="<br>".join(annotation_lines),
             bgcolor="rgba(20, 28, 24, 0.72)",
-            bordercolor=THEME_COLORS["border"],
+            bordercolor=THEME_COLORS["border_subtle"],
             borderwidth=1,
             borderpad=6,
-            font=dict(size=11, color=THEME_COLORS["foreground"]),
+            font=dict(size=11, color=THEME_COLORS["text_primary"]),
         )
 
     fig.update_layout(
@@ -474,7 +472,7 @@ def create_waterfall_chart(
             measure=measure,
             x=categories,
             y=values,
-            connector={"line": {"color": THEME_COLORS["border"]}},
+            connector={"line": {"color": THEME_COLORS["border_subtle"]}},
             increasing={"marker": {"color": CHART_COLORS["success"]}},
             decreasing={"marker": {"color": CHART_COLORS["error"]}},
             totals={"marker": {"color": CHART_COLORS["primary"]}},
@@ -587,12 +585,12 @@ def create_coverage_fabric_chart(
                 y=[c.row.row_label for c in state_cells],
                 orientation="h",
                 marker=dict(
-                    color=color, line=dict(color=THEME_COLORS["border"], width=1)
+                    color=color, line=dict(color=THEME_COLORS["border_subtle"], width=1)
                 ),
                 text=[glyph] * len(state_cells),
                 textposition="inside",
                 insidetextanchor="middle",
-                textfont=dict(color=THEME_COLORS["foreground"]),
+                textfont=dict(color=THEME_COLORS["text_primary"]),
                 customdata=customdata,
                 hovertemplate=(
                     "<b>%{y}</b><br>"

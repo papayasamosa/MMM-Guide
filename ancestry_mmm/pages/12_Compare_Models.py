@@ -33,8 +33,7 @@ from ancestry_mmm.core.model_comparison import (
 )
 
 st.set_page_config(
-    page_title="Compare Models | Ancestry Family History & DNA MMM",
-    page_icon="🧬",
+    page_title="Model Comparison | Ancestry Family History & DNA MMM",
     layout="wide",
 )
 init_session_state()

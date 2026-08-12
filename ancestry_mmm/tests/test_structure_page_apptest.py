@@ -82,7 +82,7 @@ def test_quick_start_wizard_seeds_the_catalogue_without_requiring_it():  # noqa:
     assert at.session_state["structure_outcome_rows"] == []
 
     wizard_button = [
-        b for b in at.button if b.label == "Create standard FH GSA outcomes"
+        b for b in at.button if b.label == "Add standard Family History outcomes"
     ][0]
     wizard_button.click().run()
     assert not at.exception, f"wizard click raised: {at.exception}"

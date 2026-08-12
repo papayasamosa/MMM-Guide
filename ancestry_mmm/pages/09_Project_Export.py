@@ -135,7 +135,7 @@ _CONTAINS_LABELS = {
     "posterior": "Fitted posterior trace",
     "diagnostics": "Diagnostics scorecard / backtest results",
     "curves": "Legacy curve bank entries",
-    "official_curve_artifacts": "Official curve artifacts (REQ-CURVE-001)",
+    "official_curve_artifacts": "Official curve artifacts",
     "approval": "Model approval",
     "outcome_approvals": "Outcome approvals",
     "scenarios": "Saved scenarios",
@@ -390,8 +390,7 @@ def _resolve_official_curve_artifact_rows() -> list[dict]:
 
 
 st.set_page_config(
-    page_title="Project Export | Ancestry Family History & DNA MMM",
-    page_icon="🧬",
+    page_title="Export & Recovery | Ancestry Family History & DNA MMM",
     layout="wide",
 )
 init_session_state()
@@ -1180,7 +1179,7 @@ with SectionCard(
                 st.info(
                     f"{len(_changed_pathways)} media-outcome pathway(s) differ from this fit's captured "
                     "pathway metadata (informational only - the pathway catalogue does not yet drive "
-                    "fitting; PR F)."
+                    "fitting; this is informational only."
                 )
         if model_type_for_export == "shared":
             st.caption(

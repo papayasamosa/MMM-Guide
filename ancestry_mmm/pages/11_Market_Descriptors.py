@@ -41,8 +41,7 @@ from ancestry_mmm.core.market_config import (
 )
 
 st.set_page_config(
-    page_title="Market Descriptors | Ancestry Family History & DNA MMM",
-    page_icon="🧬",
+    page_title="Market Context | Ancestry Family History & DNA MMM",
     layout="wide",
 )
 init_session_state()
@@ -82,7 +81,7 @@ st.info(
     "information yet."
 )
 st.caption(
-    "See docs/market_hierarchy.md for how this context is used, and docs/decision_log.md for the fingerprint boundary."
+    "This context supports market interpretation and is included in the model identity when saved."
 )
 
 config_dict = get_state("market_spec_config")

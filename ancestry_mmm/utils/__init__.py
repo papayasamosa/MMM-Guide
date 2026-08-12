@@ -6,6 +6,7 @@ from .config import (
     DEFAULT_DNA_LAG_WEEKS,
     OPTIMIZATION_DEFAULTS,
     CHART_COLORS,
+    CHART_CATEGORICAL,
     THEME_COLORS,
     SUPPORTED_FILE_TYPES,
     CURVE_BANK_ROOT,
@@ -26,6 +27,7 @@ from .session_state import (
 )
 from .display import (
     DATE_COLUMN_FORMAT,
+    DISPLAY_LABELS,
     format_date,
     format_number,
     readable_label,
@@ -52,6 +54,7 @@ __all__ = [
     "DEFAULT_DNA_LAG_WEEKS",
     "OPTIMIZATION_DEFAULTS",
     "CHART_COLORS",
+    "CHART_CATEGORICAL",
     "THEME_COLORS",
     "SUPPORTED_FILE_TYPES",
     "CURVE_BANK_ROOT",
@@ -68,6 +71,7 @@ __all__ = [
     "get_workflow_progress",
     "is_step_complete",
     "DATE_COLUMN_FORMAT",
+    "DISPLAY_LABELS",
     "format_date",
     "format_number",
     "readable_label",

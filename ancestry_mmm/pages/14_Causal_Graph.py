@@ -245,7 +245,6 @@ def _graph_change_state(
 
 st.set_page_config(
     page_title="Causal Graph | Ancestry Family History & DNA MMM",
-    page_icon="🕸️",
     layout="wide",
 )
 init_session_state()
@@ -272,7 +271,7 @@ render_workspace_note(
     kind="governed",
 )
 st.caption(
-    "REQ-GRAPH-001: build the variable-level causal graph node by node and "
+    "Build the variable-level causal graph node by node and "
     "edge by edge. Every canvas capability also has a keyboard-accessible, "
     "non-drag equivalent below (the Add-node form and the structured "
     "property panel) - nothing here exists only as a mouse-drag gesture. "
@@ -371,9 +370,8 @@ with st.expander("Seed nodes from current Structure (optional)"):
     st.caption(
         f"Detected {len(seed_channels)} channel(s), {len(seed_outcome_ids)} "
         f"outcome(s), and {len(seedable_search_objects)} governed Search "
-        "object(s) from Structure: Segments & Markets / Channel & Media "
-        "Units. Adds one node per item, with the role REQ-SEARCH-001 maps "
-        "each Search object to - no edges are inferred or invented."
+        "object(s) from Model Structure / Media Mapping. Adds one node per "
+        "item using its governed Search role - no edges are inferred or invented."
     )
     if st.button(
         "Add these as nodes",

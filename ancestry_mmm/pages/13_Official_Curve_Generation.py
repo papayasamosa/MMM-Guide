@@ -263,8 +263,7 @@ def _build_cost_mapping_registry(
 
 
 st.set_page_config(
-    page_title="Official Curve Generation | Ancestry Family History & DNA MMM",
-    page_icon="🧬",
+    page_title="Planning Curves | Ancestry Family History & DNA MMM",
     layout="wide",
 )
 init_session_state()
@@ -417,7 +416,7 @@ with SectionCard(
     "1. Outcome and use",
     description=(
         "Only outcomes with a current, approved outcome approval covering "
-        "curve_publication can become official curves (REQ-CURVE-001)."
+        "curve_publication can become official curves."
     ),
 ):
     eligible: list[tuple[OutcomeApproval, object]] = []
@@ -508,8 +507,7 @@ cost_as_of_date_value = ""
 if curve_type == "monetary":
     st.caption(
         "Monetary curves require an approved, effective cost mapping for "
-        "every (market, channel) plus explicit currency/FX evidence "
-        "(REQ-CURVE-001)."
+        "every (market, channel) plus explicit currency/FX evidence."
     )
     st.markdown("**Governed cost mappings**")
     existing_registry = CostMappingRegistry.from_dict(get_state("media_cost_mappings"))
@@ -589,7 +587,7 @@ if curve_type == "monetary":
                 "Resolves which effective cost mapping applies for every "
                 "(market, channel) - distinct from the FX as-of date below. "
                 "Required whenever more than one effective mapping could "
-                "otherwise exist for the same cell (REQ-CURVE-001)."
+                "otherwise exist for the same cell."
             ),
         )
     )
@@ -628,7 +626,7 @@ st.markdown("### 3. Reference context per market")
 st.caption(
     "Every mode except 'specific_scenario' is derived directly from the "
     "prepared model frame's actual history for that market - never an "
-    "implicit zero or unstated default (REQ-CURVE-001). 'specific_scenario' "
+    "implicit zero or unstated default. 'specific_scenario' "
     "remains fully explicit by design. Either way, an analyst must review "
     "and explicitly confirm each market's context below before it can be "
     "used to generate - an unreviewed context, derived or not, can never be "
@@ -844,7 +842,7 @@ st.caption(
     "required for every channel below - generation itself needs it to know "
     "what unit spend_points are expressed in. Observed current/min/max "
     "support is always derived from the prepared model frame's actual "
-    "history (REQ-CURVE-001 forbids a self-declared observed range); only "
+    "history; self-declared observed ranges are not accepted. Only "
     "the forward-looking planning min/max remain an explicit analyst "
     "choice. The support range is optional per (market, channel): providing "
     "it marks that cell planning-support-eligible; an omitted range still "
@@ -1037,8 +1035,8 @@ for market in selected_markets:
 st.markdown("**Diagnostic spend axis**")
 st.caption(
     "Leave blank to derive each channel's axis from its own observed/"
-    "planning support range instead (a unit-specific axis per channel - "
-    "REQ-CURVE-001). A comma-separated list here overrides that and applies "
+    "planning support range instead (a unit-specific axis per channel). "
+    "A comma-separated list here overrides that and applies "
     "the same axis, in the same units, to every channel; every cell without "
     "a support range above then requires this override."
 )

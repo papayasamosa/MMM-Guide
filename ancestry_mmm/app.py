@@ -30,12 +30,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from ancestry_mmm.utils import init_session_state, get_state, clear_model_state
-from ancestry_mmm.utils.workflow import (
-    WORKFLOW_STEPS,
-    get_step,
-    home_workflow_lines,
-    nav_groups,
-)
+from ancestry_mmm.utils.workflow import WORKFLOW_STEPS, get_step, nav_groups
 from ancestry_mmm.components import (
     apply_theme,
     render_sidebar,
@@ -61,19 +56,18 @@ from ancestry_mmm.core.outcomes import (
 )
 
 _QUICK_LINKS = [
-    ("Data Upload", "pages/01_Data_Upload.py"),
-    ("Data Coverage", "pages/15_Data_Coverage.py"),
-    ("Diagnostics", "pages/06_Diagnostics.py"),
-    ("Results & Curve Bank", "pages/07_Results_Curve_Bank.py"),
+    ("Data Sources", "pages/01_Data_Upload.py"),
+    ("Coverage & Gaps", "pages/15_Data_Coverage.py"),
+    ("Model Diagnostics", "pages/06_Diagnostics.py"),
+    ("Results & Response Curves", "pages/07_Results_Curve_Bank.py"),
     ("Scenario Planner", "pages/08_Scenario_Planner.py"),
-    ("Project Export", "pages/09_Project_Export.py"),
+    ("Export & Recovery", "pages/09_Project_Export.py"),
 ]
 
 
 def setup_page_config():
     st.set_page_config(
         page_title="Ancestry | Family History & DNA MMM",
-        page_icon="🧬",
         layout="wide",
         initial_sidebar_state="expanded",
     )
@@ -130,7 +124,7 @@ def _command_targets() -> list:
         for step in WORKFLOW_STEPS
     ]
     if not get_state("data_loaded"):
-        commands.insert(0, {"label": "Load synthetic demo data", "action": "load_demo"})
+        commands.insert(0, {"label": "Load demo data", "action": "load_demo"})
     return commands
 
 
@@ -173,7 +167,7 @@ def _render_next_action() -> None:
             col_demo, col_upload = st.columns(2)
             with col_demo:
                 if st.button(
-                    "Load synthetic demo data",
+                    "Load demo data",
                     type="primary",
                     width="stretch",
                     key="home_load_demo",
@@ -191,13 +185,13 @@ def _render_next_action() -> None:
         if next_key is None:
             st.markdown(
                 "Every required workflow stage is ready. Review results in "
-                "**Results & Curve Bank**, plan a scenario, or export the "
+                "**Results & Response Curves**, plan a scenario, or export the "
                 "project bundle."
             )
             col_a, col_b = st.columns(2)
             with col_a:
                 if st.button(
-                    "Go to Results & Curve Bank",
+                    "Go to Results & Response Curves",
                     type="primary",
                     width="stretch",
                     key="home_go_results",
@@ -205,7 +199,7 @@ def _render_next_action() -> None:
                     st.switch_page("pages/07_Results_Curve_Bank.py")
             with col_b:
                 if st.button(
-                    "Go to Project Export", width="stretch", key="home_go_export"
+                    "Go to Export & Recovery", width="stretch", key="home_go_export"
                 ):
                     st.switch_page("pages/09_Project_Export.py")
             return
@@ -230,8 +224,8 @@ def _render_topology() -> None:
     do not count as required-stage completion.
     """
     with SectionCard(
-        "Workflow readiness",
-        description="Lifecycle state per workflow area, using the same page state as the sidebar and headers.",
+        "Workflow map",
+        description="Current stage and attention state across the analytical workflow.",
     ):
         groups = [g for g in nav_groups() if g["label"] != "OVERVIEW"]
         cols = st.columns(len(groups))
@@ -380,11 +374,9 @@ def main():
     with title_col:
         st.markdown(
             '<div class="mmm-home-identity">'
-            '<div class="mmm-home-eyebrow">ANCESTRY</div>'
             '<h1 class="mmm-home-product">Family History &amp; DNA MMM</h1>'
-            '<div class="mmm-home-description">Marketing mix modelling, validation, '
-            "response curves, and scenario planning for Ancestry.</div>"
-            '<div class="mmm-lineage-mark" aria-hidden="true"></div>'
+            '<div class="mmm-home-description">Marketing measurement and planning '
+            "across Family History and DNA.</div>"
             "</div>",
             unsafe_allow_html=True,
         )
@@ -401,9 +393,6 @@ def main():
     _render_lineage()
 
     _render_quick_links()
-
-    with st.expander("Full step-by-step workflow guide", expanded=False):
-        st.markdown("\n".join(home_workflow_lines()))
 
 
 if __name__ == "__main__":

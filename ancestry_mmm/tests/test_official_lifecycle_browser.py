@@ -218,7 +218,7 @@ def test_official_lifecycle_journey_in_browser(
     # some captions/labels are near-duplicates of a heading's text - both
     # trip Playwright's strict-mode "resolved to N elements" check on a
     # plain substring `get_by_text` match.
-    page.get_by_role("link", name="Project Export & Recovery").click()
+    page.get_by_role("link", name="Export & Recovery").click()
     expect(
         page.get_by_text("Upload a previously exported .zip", exact=True)
     ).to_be_visible(timeout=30_000)
@@ -270,12 +270,16 @@ def test_official_lifecycle_journey_in_browser(
     # real page, not only import pre-built ones - otherwise this required
     # browser job would still pass even if page 13's generate/save path were
     # broken, since it would never have been exercised in a real browser.
-    page.get_by_role("link", name="Official Curve Generation").click()
+    page.get_by_role("link", name="Planning Curves").click()
     page.get_by_text("Reference context - UK", exact=False).click()
     mode_select = page.get_by_role("combobox", name="Mode")
     mode_option = page.get_by_role("option", name="recent_average", exact=True)
     _click_until_visible(mode_select, mode_option)
-    mode_option.click()
+    # Selecting through the open combobox avoids racing the transient option
+    # node that Streamlit's BaseWeb select replaces while it commits the
+    # choice.
+    mode_select.press("ArrowDown")
+    mode_select.press("Enter")
     # Selecting the mode triggers a script rerun that recomputes the
     # confirmation checkbox's fingerprinted widget key (page 13's own
     # anti-stale-confirmation design: a changed context renders a *new*,
@@ -335,7 +339,7 @@ def test_official_lifecycle_journey_in_browser(
     generated_artifact_id = f"New-{date.today().isoformat()}"
 
     # --- Curve Bank: all three official curve artifacts are visible ------
-    page.get_by_role("link", name="Results & Curve Bank").click()
+    page.get_by_role("link", name="Results & Response Curves").click()
     expect(page.get_by_text("Official curve artifacts", exact=True)).to_be_visible(
         timeout=30_000
     )

@@ -35,7 +35,7 @@ class TestNextRecommendedAction:
         at = _run_at()
         assert not at.exception, f"page raised: {at.exception}"
         assert any("Next recommended action" in (m.value or "") for m in at.markdown)
-        assert any(b.label == "Load synthetic demo data" for b in at.button)
+        assert any(b.label == "Load demo data" for b in at.button)
         assert any(b.label == "Upload your own data" for b in at.button)
         # Synthetic label discipline (render_context_bar's own contract) -
         # never presented as though it were a real Ancestry upload.
@@ -45,9 +45,7 @@ class TestNextRecommendedAction:
 
     def test_loading_the_demo_populates_state_and_updates_the_next_action(self):
         at = _run_at()
-        demo_button = next(
-            b for b in at.button if b.label == "Load synthetic demo data"
-        )
+        demo_button = next(b for b in at.button if b.label == "Load demo data")
         demo_button.click().run()
         assert not at.exception, f"demo click raised: {at.exception}"
         assert at.session_state["data_loaded"] is True
@@ -58,16 +56,12 @@ class TestNextRecommendedAction:
         assert at.session_state["active_source_upload_version"] == {}
         # With data loaded but nothing transformed yet, the next
         # recommended step is Transform Pipeline.
-        assert any(
-            "Continue to Transform Pipeline" in (b.label or "") for b in at.button
-        )
+        assert any("Continue to Prepare Data" in (b.label or "") for b in at.button)
 
     def test_data_loaded_but_not_transformed_recommends_transform_pipeline(self):
         at = _run_at(data_loaded=True)
         assert not at.exception, f"page raised: {at.exception}"
-        assert any(
-            "Continue to Transform Pipeline" in (b.label or "") for b in at.button
-        )
+        assert any("Continue to Prepare Data" in (b.label or "") for b in at.button)
 
 
 class TestWorkflowReadinessStrip:
@@ -185,14 +179,16 @@ class TestQuickLinksAndWorkflowGuide:
         at = _run_at()
         assert not at.exception, f"page raised: {at.exception}"
         labels = {b.label for b in at.button}
-        assert "Data Upload" in labels
-        assert "Diagnostics" in labels
+        assert "Data Sources" in labels
+        assert "Model Diagnostics" in labels
         assert "Scenario Planner" in labels
 
-    def test_full_workflow_guide_is_collapsed_not_dominant(self):
+    def test_home_uses_compact_workflow_map_instead_of_tutorial_expander(self):
         at = _run_at()
         assert not at.exception, f"page raised: {at.exception}"
-        assert any("Full step-by-step workflow guide" in e.label for e in at.expander)
+        assert not any(
+            "Full step-by-step workflow guide" in e.label for e in at.expander
+        )
         # The old dominant flat numbered list must not appear as a bare
         # top-level "### Workflow" heading any more.
         assert not any((m.value or "").strip() == "### Workflow" for m in at.markdown)

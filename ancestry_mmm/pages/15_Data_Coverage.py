@@ -62,8 +62,7 @@ from ancestry_mmm.data import detect_column_types
 FREQUENCY_OPTIONS = ["daily", "weekly", "monthly", "quarterly", "irregular"]
 
 st.set_page_config(
-    page_title="Data Coverage | Ancestry Family History & DNA MMM",
-    page_icon="🧬",
+    page_title="Coverage & Gaps | Ancestry Family History & DNA MMM",
     layout="wide",
 )
 init_session_state()
@@ -108,7 +107,7 @@ if not _data_ready:
         target_key="transform_pipeline",
         what_for=(
             "Reviewing each governed variable's coverage and missingness "
-            "by market before defining model structure (REQ-COVERAGE-001)."
+            "by market before defining model structure."
         ),
         dependency="A joined dataset with a market column (Transform Pipeline).",
         next_action="Go to Transform Pipeline to join your sources and select a market column.",
@@ -117,7 +116,7 @@ if not _data_ready:
 
 st.markdown("---")
 st.caption(
-    "REQ-COVERAGE-001: every candidate model must expose a variable "
+    "Every candidate model must expose a variable "
     "coverage matrix before fitting. This page builds that matrix from the "
     "joined data and lets you review, and propose/approve treatments for, "
     "each variable's coverage before model preparation. It never classifies "
@@ -208,7 +207,7 @@ segment_col = None if segment_col_choice == "(none)" else segment_col_choice
 if variable_columns:
     st.markdown("#### Per-variable frequency, class and source")
     st.caption(
-        "REQ-COVERAGE-001 S4: variable class gates which frequency-"
+        "Variable class gates which frequency-"
         "conversion methods are eligible - never one default applied "
         "across classes. Source ID/version identify which governed upload "
         "(Data Upload page) this variable's values came from."
@@ -351,7 +350,7 @@ st.markdown("---")
 st.markdown("### 2. Coverage fabric")
 st.caption(
     "A time x variable x market visual surface built from the coverage "
-    "matrix above (REQ-COVERAGE-001 S2's canonical missingness-state "
+    "matrix above (the canonical missingness-state "
     "vocabulary). Selecting or filtering here never changes governance "
     "state - state classification and treatment approval remain the "
     "explicit controls in section 4 below."
@@ -459,7 +458,7 @@ blocking_issues = matrix.blocking_issues
 if blocking_issues:
     st.warning(
         "The following variables have unresolved coverage not yet "
-        "approved for official use (REQ-COVERAGE-001 S5):"
+        "approved for official use:"
     )
     st.markdown("\n".join(f"- {issue}" for issue in blocking_issues))
 else:
@@ -490,8 +489,8 @@ st.dataframe(pd.DataFrame(summary_rows), width="stretch", hide_index=True)
 
 st.markdown("#### Gap segment classification")
 st.caption(
-    "A gap is never inferred as anything beyond 'unknown' (REQ-COVERAGE-001 "
-    "S1/S2) - reclassify each one here to the state that actually applies "
+    "A gap is never inferred as anything beyond 'unknown' - reclassify each "
+    "one here to the state that actually applies "
     "(missing_expected, not_applicable, unavailable_source, suppressed, "
     "estimated, modelled, or a genuine structural observed_zero) before "
     "approving a treatment for it below. A structural-zero segment requires "
@@ -597,7 +596,7 @@ _treatment_section = SectionCard(
     "4. Propose and approve treatments",
     description=(
         "Unresolved unknown/missing_expected coverage never becomes official "
-        "fit input silently (REQ-COVERAGE-001 S5) - a variable stays "
+        "fit input silently - a variable stays "
         "exploratory until you approve a treatment for it here. "
         "'Approved for official use' requires an approved treatment, an "
         "approver and an approval date."

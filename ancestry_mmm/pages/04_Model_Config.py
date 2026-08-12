@@ -45,8 +45,7 @@ from ancestry_mmm.data import prepare_fh_modeling_frame
 import pandas as pd
 
 st.set_page_config(
-    page_title="Model Configuration | Ancestry Family History & DNA MMM",
-    page_icon="🧬",
+    page_title="Model Setup | Ancestry Family History & DNA MMM",
     layout="wide",
 )
 init_session_state()
@@ -201,9 +200,8 @@ with c1:
     )
 with c2:
     prior_config["active_cross_product_sigma"] = st.slider(
-        "Active cross-product strength prior - the DNA halo pathway's prior by default, kept tight "
-        "('smaller effect elsewhere'); PR G1 generalises this beyond DNA channels for any pathway "
-        "catalogue cell explicitly marked active_cross_product (core.pathways).",
+        "Active cross-product strength prior - kept tight by default because cross-product effects should "
+        "be smaller unless the pathway catalogue explicitly marks them active.",
         0.05,
         1.0,
         float(prior_config.get("active_cross_product_sigma", 0.25)),
@@ -220,7 +218,7 @@ with c2:
     )
     dna_lag_weeks = st.number_input(
         "DNA halo lag (weeks) - decision-time lag beyond adstock carryover, shared by every "
-        "active/exploratory cross-product cell (core.pathways.ResolvedPathwayMasks.cross_product_lag_weeks)",
+        "active or exploratory cross-product pathway cell",
         min_value=0,
         max_value=12,
         value=int(get_state("dna_lag_weeks", 4)),
@@ -240,7 +238,7 @@ st.markdown("#### Brand Search treatment mode")
 st.caption(
     "How each Brand Search channel's known ambiguity (some of its response is genuinely incremental, "
     "some is upper-funnel demand it just happens to capture last-click) is treated - four explicit "
-    "modes (core.brand_search), never a silent default assumption about which is 'true'. "
+    "modes), never a silent default assumption about which is 'true'. "
     "`direct_channel`/`demand_capture_mediator`/`experiment_calibrated_incremental` all fit as an "
     "ordinary primary_direct channel; `excluded` needs a matching `role=excluded` row for this "
     "channel on the Structure page's pathway catalogue to actually drop it from the fit - this table "
@@ -391,12 +389,12 @@ if dna_kit_outcomes:
     st.info(
         f"DNA outcomes mapped on Structure will be included in this fit: {', '.join(dna_kit_outcomes)}. "
         "DNA-targeted media gets full direct response on these outcomes, same as the FH DNA-cross-sell "
-        "outcome - see docs/dna_fh_causal_structure.md."
+        "outcome, separate from the cross-product halo pathway used for other outcomes."
     )
 else:
     st.caption(
         "No DNA outcomes mapped (or their columns aren't in the current data) - fitting Family "
-        "History segments only. Map DNA kit columns on Structure: Segments & Markets to include them."
+        "History segments only. Map DNA kit columns on Model Structure to include them."
     )
 if spec.dna_channels and not spec.fh_dna_cross_sell_outcome_id:
     st.warning(
@@ -413,7 +411,7 @@ _coverage_section = SectionCard(
 )
 _coverage_section.__enter__()
 st.caption(
-    "REQ-COVERAGE-001 S6: the current engine only validly fits a "
+    "The current engine only validly fits a "
     "rectangular market x channel matrix - every requested channel "
     "genuinely observed in every requested market. This never blocks "
     "preparing or fitting a model (an exploratory fit is always "
@@ -441,7 +439,7 @@ if _coverage_matrix is None:
     st.info(
         "No coverage matrix built yet for this project - every requested "
         "market/channel combination is therefore exploratory/unsupported "
-        "today (REQ-COVERAGE-001 S6). Build one on the Data Coverage page "
+        "today. Build one on the Coverage & Gaps page "
         "to see whether this configuration is within the engine's current "
         "rectangular capability before fitting."
     )

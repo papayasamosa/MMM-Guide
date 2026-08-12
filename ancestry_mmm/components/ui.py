@@ -43,31 +43,31 @@ def apply_theme() -> None:
     st.markdown(
         f"""
         <style>
-        .muted {{ color: {THEME_COLORS["foreground_muted"]}; }}
+        .muted {{ color: {THEME_COLORS["text_secondary"]}; }}
         #MainMenu {{ visibility: hidden; }}
         footer {{ visibility: hidden; }}
         [data-testid="stAlertContainer"]:has([data-testid="stAlertContentInfo"]) {{
-            background-color: #EAF4F7 !important;
-            border: 1px solid #B8DCE6 !important;
+            background-color: {THEME_COLORS["surface_info"]} !important;
+            border: 1px solid {THEME_COLORS["focus_ring"]} !important;
         }}
-        [data-testid="stAlertContentInfo"] {{ color: {THEME_COLORS["foreground"]} !important; }}
+        [data-testid="stAlertContentInfo"] {{ color: {THEME_COLORS["text_primary"]} !important; }}
         div.stButton > button[kind="primary"] {{
-            background: {THEME_COLORS["accent"]};
-            border-color: {THEME_COLORS["accent"]};
+            background: {THEME_COLORS["action_primary"]};
+            border-color: {THEME_COLORS["action_primary"]};
             color: #FFFFFF;
         }}
         div.stButton > button[kind="primary"]:hover {{
-            background: #0D6888;
-            border-color: #0D6888;
+            background: {THEME_COLORS["action_primary_hover"]};
+            border-color: {THEME_COLORS["action_primary_hover"]};
             color: #FFFFFF;
         }}
         div.stButton > button:focus-visible, input:focus-visible, textarea:focus-visible {{
-            outline: 3px solid #75B8CC !important;
+            outline: 3px solid {THEME_COLORS["focus_ring"]} !important;
             outline-offset: 2px;
         }}
         .stMarkdown hr {{
             border: 0;
-            border-top: 1px solid {THEME_COLORS["border"]};
+            border-top: 1px solid {THEME_COLORS["border_subtle"]};
             margin: 1.5rem 0;
         }}
         </style>
@@ -95,6 +95,33 @@ _READINESS_ICON = {
     "blocked": "🔒",
     "not_started": "⚪",
     "optional": "◽",
+}
+# Keep sidebar indicators compact and readable without emoji. Full status
+# labels remain in the page header and status badges; these symbols only flag
+# attention in the navigation.
+_READINESS_ICON.update(
+    {
+        "ready": "✓",
+        "blocked": "×",
+        "not_started": "—",
+        "optional": "·",
+    }
+)
+# Compact navigation cues; detailed labels remain in the header badges.
+_READINESS_ICON = {
+    "complete": ":material/check:",
+    "configured": ":material/settings:",
+    "saved": ":material/save:",
+    "validated": ":material/verified:",
+    "draft": ":material/edit:",
+    "approved": ":material/check_circle:",
+    "stale": ":material/warning:",
+    "review": ":material/help:",
+    "unavailable": ":material/error:",
+    "ready": ":material/check:",
+    "blocked": ":material/block:",
+    "not_started": ":material/radio_button_unchecked:",
+    "optional": ":material/more_horiz:",
 }
 _ATTENTION_STATUSES = {"stale", "review", "unavailable", "blocked"}
 
@@ -144,9 +171,9 @@ def render_sidebar(active_key: str) -> None:
     with st.sidebar:
         st.markdown(
             '<div class="mmm-brand-lockup">'
-            '<div class="mmm-brand-eyebrow">ANCESTRY</div>'
             '<div class="mmm-brand-product">Family History &amp; DNA MMM</div>'
-            '<div class="mmm-brand-function">Marketing measurement &amp; planning</div>'
+            '<div class="mmm-brand-function">Marketing Measurement &amp; Planning</div>'
+            '<div class="mmm-brand-context">Ancestry internal analytics</div>'
             "</div>",
             unsafe_allow_html=True,
         )
@@ -365,18 +392,18 @@ def SectionCard(title: str, *, description: Optional[str] = None):
 
 def InfoPanel(title: str, *, description: Optional[str] = None):
     """A bordered, info-tinted panel for neutral contextual information."""
-    return _panel("info", title, description=description, icon="ℹ")
+    return _panel("info", title, description=description, icon="i")
 
 
 def WarningPanel(title: str, *, description: Optional[str] = None):
     """A bordered, caution-tinted panel for a non-blocking warning."""
-    return _panel("caution", title, description=description, icon="⚠")
+    return _panel("caution", title, description=description, icon="!")
 
 
 def BlockingPanel(title: str, *, description: Optional[str] = None):
     """A bordered, negative-tinted panel for a condition that blocks the
     page's primary action until resolved."""
-    return _panel("negative", title, description=description, icon="⛔")
+    return _panel("negative", title, description=description, icon="×")
 
 
 def render_next_step(key: str, *, key_suffix: str = "") -> None:
@@ -481,7 +508,7 @@ def render_glossary(terms: Optional[Iterable[str]] = None) -> None:
     )
     if not entries:
         return
-    with st.expander("Relevant definitions", expanded=False):
+    with st.popover("Help for this workspace"):
         for term, definition in entries.items():
             st.markdown(f"**{term}** - {definition}")
 
@@ -536,6 +563,6 @@ def render_drift_status(
         )
     else:
         st.info(message)
-    with st.expander("Drift detail"):
+    with st.expander("See outcome changes"):
         st.dataframe(drift_df[["outcome_id", "drift_status"]], width="stretch")
     return has_blocking

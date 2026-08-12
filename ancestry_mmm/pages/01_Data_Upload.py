@@ -52,8 +52,7 @@ _DOMAIN_LABELS = {
 }
 
 st.set_page_config(
-    page_title="Data Upload | Ancestry Family History & DNA MMM",
-    page_icon="🧬",
+    page_title="Data Sources | Ancestry Family History & DNA MMM",
     layout="wide",
 )
 init_session_state()
@@ -84,7 +83,7 @@ render_page_header(
     "data_upload",
     description=(
         "Bring together Outcomes, Activity and Media, and Context and External "
-        "Factors. Start with the synthetic fixture or add governed source files."
+        "Factors. Start with demo data or add your source files."
     ),
     badges=_header_badges,
 )
@@ -110,7 +109,7 @@ with tab_demo:
         "Use the deterministic weekly UK / Australia / Canada fixture to explore the "
         "workflow end-to-end. **This is not real Ancestry data.**"
     )
-    if st.button("Load synthetic demo sources", type="primary"):
+    if st.button("Load demo data", type="primary"):
         frames, err = load_all_sample_sources()
         if err:
             st.error(err)
@@ -168,8 +167,8 @@ with tab_upload:
         [_DOMAIN_PLACEHOLDER, *LOGICAL_SOURCE_DOMAINS],
         format_func=lambda d: _DOMAIN_LABELS.get(d, d),
         help=(
-            "REQ-DATAIN-001: every source belongs to one governed logical "
-            "domain. Outcomes, Activity and Media, and Context and "
+            "Choose the logical domain for this source. Outcomes, Activity and "
+            "Media, and Context and "
             "External Factors are required for a complete project; "
             "Experiment Evidence is optional."
         ),
@@ -303,8 +302,8 @@ def _render_source_detail(name: str, df) -> None:
 if sources:
     st.markdown("## Sources by logical domain")
     st.caption(
-        "REQ-DATAIN-001: a logical domain is not a physical file - any "
-        "number of physical source files/versions may exist under one "
+        "A logical domain is not a physical file - any number of physical "
+        "source files or versions may exist under one "
         "domain. A source belongs to exactly one of the three required "
         "domains (Outcomes, Activity and Media, Context and External "
         "Factors) or the optional Experiment Evidence domain."
@@ -376,7 +375,7 @@ else:
         what_for=(
             "Loading source data under the three required logical domains "
             "(Outcomes; Activity and Media; Context and External Factors) "
-            "plus the optional Experiment Evidence domain, per REQ-DATAIN-001."
+            "plus the optional Experiment Evidence domain."
         ),
-        next_action="Load the synthetic demo data, or upload a file and choose its logical domain above.",
+        next_action="Load the demo data, or upload a file and choose its logical domain above.",
     )
