@@ -107,7 +107,7 @@ WORKFLOW_STEPS: List[Dict[str, Any]] = [
         "label": "Market Context",
         "path": "pages/11_Market_Descriptors.py",
         "title": "Market Context",
-        "purpose": "Record market context (currency, audience, penetration, maturity) used to explain market-level differences.",
+        "purpose": "Record market currency and optional descriptive context for reporting and future interpretation.",
         "steps": [
             "Review each market's data coverage card.",
             "Record currency and, optionally, market descriptors.",

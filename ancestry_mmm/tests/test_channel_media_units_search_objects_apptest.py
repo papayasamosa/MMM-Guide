@@ -52,7 +52,7 @@ def test_page_renders_with_no_search_objects_configured():
     df, spec = _base_state()
     at = _run_at(df, spec)
     assert not at.exception, f"page raised: {at.exception}"
-    assert any("governed Search objects" in (h.value or "") for h in at.markdown)
+    assert any("Search object governance" in (h.value or "") for h in at.markdown)
 
 
 def test_existing_search_object_loads_without_error():
