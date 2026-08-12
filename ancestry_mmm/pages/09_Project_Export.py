@@ -36,6 +36,7 @@ from ancestry_mmm.components import (
     render_page_header,
     render_drift_status,
     page_readiness,
+    render_workspace_note,
     SectionCard,
 )
 from ancestry_mmm.core.persistence import (
@@ -400,6 +401,11 @@ render_page_header(
     "export",
     task_prompt="Can this project be resumed from a durable bundle?",
     badges=[page_readiness("export")],
+)
+render_workspace_note(
+    "Durable bundle",
+    "Use the bundle for recovery and collaboration; Excel and report outputs are read-only exports and do not replace the system of record.",
+    kind="governed",
 )
 st.info(
     "**Streamlit session state is not durable storage.** It only drives in-session "
@@ -1141,7 +1147,6 @@ if uploaded_zip is not None and st.button("Import bundle"):
     finally:
         tmp_path.unlink(missing_ok=True)
 
-st.markdown("---")
 with SectionCard(
     "Excel export",
     description=(

@@ -27,6 +27,7 @@ from ancestry_mmm.components import (
     render_glossary,
     render_drift_status,
     render_status_badge,
+    render_workspace_note,
     SectionCard,
 )
 from ancestry_mmm.core.approval import (
@@ -117,6 +118,11 @@ render_sidebar("scenario_planner")
 render_page_header(
     "scenario_planner",
     task_prompt="What spend decision should be evaluated under current evidence?",
+)
+render_workspace_note(
+    "Plan versus result",
+    "Edit the spend plan below; outcomes, economics, and optimisation outputs are calculated from the approved fit and remain distinct from saved scenarios.",
+    kind="derived",
 )
 st.info(
     "**Steady-state monthly approximation.** Predicted outcomes hold spend constant within a "
@@ -270,7 +276,6 @@ if approval_dict is not None and current_identity is not None:
     except (ApprovalMismatchError, ValidationPolicyBlockedError) as exc:
         approval_invalid_reason = str(exc)
 
-st.markdown("---")
 if not approval_dict:
     st.warning(
         "This model hasn't been approved yet. Approve it on Diagnostics before planning scenarios - "
@@ -1697,7 +1702,6 @@ with tab_unconstrained:
             column_config=dataframe_column_config(unconstrained_plan_df),
         )
 
-st.markdown("---")
 with SectionCard(
     "Saved scenarios",
     description=(

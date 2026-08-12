@@ -30,6 +30,7 @@ from ancestry_mmm.components import (
     render_page_header,
     render_next_step,
     render_empty_state,
+    render_workspace_note,
     SectionCard,
     BlockingPanel,
 )
@@ -273,6 +274,11 @@ render_page_header(
     "official_curve_generation",
     task_prompt="Can this approved fit support a governed official curve artifact?",
 )
+render_workspace_note(
+    "Governed artifact",
+    "This workflow publishes evaluated official curves only when fit identity, outcome approval, evidence, and cost mappings satisfy their gates.",
+    kind="governed",
+)
 st.caption(
     "Produces a governed, evaluated official curve artifact through "
     "CurveService.create_official_artifact - distinct from the legacy curve "
@@ -296,7 +302,6 @@ if (
     or params is None
     or spec_dict is None
 ):
-    st.markdown("---")
     render_empty_state(
         "No trained model yet. Complete Model Training first.",
         button_label="Go to Model Training",
@@ -408,7 +413,6 @@ if not current_identity or not approval_dict:
 # ---------------------------------------------------------------------------
 # 1. Outcome and use selection
 # ---------------------------------------------------------------------------
-st.markdown("---")
 with SectionCard(
     "1. Outcome and use",
     description=(
