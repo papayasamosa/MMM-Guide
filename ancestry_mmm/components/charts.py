@@ -515,9 +515,11 @@ def create_waterfall_chart(
 # never silently drop a governed state for lack of a colour/glyph.
 STATE_VISUALS: Dict[str, Tuple[str, str, str]] = {
     FABRIC_LABEL_COVERED: ("Covered (no recorded gap)", "·", "#22301F"),
-    "observed_zero": ("Observed zero", "0", CHART_COLORS["chart_1"]),
+    # Coverage-state colours retain the existing no-blue/purple status rule;
+    # the light blue accent remains available for analytical chart series.
+    "observed_zero": ("Observed zero", "0", CHART_COLORS["success"]),
     "estimated": ("Estimated", "~", CHART_COLORS["chart_2"]),
-    "modelled": ("Modelled", "M", CHART_COLORS["chart_5"]),
+    "modelled": ("Modelled", "M", "#3B6C5E"),
     "not_applicable": ("Not applicable", "–", CHART_COLORS["chart_6"]),
     "suppressed": ("Suppressed", "S", "#7A6A57"),
     "unavailable_source": ("Unavailable source", "U", CHART_COLORS["chart_3"]),
