@@ -1146,3 +1146,31 @@ def test_saved_scenarios_are_labelled_as_persisted_state():
         "Saved scenarios - persisted state" in (m.value or "") for m in at.markdown
     )
     assert any("Persisted state:" in (c.value or "") for c in at.caption)
+
+
+def test_allocation_desk_separates_editable_proposed_and_saved_state():
+    """Phase 5: the planner presents an allocation-desk state model without
+    changing the existing evaluator or optimiser contracts."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_consistent_session_state(at, value_currency="GBP")
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    markdown = [m.value or "" for m in at.markdown]
+    captions = [c.value or "" for c in at.caption]
+    assert any("Allocation desk" in text for text in markdown)
+    assert any("Decision outputs" in text for text in markdown)
+    assert any("Planning assumptions & governance" in text for text in markdown)
+    assert any("Saved scenarios" in text for text in markdown)
+    assert any("current reference plan" in text for text in captions)
+    assert [tab.label for tab in at.tabs] == [
+        "Edited plan and calculated result",
+        "Constrained proposal",
+        "Unconstrained benchmark",
+    ]
+    metric_labels = {metric.label for metric in at.metric}
+    assert {
+        "Model approval",
+        "Plan state",
+        "Evaluation",
+        "Saved scenarios",
+    } <= metric_labels

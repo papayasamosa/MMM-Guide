@@ -1004,3 +1004,28 @@ def test_official_curve_generation_preview_plots_local_spend_not_reporting_curre
     assert chart["x"] != [0.0, 1.0, 2.0, 3.0, 4.0]
     assert "GBP" in chart["x_axis_title"]
     assert "USD" not in chart["x_axis_title"]
+
+
+def test_planning_curves_dashboard_surfaces_readiness_and_artifact_state():
+    """Phase 5: official curve generation opens with a planning dashboard
+    that distinguishes the fitted model from the artifact being configured
+    (implementation brief, Planning Curves)."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_governed_session_state(at)
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    markdown = [m.value or "" for m in at.markdown]
+    captions = [c.value or "" for c in at.caption]
+    assert any("Planning Curves dashboard" in text for text in markdown)
+    assert any("Outcome and use" in text for text in markdown)
+    assert any("Generate planning curve" in text for text in markdown)
+    assert any(
+        "Readiness blockers are shown before Generate" in text for text in captions
+    )
+    metric_labels = {metric.label for metric in at.metric}
+    assert {
+        "Fit state",
+        "Model type",
+        "Model approval",
+        "Artifact state",
+    } <= metric_labels

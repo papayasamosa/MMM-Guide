@@ -132,6 +132,29 @@ st.info(
     "(see core/predict.py) - not a placeholder description of a future capability."
 )
 
+_dashboard_trained = all(
+    get_state(key) is not None
+    for key in ("trace", "frame", "model_meta", "posterior_params")
+)
+with st.container(border=True):
+    st.markdown("### Allocation desk")
+    _desk_status = st.columns(4)
+    _desk_status[0].metric(
+        "Model approval", "Current" if get_state("model_approval") else "Needs review"
+    )
+    _desk_status[1].metric(
+        "Plan state", "Editable" if _dashboard_trained else "Blocked"
+    )
+    _desk_status[2].metric(
+        "Evaluation", "Steady-state monthly" if _dashboard_trained else "Unavailable"
+    )
+    _desk_status[3].metric("Saved scenarios", len(get_state("scenarios") or []))
+    st.caption(
+        "Decision flow: current reference plan → editable plan → calculated result → "
+        "constrained or benchmark proposal → explicitly saved scenario. Calculated and "
+        "optimiser outputs remain read-only until the plan is saved."
+    )
+
 frame = get_state("frame")
 meta = get_state("model_meta")
 params = get_state("posterior_params")
@@ -1127,8 +1150,17 @@ elif objective == "expected_value":
         )
 
 st.markdown("---")
+st.markdown("### Decision outputs")
+st.caption(
+    "Choose the output view that matches the decision: evaluate the edited plan, "
+    "run a constrained proposal, or inspect the unconstrained benchmark."
+)
 tab_manual, tab_constrained, tab_unconstrained = st.tabs(
-    ["Manual", "Constrained optimisation", "Unconstrained benchmark"]
+    [
+        "Edited plan and calculated result",
+        "Constrained proposal",
+        "Unconstrained benchmark",
+    ]
 )
 
 with tab_manual:

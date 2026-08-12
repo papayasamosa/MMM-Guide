@@ -134,6 +134,33 @@ render_workspace_note(
     kind="governed",
 )
 
+_dashboard_meta = get_state("model_meta")
+_dashboard_trained = all(
+    get_state(key) is not None
+    for key in ("trace", "frame", "model_meta", "posterior_params")
+)
+with st.container(border=True):
+    st.markdown("### Results dashboard")
+    _fit_label = (
+        "Market-specific" if get_state("model_type") == "market_specific" else "Shared"
+    )
+    _result_status = st.columns(4)
+    _result_status[0].metric(
+        "Fit state", "Trained" if _dashboard_trained else "Not ready"
+    )
+    _result_status[1].metric("Model type", _fit_label)
+    _result_status[2].metric(
+        "Markets in fit", len(_dashboard_meta.markets) if _dashboard_meta else "-"
+    )
+    _result_status[3].metric(
+        "Outcomes in fit", len(_dashboard_meta.outcome_ids) if _dashboard_meta else "-"
+    )
+    st.caption(
+        "Use the contribution summary for fitted attribution and the response curve library "
+        "for exploratory response evidence. Official curve artifacts remain a separate, "
+        "governance-checked view; monetary CPA/ROI appears only where its cost mapping is valid."
+    )
+
 
 def _render_curve_with_cpa(
     curve_df: pd.DataFrame,
@@ -659,6 +686,8 @@ render_drift_status(
 model_type = get_state("model_type", "shared")
 market_config = MarketSpecConfig.from_dict(get_state("market_spec_config"))
 
+st.markdown("### Contribution summary")
+
 if model_type == "market_specific":
     st.markdown("---")
     with st.spinner("Computing market-aware Shapley contributions..."):
@@ -666,7 +695,7 @@ if model_type == "market_specific":
             frame, meta, params, n_permutations=100
         )
 
-    st.markdown("### Total contribution by channel")
+    st.markdown("#### Total contribution by channel")
     fh_gsa_ids = fh_gsa_outcome_ids(meta)
     fh_signup_ids = fh_signup_outcome_ids(meta)
     dna_kit_outcomes_in_fit = dna_kit_sale_outcome_ids(meta)
@@ -697,7 +726,7 @@ if model_type == "market_specific":
     )
 
     st.markdown("---")
-    st.markdown("### Market x segment x channel detail")
+    st.markdown("#### Market x segment x channel detail")
     ms_seg_df = outcome_channel_market_summary(
         frame, meta, params, ms_contributions, ltv
     )
@@ -706,7 +735,7 @@ if model_type == "market_specific":
     )
 
     st.markdown("---")
-    st.markdown("### Contribution waterfall")
+    st.markdown("#### Contribution waterfall")
     c1, c2 = st.columns(2)
     waterfall_market = c1.selectbox("Market", meta.markets, key="ms_waterfall_market")
     waterfall_scope = c2.selectbox(
@@ -743,7 +772,12 @@ if model_type == "market_specific":
     )
 
     st.markdown("---")
-    st.markdown("### Market-specific channel curve viewer")
+    st.markdown("### Response curve library")
+    st.caption(
+        "Selected context: choose one market and channel below. This viewer is exploratory "
+        "evidence from the fitted model; it is not an official published curve artifact."
+    )
+    st.markdown("#### Market-specific channel response curve")
     st.caption(
         "Exploratory / legacy (point estimates): spend -> incremental response for one "
         "market and channel, per segment and overall (overall = sum of segment responses). "
@@ -820,11 +854,11 @@ if model_type == "market_specific":
         )
 
     st.markdown("---")
-    st.markdown("### Media units & inflation")
+    st.markdown("#### Media units & inflation")
     _render_media_unit_section(curve_df, market_config, viewer_market, viewer_channel)
 
     st.markdown("---")
-    st.markdown("### Cross-product pathway strength")
+    st.markdown("#### Cross-product pathway strength")
     st.caption(
         "Shared across markets in this model structure (only K and beta are market-specific). "
         "Estimated multiplier for each active/exploratory cross-product (outcome, channel) cell "
@@ -843,7 +877,7 @@ else:
             frame, meta, params, n_permutations=100
         )
 
-    st.markdown("### Total-FH contribution by channel")
+    st.markdown("#### Total-FH contribution by channel")
     fh_gsa_ids = fh_gsa_outcome_ids(meta)
     fh_signup_ids = fh_signup_outcome_ids(meta)
     dna_kit_outcomes_in_fit = dna_kit_sale_outcome_ids(meta)
@@ -867,12 +901,12 @@ else:
     )
 
     st.markdown("---")
-    st.markdown("### Outcome x channel detail")
+    st.markdown("#### Outcome x channel detail")
     seg_df = outcome_channel_summary(frame, meta, params, contributions, ltv)
     st.dataframe(seg_df, width="stretch", column_config=dataframe_column_config(seg_df))
 
     st.markdown("---")
-    st.markdown("### Contribution waterfall")
+    st.markdown("#### Contribution waterfall")
     waterfall_scope = st.selectbox("Scope", ["Total FH"] + meta.outcome_ids)
     outcome_id_arg = None if waterfall_scope == "Total FH" else waterfall_scope
     waterfall_df = contribution_waterfall(
@@ -888,7 +922,13 @@ else:
     )
 
     st.markdown("---")
-    st.markdown("### Channel curve viewer")
+    st.markdown("### Response curve library")
+    st.caption(
+        "Selected context: choose a channel and reference market below. This viewer is "
+        "exploratory evidence from the fitted model; official published curve artifacts "
+        "are shown separately below."
+    )
+    st.markdown("#### Channel response curve")
     st.caption(
         "Exploratory / legacy (point estimates): spend -> incremental response for one "
         "channel, per segment and overall (overall = sum of segment responses) - the same "
@@ -956,7 +996,7 @@ else:
         )
 
     st.markdown("---")
-    st.markdown("### Media units & inflation")
+    st.markdown("#### Media units & inflation")
     st.caption(
         "Cost-per-unit history is inherently market-specific, even though the curve above is shared "
         "across markets - choose a reference market to see its own cost data."
@@ -965,7 +1005,7 @@ else:
     _render_media_unit_section(curve_df, market_config, viewer_market, viewer_channel)
 
     st.markdown("---")
-    st.markdown("### Cross-product pathway strength")
+    st.markdown("#### Cross-product pathway strength")
     pathway_df = _pathway_strength_table(meta, params)
     st.dataframe(
         pathway_df, width="stretch", column_config=dataframe_column_config(pathway_df)
@@ -989,7 +1029,7 @@ else:
 # the viewer above still shows media-unit context for a chosen reference
 # market, it just isn't persisted to the curve bank for a shared curve.
 st.markdown("---")
-st.markdown("## Curve bank")
+st.markdown("## Curve bank snapshots")
 st.caption(FIELD_HELP["curve_bank"])
 st.caption(
     "Curve bank entries are **fitted parameter snapshots** (Hill/decay/beta "

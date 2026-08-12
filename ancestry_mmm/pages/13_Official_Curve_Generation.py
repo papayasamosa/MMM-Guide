@@ -287,6 +287,32 @@ st.caption(
     "evidence is required for the latter)."
 )
 
+_dashboard_trained = all(
+    get_state(key) is not None
+    for key in ("trace", "frame", "model_meta", "posterior_params")
+)
+with st.container(border=True):
+    st.markdown("### Planning Curves dashboard")
+    _curve_status = st.columns(4)
+    _curve_status[0].metric(
+        "Fit state", "Trained" if _dashboard_trained else "Not ready"
+    )
+    _curve_status[1].metric(
+        "Model type",
+        "Market-specific" if get_state("model_type") == "market_specific" else "Shared",
+    )
+    _curve_status[2].metric(
+        "Model approval", "Current" if get_state("model_approval") else "Needs review"
+    )
+    _curve_status[3].metric(
+        "Artifact state", "Configure and review" if _dashboard_trained else "Blocked"
+    )
+    st.caption(
+        "This page generates official, evaluated curve artifacts. Readiness blockers are "
+        "shown before Generate; the saved artifact carries its own outcome definition, "
+        "reference context, support, evidence, and authorization state."
+    )
+
 _CURVE_SERVICE = CurveService()
 
 trace = get_state("trace")
@@ -410,10 +436,10 @@ if not current_identity or not approval_dict:
     st.stop()
 
 # ---------------------------------------------------------------------------
-# 1. Outcome and use selection
+# Outcome and use selection
 # ---------------------------------------------------------------------------
 with SectionCard(
-    "1. Outcome and use",
+    "Outcome and use",
     description=(
         "Only outcomes with a current, approved outcome approval covering "
         "curve_publication can become official curves."
@@ -461,7 +487,7 @@ with SectionCard(
 # 2. Markets to include
 # ---------------------------------------------------------------------------
 st.markdown("---")
-st.markdown("### 2. Markets")
+st.markdown("### Markets")
 selected_markets = st.multiselect(
     "Markets to generate a curve for",
     meta.markets,
@@ -485,7 +511,7 @@ fourier_length = len(next(iter(params.gamma_fourier.values())))
 # 2b. Curve type, and, if monetary, governed cost mappings and currency/FX
 # ---------------------------------------------------------------------------
 st.markdown("---")
-st.markdown("### 2b. Curve type")
+st.markdown("### Curve representation")
 curve_type_label = st.radio(
     "Curve type",
     [
@@ -622,7 +648,7 @@ if curve_type == "monetary":
 # 3. Reference context per market
 # ---------------------------------------------------------------------------
 st.markdown("---")
-st.markdown("### 3. Reference context per market")
+st.markdown("### Reference context")
 st.caption(
     "Every mode except 'specific_scenario' is derived directly from the "
     "prepared model frame's actual history for that market - never an "
@@ -836,7 +862,7 @@ for market in selected_markets:
 #    planning-support-eligible).
 # ---------------------------------------------------------------------------
 st.markdown("---")
-st.markdown("### 4. Model-input support")
+st.markdown("### Support for planning")
 st.caption(
     "Model-input identity/unit metadata (column, unit, unit scale) is "
     "required for every channel below - generation itself needs it to know "
@@ -1059,7 +1085,7 @@ except ValueError:
 # 5. Posterior draw count
 # ---------------------------------------------------------------------------
 st.markdown("---")
-st.markdown("### 5. Posterior draw count")
+st.markdown("### Posterior draw plan")
 n_draws = st.slider(
     "Posterior draws to sample", 20, 200, 50, step=10, key="ocg_n_draws"
 )
@@ -1068,7 +1094,11 @@ n_draws = st.slider(
 # 6. Generate and persist
 # ---------------------------------------------------------------------------
 st.markdown("---")
-st.markdown("### 6. Generate and save")
+st.markdown("### Generate planning curve")
+st.caption(
+    "Review the readiness state below, then generate a governed artifact. The action "
+    "does not change the fitted model or invent a new response calculation."
+)
 artifact_id = st.text_input(
     "Artifact ID",
     value=f"{selected_outcome.outcome_id}-{date.today().isoformat()}",
@@ -1179,7 +1209,8 @@ if st.button(
     else:
         st.success(f"Saved official curve artifact `{result.artifact_id}`.")
 
-        # 7. Authorization and planning-support status
+        st.markdown("#### Resulting artifact")
+        # Authorization and planning-support status
         st.markdown("#### Authorization and planning-support status")
         try:
             authorization = _CURVE_SERVICE.authorize_use(
