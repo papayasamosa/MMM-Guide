@@ -326,6 +326,8 @@ class TestRenderPageHeader:
             "Which coverage treatment is ready to approve?" in (m.value or "")
             for m in at.markdown
         )
+        assert any("·" in (caption.value or "") for caption in at.caption)
+        assert not any("Â·" in (caption.value or "") for caption in at.caption)
         assert any("Ready" in (m.value or "") for m in at.markdown)
         assert any(b.label == "Primary go" for b in at.button)
         assert any(b.label == "Secondary go" for b in at.button)
