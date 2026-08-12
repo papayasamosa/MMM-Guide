@@ -45,16 +45,29 @@ def render_primary_concern(sentence: Optional[str]) -> None:
         st.warning(sentence)
 
 
+_MAX_COLS_PER_ROW = 4
+
+
 def render_domain_health_rail(rows: List[DomainHealth]) -> None:
     """One compact bordered card per evidence domain - not four equal
     st.metric cards. Each card names the domain, its status via the shared
-    badge vocabulary, and a one-line deterministic detail."""
+    badge vocabulary, and a one-line deterministic detail.
+
+    Wrapped into rows of at most ``_MAX_COLS_PER_ROW`` columns rather than
+    one ``st.columns(len(rows))`` call: st.columns never reflows on its
+    own, so seven equal-width columns in one row become unreadably cramped
+    (truncated labels) at narrower viewports (~1024px) even though nothing
+    actually overflows/scrolls. Multiple row-sized st.columns() calls give
+    every card a readable minimum width at any of the app's supported
+    resolutions."""
     if not rows:
         return
-    cols = st.columns(len(rows))
-    for col, row in zip(cols, rows):
-        with col:
-            with st.container(border=True):
-                st.caption(row.domain)
-                render_status_badge(row.status)
-                st.caption(row.detail)
+    for row_start in range(0, len(rows), _MAX_COLS_PER_ROW):
+        row_chunk = rows[row_start : row_start + _MAX_COLS_PER_ROW]
+        cols = st.columns(len(row_chunk))
+        for col, row in zip(cols, row_chunk):
+            with col:
+                with st.container(border=True):
+                    st.caption(row.domain)
+                    render_status_badge(row.status)
+                    st.caption(row.detail)

@@ -284,3 +284,43 @@ def test_top_line_never_claims_approved_without_a_real_approval():
     assert at.session_state["model_approval"] is None
     text = _all_markdown_text(at)
     assert "Approved for planning" not in text
+
+
+def test_degenerate_convergence_evidence_never_crashes_the_page():
+    """A trace missing the 'mu' variable ArviZ's R-hat/ESS check needs
+    (e.g. a structurally-valid-but-never-sampled synthetic trace, the same
+    shape ancestry_mmm.tests.support.lifecycle_fixture.build_trace produces
+    for the official-lifecycle Playwright journey) makes
+    DiagnosticsService's own convergence check fail closed to NaN, by
+    design - REQ-VAL-001's 'missing evidence is never encoded as zero'.
+    The page must render that NaN safely (top-line, domain rail, AND the
+    'Full diagnostic detail' Convergence tab's st.metric) rather than
+    crashing - round(nan) raises ValueError, which is exactly what a prior
+    version of this page's Convergence tab did before this regression test
+    was added."""
+    trace, frame, meta = _trace_frame_meta()
+    del trace.posterior["mu"]
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.session_state["trace"] = trace
+    at.session_state["frame"] = frame
+    at.session_state["model_meta"] = meta
+    at.session_state["model_spec"] = ModelSpec(
+        date_col="date",
+        market_col="market",
+        markets=["UK"],
+        segment_outcomes={"New": "fh_new_gsa"},
+        channels=["TV"],
+    ).to_dict()
+    at.session_state["posterior_params"] = {"beta": [[1.0]]}
+    at.session_state["model_run_id"] = "run-test-nan-1"
+    at.run()
+    compute_button = next(b for b in at.button if b.label == "Compute scorecard")
+    at = compute_button.click().run()
+    assert not at.exception, (
+        f"page raised on a degenerate/NaN convergence trace: {at.exception}"
+    )
+    assert not any(
+        "cannot convert float NaN to integer" in (e.value or "") for e in at.error
+    )
+    text = _all_markdown_text(at)
+    assert "Fail" in text  # converged=False for a failed convergence check
