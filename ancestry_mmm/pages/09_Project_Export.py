@@ -1,8 +1,7 @@
 """Page 9: project export/import bundle (Parquet + JSON + NetCDF) and Excel export for portability and recovery.
 
-Phase 7 of the Streamlit UI/UX overhaul (docs/decision_log.md) applies the
-shared shell (SectionCard, page-header badges, a "Project status"
-summary) to this page - the last one not yet migrated. Presentation only:
+Phase 6 of the dashboard UX/UI brief applies the shared shell and an
+Export & Recovery dashboard to this page. Presentation only:
 every value shown is read from existing session-state getters or from the
 bundle's own manifest.json ("contains" dict, written by
 core.persistence.export_project - never recomputed here), never invented or
@@ -154,6 +153,26 @@ _CONTAINS_LABELS = {
     "variable_coverage_matrices": "Variable coverage matrix versions",
     "join_config": "Join configuration",
 }
+
+_CHECKPOINT_LABELS = {
+    "uploaded": "Sources uploaded",
+    "transformed": "Data prepared",
+    "configured": "Model configured",
+    "pre_fit": "Ready to fit",
+    "fitted": "Model fitted",
+    "approved": "Model approved",
+    "curves": "Curves saved",
+    "official_curves": "Planning curves saved",
+    "scenarios": "Scenarios saved",
+    "unknown": "Not recorded",
+}
+
+
+def _display_checkpoint(checkpoint: object) -> str:
+    """Translate persisted checkpoint values into analyst-facing copy."""
+
+    value = str(checkpoint or "unknown")
+    return _CHECKPOINT_LABELS.get(value, value.replace("_", " ").title())
 
 
 def _render_contains_checklist(contains: dict) -> None:
@@ -406,15 +425,6 @@ render_workspace_note(
     "Use the bundle for recovery and collaboration; Excel and report outputs are read-only exports and do not replace the system of record.",
     kind="governed",
 )
-st.info(
-    "**Streamlit session state is not durable storage.** It only drives in-session "
-    "interactivity and is lost on refresh or a new browser session. This project bundle "
-    "(Parquet + JSON + NetCDF, all open formats) is the actual system of record: pause here, "
-    "resume later, share with another analyst, or replay the same pipeline on refreshed "
-    "weekly data. The Excel summary and project report further down this page are one-way, "
-    "read-only exports for sharing and analysis - only the bundle round-trips back into a "
-    "working, resumable project."
-)
 
 # One read of the curve bank / official curve artifact store per page render,
 # reused by the "Project status" summary below and by the Excel/report
@@ -432,17 +442,48 @@ _authorized_artifact_count = sum(
 _last_bundle_build = get_state("export_last_bundle_summary")
 _last_bundle_import = get_state("export_last_import_summary")
 
+_bundle_activity = (
+    "Built + restored"
+    if _last_bundle_build and _last_bundle_import
+    else "Built this session"
+    if _last_bundle_build
+    else "Restored this session"
+    if _last_bundle_import
+    else "Not started"
+)
+_latest_checkpoint = _last_bundle_import or _last_bundle_build or {}
+_secondary_outputs = (
+    "Excel + report" if get_state("trace") is not None else "Report only"
+)
+
+st.markdown("### Export & Recovery dashboard")
+st.caption(
+    "Keep the durable project bundle as the recovery object. Use the one-way Excel and report exports for sharing or review."
+)
+_dashboard_col1, _dashboard_col2 = st.columns(2)
+with _dashboard_col1:
+    st.metric("Primary recovery object", "Durable bundle")
+with _dashboard_col2:
+    st.metric("Bundle activity", _bundle_activity)
+_dashboard_col3, _dashboard_col4 = st.columns(2)
+with _dashboard_col3:
+    st.metric(
+        "Latest checkpoint",
+        _display_checkpoint(_latest_checkpoint.get("checkpoint")),
+    )
+with _dashboard_col4:
+    st.metric("Secondary outputs", _secondary_outputs)
+
 with SectionCard(
-    "Project status",
+    "Project snapshot",
     description=(
-        "What this project currently has, and what this browser session has done with the "
-        "system-of-record bundle. Read from session state and the on-disk curve bank / "
-        "official curve artifact store already used below - not a new signal."
+        "A compact view of the working project and this session's bundle activity. The durable "
+        "bundle remains the source of truth."
     ),
 ):
     _status_col1, _status_col2 = st.columns(2)
     with _status_col1:
-        st.markdown("**Current project (session state)**")
+        st.markdown("**Current project**")
         st.caption(f"Project name: {get_state('project_name', 'ancestry-fh-uk')}")
         st.caption(
             f"Data sources loaded: {len(get_state('raw_sources') or {})} "
@@ -453,8 +494,8 @@ with SectionCard(
         )
         _model_run_id = get_state("model_run_id")
         st.caption(
-            "Model: "
-            + (f"run `{_model_run_id}`" if _model_run_id else "not yet trained")
+            "Fitted model: "
+            + ("available" if _model_run_id else "not yet available")
             + (", approved" if get_state("model_approval") else ", not approved")
         )
         st.caption(
@@ -481,7 +522,7 @@ with SectionCard(
         if _last_bundle_build:
             st.caption(
                 f"Last bundle built this session: `{_last_bundle_build['project_name']}` "
-                f"at checkpoint '{_last_bundle_build['checkpoint']}', "
+                f"at {_display_checkpoint(_last_bundle_build['checkpoint'])}, "
                 f"{_last_bundle_build['built_at']} UTC."
             )
         else:
@@ -494,22 +535,26 @@ with SectionCard(
                     if _last_bundle_import.get("officially_resumable")
                     else ""
                 )
-                + f" at checkpoint '{_last_bundle_import.get('checkpoint')}', "
+                + f" at {_display_checkpoint(_last_bundle_import.get('checkpoint'))}, "
                 f"{_last_bundle_import['imported_at']} UTC."
             )
         else:
             st.caption("No bundle has been imported yet this session.")
         st.caption(
-            "This activity log is itself session-only - it resets on refresh or a new "
-            "session, same as everything else on this page except the bundle file itself."
+            "This activity log is session-only and resets on refresh. The bundle file is the durable recovery object."
+        )
+
+    with st.expander("Technical details", expanded=False):
+        if _model_run_id:
+            st.caption(f"Model run ID: `{_model_run_id}`")
+        st.caption(
+            "Session state is not durable storage; build or restore a project bundle before leaving this session."
         )
 
 st.markdown("---")
-st.markdown("### Export project bundle")
+st.markdown("### Build durable project bundle")
 st.caption(
-    "The system of record. Produces a single portable .zip (Parquet + JSON + NetCDF, all "
-    "open formats) that fully round-trips back into a working project via **Import project "
-    "bundle** below."
+    "The primary recovery object: one portable .zip that can be restored into a working project."
 )
 project_name = get_state("project_name", "ancestry-fh-uk")
 project_notes = st.text_area(
@@ -656,7 +701,7 @@ if st.button("Build export bundle", type="primary"):
                 else None
             ),
         )
-    st.success(f"Project bundle built: {output_path}")
+    st.success("Durable project bundle built and ready to download.")
     # Read back this bundle's own manifest.json (written by
     # core.persistence.export_project - see the module docstring) rather
     # than re-deriving a second "what's in it" notion here, so the
@@ -683,12 +728,9 @@ if st.button("Build export bundle", type="primary"):
         )
 
 st.markdown("---")
-st.markdown("### Import project bundle")
+st.markdown("### Restore from a project bundle")
 st.caption(
-    "Restore a previously exported bundle to resume work - the same recovery path a "
-    "different analyst, a new session, or a later date all use. Every restored artefact is "
-    "re-verified against its own governance chain below (readiness, approval, fingerprints), "
-    "never trusted blindly."
+    "Restore a bundle from another analyst, session, or date. Restored artefacts are re-verified before official use."
 )
 uploaded_zip = st.file_uploader("Upload a previously exported .zip", type=["zip"])
 if uploaded_zip is not None and st.button("Import bundle"):
@@ -965,7 +1007,7 @@ if uploaded_zip is not None and st.button("Import bundle"):
                 if artifact_load_result.loaded:
                     st.success(
                         f"Restored {len(artifact_load_result.loaded)} official "
-                        f"curve artifact(s) to {restored_artifact_dir}."
+                        "curve artifact(s) and verified their stored integrity."
                     )
         if imported["market_spec_config"] is None:
             st.caption(
@@ -993,8 +1035,8 @@ if uploaded_zip is not None and st.button("Import bundle"):
         resume_audit = audit_project_resumability(imported)
         if resume_audit["resumable"]:
             st.success(
-                f"Resumability audit passed at checkpoint "
-                f"'{resume_audit['checkpoint']}'."
+                "Resumability audit passed at "
+                f"{_display_checkpoint(resume_audit['checkpoint'])}."
             )
         else:
             st.warning(
@@ -1094,8 +1136,8 @@ if uploaded_zip is not None and st.button("Import bundle"):
         )
         if officially_resumable_and_verified:
             st.success(
-                f"This bundle is officially resumable at checkpoint "
-                f"'{resume_audit['checkpoint']}'."
+                "This bundle is officially resumable at "
+                f"{_display_checkpoint(resume_audit['checkpoint'])}."
             )
         elif resume_audit["resumable"]:
             st.warning(
@@ -1147,7 +1189,7 @@ if uploaded_zip is not None and st.button("Import bundle"):
         tmp_path.unlink(missing_ok=True)
 
 with SectionCard(
-    "Excel export",
+    "Secondary: Excel summary",
     description=(
         "A working export for spreadsheet analysis - not the system of record. Re-importing "
         "the project bundle above is what fully restores a project; this file is one-way."
@@ -1280,7 +1322,7 @@ with SectionCard(
 
 st.markdown("---")
 with SectionCard(
-    "Project report",
+    "Secondary: Project report",
     description=(
         "A single reproducible document - objective, data, model, diagnostics, curve bank, "
         "scenarios, known limitations, and a pointer to the decision log - built from this "
