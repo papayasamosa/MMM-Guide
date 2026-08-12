@@ -18,6 +18,30 @@ import streamlit as st
 # token works either way.
 DATE_COLUMN_FORMAT = "D MMM YY"
 
+# Presentation-only labels for governed internal values. Stored keys remain
+# unchanged for persistence, joins, and validation; this map only controls
+# what an analyst reads in the dashboard.
+DISPLAY_LABELS = {
+    "market_specific": "Market-specific, partially pooled",
+    "direct_channel": "Direct channel",
+    "demand_capture_mediator": "Demand capture mediator",
+    "experiment_calibrated_incremental": "Experiment-calibrated incrementality",
+    "drop_rows": "Drop rows",
+    "ffill": "Forward fill",
+    "flow_count": "Flow / count",
+    "model_input": "Model-input curve",
+    "monetary": "Monetary curve",
+    "specific_scenario": "Specific scenario",
+    "historical_diagnostic_only": "Historical diagnostic only",
+    "planned_decision": "Planned decision",
+    "exogenous_forecastable_control": "Exogenous forecastable control",
+    "cost_translation_assumption": "Cost / translation assumption",
+    "endogenous_funnel_state": "Endogenous funnel state",
+    "latent_baseline_state": "Latent baseline state",
+    "fixed_business_assumption": "Fixed business assumption",
+    "not_used_in_planning": "Not used in planning",
+}
+
 
 def format_date(value: Any) -> str:
     """Format a date-like value for inline display, e.g. `2 Jan 23`.
@@ -74,6 +98,8 @@ def readable_label(name: Any) -> str:
     """
     if not isinstance(name, str):
         return name
+    if name in DISPLAY_LABELS:
+        return DISPLAY_LABELS[name]
     return name.replace("_", " ")
 
 
@@ -123,6 +149,7 @@ OPERATION_LABELS = {
     "lag_variable": "Lag variable",
     "fill_missing": "Fill missing",
     "drop_columns": "Drop columns",
+    "drop_rows": "Drop rows",
     "event_flag": "Event flag",
 }
 

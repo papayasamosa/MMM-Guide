@@ -76,37 +76,50 @@ OPTIMIZATION_DEFAULTS = {
     "optimization_method": "marginal_roi",
 }
 
-# Chart colours for the light analytical workbench. Brand blue/green are used
-# sparingly; semantic success/warning/error remain distinct from brand identity.
+# Chart colours for the internal analytical workbench. These are deliberately
+# original to the product rather than copied from the public Ancestry site.
 CHART_COLORS = {
-    "primary": "#117FA6",
-    "chart_1": "#117FA6",  # Ancestry-inspired blue
-    "chart_2": "#6BA410",  # Brand-inspired green
-    "chart_3": "#A66A00",  # Amber
-    "chart_4": "#B85C38",  # Terracotta
-    "chart_5": "#6D5A9E",  # Restrained violet
-    "chart_6": "#5F6B65",  # Neutral slate
-    "success": "#287A43",
-    "warning": "#A66A00",
-    "error": "#B42318",
-    "info": "#117FA6",
+    "primary": "#2D6F7A",
+    "success": "#2B7A53",
+    "warning": "#9A6700",
+    "error": "#B13B32",
+    "info": "#2D6F7A",
 }
 
-# Light, warm analytical theme colours - kept in sync with
-# .streamlit/config.toml. Brand identity and semantic status intentionally
-# use separate tokens.
+CHART_CATEGORICAL = (
+    "#2D6F7A",
+    "#667A52",
+    "#92765D",
+    "#7A6F91",
+    "#B06A4B",
+    "#5A6970",
+)
+
+# Role-based analytical theme colours - kept in sync with
+# .streamlit/config.toml. The names describe how a colour is used, so page
+# presentation does not need to know whether a surface is "brand" or a
+# particular public-site campaign colour.
 THEME_COLORS = {
-    "background": "#F6F3F0",
-    "background_secondary": "#FFFFFF",
-    "card": "#FFFFFF",
-    "foreground": "#202923",
-    "foreground_muted": "#5F6B65",
-    "border": "#D8D4CE",
-    "accent": "#117FA6",
-    # Darkened for readable small text; chart accents retain the lighter green.
-    "brand_accent": "#4E7D1A",
-    "selected": "#E7F2F5",
-    "grid": "#DDD9D3",
+    "canvas": "#F4F1EC",
+    "surface": "#FFFFFF",
+    "surface_subtle": "#F8F7F4",
+    "surface_selected": "#E8F0F2",
+    "surface_info": "#EDF5F6",
+    "surface_warning": "#FBF4E6",
+    "surface_error": "#FBECEA",
+    "text_primary": "#202725",
+    "text_secondary": "#59635F",
+    "border_subtle": "#D9D6CF",
+    "border_strong": "#B8B9B2",
+    "action_primary": "#2D6F7A",
+    "action_primary_hover": "#225762",
+    "context_accent": "#667A52",
+    "success": "#2B7A53",
+    "warning": "#9A6700",
+    "error": "#B13B32",
+    "info": "#2D6F7A",
+    "grid": "#E2DFD9",
+    "focus_ring": "#6AABB5",
 }
 
 # Supported file formats

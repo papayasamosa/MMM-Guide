@@ -106,8 +106,7 @@ MODEL_TYPE_LABEL = {
 }
 
 st.set_page_config(
-    page_title="Diagnostics | Ancestry Family History & DNA MMM",
-    page_icon="🧬",
+    page_title="Model Diagnostics | Ancestry Family History & DNA MMM",
     layout="wide",
 )
 init_session_state()
@@ -440,7 +439,7 @@ if scorecard:
 
         st.markdown("#### Error metrics & residual temporal structure")
         st.caption(
-            "REQ-VAL-001: MAE/RMSE (magnitude), sMAPE/WAPE (percentage, "
+            "Error metrics: MAE/RMSE (magnitude), sMAPE/WAPE (percentage, "
             "volume-weighted) and bias (systematic over/under-prediction) "
             "alongside R-squared/MAPE above - plus lag-1 autocorrelation and "
             "the Durbin-Watson statistic on the residuals, evidence of "
@@ -511,7 +510,7 @@ if scorecard:
             "Whether this fit's channel coefficients are trustworthy enough to plan against at all - "
             "independent of convergence, in-sample fit or PPC coverage above, since a model can score "
             "well on all three while still having two channels whose effects the data can't tell apart. "
-            "core.identification_diagnostics - a leave-one-channel-out refit sensitivity check is not run "
+            "A leave-one-channel-out refit sensitivity check is not run "
             "here (it needs a full model refit per channel, too slow for an interactive page); the three "
             "signals below need no refit."
         )
@@ -708,7 +707,7 @@ if _capability_result is not None and not _capability_result.supported:
     st.info(
         "This fit's market/channel combination goes beyond what the "
         "engine can validly support today per the governed coverage "
-        "matrix (REQ-COVERAGE-001 S6). Exploratory review remains "
+        "matrix. Exploratory review remains "
         "available; whether this blocks policy-backed approval depends "
         "on whether the active validation policy includes the "
         "market_channel_capability gate:\n\n"
@@ -1000,7 +999,7 @@ def _rebuild_fit_time_model():
 st.markdown("---")
 st.markdown("### Prior predictive check")
 st.caption(
-    "REQ-VAL-001: samples from this model's declared PRIORS - never its "
+    "Prior predictive sampling uses this model's declared priors - never its "
     "posterior, never fitted (no MCMC, no trace) - and summarises the "
     "outcome-scale implication per market x outcome_id before any fitting. "
     "This is evidence about what the priors imply, not a measure of "
@@ -1086,7 +1085,7 @@ elif pp_section is not None and pp_section.status == "failed":
 st.markdown("---")
 st.markdown("### Predictive density (PSIS-LOO / WAIC)")
 st.caption(
-    "REQ-VAL-001: pointwise predictive-density evidence computed post-hoc "
+    "Predictive-density evidence is computed post-hoc "
     "against this fit's actual posterior trace (pm.compute_log_likelihood, "
     "then ArviZ PSIS-LOO/WAIC) - no refit, no MCMC re-run, and the trace is "
     "never modified. Rebuilds the exact fit-time model structure (same as "

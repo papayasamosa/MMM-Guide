@@ -1,9 +1,8 @@
-"""Shared design tokens for the light Ancestry analytical workbench.
+"""Shared design tokens for the Family History & DNA MMM workbench.
 
-The palette is an analytical adaptation of the current Ancestry UK visual
-direction: warm neutral canvas, white work surfaces, blue interaction, and a
-restrained green brand accent. Brand identity is kept separate from semantic
-success/warning/error colours.
+The palette is an original analytical system: warm enough to feel considered,
+neutral enough for dense tables and charts, and explicit about the difference
+between interaction, context, and semantic status colours.
 
 Presentation-only: no analytical, model, or governance behaviour lives here,
 and nothing here is imported by ``ancestry_mmm.core``.
@@ -27,27 +26,27 @@ RADIUS = {
 }
 
 SURFACE = {
-    "base": THEME_COLORS["background"],
-    "raised": THEME_COLORS["background_secondary"],
-    "card": THEME_COLORS["card"],
-    "border": THEME_COLORS["border"],
-    "border_strong": "#B8B2A9",
+    "base": THEME_COLORS["canvas"],
+    "raised": THEME_COLORS["surface_subtle"],
+    "card": THEME_COLORS["surface"],
+    "border": THEME_COLORS["border_subtle"],
+    "border_strong": THEME_COLORS["border_strong"],
 }
 
 TEXT = {
-    "primary": THEME_COLORS["foreground"],
-    "muted": THEME_COLORS["foreground_muted"],
-    "accent": THEME_COLORS["accent"],
-    "brand": THEME_COLORS["brand_accent"],
+    "primary": THEME_COLORS["text_primary"],
+    "muted": THEME_COLORS["text_secondary"],
+    "accent": THEME_COLORS["action_primary"],
+    "context": THEME_COLORS["context_accent"],
 }
 
-# Semantic status colours are deliberately separate from the brand green.
+# Semantic status colours are deliberately separate from interaction/context.
 STATUS_COLOR = {
     "neutral": TEXT["muted"],
-    "positive": "#287A43",
-    "caution": "#A66A00",
-    "negative": "#B42318",
-    "info": THEME_COLORS["accent"],
+    "positive": THEME_COLORS["success"],
+    "caution": THEME_COLORS["warning"],
+    "negative": THEME_COLORS["error"],
+    "info": THEME_COLORS["info"],
 }
 
 
@@ -62,8 +61,8 @@ def shell_css() -> str:
         --mmm-border: {SURFACE["border"]};
         --mmm-text: {TEXT["primary"]};
         --mmm-muted: {TEXT["muted"]};
-        --mmm-blue: {TEXT["accent"]};
-        --mmm-green: {TEXT["brand"]};
+        --mmm-action: {TEXT["accent"]};
+        --mmm-context-accent: {TEXT["context"]};
     }}
     [data-testid="stAppViewContainer"] {{
         background: {SURFACE["base"]};
@@ -88,26 +87,24 @@ def shell_css() -> str:
         border-bottom: 1px solid {SURFACE["border"]};
         margin-bottom: 0.85rem;
     }}
-    .mmm-brand-eyebrow, .mmm-home-eyebrow {{
-        color: {TEXT["brand"]};
-        font-size: 0.7rem;
-        font-weight: 750;
-        letter-spacing: 0.16em;
-        line-height: 1.2;
-        text-transform: uppercase;
-    }}
     .mmm-brand-product {{
         color: {TEXT["primary"]};
-        font-size: 1.02rem;
+        font-size: 1.08rem;
         font-weight: 700;
         line-height: 1.3;
-        margin-top: 0.28rem;
     }}
     .mmm-brand-function {{
         color: {TEXT["muted"]};
         font-size: 0.76rem;
         line-height: 1.35;
         margin-top: 0.22rem;
+    }}
+    .mmm-brand-context {{
+        color: {TEXT["muted"]};
+        font-size: 0.68rem;
+        letter-spacing: 0.03em;
+        line-height: 1.35;
+        margin-top: 0.5rem;
     }}
     .mmm-nav-group {{
         font-size: 0.67rem;
@@ -127,10 +124,10 @@ def shell_css() -> str:
         transition: background 120ms ease, border-color 120ms ease;
     }}
     section[data-testid="stSidebar"] [data-testid="stPageLink-NavLink"]:hover {{
-        background: {THEME_COLORS["selected"]};
+        background: {THEME_COLORS["surface_selected"]};
     }}
     section[data-testid="stSidebar"] [data-testid="stPageLink-NavLink"][aria-current="page"] {{
-        background: {THEME_COLORS["selected"]};
+        background: {THEME_COLORS["surface_selected"]};
         border-left-color: {TEXT["accent"]};
         font-weight: 700;
     }}
@@ -231,7 +228,7 @@ def shell_css() -> str:
     }}
     .mmm-workbench-note {{
         align-items: baseline;
-        border-left: 3px solid {THEME_COLORS["border"]};
+        border-left: 3px solid {THEME_COLORS["border_subtle"]};
         display: flex;
         flex-wrap: wrap;
         gap: 0.3rem 0.6rem;
@@ -239,7 +236,7 @@ def shell_css() -> str:
         padding: 0.15rem 0 0.15rem 0.7rem;
     }}
     .mmm-workbench-note.editable {{ border-left-color: {TEXT["accent"]}; }}
-    .mmm-workbench-note.derived {{ border-left-color: {TEXT["brand"]}; }}
+    .mmm-workbench-note.derived {{ border-left-color: {TEXT["context"]}; }}
     .mmm-workbench-note.governed {{ border-left-color: {STATUS_COLOR["caution"]}; }}
     .mmm-workbench-note-label {{
         color: {TEXT["primary"]};
@@ -260,14 +257,14 @@ def shell_css() -> str:
         margin: 0.65rem 0;
     }}
     .mmm-home-identity {{
-        border-left: 4px solid {TEXT["brand"]};
+        border-left: 3px solid {TEXT["context"]};
         margin: 0.15rem 0 1.7rem;
         padding-left: 1rem;
         position: relative;
     }}
     .mmm-home-product {{
         color: {TEXT["primary"]};
-        font-size: clamp(1.75rem, 3vw, 2.6rem);
+        font-size: clamp(1.7rem, 2.6vw, 2.35rem);
         font-weight: 760;
         letter-spacing: -0.025em;
         line-height: 1.12;
@@ -280,39 +277,21 @@ def shell_css() -> str:
         margin-top: 0.6rem;
         max-width: 66ch;
     }}
-    .mmm-lineage-mark {{
-        border-top: 1px solid {THEME_COLORS["border"]};
-        margin-top: 1rem;
-        max-width: 270px;
-        position: relative;
-    }}
-    .mmm-lineage-mark::before, .mmm-lineage-mark::after {{
-        background: {TEXT["accent"]};
-        border: 2px solid {SURFACE["base"]};
-        border-radius: 50%;
-        content: "";
-        height: 8px;
-        position: absolute;
-        top: -5px;
-        width: 8px;
-    }}
-    .mmm-lineage-mark::before {{ left: 18%; }}
-    .mmm-lineage-mark::after {{ background: {TEXT["brand"]}; right: 18%; }}
     div[data-testid="stVerticalBlock"] > div:has(> div .mmm-panel-marker-neutral) {{
         padding-bottom: 0.25rem;
     }}
     /* Only semantic warning/blocking panels receive a bordered surface. */
     [data-testid="stVerticalBlockBorderWrapper"]:has(> div .mmm-panel-marker-info) {{
-        background: #EAF4F7;
-        border-color: #B8DCE6 !important;
+        background: {THEME_COLORS["surface_info"]};
+        border-color: {THEME_COLORS["focus_ring"]} !important;
     }}
     [data-testid="stVerticalBlockBorderWrapper"]:has(> div .mmm-panel-marker-caution) {{
-        background: #FFF5DE;
-        border-color: #E5C57E !important;
+        background: {THEME_COLORS["surface_warning"]};
+        border-color: {THEME_COLORS["warning"]} !important;
     }}
     [data-testid="stVerticalBlockBorderWrapper"]:has(> div .mmm-panel-marker-negative) {{
-        background: #FDECEA;
-        border-color: #E4AAA4 !important;
+        background: {THEME_COLORS["surface_error"]};
+        border-color: {THEME_COLORS["error"]} !important;
     }}
     </style>
     """

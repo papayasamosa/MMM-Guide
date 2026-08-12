@@ -118,8 +118,7 @@ from ancestry_mmm.application.curve_annotations import (
 )
 
 st.set_page_config(
-    page_title="Results & Curve Bank | Ancestry Family History & DNA MMM",
-    page_icon="🧬",
+    page_title="Results & Response Curves | Ancestry Family History & DNA MMM",
     layout="wide",
 )
 init_session_state()
@@ -191,8 +190,7 @@ def _render_curve_with_cpa(
         "wherever response (or its change between points) is zero or negative. Against Family History "
         "GSA outcomes only; where this channel also has a mapped DNA-kit outcome or a distinct FH "
         "sign-up outcome, `dna_avg_cpa`/`cost_per_dna_kit` and `fh_signup_avg_cpa`/`cost_per_fh_signup` "
-        "are shown separately - none of the three are ever combined into one number "
-        "(docs/dna_fh_causal_structure.md)."
+        "are shown separately - none of the three are ever combined into one number."
     )
     st.dataframe(cpa_df, width="stretch", column_config=dataframe_column_config(cpa_df))
     for f in cpa_stability_flags(curve_df)[:5]:
@@ -286,7 +284,7 @@ def _render_media_unit_section(
     )
     st.caption(
         "Derived from the spend curve using the average historical cost per unit - a documented "
-        "simplification (docs/media_units_and_inflation.md), not an independently observed "
+        "simplification, not an independently observed "
         "spend-to-delivery relationship at every spend level."
     )
 
@@ -570,7 +568,7 @@ def _render_official_artifact_section(
     with SectionCard(
         "Official curve artifacts",
         description=(
-            "The governed official response-curve artifact store (REQ-CURVE-001). "
+            "The governed official response-curve artifact store. "
             "Each artifact is revalidated against current governance at display "
             "time (curve_publication approval, current model, outcome, and "
             "activities). Legacy point-estimate curves - a structurally distinct "
@@ -787,7 +785,7 @@ if model_type == "market_specific":
         )
         st.caption(
             f"Shaded band = 90% credible interval across {n_draws} sampled posterior draws "
-            "(docs/decision_log.md) - a subsample of the full posterior for speed, not the full "
+            "This is a subsample of the full posterior for speed, not the full "
             "posterior itself."
         )
         st.dataframe(
@@ -932,7 +930,7 @@ else:
         )
         st.caption(
             f"Shaded band = 90% credible interval across {n_draws} sampled posterior draws "
-            "(docs/decision_log.md) - a subsample of the full posterior for speed, not the full "
+            "This is a subsample of the full posterior for speed, not the full "
             "posterior itself."
         )
         st.dataframe(

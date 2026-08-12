@@ -294,7 +294,7 @@ def test_causal_graph_editor_journey_in_browser(
             "Family History & DNA MMM"
         )
     ).to_be_visible(timeout=60_000)
-    page.get_by_role("link", name="Project Export & Recovery").click()
+    page.get_by_role("link", name="Export & Recovery").click()
     expect(
         page.get_by_text("Upload a previously exported .zip", exact=True)
     ).to_be_visible(timeout=30_000)
@@ -459,7 +459,7 @@ def test_causal_graph_editor_journey_in_browser(
     # (test_project_export_page_apptest.py), which drives the identical
     # button-click code path without the added flakiness risk of a second
     # real browser session boundary in this already-long journey. ---------
-    page.get_by_role("link", name="Project Export & Recovery").click()
+    page.get_by_role("link", name="Export & Recovery").click()
     expect(page.get_by_text("Build export bundle", exact=True)).to_be_visible(
         timeout=30_000
     )

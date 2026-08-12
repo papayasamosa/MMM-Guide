@@ -59,8 +59,7 @@ from ancestry_mmm.core.search_objects import (
 from ancestry_mmm.data import detect_column_types
 
 st.set_page_config(
-    page_title="Channel & Media Units | Ancestry Family History & DNA MMM",
-    page_icon="🧬",
+    page_title="Media Mapping | Ancestry Family History & DNA MMM",
     layout="wide",
 )
 init_session_state()
@@ -329,8 +328,8 @@ _search_section = SectionCard(
 )
 _search_section.__enter__()
 st.caption(
-    "REQ-SEARCH-001: branded-search demand, Paid Search spend/delivery/cap, "
-    "organic-search capture, and direct-navigation capture are governed as "
+    "Branded-search demand, Paid Search spend/delivery/cap, organic-search "
+    "capture, and direct-navigation capture are separate governed objects "
     "distinct objects here - never inferred by name-matching a column. A "
     "raw column already governed under one Search role cannot also be "
     "registered under a different one. A paid_search_cap row's Channel must "
@@ -411,8 +410,8 @@ search_object_editor = st.data_editor(
     },
 )
 st.caption(
-    "REQ-SEARCH-001 S10: editing an already-saved row does not overwrite it "
-    "in place - Save creates a new, higher-numbered version of that row's "
+    "Editing an already-saved row does not overwrite it in place - Save creates "
+    "a new, higher-numbered version of that row's "
     "(market, search_object_id) lineage, resets its Approval to draft, and "
     "keeps the version it replaced in the version history below. A brand "
     "new row (a search_object_id not already saved) starts at version 1."

@@ -48,10 +48,7 @@ def test_no_sources_shows_awaiting_data_badge():
 def test_sources_loaded_but_not_joined_shows_source_alignment_section():
     at = _run_at(raw_sources=_matching_sources())
     assert not at.exception, f"page raised: {at.exception}"
-    assert any(
-        "Source alignment and join configuration" in (m.value or "")
-        for m in at.markdown
-    )
+    assert any("Join setup" in (m.value or "") for m in at.markdown)
 
 
 def test_after_join_shows_diagnostics_panel_as_a_distinct_section():

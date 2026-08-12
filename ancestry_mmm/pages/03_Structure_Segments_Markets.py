@@ -82,8 +82,7 @@ from ancestry_mmm.data import (
 import pandas as pd
 
 st.set_page_config(
-    page_title="Structure | Ancestry Family History & DNA MMM",
-    page_icon="🧬",
+    page_title="Model Structure | Ancestry Family History & DNA MMM",
     layout="wide",
 )
 init_session_state()
@@ -194,13 +193,13 @@ _outcome_section = SectionCard(
 )
 _outcome_section.__enter__()
 st.caption(
-    "The **primary workflow** for what this project actually fits (PR E.2) - one row per measurable "
+    "The **primary workflow** for what this project actually fits - one row per measurable "
     "outcome, not one weekly GSA column per segment. A sign-up KPI and a GSA KPI on the same segment "
     "are two separate rows here, each with its own `outcome_id`, `metric` and `unit`, so they are fit "
     "as fully independent outcomes - never combined anywhere downstream just because they share a "
-    "`segment` (docs/outcomes.md). Add, edit, or remove rows directly below; the quick-start wizards "
-    "further down are optional migration/seeding helpers only, not a second required configuration "
-    "surface - a sign-up-only or GSA-only project can add its rows here without ever opening them. "
+    "segment). Add, edit, or remove rows directly below; the optional helpers "
+    "further down are only shortcuts, not a second configuration surface - a sign-up-only or GSA-only "
+    "project can add its rows here without opening them. "
     "`included_in_fit` is the persisted 'exclude from next fit' control: unchecking a row here still "
     "captures and validates it, just holds it back from the next fit."
 )
@@ -221,13 +220,10 @@ def _merge_outcome_rows(new_rows: list) -> None:
     st.session_state.pop("outcome_catalogue_editor", None)
 
 
-with st.expander(
-    "Quick-start wizard: Create standard FH GSA outcomes (legacy per-segment mapping)"
-):
+with st.expander("Add standard Family History outcomes"):
     st.caption(
-        "Migration/seeding helper only, not required - maps one weekly GSA column per FH segment, "
-        "the shape every project used before the general catalogue above existed. A sign-up-only or "
-        "GSA-only project can skip this entirely and add rows directly above. Re-running this only "
+        "Optional shortcut for adding one weekly GSA outcome per Family History segment. A sign-up-only "
+        "or GSA-only project can skip this and add rows directly above. Re-running this only "
         "adds/updates the standard GSA rows it creates; it never touches anything else in the "
         "catalogue."
     )
@@ -269,18 +265,17 @@ with st.expander(
         if key:
             wizard_segment_outcomes[key] = col
             wizard_ltv[key] = ltv_val
-    if st.button("Create standard FH GSA outcomes"):
+    if st.button("Add standard Family History outcomes"):
         _merge_outcome_rows(fh_outcomes_from_spec(wizard_segment_outcomes, wizard_ltv))
         st.rerun()
 
-with st.expander("Quick-start wizard: Add DNA kit outcomes"):
+with st.expander("Add DNA purchase outcomes"):
     st.caption(
         "DNA kit purchases are a separate business outcome (product='DNA', metric='Kit sale') from any "
         "Family History outcome - a kit sale is never the same KPI as an FH sign-up or an FH GSA, even "
         "for the DNA cross-sell segment. Once added, they're **automatically included in the joint "
-        "model fit** on Model Configuration/Training: DNA-targeted media gets full direct response on "
-        "these outcomes (not the shrunk halo pathway other outcomes get) - see "
-        "docs/dna_fh_causal_structure.md."
+        "model fit** on Model Setup/Fit Model: DNA-targeted media gets direct response on these outcomes, "
+        "separate from the cross-product halo pathway used for other outcomes."
     )
     dna_mode = st.radio(
         "Data available for DNA kit purchases",
@@ -534,13 +529,12 @@ st.caption(
     "primary direct effect, a trusted delayed cross-product effect (e.g. DNA media's halo onto FH), "
     "an exploratory one strongly shrunk toward zero, a diagnostic-only mediated assumption, or an "
     "excluded relationship with deterministically zero contribution. Mediated records do not enter "
-    "the standard MMM likelihood and cannot drive planning or headline reporting. "
-    "(core.pathways.resolve_pathway_masks) - both PyMC model builders read this catalogue directly "
+    "the standard MMM likelihood and cannot drive planning or headline reporting. The model reads this "
+    "catalogue directly to decide which coefficients are estimated and how; a cell left uncovered here "
     "to decide which coefficients get estimated and how; a cell left uncovered here falls back to "
     "the legacy default (`dna_channels` above drives that default exactly as before). Can already "
     "target planned future outcome_ids (e.g. a net bill-through count) the moment a matching row "
-    "exists in the outcome catalogue above, even before any dedicated transformation computes it - "
-    "see docs/media_outcome_pathways.md."
+    "exists in the outcome catalogue above, even before any dedicated transformation computes it."
 )
 if "media_outcome_pathways" not in st.session_state:
     st.session_state["media_outcome_pathways"] = (
@@ -911,8 +905,8 @@ if get_state("model_meta") is not None and st.session_state["media_outcome_pathw
         if not _changed_pathways.empty:
             st.warning(
                 f"{len(_changed_pathways)} pathway(s) differ from this fit's captured pathway metadata - "
-                "since PR G1 the pathway catalogue drives which coefficients get estimated, so this fit's "
-                "results no longer reflect the catalogue shown above. Re-run Model Training to pick up "
+                "the pathway catalogue drives which coefficients get estimated, so this fit's results no "
+                "longer reflect the catalogue shown above. Re-run Fit Model to pick up "
                 "the change."
             )
             with st.expander("Pathway drift detail"):
@@ -1401,8 +1395,8 @@ if st.button("Save structure and validate", type="primary"):
 
         st.markdown("#### Outcome catalogue")
         st.caption(
-            "Every outcome captured for this project, with its current `status` (see "
-            "docs/outcomes.md): `Configured` means captured here only; `Excluded` means captured "
+            "Every outcome captured for this project, with its current status. `Configured` means captured "
+            "here only; `Excluded` means captured "
             "but held back from the next fit; `Missing source column` means its mapped column isn't "
             "in the current data; `Included in prepared frame` / `Included in fitted run` reflect "
             "this session's actual Model Configuration / Model Training state, if any; `Stale after "

@@ -67,6 +67,40 @@ STATUS_BADGES: Dict[str, Tuple[str, str, str]] = {
 }
 
 
+# Use compact, text-readable symbols rather than emoji as status chrome. The
+# label remains the authoritative accessible meaning; the symbol is a cue.
+STATUS_BADGES.update(
+    {
+        "draft": ("Draft", "•", "neutral"),
+        "running": ("Running", "→", "info"),
+        "failed": ("Failed", "!", "negative"),
+        "exploratory": ("Exploratory", "◇", "neutral"),
+        "validated": ("Validated", "✓", "positive"),
+        "approved_for_reporting": ("Approved for reporting", "✓", "positive"),
+        "approved_for_planning": ("Approved for planning", "✓", "positive"),
+        "approved": ("Approved", "✓", "positive"),
+        "deprecated": ("Deprecated", "×", "negative"),
+        "stale": ("Stale", "!", "caution"),
+        "superseded": ("Superseded", "↗", "neutral"),
+        "not_configured": ("Not configured", "—", "neutral"),
+        "awaiting_data": ("Awaiting data", "—", "neutral"),
+        "pass": ("Pass", "✓", "positive"),
+        "review": ("Review", "?", "caution"),
+        "fail": ("Fail", "!", "negative"),
+        "reported": ("Reported", "i", "info"),
+        "complete": ("Complete", "✓", "positive"),
+        "configured": ("Configured", "•", "neutral"),
+        "saved": ("Saved", "✓", "positive"),
+        "unavailable": ("Unavailable", "!", "negative"),
+        "ready": ("Ready", "✓", "positive"),
+        "blocked": ("Blocked", "×", "negative"),
+        "not_started": ("Not started", "—", "neutral"),
+        "current": ("In progress", "→", "info"),
+        "optional": ("Optional", "·", "neutral"),
+    }
+)
+
+
 def _lookup(status_key: str, label: Optional[str]) -> Tuple[str, str, str]:
     text, icon, color_key = STATUS_BADGES.get(
         status_key, (status_key.replace("_", " ").title(), "•", "neutral")
