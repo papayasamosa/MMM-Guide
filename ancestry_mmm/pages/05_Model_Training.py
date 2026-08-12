@@ -25,6 +25,7 @@ from ancestry_mmm.components import (
     render_next_step,
     render_empty_state,
     render_drift_status,
+    render_workspace_note,
     SectionCard,
     InfoPanel,
     render_status_badge,
@@ -67,11 +68,15 @@ render_page_header(
     "model_training",
     task_prompt="Is the prepared frame ready for an honest fit?",
 )
+render_workspace_note(
+    "Proposed fit",
+    "The prepared frame is read-only here; fitting creates the posterior evidence reviewed in Diagnostics.",
+    kind="derived",
+)
 
 frame = get_state("frame")
 spec_dict = get_state("model_spec")
 if frame is None or not spec_dict:
-    st.markdown("---")
     render_empty_state(
         "No modelling frame ready yet. Complete Model Configuration first.",
         button_label="Go to Model Configuration",
@@ -91,8 +96,6 @@ if model_type == "market_specific" and len(frame["markets"]) < 2:
     model_type = "shared"
 
 dna_kit_outcome_ids = get_state("direct_dna_outcome_ids") or []
-
-st.markdown("---")
 
 with SectionCard(
     "Proposed model",

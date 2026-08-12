@@ -22,6 +22,7 @@ from ancestry_mmm.components import (
     render_page_header,
     render_next_step,
     render_glossary,
+    render_workspace_note,
     SectionCard,
     render_status_badge,
 )
@@ -46,8 +47,12 @@ render_page_header(
 render_glossary(
     ["Model comparison", "Market-specific curve", "Shrinkage", "Partial pooling"]
 )
+render_workspace_note(
+    "Decision rule",
+    "Use convergence, predictive fit, and plausibility together; this view does not rank candidates with a composite score.",
+    kind="governed",
+)
 
-st.markdown("---")
 st.markdown(
     "Three candidate model structures are worth comparing before trusting a market-specific fit: "
     "**Model A** (one shared curve across markets), **Model B** (an independent fit per market), "
@@ -98,7 +103,6 @@ else:
             table, width="stretch", column_config=dataframe_column_config(table)
         )
 
-    st.markdown("---")
     st.markdown("### Candidate detail")
     labels = [c.label for c in candidates]
     chosen_label = st.selectbox("Candidate", labels)
