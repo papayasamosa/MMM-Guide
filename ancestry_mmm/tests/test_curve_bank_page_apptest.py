@@ -795,3 +795,124 @@ def test_official_curve_chart_renders_for_model_input_curve_with_two_components(
     ]
     assert meta_dataframes, "expected the official-artifact metadata table to render"
     assert meta_dataframes[0]["segment"].iloc[0] == "NewSegment"
+
+
+# ---------------------------------------------------------------------------
+# Phase 6 UI overhaul: on-curve annotation (application.curve_annotations)
+# gates monetary economics on curve_type - a model-input official curve
+# artifact must never show monetary CPA/ROI, a monetary one may (see
+# test_official_curve_generation_page_apptest.py for the generation-time
+# gate; these two tests exercise the *display* gate on this page).
+# ---------------------------------------------------------------------------
+
+
+def _write_annotated_artifact(store_dir: Path, approval_dict: dict, *, curve_type: str):
+    artifact_id = f"art-annotated-{curve_type}"
+    metadata = CurveArtifactMetadata(
+        artifact_id=artifact_id,
+        creation_timestamp="2026-07-01T00:00:00+00:00",
+        model_identity_snapshot={
+            "model_run_id": approval_dict["model_run_id"],
+            "data_fingerprint": approval_dict["data_fingerprint"],
+            "model_spec_fingerprint": approval_dict["model_spec_fingerprint"],
+            "posterior_fingerprint": approval_dict["posterior_fingerprint"],
+        },
+        outcome_definition_snapshot={
+            "outcome_id": "New",
+            "definition_version": "1.0",
+        },
+        outcome_approval_snapshot={
+            "approval_id": "apr-official-1",
+            "allowed_uses": ["curve_publication", "headline_reporting"],
+        },
+        activity_governance_snapshot={
+            "activities": ["tv-paid"],
+            "fingerprint": activity_definitions_fingerprint(
+                [ActivityDefinition.from_dict(_official_activity_dict())]
+            ),
+        },
+        support_snapshot={
+            "rows": [
+                {
+                    "market": "UK",
+                    "channel": "TV_Brand",
+                    "current": 100.0,
+                    "observed_min": 0.0,
+                    "observed_max": 300.0,
+                    "is_extrapolated": False,
+                }
+            ]
+        },
+    )
+    metadata = dataclasses.replace(
+        metadata, fingerprints=dict(compute_curve_artifact_fingerprints(metadata))
+    )
+    draws = pd.DataFrame(
+        {
+            "model_run_id": [approval_dict["model_run_id"]] * 4,
+            "reference_context_id": ["ref-official"] * 4,
+            "market": ["UK"] * 4,
+            "product": ["Family History"] * 4,
+            "segment": ["New"] * 4,
+            "outcome_id": ["New"] * 4,
+            "metric_key": ["GSA"] * 4,
+            "channel": ["TV_Brand"] * 4,
+            "component_type": ["media"] * 4,
+            "pathway_role": ["direct"] * 4,
+            "curve_type": [curve_type] * 4,
+            "spend_point": [0.0, 100.0, 200.0, 300.0],
+            "local_spend": [0.0, 100.0, 200.0, 300.0],
+            "posterior_draw": [0] * 4,
+            "incremental_response": [0.0, 2.0, 3.0, 3.5],
+            "planning_support_eligible": [True] * 4,
+            "planning_blocked_reason": [""] * 4,
+        }
+    )
+    summaries = draws.drop(
+        columns=[
+            "local_spend",
+            "posterior_draw",
+            "incremental_response",
+            "planning_support_eligible",
+            "planning_blocked_reason",
+        ]
+    ).drop_duplicates()
+    summaries["average_cpa"] = 12.5
+    summaries["marginal_cpa"] = 15.0
+    write_curve_artifact(store_dir, metadata=metadata, draws=draws, summaries=summaries)
+    return artifact_id
+
+
+def test_model_input_official_curve_blocks_monetary_annotation(monkeypatch, tmp_path):
+    """A model-input official artifact (curve_type='model_input') must never
+    annotate the curve with monetary CPA/ROI, even though the artifact's own
+    summaries table carries average_cpa/marginal_cpa columns - curve_type is
+    the sole governing signal (pages/AGENTS.md Curve UI rule)."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_official_artifact_governance(at)
+    _patch_store_root(monkeypatch, tmp_path)
+    store_dir = Path(tmp_path) / "test-project"
+    _write_annotated_artifact(
+        store_dir, at.session_state["model_approval"], curve_type="model_input"
+    )
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    assert any("monetary CPA/ROI is not shown" in (c.value or "") for c in at.caption)
+
+
+def test_monetary_official_curve_does_not_show_blocked_caption(monkeypatch, tmp_path):
+    """A monetary official artifact (a governed cost mapping was applied at
+    generation time) must not show the model-input monetary-blocked caption
+    - its economics are drawn directly onto the chart annotation instead."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_official_artifact_governance(at)
+    _patch_store_root(monkeypatch, tmp_path)
+    store_dir = Path(tmp_path) / "test-project"
+    _write_annotated_artifact(
+        store_dir, at.session_state["model_approval"], curve_type="monetary"
+    )
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    assert not any(
+        "monetary CPA/ROI is not shown" in (c.value or "") for c in at.caption
+    )

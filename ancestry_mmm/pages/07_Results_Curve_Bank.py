@@ -25,6 +25,7 @@ from ancestry_mmm.components import (
     render_next_step,
     render_empty_state,
     render_drift_status,
+    SectionCard,
 )
 from ancestry_mmm.core.approval import (
     ApprovalMismatchError,
@@ -85,7 +86,10 @@ from ancestry_mmm.core.market_specific_attribution import (
     total_contribution_market_specific,
 )
 from ancestry_mmm.core import curve_bank as cb
-from ancestry_mmm.core.evidence_tiers import classify_all_markets
+from ancestry_mmm.core.evidence_tiers import (
+    classify_all_markets,
+    classify_market_evidence,
+)
 from ancestry_mmm.core.predict import generate_channel_curve
 from ancestry_mmm.core.market_specific_predict import generate_market_channel_curve
 from ancestry_mmm.core.uncertainty import (
@@ -105,6 +109,11 @@ from ancestry_mmm.components.charts import (
     create_waterfall_chart,
     create_response_curve,
     create_response_curve_with_band,
+    create_annotated_response_curve,
+)
+from ancestry_mmm.application.curve_annotations import (
+    annotation_from_legacy_curve,
+    annotation_from_official_support,
 )
 
 st.set_page_config(
@@ -116,19 +125,51 @@ render_sidebar("curve_bank")
 render_page_header("curve_bank")
 
 
-def _render_curve_with_cpa(curve_df: pd.DataFrame, title: str) -> None:
-    """Response chart + CPA table (docs/media_units_and_inflation.md) for
-    any curve DataFrame - shared by both model types since
-    core.predict.generate_channel_curve and
+def _render_curve_with_cpa(
+    curve_df: pd.DataFrame,
+    title: str,
+    *,
+    spend_history=None,
+    status_label=None,
+) -> None:
+    """Annotated response chart + CPA table (docs/media_units_and_inflation.md,
+    Phase 6 UI overhaul) for any curve DataFrame - shared by both model
+    types since core.predict.generate_channel_curve and
     core.market_specific_predict.generate_market_channel_curve produce the
-    same column shape."""
+    same column shape.
+
+    ``spend_history``/``status_label`` are the caller's real, already-
+    available historical model-input series and evidence/curve-status label
+    for this (market, channel) - see
+    ``application.curve_annotations.annotation_from_legacy_curve``; when
+    omitted, the chart renders with no annotation layer (identical to the
+    pre-Phase-6 chart).
+    """
+    cpa_df = compute_cpa_by_product(curve_df)
+    annotation = annotation_from_legacy_curve(
+        curve_df, cpa_df, spend_history or [], status_label=status_label
+    )
     st.plotly_chart(
-        create_response_curve(
-            curve_df["spend"].to_numpy(), curve_df["overall_response"].to_numpy(), title
+        create_annotated_response_curve(
+            curve_df["spend"].to_numpy(),
+            curve_df["overall_response"].to_numpy(),
+            title,
+            current_x=annotation.current_x,
+            observed_min=annotation.observed_min,
+            observed_max=annotation.observed_max,
+            annotation_lines=annotation.annotation_lines(),
         ),
         width="stretch",
     )
-    cpa_df = compute_cpa_by_product(curve_df)
+    if annotation.current_x is not None:
+        st.caption(
+            "Diamond marker = current model input (historical average); shaded "
+            "band = observed historical support range - both from this channel's "
+            "own fitted data, never a saturation-parameter-derived range. "
+            "Annotation text (top-left) surfaces evidence/curve status and the "
+            "average/marginal economics already shown in the table below, at "
+            "the current point."
+        )
     st.markdown("**Spend curve with CPA**")
     st.caption(
         "**Spend scope: channel-incremental** - this channel's own response curve at varying spend, "
@@ -363,6 +404,8 @@ def _render_official_artifact_curves(artifact):
     outcome_snapshot = artifact.metadata.outcome_definition_snapshot or {}
     outcome_id = outcome_snapshot.get("outcome_id")
     definition_version = outcome_snapshot.get("definition_version")
+    support_rows = (artifact.metadata.support_snapshot or {}).get("rows") or []
+    summaries = artifact.summaries
     for (market, channel), group in draws.groupby(["market", "channel"]):
         stats = summarize_component_response_by_draw(
             group, by=[], x_col=x_col
@@ -370,13 +413,40 @@ def _render_official_artifact_curves(artifact):
         title = f"Official curve - {market} / {channel} - {outcome_id}"
         if definition_version:
             title += f" (v{definition_version})"
+        curve_type = (
+            str(group["curve_type"].iloc[0])
+            if "curve_type" in group.columns and not group.empty
+            else "model_input"
+        )
+        economics_row = None
+        if (
+            summaries is not None
+            and not summaries.empty
+            and {"market", "channel"}.issubset(summaries.columns)
+        ):
+            econ_rows = summaries[
+                (summaries["market"] == market) & (summaries["channel"] == channel)
+            ]
+            if not econ_rows.empty:
+                economics_row = econ_rows.iloc[0].to_dict()
+        annotation = annotation_from_official_support(
+            support_rows,
+            market,
+            channel,
+            curve_type=curve_type,
+            economics_row=economics_row,
+        )
         st.plotly_chart(
-            create_response_curve_with_band(
+            create_annotated_response_curve(
                 stats[x_col].to_numpy(dtype=float),
                 stats["posterior_mean"].to_numpy(dtype=float),
-                stats["lower_interval"].to_numpy(dtype=float),
-                stats["upper_interval"].to_numpy(dtype=float),
                 title,
+                lower_values=stats["lower_interval"].to_numpy(dtype=float),
+                upper_values=stats["upper_interval"].to_numpy(dtype=float),
+                current_x=annotation.current_x,
+                observed_min=annotation.observed_min,
+                observed_max=annotation.observed_max,
+                annotation_lines=annotation.annotation_lines(),
                 # Corrective PR E2.4: an official model-input curve's axis
                 # is a governed media-input unit (TVRs, impressions,
                 # clicks, ...), never spend - resolved from this artifact's
@@ -386,6 +456,8 @@ def _render_official_artifact_curves(artifact):
             ),
             width="stretch",
         )
+        if annotation.monetary_blocked and annotation.monetary_blocked_reason:
+            st.caption(annotation.monetary_blocked_reason)
 
 
 def _render_official_artifact(
@@ -484,61 +556,64 @@ def _render_official_artifact_section(
 ):
     """Render the official curve artifact store section (fail closed)."""
     st.markdown("---")
-    st.markdown("## Official curve artifacts")
-    st.caption(
-        "The governed official response-curve artifact store (REQ-CURVE-001). "
-        "Each artifact is revalidated against current governance at display time "
-        "(curve_publication approval, current model, outcome, and activities). "
-        "Legacy point-estimate curves remain available in the exploratory viewers "
-        "below and in the curve bank."
-    )
-    store_dir = curve_artifact_store_dir()
-    try:
-        load_result = load_curve_artifact_store(store_dir, raise_on_malformed=False)
-    except CurveArtifactError as exc:
-        st.warning(f"Official curve artifact store could not be read: {exc}")
-        return
-    if load_result.malformed:
-        st.warning(
-            f"{len(load_result.malformed)} malformed or unsupported official "
-            "curve artifact(s) were found and are reported below - they are "
-            "never silently skipped."
-        )
-        with st.expander("Show malformed-artifact audit"):
-            audit_df = pd.DataFrame(
-                [
-                    {
-                        "artifact_dir": str(e.artifact_dir),
-                        "status": e.status,
-                        "error": e.error,
-                    }
-                    for e in load_result.malformed
-                ]
+    with SectionCard(
+        "Official curve artifacts",
+        description=(
+            "The governed official response-curve artifact store (REQ-CURVE-001). "
+            "Each artifact is revalidated against current governance at display "
+            "time (curve_publication approval, current model, outcome, and "
+            "activities). Legacy point-estimate curves - a structurally distinct "
+            "concept, never blended with these - remain available in the "
+            "exploratory viewers above and the curve bank below."
+        ),
+    ):
+        store_dir = curve_artifact_store_dir()
+        try:
+            load_result = load_curve_artifact_store(store_dir, raise_on_malformed=False)
+        except CurveArtifactError as exc:
+            st.warning(f"Official curve artifact store could not be read: {exc}")
+            return
+        if load_result.malformed:
+            st.warning(
+                f"{len(load_result.malformed)} malformed or unsupported official "
+                "curve artifact(s) were found and are reported below - they are "
+                "never silently skipped."
             )
-            st.dataframe(
-                audit_df,
-                width="stretch",
-                column_config=dataframe_column_config(audit_df),
+            with st.expander("Show malformed-artifact audit"):
+                audit_df = pd.DataFrame(
+                    [
+                        {
+                            "artifact_dir": str(e.artifact_dir),
+                            "status": e.status,
+                            "error": e.error,
+                        }
+                        for e in load_result.malformed
+                    ]
+                )
+                st.dataframe(
+                    audit_df,
+                    width="stretch",
+                    column_config=dataframe_column_config(audit_df),
+                )
+        if not load_result.loaded:
+            st.info(
+                "No official curve artifacts exist for this project yet. Official "
+                "curves are produced through the governance-enforcing CurveService "
+                f"and stored in `{store_dir}`."
             )
-    if not load_result.loaded:
-        st.info(
-            "No official curve artifacts exist for this project yet. Official "
-            "curves are produced through the governance-enforcing CurveService "
-            f"and stored in `{store_dir}`."
-        )
-        return
-    for artifact in load_result.loaded:
-        _render_official_artifact(
-            artifact,
-            current_identity,
-            approval_dict,
-            current_policy,
-            current_readiness,
-            current_diagnostics_artefact,
-            activity_definitions,
-            outcome_definitions,
-            outcome_approvals,
-        )
+            return
+        for artifact in load_result.loaded:
+            _render_official_artifact(
+                artifact,
+                current_identity,
+                approval_dict,
+                current_policy,
+                current_readiness,
+                current_diagnostics_artefact,
+                activity_definitions,
+                outcome_definitions,
+                outcome_approvals,
+            )
 
 
 trace = get_state("trace")
@@ -714,7 +789,23 @@ if model_type == "market_specific":
         curve_df = generate_market_channel_curve(
             viewer_market, viewer_channel, meta, params
         )
-        _render_curve_with_cpa(curve_df, f"{viewer_market} - {viewer_channel}")
+        try:
+            _viewer_evidence_tier = classify_market_evidence(
+                trace, frame, meta, viewer_market, viewer_channel
+            )
+        except (KeyError, ValueError):
+            _viewer_evidence_tier = None
+        _viewer_channel_idx = meta.channels.index(viewer_channel)
+        _viewer_market_mask = frame["df"][spec.market_col] == viewer_market
+        _viewer_spend_history = frame["X_media"][
+            _viewer_market_mask.to_numpy(), _viewer_channel_idx
+        ].tolist()
+        _render_curve_with_cpa(
+            curve_df,
+            f"{viewer_market} - {viewer_channel}",
+            spend_history=_viewer_spend_history,
+            status_label=_viewer_evidence_tier,
+        )
         st.dataframe(
             curve_df, width="stretch", column_config=dataframe_column_config(curve_df)
         )
@@ -839,7 +930,18 @@ else:
         curve_df = generate_channel_curve(viewer_channel, meta, params)
     else:
         curve_df = generate_channel_curve(viewer_channel, meta, params)
-        _render_curve_with_cpa(curve_df, viewer_channel)
+        _viewer_channel_idx = meta.channels.index(viewer_channel)
+        # Shared curve = shared across every market by construction (see
+        # docs/decision_log.md's CURVE_STATUS_SHARED decision), so "current"
+        # and observed support are the historical average/range across every
+        # fitted market's data for this channel, not one market's.
+        _viewer_spend_history = frame["X_media"][:, _viewer_channel_idx].tolist()
+        _render_curve_with_cpa(
+            curve_df,
+            viewer_channel,
+            spend_history=_viewer_spend_history,
+            status_label=cb.CURVE_STATUS_SHARED,
+        )
         st.dataframe(
             curve_df, width="stretch", column_config=dataframe_column_config(curve_df)
         )
