@@ -160,10 +160,17 @@ if joined is None:
 join_diagnostics = get_state("join_diagnostics")
 if join_diagnostics:
     with SectionCard(
-        "Join mode and diagnostics",
+        "Join health",
         description="Row loss and coverage gaps from the join above, kept "
         "visually separate from the join controls themselves.",
     ):
+        health_cols = st.columns(3)
+        health_cols[0].metric("Joined rows", f"{join_diagnostics['output_rows']:,}")
+        health_cols[1].metric("Sources checked", len(join_diagnostics["per_source"]))
+        health_cols[2].metric(
+            "Sources with row loss",
+            sum(s["dropped_keys"] > 0 for s in join_diagnostics["per_source"]),
+        )
         st.caption(
             f"Join mode: **{join_diagnostics['join_mode']}** - "
             f"{join_diagnostics['output_rows']} row(s) in the joined result."
@@ -215,13 +222,15 @@ st.dataframe(
 )
 
 st.markdown("---")
-st.markdown("### 2. Transformation pipeline")
-st.caption("Each transformation is saved as a reusable step and can be replayed later.")
+st.markdown("### Transformation sequence")
+st.caption(
+    "Add a step, review its preview, and keep the ordered sequence saved with the project."
+)
 
 steps_json = get_state("pipeline_steps") or []
 steps = pipeline_from_json(steps_json)
 
-with st.expander("+ Add a transformation", expanded=len(steps) == 0):
+with st.popover("Add transformation"):
     op = st.selectbox(
         "Operation",
         SUPPORTED_OPS,
@@ -316,7 +325,7 @@ with st.expander("+ Add a transformation", expanded=len(steps) == 0):
 
 if steps:
     with SectionCard(
-        "Ordered transformation steps",
+        "Transformation sequence",
         description="The exact sequence applied, in order - each step is "
         "saved and replayed in this order, never reordered implicitly.",
     ):
@@ -336,7 +345,7 @@ try:
     set_state("transformed_data", transformed)
     st.markdown("---")
     with SectionCard(
-        "3. Transformed preview",
+        "Output preview",
         description="The result of applying every step above, in order, to "
         "the joined data.",
     ):

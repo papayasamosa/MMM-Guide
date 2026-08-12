@@ -1,6 +1,5 @@
 """AppTest coverage for pages/02_Transform_Pipeline.py's Phase 3 UI overhaul
-changes: the readiness badge, the "Source alignment and join configuration"
-/ "Join mode and diagnostics" panel split, and the ordered transformation-
+changes: the readiness badge, the "Join setup" / "Join health" panel split, and the transformation-
 step list. Complements the pre-existing join-diagnostics assertions in
 test_transform_pipeline_page_apptest.py, which this file does not duplicate
 and whose exact warning/success text this file leaves untouched.
@@ -56,7 +55,7 @@ def test_after_join_shows_diagnostics_panel_as_a_distinct_section():
     join_button = next(b for b in at.button if b.label == "Join sources")
     join_button.click().run()
     assert not at.exception, f"join click raised: {at.exception}"
-    assert any("Join mode and diagnostics" in (m.value or "") for m in at.markdown)
+    assert any("Join health" in (m.value or "") for m in at.markdown)
 
 
 def test_joined_but_not_yet_transformed_shows_in_progress_badge():
@@ -101,7 +100,7 @@ def test_ordered_transformation_steps_render_as_a_numbered_list():
         date_col="date",
     )
     assert not at.exception, f"page raised: {at.exception}"
-    assert any("Ordered transformation steps" in (m.value or "") for m in at.markdown)
+    assert any("Transformation sequence" in (m.value or "") for m in at.markdown)
     assert any("**1.**" in (m.value or "") for m in at.markdown)
 
 
@@ -119,7 +118,7 @@ def test_transformed_preview_and_save_replay_panel_render():
         date_col="date",
     )
     assert not at.exception, f"page raised: {at.exception}"
-    assert any("3. Transformed preview" in (m.value or "") for m in at.markdown)
+    assert any("Output preview" in (m.value or "") for m in at.markdown)
     assert any("Save and replay" in (m.value or "") for m in at.markdown)
 
     # A second run now sees transformed_data populated from the first run,

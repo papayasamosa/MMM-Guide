@@ -94,7 +94,48 @@ render_workspace_note(
     kind="editable",
 )
 
-st.markdown("### Project setup")
+sources = st.session_state.get("raw_sources") or {}
+definitions = st.session_state.get("source_definitions") or []
+sources_by_domain: "dict[str | None, list]" = {}
+for name, df in sources.items():
+    domain = resolve_source_logical_domain(name, definitions)
+    sources_by_domain.setdefault(domain, []).append((name, df))
+
+with st.container(border=True):
+    st.markdown("### Source readiness")
+    st.caption(
+        "Required source areas are shown here before file detail. Add or replace a source below."
+    )
+    readiness_cols = st.columns(4)
+    for col, domain in zip(
+        readiness_cols,
+        [*REQUIRED_LOGICAL_SOURCE_DOMAINS, DOMAIN_EXPERIMENT_EVIDENCE],
+    ):
+        supplied = sources_by_domain.get(domain) or []
+        with col:
+            st.caption(_DOMAIN_LABELS[domain])
+            render_status_badges(
+                [
+                    "ready"
+                    if supplied
+                    else (
+                        "optional"
+                        if domain == DOMAIN_EXPERIMENT_EVIDENCE
+                        else "blocked"
+                    )
+                ]
+            )
+            st.caption(
+                f"{len(supplied)} source(s)"
+                if supplied
+                else (
+                    "Optional"
+                    if domain == DOMAIN_EXPERIMENT_EVIDENCE
+                    else "Add a source"
+                )
+            )
+
+st.markdown("### Add or update sources")
 st.session_state.setdefault("project_name", "ancestry-fh-uk")
 st.session_state["project_name"] = st.text_input(
     "Project name",
@@ -102,7 +143,7 @@ st.session_state["project_name"] = st.text_input(
     help="Used to namespace the curve bank and exported project bundles for this project.",
 )
 
-tab_demo, tab_upload = st.tabs(["Synthetic fixture", "Upload sources"])
+tab_demo, tab_upload = st.tabs(["Demo data", "Add source"])
 
 with tab_demo:
     st.markdown(
@@ -232,8 +273,6 @@ with tab_upload:
                     f"{source_version.checksum[:12]}...)."
                 )
 
-sources = st.session_state.get("raw_sources") or {}
-
 
 def _render_source_detail(name: str, df) -> None:
     """One physical source's expander: version/provenance, logical domain,
@@ -308,12 +347,6 @@ if sources:
         "domains (Outcomes, Activity and Media, Context and External "
         "Factors) or the optional Experiment Evidence domain."
     )
-
-    definitions = st.session_state.get("source_definitions") or []
-    sources_by_domain: "dict[str | None, list]" = {}
-    for name, df in sources.items():
-        domain = resolve_source_logical_domain(name, definitions)
-        sources_by_domain.setdefault(domain, []).append((name, df))
 
     missing_required_labels = []
     for domain in REQUIRED_LOGICAL_SOURCE_DOMAINS:

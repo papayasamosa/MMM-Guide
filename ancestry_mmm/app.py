@@ -9,11 +9,9 @@ as one blended KPI - plus an explicit DNA halo pathway, a versioned curve
 bank, and constrained scenario planning.
 
 Phase 2 of the Streamlit UI/UX overhaul (see docs/decision_log.md)
-redesigns this page from a flat 15-line workflow list plus four generic
-KPI cards into a project-topology / decision-state overview: the single
-next recommended action, a compact per-workflow-area readiness strip, a
-concrete open-issues list, and a synthetic-demo entry point for a new
-project. Every signal shown is read from existing session-state getters
+redesigns this page as a compact project-state dashboard: the single next
+recommended action, current project state, open issues, a workflow map, and
+a synthetic-demo entry point for a new project. Every signal shown is read from existing session-state getters
 or tested `ancestry_mmm.core` functions (outcome drift, validation
 readiness) - never invented. The old numbered workflow tutorial is kept,
 unchanged, in a collapsed expander rather than removed outright.
@@ -150,14 +148,19 @@ def _command_palette_dialog() -> None:
             st.rerun()
 
 
-def _render_next_action() -> None:
+def _render_next_action(*, compact: bool = False) -> None:
     """Item 1: the single dominant "what should I do next" element,
     derived from `next_recommended_step_key()` (Phase 1's
     `page_readiness()`, extended by composition). Doubles as item 4 (the
     synthetic-demo entry point) when no project data is loaded yet, since
     that *is* the next recommended action in that state.
     """
-    with SectionCard("Next recommended action"):
+    card = (
+        st.container(border=True) if compact else SectionCard("Next recommended action")
+    )
+    with card:
+        if compact:
+            st.markdown("### Next recommended action")
         if not get_state("data_loaded"):
             st.markdown(
                 "No project data loaded yet. Load the built-in **synthetic demo "
@@ -245,7 +248,7 @@ def _render_topology() -> None:
                     st.caption(f"{complete}/{len(keys)} pages with recorded state")
 
 
-def _render_issues() -> None:
+def _collect_issues() -> list[str]:
     """Item 3: concrete, deterministically-derived open issues - never
     speculative text. Each condition below is traced to an existing
     getter or tested core function:
@@ -310,12 +313,54 @@ def _render_issues() -> None:
             "yet (Results & Curve Bank)."
         )
 
-    with SectionCard("Issues requiring attention"):
+    return issues
+
+
+def _render_project_state() -> None:
+    """Show only state that can be derived from the current project bundle."""
+    with st.container(border=True):
+        st.markdown("### Project state")
+        project_name = get_state("project_name") or "Unnamed project"
+        st.markdown(f"**{project_name}**")
+        raw_sources = get_state("raw_sources") or {}
+        if raw_sources:
+            source_kind = (
+                "Uploaded sources"
+                if get_state("active_source_upload_version")
+                else "Demo data"
+            )
+            st.caption(f"Data: {source_kind} · {len(raw_sources)} source area(s)")
+        else:
+            st.caption("Data: no sources loaded")
+        if get_state("model_approval"):
+            st.caption("Model: approved")
+        elif get_state("model_trained"):
+            st.caption("Model: fitted, review still required")
+        elif get_state("transformed_data") is not None:
+            st.caption("Model: data prepared, not fitted")
+        else:
+            st.caption("Model: not started")
+
+
+def _render_issues(*, compact: bool = False) -> None:
+    issues = _collect_issues()
+    card = (
+        st.container(border=True)
+        if compact
+        else SectionCard("Issues requiring attention")
+    )
+    with card:
+        if compact:
+            st.markdown("### Needs attention")
         if not issues:
             st.caption("No open issues detected from the current project state.")
         else:
-            for issue in issues:
+            for issue in issues[:3]:
                 st.markdown(f"- {issue}")
+            if len(issues) > 3:
+                st.caption(
+                    f"{len(issues) - 3} more issue(s) are visible on the relevant workspace."
+                )
 
 
 def _render_lineage() -> None:
@@ -384,11 +429,15 @@ def main():
         if st.button("Command palette", key="home_open_palette", width="stretch"):
             _command_palette_dialog()
 
-    _render_next_action()
+    summary_cols = st.columns([1.35, 1, 1])
+    with summary_cols[0]:
+        _render_next_action(compact=True)
+    with summary_cols[1]:
+        _render_project_state()
+    with summary_cols[2]:
+        _render_issues(compact=True)
 
     _render_topology()
-
-    _render_issues()
 
     _render_lineage()
 
