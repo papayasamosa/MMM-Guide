@@ -271,18 +271,13 @@ render_workspace_note(
     kind="governed",
 )
 st.caption(
-    "Build the variable-level causal graph node by node and "
-    "edge by edge. Every canvas capability also has a keyboard-accessible, "
-    "non-drag equivalent below (the Add-node form and the structured "
-    "property panel) - nothing here exists only as a mouse-drag gesture. "
-    "The workbench below is a three-pane layout - variable library, canvas, "
-    "and inspector - all reading and writing the exact same graph state; "
-    "the model-plan preview and save/approve/compile controls are full-width "
-    "sections beneath it."
+    "Use the canvas or the accessible forms below to map approved pathways. "
+    "The variable library, canvas, and inspector share one graph state; the "
+    "model-plan preview and save/approve/compile controls are below."
 )
 
 with InfoPanel(
-    "Graph status",
+    "Graph summary",
     description="Draft/approved lifecycle and whether this session's edits are structural (would restale a compiled configuration) or layout-only.",
 ):
     status_summary_cols = st.columns(4)
@@ -315,6 +310,9 @@ with InfoPanel(
     status_summary_cols[3].caption(
         "Layout-only = canvas position only, never stales a compiled configuration."
     )
+    st.caption(
+        f"Current graph content: {len(graph.nodes)} node(s) and {len(graph.edges)} edge(s)."
+    )
 
 if _structural_unsaved:
     with WarningPanel(
@@ -327,17 +325,11 @@ if _structural_unsaved:
         )
 
 st.markdown("---")
-st.markdown("### 1. Nodes and edges")
+st.markdown("### Build the graph")
 st.caption(
-    "Drag from a node's edge handle to another node to draw a new edge "
-    "(defaults to role 'direct' - set its real role in the inspector), "
-    "or drag a node to reposition it. Use the inspector's property panel "
-    "to edit a role or lag, or to remove a node or edge - removal always "
-    "goes through the property panel, never the canvas directly, so it is "
-    "never lost to a delayed canvas update. The Add-node/Add-edge forms "
-    "and the property panel work fully with a keyboard or screen reader. "
-    "Three panes below - variable library, canvas, inspector - all read "
-    "and write the exact same graph state."
+    "Connect nodes on the canvas or use the keyboard-accessible forms. New "
+    "edges start as direct until their real role and lag are set in the inspector; "
+    "node and edge removal is explicit and auditable."
 )
 _workbench_lib_col, _workbench_canvas_col, _workbench_inspector_col = st.columns(
     [1, 1.6, 1.4]
@@ -695,7 +687,7 @@ _inspector_section.__exit__(None, None, None)
 _workbench_inspector_col.__exit__(None, None, None)
 
 st.markdown("---")
-st.markdown("### 2. Model-plan preview")
+st.markdown("### Model-plan preview")
 st.caption(
     "A pure preview of what this graph would compile to - no engine "
     "capability check yet (see section 6 for that)."
@@ -715,7 +707,7 @@ else:
     st.info("Fix validation errors above to see the model-plan preview.")
 
 st.markdown("---")
-st.markdown("### 3. Save, approve and compile")
+st.markdown("### Save, approve & compile")
 status_cols = st.columns(3)
 with status_cols[0]:
     # Consistent status-badge vocabulary (Phase 7 QA, docs/decision_log.md):
@@ -727,7 +719,7 @@ with status_cols[0]:
     render_status_badge(graph.status)
 status_cols[1].metric("Version", graph.graph_version)
 status_cols[2].metric(
-    "Structural fingerprint", graph.structural_fingerprint()[:12] + "…"
+    "Structural fingerprint", graph.structural_fingerprint()[:12] + "..."
 )
 
 save_col, approve_col, compile_col = st.columns(3)
@@ -765,7 +757,7 @@ if compile_col.button(
         )
         st.success(
             "Model configuration prepared. Structural fingerprint bound: "
-            f"{result.causal_graph_structural_fingerprint[:12]}…"
+            f"{result.causal_graph_structural_fingerprint[:12]}..."
         )
 
 compiled_fp = get_state("causal_graph_compiled_structural_fingerprint")

@@ -91,7 +91,7 @@ spec = ModelSpec.from_dict(spec_dict)
 render_glossary(["Response curve"])
 st.caption(
     "Keep fitted inputs, Search demand/delivery/caps, and physical delivery or cost mappings "
-    "separate. These fields answer different causal and reporting questions."
+    "separate. These fields answer different causal, reporting, and planning questions."
 )
 
 hints = detect_column_types(df)
@@ -100,12 +100,28 @@ numeric_cols = hints["numeric"]
 config_dict = get_state("market_spec_config")
 market_config = MarketSpecConfig.from_dict(config_dict)
 existing_activity_items = get_state("activity_definitions") or []
+saved_search_object_items = get_state("search_objects") or []
+saved_media_unit_count = sum(
+    1
+    for config in market_config.channel_media_units.values()
+    if config.has_media_unit()
+)
+
+with st.container(border=True):
+    st.markdown("### Mapping summary")
+    st.caption(
+        "Saved mappings only. The editors below keep model input, monetary spend, physical delivery, Search roles, and planning eligibility distinct."
+    )
+    summary_cols = st.columns(4)
+    summary_cols[0].metric("Markets", len(spec.markets))
+    summary_cols[1].metric("Model-input channels", len(spec.channels))
+    summary_cols[2].metric("Saved Search objects", len(saved_search_object_items))
+    summary_cols[3].metric("Physical mappings", saved_media_unit_count)
 
 _activity_section = SectionCard(
-    "Required: activity & causal-role governance",
+    "Activity and causal-role mapping",
     description=(
-        "Required before model approval - the fitted model-input column, ownership, causal "
-        "role, economic treatment and planning eligibility for each activity."
+        "The fitted model-input column, ownership, causal role, economic treatment, and planning eligibility for each activity."
     ),
 )
 _activity_section.__enter__()
@@ -320,7 +336,7 @@ _activity_section.__exit__(None, None, None)
 
 st.markdown("---")
 _search_section = SectionCard(
-    "Optional: governed Search objects",
+    "Search object governance",
     description=(
         "Branded-search demand, Paid Search spend/delivery/cap, organic-search and "
         "direct-navigation capture - distinct governed objects, never inferred by name."
@@ -337,7 +353,7 @@ st.caption(
     "row it constrains, in the same market - a cap with no matching channel "
     "counterpart is rejected."
 )
-existing_search_object_items = get_state("search_objects") or []
+existing_search_object_items = saved_search_object_items
 if existing_search_object_items:
     search_object_rows = [
         SearchObjectDefinition.from_dict(item).to_dict()
@@ -511,7 +527,7 @@ _search_section.__exit__(None, None, None)
 
 st.markdown("---")
 _media_unit_section = SectionCard(
-    "Optional: physical media-unit & cost mapping",
+    "Physical delivery & cost mapping",
     description=(
         "Physical delivery (impressions, GRPs, clicks) and cost basis/currency, kept separate "
         "from monetary spend and from the fitted model-input column above. Response-only "

@@ -53,8 +53,8 @@ render_page_header(
     badges=[page_readiness("market_descriptors")],
 )
 render_workspace_note(
-    "Optional context",
-    "Currency and descriptors provide reporting context; they do not replace observed model data or invent market evidence.",
+    "Currency & optional context",
+    "Local currency is required for monetary reporting and curves; descriptive context is optional and never substitutes for observed model data.",
     kind="derived",
 )
 
@@ -74,11 +74,9 @@ render_glossary(["Partial pooling"])
 
 st.markdown("---")
 st.info(
-    "This step is optional - it records context (currency, audience, penetration, "
-    "maturity, ...) for reporting and, for currency, the model-specification fingerprint. The "
-    "descriptor fields (audience, penetration, maturity, ...) are informational only and not yet "
-    "used to explain market-level curve differences. Skip it and continue if you don't have this "
-    "information yet."
+    "Local currency is required for monetary reporting and monetary curves. The descriptor fields "
+    "(audience, penetration, maturity, ...) are optional informational context only and are not yet "
+    "used to explain market-level curve differences."
 )
 st.caption(
     "This context supports market interpretation and is included in the model identity when saved."
@@ -86,6 +84,25 @@ st.caption(
 
 config_dict = get_state("market_spec_config")
 market_config = MarketSpecConfig.from_dict(config_dict)
+
+currency_set = sum(
+    bool(str(market_config.get_profile(market).currency.local_currency or "").strip())
+    for market in spec.markets
+)
+descriptor_profiles = sum(
+    not market_config.get_profile(market).descriptors.is_empty()
+    for market in spec.markets
+)
+with st.container(border=True):
+    st.markdown("### Context summary")
+    st.caption(
+        "Currency readiness and optional descriptors are shown separately so missing context is not mistaken for a model-data blocker."
+    )
+    summary_cols = st.columns(4)
+    summary_cols[0].metric("Markets", len(spec.markets))
+    summary_cols[1].metric("Currencies set", f"{currency_set}/{len(spec.markets)}")
+    summary_cols[2].metric("Optional profiles", descriptor_profiles)
+    summary_cols[3].metric("Media-unit coverage", "See Media Mapping")
 
 for market in spec.markets:
     market_df = (
@@ -118,11 +135,11 @@ for market in spec.markets:
         profile = market_config.get_profile(market)
         with SectionCard(
             "Currency",
-            description="Feeds monetary curves/CPA and the model-specification fingerprint once set.",
+            description="Required for monetary curves and CPA/ROI; also contributes to the model-specification fingerprint once saved.",
         ):
             c1, c2 = st.columns(2)
             local_currency = c1.text_input(
-                "Local currency (ISO code)",
+                "Local currency (ISO code) *",
                 value=profile.currency.local_currency,
                 key=f"currency_{market}",
             )
@@ -133,7 +150,7 @@ for market in spec.markets:
             )
 
         with SectionCard(
-            "Market descriptors (all optional)",
+            "Optional market descriptors",
             description=(
                 "Informational context only - population, audience, penetration, awareness, "
                 "maturity. Not yet used to explain market-level curve differences and does not "
@@ -201,6 +218,12 @@ for market in spec.markets:
             )
 
         if st.button(f"Save {market} profile", key=f"save_{market}"):
+            if not local_currency.strip():
+                st.error(
+                    "Local currency is required before saving this market profile. "
+                    "Optional descriptors can remain blank."
+                )
+                continue
             market_config.set_profile(
                 MarketProfile(
                     market=market,

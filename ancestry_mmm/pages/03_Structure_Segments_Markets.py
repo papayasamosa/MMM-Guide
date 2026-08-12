@@ -99,11 +99,8 @@ render_workspace_note(
     kind="governed",
 )
 st.caption(
-    "Markets and FH segments (New, DNA cross-sell, Winback) are explicit structural dimensions "
-    "here - not just filter values - because the joint hierarchical model needs to know them to "
-    "share curves correctly and keep each segment's economics visible throughout. Sections below "
-    "are grouped by topic: market selection, media/activity selection, outcome/segment mapping, "
-    "promotions/controls/value inputs, and a final validation summary."
+    "Markets, outcomes, segments, activities, and pathways are configured here as durable model "
+    "scope. The saved-state summary below is read-only; edits become durable only after validation."
 )
 
 df = get_state("transformed_data")
@@ -116,6 +113,24 @@ if df is None:
     )
     st.stop()
 
+_saved_spec_dict = get_state("model_spec")
+_saved_spec = ModelSpec.from_dict(_saved_spec_dict) if _saved_spec_dict else None
+_saved_outcome_rows = get_state("outcome_definitions") or []
+_saved_pathway_rows = get_state("media_outcome_pathways") or []
+with st.container(border=True):
+    st.markdown("### Saved structure summary")
+    st.caption(
+        "A compact read-only snapshot of the last saved structure. It does not imply that unsaved edits are complete."
+    )
+    summary_cols = st.columns(4)
+    summary_cols[0].metric("Markets", len(_saved_spec.markets) if _saved_spec else "—")
+    summary_cols[1].metric("Outcomes", len(_saved_outcome_rows) if _saved_spec else "—")
+    summary_cols[2].metric(
+        "Activities", len(_saved_spec.channels) if _saved_spec else "—"
+    )
+    summary_cols[3].metric("Pathways", len(_saved_pathway_rows) if _saved_spec else "—")
+    st.caption(f"Saved state: {'Configured' if _saved_spec else 'Not saved'}")
+
 date_col = get_state("date_col")
 market_col = get_state("market_col")
 hints = detect_column_types(df)
@@ -123,8 +138,8 @@ numeric_cols = hints["numeric"]
 
 st.markdown("---")
 _markets_section = SectionCard(
-    "Market selection",
-    description="Which markets this project fits, pooled or unpooled.",
+    "Project scope · markets",
+    description="Which markets this project fits, and where market-specific estimation is appropriate.",
 )
 _markets_section.__enter__()
 if market_col:
@@ -150,8 +165,8 @@ _markets_section.__exit__(None, None, None)
 
 st.markdown("---")
 _media_section = SectionCard(
-    "Media & activity selection",
-    description="Channel spend columns and which of them drive the DNA halo pathway.",
+    "Project scope · activities",
+    description="Which model-input columns and DNA-targeted activities are in scope.",
 )
 _media_section.__enter__()
 # Default to every numeric column that doesn't look like a promo flag, price,
@@ -188,12 +203,12 @@ _media_section.__exit__(None, None, None)
 
 st.markdown("---")
 _outcome_section = SectionCard(
-    "Outcome & segment mapping",
-    description="The primary catalogue of what this project fits, plus funnel links and net bill-through completeness.",
+    "Outcomes & segment mapping",
+    description="The primary outcome catalogue, with segment and product scope kept explicit.",
 )
 _outcome_section.__enter__()
 st.caption(
-    "The **primary workflow** for what this project actually fits - one row per measurable "
+    "The main configuration surface for what this project actually fits - one row per measurable "
     "outcome, not one weekly GSA column per segment. A sign-up KPI and a GSA KPI on the same segment "
     "are two separate rows here, each with its own `outcome_id`, `metric` and `unit`, so they are fit "
     "as fully independent outcomes - never combined anywhere downstream just because they share a "
@@ -356,7 +371,7 @@ _default_outcome_df = (
 )
 if st.button(
     "Clear outcome catalogue",
-    help="Removes every row below - the wizards above can reseed it.",
+    help="Removes every row below - the optional shortcuts above can add standard rows again.",
 ):
     st.session_state["structure_outcome_rows"] = []
     st.session_state.pop("outcome_catalogue_editor", None)
@@ -464,7 +479,7 @@ _outcome_section.__exit__(None, None, None)
 
 st.markdown("---")
 _funnel_section = SectionCard(
-    "Funnel links (optional)",
+    "Advanced causal links (optional)",
     description="Diagnostics/warnings only - not a constrained funnel model.",
 )
 _funnel_section.__enter__()
@@ -520,7 +535,7 @@ _funnel_section.__exit__(None, None, None)
 
 st.markdown("---")
 _pathway_section = SectionCard(
-    "Media-outcome pathway catalogue",
+    "Advanced pathway catalogue",
     description="Which (channel, target outcome) relationships this project believes exist, and their governance.",
 )
 _pathway_section.__enter__()
@@ -531,8 +546,7 @@ st.caption(
     "excluded relationship with deterministically zero contribution. Mediated records do not enter "
     "the standard MMM likelihood and cannot drive planning or headline reporting. The model reads this "
     "catalogue directly to decide which coefficients are estimated and how; a cell left uncovered here "
-    "to decide which coefficients get estimated and how; a cell left uncovered here falls back to "
-    "the legacy default (`dna_channels` above drives that default exactly as before). Can already "
+    "uses the existing default (`dna_channels` above drives that default exactly as before). It can already "
     "target planned future outcome_ids (e.g. a net bill-through count) the moment a matching row "
     "exists in the outcome catalogue above, even before any dedicated transformation computes it."
 )
@@ -1046,7 +1060,7 @@ for product in KNOWN_PRODUCTS:
         product_control_cols[product] = cols
 
 st.markdown(
-    "**Segment-specific controls** (legacy - e.g. DNA kit price -> DNA cross-sell only)"
+    "**Segment-specific controls** (optional - e.g. DNA kit price -> DNA cross-sell only)"
 )
 segment_control_cols = {}
 for seg in _catalogue_segments:
@@ -1074,7 +1088,7 @@ if _multi_outcome_segments:
     st.markdown("#### Outcome-level promo & control overrides (optional)")
     st.caption(
         "Segment-level mappings above apply to every outcome sharing that segment by default "
-        "(legacy behaviour). Override per outcome_id here when two KPIs on the same segment (e.g. a "
+        "for the current configuration. Override per outcome_id here when two KPIs on the same segment (e.g. a "
         "sign-up and a GSA) need genuinely different promo timing or controls - an explicit "
         "outcome_id-keyed mapping always wins over the segment-level one above for that outcome_id. "
         "'Apply to every outcome in this segment' is an explicit bulk action, not implicit inheritance."

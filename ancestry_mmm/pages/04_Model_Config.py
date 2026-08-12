@@ -34,8 +34,13 @@ from ancestry_mmm.core.outcomes import (
     included_outcomes,
 )
 from ancestry_mmm.core.brand_search import (
-    BRAND_SEARCH_MODES,
     BrandSearchConfig,
+    MODE_ASSUMPTION_BASED_REALLOCATION,
+    MODE_DEMAND_CAPTURE_MEDIATOR,
+    MODE_DIRECT_CHANNEL,
+    MODE_EXCLUDED,
+    MODE_EXPERIMENTAL_FITTED_MEDIATION,
+    MODE_EXPERIMENT_CALIBRATED_INCREMENTAL,
     validate_brand_search_configs,
 )
 from ancestry_mmm.core.coverage import VariableCoverageMatrix
@@ -43,6 +48,18 @@ from ancestry_mmm.core.fingerprint import fingerprint_dataframe
 from ancestry_mmm.core.market_data_capability import check_market_channel_capability
 from ancestry_mmm.data import prepare_fh_modeling_frame
 import pandas as pd
+
+BRAND_SEARCH_MODE_LABELS = {
+    MODE_DIRECT_CHANNEL: "Treat as direct paid Search",
+    MODE_EXCLUDED: "Exclude from the fit",
+    MODE_ASSUMPTION_BASED_REALLOCATION: "Assumption-adjusted demand capture (diagnostic)",
+    MODE_DEMAND_CAPTURE_MEDIATOR: "Demand-capture sensitivity (diagnostic)",
+    MODE_EXPERIMENTAL_FITTED_MEDIATION: "Experimental fitted mediation (not production)",
+    MODE_EXPERIMENT_CALIBRATED_INCREMENTAL: "Experiment-calibrated incrementality",
+}
+BRAND_SEARCH_MODE_BY_LABEL = {
+    label: mode for mode, label in BRAND_SEARCH_MODE_LABELS.items()
+}
 
 st.set_page_config(
     page_title="Model Setup | Ancestry Family History & DNA MMM",
@@ -74,10 +91,34 @@ if not spec_dict or df is None:
     st.stop()
 
 spec = ModelSpec.from_dict(spec_dict)
+outcome_definitions = resolve_outcome_definitions(
+    get_state("outcome_definitions"), spec.segment_outcomes, spec.segment_ltv
+)
+
+with st.container(border=True):
+    st.markdown("### Model setup summary")
+    st.caption(
+        "A read-only snapshot of the current structure and prepared-frame state. Routine choices are below; advanced statistical controls are kept separate."
+    )
+    summary_cols = st.columns(4)
+    summary_cols[0].metric("Markets", len(spec.markets))
+    summary_cols[1].metric(
+        "Outcomes in scope",
+        sum(1 for outcome in outcome_definitions if outcome.included_in_fit),
+    )
+    summary_cols[2].metric("Model-input channels", len(spec.channels))
+    summary_cols[3].metric(
+        "Prepared frame", "Ready" if get_state("frame") is not None else "Not prepared"
+    )
+    st.caption(
+        "Pooling strategy: "
+        f"{'Market-specific' if get_state('model_type') == 'market_specific' else 'Shared'} · "
+        "change it in Model strategy below."
+    )
 
 st.markdown("---")
 with SectionCard(
-    "Market hierarchy & pooling context",
+    "Model strategy · market pooling",
     description="Read-only here - change markets/pooling on the Structure page.",
 ):
     st.info(
@@ -89,7 +130,7 @@ with SectionCard(
 
 st.markdown("---")
 _model_structure_section = SectionCard(
-    "Model family & architecture",
+    "Model strategy",
     description="Shared curve across markets, or market-specific partially-pooled curves.",
 )
 _model_structure_section.__enter__()
@@ -130,11 +171,11 @@ _model_structure_section.__exit__(None, None, None)
 
 st.markdown("---")
 _priors_section = SectionCard(
-    "Priors & transformations",
-    description="Adstock/saturation, segment pooling, DNA halo, promo sensitivity, and Brand Search treatment.",
+    "Media response assumptions",
+    description="Response curves, cross-product effects, promotions, and Search treatment for the next fit.",
 )
 _priors_section.__enter__()
-st.markdown("#### Shared adstock & saturation curve priors")
+st.markdown("#### Response curve assumptions")
 st.caption(
     FIELD_HELP["priors"]
     + " Stage 1 core: geometric adstock + Hill saturation, shared across segments and markets per channel."
@@ -179,7 +220,10 @@ with c2:
         0.5,
     )
 
-st.markdown("#### Segment partial pooling & DNA halo")
+st.markdown("#### Advanced priors")
+st.caption(
+    "These controls govern how much segments, markets, and cross-product pathways may diverge. They are intentionally separate from the routine model-strategy choice above."
+)
 c1, c2 = st.columns(2)
 with c1:
     prior_config["pooling_sigma_prior"] = st.slider(
@@ -234,16 +278,10 @@ prior_config["promo_sigma"] = st.slider(
     0.05,
 )
 
-st.markdown("#### Brand Search treatment mode")
+st.markdown("#### Search treatment")
 st.caption(
-    "How each Brand Search channel's known ambiguity (some of its response is genuinely incremental, "
-    "some is upper-funnel demand it just happens to capture last-click) is treated - four explicit "
-    "modes), never a silent default assumption about which is 'true'. "
-    "`direct_channel`/`demand_capture_mediator`/`experiment_calibrated_incremental` all fit as an "
-    "ordinary primary_direct channel; `excluded` needs a matching `role=excluded` row for this "
-    "channel on the Structure page's pathway catalogue to actually drop it from the fit - this table "
-    "only controls how a channel's ALREADY-fitted contribution is reported/reallocated afterwards, it "
-    "does not by itself change fitting."
+    "Choose an explicit interpretation for paid Search. Direct and excluded are fit choices; demand-capture and experiment-calibrated options are labelled sensitivity or calibration views. "
+    "A post-hoc demand-capture reallocation is not production mediation, and excluding Search from the fit still requires the matching pathway role on Model Structure."
 )
 if "brand_search_configs" not in st.session_state:
     st.session_state["brand_search_configs"] = get_state("brand_search_configs") or []
@@ -268,6 +306,10 @@ else:
             "notes",
         ]
     )
+if not _brand_search_default_df.empty:
+    _brand_search_default_df["mode"] = _brand_search_default_df["mode"].map(
+        lambda mode: BRAND_SEARCH_MODE_LABELS.get(mode, mode)
+    )
 brand_search_df = st.data_editor(
     _brand_search_default_df,
     num_rows="dynamic",
@@ -276,7 +318,7 @@ brand_search_df = st.data_editor(
             "channel", options=spec.channels, required=True
         ),
         "mode": st.column_config.SelectboxColumn(
-            "mode", options=list(BRAND_SEARCH_MODES), required=True
+            "Treatment", options=list(BRAND_SEARCH_MODE_LABELS.values()), required=True
         ),
         "mediator_of": st.column_config.TextColumn(
             "mediator_of",
@@ -304,13 +346,14 @@ brand_search_configs = []
 for row in brand_search_df.to_dict("records"):
     if not (row.get("channel") and row.get("mode")):
         continue  # a blank row added by the editor but never filled in
+    mode = BRAND_SEARCH_MODE_BY_LABEL.get(str(row["mode"]), str(row["mode"]))
     mediator_of = [
         c.strip() for c in str(row.get("mediator_of") or "").split(",") if c.strip()
     ]
     brand_search_configs.append(
         BrandSearchConfig(
             channel=row["channel"],
-            mode=row["mode"],
+            mode=mode,
             mediator_of=mediator_of,
             mediation_share=row.get("mediation_share"),
             calibration_factor=row.get("calibration_factor"),
@@ -325,7 +368,7 @@ for e in brand_search_errors:
 _priors_section.__exit__(None, None, None)
 
 st.markdown("---")
-with st.expander("Advanced settings: MCMC sampling", expanded=False):
+with st.expander("Advanced sampling", expanded=False):
     st.caption(
         "Reasonable defaults are pre-filled. Increase draws/tune for a more reliable fit; reduce them for a quicker check."
     )
@@ -362,9 +405,6 @@ with st.expander("Advanced settings: MCMC sampling", expanded=False):
         key="mcmc_target_accept_input",
     )
 
-outcome_definitions = resolve_outcome_definitions(
-    get_state("outcome_definitions"), spec.segment_outcomes, spec.segment_ltv
-)
 render_drift_status(
     outcome_definitions, get_state("model_meta"), available_columns=set(df.columns)
 )
@@ -377,7 +417,7 @@ excluded_dna_outcomes = [o for o in outcome_definitions if not o.included_in_fit
 
 st.markdown("---")
 _included_outcomes_section = SectionCard(
-    "Included outcomes for this fit",
+    "Included outcomes & current scope",
     description="Which outcomes and DNA-kit segments this fit will actually cover.",
 )
 _included_outcomes_section.__enter__()

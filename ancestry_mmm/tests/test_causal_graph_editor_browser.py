@@ -311,7 +311,7 @@ def test_causal_graph_editor_journey_in_browser(
 
     # --- open Causal Graph --------------------------------------------------
     page.get_by_role("link", name="Causal Graph").click()
-    expect(page.get_by_text("Nodes and edges", exact=False)).to_be_visible(
+    expect(page.get_by_text("Build the graph", exact=False)).to_be_visible(
         timeout=30_000
     )
 
