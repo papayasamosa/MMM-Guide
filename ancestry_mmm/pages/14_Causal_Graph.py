@@ -243,7 +243,7 @@ def _graph_change_state(
 
 
 st.set_page_config(
-    page_title="Causal Graph - Ancestry FH MMM",
+    page_title="Causal Graph | Ancestry Family History & DNA MMM",
     page_icon="🕸️",
     layout="wide",
 )

@@ -262,7 +262,7 @@ def _build_cost_mapping_registry(
 
 
 st.set_page_config(
-    page_title="Official Curve Generation - Ancestry FH MMM",
+    page_title="Official Curve Generation | Ancestry Family History & DNA MMM",
     page_icon="🧬",
     layout="wide",
 )

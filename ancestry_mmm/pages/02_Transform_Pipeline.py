@@ -52,7 +52,9 @@ JOIN_MODE_HELP = {
 }
 
 st.set_page_config(
-    page_title="Transform Pipeline - Ancestry FH MMM", page_icon="🧬", layout="wide"
+    page_title="Transform Pipeline | Ancestry Family History & DNA MMM",
+    page_icon="🧬",
+    layout="wide",
 )
 init_session_state()
 apply_theme()

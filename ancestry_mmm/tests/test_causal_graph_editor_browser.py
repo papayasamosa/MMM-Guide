@@ -291,7 +291,7 @@ def test_causal_graph_editor_journey_in_browser(
     page.goto(streamlit_base_url, wait_until="load")
     expect(
         page.get_by_test_id("stSidebarUserContent").get_by_text(
-            "Marketing Mix Modelling"
+            "Family History & DNA MMM"
         )
     ).to_be_visible(timeout=60_000)
     page.get_by_role("link", name="Project Export & Recovery").click()

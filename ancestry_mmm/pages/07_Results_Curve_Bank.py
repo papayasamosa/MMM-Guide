@@ -117,7 +117,9 @@ from ancestry_mmm.application.curve_annotations import (
 )
 
 st.set_page_config(
-    page_title="Results & Curve Bank - Ancestry FH MMM", page_icon="🧬", layout="wide"
+    page_title="Results & Curve Bank | Ancestry Family History & DNA MMM",
+    page_icon="🧬",
+    layout="wide",
 )
 init_session_state()
 apply_theme()

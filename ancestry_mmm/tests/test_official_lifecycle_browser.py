@@ -208,7 +208,7 @@ def test_official_lifecycle_journey_in_browser(
     # just a rerun - occasionally exceeds a plain 30s budget.
     expect(
         page.get_by_test_id("stSidebarUserContent").get_by_text(
-            "Marketing Mix Modelling"
+            "Family History & DNA MMM"
         )
     ).to_be_visible(timeout=60_000)
 

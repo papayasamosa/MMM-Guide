@@ -24,7 +24,6 @@ from ancestry_mmm.utils.config import THEME_COLORS
 from ancestry_mmm.utils.display import GLOSSARY
 from ancestry_mmm.utils.session_state import get_state
 from ancestry_mmm.utils.workflow import (
-    HOME_KEY,
     get_step,
     nav_groups,
     next_step_key,
@@ -41,24 +40,37 @@ from ancestry_mmm.core.outcomes import BLOCKING_DRIFT_STATUSES, outcomes_drift_d
 
 
 def apply_theme() -> None:
-    """Inject the small amount of CSS not reachable via .streamlit/config.toml's
-    [theme] section. Call once near the top of every page, after
-    st.set_page_config(). The base dark-green palette itself comes from the
-    theme config, which applies automatically on every page.
-    """
+    """Inject the small amount of CSS not reachable via Streamlit theme config."""
     st.markdown(
         f"""
         <style>
         .muted {{ color: {THEME_COLORS["foreground_muted"]}; }}
         #MainMenu {{ visibility: hidden; }}
         footer {{ visibility: hidden; }}
-        /* st.info() defaults to Streamlit's fixed blue, which reads as "strong
-           blue" against an otherwise all-green palette - retint it to a muted
-           green-gray so info messages stay calm and on-palette. */
         [data-testid="stAlertContainer"]:has([data-testid="stAlertContentInfo"]) {{
-            background-color: rgba(107, 139, 122, 0.18) !important;
+            background-color: #EAF4F7 !important;
+            border: 1px solid #B8DCE6 !important;
         }}
-        [data-testid="stAlertContentInfo"] {{ color: {THEME_COLORS["foreground_muted"]} !important; }}
+        [data-testid="stAlertContentInfo"] {{ color: {THEME_COLORS["foreground"]} !important; }}
+        div.stButton > button[kind="primary"] {{
+            background: {THEME_COLORS["accent"]};
+            border-color: {THEME_COLORS["accent"]};
+            color: #FFFFFF;
+        }}
+        div.stButton > button[kind="primary"]:hover {{
+            background: #0D6888;
+            border-color: #0D6888;
+            color: #FFFFFF;
+        }}
+        div.stButton > button:focus-visible, input:focus-visible, textarea:focus-visible {{
+            outline: 3px solid #75B8CC !important;
+            outline-offset: 2px;
+        }}
+        .stMarkdown hr {{
+            border: 0;
+            border-top: 1px solid {THEME_COLORS["border"]};
+            margin: 1.5rem 0;
+        }}
         </style>
         """,
         unsafe_allow_html=True,
@@ -85,6 +97,7 @@ _READINESS_ICON = {
     "not_started": "⚪",
     "optional": "◽",
 }
+_ATTENTION_STATUSES = {"stale", "review", "unavailable", "blocked"}
 
 
 def page_readiness(key: str) -> str:
@@ -130,9 +143,14 @@ def render_sidebar(active_key: str) -> None:
     same sidebar_entries() are visually grouped.
     """
     with st.sidebar:
-        st.markdown("**Marketing Mix Modelling**")
-        st.caption("New · DNA cross-sell · Winback")
-        st.markdown("---")
+        st.markdown(
+            '<div class="mmm-brand-lockup">'
+            '<div class="mmm-brand-eyebrow">ANCESTRY</div>'
+            '<div class="mmm-brand-product">Family History &amp; DNA MMM</div>'
+            '<div class="mmm-brand-function">Marketing measurement &amp; planning</div>'
+            "</div>",
+            unsafe_allow_html=True,
+        )
         for group in nav_groups():
             st.markdown(
                 f'<div class="mmm-nav-group">{group["label"]}</div>',
@@ -140,18 +158,21 @@ def render_sidebar(active_key: str) -> None:
             )
             for entry in group["entries"]:
                 key = entry["key"]
+                status = page_readiness(key)
                 icon = (
-                    None
-                    if key == HOME_KEY
-                    else _READINESS_ICON.get(page_readiness(key))
+                    _READINESS_ICON.get(status)
+                    if status in _ATTENTION_STATUSES
+                    else None
                 )
                 st.page_link(entry["path"], label=entry["label"], icon=icon)
-        st.markdown("---")
         states = workflow_page_states(getter=get_state)
         required = [state for state in states if not state.optional]
         satisfied = sum(1 for state in required if state.satisfied)
-        st.caption(
-            f"Workflow state: {satisfied}/{len(required)} required stages satisfied; iterative"
+        st.markdown(
+            f'<div class="mmm-sidebar-footnote">'
+            f"{satisfied}/{len(required)} required stages satisfied · iterative workflow"
+            "</div>",
+            unsafe_allow_html=True,
         )
     _ = active_key  # reserved for future explicit-highlight use
 
@@ -182,6 +203,9 @@ def render_context_bar() -> None:
     if isinstance(spec, dict) and spec.get("markets"):
         markets = ", ".join(str(m) for m in spec["markets"])
         items.append(("Market scope", _html.escape(markets)))
+    if isinstance(spec, dict) and spec.get("segment_outcomes"):
+        segments = ", ".join(str(s) for s in spec["segment_outcomes"])
+        items.append(("Segments", _html.escape(segments)))
 
     df = get_state("transformed_data")
     date_col = get_state("date_col")
@@ -309,7 +333,13 @@ def _render_header_action(action: Dict[str, Any], *, primary: bool, idx: int) ->
 
 
 @contextlib.contextmanager
-def _panel(kind: str, title: str, *, description: Optional[str] = None, icon: str = ""):
+def _panel(
+    kind: str,
+    title: str,
+    *,
+    description: Optional[str] = None,
+    icon: str = "",
+):
     """Shared implementation behind SectionCard/InfoPanel/WarningPanel/
     BlockingPanel - a bordered st.container() carrying a hidden marker span
     that tokens.shell_css()'s :has() rules use to tint the container by
@@ -317,7 +347,7 @@ def _panel(kind: str, title: str, *, description: Optional[str] = None, icon: st
     selector ever stops matching a future Streamlit release's DOM - the
     title/description content itself is unaffected either way.
     """
-    with st.container(border=True):
+    with st.container(border=kind != "neutral"):
         st.markdown(
             f'<span class="mmm-panel-marker-{kind}" style="display:none"></span>'
             f'<div class="mmm-panel-title">{icon} {title}</div>'.strip(),
@@ -329,8 +359,7 @@ def _panel(kind: str, title: str, *, description: Optional[str] = None, icon: st
 
 
 def SectionCard(title: str, *, description: Optional[str] = None):
-    """A neutral bordered card for grouping related content under one
-    heading - the plain building block panels below layer meaning onto."""
+    """A borderless workspace section for grouping related content."""
     return _panel("neutral", title, description=description)
 
 

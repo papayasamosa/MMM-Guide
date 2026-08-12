@@ -1,22 +1,17 @@
-"""Shared design tokens for the app shell (Phase 1 of the Streamlit UI/UX
-overhaul - see docs/decision_log.md).
+"""Shared design tokens for the light Ancestry analytical workbench.
 
-Centralises spacing, radius, surface/background and text-hierarchy tokens
-as a thin extension of the existing dark graphite-green identity
-(.streamlit/config.toml, ancestry_mmm.utils.config.THEME_COLORS) - it does
-not replace that palette, only gives every shell primitive (sidebar, context
-bar, page header, panels, status badges) a single, consistent set of values
-to build from instead of each hand-rolling its own spacing/border/radius
-numbers.
+The palette is an analytical adaptation of the current Ancestry UK visual
+direction: warm neutral canvas, white work surfaces, blue interaction, and a
+restrained green brand accent. Brand identity is kept separate from semantic
+success/warning/error colours.
 
-Presentation-only: no analytical, model, or governance behaviour lives
-here, and nothing here is imported by ancestry_mmm/core.
+Presentation-only: no analytical, model, or governance behaviour lives here,
+and nothing here is imported by ``ancestry_mmm.core``.
 """
 
 from ancestry_mmm.utils.config import THEME_COLORS
 
-# Spacing scale (CSS length strings) - use these instead of ad-hoc px/rem
-# values in any new component CSS.
+
 SPACING = {
     "xs": "4px",
     "sm": "8px",
@@ -25,71 +20,136 @@ SPACING = {
     "xl": "32px",
 }
 
-# Corner radius scale.
 RADIUS = {
     "sm": "6px",
     "md": "10px",
-    "lg": "14px",
+    "lg": "12px",
 }
 
-# Surface/background tokens, layered on top of THEME_COLORS rather than
-# duplicating its values.
 SURFACE = {
     "base": THEME_COLORS["background"],
     "raised": THEME_COLORS["background_secondary"],
     "card": THEME_COLORS["card"],
     "border": THEME_COLORS["border"],
-    "border_strong": "#3D5245",
+    "border_strong": "#B8B2A9",
 }
 
-# Text hierarchy tokens.
 TEXT = {
     "primary": THEME_COLORS["foreground"],
     "muted": THEME_COLORS["foreground_muted"],
     "accent": THEME_COLORS["accent"],
+    "brand": THEME_COLORS["brand_accent"],
 }
 
-# Semantic status colours - the single colour vocabulary reused by
-# components/status.py's badge mapping and by the sidebar's readiness
-# indicators, so status meaning is never reinvented per call site.
-# Deliberately no purple/blue AI-gradient accent - "info" reuses the
-# existing muted slate-green rather than introducing a new hue family.
+# Semantic status colours are deliberately separate from the brand green.
 STATUS_COLOR = {
     "neutral": TEXT["muted"],
-    "positive": "#34A871",
-    "caution": "#D9A441",
-    "negative": "#E2555B",
-    "info": "#6B8B7A",
+    "positive": "#287A43",
+    "caution": "#A66A00",
+    "negative": "#B42318",
+    "info": THEME_COLORS["accent"],
 }
 
 
 def shell_css() -> str:
-    """CSS for shared shell chrome: nav group headers, the project context
-    bar, page-header description text, status badges and panel primitives.
-    Injected once by ``apply_theme()``; every primitive in ``ui.py`` only
-    ever applies one of these class names, never an inline style block of
-    its own, so the shell's visual language stays in exactly one place.
-    """
+    """Return the shared CSS for shell chrome and analytical surfaces."""
+
     return f"""
     <style>
+    :root {{
+        --mmm-canvas: {SURFACE["base"]};
+        --mmm-surface: {SURFACE["card"]};
+        --mmm-border: {SURFACE["border"]};
+        --mmm-text: {TEXT["primary"]};
+        --mmm-muted: {TEXT["muted"]};
+        --mmm-blue: {TEXT["accent"]};
+        --mmm-green: {TEXT["brand"]};
+    }}
+    [data-testid="stAppViewContainer"] {{
+        background: {SURFACE["base"]};
+    }}
+    [data-testid="stMainBlockContainer"] {{
+        max-width: 1440px;
+        padding-top: 2.25rem;
+        padding-bottom: 3rem;
+    }}
+    section[data-testid="stSidebar"] {{
+        background: {SURFACE["card"]};
+        border-right: 1px solid {SURFACE["border"]};
+    }}
+    section[data-testid="stSidebar"] > div {{
+        padding-top: 1.35rem;
+    }}
+    section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {{
+        margin-bottom: 0;
+    }}
+    .mmm-brand-lockup {{
+        padding: 0.1rem 0.35rem 1.25rem;
+        border-bottom: 1px solid {SURFACE["border"]};
+        margin-bottom: 0.85rem;
+    }}
+    .mmm-brand-eyebrow, .mmm-home-eyebrow {{
+        color: {TEXT["brand"]};
+        font-size: 0.7rem;
+        font-weight: 750;
+        letter-spacing: 0.16em;
+        line-height: 1.2;
+        text-transform: uppercase;
+    }}
+    .mmm-brand-product {{
+        color: {TEXT["primary"]};
+        font-size: 1.02rem;
+        font-weight: 700;
+        line-height: 1.3;
+        margin-top: 0.28rem;
+    }}
+    .mmm-brand-function {{
+        color: {TEXT["muted"]};
+        font-size: 0.76rem;
+        line-height: 1.35;
+        margin-top: 0.22rem;
+    }}
     .mmm-nav-group {{
-        font-size: 0.72rem;
-        letter-spacing: 0.06em;
+        font-size: 0.67rem;
+        letter-spacing: 0.12em;
         text-transform: uppercase;
         color: {TEXT["muted"]};
-        margin: {SPACING["md"]} 0 {SPACING["xs"]} 0;
-        font-weight: 600;
+        margin: 1.2rem 0 0.35rem 0.35rem;
+        font-weight: 750;
+    }}
+    section[data-testid="stSidebar"] [data-testid="stPageLink-NavLink"] {{
+        border-left: 3px solid transparent;
+        border-radius: 0 {RADIUS["sm"]} {RADIUS["sm"]} 0;
+        color: {TEXT["primary"]};
+        margin: 0.12rem 0;
+        min-height: 2.1rem;
+        padding: 0.38rem 0.55rem;
+        transition: background 120ms ease, border-color 120ms ease;
+    }}
+    section[data-testid="stSidebar"] [data-testid="stPageLink-NavLink"]:hover {{
+        background: {THEME_COLORS["selected"]};
+    }}
+    section[data-testid="stSidebar"] [data-testid="stPageLink-NavLink"][aria-current="page"] {{
+        background: {THEME_COLORS["selected"]};
+        border-left-color: {TEXT["accent"]};
+        font-weight: 700;
+    }}
+    .mmm-sidebar-footnote {{
+        border-top: 1px solid {SURFACE["border"]};
+        color: {TEXT["muted"]};
+        font-size: 0.72rem;
+        line-height: 1.45;
+        margin-top: 1.2rem;
+        padding: 0.75rem 0.35rem 0;
     }}
     .mmm-context-bar {{
         display: flex;
         flex-wrap: wrap;
-        gap: {SPACING["lg"]};
-        padding: {SPACING["sm"]} {SPACING["md"]};
-        margin-bottom: {SPACING["md"]};
-        background: {SURFACE["raised"]};
-        border: 1px solid {SURFACE["border"]};
-        border-radius: {RADIUS["md"]};
-        font-size: 0.85rem;
+        gap: 1.25rem;
+        padding: 0.55rem 0 0.85rem;
+        margin-bottom: 1.35rem;
+        border-bottom: 1px solid {SURFACE["border"]};
+        font-size: 0.8rem;
         align-items: center;
     }}
     .mmm-context-item {{
@@ -106,46 +166,88 @@ def shell_css() -> str:
     }}
     .mmm-context-value {{
         color: {TEXT["primary"]};
-        font-weight: 500;
+        font-weight: 600;
         overflow-wrap: anywhere;
     }}
     .mmm-badge {{
         display: inline-flex;
         align-items: center;
         gap: 4px;
-        padding: 2px 9px;
-        border-radius: 999px;
+        padding: 2px 8px;
+        border-radius: {RADIUS["sm"]};
         font-size: 0.72rem;
-        font-weight: 600;
+        font-weight: 650;
         border: 1px solid transparent;
         white-space: nowrap;
         margin-right: 6px;
     }}
-    .mmm-header-desc {{
-        color: {TEXT["muted"]};
-        margin-top: -4px;
-        margin-bottom: {SPACING["sm"]};
-    }}
     .mmm-panel-title {{
-        font-weight: 600;
+        color: {TEXT["primary"]};
+        font-weight: 700;
         margin-bottom: 4px;
     }}
-    /* Panel primitives (SectionCard/InfoPanel/WarningPanel/BlockingPanel in
-       ui.py) render a hidden marker span as the first child of a bordered
-       st.container(); :has() tints the container itself by kind, the same
-       technique already used above to retint st.info. Falls back cleanly
-       to a plain bordered container if a future Streamlit release renames
-       this testid - the marker/title text still render either way. */
+    .mmm-header-desc {{
+        color: {TEXT["muted"]};
+        font-size: 1rem;
+        line-height: 1.55;
+        max-width: 72ch;
+        margin-top: -4px;
+        margin-bottom: {SPACING["md"]};
+    }}
+    .mmm-home-identity {{
+        border-left: 4px solid {TEXT["brand"]};
+        margin: 0.15rem 0 1.7rem;
+        padding-left: 1rem;
+        position: relative;
+    }}
+    .mmm-home-product {{
+        color: {TEXT["primary"]};
+        font-size: clamp(1.75rem, 3vw, 2.6rem);
+        font-weight: 760;
+        letter-spacing: -0.025em;
+        line-height: 1.12;
+        margin-top: 0.22rem;
+    }}
+    .mmm-home-description {{
+        color: {TEXT["muted"]};
+        font-size: 1rem;
+        line-height: 1.5;
+        margin-top: 0.6rem;
+        max-width: 66ch;
+    }}
+    .mmm-lineage-mark {{
+        border-top: 1px solid {THEME_COLORS["border"]};
+        margin-top: 1rem;
+        max-width: 270px;
+        position: relative;
+    }}
+    .mmm-lineage-mark::before, .mmm-lineage-mark::after {{
+        background: {TEXT["accent"]};
+        border: 2px solid {SURFACE["base"]};
+        border-radius: 50%;
+        content: "";
+        height: 8px;
+        position: absolute;
+        top: -5px;
+        width: 8px;
+    }}
+    .mmm-lineage-mark::before {{ left: 18%; }}
+    .mmm-lineage-mark::after {{ background: {TEXT["brand"]}; right: 18%; }}
+    div[data-testid="stVerticalBlock"] > div:has(> div .mmm-panel-marker-neutral) {{
+        padding-bottom: 0.25rem;
+    }}
+    /* Only semantic warning/blocking panels receive a bordered surface. */
     [data-testid="stVerticalBlockBorderWrapper"]:has(> div .mmm-panel-marker-info) {{
-        background: rgba(107, 139, 122, 0.12);
+        background: #EAF4F7;
+        border-color: #B8DCE6 !important;
     }}
     [data-testid="stVerticalBlockBorderWrapper"]:has(> div .mmm-panel-marker-caution) {{
-        background: rgba(217, 164, 65, 0.10);
-        border-color: #4a3f26 !important;
+        background: #FFF5DE;
+        border-color: #E5C57E !important;
     }}
     [data-testid="stVerticalBlockBorderWrapper"]:has(> div .mmm-panel-marker-negative) {{
-        background: rgba(226, 85, 91, 0.10);
-        border-color: #4a2a2c !important;
+        background: #FDECEA;
+        border-color: #E4AAA4 !important;
     }}
     </style>
     """

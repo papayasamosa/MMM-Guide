@@ -51,7 +51,9 @@ _DOMAIN_LABELS = {
 }
 
 st.set_page_config(
-    page_title="Data Upload - Ancestry FH MMM", page_icon="🧬", layout="wide"
+    page_title="Data Upload | Ancestry Family History & DNA MMM",
+    page_icon="🧬",
+    layout="wide",
 )
 init_session_state()
 apply_theme()
@@ -80,15 +82,13 @@ else:
 render_page_header(
     "data_upload",
     description=(
-        "Load data under each governed logical domain (REQ-DATAIN-001: "
-        "Outcomes, Activity and Media, and Context and External Factors "
-        "are required; Experiment Evidence is optional), or start from the "
-        "synthetic demo."
+        "Bring together Outcomes, Activity and Media, and Context and External "
+        "Factors. Start with the synthetic fixture or add governed source files."
     ),
     badges=_header_badges,
 )
 
-st.markdown("---")
+st.markdown("### Project setup")
 st.session_state.setdefault("project_name", "ancestry-fh-uk")
 st.session_state["project_name"] = st.text_input(
     "Project name",
@@ -96,14 +96,12 @@ st.session_state["project_name"] = st.text_input(
     help="Used to namespace the curve bank and exported project bundles for this project.",
 )
 
-tab_demo, tab_upload = st.tabs(["Use synthetic demo data", "Upload your own sources"])
+tab_demo, tab_upload = st.tabs(["Synthetic fixture", "Upload sources"])
 
 with tab_demo:
     st.markdown(
-        "A synthetic weekly UK / Australia / Canada dataset shaped like Ancestry's FH problem - "
-        "three segment outcomes, a DNA-targeted media channel with a halo effect, promo flags "
-        "per segment, and DNA kit pricing. **Not real Ancestry data** - it exists so the tool is "
-        "runnable end-to-end before real data is connected."
+        "Use the deterministic weekly UK / Australia / Canada fixture to explore the "
+        "workflow end-to-end. **This is not real Ancestry data.**"
     )
     if st.button("Load synthetic demo sources", type="primary"):
         frames, err = load_all_sample_sources()
@@ -145,9 +143,7 @@ with tab_demo:
             )
 
 with tab_upload:
-    st.markdown(
-        "Upload one file per source. You can add more sources later (e.g. a second controls file)."
-    )
+    st.caption("Add one or more governed source files. You can add more later.")
     source_name = st.text_input(
         "Source name *", value="media", help="e.g. media, outcomes, controls"
     )
@@ -298,8 +294,7 @@ def _render_source_detail(name: str, df) -> None:
 
 
 if sources:
-    st.markdown("---")
-    st.markdown("### Sources by logical domain")
+    st.markdown("## Sources by logical domain")
     st.caption(
         "REQ-DATAIN-001: a logical domain is not a physical file - any "
         "number of physical source files/versions may exist under one "

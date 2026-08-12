@@ -40,7 +40,9 @@ from ancestry_mmm.core.market_config import (
 )
 
 st.set_page_config(
-    page_title="Market Descriptors - Ancestry FH MMM", page_icon="🧬", layout="wide"
+    page_title="Market Descriptors | Ancestry Family History & DNA MMM",
+    page_icon="🧬",
+    layout="wide",
 )
 init_session_state()
 apply_theme()

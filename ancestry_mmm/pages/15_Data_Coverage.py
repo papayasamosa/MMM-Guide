@@ -61,7 +61,9 @@ from ancestry_mmm.data import detect_column_types
 FREQUENCY_OPTIONS = ["daily", "weekly", "monthly", "quarterly", "irregular"]
 
 st.set_page_config(
-    page_title="Data Coverage - Ancestry FH MMM", page_icon="🧬", layout="wide"
+    page_title="Data Coverage | Ancestry Family History & DNA MMM",
+    page_icon="🧬",
+    layout="wide",
 )
 init_session_state()
 apply_theme()
