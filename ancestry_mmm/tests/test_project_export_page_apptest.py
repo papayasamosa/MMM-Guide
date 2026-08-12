@@ -495,22 +495,18 @@ def test_officially_resumable_message_withheld_when_diagnostics_artefact_has_dri
     assert any("not **officially** resumable" in (w.value or "") for w in at.warning)
 
 
-# Phase 7 of the Streamlit UI/UX overhaul (docs/decision_log.md): the shared
-# shell applied to this page - a page-header readiness badge, the "Project
-# status" summary (current project/artefact versions + this session's
-# bundle activity), and a manifest-driven "what's included" checklist after
-# a real build/import. Presentation only - every assertion below reads a
-# value the page derives from session state or from the bundle's own
-# manifest.json, never a new computation.
+# Phase 6 of the dashboard UX/UI brief: the shared shell applied to this page,
+# an Export & Recovery dashboard that keeps the durable bundle primary, and a
+# manifest-driven contents checklist after a real build/import. Presentation
+# only - every assertion below reads a value the page derives from session
+# state or from the bundle's own manifest.json, never a new computation.
 
 
 def test_session_state_not_durable_banner_and_empty_project_status(
     monkeypatch, tmp_path
 ):
-    """Before any build/import this session, the page states plainly that
-    session state is not durable storage, and the "Project status" panel
-    honestly reports no bundle activity yet - never a fabricated 'last
-    build' claim."""
+    """Before any build/import, the recovery dashboard reports no activity
+    and keeps the durable bundle visibly ahead of secondary outputs."""
     export_root = tmp_path / "exports"
     artifact_root = tmp_path / "artifact-root"
 
@@ -524,9 +520,11 @@ def test_session_state_not_durable_banner_and_empty_project_status(
     at.run()
     assert not at.exception, f"initial load raised: {at.exception}"
 
-    assert any("not durable storage" in (i.value or "") for i in at.info), (
-        "the session-state-is-not-durable-storage invariant must be stated plainly"
-    )
+    assert any("Export & Recovery dashboard" in (m.value or "") for m in at.markdown)
+    metrics = {metric.label: metric.value for metric in at.metric}
+    assert metrics["Primary recovery object"] == "Durable bundle"
+    assert metrics["Bundle activity"] == "Not started"
+    assert metrics["Secondary outputs"] == "Report only"
     assert any(
         "No bundle has been built yet this session" in (c.value or "")
         for c in at.caption

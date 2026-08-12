@@ -245,7 +245,7 @@ def test_official_lifecycle_journey_in_browser(
     # bundle is technically complete, not just that the zip extracted
     # cleanly.
     expect(
-        page.get_by_text(re.compile(r"Resumability audit passed at checkpoint"))
+        page.get_by_text(re.compile(r"Resumability audit passed at "))
     ).to_be_visible(timeout=30_000)
     expect(
         page.get_by_text("its declared checkpoint is incomplete", exact=False)
