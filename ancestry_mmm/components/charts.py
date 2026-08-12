@@ -503,10 +503,10 @@ def create_waterfall_chart(
 # pages/AGENTS.md accessibility rule: "distinguish states by more than
 # colour alone"). Never a purple/blue hue (tokens.py's existing "no
 # purple/blue AI-gradient accent" convention, extended here): "unknown" -
-# the one state that has not even been triaged yet - instead gets the one
-# stand-out *light* cell against this app's otherwise dark palette, which
-# reads as "flag for review" without borrowing a severity colour that would
-# misrepresent it as a confirmed problem the way "missing_expected" (red) is.
+# the one state that has not even been triaged yet - gets a warm review
+# surface without borrowing the confirmed-problem colour used by
+# "missing_expected". Every state uses a light surface in the light
+# workbench; the in-cell glyph and legend label preserve non-colour meaning.
 # ---------------------------------------------------------------------------
 
 # state -> (display label, short in-cell glyph, hex colour). Every entry in
@@ -514,21 +514,16 @@ def create_waterfall_chart(
 # appear here (enforced by test_charts_coverage_fabric.py) - a chart must
 # never silently drop a governed state for lack of a colour/glyph.
 STATE_VISUALS: Dict[str, Tuple[str, str, str]] = {
-    FABRIC_LABEL_COVERED: ("Covered (no recorded gap)", "·", "#22301F"),
-    # Coverage-state colours retain the existing no-blue/purple status rule;
-    # the light blue accent remains available for analytical chart series.
-    "observed_zero": ("Observed zero", "0", CHART_COLORS["success"]),
-    "estimated": ("Estimated", "~", CHART_COLORS["chart_2"]),
-    "modelled": ("Modelled", "M", "#3B6C5E"),
-    "not_applicable": ("Not applicable", "–", CHART_COLORS["chart_6"]),
-    "suppressed": ("Suppressed", "S", "#7A6A57"),
-    "unavailable_source": ("Unavailable source", "U", CHART_COLORS["chart_3"]),
-    "missing_expected": ("Missing (expected)", "!", CHART_COLORS["error"]),
-    "unknown": ("Unknown - not yet triaged", "?", THEME_COLORS["foreground"]),
+    FABRIC_LABEL_COVERED: ("Covered (no recorded gap)", "·", "#E5F0E5"),
+    "observed_zero": ("Observed zero", "0", "#D8EBD9"),
+    "estimated": ("Estimated", "~", "#EDF3D6"),
+    "modelled": ("Modelled", "M", "#E5EEE9"),
+    "not_applicable": ("Not applicable", "–", "#EAE8E3"),
+    "suppressed": ("Suppressed", "S", "#F1E5D4"),
+    "unavailable_source": ("Unavailable source", "U", "#F8EBCF"),
+    "missing_expected": ("Missing (expected)", "!", "#F9DCD8"),
+    "unknown": ("Unknown - not yet triaged", "?", "#FFF4D8"),
 }
-# Text colour per state's glyph - the light "unknown"/"covered" cells need
-# dark glyph text to stay legible; every other (dark) cell keeps light text.
-_DARK_GLYPH_STATES = {FABRIC_LABEL_COVERED, "unknown"}
 
 assert set(STATE_VISUALS) == set(COVERAGE_STATES) | {FABRIC_LABEL_COVERED}, (
     "STATE_VISUALS must cover exactly every core.coverage.COVERAGE_STATES "
@@ -597,13 +592,7 @@ def create_coverage_fabric_chart(
                 text=[glyph] * len(state_cells),
                 textposition="inside",
                 insidetextanchor="middle",
-                textfont=dict(
-                    color=(
-                        THEME_COLORS["background"]
-                        if state in _DARK_GLYPH_STATES
-                        else THEME_COLORS["foreground"]
-                    )
-                ),
+                textfont=dict(color=THEME_COLORS["foreground"]),
                 customdata=customdata,
                 hovertemplate=(
                     "<b>%{y}</b><br>"

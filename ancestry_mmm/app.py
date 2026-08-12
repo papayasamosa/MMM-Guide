@@ -376,7 +376,7 @@ def main():
     render_sidebar("home")
     render_context_bar()
 
-    title_col, palette_col = st.columns([5, 1])
+    title_col, palette_col = st.columns([3, 1])
     with title_col:
         st.markdown(
             '<div class="mmm-home-identity">'

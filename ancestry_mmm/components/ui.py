@@ -275,7 +275,7 @@ def render_page_header(
             ),
             "WORKFLOW",
         )
-        st.caption(f"{group_label} Â· {step['label']}")
+        st.caption(f"{group_label} · {step['label']}")
 
     canonical_status = page_readiness(key)
     badge_keys = list(badges or [])
