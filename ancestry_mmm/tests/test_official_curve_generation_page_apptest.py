@@ -325,6 +325,56 @@ def test_empty_state_loads_without_error():
     assert not at.exception, f"page raised: {at.exception}"
 
 
+def test_blocker_panel_shown_and_generate_disabled_before_context_confirmed(
+    monkeypatch, tmp_path
+):
+    """Phase 6 UI overhaul: a missing requirement (here, the reference
+    context for the selected market not yet reviewed/confirmed) must be
+    visible as an explicit blocker before Generate is pressed, and the
+    button itself must be disabled - not only surfaced as an st.error after
+    a click that was always going to fail."""
+    import ancestry_mmm.utils.session_state as ss
+
+    monkeypatch.setattr(ss, "CURVE_ARTIFACT_ROOT", tmp_path)
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_governed_session_state(at)
+    at.session_state["ocg_mode_UK"] = "recent_average"
+    at.session_state["ocg_spend_points"] = "0, 50, 100, 150, 200"
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    assert any("Not ready to generate" in (m.value or "") for m in at.markdown)
+    assert any(
+        "Reference context is not yet reviewed and confirmed" in (m.value or "")
+        for m in at.markdown
+    )
+    generate_button = next(
+        b for b in at.button if b.label == "Generate and save official curve artifact"
+    )
+    assert generate_button.disabled is True
+
+
+def test_blocker_panel_clears_and_generate_enabled_once_ready(monkeypatch, tmp_path):
+    import ancestry_mmm.utils.session_state as ss
+
+    monkeypatch.setattr(ss, "CURVE_ARTIFACT_ROOT", tmp_path)
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_governed_session_state(at)
+    at.session_state["ocg_mode_UK"] = "recent_average"
+    at.session_state["ocg_spend_points"] = "0, 50, 100, 150, 200"
+    at.session_state["ocg_artifact_id"] = "art-ready-check"
+    at.run()
+    _confirm_market_context(at, "UK")
+    assert not at.exception, f"confirmation click raised: {at.exception}"
+    assert any("All pre-flight checks pass" in (c.value or "") for c in at.caption)
+    assert not any("Not ready to generate" in (m.value or "") for m in at.markdown)
+    generate_button = next(
+        b for b in at.button if b.label == "Generate and save official curve artifact"
+    )
+    assert generate_button.disabled is False
+
+
 def test_full_governance_generates_and_saves_an_artifact(monkeypatch, tmp_path):
     import ancestry_mmm.utils.session_state as ss
 
