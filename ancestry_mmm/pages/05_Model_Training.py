@@ -25,6 +25,9 @@ from ancestry_mmm.components import (
     render_next_step,
     render_empty_state,
     render_drift_status,
+    SectionCard,
+    InfoPanel,
+    render_status_badge,
 )
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.causal_graph import GRAPH_STATUS_APPROVED, CausalGraph
@@ -85,20 +88,33 @@ if model_type == "market_specific" and len(frame["markets"]) < 2:
 dna_kit_outcome_ids = get_state("direct_dna_outcome_ids") or []
 
 st.markdown("---")
-st.markdown(f"""
+
+with SectionCard(
+    "Proposed model",
+    description="What would be built and fit if you click 'Build & fit model' below.",
+):
+    st.markdown(f"""
 - **Model structure:** {MODEL_TYPE_LABELS[model_type]}
 - **Observations:** {format_number(frame["X_media"].shape[0])}
 - **Markets:** {", ".join(frame["markets"])}
-- **Outcomes:** {", ".join(frame["outcome_ids"])}{f" (DNA-product, direct media response: {', '.join(dna_kit_outcome_ids)})" if dna_kit_outcome_ids else ""}
+- **Segments / outcomes:** {", ".join(frame["outcome_ids"])}{f" (DNA-product, direct media response: {', '.join(dna_kit_outcome_ids)})" if dna_kit_outcome_ids else ""}
 - **Channels:** {", ".join(frame["channels"])} (DNA: {", ".join(frame["channels"][i] for i in frame["dna_channel_idx"]) or "none"})
-- **MCMC:** {format_number(get_state("mcmc_draws"))} draws, {format_number(get_state("mcmc_tune"))} tune, {get_state("mcmc_chains")} chains
 """)
 
-st.info(
-    "Model training runs sequentially (one core) here so progress can be shown live in the UI. "
-    "A full run with several thousand draws can take from a few minutes to significantly longer "
-    "depending on data size and hardware - this does not block the rest of the app once started."
-)
+with InfoPanel(
+    "Resource expectations",
+    description="Sequential (single-core) sampling so live progress can be shown honestly below.",
+):
+    st.markdown(f"""
+- **MCMC draws:** {format_number(get_state("mcmc_draws"))}
+- **Tune steps:** {format_number(get_state("mcmc_tune"))}
+- **Chains:** {get_state("mcmc_chains")}
+""")
+    st.caption(
+        "A full run with several thousand draws can take from a few minutes to significantly "
+        "longer depending on data size and hardware - this does not block the rest of the app "
+        "once started."
+    )
 
 
 def _resolve_causal_graph():
@@ -277,6 +293,21 @@ if st.button("Preview prior predictive (no fitting)"):
             )
 
 _preview = get_state("prior_predictive_preview")
+# Prior-predictive preview status badge - reuses the exact same staleness
+# signal the warning/detail below already computed (proposed_model_
+# fingerprint vs. _proposed_model_fingerprint(model_type)); no new
+# staleness check is invented here.
+if not _preview:
+    render_status_badge("not_configured", label="Preview: not yet run")
+elif _preview.get("status") == "failed":
+    render_status_badge("failed", label="Preview: failed")
+elif _preview.get("proposed_model_fingerprint") != _proposed_model_fingerprint(
+    model_type
+):
+    render_status_badge("stale", label="Preview: stale")
+else:
+    render_status_badge("validated", label="Preview: current")
+
 if _preview and _preview.get("status") == "failed":
     st.error(_preview["error"])
 elif _preview and _preview.get("status") == "computed":
@@ -400,6 +431,18 @@ if st.button("Build & fit model", type="primary"):
 
 if get_state("model_trained"):
     st.markdown("---")
+    with SectionCard(
+        "Completed fit", description="The identity of the model run currently in session."
+    ):
+        render_status_badge("validated", label="Trained")
+        _completed_run_id = get_state("model_run_id") or ""
+        st.markdown(f"""
+- **Model run:** `{_completed_run_id[:8] if _completed_run_id else "(unknown)"}`
+- **Model structure:** {MODEL_TYPE_LABELS[get_state("model_type")]}
+- **MCMC:** {format_number(get_state("mcmc_draws"))} draws, {format_number(get_state("mcmc_tune"))} tune, {get_state("mcmc_chains")} chains
+- **Approval status:** {"Approved" if get_state("model_approval") else "Not yet approved"}
+""")
+
     st.markdown("### Save as a comparison candidate")
     st.caption(
         "Optional: record this fit's scorecard so it can be compared side by side with other "
