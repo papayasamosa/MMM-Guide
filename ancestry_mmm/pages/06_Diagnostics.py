@@ -31,6 +31,7 @@ from ancestry_mmm.components import (
     render_top_line,
     render_primary_concern,
     render_domain_health_rail,
+    render_workspace_note,
 )
 from ancestry_mmm.application.diagnostics_summary import (
     compute_domain_health,
@@ -119,12 +120,16 @@ render_page_header(
 st.caption(
     "A scorecard, not a single headline R-squared - convergence, fit, posterior predictive coverage and plausibility flags together."
 )
+render_workspace_note(
+    "Evidence first",
+    "Start with the summary rail, inspect domain detail, then evaluate readiness before approval.",
+    kind="governed",
+)
 
 trace = get_state("trace")
 frame = get_state("frame")
 meta = get_state("model_meta")
 if trace is None or frame is None or meta is None:
-    st.markdown("---")
     render_empty_state(
         "No trained model yet. Complete Model Training first.",
         button_label="Go to Model Training",
@@ -385,7 +390,6 @@ def _render_summary_into(slot) -> None:
 # second fill below, after that button's handler, corrects that case).
 _render_summary_into(_summary_slot)
 
-st.markdown("---")
 st.markdown("### Full diagnostic detail")
 st.caption(
     "Detail behind the summary above, grouped by evidence domain - not "
@@ -561,7 +565,6 @@ if scorecard:
 else:
     st.info("Compute the scorecard above to see full diagnostic detail by domain.")
 
-st.markdown("---")
 st.markdown("### Validation readiness")
 st.caption(
     "Evaluate diagnostics against a validation policy. This shows which gates pass, "
@@ -680,7 +683,6 @@ if validation_service_result:
         for e in validation_service_result.errors:
             st.error(e)
 
-st.markdown("---")
 st.markdown("### Model approval")
 st.caption(FIELD_HELP["approval"])
 render_glossary(["Prior", "Posterior", "Approval"])
