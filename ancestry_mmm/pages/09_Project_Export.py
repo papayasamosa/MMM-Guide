@@ -1,6 +1,19 @@
-"""Page 9: project export/import bundle (Parquet + JSON + NetCDF) and Excel export for portability and recovery."""
+"""Page 9: project export/import bundle (Parquet + JSON + NetCDF) and Excel export for portability and recovery.
 
+Phase 7 of the Streamlit UI/UX overhaul (docs/decision_log.md) applies the
+shared shell (SectionCard/InfoPanel, page-header badges, a "Project status"
+summary) to this page - the last one not yet migrated. Presentation only:
+every value shown is read from existing session-state getters or from the
+bundle's own manifest.json ("contains" dict, written by
+core.persistence.export_project - never recomputed here), never invented or
+duplicated. No change to core.persistence or application.project_service
+logic.
+"""
+
+import json
 import sys
+import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -22,6 +35,9 @@ from ancestry_mmm.components import (
     render_sidebar,
     render_page_header,
     render_drift_status,
+    page_readiness,
+    SectionCard,
+    InfoPanel,
 )
 from ancestry_mmm.core.persistence import (
     export_project,
@@ -106,6 +122,57 @@ from ancestry_mmm.core.promotions import PROMOTION_EVENT_OP
 from ancestry_mmm.data import apply_pipeline, pipeline_from_json
 
 _CURVE_SERVICE = CurveService()
+
+# Human-readable labels for core.persistence.export_project's manifest.json
+# "contains" keys, purely presentational (label text only, no logic) - used
+# to render an honest "what's actually in this bundle" checklist straight
+# from the bundle's own manifest after a real build/import, rather than
+# re-deriving a second, possibly-drifting notion of bundle contents here.
+_CONTAINS_LABELS = {
+    "raw_data": "Raw uploaded source data",
+    "transformed_data": "Transformed / joined data",
+    "model_spec": "Model structure (segments, markets, channels)",
+    "posterior": "Fitted posterior trace",
+    "diagnostics": "Diagnostics scorecard / backtest results",
+    "curves": "Legacy curve bank entries",
+    "official_curve_artifacts": "Official curve artifacts (REQ-CURVE-001)",
+    "approval": "Model approval",
+    "outcome_approvals": "Outcome approvals",
+    "scenarios": "Saved scenarios",
+    "notes": "Analyst notes",
+    "validation_policy": "Validation / threshold policy",
+    "diagnostics_artefact": "Diagnostics artefact evidence",
+    "validation_results": "Validation results",
+    "approval_readiness": "Approval readiness proof",
+    "counterfactual_policy": "Counterfactual policy",
+    "currency_context": "Currency context",
+    "value_mapping": "Outcome value mapping",
+    "causal_graphs": "Causal graph versions",
+    "search_objects": "Search object versions",
+    "source_versions": "Source upload version history",
+    "source_definitions": "Source logical-domain definitions",
+    "variable_coverage_matrices": "Variable coverage matrix versions",
+    "join_config": "Join configuration",
+}
+
+
+def _render_contains_checklist(contains: dict) -> None:
+    """Two-column included / not-included checklist rendered directly from
+    a bundle's own manifest.json "contains" dict - presentation only, no
+    new completeness logic."""
+    included = [label for key, label in _CONTAINS_LABELS.items() if contains.get(key)]
+    not_included = [
+        label for key, label in _CONTAINS_LABELS.items() if not contains.get(key)
+    ]
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("**Included**")
+        for label in included:
+            st.caption(f"✓ {label}")
+    with c2:
+        st.markdown("**Not included**")
+        for label in not_included:
+            st.caption(f"– {label}")
 
 
 def _resolve_official_curve_artifact_rows() -> list[dict]:
@@ -328,16 +395,115 @@ st.set_page_config(
 init_session_state()
 apply_theme()
 render_sidebar("export")
-render_page_header("export")
-st.caption(
-    "Streamlit session state is never the system of record - it only drives in-session "
-    "interactivity. This bundle (Parquet + JSON + NetCDF, all open formats) is what an analyst "
-    "actually keeps: pause here, resume later, share with another analyst, or replay the same pipeline on "
-    "refreshed weekly data."
+render_page_header(
+    "export",
+    badges=[page_readiness("export")],
 )
+st.info(
+    "**Streamlit session state is not durable storage.** It only drives in-session "
+    "interactivity and is lost on refresh or a new browser session. This project bundle "
+    "(Parquet + JSON + NetCDF, all open formats) is the actual system of record: pause here, "
+    "resume later, share with another analyst, or replay the same pipeline on refreshed "
+    "weekly data. The Excel summary and project report further down this page are one-way, "
+    "read-only exports for sharing and analysis - only the bundle round-trips back into a "
+    "working, resumable project."
+)
+
+# One read of the curve bank / official curve artifact store per page render,
+# reused by the "Project status" summary below and by the Excel/report
+# builders further down this page - previously read up to three times per
+# render (once per consumer) for the exact same on-disk state. Read-only,
+# same functions/paths already used unconditionally elsewhere on this page.
+_curve_bank_entries = load_all_entries(curve_bank_dir())
+_official_curve_artifact_rows = _resolve_official_curve_artifact_rows()
+_authorized_artifact_count = sum(
+    1
+    for row in _official_curve_artifact_rows
+    if row.get("current_authorization") == "authorized"
+)
+
+_last_bundle_build = get_state("export_last_bundle_summary")
+_last_bundle_import = get_state("export_last_import_summary")
+
+with SectionCard(
+    "Project status",
+    description=(
+        "What this project currently has, and what this browser session has done with the "
+        "system-of-record bundle. Read from session state and the on-disk curve bank / "
+        "official curve artifact store already used below - not a new signal."
+    ),
+):
+    _status_col1, _status_col2 = st.columns(2)
+    with _status_col1:
+        st.markdown("**Current project (session state)**")
+        st.caption(f"Project name: {get_state('project_name', 'ancestry-fh-uk')}")
+        st.caption(
+            f"Data sources loaded: {len(get_state('raw_sources') or {})} "
+            f"(source versions recorded: {len(get_state('source_versions') or [])})"
+        )
+        st.caption(
+            f"Transformation pipeline steps: {len(get_state('pipeline_steps') or [])}"
+        )
+        _model_run_id = get_state("model_run_id")
+        st.caption(
+            "Model: "
+            + (f"run `{_model_run_id}`" if _model_run_id else "not yet trained")
+            + (", approved" if get_state("model_approval") else ", not approved")
+        )
+        st.caption(
+            f"Causal graph versions saved: {len(get_state('causal_graph_versions') or [])}"
+        )
+        st.caption(
+            "Search object versions saved: "
+            f"{len(get_state('search_object_versions') or [])}"
+        )
+        st.caption(
+            "Coverage matrix versions saved: "
+            f"{len(get_state('variable_coverage_matrix_versions') or [])}"
+        )
+        st.caption(f"Legacy curve bank entries: {len(_curve_bank_entries)}")
+        st.caption(
+            f"Official curve artifacts: {len(_official_curve_artifact_rows)} "
+            f"({_authorized_artifact_count} currently authorized for headline reporting)"
+            if _official_curve_artifact_rows
+            else "Official curve artifacts: none generated yet"
+        )
+        st.caption(f"Saved scenarios: {len(get_state('scenarios') or [])}")
+    with _status_col2:
+        st.markdown("**This session's bundle activity**")
+        if _last_bundle_build:
+            st.caption(
+                f"Last bundle built this session: `{_last_bundle_build['project_name']}` "
+                f"at checkpoint '{_last_bundle_build['checkpoint']}', "
+                f"{_last_bundle_build['built_at']} UTC."
+            )
+        else:
+            st.caption("No bundle has been built yet this session.")
+        if _last_bundle_import:
+            st.caption(
+                f"Last bundle imported this session: `{_last_bundle_import['bundle_name']}`"
+                + (
+                    ", officially resumable"
+                    if _last_bundle_import.get("officially_resumable")
+                    else ""
+                )
+                + f" at checkpoint '{_last_bundle_import.get('checkpoint')}', "
+                f"{_last_bundle_import['imported_at']} UTC."
+            )
+        else:
+            st.caption("No bundle has been imported yet this session.")
+        st.caption(
+            "This activity log is itself session-only - it resets on refresh or a new "
+            "session, same as everything else on this page except the bundle file itself."
+        )
 
 st.markdown("---")
 st.markdown("### Export project bundle")
+st.caption(
+    "The system of record. Produces a single portable .zip (Parquet + JSON + NetCDF, all "
+    "open formats) that fully round-trips back into a working project via **Import project "
+    "bundle** below."
+)
 project_name = get_state("project_name", "ancestry-fh-uk")
 project_notes = st.text_area(
     "Analyst project notes",
@@ -484,6 +650,23 @@ if st.button("Build export bundle", type="primary"):
             ),
         )
     st.success(f"Project bundle built: {output_path}")
+    # Read back this bundle's own manifest.json (written by
+    # core.persistence.export_project - see the module docstring) rather
+    # than re-deriving a second "what's in it" notion here, so the
+    # checklist below can never drift from what was actually written.
+    with zipfile.ZipFile(output_path) as _build_zf:
+        _build_manifest = json.loads(_build_zf.read("manifest.json"))
+    set_state(
+        "export_last_bundle_summary",
+        {
+            "project_name": project_name,
+            "path": str(output_path),
+            "checkpoint": _build_manifest.get("workflow_checkpoint"),
+            "built_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        },
+    )
+    with st.expander("What's included in this bundle", expanded=False):
+        _render_contains_checklist(_build_manifest.get("contains", {}))
     with open(output_path, "rb") as f:
         st.download_button(
             "Download project bundle (.zip)",
@@ -494,6 +677,12 @@ if st.button("Build export bundle", type="primary"):
 
 st.markdown("---")
 st.markdown("### Import project bundle")
+st.caption(
+    "Restore a previously exported bundle to resume work - the same recovery path a "
+    "different analyst, a new session, or a later date all use. Every restored artefact is "
+    "re-verified against its own governance chain below (readiness, approval, fingerprints), "
+    "never trusted blindly."
+)
 uploaded_zip = st.file_uploader("Upload a previously exported .zip", type=["zip"])
 if uploaded_zip is not None and st.button("Import bundle"):
     tmp_path = PROJECT_EXPORT_ROOT / f"_import_{uploaded_zip.name}"
@@ -929,189 +1118,222 @@ if uploaded_zip is not None and st.button("Import bundle"):
                 "or inconsistent transformed data / model spec) - re-run Model Configuration's "
                 '"Prepare modelling frame" step, or re-fit, to continue.'
             )
+        # Read this imported bundle's own manifest.json (already parsed by
+        # import_project - see the module docstring) for the same
+        # presentation-only checklist the export side shows, rather than
+        # re-deriving a second notion of bundle contents here.
+        set_state(
+            "export_last_import_summary",
+            {
+                "bundle_name": uploaded_zip.name,
+                "checkpoint": resume_audit.get("checkpoint"),
+                "officially_resumable": officially_resumable_and_verified,
+                "imported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            },
+        )
+        with st.expander("What was included in the imported bundle", expanded=False):
+            _render_contains_checklist(
+                (imported.get("manifest") or {}).get("contains", {})
+            )
         st.success("Project imported. Review each page to pick up where you left off.")
     finally:
         tmp_path.unlink(missing_ok=True)
 
 st.markdown("---")
-st.markdown("### Excel export")
-model_type_for_export = get_state("model_type", "shared")
-if get_state("trace") is not None and get_state("model_spec"):
-    _export_spec = ModelSpec.from_dict(get_state("model_spec"))
-    render_drift_status(
-        resolve_outcome_definitions(
-            get_state("outcome_definitions"),
-            _export_spec.segment_outcomes,
-            _export_spec.segment_ltv,
-        ),
-        get_state("model_meta"),
-    )
-    _current_pathways = [
-        MediaOutcomePathway.from_dict(p)
-        for p in (get_state("media_outcome_pathways") or [])
-    ]
-    _pathway_drift_df = pathways_drift_dataframe(
-        _current_pathways, get_state("model_meta")
-    )
-    if not _pathway_drift_df.empty:
-        _changed_pathways = _pathway_drift_df[
-            _pathway_drift_df["drift_status"] != "Fitted and current"
+with SectionCard(
+    "Excel export",
+    description=(
+        "A working export for spreadsheet analysis - not the system of record. Re-importing "
+        "the project bundle above is what fully restores a project; this file is one-way."
+    ),
+):
+    model_type_for_export = get_state("model_type", "shared")
+    if get_state("trace") is not None and get_state("model_spec"):
+        _export_spec = ModelSpec.from_dict(get_state("model_spec"))
+        render_drift_status(
+            resolve_outcome_definitions(
+                get_state("outcome_definitions"),
+                _export_spec.segment_outcomes,
+                _export_spec.segment_ltv,
+            ),
+            get_state("model_meta"),
+        )
+        _current_pathways = [
+            MediaOutcomePathway.from_dict(p)
+            for p in (get_state("media_outcome_pathways") or [])
         ]
-        if not _changed_pathways.empty:
-            st.info(
-                f"{len(_changed_pathways)} media-outcome pathway(s) differ from this fit's captured "
-                "pathway metadata (informational only - the pathway catalogue does not yet drive "
-                "fitting; PR F)."
-            )
-    if model_type_for_export == "shared":
-        st.caption(
-            "Curve bank, total-FH contribution and segment x channel Shapley attribution (Model A)."
+        _pathway_drift_df = pathways_drift_dataframe(
+            _current_pathways, get_state("model_meta")
         )
-    else:
-        st.caption(
-            "Curve bank, evidence tiers, a CPA table per market/channel, market-aware Shapley "
-            "attribution (total and market x segment x channel detail, computed with each market's "
-            "own beta/hill_K), diagnostics and approval metadata, and the scenario comparison."
-        )
-    if st.button("Build Excel summary"):
-        meta = get_state("model_meta")
-        params = get_state("posterior_params")
-        frame = get_state("frame")
-        trace = get_state("trace")
-        spec = ModelSpec.from_dict(get_state("model_spec"))
-        entries = load_all_entries(curve_bank_dir())
-        entries_df = entries_to_dataframe(entries) if entries else None
-
+        if not _pathway_drift_df.empty:
+            _changed_pathways = _pathway_drift_df[
+                _pathway_drift_df["drift_status"] != "Fitted and current"
+            ]
+            if not _changed_pathways.empty:
+                st.info(
+                    f"{len(_changed_pathways)} media-outcome pathway(s) differ from this fit's captured "
+                    "pathway metadata (informational only - the pathway catalogue does not yet drive "
+                    "fitting; PR F)."
+                )
         if model_type_for_export == "shared":
-            contributions = compute_shapley_contributions(
-                frame, meta, params, n_permutations=100
+            st.caption(
+                "Curve bank, total-FH contribution and segment x channel Shapley attribution (Model A)."
             )
-            total_df = total_fh_contribution(
-                frame,
-                meta,
-                params,
-                contributions,
-                spec.segment_ltv,
-                outcome_ids=fh_gsa_outcome_ids(meta),
-            )
-            seg_df = outcome_channel_summary(
-                frame, meta, params, contributions, spec.segment_ltv
-            )
-            sheets = {
-                "Total FH Contribution": total_df,
-                "Segment x Channel": seg_df,
-                "Curve Bank": entries_df,
-            }
         else:
-            scorecard = get_state("scorecard") or {}
-            diagnostics_df = pd.DataFrame(scorecard.get("in_sample_fit") or [])
-            approval_dict = get_state("model_approval")
-            approval_df = pd.DataFrame([approval_dict]) if approval_dict else None
-            scenarios = get_state("scenarios") or []
-            scenarios_df = compare_scenarios(scenarios) if scenarios else None
-            ms_contributions = compute_shapley_contributions_market_specific(
-                frame, meta, params, n_permutations=100
+            st.caption(
+                "Curve bank, evidence tiers, a CPA table per market/channel, market-aware Shapley "
+                "attribution (total and market x segment x channel detail, computed with each market's "
+                "own beta/hill_K), diagnostics and approval metadata, and the scenario comparison."
             )
-            ms_total_df = total_contribution_market_specific(
-                frame,
-                meta,
-                params,
-                ms_contributions,
-                spec.segment_ltv,
-                outcome_ids=fh_gsa_outcome_ids(meta),
-                by_market=True,
-            )
-            ms_seg_df = outcome_channel_market_summary(
-                frame, meta, params, ms_contributions, spec.segment_ltv
-            )
-            sheets = {
-                "Curve Bank": entries_df,
-                "Evidence Tiers": evidence_tiers_dataframe(trace, frame, meta),
-                "CPA": market_specific_cpa_table(meta, params),
-                "Total Contribution": ms_total_df,
-                "Market x Segment x Channel": ms_seg_df,
-                "Diagnostics": diagnostics_df,
-                "Approval": approval_df,
-                "Scenarios": scenarios_df,
-            }
+        if st.button("Build Excel summary"):
+            meta = get_state("model_meta")
+            params = get_state("posterior_params")
+            frame = get_state("frame")
+            trace = get_state("trace")
+            spec = ModelSpec.from_dict(get_state("model_spec"))
+            # Reuse the single top-of-page read (see "Project status" above)
+            # instead of reading the curve bank directory a second time.
+            entries = _curve_bank_entries
+            entries_df = entries_to_dataframe(entries) if entries else None
 
-        official_curve_artifact_rows = _resolve_official_curve_artifact_rows()
-        sheets["Official Curve Artifacts"] = (
-            pd.DataFrame(official_curve_artifact_rows)
-            if official_curve_artifact_rows
-            else None
+            if model_type_for_export == "shared":
+                contributions = compute_shapley_contributions(
+                    frame, meta, params, n_permutations=100
+                )
+                total_df = total_fh_contribution(
+                    frame,
+                    meta,
+                    params,
+                    contributions,
+                    spec.segment_ltv,
+                    outcome_ids=fh_gsa_outcome_ids(meta),
+                )
+                seg_df = outcome_channel_summary(
+                    frame, meta, params, contributions, spec.segment_ltv
+                )
+                sheets = {
+                    "Total FH Contribution": total_df,
+                    "Segment x Channel": seg_df,
+                    "Curve Bank": entries_df,
+                }
+            else:
+                scorecard = get_state("scorecard") or {}
+                diagnostics_df = pd.DataFrame(scorecard.get("in_sample_fit") or [])
+                approval_dict = get_state("model_approval")
+                approval_df = pd.DataFrame([approval_dict]) if approval_dict else None
+                scenarios = get_state("scenarios") or []
+                scenarios_df = compare_scenarios(scenarios) if scenarios else None
+                ms_contributions = compute_shapley_contributions_market_specific(
+                    frame, meta, params, n_permutations=100
+                )
+                ms_total_df = total_contribution_market_specific(
+                    frame,
+                    meta,
+                    params,
+                    ms_contributions,
+                    spec.segment_ltv,
+                    outcome_ids=fh_gsa_outcome_ids(meta),
+                    by_market=True,
+                )
+                ms_seg_df = outcome_channel_market_summary(
+                    frame, meta, params, ms_contributions, spec.segment_ltv
+                )
+                sheets = {
+                    "Curve Bank": entries_df,
+                    "Evidence Tiers": evidence_tiers_dataframe(trace, frame, meta),
+                    "CPA": market_specific_cpa_table(meta, params),
+                    "Total Contribution": ms_total_df,
+                    "Market x Segment x Channel": ms_seg_df,
+                    "Diagnostics": diagnostics_df,
+                    "Approval": approval_df,
+                    "Scenarios": scenarios_df,
+                }
+
+            # Reuse the single top-of-page read (see "Project status" above)
+            # instead of re-resolving official curve artifact governance a
+            # second time.
+            official_curve_artifact_rows = _official_curve_artifact_rows
+            sheets["Official Curve Artifacts"] = (
+                pd.DataFrame(official_curve_artifact_rows)
+                if official_curve_artifact_rows
+                else None
+            )
+
+            PROJECT_EXPORT_ROOT.mkdir(parents=True, exist_ok=True)
+            excel_path = PROJECT_EXPORT_ROOT / f"{project_name}_summary.xlsx"
+            export_excel_summary(excel_path, sheets)
+            with open(excel_path, "rb") as f:
+                st.download_button(
+                    "Download Excel summary (.xlsx)",
+                    f,
+                    file_name=excel_path.name,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+    else:
+        st.info("Train a model first to build an Excel summary.")
+
+st.markdown("---")
+with SectionCard(
+    "Project report",
+    description=(
+        "A single reproducible document - objective, data, model, diagnostics, curve bank, "
+        "scenarios, known limitations, and a pointer to the decision log - built from this "
+        "project's actual current state, not a static template. A working export, not the "
+        "system of record: available at any point in the workflow, and sections say plainly "
+        "what hasn't happened yet rather than being left out."
+    ),
+):
+    if st.button("Build project report"):
+        spec_dict = get_state("model_spec")
+        spec = ModelSpec.from_dict(spec_dict) if spec_dict else None
+        frame = get_state("frame")
+        data_window = None
+        if frame is not None and frame.get("dates") is not None and len(frame["dates"]):
+            data_window = (
+                str(pd.Timestamp(frame["dates"].min()).date()),
+                str(pd.Timestamp(frame["dates"].max()).date()),
+            )
+        approval_dict = get_state("model_approval")
+        approval = ModelApproval.from_dict(approval_dict) if approval_dict else None
+        # Reuse the single top-of-page read (see "Project status" above)
+        # instead of reading the curve bank directory a second time.
+        entries = _curve_bank_entries
+        market_config = MarketSpecConfig.from_dict(get_state("market_spec_config"))
+
+        sections = build_report_sections(
+            spec=spec,
+            model_type=get_state("model_type", "shared"),
+            pipeline_steps=get_state("pipeline_steps") or [],
+            data_window=data_window,
+            dna_lag_weeks=get_state("dna_lag_weeks", 4),
+            scorecard=get_state("scorecard"),
+            approval=approval,
+            curve_bank_entries=entries,
+            scenarios=get_state("scenarios") or [],
+            market_spec_config=market_config,
+            outcome_definitions=get_state("outcome_definitions"),
+            official_curve_artifact_rows=_official_curve_artifact_rows,
         )
 
         PROJECT_EXPORT_ROOT.mkdir(parents=True, exist_ok=True)
-        excel_path = PROJECT_EXPORT_ROOT / f"{project_name}_summary.xlsx"
-        export_excel_summary(excel_path, sheets)
-        with open(excel_path, "rb") as f:
-            st.download_button(
-                "Download Excel summary (.xlsx)",
-                f,
-                file_name=excel_path.name,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        md_path = PROJECT_EXPORT_ROOT / f"{project_name}_report.md"
+        html_path = PROJECT_EXPORT_ROOT / f"{project_name}_report.html"
+        md_path.write_text(render_markdown(project_name, sections))
+        html_path.write_text(render_html(project_name, sections))
+        st.success("Report built.")
+        c1, c2 = st.columns(2)
+        with open(md_path, "rb") as f:
+            c1.download_button(
+                "Download report (.md)", f, file_name=md_path.name, mime="text/markdown"
             )
-else:
-    st.info("Train a model first to build an Excel summary.")
+        with open(html_path, "rb") as f:
+            c2.download_button(
+                "Download report (.html)", f, file_name=html_path.name, mime="text/html"
+            )
 
 st.markdown("---")
-st.markdown("### Project report")
-st.caption(
-    "A single reproducible document - objective, data, model, diagnostics, curve bank, scenarios, "
-    "known limitations, and a pointer to the decision log - built from this project's actual current "
-    "state, not a static template. Available at any point in the workflow; sections say plainly what "
-    "hasn't happened yet rather than being left out."
-)
-if st.button("Build project report"):
-    spec_dict = get_state("model_spec")
-    spec = ModelSpec.from_dict(spec_dict) if spec_dict else None
-    frame = get_state("frame")
-    data_window = None
-    if frame is not None and frame.get("dates") is not None and len(frame["dates"]):
-        data_window = (
-            str(pd.Timestamp(frame["dates"].min()).date()),
-            str(pd.Timestamp(frame["dates"].max()).date()),
-        )
-    approval_dict = get_state("model_approval")
-    approval = ModelApproval.from_dict(approval_dict) if approval_dict else None
-    entries = load_all_entries(curve_bank_dir())
-    market_config = MarketSpecConfig.from_dict(get_state("market_spec_config"))
-
-    sections = build_report_sections(
-        spec=spec,
-        model_type=get_state("model_type", "shared"),
-        pipeline_steps=get_state("pipeline_steps") or [],
-        data_window=data_window,
-        dna_lag_weeks=get_state("dna_lag_weeks", 4),
-        scorecard=get_state("scorecard"),
-        approval=approval,
-        curve_bank_entries=entries,
-        scenarios=get_state("scenarios") or [],
-        market_spec_config=market_config,
-        outcome_definitions=get_state("outcome_definitions"),
-        official_curve_artifact_rows=_resolve_official_curve_artifact_rows(),
-    )
-
-    PROJECT_EXPORT_ROOT.mkdir(parents=True, exist_ok=True)
-    md_path = PROJECT_EXPORT_ROOT / f"{project_name}_report.md"
-    html_path = PROJECT_EXPORT_ROOT / f"{project_name}_report.html"
-    md_path.write_text(render_markdown(project_name, sections))
-    html_path.write_text(render_html(project_name, sections))
-    st.success("Report built.")
-    c1, c2 = st.columns(2)
-    with open(md_path, "rb") as f:
-        c1.download_button(
-            "Download report (.md)", f, file_name=md_path.name, mime="text/markdown"
-        )
-    with open(html_path, "rb") as f:
-        c2.download_button(
-            "Download report (.html)", f, file_name=html_path.name, mime="text/html"
-        )
-
-st.markdown("---")
-st.markdown("### What's out of scope")
-st.markdown("""
+with InfoPanel("What's out of scope"):
+    st.markdown("""
 Per `docs/project_objectives.md` and `docs/limitations.md`, deliberately **not** built:
 
 - **CPA/inflation as first-class optimiser objectives** - "minimise CPA," "maintain response/delivery
