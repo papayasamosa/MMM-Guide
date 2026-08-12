@@ -22,15 +22,18 @@ import streamlit as st
 
 from ancestry_mmm.utils.config import THEME_COLORS
 from ancestry_mmm.utils.display import GLOSSARY
-from ancestry_mmm.utils.session_state import get_state, get_workflow_progress
+from ancestry_mmm.utils.session_state import get_state
 from ancestry_mmm.utils.workflow import (
     HOME_KEY,
-    TOTAL_STEPS,
-    WORKFLOW_STEPS,
     get_step,
     nav_groups,
     next_step_key,
     step_number,
+)
+from ancestry_mmm.utils.workflow_state import (
+    next_workflow_step_key,
+    workflow_page_states,
+    workflow_page_state,
 )
 from ancestry_mmm.components.tokens import shell_css
 from ancestry_mmm.components.status import render_status_badges
@@ -68,6 +71,15 @@ def apply_theme() -> None:
 # alongside a page header (components/status.py), this is just the compact
 # nav-row form of the same vocabulary.
 _READINESS_ICON = {
+    "complete": "\u2705",
+    "configured": "\u2699\ufe0f",
+    "saved": "\u2705",
+    "validated": "\u2705",
+    "draft": "\u270f\ufe0f",
+    "approved": "\u2705",
+    "stale": "\u26a0\ufe0f",
+    "review": "\u2753",
+    "unavailable": "\u26a0\ufe0f",
     "ready": "✅",
     "blocked": "🔒",
     "not_started": "⚪",
@@ -76,115 +88,36 @@ _READINESS_ICON = {
 
 
 def page_readiness(key: str) -> str:
-    """Best-effort ready/blocked/not_started/optional signal for one
-    workflow page, derived only from existing session-state getters already
-    used elsewhere in the app (ancestry_mmm.utils.session_state) - never a
-    new or invented signal. If a genuine readiness signal isn't derivable
-    for a page from current state, it is treated as "optional" rather than
-    guessed. Returns a key from ancestry_mmm.components.status.STATUS_BADGES.
-    """
-    data_loaded = bool(get_state("data_loaded"))
-    transformed = get_state("transformed_data") is not None
-    spec = bool(get_state("model_spec"))
-    frame = get_state("frame") is not None
-    trained = bool(get_state("model_trained"))
-    approved = bool(get_state("model_approval"))
-
-    if key == "data_upload":
-        return "ready" if data_loaded else "not_started"
-    if key == "transform_pipeline":
-        if transformed:
-            return "ready"
-        return "blocked" if not data_loaded else "not_started"
-    if key == "data_coverage":
-        if get_state("variable_coverage_matrix") is not None:
-            return "ready"
-        return "blocked" if not transformed else "not_started"
-    if key == "structure":
-        if spec:
-            return "ready"
-        return "blocked" if not transformed else "not_started"
-    if key == "causal_graph":
-        return "ready" if get_state("causal_graph") else "optional"
-    if key == "channel_media_units":
-        return "ready" if get_state("media_cost_mappings") else "optional"
-    if key == "market_descriptors":
-        return "ready" if get_state("market_spec_config") else "optional"
-    if key == "model_config":
-        if frame:
-            return "ready"
-        return "blocked" if not spec else "not_started"
-    if key == "model_training":
-        if trained:
-            return "ready"
-        return "blocked" if not frame else "not_started"
-    if key == "compare_models":
-        return "ready" if get_state("model_comparison_candidates") else "optional"
-    if key == "diagnostics":
-        if get_state("scorecard"):
-            return "ready"
-        return "blocked" if not trained else "not_started"
-    if key == "curve_bank":
-        if get_state("curve_bank_entry_id"):
-            return "ready"
-        return "blocked" if not approved else "not_started"
-    if key == "official_curve_generation":
-        return "blocked" if not approved else "not_started"
-    if key == "scenario_planner":
-        if get_state("scenarios"):
-            return "ready"
-        return "blocked" if not approved else "not_started"
-    if key == "export":
-        return "ready" if data_loaded else "not_started"
-    return "not_started"
+    """Return the canonical lifecycle/access status for one workflow page."""
+    return workflow_page_state(key, getter=get_state).display_status
 
 
 def group_readiness(keys: Iterable[str]) -> str:
-    """Aggregate several pages' ``page_readiness()`` results into one
-    status for a workflow area (Phase 2 Home overview - project-topology
-    view, docs/decision_log.md). A pure, deterministic aggregation of the
-    existing per-page readiness signal - it never introduces a new
-    readiness source of its own:
-
-    - no non-optional page in the group -> "not_started" (nothing to show)
-    - every non-optional page "ready" -> "ready"
-    - at least one "ready" but not all -> "current" (in progress)
-    - none ready, at least one "blocked" -> "blocked"
-    - otherwise (every non-optional page "not_started") -> "not_started"
-
-    Returns a key from ``ancestry_mmm.components.status.STATUS_BADGES``.
-    """
+    """Aggregate canonical page states into one workflow-area status."""
     scored = [s for s in (page_readiness(k) for k in keys) if s != "optional"]
     if not scored:
         return "not_started"
-    ready = sum(1 for s in scored if s == "ready")
-    if ready == len(scored):
-        return "ready"
-    if ready > 0:
+    satisfied = {
+        "complete",
+        "configured",
+        "saved",
+        "validated",
+        "approved",
+        "draft",
+    }
+    done = sum(1 for s in scored if s in satisfied)
+    if done == len(scored):
+        return "complete"
+    if done > 0:
         return "current"
-    if any(s == "blocked" for s in scored):
+    if any(s in {"blocked", "stale", "review", "unavailable"} for s in scored):
         return "blocked"
     return "not_started"
 
 
 def next_recommended_step_key() -> Optional[str]:
-    """The single "what should I do next" signal for the Home overview
-    (Phase 2, docs/decision_log.md): the first workflow page in canonical
-    ``WORKFLOW_STEPS`` order whose ``page_readiness()`` is not yet
-    "ready", skipping optional pages entirely. Because a page can only be
-    "blocked" when an earlier, non-optional prerequisite page is itself
-    not "ready" (see ``page_readiness``'s per-key rules above), an
-    in-order scan always surfaces that earlier "not_started" prerequisite
-    first - so this never recommends a page the user cannot act on yet.
-
-    Returns ``None`` once every non-optional page is "ready" - a
-    legitimate terminal state, not a missing signal.
-    """
-    for step in WORKFLOW_STEPS:
-        status = page_readiness(step["key"])
-        if status in ("not_started", "blocked"):
-            return step["key"]
-    return None
+    """Return the first actionable unsatisfied required page, if any."""
+    return next_workflow_step_key(getter=get_state)
 
 
 def render_sidebar(active_key: str) -> None:
@@ -214,9 +147,12 @@ def render_sidebar(active_key: str) -> None:
                 )
                 st.page_link(entry["path"], label=entry["label"], icon=icon)
         st.markdown("---")
-        current_step, total_steps = get_workflow_progress()
-        st.caption(f"Workflow progress · step {current_step} of {total_steps}")
-        st.progress(current_step / total_steps)
+        states = workflow_page_states(getter=get_state)
+        required = [state for state in states if not state.optional]
+        satisfied = sum(1 for state in required if state.satisfied)
+        st.caption(
+            f"Workflow state: {satisfied}/{len(required)} required stages satisfied; iterative"
+        )
     _ = active_key  # reserved for future explicit-highlight use
 
 
@@ -283,7 +219,7 @@ def render_page_header(
     primary_action: Optional[Dict[str, Any]] = None,
     secondary_actions: Optional[Iterable[Dict[str, Any]]] = None,
 ) -> None:
-    """Compact top-of-page block (Phase 1 item #4): step indicator, title,
+    """Compact top-of-page block (Phase 1 item #4): workflow context, title,
     one-sentence task description, status badges, and up to one dominant
     primary action plus optional secondary actions - without a multi-step
     tutorial dumped above the workspace on every visit. Detailed
@@ -306,7 +242,20 @@ def render_page_header(
         return
     n = step_number(key)
     if n is not None:
-        st.caption(f"Step {n} of {TOTAL_STEPS}: {step['label']}")
+        group_label = next(
+            (
+                group["label"]
+                for group in nav_groups()
+                if key in {entry["key"] for entry in group["entries"]}
+            ),
+            "WORKFLOW",
+        )
+        st.caption(f"{group_label} Â· {step['label']}")
+
+    canonical_status = page_readiness(key)
+    badge_keys = list(badges or [])
+    if canonical_status not in badge_keys:
+        badge_keys.insert(0, canonical_status)
 
     has_actions = bool(primary_action) or bool(secondary_actions)
     if has_actions:
@@ -321,8 +270,8 @@ def render_page_header(
             st.markdown(
                 f'<div class="mmm-header-desc">{desc}</div>', unsafe_allow_html=True
             )
-        if badges:
-            render_status_badges(badges)
+        if badge_keys:
+            render_status_badges(badge_keys)
 
     if action_col is not None:
         with action_col:

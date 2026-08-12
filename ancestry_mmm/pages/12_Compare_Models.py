@@ -1,4 +1,4 @@
-"""Page (step 8 of 12): compare fitted candidate models side by side before
+"""Compare fitted candidate models side by side before
 choosing which to take forward to Diagnostics for approval - the model
 comparison workflow from docs/model_validation.md."""
 

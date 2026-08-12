@@ -223,29 +223,32 @@ def _render_next_action() -> None:
 
 
 def _render_topology() -> None:
-    """Item 2: a compact, per-workflow-area readiness strip replacing the
-    old flat 15-line numbered list and the four generic KPI cards -
-    status per `NAV_GROUPS` area (DATA / MODEL DESIGN / FIT & VALIDATE /
-    DECISION SUPPORT / OPERATIONS), aggregated deterministically from the
-    same `page_readiness()` signal the sidebar already uses
-    (`group_readiness()`). The OVERVIEW group (Home itself) is omitted -
-    it has no readiness signal of its own to show.
+    """Render workflow-area lifecycle state from the canonical page model.
+
+    The OVERVIEW group (Home itself) is omitted because it has no page
+    lifecycle of its own. Optional pages are shown as optional/configured and
+    do not count as required-stage completion.
     """
     with SectionCard(
         "Workflow readiness",
-        description="Status per workflow area, derived from the same readiness signal as the sidebar.",
+        description="Lifecycle state per workflow area, using the same page state as the sidebar and headers.",
     ):
         groups = [g for g in nav_groups() if g["label"] != "OVERVIEW"]
         cols = st.columns(len(groups))
         for col, group in zip(cols, groups):
             keys = [e["key"] for e in group["entries"]]
             status = group_readiness(keys)
-            ready = sum(1 for k in keys if page_readiness(k) == "ready")
+            complete = sum(
+                1
+                for k in keys
+                if page_readiness(k)
+                in {"complete", "configured", "saved", "validated", "approved", "draft"}
+            )
             with col:
                 with st.container(border=True):
                     st.caption(group["label"])
                     render_status_badges([status])
-                    st.caption(f"{ready}/{len(keys)} pages ready")
+                    st.caption(f"{complete}/{len(keys)} pages with recorded state")
 
 
 def _render_issues() -> None:
@@ -382,7 +385,7 @@ def main():
             "and constrained budget planning."
         )
     with palette_col:
-        if st.button("⌘K Command palette", key="home_open_palette", width="stretch"):
+        if st.button("Command palette", key="home_open_palette", width="stretch"):
             _command_palette_dialog()
 
     st.markdown("---")
