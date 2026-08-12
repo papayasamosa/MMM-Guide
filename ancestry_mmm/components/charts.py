@@ -307,6 +307,121 @@ def create_response_curve_with_band(
     return fig
 
 
+def create_annotated_response_curve(
+    x_values: np.ndarray,
+    y_values: np.ndarray,
+    channel_name: str,
+    *,
+    lower_values: Optional[np.ndarray] = None,
+    upper_values: Optional[np.ndarray] = None,
+    current_x: Optional[float] = None,
+    observed_min: Optional[float] = None,
+    observed_max: Optional[float] = None,
+    annotation_lines: Optional[Sequence[str]] = None,
+    x_axis_label: str = "Spend",
+    height: int = 340,
+) -> go.Figure:
+    """Response curve with the Phase 6 UI overhaul's on-curve annotation
+    layer (see docs/decision_log.md; ``application.curve_annotations``
+    computes every value this function is passed - it never invents one).
+
+    Adds, only where the corresponding value is given: a shaded band for the
+    observed historical support range (never drawn from a saturation
+    parameter - the caller must have derived it from real historical data),
+    a marker at the current spend/model-input point, and a small fixed text
+    box listing evidence/status, extrapolation, and any economics lines a
+    caller resolved. ``lower_values``/``upper_values`` optionally add the
+    same credible-interval band ``create_response_curve_with_band`` draws -
+    this function replaces neither existing chart function; both remain in
+    use where no annotation layer is needed.
+    """
+    fig = go.Figure()
+
+    if (
+        observed_min is not None
+        and observed_max is not None
+        and observed_max > observed_min
+    ):
+        fig.add_vrect(
+            x0=observed_min,
+            x1=observed_max,
+            fillcolor="rgba(107, 139, 122, 0.14)",
+            line_width=0,
+            layer="below",
+            annotation_text="Observed support",
+            annotation_position="top left",
+            annotation_font_size=10,
+        )
+
+    has_band = lower_values is not None and upper_values is not None
+    if has_band:
+        fig.add_trace(
+            go.Scatter(
+                x=np.concatenate([x_values, x_values[::-1]]),
+                y=np.concatenate([upper_values, lower_values[::-1]]),
+                fill="toself",
+                fillcolor="rgba(99, 179, 138, 0.2)",
+                line=dict(color="rgba(0,0,0,0)"),
+                hoverinfo="skip",
+                name="Credible interval",
+                showlegend=True,
+            )
+        )
+
+    fig.add_trace(
+        go.Scatter(
+            x=x_values,
+            y=y_values,
+            mode="lines",
+            line=dict(color=CHART_COLORS["primary"], width=2),
+            name="Mean response" if has_band else "Response",
+        )
+    )
+
+    if current_x is not None and len(x_values):
+        idx = int(np.argmin(np.abs(x_values - current_x)))
+        fig.add_trace(
+            go.Scatter(
+                x=[current_x],
+                y=[y_values[idx]],
+                mode="markers",
+                marker=dict(color=CHART_COLORS["warning"], size=12, symbol="diamond"),
+                name="Current",
+                hovertemplate=f"Current: {current_x:,.2f}<extra></extra>",
+            )
+        )
+
+    if annotation_lines:
+        fig.add_annotation(
+            xref="paper",
+            yref="paper",
+            x=0.02,
+            y=0.98,
+            xanchor="left",
+            yanchor="top",
+            showarrow=False,
+            align="left",
+            text="<br>".join(annotation_lines),
+            bgcolor="rgba(20, 28, 24, 0.72)",
+            bordercolor=THEME_COLORS["border"],
+            borderwidth=1,
+            borderpad=6,
+            font=dict(size=11, color=THEME_COLORS["foreground"]),
+        )
+
+    fig.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        title=f"{channel_name} response curve",
+        xaxis_title=x_axis_label,
+        yaxis_title="Response",
+        height=height,
+    )
+
+    return fig
+
+
 def create_waterfall_chart(
     categories: List[str],
     values: List[float],

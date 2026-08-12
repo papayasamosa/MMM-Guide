@@ -16,6 +16,7 @@ from ancestry_mmm.components.charts import (
     create_correlation_heatmap,
     create_response_curve,
     create_response_curve_with_band,
+    create_annotated_response_curve,
     create_waterfall_chart,
 )
 
@@ -138,6 +139,102 @@ def test_response_curve_with_band_uses_the_supplied_axis_label():
     upper = np.array([0.0, 12.0, 18.0])
     fig = create_response_curve_with_band(
         x, mean, lower, upper, "TV_Brand", x_axis_label="Model input (TVRs)"
+    )
+    assert fig.layout.xaxis.title.text == "Model input (TVRs)"
+
+
+# ---------------------------------------------------------------------------
+# create_annotated_response_curve (Phase 6 UI overhaul) - the on-curve
+# annotation layer application.curve_annotations feeds. Every value here is
+# a plain scalar/sequence the caller must have already computed; this
+# function only ever draws what it is given, never derives or fabricates a
+# value itself.
+# ---------------------------------------------------------------------------
+
+
+def test_annotated_curve_with_no_annotation_args_has_one_line_trace():
+    x = np.array([0.0, 50.0, 100.0])
+    y = np.array([0.0, 10.0, 15.0])
+    fig = create_annotated_response_curve(x, y, "TV_Brand")
+    assert len(fig.data) == 1
+    assert fig.data[0].mode == "lines"
+    assert fig.data[0].name == "Response"
+    assert fig.layout.annotations == ()
+
+
+def test_annotated_curve_with_band_adds_credible_interval_trace():
+    x = np.array([0.0, 50.0, 100.0])
+    y = np.array([0.0, 10.0, 15.0])
+    lower = np.array([0.0, 8.0, 12.0])
+    upper = np.array([0.0, 12.0, 18.0])
+    fig = create_annotated_response_curve(
+        x, y, "TV_Brand", lower_values=lower, upper_values=upper
+    )
+    assert len(fig.data) == 2
+    assert fig.data[0].name == "Credible interval"
+    assert fig.data[1].name == "Mean response"
+
+
+def test_annotated_curve_adds_current_marker_at_nearest_point():
+    x = np.array([0.0, 50.0, 100.0])
+    y = np.array([0.0, 10.0, 15.0])
+    fig = create_annotated_response_curve(x, y, "TV_Brand", current_x=48.0)
+    assert len(fig.data) == 2
+    marker_trace = fig.data[1]
+    assert marker_trace.mode == "markers"
+    assert marker_trace.x[0] == 48.0
+    assert marker_trace.y[0] == 10.0
+
+
+def test_annotated_curve_draws_observed_support_shaded_region():
+    x = np.array([0.0, 50.0, 100.0])
+    y = np.array([0.0, 10.0, 15.0])
+    fig = create_annotated_response_curve(
+        x, y, "TV_Brand", observed_min=10.0, observed_max=80.0
+    )
+    shapes = fig.layout.shapes
+    assert len(shapes) == 1
+    assert shapes[0].x0 == 10.0
+    assert shapes[0].x1 == 80.0
+
+
+def test_annotated_curve_no_shaded_region_when_support_not_given():
+    x = np.array([0.0, 50.0, 100.0])
+    y = np.array([0.0, 10.0, 15.0])
+    fig = create_annotated_response_curve(x, y, "TV_Brand")
+    assert fig.layout.shapes == ()
+
+
+def test_annotated_curve_renders_annotation_lines_as_a_text_box():
+    x = np.array([0.0, 50.0, 100.0])
+    y = np.array([0.0, 10.0, 15.0])
+    fig = create_annotated_response_curve(
+        x,
+        y,
+        "TV_Brand",
+        annotation_lines=[
+            "Locally estimated",
+            "Average CPA at current spend: 12.50",
+        ],
+    )
+    assert len(fig.layout.annotations) == 1
+    text = fig.layout.annotations[0].text
+    assert "Locally estimated" in text
+    assert "Average CPA at current spend: 12.50" in text
+
+
+def test_annotated_curve_no_annotation_box_when_no_lines_given():
+    x = np.array([0.0, 50.0, 100.0])
+    y = np.array([0.0, 10.0, 15.0])
+    fig = create_annotated_response_curve(x, y, "TV_Brand", annotation_lines=[])
+    assert fig.layout.annotations == ()
+
+
+def test_annotated_curve_uses_supplied_axis_label():
+    x = np.array([0.0, 50.0, 100.0])
+    y = np.array([0.0, 10.0, 15.0])
+    fig = create_annotated_response_curve(
+        x, y, "TV_Brand", x_axis_label="Model input (TVRs)"
     )
     assert fig.layout.xaxis.title.text == "Model input (TVRs)"
 
