@@ -916,3 +916,29 @@ def test_monetary_official_curve_does_not_show_blocked_caption(monkeypatch, tmp_
     assert not any(
         "monetary CPA/ROI is not shown" in (c.value or "") for c in at.caption
     )
+
+
+def test_results_dashboard_separates_summary_and_exploratory_curve_context():
+    """Phase 5: the results page surfaces the decision context before the
+    detailed tables while keeping exploratory curves distinct from official
+    artifacts (implementation brief, Results & Response Curves)."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_consistent_session_state(at)
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    markdown = [m.value or "" for m in at.markdown]
+    captions = [c.value or "" for c in at.caption]
+    assert any("Results dashboard" in text for text in markdown)
+    assert any("Contribution summary" in text for text in markdown)
+    assert any("Response curve library" in text for text in markdown)
+    assert any(
+        "exploratory evidence" in text and "official published curve artifact" in text
+        for text in captions
+    )
+    metric_labels = {metric.label for metric in at.metric}
+    assert {
+        "Fit state",
+        "Model type",
+        "Markets in fit",
+        "Outcomes in fit",
+    } <= metric_labels
