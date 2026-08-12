@@ -1689,10 +1689,10 @@ with tab_unconstrained:
 
 st.markdown("---")
 with SectionCard(
-    "Saved scenarios - persisted state",
+    "Saved scenarios",
     description=(
-        "Explicitly saved plans, distinct from the proposed (not-yet-saved) plans shown in "
-        "the tabs above - saving is the only way a plan lands here."
+        "Persisted state: explicitly saved plans, distinct from the proposed (not-yet-saved) "
+        "plans shown in the tabs above - saving is the only way a plan lands here."
     ),
 ):
     scenarios = get_state("scenarios") or []

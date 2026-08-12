@@ -1132,10 +1132,17 @@ def test_constraints_are_visually_distinct_from_assumptions():
 
 
 def test_saved_scenarios_are_labelled_as_persisted_state():
+    """The section title itself stays exactly "Saved scenarios" (the real,
+    already-running browser-lifecycle journey
+    (test_official_lifecycle_browser.py) asserts on this exact heading text)
+    - the "persisted state" framing that distinguishes it from the proposed-
+    but-not-yet-saved plans above lives in the section's caption instead."""
     at = AppTest.from_file(str(PAGE), default_timeout=60)
     _seed_consistent_session_state(at, value_currency="GBP")
     at.run()
     assert not at.exception, f"page raised: {at.exception}"
-    assert any(
+    assert any("Saved scenarios" in (m.value or "") for m in at.markdown)
+    assert not any(
         "Saved scenarios - persisted state" in (m.value or "") for m in at.markdown
     )
+    assert any("Persisted state:" in (c.value or "") for c in at.caption)
