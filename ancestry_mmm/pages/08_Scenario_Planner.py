@@ -26,6 +26,7 @@ from ancestry_mmm.components import (
     render_empty_state,
     render_glossary,
     render_drift_status,
+    render_status_badge,
     SectionCard,
 )
 from ancestry_mmm.core.approval import (
@@ -1482,14 +1483,17 @@ with tab_constrained:
         current_counterfactual_fingerprint=counterfactual_policy.fingerprint(),
     )
     if result:
-        governance_badge = (
-            "⚠️ Exploratory"
-            if result["governance_mode"] == "exploratory"
-            else "Official"
-        )
-        st.caption(
-            f"**Governance mode: {governance_badge}** (persisted with this result)"
-        )
+        # Consistent status-badge vocabulary (Phase 7 QA, docs/decision_log.md):
+        # "exploratory" is an exact STATUS_BADGES key already used elsewhere
+        # for this same concept - render through the shared badge instead of
+        # a page-local "⚠️ Exploratory" string. "official" isn't a lifecycle
+        # status STATUS_BADGES covers (it's this scenario's governance mode,
+        # not a state to flag) and stays plain text, same as before.
+        if result["governance_mode"] == "exploratory":
+            st.caption("**Governance mode** (persisted with this result)")
+            render_status_badge("exploratory")
+        else:
+            st.caption("**Governance mode: Official** (persisted with this result)")
         c1, c2 = st.columns(2)
         c1.metric(
             f"Current total ({_objective_labels[objective]})",
@@ -1634,12 +1638,13 @@ with tab_unconstrained:
         current_counterfactual_fingerprint=counterfactual_policy.fingerprint(),
     )
     if result:
-        governance_badge = (
-            "⚠️ Exploratory"
-            if result["governance_mode"] == "exploratory"
-            else "Official"
-        )
-        st.caption(f"**Governance mode: {governance_badge}**")
+        # See the matching comment above (constrained-result section) - same
+        # shared-vocabulary fix, applied here for the unconstrained result.
+        if result["governance_mode"] == "exploratory":
+            st.caption("**Governance mode**")
+            render_status_badge("exploratory")
+        else:
+            st.caption("**Governance mode: Official**")
         c1, c2 = st.columns(2)
         c1.metric(
             f"Current total ({_objective_labels[objective]})",

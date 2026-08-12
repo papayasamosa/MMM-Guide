@@ -27,6 +27,7 @@ from ancestry_mmm.components import (
     render_empty_state,
     render_glossary,
     render_drift_status,
+    render_status_badge,
     render_top_line,
     render_primary_concern,
     render_domain_health_rail,
@@ -651,9 +652,20 @@ if validation_service_result:
         if rd.gate_results:
             st.markdown("#### Gate results")
             for r in rd.gate_results:
-                gate_icon = {"pass": "✅", "fail": "❌", "review": "🔍", "skip": "➖"}
-                icon = gate_icon.get(r.status, "❓")
-                st.write(f"{icon} **{r.gate_name}**: {r.status} (value: {r.value})")
+                # Consistent status-badge vocabulary (Phase 7 QA,
+                # docs/decision_log.md): "pass"/"review"/"fail" reuse
+                # core.validation_policy.VALIDATION_STATUS_VALUES's own
+                # vocabulary, exactly the concept STATUS_BADGES already
+                # covers for this reason - render through the shared badge
+                # instead of a page-local icon map. A gate status outside
+                # that three-value vocabulary (e.g. "skip") falls back to
+                # badge_html's own neutral, title-cased default rather than
+                # a fabricated icon.
+                gate_col, value_col = st.columns([1, 3])
+                with gate_col:
+                    render_status_badge(r.status)
+                with value_col:
+                    st.write(f"**{r.gate_name}** (value: {r.value})")
         if rd.waivers_applied:
             st.markdown("#### Waivers")
             for w in rd.waivers_applied:

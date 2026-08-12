@@ -493,3 +493,178 @@ def test_officially_resumable_message_withheld_when_diagnostics_artefact_has_dri
         "This bundle is officially resumable" in (s.value or "") for s in at.success
     )
     assert any("not **officially** resumable" in (w.value or "") for w in at.warning)
+
+
+# Phase 7 of the Streamlit UI/UX overhaul (docs/decision_log.md): the shared
+# shell applied to this page - a page-header readiness badge, the "Project
+# status" summary (current project/artefact versions + this session's
+# bundle activity), and a manifest-driven "what's included" checklist after
+# a real build/import. Presentation only - every assertion below reads a
+# value the page derives from session state or from the bundle's own
+# manifest.json, never a new computation.
+
+
+def test_session_state_not_durable_banner_and_empty_project_status(
+    monkeypatch, tmp_path
+):
+    """Before any build/import this session, the page states plainly that
+    session state is not durable storage, and the "Project status" panel
+    honestly reports no bundle activity yet - never a fabricated 'last
+    build' claim."""
+    export_root = tmp_path / "exports"
+    artifact_root = tmp_path / "artifact-root"
+
+    import ancestry_mmm.utils as utils_pkg
+    import ancestry_mmm.utils.session_state as ss
+
+    monkeypatch.setattr(utils_pkg, "PROJECT_EXPORT_ROOT", export_root)
+    monkeypatch.setattr(ss, "CURVE_ARTIFACT_ROOT", artifact_root)
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.run()
+    assert not at.exception, f"initial load raised: {at.exception}"
+
+    assert any("not durable storage" in (i.value or "") for i in at.info), (
+        "the session-state-is-not-durable-storage invariant must be stated plainly"
+    )
+    assert any(
+        "No bundle has been built yet this session" in (c.value or "")
+        for c in at.caption
+    )
+    assert any(
+        "No bundle has been imported yet this session" in (c.value or "")
+        for c in at.caption
+    )
+    # Header readiness badge matches the sidebar's own readiness vocabulary
+    # for this page (ancestry_mmm.components.page_readiness("export")) - no
+    # data loaded yet, so "not_started".
+    assert any("Not started" in (m.value or "") for m in at.markdown)
+
+
+def test_build_bundle_updates_project_status_and_shows_included_checklist(
+    monkeypatch, tmp_path
+):
+    """A real "Build export bundle" click records this session's bundle
+    activity (for the "Project status" panel) and shows a checklist of
+    what the bundle actually contains, read back from the bundle's own
+    manifest.json rather than re-derived - so it can never disagree with
+    what import_project() itself reports for the same bundle."""
+    export_root = tmp_path / "exports"
+    artifact_root = tmp_path / "artifact-root"
+
+    import ancestry_mmm.utils as utils_pkg
+    import ancestry_mmm.utils.session_state as ss
+
+    monkeypatch.setattr(utils_pkg, "PROJECT_EXPORT_ROOT", export_root)
+    monkeypatch.setattr(ss, "CURVE_ARTIFACT_ROOT", artifact_root)
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.run()
+    assert not at.exception, f"initial load raised: {at.exception}"
+
+    at.session_state["project_name"] = "proj-status"
+    build_button = next(b for b in at.button if b.label == "Build export bundle")
+    build_button.click().run()
+    assert not at.exception, f"export click raised: {at.exception}"
+
+    summary = at.session_state["export_last_bundle_summary"]
+    assert summary["project_name"] == "proj-status"
+    assert summary["checkpoint"] == "uploaded"  # nothing fitted/approved in this test
+    assert summary["built_at"]
+
+    assert any("What's included in this bundle" in e.label for e in at.expander), (
+        "the manifest-driven checklist expander must be present after a real build"
+    )
+
+    # A fresh rerun (e.g. the analyst's next interaction) reflects the
+    # updated activity in the "Project status" panel rendered at the top of
+    # the page - this does not re-click the button, so it does not rebuild.
+    at.run()
+    assert not at.exception, f"follow-up rerun raised: {at.exception}"
+    assert any("Last bundle built this session" in (c.value or "") for c in at.caption)
+    assert any("proj-status" in (c.value or "") for c in at.caption)
+
+
+def test_import_bundle_updates_project_status_and_shows_included_checklist(
+    monkeypatch, tmp_path
+):
+    """A real "Import bundle" click records this session's import activity
+    and shows what the imported bundle actually contained, read from the
+    same manifest.json import_project() already parsed - not a second,
+    possibly-drifting notion of bundle contents."""
+    export_root = tmp_path / "exports"
+    artifact_root = tmp_path / "artifact-root"
+
+    import ancestry_mmm.utils as utils_pkg
+    import ancestry_mmm.utils.session_state as ss
+
+    monkeypatch.setattr(utils_pkg, "PROJECT_EXPORT_ROOT", export_root)
+    monkeypatch.setattr(ss, "CURVE_ARTIFACT_ROOT", artifact_root)
+
+    bundle_path = export_project(
+        tmp_path / "bundle.zip",
+        raw_sources={},
+        transformed_data=None,
+        pipeline_steps=[],
+        model_spec=None,
+        prior_config=None,
+        dna_lag_weeks=0,
+        trace=None,
+        scenarios=[],
+    )
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.run()
+    assert not at.exception, f"initial load raised: {at.exception}"
+    at.session_state["project_name"] = "proj-import-status"
+
+    uploader = at.file_uploader[0]
+    uploader.set_value(
+        (bundle_path.name, bundle_path.read_bytes(), "application/zip")
+    ).run()
+    import_button = next(b for b in at.button if b.label == "Import bundle")
+    import_button.click().run()
+    assert not at.exception, f"import click raised: {at.exception}"
+
+    summary = at.session_state["export_last_import_summary"]
+    assert summary["bundle_name"] == bundle_path.name
+    assert summary["imported_at"]
+
+    assert any(
+        "What was included in the imported bundle" in e.label for e in at.expander
+    ), "the manifest-driven checklist expander must be present after a real import"
+
+    at.run()
+    assert not at.exception, f"follow-up rerun raised: {at.exception}"
+    assert any(
+        "Last bundle imported this session" in (c.value or "") for c in at.caption
+    )
+    assert any(bundle_path.name in (c.value or "") for c in at.caption)
+
+
+def test_project_status_reflects_curve_bank_and_official_artifact_counts(
+    monkeypatch, tmp_path
+):
+    """The "Project status" panel's curve bank / official curve artifact
+    counts come from the same single top-of-page reads the Excel/report
+    builders further down the page reuse (no duplicated disk read, no
+    second notion of "how many artifacts exist") - proven here by writing
+    one official artifact to disk and confirming the panel reflects it."""
+    export_root = tmp_path / "exports"
+    artifact_root = tmp_path / "artifact-root"
+
+    import ancestry_mmm.utils as utils_pkg
+    import ancestry_mmm.utils.session_state as ss
+
+    monkeypatch.setattr(utils_pkg, "PROJECT_EXPORT_ROOT", export_root)
+    monkeypatch.setattr(ss, "CURVE_ARTIFACT_ROOT", artifact_root)
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.run()
+    assert not at.exception, f"initial load raised: {at.exception}"
+    at.session_state["project_name"] = "proj-artifact-status"
+    _write_official_artifact(artifact_root / "proj-artifact-status", "art-status-1")
+
+    at.run()
+    assert not at.exception, f"rerun after writing artifact raised: {at.exception}"
+    assert any("Official curve artifacts: 1" in (c.value or "") for c in at.caption)

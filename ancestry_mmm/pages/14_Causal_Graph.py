@@ -37,6 +37,7 @@ from ancestry_mmm.components import (
     render_next_step,
     render_page_header,
     render_sidebar,
+    render_status_badge,
     page_readiness,
     SectionCard,
     InfoPanel,
@@ -711,7 +712,14 @@ else:
 st.markdown("---")
 st.markdown("### 3. Save, approve and compile")
 status_cols = st.columns(3)
-status_cols[0].metric("Status", graph.status)
+with status_cols[0]:
+    # Consistent status-badge vocabulary (Phase 7 QA, docs/decision_log.md):
+    # graph.status is one of core.causal_graph.GRAPH_STATUSES
+    # (draft/approved/superseded/deprecated), each an exact STATUS_BADGES
+    # key - render the same way the header badge above already does,
+    # instead of a plain st.metric value.
+    st.caption("Status")
+    render_status_badge(graph.status)
 status_cols[1].metric("Version", graph.graph_version)
 status_cols[2].metric(
     "Structural fingerprint", graph.structural_fingerprint()[:12] + "…"
