@@ -165,7 +165,10 @@ def test_progress_display_never_shows_a_percentage_before_any_real_progress_repo
     time-based or otherwise fabricated fraction."""
     source = PAGE.read_text(encoding="utf-8")
     assert "progress_bar.progress(frac)" in source
-    assert "frac = min(1.0, progress_state[\"done\"] / max(progress_state[\"total\"], 1))" in source
+    assert (
+        'frac = min(1.0, progress_state["done"] / max(progress_state["total"], 1))'
+        in source
+    )
     # No second, independent progress source (e.g. a hardcoded sleep-based
     # counter) exists anywhere else in the file.
     assert source.count("progress_bar.progress(") == 2  # 0.0 init + real frac update

@@ -417,7 +417,9 @@ if scorecard:
     with tab_fit:
         st.markdown("#### In-sample fit")
         fit_df = pd.DataFrame(scorecard["in_sample_fit"])
-        st.dataframe(fit_df, width="stretch", column_config=dataframe_column_config(fit_df))
+        st.dataframe(
+            fit_df, width="stretch", column_config=dataframe_column_config(fit_df)
+        )
 
         st.markdown("#### Error metrics & residual temporal structure")
         st.caption(
@@ -440,7 +442,10 @@ if scorecard:
         )
         error_metrics_section = diag_artefact.error_metrics if diag_artefact else None
         residual_section = diag_artefact.residual_diagnostics if diag_artefact else None
-        if error_metrics_section is None or error_metrics_section.status == "not_computed":
+        if (
+            error_metrics_section is None
+            or error_metrics_section.status == "not_computed"
+        ):
             st.info(
                 error_metrics_section.error
                 if error_metrics_section is not None and error_metrics_section.error
@@ -451,7 +456,9 @@ if scorecard:
         else:
             error_df = pd.DataFrame(error_metrics_section.payload)
             st.dataframe(
-                error_df, width="stretch", column_config=dataframe_column_config(error_df)
+                error_df,
+                width="stretch",
+                column_config=dataframe_column_config(error_df),
             )
         if residual_section is not None and residual_section.status == "computed":
             residual_df = pd.DataFrame(residual_section.payload)
@@ -468,7 +475,9 @@ if scorecard:
             "% of actual observations falling inside the posterior predictive credible interval - should be close to the target %."
         )
         ppc_df = pd.DataFrame(scorecard["ppc_coverage"])
-        st.dataframe(ppc_df, width="stretch", column_config=dataframe_column_config(ppc_df))
+        st.dataframe(
+            ppc_df, width="stretch", column_config=dataframe_column_config(ppc_df)
+        )
 
     with tab_plaus:
         flags = scorecard["plausibility_flags"]
@@ -512,7 +521,9 @@ if scorecard:
             with st.expander("Channel spend correlation matrix"):
                 corr_df = pd.DataFrame(ident_section.payload["correlation_matrix"]).T
                 st.dataframe(
-                    corr_df, width="stretch", column_config=dataframe_column_config(corr_df)
+                    corr_df,
+                    width="stretch",
+                    column_config=dataframe_column_config(corr_df),
                 )
 
             with st.expander(

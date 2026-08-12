@@ -32,7 +32,7 @@ it from a rendered chart or badge.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from ancestry_mmm.core.market_data_capability import EngineCapabilityResult
 from ancestry_mmm.core.validation_policy import ApprovalReadiness, ThresholdPolicy
@@ -95,7 +95,7 @@ class TopLineReadiness:
 def _gate_results_for(
     readiness: Optional[ApprovalReadiness],
     policy: Optional[ThresholdPolicy],
-    evaluator_ids: Sequence[str],
+    evaluator_ids: Iterable[str],
 ) -> list:
     if readiness is None or policy is None:
         return []
@@ -108,7 +108,7 @@ def _gate_results_for(
 
 
 def _worst_gate_status(results: Sequence) -> Optional[str]:
-    statuses = [r.status for r in results if r.status in _STATUS_RANK]
+    statuses: List[str] = [r.status for r in results if r.status in _STATUS_RANK]
     if not statuses:
         return None
     return max(statuses, key=lambda s: _STATUS_RANK[s])
@@ -117,7 +117,9 @@ def _worst_gate_status(results: Sequence) -> Optional[str]:
 def _gate_detail(results: Sequence) -> str:
     if not results:
         return ""
-    parts = [f"{r.gate_name}: {r.message}" if r.message else r.gate_name for r in results]
+    parts = [
+        f"{r.gate_name}: {r.message}" if r.message else r.gate_name for r in results
+    ]
     return "; ".join(parts)
 
 
@@ -188,7 +190,9 @@ def _residual_behaviour_domain(diag_artefact: Any) -> DomainHealth:
         )
     if section.status == "failed":
         return DomainHealth(
-            "Residual behaviour", "failed", section.error or "Residual diagnostics failed."
+            "Residual behaviour",
+            "failed",
+            section.error or "Residual diagnostics failed.",
         )
     n = len(section.payload) if isinstance(section.payload, list) else None
     prefix = (
@@ -274,7 +278,9 @@ def _plausibility_domain(scorecard: Optional[Dict[str, Any]]) -> DomainHealth:
     flags = scorecard["plausibility_flags"] or []
     if not flags:
         return DomainHealth("Plausibility", "pass", "No plausibility flags raised.")
-    shown = "; ".join(f"{f.get('channel', '')}: {f.get('message', '')}" for f in flags[:2])
+    shown = "; ".join(
+        f"{f.get('channel', '')}: {f.get('message', '')}" for f in flags[:2]
+    )
     return DomainHealth(
         "Plausibility",
         "review",
@@ -291,9 +297,13 @@ def _approval_evidence_domain(readiness: Optional[ApprovalReadiness]) -> DomainH
         )
     if readiness.overall_ready:
         return DomainHealth(
-            "Approval evidence", "pass", "All required gates pass under the active policy."
+            "Approval evidence",
+            "pass",
+            "All required gates pass under the active policy.",
         )
-    n_blocking = len(readiness.blocking_failures) + len(readiness.missing_required_gates)
+    n_blocking = len(readiness.blocking_failures) + len(
+        readiness.missing_required_gates
+    )
     if n_blocking:
         return DomainHealth(
             "Approval evidence",
@@ -306,7 +316,9 @@ def _approval_evidence_domain(readiness: Optional[ApprovalReadiness]) -> DomainH
             "review",
             f"{len(readiness.review_items)} review item(s) under the active policy.",
         )
-    return DomainHealth("Approval evidence", "fail", "Not ready under the active policy.")
+    return DomainHealth(
+        "Approval evidence", "fail", "Not ready under the active policy."
+    )
 
 
 def compute_domain_health(
@@ -348,7 +360,9 @@ def compute_top_line_status(
     ``ModelApproval`` state (Model approval, below) is the only source of
     approval truth, per REQ-VAL-001 and root AGENTS.md's governance rules."""
     if readiness is not None:
-        n_blocking = len(readiness.blocking_failures) + len(readiness.missing_required_gates)
+        n_blocking = len(readiness.blocking_failures) + len(
+            readiness.missing_required_gates
+        )
         n_review = len(readiness.review_items)
         if readiness.overall_ready:
             detail = (

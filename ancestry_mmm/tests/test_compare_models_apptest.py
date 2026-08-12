@@ -32,8 +32,12 @@ def _candidate(label, *, model_type="A", market=None, converged=True, n_flags=0)
             "divergences": 0,
             "converged": converged,
         },
-        in_sample_fit=[{"outcome_id": "fh_new_gsa", "r_squared": 0.8, "mape_pct": 12.0}],
-        ppc_coverage=[{"outcome_id": "fh_new_gsa", "coverage_pct": 91.0, "target_pct": 90.0}],
+        in_sample_fit=[
+            {"outcome_id": "fh_new_gsa", "r_squared": 0.8, "mape_pct": 12.0}
+        ],
+        ppc_coverage=[
+            {"outcome_id": "fh_new_gsa", "coverage_pct": 91.0, "target_pct": 90.0}
+        ],
         n_plausibility_flags=n_flags,
     ).to_dict()
 
@@ -55,7 +59,9 @@ def test_candidates_at_a_glance_table_has_no_composite_score_column():
     at = AppTest.from_file(str(PAGE), default_timeout=60)
     at.session_state["model_comparison_candidates"] = [
         _candidate("Model A - shared", model_type="A"),
-        _candidate("Model C - UK", model_type="C", market="UK", converged=False, n_flags=2),
+        _candidate(
+            "Model C - UK", model_type="C", market="UK", converged=False, n_flags=2
+        ),
     ]
     at.run()
     assert not at.exception, f"page raised: {at.exception}"
@@ -81,9 +87,7 @@ def test_full_comparison_table_is_available_as_deeper_evidence():
     at.session_state["model_comparison_candidates"] = [_candidate("Model A - shared")]
     at.run()
     assert not at.exception, f"page raised: {at.exception}"
-    assert any(
-        "Full comparison table" in (e.label or "") for e in at.expander
-    )
+    assert any("Full comparison table" in (e.label or "") for e in at.expander)
 
 
 def test_candidate_detail_uses_tabs_not_one_flat_block():
@@ -92,7 +96,11 @@ def test_candidate_detail_uses_tabs_not_one_flat_block():
     at.run()
     assert not at.exception, f"page raised: {at.exception}"
     tab_labels = [t.label for t in at.tabs]
-    assert tab_labels == ["Convergence", "In-sample fit", "Posterior predictive coverage"]
+    assert tab_labels == [
+        "Convergence",
+        "In-sample fit",
+        "Posterior predictive coverage",
+    ]
 
 
 def test_remove_candidate_button_removes_it_from_state():
@@ -102,9 +110,7 @@ def test_remove_candidate_button_removes_it_from_state():
         _candidate("Model C - UK", model_type="C", market="UK"),
     ]
     at.run()
-    remove_button = next(
-        b for b in at.button if b.label == "Remove 'Model A - shared'"
-    )
+    remove_button = next(b for b in at.button if b.label == "Remove 'Model A - shared'")
     at = remove_button.click().run()
     assert not at.exception, f"page raised after remove: {at.exception}"
     remaining_labels = [

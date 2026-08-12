@@ -50,7 +50,9 @@ def _policy(gates) -> ThresholdPolicy:
     )
 
 
-def _readiness(*, gate_results=(), blocking=(), review=(), passes=(), missing=(), ready) -> ApprovalReadiness:
+def _readiness(
+    *, gate_results=(), blocking=(), review=(), passes=(), missing=(), ready
+) -> ApprovalReadiness:
     return ApprovalReadiness(
         readiness_artefact_id="ra-1",
         policy_id="pol-1",
@@ -68,40 +70,77 @@ def _readiness(*, gate_results=(), blocking=(), review=(), passes=(), missing=()
 class TestConvergenceDomain:
     def test_not_computed_without_scorecard(self):
         rows = compute_domain_health(
-            scorecard=None, diag_artefact=None, capability_result=None,
-            readiness=None, policy=None,
+            scorecard=None,
+            diag_artefact=None,
+            capability_result=None,
+            readiness=None,
+            policy=None,
         )
         conv = next(r for r in rows if r.domain == "Convergence")
         assert conv.status == "not_computed"
 
     def test_pass_when_converged(self):
-        scorecard = {"convergence": {"max_rhat": 1.01, "min_ess": 500, "divergences": 0, "converged": True}}
+        scorecard = {
+            "convergence": {
+                "max_rhat": 1.01,
+                "min_ess": 500,
+                "divergences": 0,
+                "converged": True,
+            }
+        }
         rows = compute_domain_health(
-            scorecard=scorecard, diag_artefact=None, capability_result=None,
-            readiness=None, policy=None,
+            scorecard=scorecard,
+            diag_artefact=None,
+            capability_result=None,
+            readiness=None,
+            policy=None,
         )
         conv = next(r for r in rows if r.domain == "Convergence")
         assert conv.status == "pass"
         assert "1.010" in conv.detail
 
     def test_fail_when_not_converged(self):
-        scorecard = {"convergence": {"max_rhat": 1.5, "min_ess": 10, "divergences": 5, "converged": False}}
+        scorecard = {
+            "convergence": {
+                "max_rhat": 1.5,
+                "min_ess": 10,
+                "divergences": 5,
+                "converged": False,
+            }
+        }
         rows = compute_domain_health(
-            scorecard=scorecard, diag_artefact=None, capability_result=None,
-            readiness=None, policy=None,
+            scorecard=scorecard,
+            diag_artefact=None,
+            capability_result=None,
+            readiness=None,
+            policy=None,
         )
         conv = next(r for r in rows if r.domain == "Convergence")
         assert conv.status == "fail"
 
     def test_gate_result_overrides_scorecard(self):
-        gate = ValidationGate(name="rhat_gate", description="R-hat", evaluator_id="convergence_rhat")
+        gate = ValidationGate(
+            name="rhat_gate", description="R-hat", evaluator_id="convergence_rhat"
+        )
         policy = _policy([gate])
-        result = ValidationResult(gate_name="rhat_gate", status="review", message="borderline")
+        result = ValidationResult(
+            gate_name="rhat_gate", status="review", message="borderline"
+        )
         readiness = _readiness(gate_results=[result], review=[result], ready=False)
-        scorecard = {"convergence": {"max_rhat": 1.0, "min_ess": 500, "divergences": 0, "converged": True}}
+        scorecard = {
+            "convergence": {
+                "max_rhat": 1.0,
+                "min_ess": 500,
+                "divergences": 0,
+                "converged": True,
+            }
+        }
         rows = compute_domain_health(
-            scorecard=scorecard, diag_artefact=None, capability_result=None,
-            readiness=readiness, policy=policy,
+            scorecard=scorecard,
+            diag_artefact=None,
+            capability_result=None,
+            readiness=readiness,
+            policy=policy,
         )
         conv = next(r for r in rows if r.domain == "Convergence")
         # The evaluated gate ("review") takes priority over the raw boolean
@@ -117,8 +156,11 @@ class TestPredictiveFitDomain:
             "ppc_coverage": [{"outcome_id": "a", "coverage_pct": 92.0}],
         }
         rows = compute_domain_health(
-            scorecard=scorecard, diag_artefact=None, capability_result=None,
-            readiness=None, policy=None,
+            scorecard=scorecard,
+            diag_artefact=None,
+            capability_result=None,
+            readiness=None,
+            policy=None,
         )
         pf = next(r for r in rows if r.domain == "Predictive fit")
         assert pf.status == "reported"
@@ -126,8 +168,11 @@ class TestPredictiveFitDomain:
 
     def test_not_computed_without_evidence(self):
         rows = compute_domain_health(
-            scorecard=None, diag_artefact=None, capability_result=None,
-            readiness=None, policy=None,
+            scorecard=None,
+            diag_artefact=None,
+            capability_result=None,
+            readiness=None,
+            policy=None,
         )
         pf = next(r for r in rows if r.domain == "Predictive fit")
         assert pf.status == "not_computed"
@@ -135,10 +180,15 @@ class TestPredictiveFitDomain:
 
 class TestResidualBehaviourDomain:
     def test_never_pass_fail_only_reported(self):
-        artefact = _artefact(residual_diagnostics=_section("computed", payload=[{"market": "UK"}]))
+        artefact = _artefact(
+            residual_diagnostics=_section("computed", payload=[{"market": "UK"}])
+        )
         rows = compute_domain_health(
-            scorecard=None, diag_artefact=artefact, capability_result=None,
-            readiness=None, policy=None,
+            scorecard=None,
+            diag_artefact=artefact,
+            capability_result=None,
+            readiness=None,
+            policy=None,
         )
         rb = next(r for r in rows if r.domain == "Residual behaviour")
         assert rb.status == "reported"
@@ -147,8 +197,11 @@ class TestResidualBehaviourDomain:
     def test_failed_computation_is_distinct_from_evidence_fail(self):
         artefact = _artefact(residual_diagnostics=_section("failed", error="boom"))
         rows = compute_domain_health(
-            scorecard=None, diag_artefact=artefact, capability_result=None,
-            readiness=None, policy=None,
+            scorecard=None,
+            diag_artefact=artefact,
+            capability_result=None,
+            readiness=None,
+            policy=None,
         )
         rb = next(r for r in rows if r.domain == "Residual behaviour")
         assert rb.status == "failed"
@@ -159,12 +212,20 @@ class TestIdentificationDomain:
     def test_pass_with_no_flags(self):
         artefact = _artefact(
             identification=_section(
-                "computed", payload={"flags": [], "correlation_matrix": {}, "condition_number": 5.0}
+                "computed",
+                payload={
+                    "flags": [],
+                    "correlation_matrix": {},
+                    "condition_number": 5.0,
+                },
             )
         )
         rows = compute_domain_health(
-            scorecard=None, diag_artefact=artefact, capability_result=None,
-            readiness=None, policy=None,
+            scorecard=None,
+            diag_artefact=artefact,
+            capability_result=None,
+            readiness=None,
+            policy=None,
         )
         ident = next(r for r in rows if r.domain == "Identification & collinearity")
         assert ident.status == "pass"
@@ -174,16 +235,21 @@ class TestIdentificationDomain:
             identification=_section(
                 "computed",
                 payload={
-                    "flags": [{"level": "warning", "channel": "TV", "message": "mild"},
-                              {"level": "error", "channel": "Radio", "message": "severe"}],
+                    "flags": [
+                        {"level": "warning", "channel": "TV", "message": "mild"},
+                        {"level": "error", "channel": "Radio", "message": "severe"},
+                    ],
                     "correlation_matrix": {},
                     "condition_number": 150.0,
                 },
             )
         )
         rows = compute_domain_health(
-            scorecard=None, diag_artefact=artefact, capability_result=None,
-            readiness=None, policy=None,
+            scorecard=None,
+            diag_artefact=artefact,
+            capability_result=None,
+            readiness=None,
+            policy=None,
         )
         ident = next(r for r in rows if r.domain == "Identification & collinearity")
         assert ident.status == "fail"
@@ -200,8 +266,11 @@ class TestIdentificationDomain:
             )
         )
         rows = compute_domain_health(
-            scorecard=None, diag_artefact=artefact, capability_result=None,
-            readiness=None, policy=None,
+            scorecard=None,
+            diag_artefact=artefact,
+            capability_result=None,
+            readiness=None,
+            policy=None,
         )
         ident = next(r for r in rows if r.domain == "Identification & collinearity")
         assert ident.status == "review"
@@ -209,22 +278,36 @@ class TestIdentificationDomain:
 
 class TestCoverageCapabilityDomain:
     def test_pass_when_supported(self):
-        cap = EngineCapabilityResult(engine="e", markets=("UK",), channels=("TV",), issues=())
+        cap = EngineCapabilityResult(
+            engine="e", markets=("UK",), channels=("TV",), issues=()
+        )
         rows = compute_domain_health(
-            scorecard=None, diag_artefact=None, capability_result=cap,
-            readiness=None, policy=None,
+            scorecard=None,
+            diag_artefact=None,
+            capability_result=cap,
+            readiness=None,
+            policy=None,
         )
         cov = next(r for r in rows if r.domain == "Coverage capability")
         assert cov.status == "pass"
 
     def test_review_not_fail_when_unsupported_and_no_gate(self):
         cap = EngineCapabilityResult(
-            engine="e", markets=("UK",), channels=("TV",),
-            issues=(MarketChannelCapabilityIssue(market="UK", channel="TV", reason="no coverage"),),
+            engine="e",
+            markets=("UK",),
+            channels=("TV",),
+            issues=(
+                MarketChannelCapabilityIssue(
+                    market="UK", channel="TV", reason="no coverage"
+                ),
+            ),
         )
         rows = compute_domain_health(
-            scorecard=None, diag_artefact=None, capability_result=cap,
-            readiness=None, policy=None,
+            scorecard=None,
+            diag_artefact=None,
+            capability_result=cap,
+            readiness=None,
+            policy=None,
         )
         cov = next(r for r in rows if r.domain == "Coverage capability")
         assert cov.status == "review"
@@ -233,16 +316,26 @@ class TestCoverageCapabilityDomain:
 class TestPlausibilityDomain:
     def test_pass_with_no_flags(self):
         rows = compute_domain_health(
-            scorecard={"plausibility_flags": []}, diag_artefact=None, capability_result=None,
-            readiness=None, policy=None,
+            scorecard={"plausibility_flags": []},
+            diag_artefact=None,
+            capability_result=None,
+            readiness=None,
+            policy=None,
         )
         pl = next(r for r in rows if r.domain == "Plausibility")
         assert pl.status == "pass"
 
     def test_review_never_fail_with_flags(self):
         rows = compute_domain_health(
-            scorecard={"plausibility_flags": [{"level": "warning", "channel": "TV", "message": "high ROI"}]},
-            diag_artefact=None, capability_result=None, readiness=None, policy=None,
+            scorecard={
+                "plausibility_flags": [
+                    {"level": "warning", "channel": "TV", "message": "high ROI"}
+                ]
+            },
+            diag_artefact=None,
+            capability_result=None,
+            readiness=None,
+            policy=None,
         )
         pl = next(r for r in rows if r.domain == "Plausibility")
         assert pl.status == "review"
@@ -251,8 +344,11 @@ class TestPlausibilityDomain:
 class TestApprovalEvidenceDomain:
     def test_not_computed_without_readiness(self):
         rows = compute_domain_health(
-            scorecard=None, diag_artefact=None, capability_result=None,
-            readiness=None, policy=None,
+            scorecard=None,
+            diag_artefact=None,
+            capability_result=None,
+            readiness=None,
+            policy=None,
         )
         ae = next(r for r in rows if r.domain == "Approval evidence")
         assert ae.status == "not_computed"
@@ -260,8 +356,11 @@ class TestApprovalEvidenceDomain:
     def test_pass_when_overall_ready(self):
         readiness = _readiness(ready=True)
         rows = compute_domain_health(
-            scorecard=None, diag_artefact=None, capability_result=None,
-            readiness=readiness, policy=None,
+            scorecard=None,
+            diag_artefact=None,
+            capability_result=None,
+            readiness=readiness,
+            policy=None,
         )
         ae = next(r for r in rows if r.domain == "Approval evidence")
         assert ae.status == "pass"
@@ -271,8 +370,11 @@ class TestApprovalEvidenceDomain:
         result = ValidationResult(gate_name="g", status="fail")
         readiness = _readiness(gate_results=[result], blocking=[result], ready=False)
         rows = compute_domain_health(
-            scorecard=None, diag_artefact=None, capability_result=None,
-            readiness=readiness, policy=_policy([gate]),
+            scorecard=None,
+            diag_artefact=None,
+            capability_result=None,
+            readiness=readiness,
+            policy=_policy([gate]),
         )
         ae = next(r for r in rows if r.domain == "Approval evidence")
         assert ae.status == "fail"
@@ -297,7 +399,10 @@ class TestTopLineStatus:
     def test_blocked_counts_blocking_and_missing(self):
         result = ValidationResult(gate_name="g", status="fail")
         readiness = _readiness(
-            gate_results=[result], blocking=[result], missing=("other_gate",), ready=False
+            gate_results=[result],
+            blocking=[result],
+            missing=("other_gate",),
+            ready=False,
         )
         top = compute_top_line_status(readiness=readiness, scorecard_computed=True)
         assert top.status_key == "blocked"
@@ -306,21 +411,36 @@ class TestTopLineStatus:
 
 class TestPrimaryConcern:
     def test_none_when_nothing_to_report(self):
-        assert derive_primary_concern(
-            readiness=None, diag_artefact=None, scorecard=None, capability_result=None
-        ) is None
+        assert (
+            derive_primary_concern(
+                readiness=None,
+                diag_artefact=None,
+                scorecard=None,
+                capability_result=None,
+            )
+            is None
+        )
 
     def test_blocking_failure_takes_priority(self):
-        result = ValidationResult(gate_name="g", status="fail", message="R-hat too high")
+        result = ValidationResult(
+            gate_name="g", status="fail", message="R-hat too high"
+        )
         readiness = _readiness(gate_results=[result], blocking=[result], ready=False)
         artefact = _artefact(
             identification=_section(
                 "computed",
-                payload={"flags": [{"level": "error", "channel": "TV", "message": "collinear"}]},
+                payload={
+                    "flags": [
+                        {"level": "error", "channel": "TV", "message": "collinear"}
+                    ]
+                },
             )
         )
         sentence = derive_primary_concern(
-            readiness=readiness, diag_artefact=artefact, scorecard=None, capability_result=None
+            readiness=readiness,
+            diag_artefact=artefact,
+            scorecard=None,
+            capability_result=None,
         )
         assert sentence is not None
         assert "g" in sentence
@@ -330,30 +450,61 @@ class TestPrimaryConcern:
         artefact = _artefact(
             identification=_section(
                 "computed",
-                payload={"flags": [{"level": "error", "channel": "Radio", "message": "collinear with TV"}]},
+                payload={
+                    "flags": [
+                        {
+                            "level": "error",
+                            "channel": "Radio",
+                            "message": "collinear with TV",
+                        }
+                    ]
+                },
             )
         )
         sentence = derive_primary_concern(
-            readiness=None, diag_artefact=artefact, scorecard=None, capability_result=None
+            readiness=None,
+            diag_artefact=artefact,
+            scorecard=None,
+            capability_result=None,
         )
         assert sentence is not None
         assert "Radio" in sentence
         assert "collinear with TV" in sentence
 
     def test_falls_back_to_non_convergence(self):
-        scorecard = {"convergence": {"max_rhat": 1.8, "min_ess": 5, "divergences": 3, "converged": False}}
+        scorecard = {
+            "convergence": {
+                "max_rhat": 1.8,
+                "min_ess": 5,
+                "divergences": 3,
+                "converged": False,
+            }
+        }
         sentence = derive_primary_concern(
-            readiness=None, diag_artefact=None, scorecard=scorecard, capability_result=None
+            readiness=None,
+            diag_artefact=None,
+            scorecard=scorecard,
+            capability_result=None,
         )
         assert sentence is not None
         assert "convergence" in sentence.lower()
 
     def test_deterministic_same_inputs_same_output(self):
-        scorecard = {"plausibility_flags": [{"level": "warning", "channel": "TV", "message": "high ROI"}]}
+        scorecard = {
+            "plausibility_flags": [
+                {"level": "warning", "channel": "TV", "message": "high ROI"}
+            ]
+        }
         s1 = derive_primary_concern(
-            readiness=None, diag_artefact=None, scorecard=scorecard, capability_result=None
+            readiness=None,
+            diag_artefact=None,
+            scorecard=scorecard,
+            capability_result=None,
         )
         s2 = derive_primary_concern(
-            readiness=None, diag_artefact=None, scorecard=scorecard, capability_result=None
+            readiness=None,
+            diag_artefact=None,
+            scorecard=scorecard,
+            capability_result=None,
         )
         assert s1 == s2 is not None

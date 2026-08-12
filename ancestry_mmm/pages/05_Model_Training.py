@@ -432,7 +432,8 @@ if st.button("Build & fit model", type="primary"):
 if get_state("model_trained"):
     st.markdown("---")
     with SectionCard(
-        "Completed fit", description="The identity of the model run currently in session."
+        "Completed fit",
+        description="The identity of the model run currently in session.",
     ):
         render_status_badge("validated", label="Trained")
         _completed_run_id = get_state("model_run_id") or ""

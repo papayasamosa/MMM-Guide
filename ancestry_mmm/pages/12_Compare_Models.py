@@ -85,9 +85,13 @@ else:
             "them into one ranking number."
         )
 
-    with st.expander("Full comparison table (R-hat, ESS, mean R-squared/MAPE, PPC coverage)"):
+    with st.expander(
+        "Full comparison table (R-hat, ESS, mean R-squared/MAPE, PPC coverage)"
+    ):
         table = candidates_to_dataframe(candidates)
-        st.dataframe(table, width="stretch", column_config=dataframe_column_config(table))
+        st.dataframe(
+            table, width="stretch", column_config=dataframe_column_config(table)
+        )
 
     st.markdown("---")
     st.markdown("### Candidate detail")
@@ -104,7 +108,9 @@ else:
     with tab_conv:
         render_status_badge(
             "validated" if chosen.convergence.get("converged") else "failed",
-            label="Converged" if chosen.convergence.get("converged") else "Not converged",
+            label="Converged"
+            if chosen.convergence.get("converged")
+            else "Not converged",
         )
         c1, c2, c3 = st.columns(3)
         c1.metric(
@@ -131,7 +137,9 @@ else:
         if chosen.ppc_coverage:
             st.dataframe(pd.DataFrame(chosen.ppc_coverage), width="stretch")
         else:
-            st.info("No posterior predictive coverage evidence recorded for this candidate.")
+            st.info(
+                "No posterior predictive coverage evidence recorded for this candidate."
+            )
 
     if st.button(f"Remove '{chosen_label}'"):
         candidate_dicts = [d for d in candidate_dicts if d.get("label") != chosen_label]
