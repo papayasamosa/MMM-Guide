@@ -30,6 +30,11 @@ from ancestry_mmm.components import (
     render_page_header,
     render_next_step,
     render_empty_state,
+    SectionCard,
+    BlockingPanel,
+)
+from ancestry_mmm.application.official_curve_readiness import (
+    resolve_generation_blockers,
 )
 from ancestry_mmm.core.activities import ActivityDefinition, activity_fit_fingerprint
 from ancestry_mmm.core.search_objects import (
@@ -401,44 +406,50 @@ if not current_identity or not approval_dict:
 # 1. Outcome and use selection
 # ---------------------------------------------------------------------------
 st.markdown("---")
-st.markdown("### 1. Outcome and use")
-st.caption(
-    "Only outcomes with a current, approved outcome approval covering "
-    "curve_publication can become official curves (REQ-CURVE-001)."
-)
-eligible: list[tuple[OutcomeApproval, object]] = []
-for outcome_approval in outcome_approvals:
-    if outcome_approval.status != "approved":
-        continue
-    if "curve_publication" not in outcome_approval.allowed_uses:
-        continue
-    outcome = next(
-        (o for o in outcome_definitions if o.outcome_id == outcome_approval.outcome_id),
-        None,
+with SectionCard(
+    "1. Outcome and use",
+    description=(
+        "Only outcomes with a current, approved outcome approval covering "
+        "curve_publication can become official curves (REQ-CURVE-001)."
+    ),
+):
+    eligible: list[tuple[OutcomeApproval, object]] = []
+    for outcome_approval in outcome_approvals:
+        if outcome_approval.status != "approved":
+            continue
+        if "curve_publication" not in outcome_approval.allowed_uses:
+            continue
+        outcome = next(
+            (
+                o
+                for o in outcome_definitions
+                if o.outcome_id == outcome_approval.outcome_id
+            ),
+            None,
+        )
+        if outcome is not None:
+            eligible.append((outcome_approval, outcome))
+
+    if not eligible:
+        render_empty_state(
+            "No outcome is currently approved for curve_publication. Review "
+            "outcome approvals on Structure -> Outcome Governance first.",
+            button_label="Go to Structure: Segments & Markets",
+            target_key="structure",
+        )
+        st.stop()
+
+    outcome_labels = [outcome.outcome_id for _, outcome in eligible]
+    selected_label = st.selectbox("Outcome", outcome_labels, key="ocg_outcome")
+    selected_outcome_approval, selected_outcome = next(
+        (oa, o) for oa, o in eligible if o.outcome_id == selected_label
     )
-    if outcome is not None:
-        eligible.append((outcome_approval, outcome))
 
-if not eligible:
-    render_empty_state(
-        "No outcome is currently approved for curve_publication. Review "
-        "outcome approvals on Structure -> Outcome Governance first.",
-        button_label="Go to Structure: Segments & Markets",
-        target_key="structure",
+    requested_use = st.selectbox(
+        "Requested use to check immediately after generation",
+        ["headline_reporting", "planning", "optimisation", "external_distribution"],
+        key="ocg_requested_use",
     )
-    st.stop()
-
-outcome_labels = [outcome.outcome_id for _, outcome in eligible]
-selected_label = st.selectbox("Outcome", outcome_labels, key="ocg_outcome")
-selected_outcome_approval, selected_outcome = next(
-    (oa, o) for oa, o in eligible if o.outcome_id == selected_label
-)
-
-requested_use = st.selectbox(
-    "Requested use to check immediately after generation",
-    ["headline_reporting", "planning", "optimisation", "external_distribution"],
-    key="ocg_requested_use",
-)
 
 # ---------------------------------------------------------------------------
 # 2. Markets to include
@@ -1059,7 +1070,42 @@ artifact_id = st.text_input(
     key="ocg_artifact_id",
 )
 
-if st.button("Generate and save official curve artifact", type="primary"):
+# Pre-flight readiness (Phase 6 UI overhaul): restates, before the button is
+# pressed, the exact same completeness conditions the click handler below
+# already checks - a missing requirement is visible as an explicit blocker
+# up front, not only as an st.error after the click. CurveService's own
+# governance chain (outcome/model approval, threshold policy, readiness,
+# diagnostics, activity/pathway governance) remains the authoritative,
+# unconditional check and still runs unchanged when Generate is pressed.
+_generation_blockers = resolve_generation_blockers(
+    eligible_outcomes_count=len(eligible),
+    selected_markets=selected_markets,
+    curve_type=curve_type,
+    cost_mapping_registry_present=bool(
+        cost_mapping_registry is not None
+        and cost_mapping_registry.to_dict()["mappings"]
+    ),
+    currency_by_market=currency_by_market,
+    reporting_currency=reporting_currency,
+    reference_context_confirmed=reference_context_confirmed,
+    invalid_support_cells=invalid_support_cells,
+    artifact_id=artifact_id,
+)
+if _generation_blockers:
+    with BlockingPanel(
+        "Not ready to generate",
+        description="Resolve every item below before Generate is enabled.",
+    ):
+        for _blocker in _generation_blockers:
+            st.markdown(f"- {_blocker.message}")
+else:
+    st.caption("All pre-flight checks pass - ready to generate.")
+
+if st.button(
+    "Generate and save official curve artifact",
+    type="primary",
+    disabled=bool(_generation_blockers),
+):
     if not artifact_id.strip():
         st.error("Artifact ID must be non-blank.")
         st.stop()
