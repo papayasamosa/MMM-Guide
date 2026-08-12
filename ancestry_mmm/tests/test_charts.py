@@ -34,6 +34,7 @@ def test_time_series_chart_has_one_trace_per_y_col_with_correct_names():
     assert [trace.name for trace in fig.data] == ["TV_Brand", "Social"]
     assert fig.layout.xaxis.title.text == "week"
     assert fig.layout.title.text == "t"
+    assert fig.layout.plot_bgcolor == "#FFFFFF"
 
 
 def test_bar_chart_with_ci_computes_error_bars_from_bounds():

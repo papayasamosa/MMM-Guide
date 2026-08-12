@@ -1,7 +1,7 @@
 """
-Marketing Mix Modelling & Scenario Planner (Home)
+Family History & DNA MMM (Home)
 
-An in-house Marketing Mix Modelling and scenario-planning tool built around
+An in-house Family History & DNA marketing-measurement and scenario-planning tool built around
 Ancestry's actual FH measurement problem: three acquisition paths (New,
 DNA cross-sell, Winback) with different media response, different
 promotional sensitivity and different value, modelled jointly rather than
@@ -72,7 +72,7 @@ _QUICK_LINKS = [
 
 def setup_page_config():
     st.set_page_config(
-        page_title="Marketing Mix Modelling & Scenario Planner",
+        page_title="Ancestry | Family History & DNA MMM",
         page_icon="🧬",
         layout="wide",
         initial_sidebar_state="expanded",
@@ -245,7 +245,7 @@ def _render_topology() -> None:
                 in {"complete", "configured", "saved", "validated", "approved", "draft"}
             )
             with col:
-                with st.container(border=True):
+                with st.container():
                     st.caption(group["label"])
                     render_status_badges([status])
                     st.caption(f"{complete}/{len(keys)} pages with recorded state")
@@ -378,27 +378,28 @@ def main():
 
     title_col, palette_col = st.columns([5, 1])
     with title_col:
-        st.title("Marketing Mix Modelling & Scenario Planner")
         st.markdown(
-            "A hierarchical marketing mix modelling and scenario planning application "
-            "for segment-level measurement, response curves, attribution, diagnostics, "
-            "and constrained budget planning."
+            '<div class="mmm-home-identity">'
+            '<div class="mmm-home-eyebrow">ANCESTRY</div>'
+            '<h1 class="mmm-home-product">Family History &amp; DNA MMM</h1>'
+            '<div class="mmm-home-description">Marketing mix modelling, validation, '
+            "response curves, and scenario planning for Ancestry.</div>"
+            '<div class="mmm-lineage-mark" aria-hidden="true"></div>'
+            "</div>",
+            unsafe_allow_html=True,
         )
     with palette_col:
         if st.button("Command palette", key="home_open_palette", width="stretch"):
             _command_palette_dialog()
 
-    st.markdown("---")
     _render_next_action()
 
-    st.markdown("---")
     _render_topology()
 
     _render_issues()
 
     _render_lineage()
 
-    st.markdown("---")
     _render_quick_links()
 
     with st.expander("Full step-by-step workflow guide", expanded=False):

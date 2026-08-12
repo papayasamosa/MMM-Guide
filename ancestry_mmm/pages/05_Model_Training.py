@@ -56,7 +56,9 @@ MODEL_TYPE_LABELS = {
 }
 
 st.set_page_config(
-    page_title="Model Training - Ancestry FH MMM", page_icon="🧬", layout="wide"
+    page_title="Model Training | Ancestry Family History & DNA MMM",
+    page_icon="🧬",
+    layout="wide",
 )
 init_session_state()
 apply_theme()

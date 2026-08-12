@@ -44,7 +44,9 @@ from ancestry_mmm.data import prepare_fh_modeling_frame
 import pandas as pd
 
 st.set_page_config(
-    page_title="Model Configuration - Ancestry FH MMM", page_icon="🧬", layout="wide"
+    page_title="Model Configuration | Ancestry Family History & DNA MMM",
+    page_icon="🧬",
+    layout="wide",
 )
 init_session_state()
 apply_theme()

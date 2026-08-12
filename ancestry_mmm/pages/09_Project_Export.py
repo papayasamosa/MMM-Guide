@@ -390,7 +390,9 @@ def _resolve_official_curve_artifact_rows() -> list[dict]:
 
 
 st.set_page_config(
-    page_title="Project Export - Ancestry FH MMM", page_icon="🧬", layout="wide"
+    page_title="Project Export | Ancestry Family History & DNA MMM",
+    page_icon="🧬",
+    layout="wide",
 )
 init_session_state()
 apply_theme()

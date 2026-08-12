@@ -76,34 +76,37 @@ OPTIMIZATION_DEFAULTS = {
     "optimization_method": "marginal_roi",
 }
 
-# Chart colors matching the design system - a professional dark-green palette.
-# "primary"/"success" reuse the one accent green everywhere (buttons, active nav,
-# links, selected controls, focus states, success states); chart_1..chart_6 are a
-# qualitative palette for multi-series charts, deliberately avoiding navy/blue/
-# purple and neon green.
+# Chart colours for the light analytical workbench. Brand blue/green are used
+# sparingly; semantic success/warning/error remain distinct from brand identity.
 CHART_COLORS = {
-    "primary": "#34A871",
-    "chart_1": "#34A871",  # Accent green
-    "chart_2": "#2FB6A3",  # Teal
-    "chart_3": "#D9A441",  # Amber/gold
-    "chart_4": "#C97B4A",  # Terracotta
-    "chart_5": "#8FA33E",  # Olive
-    "chart_6": "#6B8B7A",  # Muted slate-green
-    "success": "#34A871",
-    "warning": "#D9A441",
-    "error": "#E2555B",
-    "info": "#6B8B7A",
+    "primary": "#117FA6",
+    "chart_1": "#117FA6",  # Ancestry-inspired blue
+    "chart_2": "#6BA410",  # Brand-inspired green
+    "chart_3": "#A66A00",  # Amber
+    "chart_4": "#B85C38",  # Terracotta
+    "chart_5": "#6D5A9E",  # Restrained violet
+    "chart_6": "#5F6B65",  # Neutral slate
+    "success": "#287A43",
+    "warning": "#A66A00",
+    "error": "#B42318",
+    "info": "#117FA6",
 }
 
-# Dark green-charcoal theme colors - kept in sync with .streamlit/config.toml.
+# Light, warm analytical theme colours - kept in sync with
+# .streamlit/config.toml. Brand identity and semantic status intentionally
+# use separate tokens.
 THEME_COLORS = {
-    "background": "#0E1512",
-    "background_secondary": "#16211B",
-    "card": "#16211B",
-    "foreground": "#F1F5F1",
-    "foreground_muted": "#93A398",
-    "border": "#2C3D33",
-    "accent": "#34A871",
+    "background": "#F6F3F0",
+    "background_secondary": "#FFFFFF",
+    "card": "#FFFFFF",
+    "foreground": "#202923",
+    "foreground_muted": "#5F6B65",
+    "border": "#D8D4CE",
+    "accent": "#117FA6",
+    # Darkened for readable small text; chart accents retain the lighter green.
+    "brand_accent": "#4E7D1A",
+    "selected": "#E7F2F5",
+    "grid": "#DDD9D3",
 }
 
 # Supported file formats

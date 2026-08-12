@@ -233,7 +233,7 @@ _HOME = {
     "key": HOME_KEY,
     "label": "Home",
     "path": "app.py",
-    "title": "Marketing Mix Modelling & Scenario Planner",
+    "title": "Family History & DNA MMM",
 }
 
 

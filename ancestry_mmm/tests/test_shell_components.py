@@ -35,6 +35,9 @@ class TestTokens:
             "mmm-panel-marker-negative",
         ]:
             assert cls in css
+        assert "#F6F3F0" in css
+        assert "mmm-brand-lockup" in css
+        assert "#0E1512" not in css
 
     def test_status_color_covers_every_semantic_key_status_badges_uses(self):
         used_color_keys = {c for (_, _, c) in status_module.STATUS_BADGES.values()}
@@ -45,6 +48,26 @@ class TestSidebarIcons:
     def test_readiness_icons_are_valid_streamlit_page_link_icons(self):
         for status_key, icon in ui_module._READINESS_ICON.items():
             validate_icon_or_emoji(icon)
+
+
+class TestSidebarIdentity:
+    def test_sidebar_uses_product_lockup_without_segment_brand_subtitle(self):
+        script = """
+import streamlit as st
+st.page_link = lambda *args, **kwargs: None
+from ancestry_mmm.utils.session_state import init_session_state
+from ancestry_mmm.components import render_sidebar
+init_session_state()
+render_sidebar("home")
+"""
+        at = AppTest.from_string(script)
+        at.run()
+        assert not at.exception, f"sidebar script raised: {at.exception}"
+        rendered = " ".join((m.value or "") for m in at.markdown)
+        assert "Family History &amp; DNA MMM" in rendered
+        assert "Marketing measurement &amp; planning" in rendered
+        assert "Marketing Mix Modelling" not in rendered
+        assert "DNA cross-sell" not in rendered
 
 
 class TestStatusBadges:

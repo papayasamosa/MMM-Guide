@@ -81,7 +81,9 @@ from ancestry_mmm.data import (
 import pandas as pd
 
 st.set_page_config(
-    page_title="Structure - Ancestry FH MMM", page_icon="🧬", layout="wide"
+    page_title="Structure | Ancestry Family History & DNA MMM",
+    page_icon="🧬",
+    layout="wide",
 )
 init_session_state()
 apply_theme()

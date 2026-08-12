@@ -11,6 +11,33 @@ from ancestry_mmm.core.coverage import COVERAGE_STATES
 from ancestry_mmm.core.coverage_fabric import FABRIC_LABEL_COVERED, FabricCell
 
 
+def _apply_chart_theme(fig: go.Figure) -> go.Figure:
+    """Apply the shared light-workbench treatment to every chart."""
+
+    fig.update_layout(
+        template="plotly_white",
+        paper_bgcolor=THEME_COLORS["card"],
+        plot_bgcolor=THEME_COLORS["card"],
+        font=dict(color=THEME_COLORS["foreground"]),
+        hoverlabel=dict(
+            bgcolor=THEME_COLORS["card"],
+            bordercolor=THEME_COLORS["border"],
+            font=dict(color=THEME_COLORS["foreground"]),
+        ),
+    )
+    fig.update_xaxes(
+        gridcolor=THEME_COLORS["grid"],
+        linecolor=THEME_COLORS["border"],
+        zeroline=False,
+    )
+    fig.update_yaxes(
+        gridcolor=THEME_COLORS["grid"],
+        linecolor=THEME_COLORS["border"],
+        zeroline=False,
+    )
+    return fig
+
+
 def create_time_series_chart(
     df: pd.DataFrame,
     x_col: str,
@@ -34,7 +61,7 @@ def create_time_series_chart(
         )
 
     fig.update_layout(
-        template="plotly_dark",
+        template="plotly_white",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         title=title,
@@ -43,6 +70,7 @@ def create_time_series_chart(
         height=height,
     )
 
+    _apply_chart_theme(fig)
     return fig
 
 
@@ -78,7 +106,7 @@ def create_bar_chart_with_ci(
         )
 
     fig.update_layout(
-        template="plotly_dark",
+        template="plotly_white",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         title=title,
@@ -86,6 +114,7 @@ def create_bar_chart_with_ci(
         height=height,
     )
 
+    _apply_chart_theme(fig)
     return fig
 
 
@@ -117,7 +146,7 @@ def create_stacked_area_chart(
         )
 
     fig.update_layout(
-        template="plotly_dark",
+        template="plotly_white",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         title=title,
@@ -125,6 +154,7 @@ def create_stacked_area_chart(
         height=height,
     )
 
+    _apply_chart_theme(fig)
     return fig
 
 
@@ -150,13 +180,14 @@ def create_pie_chart(
     )
 
     fig.update_layout(
-        template="plotly_dark",
+        template="plotly_white",
         paper_bgcolor="rgba(0,0,0,0)",
         title=title,
         height=height,
         margin=dict(t=30, b=0, l=0, r=0),
     )
 
+    _apply_chart_theme(fig)
     return fig
 
 
@@ -175,13 +206,14 @@ def create_correlation_heatmap(
     )
 
     fig.update_layout(
-        template="plotly_dark",
+        template="plotly_white",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         title=title,
         height=height,
     )
 
+    _apply_chart_theme(fig)
     return fig
 
 
@@ -221,7 +253,7 @@ def create_response_curve(
         )
 
     fig.update_layout(
-        template="plotly_dark",
+        template="plotly_white",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         title=f"{channel_name} Response Curve",
@@ -230,6 +262,7 @@ def create_response_curve(
         height=height,
     )
 
+    _apply_chart_theme(fig)
     return fig
 
 
@@ -295,7 +328,7 @@ def create_response_curve_with_band(
         )
 
     fig.update_layout(
-        template="plotly_dark",
+        template="plotly_white",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         title=f"{channel_name} Response Curve (with uncertainty)",
@@ -304,6 +337,7 @@ def create_response_curve_with_band(
         height=height,
     )
 
+    _apply_chart_theme(fig)
     return fig
 
 
@@ -410,7 +444,7 @@ def create_annotated_response_curve(
         )
 
     fig.update_layout(
-        template="plotly_dark",
+        template="plotly_white",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         title=f"{channel_name} response curve",
@@ -419,6 +453,7 @@ def create_annotated_response_curve(
         height=height,
     )
 
+    _apply_chart_theme(fig)
     return fig
 
 
@@ -447,13 +482,14 @@ def create_waterfall_chart(
     )
 
     fig.update_layout(
-        template="plotly_dark",
+        template="plotly_white",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         title=title,
         height=height,
     )
 
+    _apply_chart_theme(fig)
     return fig
 
 
@@ -582,7 +618,7 @@ def create_coverage_fabric_chart(
         )
 
     fig.update_layout(
-        template="plotly_dark",
+        template="plotly_white",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         barmode="overlay",
@@ -597,4 +633,5 @@ def create_coverage_fabric_chart(
         ),
         margin=dict(l=10, r=10, t=40, b=10),
     )
+    _apply_chart_theme(fig)
     return fig

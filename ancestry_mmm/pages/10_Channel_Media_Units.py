@@ -59,7 +59,9 @@ from ancestry_mmm.core.search_objects import (
 from ancestry_mmm.data import detect_column_types
 
 st.set_page_config(
-    page_title="Channel & Media Units - Ancestry FH MMM", page_icon="🧬", layout="wide"
+    page_title="Channel & Media Units | Ancestry Family History & DNA MMM",
+    page_icon="🧬",
+    layout="wide",
 )
 init_session_state()
 apply_theme()

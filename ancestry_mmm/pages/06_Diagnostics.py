@@ -105,7 +105,9 @@ MODEL_TYPE_LABEL = {
 }
 
 st.set_page_config(
-    page_title="Diagnostics - Ancestry FH MMM", page_icon="🧬", layout="wide"
+    page_title="Diagnostics | Ancestry Family History & DNA MMM",
+    page_icon="🧬",
+    layout="wide",
 )
 init_session_state()
 apply_theme()
