@@ -7,6 +7,7 @@ import pytest
 
 from ancestry_mmm.core.model_comparison import (
     ModelComparisonCandidate,
+    candidates_decision_summary_dataframe,
     candidates_to_dataframe,
     slice_frame_to_market,
 )
@@ -188,4 +189,74 @@ class TestCandidatesToDataframe:
 
     def test_empty_candidate_list_gives_empty_dataframe(self):
         df = candidates_to_dataframe([])
+        assert df.empty
+
+
+class TestCandidatesDecisionSummaryDataframe:
+    def test_only_the_decision_relevant_columns_are_present(self):
+        candidate = ModelComparisonCandidate(
+            model_type="A",
+            label="Model A",
+            model_run_id="run-1",
+            fitted_at=1.0,
+            convergence={"rhat_max": 1.0, "converged": True},
+            n_plausibility_flags=2,
+        )
+        df = candidates_decision_summary_dataframe([candidate])
+        assert list(df.columns) == [
+            "label",
+            "model_type",
+            "market",
+            "converged",
+            "plausibility_flags",
+        ]
+        # No composite score column of any kind - convergence, predictive
+        # fit and plausibility must never collapse into one ranking number.
+        forbidden_substrings = ["score", "rank", "overall"]
+        for col in df.columns:
+            for forbidden in forbidden_substrings:
+                assert forbidden not in col.lower()
+
+    def test_reflects_converged_and_flag_count(self):
+        candidates = [
+            ModelComparisonCandidate(
+                model_type="A",
+                label="Model A",
+                model_run_id="run-1",
+                fitted_at=1.0,
+                market=None,
+                convergence={"converged": True},
+                n_plausibility_flags=0,
+            ),
+            ModelComparisonCandidate(
+                model_type="C",
+                label="Model C - UK",
+                model_run_id="run-2",
+                fitted_at=2.0,
+                market="UK",
+                convergence={"converged": False},
+                n_plausibility_flags=3,
+            ),
+        ]
+        df = candidates_decision_summary_dataframe(candidates)
+        assert bool(df.loc[0, "converged"]) is True
+        assert df.loc[0, "market"] == "(all)"
+        assert bool(df.loc[1, "converged"]) is False
+        assert df.loc[1, "market"] == "UK"
+        assert df.loc[1, "plausibility_flags"] == 3
+
+    def test_missing_convergence_data_shows_as_none_not_a_score(self):
+        candidate = ModelComparisonCandidate(
+            model_type="A",
+            label="Model A",
+            model_run_id="run-1",
+            fitted_at=1.0,
+            convergence={},
+            n_plausibility_flags=0,
+        )
+        df = candidates_decision_summary_dataframe([candidate])
+        assert df.loc[0, "converged"] is None
+
+    def test_empty_candidate_list_gives_empty_dataframe(self):
+        df = candidates_decision_summary_dataframe([])
         assert df.empty
