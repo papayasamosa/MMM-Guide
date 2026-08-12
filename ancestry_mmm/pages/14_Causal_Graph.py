@@ -42,6 +42,7 @@ from ancestry_mmm.components import (
     SectionCard,
     InfoPanel,
     WarningPanel,
+    render_workspace_note,
 )
 from ancestry_mmm.core.causal_graph import (
     CAUSAL_GRAPH_SCHEMA_VERSION,
@@ -73,15 +74,15 @@ from ancestry_mmm.core.search_objects import (
 )
 
 _NODE_ROLE_COLORS = {
-    "outcome": "#f4a460",
-    "intervention": "#4c9be8",
-    "mediator": "#9b6bd6",
-    "demand_capture": "#5fc79e",
-    "capacity_or_cap": "#e0b03a",
-    "moderator": "#e07ab0",
-    "control_or_confounder": "#9aa0a6",
-    "diagnostic": "#c9c9c9",
-    "excluded": "#e05a4e",
+    "outcome": "#F6D8C7",
+    "intervention": "#D6EEF5",
+    "mediator": "#E4D9F5",
+    "demand_capture": "#D8EAD8",
+    "capacity_or_cap": "#F6E8B1",
+    "moderator": "#F1D4E3",
+    "control_or_confounder": "#E5E8E6",
+    "diagnostic": "#F2F0EB",
+    "excluded": "#F5D1CF",
 }
 
 
@@ -264,6 +265,11 @@ render_page_header(
     "causal_graph",
     task_prompt="Which causal pathways are approved for model compilation?",
     badges=[page_readiness("causal_graph"), graph.status],
+)
+render_workspace_note(
+    "Authoritative structure",
+    "The approved graph is the structural input for compilation; layout edits are separate from causal edits.",
+    kind="governed",
 )
 st.caption(
     "REQ-GRAPH-001: build the variable-level causal graph node by node and "

@@ -32,6 +32,7 @@ from ancestry_mmm.components import (
     render_page_header,
     render_next_step,
     render_empty_state,
+    render_workspace_note,
     SectionCard,
     InfoPanel,
     create_coverage_fabric_chart,
@@ -90,6 +91,11 @@ render_page_header(
         "eligible for official use."
     ),
     badges=_header_badges,
+)
+render_workspace_note(
+    "Review and approve",
+    "Every gap starts as unknown. Propose a treatment only when its source and rationale are understood.",
+    kind="governed",
 )
 
 if not _data_ready:

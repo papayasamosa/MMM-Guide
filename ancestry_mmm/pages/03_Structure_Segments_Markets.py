@@ -24,6 +24,7 @@ from ancestry_mmm.components import (
     render_next_step,
     render_empty_state,
     render_drift_status,
+    render_workspace_note,
     page_readiness,
     SectionCard,
 )
@@ -92,6 +93,11 @@ render_page_header(
     "structure",
     task_prompt="Which outcomes, segments, markets, and activities belong in this model?",
     badges=[page_readiness("structure")],
+)
+render_workspace_note(
+    "Model structure",
+    "These choices define markets, outcomes, segments, and activities; saving a change can stale downstream fit evidence.",
+    kind="governed",
 )
 st.caption(
     "Markets and FH segments (New, DNA cross-sell, Winback) are explicit structural dimensions "

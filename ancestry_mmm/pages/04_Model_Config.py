@@ -24,6 +24,7 @@ from ancestry_mmm.components import (
     render_empty_state,
     render_drift_status,
     page_readiness,
+    render_workspace_note,
     SectionCard,
 )
 from ancestry_mmm.core.schema import ModelSpec
@@ -55,6 +56,11 @@ render_page_header(
     "model_config",
     task_prompt="Which pooling and transformation assumptions should be fit?",
     badges=[page_readiness("model_config")],
+)
+render_workspace_note(
+    "Fit assumptions",
+    "Market and outcome scope is read from Structure. Edit pooling, curve, prior, and sampling assumptions here.",
+    kind="editable",
 )
 
 spec_dict = get_state("model_spec")

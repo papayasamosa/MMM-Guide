@@ -28,6 +28,7 @@ from ancestry_mmm.components import (
     render_empty_state,
     render_glossary,
     page_readiness,
+    render_workspace_note,
     SectionCard,
 )
 from ancestry_mmm.core.schema import ModelSpec
@@ -51,6 +52,11 @@ render_page_header(
     "market_descriptors",
     task_prompt="What market context is known, and which assumptions still need evidence?",
     badges=[page_readiness("market_descriptors")],
+)
+render_workspace_note(
+    "Optional context",
+    "Currency and descriptors provide reporting context; they do not replace observed model data or invent market evidence.",
+    kind="derived",
 )
 
 spec_dict = get_state("model_spec")
@@ -97,7 +103,7 @@ for market in spec.markets:
     mapped_channels = sum(1 for v in coverage.values() if v)
 
     with st.expander(f"Market: {market} - {quality}", expanded=len(spec.markets) == 1):
-        with st.container(border=True):
+        with st.container():
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Observations", format_number(n_obs))
             c2.metric("Date range", date_range)
