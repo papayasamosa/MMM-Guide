@@ -1077,3 +1077,65 @@ def test_normal_saved_scenario_with_only_a_nested_governance_dependency_is_flagg
     dataframe_texts = [str(df.value) for df in at.dataframe]
     assert any("Current Normal Save" in text for text in dataframe_texts)
     assert not any("Stale Normal Save" in text for text in dataframe_texts)
+
+
+# ---------------------------------------------------------------------------
+# Phase 6 UI overhaul: allocation-desk visual separation (SectionCard groups
+# for the editable decision grid vs. calculated outputs vs. constraints vs.
+# assumptions, plus the prominent steady-state-approximation label). Purely
+# presentational - no scenario/optimisation logic under test here beyond
+# "the page still renders and the plan/prediction flow still works", which
+# the fixture's approval-matching identity already exercises end-to-end.
+# ---------------------------------------------------------------------------
+
+
+def test_steady_state_label_is_prominent_and_honest():
+    """The steady-state monthly approximation must be stated up front, and
+    must not imply a sequential, capacity-constrained, or Chronos-2 path is
+    active - none of those are implemented (root AGENTS.md / this page's own
+    docstring)."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_consistent_session_state(at, value_currency="GBP")
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    info_texts = [i.value or "" for i in at.info]
+    assert any("Steady-state monthly approximation" in text for text in info_texts)
+    steady_state_text = next(
+        text for text in info_texts if "Steady-state monthly approximation" in text
+    )
+    assert "no sequential week-over-week carry-in simulation" in steady_state_text
+    assert "no capacity-constrained delivery model" in steady_state_text
+    assert "no Chronos-2" in steady_state_text
+
+
+def test_spend_plan_grid_is_labelled_as_the_editable_decision():
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_consistent_session_state(at, value_currency="GBP")
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    assert any("Spend plan - editable decision" in (m.value or "") for m in at.markdown)
+    assert any("Calculated output (read-only)" in (m.value or "") for m in at.markdown)
+
+
+def test_constraints_are_visually_distinct_from_assumptions():
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_consistent_session_state(at, value_currency="GBP")
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    assert any(
+        "Planning assumptions & governance" in (m.value or "") for m in at.markdown
+    )
+    assert any(
+        "Constraints (distinct from the assumptions above)" in (m.value or "")
+        for m in at.markdown
+    )
+
+
+def test_saved_scenarios_are_labelled_as_persisted_state():
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_consistent_session_state(at, value_currency="GBP")
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    assert any(
+        "Saved scenarios - persisted state" in (m.value or "") for m in at.markdown
+    )

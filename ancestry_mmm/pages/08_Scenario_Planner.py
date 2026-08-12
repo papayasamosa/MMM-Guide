@@ -26,6 +26,7 @@ from ancestry_mmm.components import (
     render_empty_state,
     render_glossary,
     render_drift_status,
+    SectionCard,
 )
 from ancestry_mmm.core.approval import (
     ApprovalMismatchError,
@@ -111,10 +112,13 @@ init_session_state()
 apply_theme()
 render_sidebar("scenario_planner")
 render_page_header("scenario_planner")
-st.caption(
-    "Predicted outcomes use a steady-state approximation: spend held constant within a month is "
-    "treated as having reached its adstock steady state, so a month's outcome is a closed-form "
-    "function of that month's spend - no MCMC in the planning loop. See core/predict.py."
+st.info(
+    "**Steady-state monthly approximation.** Predicted outcomes hold spend constant within a "
+    "month and treat it as having reached its adstock steady state, so a month's outcome is a "
+    "closed-form function of that month's spend - no MCMC in the planning loop, no sequential "
+    "week-over-week carry-in simulation, no capacity-constrained delivery model, and no "
+    "Chronos-2 (or other external) forecasting path. This is what is actually implemented today "
+    "(see core/predict.py) - not a placeholder description of a future capability."
 )
 
 frame = get_state("frame")
@@ -314,37 +318,42 @@ if render_drift_status(
 
 render_glossary(["Scenario", "Constraint", "Response curve", "Incremental outcome"])
 
-st.markdown("### Plan setup")
-c1, c2, c3 = st.columns(3)
-market = c1.selectbox("Market *", meta.markets)
-start_month = c2.date_input(
-    "Plan start month *", value=pd.Timestamp.today().replace(day=1)
-)
-n_months = c3.number_input("Number of months *", min_value=1, max_value=24, value=12)
-
-if model_type == "market_specific":
-    st.caption(
-        "This model has market-specific curves - the plan below uses "
-        f"**{market}**'s own fitted curve, not a curve shared with other markets."
+with SectionCard(
+    "Plan setup",
+    description="Which market and time window this plan (and every tab below) covers.",
+):
+    c1, c2, c3 = st.columns(3)
+    market = c1.selectbox("Market *", meta.markets)
+    start_month = c2.date_input(
+        "Plan start month *", value=pd.Timestamp.today().replace(day=1)
     )
-    with st.expander(f"Curve source for {market}'s channels"):
-        tier_rows = []
-        for ch in meta.channels:
-            try:
-                tier = classify_market_evidence(trace, frame, meta, market, ch)
-            except (KeyError, ValueError) as e:
-                tier = f"unavailable ({e})"
-            tier_rows.append({"channel": ch, "curve_status": tier})
-        tier_df = pd.DataFrame(tier_rows)
-        st.dataframe(
-            tier_df, width="stretch", column_config=dataframe_column_config(tier_df)
+    n_months = c3.number_input(
+        "Number of months *", min_value=1, max_value=24, value=12
+    )
+
+    if model_type == "market_specific":
+        st.caption(
+            "This model has market-specific curves - the plan below uses "
+            f"**{market}**'s own fitted curve, not a curve shared with other markets."
         )
-        if (tier_df["curve_status"] == "Transferred estimate").any():
-            st.caption(
-                "One or more channels above are a **transferred estimate** for this market - "
-                "not enough local data to estimate a market-specific curve confidently. Plan "
-                "against these with extra caution (`docs/market_hierarchy.md` section 4)."
+        with st.expander(f"Curve source for {market}'s channels"):
+            tier_rows = []
+            for ch in meta.channels:
+                try:
+                    tier = classify_market_evidence(trace, frame, meta, market, ch)
+                except (KeyError, ValueError) as e:
+                    tier = f"unavailable ({e})"
+                tier_rows.append({"channel": ch, "curve_status": tier})
+            tier_df = pd.DataFrame(tier_rows)
+            st.dataframe(
+                tier_df, width="stretch", column_config=dataframe_column_config(tier_df)
             )
+            if (tier_df["curve_status"] == "Transferred estimate").any():
+                st.caption(
+                    "One or more channels above are a **transferred estimate** for this market - "
+                    "not enough local data to estimate a market-specific curve confidently. Plan "
+                    "against these with extra caution (`docs/market_hierarchy.md` section 4)."
+                )
 
 month_dates = pd.date_range(pd.Timestamp(start_month), periods=n_months, freq="MS")
 months = [d.strftime("%Y-%m") for d in month_dates]
@@ -481,60 +490,65 @@ for ch in meta.channels:
             "avg_cost_per_unit": trend["avg_cost_per_unit"],
         }
 
-st.markdown("### Spend plan (monthly, by channel)")
-planning_mode = "Spend"
-if media_unit_channels:
-    planning_mode = st.radio(
-        "Planning mode",
-        ["Spend", "Media units"],
-        horizontal=True,
-        help=(
-            "Media units mode converts to/from spend using each channel's average historical "
-            "cost per unit - available for: "
-            + ", ".join(sorted(media_unit_channels))
-            + ". "
-            "Other channels stay in spend terms either way."
-        ),
-    )
-st.caption(
-    "Edit values directly for manual mode - the same plan seeds the optimisation tabs below."
-)
-
-plan_df = st.session_state[plan_key]
-if planning_mode == "Media units":
-    display_df = plan_df.copy()
-    for ch, info in media_unit_channels.items():
-        display_df[ch] = plan_df[ch] / info["avg_cost_per_unit"]
-    label_overrides = {
-        ch: f"{readable_label(ch)} ({info['unit_type']})"
-        for ch, info in media_unit_channels.items()
-    }
-    edited_display = st.data_editor(
-        display_df,
-        width="stretch",
-        key=f"editor_{plan_key}_units",
-        column_config=dataframe_column_config(
-            display_df, label_overrides=label_overrides
-        ),
-    )
-    edited = edited_display.copy()
-    for ch, info in media_unit_channels.items():
-        edited[ch] = edited_display[ch] * info["avg_cost_per_unit"]
-    st.caption(
-        "Cost-per-unit assumptions in use: "
-        + ", ".join(
-            f"{readable_label(ch)} = {info['avg_cost_per_unit']:,.2f} / {info['unit_type']}"
-            for ch, info in media_unit_channels.items()
+with SectionCard(
+    "Spend plan - editable decision (monthly, by channel)",
+    description=(
+        "This grid is the plan you control - edit values directly for manual mode; the "
+        "same plan seeds the optimisation tabs below. Predicted outcomes and economics "
+        "further down are calculated *from* this grid, never editable themselves."
+    ),
+):
+    planning_mode = "Spend"
+    if media_unit_channels:
+        planning_mode = st.radio(
+            "Planning mode",
+            ["Spend", "Media units"],
+            horizontal=True,
+            help=(
+                "Media units mode converts to/from spend using each channel's average historical "
+                "cost per unit - available for: "
+                + ", ".join(sorted(media_unit_channels))
+                + ". "
+                "Other channels stay in spend terms either way. The two modes are never mixed in "
+                "one column - each column header states which unit it's currently in."
+            ),
         )
-    )
-else:
-    edited = st.data_editor(
-        plan_df,
-        width="stretch",
-        key=f"editor_{plan_key}",
-        column_config=dataframe_column_config(plan_df),
-    )
-st.session_state[plan_key] = edited
+
+    plan_df = st.session_state[plan_key]
+    if planning_mode == "Media units":
+        display_df = plan_df.copy()
+        for ch, info in media_unit_channels.items():
+            display_df[ch] = plan_df[ch] / info["avg_cost_per_unit"]
+        label_overrides = {
+            ch: f"{readable_label(ch)} ({info['unit_type']})"
+            for ch, info in media_unit_channels.items()
+        }
+        edited_display = st.data_editor(
+            display_df,
+            width="stretch",
+            key=f"editor_{plan_key}_units",
+            column_config=dataframe_column_config(
+                display_df, label_overrides=label_overrides
+            ),
+        )
+        edited = edited_display.copy()
+        for ch, info in media_unit_channels.items():
+            edited[ch] = edited_display[ch] * info["avg_cost_per_unit"]
+        st.caption(
+            "Cost-per-unit assumptions in use: "
+            + ", ".join(
+                f"{readable_label(ch)} = {info['avg_cost_per_unit']:,.2f} / {info['unit_type']}"
+                for ch, info in media_unit_channels.items()
+            )
+        )
+    else:
+        edited = st.data_editor(
+            plan_df,
+            width="stretch",
+            key=f"editor_{plan_key}",
+            column_config=dataframe_column_config(plan_df),
+        )
+    st.session_state[plan_key] = edited
 spend_plan = {m: {c: float(edited.loc[m, c]) for c in meta.channels} for m in months}
 activity_map = (
     activity_by_model_input(activity_definitions, market)
@@ -650,6 +664,14 @@ def _invalidate_stale_cached_result(
         return None
     return result
 
+
+st.markdown("---")
+st.markdown("### Planning assumptions & governance")
+st.caption(
+    "These are assumptions the plan is evaluated under, not decisions in the spend-plan "
+    "grid above - the counterfactual policy, governance mode, and optimisation objective "
+    "below apply to every tab further down."
+)
 
 _DEMAND_CAPTURE_RULE_OPTIONS = ["hold_plan", "zero"]
 # PR 125A: seed the widget's default from the project-level counterfactual
@@ -1133,6 +1155,11 @@ with tab_manual:
         st.stop()
     manual_result = manual_service_result.evaluation
     predicted = manual_result.predicted
+    st.markdown("#### Calculated output (read-only)")
+    st.caption(
+        "Everything below is computed from the spend plan grid above - edit the plan, not "
+        "these tables, to change these numbers."
+    )
     st.dataframe(
         predicted, width="stretch", column_config=dataframe_column_config(predicted)
     )
@@ -1320,10 +1347,14 @@ with tab_manual:
                 )
 
 with tab_constrained:
+    st.markdown("#### Constraints (distinct from the assumptions above)")
     st.markdown(
         "Add the constraints Ancestry actually plans against: locked cells (e.g. committed TV "
         "bookings), fixed channel/month totals, bounded movement from the current plan, and "
-        "minimum-spend floors (e.g. DNA promotional windows)."
+        "minimum-spend floors (e.g. DNA promotional windows). Constraints are hard bounds the "
+        "optimiser must respect; they are separate from the planning assumptions (counterfactual "
+        "policy, governance mode, objective) set above, which shape how a plan is evaluated "
+        "rather than what values it may take."
     )
     if "scenario_constraints" not in st.session_state:
         st.session_state["scenario_constraints"] = []
@@ -1496,6 +1527,7 @@ with tab_constrained:
                 "paid-media-only CPA/ROI instead."
             )
 
+        st.markdown("**Proposed (optimised) spend plan** - not yet saved")
         plan_result_df = pd.DataFrame(result["spend_plan"]).T
         st.dataframe(
             plan_result_df,
@@ -1645,6 +1677,9 @@ with tab_unconstrained:
                 "paid-media-only CPA/ROI instead."
             )
 
+        st.markdown(
+            "**Theoretical-optimum spend plan** - unconstrained benchmark, not a recommended plan"
+        )
         unconstrained_plan_df = pd.DataFrame(result["spend_plan"]).T
         st.dataframe(
             unconstrained_plan_df,
@@ -1653,66 +1688,74 @@ with tab_unconstrained:
         )
 
 st.markdown("---")
-st.markdown("### Saved scenarios")
-scenarios = get_state("scenarios") or []
-if scenarios:
-    # A scenario saved under a since-edited cost mapping predicts totals
-    # that no longer reflect the governed mapping in effect now - comparing
-    # it alongside current scenarios would be indistinguishable from a
-    # current comparison (Corrective PR C9). Only a scenario whose resolved
-    # dependency (Corrective PR E2.1: nested governance_dependencies is the
-    # current contract, the top-level field only an explicit legacy
-    # fallback - see resolve_scenario_cost_mapping_fingerprint) actually
-    # names a cost mapping has this dependency at all; a scenario that
-    # never depended on cost mappings is never flagged stale by this check.
-    current_cost_mapping_fingerprint = cost_mapping_registry.fingerprint()
-    # Corrective review finding: this comparison only ever checked cost
-    # mappings - a scenario saved under a since-changed counterfactual
-    # policy predicted totals under a demand-capture rule the project no
-    # longer uses, but was never excluded or flagged, indistinguishable from
-    # a genuinely current scenario.
-    current_counterfactual_fingerprint = counterfactual_policy.fingerprint()
-    current_scenarios = []
-    stale_scenario_names = []
-    for scenario in scenarios:
-        scenario_cf_fp = (scenario.get("governance_dependencies") or {}).get(
-            "counterfactual_policy_fingerprint"
-        )
-        if scenario_cf_fp and scenario_cf_fp != current_counterfactual_fingerprint:
-            stale_scenario_names.append(scenario.get("name", "(unnamed)"))
-            continue
-        try:
-            dependency_fingerprint = resolve_scenario_cost_mapping_fingerprint(scenario)
-        except ValueError:
-            # Conflicting top-level vs. nested fingerprints - neither can
-            # be trusted, so fail closed rather than silently picking one.
-            stale_scenario_names.append(scenario.get("name", "(unnamed)"))
-            continue
-        if not dependency_fingerprint:
-            current_scenarios.append(scenario)
-            continue
-        try:
-            require_current_cost_mapping(scenario, current_cost_mapping_fingerprint)
-        except ValueError:
-            stale_scenario_names.append(scenario.get("name", "(unnamed)"))
-        else:
-            current_scenarios.append(scenario)
-    if stale_scenario_names:
-        st.warning(
-            "Excluded from the comparison below because their governed cost "
-            "mapping or counterfactual policy has since changed - regenerate "
-            f"them to compare current totals: {', '.join(stale_scenario_names)}"
-        )
-    if current_scenarios:
-        compare_df = compare_scenarios(current_scenarios)
-        st.dataframe(
-            compare_df,
-            width="stretch",
-            column_config=dataframe_column_config(compare_df),
-        )
-    elif not stale_scenario_names:
+with SectionCard(
+    "Saved scenarios - persisted state",
+    description=(
+        "Explicitly saved plans, distinct from the proposed (not-yet-saved) plans shown in "
+        "the tabs above - saving is the only way a plan lands here."
+    ),
+):
+    scenarios = get_state("scenarios") or []
+    if scenarios:
+        # A scenario saved under a since-edited cost mapping predicts totals
+        # that no longer reflect the governed mapping in effect now - comparing
+        # it alongside current scenarios would be indistinguishable from a
+        # current comparison (Corrective PR C9). Only a scenario whose resolved
+        # dependency (Corrective PR E2.1: nested governance_dependencies is the
+        # current contract, the top-level field only an explicit legacy
+        # fallback - see resolve_scenario_cost_mapping_fingerprint) actually
+        # names a cost mapping has this dependency at all; a scenario that
+        # never depended on cost mappings is never flagged stale by this check.
+        current_cost_mapping_fingerprint = cost_mapping_registry.fingerprint()
+        # Corrective review finding: this comparison only ever checked cost
+        # mappings - a scenario saved under a since-changed counterfactual
+        # policy predicted totals under a demand-capture rule the project no
+        # longer uses, but was never excluded or flagged, indistinguishable from
+        # a genuinely current scenario.
+        current_counterfactual_fingerprint = counterfactual_policy.fingerprint()
+        current_scenarios = []
+        stale_scenario_names = []
+        for scenario in scenarios:
+            scenario_cf_fp = (scenario.get("governance_dependencies") or {}).get(
+                "counterfactual_policy_fingerprint"
+            )
+            if scenario_cf_fp and scenario_cf_fp != current_counterfactual_fingerprint:
+                stale_scenario_names.append(scenario.get("name", "(unnamed)"))
+                continue
+            try:
+                dependency_fingerprint = resolve_scenario_cost_mapping_fingerprint(
+                    scenario
+                )
+            except ValueError:
+                # Conflicting top-level vs. nested fingerprints - neither can
+                # be trusted, so fail closed rather than silently picking one.
+                stale_scenario_names.append(scenario.get("name", "(unnamed)"))
+                continue
+            if not dependency_fingerprint:
+                current_scenarios.append(scenario)
+                continue
+            try:
+                require_current_cost_mapping(scenario, current_cost_mapping_fingerprint)
+            except ValueError:
+                stale_scenario_names.append(scenario.get("name", "(unnamed)"))
+            else:
+                current_scenarios.append(scenario)
+        if stale_scenario_names:
+            st.warning(
+                "Excluded from the comparison below because their governed cost "
+                "mapping or counterfactual policy has since changed - regenerate "
+                f"them to compare current totals: {', '.join(stale_scenario_names)}"
+            )
+        if current_scenarios:
+            compare_df = compare_scenarios(current_scenarios)
+            st.dataframe(
+                compare_df,
+                width="stretch",
+                column_config=dataframe_column_config(compare_df),
+            )
+        elif not stale_scenario_names:
+            st.info("No scenarios saved yet.")
+    else:
         st.info("No scenarios saved yet.")
-else:
-    st.info("No scenarios saved yet.")
 
 render_next_step("scenario_planner")
