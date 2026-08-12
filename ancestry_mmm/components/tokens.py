@@ -229,6 +229,36 @@ def shell_css() -> str:
         font-size: 0.86rem;
         line-height: 1.45;
     }}
+    .mmm-workbench-note {{
+        align-items: baseline;
+        border-left: 3px solid {THEME_COLORS["border"]};
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.3rem 0.6rem;
+        margin: 0.15rem 0 1rem;
+        padding: 0.15rem 0 0.15rem 0.7rem;
+    }}
+    .mmm-workbench-note.editable {{ border-left-color: {TEXT["accent"]}; }}
+    .mmm-workbench-note.derived {{ border-left-color: {TEXT["brand"]}; }}
+    .mmm-workbench-note.governed {{ border-left-color: {STATUS_COLOR["caution"]}; }}
+    .mmm-workbench-note-label {{
+        color: {TEXT["primary"]};
+        font-size: 0.68rem;
+        font-weight: 750;
+        letter-spacing: 0.055em;
+        text-transform: uppercase;
+    }}
+    .mmm-workbench-note-copy {{
+        color: {TEXT["muted"]};
+        font-size: 0.82rem;
+        line-height: 1.45;
+    }}
+    /* Native dividers are retained as structural spacing, not card borders. */
+    hr {{
+        border: 0;
+        border-top: 1px solid transparent;
+        margin: 0.65rem 0;
+    }}
     .mmm-home-identity {{
         border-left: 4px solid {TEXT["brand"]};
         margin: 0.15rem 0 1.7rem;

@@ -24,6 +24,7 @@ from ancestry_mmm.components import (
     render_page_header,
     render_next_step,
     render_empty_state,
+    render_workspace_note,
     SectionCard,
     InfoPanel,
 )
@@ -77,6 +78,12 @@ render_page_header(
     "transform_pipeline",
     task_prompt="Can these sources be joined without losing or inventing rows?",
     badges=_header_badges,
+)
+
+render_workspace_note(
+    "Edit here",
+    "Choose the join keys and add auditable transformations. The preview below is calculated from those choices.",
+    kind="editable",
 )
 
 if not sources:

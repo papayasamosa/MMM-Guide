@@ -445,6 +445,23 @@ def render_empty_state(
             st.switch_page(target["path"])
 
 
+def render_workspace_note(label: str, message: str, *, kind: str = "") -> None:
+    """Render a compact page-local cue about editing or derived state.
+
+    This is intentionally lighter than an InfoPanel: it gives analysts the
+    one consequence or ownership cue needed at the current workspace without
+    creating another bordered card.
+    """
+    safe_kind = kind if kind in {"editable", "derived", "governed"} else ""
+    st.markdown(
+        f'<div class="mmm-workbench-note {safe_kind}">'
+        f'<span class="mmm-workbench-note-label">{_html.escape(label)}</span>'
+        f'<span class="mmm-workbench-note-copy">{_html.escape(message)}</span>'
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def render_status_card(label: str, value: str, ready: bool) -> None:
     """One compact bordered status card, used on the Home page."""
     with st.container(border=True):

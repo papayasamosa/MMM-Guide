@@ -19,6 +19,7 @@ from ancestry_mmm.components import (
     render_next_step,
     render_empty_state,
     render_status_badges,
+    render_workspace_note,
     SectionCard,
     WarningPanel,
 )
@@ -86,6 +87,12 @@ render_page_header(
         "Factors. Start with the synthetic fixture or add governed source files."
     ),
     badges=_header_badges,
+)
+
+render_workspace_note(
+    "Editable setup",
+    "Name the project and load governed source files here; everything below is derived from those sources.",
+    kind="editable",
 )
 
 st.markdown("### Project setup")

@@ -29,6 +29,7 @@ from ancestry_mmm.components import (
     render_empty_state,
     render_glossary,
     page_readiness,
+    render_workspace_note,
     SectionCard,
 )
 from ancestry_mmm.core.schema import ModelSpec
@@ -69,6 +70,11 @@ render_page_header(
     "channel_media_units",
     task_prompt="Are model inputs, delivery measures, and caps mapped as separate objects?",
     badges=[page_readiness("channel_media_units")],
+)
+render_workspace_note(
+    "Separate concepts",
+    "Fitted inputs, Search objects, physical delivery, caps, and cost mappings stay distinct for reporting and planning.",
+    kind="governed",
 )
 
 spec_dict = get_state("model_spec")
