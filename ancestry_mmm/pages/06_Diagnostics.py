@@ -243,7 +243,29 @@ if model_run_id and posterior_params is not None and model_spec_dict is not None
 # for the model-approval section below, which binds approvals by keyword.
 current_identity = asdict(current_model_identity) if current_model_identity else None
 
+with st.container(border=True):
+    st.markdown("### Diagnostics state")
+    st.caption(
+        "Read-only state for this trained run. Compute the scorecard, evaluate the policy, then decide whether approval is justified."
+    )
+    summary_cols = st.columns(4)
+    summary_cols[0].metric(
+        "Model type", "Market-specific" if model_type == "market_specific" else "Shared"
+    )
+    summary_cols[1].metric("Run", (model_run_id or "Unknown")[:8])
+    summary_cols[2].metric(
+        "Scorecard", "Computed" if get_state("scorecard") else "Not computed"
+    )
+    summary_cols[3].metric(
+        "Readiness",
+        "Evaluated" if get_state("validation_service_result") else "Not evaluated",
+    )
+
 st.markdown("---")
+st.markdown("### Scorecard action")
+st.caption(
+    "Compute the canonical evidence once. The summary rail and domain detail below read from that same stored artefact."
+)
 if st.button("Compute scorecard", type="primary"):
     with st.spinner("Computing diagnostics..."):
         diag_service = DiagnosticsService()

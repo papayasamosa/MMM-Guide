@@ -66,6 +66,17 @@ st.caption(
 )
 
 candidate_dicts = get_state("model_comparison_candidates") or []
+with st.container(border=True):
+    st.markdown("### Comparison dashboard")
+    st.caption(
+        "Choose using independent evidence dimensions. The page never converts them into a composite score or automatic ranking."
+    )
+    summary_cols = st.columns(3)
+    summary_cols[0].metric("Saved candidates", len(candidate_dicts))
+    summary_cols[1].metric("Evidence dimensions", "3")
+    summary_cols[2].metric(
+        "Next action", "Select a candidate" if candidate_dicts else "Fit a candidate"
+    )
 if not candidate_dicts:
     st.info(
         "No comparison candidates saved yet. Fit a model on Model Training, then use "
@@ -102,7 +113,7 @@ else:
             table, width="stretch", column_config=dataframe_column_config(table)
         )
 
-    st.markdown("### Candidate detail")
+    st.markdown("### Selected candidate detail")
     labels = [c.label for c in candidates]
     chosen_label = st.selectbox("Candidate", labels)
     chosen = next(c for c in candidates if c.label == chosen_label)

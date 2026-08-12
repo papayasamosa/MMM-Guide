@@ -90,7 +90,10 @@ def _all_text(at: AppTest) -> str:
 def test_preview_badge_shows_not_yet_run_before_previewing():
     at = _run_at()
     assert not at.exception, f"page raised: {at.exception}"
-    assert "Preview: not yet run" in _all_text(at)
+    text = _all_text(at)
+    assert "Fit dashboard" in text
+    assert "Fit proposal" in text
+    assert "Preview: not yet run" in text
 
 
 def test_preview_badge_shows_current_after_previewing():
