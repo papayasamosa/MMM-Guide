@@ -63,7 +63,10 @@ st.set_page_config(
 init_session_state()
 apply_theme()
 render_sidebar("model_training")
-render_page_header("model_training")
+render_page_header(
+    "model_training",
+    task_prompt="Is the prepared frame ready for an honest fit?",
+)
 
 frame = get_state("frame")
 spec_dict = get_state("model_spec")

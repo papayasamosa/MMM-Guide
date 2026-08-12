@@ -75,6 +75,7 @@ else:
 
 render_page_header(
     "transform_pipeline",
+    task_prompt="Can these sources be joined without losing or inventing rows?",
     badges=_header_badges,
 )
 

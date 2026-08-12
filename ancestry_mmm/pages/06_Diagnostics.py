@@ -112,7 +112,10 @@ st.set_page_config(
 init_session_state()
 apply_theme()
 render_sidebar("diagnostics")
-render_page_header("diagnostics")
+render_page_header(
+    "diagnostics",
+    task_prompt="Is this fit trustworthy enough for approval?",
+)
 st.caption(
     "A scorecard, not a single headline R-squared - convergence, fit, posterior predictive coverage and plausibility flags together."
 )

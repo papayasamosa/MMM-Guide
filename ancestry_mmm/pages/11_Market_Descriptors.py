@@ -49,6 +49,7 @@ apply_theme()
 render_sidebar("market_descriptors")
 render_page_header(
     "market_descriptors",
+    task_prompt="What market context is known, and which assumptions still need evidence?",
     badges=[page_readiness("market_descriptors")],
 )
 

@@ -83,6 +83,7 @@ else:
 
 render_page_header(
     "data_coverage",
+    task_prompt="Which variables are complete enough, and what treatment is approved for gaps?",
     description=(
         "Review each governed variable's coverage and missingness by "
         "market, then propose and approve a treatment before this data is "

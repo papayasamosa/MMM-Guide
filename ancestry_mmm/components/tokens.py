@@ -194,6 +194,41 @@ def shell_css() -> str:
         margin-top: -4px;
         margin-bottom: {SPACING["md"]};
     }}
+    .mmm-task-prompt {{
+        color: {TEXT["primary"]};
+        font-size: 0.86rem;
+        line-height: 1.45;
+        margin: -0.35rem 0 {SPACING["md"]};
+        max-width: 72ch;
+    }}
+    .mmm-task-prompt span {{
+        color: {TEXT["accent"]};
+        font-size: 0.68rem;
+        font-weight: 750;
+        letter-spacing: 0.06em;
+        margin-right: 0.45rem;
+        text-transform: uppercase;
+    }}
+    .mmm-next-step {{
+        border-top: 1px solid {SURFACE["border"]};
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.35rem 0.75rem;
+        margin-top: 2rem;
+        padding-top: 0.8rem;
+        align-items: baseline;
+    }}
+    .mmm-next-step-label {{
+        color: {TEXT["accent"]};
+        font-size: 0.68rem;
+        font-weight: 750;
+        letter-spacing: 0.06em;
+    }}
+    .mmm-next-step-copy {{
+        color: {TEXT["muted"]};
+        font-size: 0.86rem;
+        line-height: 1.45;
+    }}
     .mmm-home-identity {{
         border-left: 4px solid {TEXT["brand"]};
         margin: 0.15rem 0 1.7rem;

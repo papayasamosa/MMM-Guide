@@ -53,6 +53,7 @@ apply_theme()
 render_sidebar("model_config")
 render_page_header(
     "model_config",
+    task_prompt="Which pooling and transformation assumptions should be fit?",
     badges=[page_readiness("model_config")],
 )
 

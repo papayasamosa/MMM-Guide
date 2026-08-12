@@ -269,7 +269,10 @@ st.set_page_config(
 init_session_state()
 apply_theme()
 render_sidebar("official_curve_generation")
-render_page_header("official_curve_generation")
+render_page_header(
+    "official_curve_generation",
+    task_prompt="Can this approved fit support a governed official curve artifact?",
+)
 st.caption(
     "Produces a governed, evaluated official curve artifact through "
     "CurveService.create_official_artifact - distinct from the legacy curve "
