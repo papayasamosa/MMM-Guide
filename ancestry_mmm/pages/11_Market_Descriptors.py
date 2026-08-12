@@ -1,4 +1,4 @@
-"""Page (step 5 of 12): market cards - data coverage summary plus optional
+"""Market cards - data coverage summary plus optional
 currency and market-descriptor capture for the market-specific redesign
 (see docs/market_hierarchy.md section 5 and section 17.4). Currency is part
 of the model-specification fingerprint once set (core.fingerprint); the

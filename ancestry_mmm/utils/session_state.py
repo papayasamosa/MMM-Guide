@@ -179,6 +179,10 @@ def init_session_state():
         "scenarios": [],
         "active_scenario": None,
         "project_notes": "",
+        # Session-only bundle activity checkpoints.  These are evidence that
+        # an export/import action occurred, not a proxy for page availability.
+        "export_last_bundle_summary": None,
+        "export_last_import_summary": None,
         # UI state
         "current_page": 0,
     }
@@ -270,37 +274,19 @@ def invalidate_governance_evidence() -> None:
 
 
 def get_workflow_progress() -> "tuple[int, int]":
-    """Get current workflow progress (current_step, total_steps).
+    """Get the registry-derived compatibility progress tuple.
 
-    Steps 4 (Channel & Media-Unit Mapping), 5 (Market Descriptors) and 8
-    (Compare Models) are optional - nothing downstream requires them - so
-    there's no session-state signal to gate on. Reaching the step after an
-    optional one doesn't require having visited the optional step first;
-    this just points the user at the first optional step as the next
-    recommended stop once the previous required step is done.
+    The shell no longer presents this as a course-style counter.  The tuple
+    is retained because the portable project bundle records it, but its
+    values now come from the same lifecycle state used by Home, the sidebar,
+    and page headers; there is no separately maintained step map.
     """
-    total_steps = 12
+    from .workflow_state import workflow_progress
 
-    if not get_state("data_loaded"):
-        return 1, total_steps
-    if get_state("transformed_data") is None:
-        return 2, total_steps
-    if not get_state("model_spec"):
-        return 3, total_steps
-    if get_state("frame") is None:
-        return 4, total_steps
-    if not get_state("model_trained"):
-        return 7, total_steps
-    if not get_state("scorecard"):
-        return 8, total_steps
-    if not get_state("curve_bank_entry_id"):
-        return 10, total_steps
-    if not get_state("scenarios"):
-        return 11, total_steps
-
-    return 12, total_steps
+    return workflow_progress(getter=get_state)
 
 
 def is_step_complete(step: int) -> bool:
-    current, _ = get_workflow_progress()
-    return current > step
+    from .workflow_state import is_registered_step_complete
+
+    return is_registered_step_complete(step, getter=get_state)

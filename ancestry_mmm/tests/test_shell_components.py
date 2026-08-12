@@ -99,23 +99,23 @@ class TestPageReadiness:
             ui_module, "get_state", lambda key, default=None: state.get(key, default)
         )
 
-    def test_data_upload_not_started_then_ready(self, monkeypatch):
+    def test_data_upload_not_started_then_complete(self, monkeypatch):
         self._patch_state(monkeypatch, {})
         assert ui_module.page_readiness("data_upload") == "not_started"
         self._patch_state(monkeypatch, {"data_loaded": True})
-        assert ui_module.page_readiness("data_upload") == "ready"
+        assert ui_module.page_readiness("data_upload") == "complete"
 
     def test_transform_pipeline_blocked_without_upstream_data(self, monkeypatch):
         self._patch_state(monkeypatch, {})
         assert ui_module.page_readiness("transform_pipeline") == "blocked"
 
-    def test_model_training_progresses_blocked_not_started_ready(self, monkeypatch):
+    def test_model_training_progresses_blocked_not_started_complete(self, monkeypatch):
         self._patch_state(monkeypatch, {})
         assert ui_module.page_readiness("model_training") == "blocked"
         self._patch_state(monkeypatch, {"frame": object()})
         assert ui_module.page_readiness("model_training") == "not_started"
         self._patch_state(monkeypatch, {"frame": object(), "model_trained": True})
-        assert ui_module.page_readiness("model_training") == "ready"
+        assert ui_module.page_readiness("model_training") == "complete"
 
     def test_optional_pages_are_never_reported_as_blocked(self, monkeypatch):
         self._patch_state(monkeypatch, {})
@@ -127,12 +127,12 @@ class TestPageReadiness:
         ):
             assert ui_module.page_readiness(key) == "optional"
 
-    def test_scenario_planner_ready_once_scenarios_exist(self, monkeypatch):
+    def test_scenario_planner_saved_once_scenarios_exist(self, monkeypatch):
         self._patch_state(
             monkeypatch,
             {"model_approval": {"status": "approved"}, "scenarios": [{"a": 1}]},
         )
-        assert ui_module.page_readiness("scenario_planner") == "ready"
+        assert ui_module.page_readiness("scenario_planner") == "saved"
 
     def test_unknown_key_defaults_to_not_started(self, monkeypatch):
         self._patch_state(monkeypatch, {})
@@ -151,12 +151,12 @@ class TestGroupReadiness:
         monkeypatch.setattr(ui_module, "page_readiness", lambda k: "optional")
         assert ui_module.group_readiness(["a", "b"]) == "not_started"
 
-    def test_all_ready_is_ready(self, monkeypatch):
-        monkeypatch.setattr(ui_module, "page_readiness", lambda k: "ready")
-        assert ui_module.group_readiness(["a", "b"]) == "ready"
+    def test_all_complete_is_complete(self, monkeypatch):
+        monkeypatch.setattr(ui_module, "page_readiness", lambda k: "complete")
+        assert ui_module.group_readiness(["a", "b"]) == "complete"
 
     def test_some_ready_is_current(self, monkeypatch):
-        statuses = {"a": "ready", "b": "not_started"}
+        statuses = {"a": "complete", "b": "not_started"}
         monkeypatch.setattr(ui_module, "page_readiness", lambda k: statuses[k])
         assert ui_module.group_readiness(["a", "b"]) == "current"
 
@@ -170,15 +170,14 @@ class TestGroupReadiness:
         assert ui_module.group_readiness(["a", "b"]) == "not_started"
 
     def test_optional_pages_do_not_count_against_a_ready_group(self, monkeypatch):
-        statuses = {"a": "ready", "b": "optional"}
+        statuses = {"a": "complete", "b": "optional"}
         monkeypatch.setattr(ui_module, "page_readiness", lambda k: statuses[k])
-        assert ui_module.group_readiness(["a", "b"]) == "ready"
+        assert ui_module.group_readiness(["a", "b"]) == "complete"
 
 
 class TestNextRecommendedStepKey:
-    """Phase 2 Home overview: next_recommended_step_key() is the single
-    "what should I do next" signal, derived purely from page_readiness()
-    over WORKFLOW_STEPS in canonical order."""
+    """Phase 1: next action comes from canonical lifecycle state and skips
+    optional pages."""
 
     @staticmethod
     def _patch_state(monkeypatch, state):
@@ -210,15 +209,12 @@ class TestNextRecommendedStepKey:
         )
         assert ui_module.next_recommended_step_key() == "model_config"
 
-    def test_returns_none_once_every_ready_capable_page_is_ready(self, monkeypatch):
-        # page_readiness("official_curve_generation") has no "ready" branch
-        # at all (components/ui.py) - only "blocked"/"not_started" - since
-        # no session-state signal exists yet for "an artifact was
-        # generated" (a pre-existing Phase 1 gap, not invented here per the
-        # Phase 2 brief's "never invent a new session-state key" rule). A
-        # fully-progressed project therefore still surfaces this page as
-        # the next recommended action rather than fabricating "ready" -
-        # this test documents that honestly rather than assuming otherwise.
+    def test_scorecard_without_readiness_keeps_diagnostics_as_next_action(
+        self, monkeypatch
+    ):
+        # A scorecard is evidence, not approval readiness. The next action
+        # remains Diagnostics until readiness is evaluated and approval is
+        # recorded, per the Phase 1 implementation brief.
         self._patch_state(
             monkeypatch,
             {
@@ -234,7 +230,7 @@ class TestNextRecommendedStepKey:
                 "scenarios": [{"a": 1}],
             },
         )
-        assert ui_module.next_recommended_step_key() == "official_curve_generation"
+        assert ui_module.next_recommended_step_key() == "diagnostics"
 
 
 _HEADER_SCRIPT = """

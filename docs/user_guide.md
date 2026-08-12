@@ -1,7 +1,7 @@
 # User Guide
 
-A step-by-step walkthrough of the app as it exists today (12 steps). Written for a non-technical
-user picking this up for the first time - each step's page also shows this same guidance inline
+A step-by-step walkthrough of the app as it exists today. Written for a non-technical
+user picking this up for the first time - each page also shows its own guidance inline
 (purpose sentence + numbered steps at the top, "Next:" panel at the bottom).
 
 ## Step 1: Data Upload

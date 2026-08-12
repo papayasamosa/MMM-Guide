@@ -1,4 +1,4 @@
-"""Page (step 4 of 12): map each channel's spend column to a physical
+"""Map each channel's spend column to a physical
 media-unit column, per market - optional data capture for the
 market-specific redesign (see docs/media_units_and_inflation.md). Feeds
 core.media_units's CPA/response-unit-curve calculations and is part of the

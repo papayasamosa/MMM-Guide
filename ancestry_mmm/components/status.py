@@ -53,6 +53,10 @@ STATUS_BADGES: Dict[str, Tuple[str, str, str]] = {
     "review": ("Review", "⚑", "caution"),
     "fail": ("Fail", "✕", "negative"),
     "reported": ("Reported", "•", "info"),
+    "complete": ("Complete", "OK", "positive"),
+    "configured": ("Configured", "~", "neutral"),
+    "saved": ("Saved", "OK", "positive"),
+    "unavailable": ("Unavailable", "!", "negative"),
     # Readiness states reused by the grouped sidebar nav (components/ui.py)
     # so a page's nav indicator and its own header badge always agree.
     "ready": ("Ready", "✓", "positive"),
