@@ -88,7 +88,7 @@ def test_fabric_section_renders_with_a_built_matrix():
         variable_coverage_matrix=matrix.to_dict(),
     )
     assert not at.exception, f"page raised: {at.exception}"
-    assert any("2. Coverage fabric" in (m.value or "") for m in at.markdown)
+    assert any("Coverage fabric" in (m.value or "") for m in at.markdown)
     assert any("Isolate state(s)" == ms.label for ms in at.multiselect)
 
 

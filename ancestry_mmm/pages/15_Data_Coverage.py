@@ -33,6 +33,7 @@ from ancestry_mmm.components import (
     render_next_step,
     render_empty_state,
     render_workspace_note,
+    render_status_badges,
     SectionCard,
     InfoPanel,
     create_coverage_fabric_chart,
@@ -177,7 +178,12 @@ def _default_source(column: str) -> "tuple[str, int]":
     return source_id, known_versions_by_source.get(source_id, 1)
 
 
-st.markdown("### 1. Build or refresh the coverage matrix")
+setup_expander = st.expander(
+    "Matrix setup and refresh",
+    expanded=existing_matrix_for_defaults is None,
+)
+setup_expander.__enter__()
+st.markdown("### Build or refresh the coverage matrix")
 variable_columns = st.multiselect(
     "Governed variables",
     all_columns,
@@ -338,6 +344,8 @@ if variable_columns:
         except ValueError as e:
             st.error(f"Could not build the coverage matrix: {e}")
 
+setup_expander.__exit__(None, None, None)
+
 current_matrix_dict = get_state("variable_coverage_matrix")
 if current_matrix_dict is None:
     st.info("Build a coverage matrix above to review it.")
@@ -347,7 +355,21 @@ if current_matrix_dict is None:
 matrix = VariableCoverageMatrix.from_dict(current_matrix_dict)
 
 st.markdown("---")
-st.markdown("### 2. Coverage fabric")
+with st.container(border=True):
+    st.markdown("### Coverage summary")
+    summary_cols = st.columns(4)
+    summary_cols[0].metric("Variables", len({r.variable_id for r in matrix.records}))
+    summary_cols[1].metric("Markets", len({r.market for r in matrix.records}))
+    summary_cols[2].metric(
+        "Gap segments", sum(len(r.coverage_segments) for r in matrix.records)
+    )
+    summary_cols[3].metric("Unresolved", len(matrix.blocking_issues))
+    render_status_badges(["blocked" if matrix.blocking_issues else "ready"])
+    st.caption(
+        "Review the fabric and unresolved gaps below. Matrix setup is secondary and remains available above."
+    )
+
+st.markdown("### Coverage fabric")
 st.caption(
     "A time x variable x market visual surface built from the coverage "
     "matrix above (the canonical missingness-state "
