@@ -164,6 +164,7 @@ def test_before_scorecard_top_line_says_not_yet_assessed():
     at.run()
     assert not at.exception, f"page raised on initial load: {at.exception}"
     text = _all_markdown_text(at)
+    assert "Diagnostics state" in text
     assert "Not yet assessed" in text
 
 

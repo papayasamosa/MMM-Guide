@@ -96,21 +96,41 @@ if model_type == "market_specific" and len(frame["markets"]) < 2:
 
 dna_kit_outcome_ids = get_state("direct_dna_outcome_ids") or []
 
+with st.container(border=True):
+    st.markdown("### Fit dashboard")
+    st.caption(
+        "The prepared frame is the current fit input. Review the proposal and sampling plan, then run the fit when the configuration is ready."
+    )
+    summary_cols = st.columns(4)
+    summary_cols[0].metric(
+        "Model type", "Market-specific" if model_type == "market_specific" else "Shared"
+    )
+    summary_cols[1].metric("Observations", format_number(frame["X_media"].shape[0]))
+    summary_cols[2].metric("Markets", len(frame["markets"]))
+    summary_cols[3].metric(
+        "Fit state", "Trained" if get_state("model_trained") else "Ready to fit"
+    )
+
 with SectionCard(
-    "Proposed model",
-    description="What would be built and fit if you click 'Build & fit model' below.",
+    "Fit proposal",
+    description="The model identity and scope that will be used if you start fitting.",
 ):
-    st.markdown(f"""
-- **Model structure:** {MODEL_TYPE_LABELS[model_type]}
-- **Observations:** {format_number(frame["X_media"].shape[0])}
-- **Markets:** {", ".join(frame["markets"])}
-- **Segments / outcomes:** {", ".join(frame["outcome_ids"])}{f" (DNA-product, direct media response: {', '.join(dna_kit_outcome_ids)})" if dna_kit_outcome_ids else ""}
-- **Channels:** {", ".join(frame["channels"])} (DNA: {", ".join(frame["channels"][i] for i in frame["dna_channel_idx"]) or "none"})
-""")
+    st.caption(f"Markets: {', '.join(frame['markets'])}")
+    st.caption(f"Outcomes: {', '.join(frame['outcome_ids'])}")
+    st.caption(f"Model-input channels: {', '.join(frame['channels'])}")
+    if dna_kit_outcome_ids:
+        st.caption(
+            "DNA-product outcomes with direct media response: "
+            + ", ".join(dna_kit_outcome_ids)
+        )
+    st.caption(
+        "DNA-targeted channels: "
+        + (", ".join(frame["channels"][i] for i in frame["dna_channel_idx"]) or "none")
+    )
 
 with InfoPanel(
-    "Resource expectations",
-    description="Sequential (single-core) sampling so live progress can be shown honestly below.",
+    "Sampling plan",
+    description="Sequential single-core sampling; live progress is shown only from the fitter's callback.",
 ):
     st.markdown(f"""
 - **MCMC draws:** {format_number(get_state("mcmc_draws"))}
@@ -227,7 +247,7 @@ def _proposed_model_fingerprint(fingerprint_model_type: str) -> str:
 
 
 st.markdown("---")
-st.markdown("### Preview: prior predictive check (before fitting)")
+st.markdown("### Pre-fit prior check")
 st.caption(
     "Samples from the PROPOSED model's declared priors - never a "
     "posterior, no MCMC, no trace - before committing to the fit below, "
@@ -344,6 +364,10 @@ elif _preview and _preview.get("status") == "computed":
         for w in _preview_payload.get("warnings", []):
             st.caption(f"Sampling warning: {w}")
 
+st.markdown("### Fit action")
+st.caption(
+    "Build the proposed model and start sampling. A new fit creates a new run identity and clears any previous approval."
+)
 if st.button("Build & fit model", type="primary"):
     try:
         with st.spinner("Building model..."):

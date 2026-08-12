@@ -53,6 +53,7 @@ def test_empty_state_prompts_fitting_a_candidate():
     at.run()
     assert not at.exception, f"page raised: {at.exception}"
     assert any("No comparison candidates saved yet" in (i.value or "") for i in at.info)
+    assert "Comparison dashboard" in _all_text(at)
 
 
 def test_candidates_at_a_glance_table_has_no_composite_score_column():
