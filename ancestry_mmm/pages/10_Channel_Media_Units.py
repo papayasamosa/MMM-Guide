@@ -1,13 +1,15 @@
-"""Map each channel's spend column to a physical
-media-unit column, per market - optional data capture for the
-market-specific redesign (see docs/media_units_and_inflation.md). Feeds
-core.media_units's CPA/response-unit-curve calculations and is part of the
-model-specification fingerprint once mapped (core.fingerprint).
+"""Configure governed activity mappings and physical media-unit inputs.
+
+The activity workspace captures reporting, modelling, planning, evidence, and
+provenance fields before the page's separate Search-object and media-unit
+configuration sections.
 """
 
 import sys
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
+from typing import cast
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -48,7 +50,6 @@ from ancestry_mmm.core.activities import (
     APPROVAL_STATUSES,
     ECONOMIC_TREATMENTS,
     FUNNEL_STAGES,
-    MARKETING_OBJECTIVE_SUGGESTIONS,
     MODEL_ROLES,
     OWNERSHIP,
     PLANNING_ELIGIBILITY,
@@ -173,314 +174,430 @@ render_technical_details(
     }
 )
 
-_activity_section = SectionCard(
-    "Activity and causal-role mapping",
+with SectionCard(
+    "Activity mapping",
     description=(
-        "The fitted model-input column, ownership, causal role, economic treatment, and planning eligibility for each activity."
+        "Identify each activity first. Edit its model, planning, evidence, and "
+        "provenance details only when needed."
     ),
-)
-_activity_section.__enter__()
-st.caption(
-    "Use one row per market and activity. Add rows to distinguish paid and "
-    "organic social, promotional/lifecycle/transactional CRM, PR campaigns, "
-    "and named external events even when they share a reporting channel."
-)
-if existing_activity_items or legacy_activity_rows:
-    activity_rows = [
-        ActivityDefinition.from_dict(item).to_dict() for item in activity_seed_rows
-    ]
-else:
-    activity_rows = []
-    st.info(
-        "No governed activities exist yet. Add an activity row below and choose "
-        "its model-input column explicitly; numeric columns are candidates only "
-        "and are never classified automatically."
-    )
-
-activity_columns = [
-    "market",
-    "activity_id",
-    "channel",
-    "platform",
-    "campaign_type",
-    "product_advertised",
-    "message_type",
-    "marketing_objective",
-    "funnel_stage",
-    "pooling_group_id",
-    "model_input_column",
-    "activity_ownership",
-    "model_role",
-    "economic_treatment",
-    "planning_eligibility",
-    "pathway_ids",
-    "evidence_status",
-    "evidence_source",
-    "rationale",
-    "limitations",
-    "approval_status",
-    "reviewed_by",
-    "reviewed_at",
-    "approved_by",
-    "approved_at",
-    "source",
-]
-_activity_enum_values = {
-    "activity_ownership": OWNERSHIP,
-    "model_role": MODEL_ROLES,
-    "economic_treatment": ECONOMIC_TREATMENTS,
-    "planning_eligibility": PLANNING_ELIGIBILITY,
-    "approval_status": APPROVAL_STATUSES,
-    "funnel_stage": FUNNEL_STAGES,
-}
-_activity_editor_df = display_enum_frame(
-    pd.DataFrame(activity_rows).reindex(columns=activity_columns),
-    _activity_enum_values.keys(),
-)
-for _text_col in (
-    "market",
-    "activity_id",
-    "channel",
-    "platform",
-    "campaign_type",
-    "product_advertised",
-    "message_type",
-    "marketing_objective",
-    "pooling_group_id",
-    "model_input_column",
-    "pathway_ids",
-    "evidence_status",
-    "evidence_source",
-    "rationale",
-    "limitations",
-    "reviewed_by",
-    "reviewed_at",
-    "approved_by",
-    "approved_at",
-    "source",
 ):
-    _activity_editor_df[_text_col] = _activity_editor_df[_text_col].astype("object")
-_activity_editor_df["pathway_ids"] = _activity_editor_df["pathway_ids"].map(
-    lambda value: (
-        ", ".join(value) if isinstance(value, (list, tuple, set)) else str(value or "")
+    st.caption(
+        "Use one row per market and activity. Multiple activities may share a "
+        "reporting channel when their model-input columns differ."
     )
-)
-activity_editor = st.data_editor(
-    _activity_editor_df,
-    num_rows="dynamic",
-    width="stretch",
-    key="activity_governance_editor",
-    column_config={
-        "market": st.column_config.SelectboxColumn(
-            "Market", options=mapping_markets, required=True
-        ),
-        "activity_id": st.column_config.TextColumn(
-            "Activity ID",
-            required=True,
-            help="Stable identity for this activity in this market.",
-        ),
-        "channel": st.column_config.TextColumn(
-            "Reporting channel",
-            required=True,
-            help=(
-                "Shared reporting label, such as Social. Multiple activities "
-                "may share it when their model-input columns differ."
-            ),
-        ),
-        "platform": st.column_config.TextColumn(
-            "Platform / supplier",
-            help="Platform or supplier, such as Meta, Google Ads, Email, or a TV network. It is separate from the reporting channel.",
-        ),
-        "campaign_type": st.column_config.TextColumn(
-            "Campaign / tactic",
-            help="Execution or tactic, such as prospecting, newsletter, lifecycle, winback, promotional, or transactional.",
-        ),
-        "product_advertised": st.column_config.TextColumn(
-            "Product advertised",
-            help="Product promoted by the activity; keep it separate from the model outcome and pathway target.",
-        ),
-        "message_type": st.column_config.TextColumn(
-            "Message / content",
-            help="Content or message type, such as brand/editorial, educational, offer/discount, product, reminder, or service.",
-        ),
-        "marketing_objective": st.column_config.TextColumn(
-            "Marketing objective",
-            help=(
-                "Optional normalized business purpose, separate from campaign and message. "
-                "Suggestions: "
-                + ", ".join(MARKETING_OBJECTIVE_SUGGESTIONS)
-                + ". Never inferred from names or platform."
-            ),
-        ),
-        "funnel_stage": st.column_config.SelectboxColumn(
-            "Funnel stage",
-            options=display_enum_options(FUNNEL_STAGES),
-            required=True,
-            help="Explicit reporting classification only. It does not create a causal edge, mediator, model role, prior, or planning permission.",
-        ),
-        "pooling_group_id": st.column_config.TextColumn(
-            "Comparable activity group",
-            help="Optional stable identity for comparable activities across markets. It never enables statistical pooling by itself.",
-        ),
-        "model_input_column": st.column_config.SelectboxColumn(
-            "Media input column",
-            options=available_model_inputs,
-            required=True,
-            help="The observed column used by the fitted model; it is not assumed to be monetary spend.",
-        ),
-        "activity_ownership": st.column_config.SelectboxColumn(
-            "Activity ownership",
-            options=display_enum_options(sorted(OWNERSHIP)),
-            required=True,
-        ),
-        "model_role": st.column_config.SelectboxColumn(
-            "Model role",
-            options=display_enum_options(sorted(MODEL_ROLES)),
-            required=True,
-        ),
-        "economic_treatment": st.column_config.SelectboxColumn(
-            "Cost treatment",
-            options=display_enum_options(sorted(ECONOMIC_TREATMENTS)),
-            required=True,
-        ),
-        "planning_eligibility": st.column_config.SelectboxColumn(
-            "Planning eligibility",
-            options=display_enum_options(sorted(PLANNING_ELIGIBILITY)),
-            required=True,
-        ),
-        "pathway_ids": st.column_config.TextColumn(
-            "Pathway IDs",
-            help="Comma-separated pathway records linked to this activity.",
-        ),
-        "evidence_status": st.column_config.TextColumn("Evidence status"),
-        "evidence_source": st.column_config.TextColumn("Evidence source"),
-        "rationale": st.column_config.TextColumn("Reason for this mapping"),
-        "limitations": st.column_config.TextColumn("Known limitations"),
-        "approval_status": st.column_config.SelectboxColumn(
-            "Review status",
-            options=display_enum_options(sorted(APPROVAL_STATUSES)),
-            required=True,
-        ),
-        "reviewed_by": st.column_config.TextColumn("Reviewed by"),
-        "reviewed_at": st.column_config.TextColumn("Reviewed on"),
-        "approved_by": st.column_config.TextColumn("Approved by"),
-        "approved_at": st.column_config.TextColumn("Approved on"),
-        "source": st.column_config.TextColumn("Source / provenance"),
-    },
-)
-activity_editor = restore_enum_frame(
-    activity_editor,
-    _activity_enum_values.keys(),
-    _activity_enum_values,
-)
 
-activity_definitions = []
-activity_errors = []
-seen_keys = set()
-seen_inputs = set()
-for row_number, row in activity_editor.fillna("").iterrows():
-    try:
-        activity_key = (str(row["market"]), str(row["activity_id"]))
-        input_key = (str(row["market"]), str(row["model_input_column"]))
-        if activity_key in seen_keys:
-            raise ValueError(f"duplicate market/activity_id {activity_key}")
-        if input_key in seen_inputs:
-            raise ValueError(f"duplicate market/model_input_column {input_key}")
-        seen_keys.add(activity_key)
-        seen_inputs.add(input_key)
-        activity_definitions.append(
-            ActivityDefinition(
-                activity_id=str(row["activity_id"]),
-                market=str(row["market"]),
-                channel=str(row["channel"]),
-                platform=str(row["platform"]),
-                campaign_type=str(row["campaign_type"]),
-                product_advertised=str(row["product_advertised"]),
-                message_type=str(row["message_type"]),
-                marketing_objective=str(row["marketing_objective"]),
-                funnel_stage=str(row["funnel_stage"]),
-                model_input_column=str(row["model_input_column"]),
-                activity_ownership=str(row["activity_ownership"]),
-                model_role=str(row["model_role"]),
-                economic_treatment=str(row["economic_treatment"]),
-                planning_eligibility=str(row["planning_eligibility"]),
-                pooling_group_id=str(row["pooling_group_id"]).strip() or None,
-                pathway_ids=tuple(
-                    item.strip()
-                    for item in str(row["pathway_ids"]).split(",")
-                    if item.strip()
-                ),
-                evidence_status=str(row["evidence_status"] or "not_assessed"),
-                evidence_source=str(row["evidence_source"]),
-                rationale=str(row["rationale"]),
-                limitations=str(row["limitations"]),
-                approval_status=str(row["approval_status"] or "draft"),
-                reviewed_by=str(row["reviewed_by"]),
-                reviewed_at=str(row["reviewed_at"]),
-                approved_by=str(row["approved_by"]) or None,
-                approved_at=str(row["approved_at"]) or None,
-                source=str(row["source"] or "activity governance UI"),
-            )
-        )
-    except ValueError as error:
-        activity_errors.append(f"Row {row_number + 1}: {error}")
-
-for error in activity_errors:
-    st.error(error)
-
-if st.button("Save required activity governance", type="primary"):
-    if activity_errors:
-        st.error("Nothing was saved. Resolve every governance error first.")
-    elif not activity_definitions:
-        st.error(
-            "Add at least one governed activity before saving. Numeric columns "
-            "are suggestions for the explicit mapping only."
+    activity_definitions = [
+        ActivityDefinition.from_dict(item) for item in activity_seed_rows
+    ]
+    overview_rows = [
+        {
+            "Market": item.market,
+            "Activity": item.activity_id,
+            "Reporting channel": item.channel,
+            "Platform": item.platform,
+            "Funnel stage": readable_label(item.funnel_stage),
+            "Media input": item.resolved_model_input_column,
+            "Planning eligibility": readable_label(item.planning_eligibility),
+            "Review status": readable_label(item.approval_status),
+        }
+        for item in activity_definitions
+    ]
+    if overview_rows:
+        st.dataframe(pd.DataFrame(overview_rows), width="stretch", hide_index=True)
+        st.caption(
+            "Overview fields are for comparison. Select an activity below to edit "
+            "its complete governed record."
         )
     else:
-        previous = [
-            ActivityDefinition.from_dict(item) for item in existing_activity_items
-        ]
-        previous_by_key = {item.activity_key: item for item in previous}
-        refit_required = set(previous_by_key) != {
-            item.activity_key for item in activity_definitions
-        }
-        rebuild_curves = refit_required
-        rebuild_scenarios = refit_required
-        for definition in activity_definitions:
-            prior = previous_by_key.get(definition.activity_key)
-            if prior is None:
-                continue
-            impact = activity_invalidation(prior, definition)
-            refit_required = refit_required or impact.refit_model
-            rebuild_curves = (
-                rebuild_curves or impact.rebuild_curves or impact.rebuild_economics
-            )
-            rebuild_scenarios = rebuild_scenarios or impact.rebuild_scenarios
-        set_state(
-            "activity_definitions",
-            [definition.to_dict() for definition in activity_definitions],
+        st.info(
+            "No governed activities exist yet. Add the first activity below and "
+            "choose its media input explicitly; numeric columns are candidates "
+            "only and are never classified automatically."
         )
-        if refit_required and get_state("model_trained"):
+
+    activity_mode = st.session_state.setdefault(
+        "activity_detail_mode", "edit" if activity_definitions else "add"
+    )
+    selected_index = 0
+    if activity_definitions:
+        selected_index = st.selectbox(
+            "Selected activity",
+            list(range(len(activity_definitions))),
+            index=min(
+                int(st.session_state.get("activity_selected_index", 0)),
+                len(activity_definitions) - 1,
+            ),
+            format_func=lambda index: (
+                f"{activity_definitions[index].market} · "
+                f"{activity_definitions[index].activity_id} · "
+                f"{activity_definitions[index].channel} · "
+                f"{activity_definitions[index].resolved_model_input_column}"
+            ),
+            key="activity_selected_index",
+        )
+        selected_index = int(selected_index)
+        selected_activity = activity_definitions[selected_index]
+        actions = st.columns(3)
+        if actions[0].button("Add activity", key="add_activity_detail"):
+            st.session_state["activity_detail_mode"] = "add"
+            st.rerun()
+        if actions[1].button("Edit selected activity", key="edit_activity_detail"):
+            st.session_state["activity_detail_mode"] = "edit"
+            st.rerun()
+        remove_confirmation = st.checkbox(
+            "I understand this removes the selected mapping",
+            key="remove_activity_confirmation",
+        )
+        if actions[2].button(
+            "Remove selected activity",
+            key="remove_activity_detail",
+            disabled=not remove_confirmation,
+        ):
+            remaining = [
+                item
+                for index, item in enumerate(activity_definitions)
+                if index != selected_index
+            ]
+            set_state("activity_definitions", [item.to_dict() for item in remaining])
             clear_model_state()
             set_state("scenarios", [])
             st.warning(
-                "Saved. The activity role or model-input mapping changed, so "
-                "the fitted model, approval, curves, and scenarios were invalidated."
+                "Removed the selected activity. The fitted model, approval, curves, "
+                "and scenarios were cleared because the model scope changed."
+            )
+            activity_definitions = remaining
+            st.session_state["activity_detail_mode"] = "edit"
+            st.session_state["remove_activity_confirmation"] = False
+            selected_activity = (
+                activity_definitions[0] if activity_definitions else None
             )
         else:
-            if rebuild_curves:
-                set_state("curve_bank_entry_id", None)
-            if rebuild_scenarios:
+            selected_activity = activity_definitions[selected_index]
+    else:
+        selected_activity = None
+        if st.button("Add activity", key="add_activity_first"):
+            st.session_state["activity_detail_mode"] = "add"
+
+    is_new_activity = activity_mode == "add" or selected_activity is None
+    if is_new_activity:
+        detail = SimpleNamespace(
+            activity_id="",
+            market=mapping_markets[0],
+            channel="",
+            activity_ownership="paid",
+            model_role="intervention",
+            economic_treatment="paid_media_cost",
+            planning_eligibility="optimisable",
+            source="activity governance UI",
+            model_input_column=(
+                available_model_inputs[0] if available_model_inputs else ""
+            ),
+            resolved_model_input_column=(
+                available_model_inputs[0] if available_model_inputs else ""
+            ),
+            platform="",
+            campaign_type="",
+            product_advertised="",
+            message_type="",
+            marketing_objective="",
+            funnel_stage="unclassified",
+            pooling_group_id=None,
+            pathway_ids=(),
+            evidence_status="not_assessed",
+            evidence_source="",
+            rationale="",
+            limitations="",
+            approval_status="draft",
+            reviewed_by="",
+            reviewed_at="",
+            approved_by=None,
+            approved_at=None,
+            governance_notes="",
+            supersedes_activity_id=None,
+            schema_version=4,
+            change_history=(),
+        )
+    else:
+        detail = selected_activity
+
+    def _text(value: object) -> str:
+        return "" if value is None else str(value)
+
+    def _options(values, current: str) -> list[str]:
+        options = list(values)
+        if current and current not in options:
+            options.insert(0, current)
+        return options or [""]
+
+    with st.form("activity_detail_form", clear_on_submit=False):
+        st.markdown(
+            "### Add activity"
+            if activity_mode == "add" or selected_activity is None
+            else f"### Edit {detail.activity_id}"
+        )
+        st.caption(
+            "The detail form keeps every governed field accessible while the "
+            "overview stays compact."
+        )
+
+        st.markdown("#### Identity and reporting")
+        identity_a, identity_b = st.columns(2)
+        activity_id = identity_a.text_input(
+            "Activity ID *",
+            value=_text(detail.activity_id),
+            help="Stable identity for this activity in its market.",
+        )
+        market = identity_b.selectbox(
+            "Market *",
+            _options(mapping_markets, detail.market),
+            index=_options(mapping_markets, detail.market).index(detail.market),
+        )
+        report_a, report_b = st.columns(2)
+        channel = report_a.text_input(
+            "Reporting channel *",
+            value=_text(detail.channel),
+            help="A shared reporting label; it is separate from the model input.",
+        )
+        platform = report_b.text_input(
+            "Platform / supplier", value=_text(detail.platform)
+        )
+        campaign_a, campaign_b = st.columns(2)
+        campaign_type = campaign_a.text_input(
+            "Campaign / tactic", value=_text(detail.campaign_type)
+        )
+        product_advertised = campaign_b.text_input(
+            "Product advertised", value=_text(detail.product_advertised)
+        )
+        message_a, message_b = st.columns(2)
+        message_type = message_a.text_input(
+            "Message / content", value=_text(detail.message_type)
+        )
+        marketing_objective = message_b.text_input(
+            "Marketing objective",
+            value=_text(detail.marketing_objective),
+            help="Optional normalized business purpose; never inferred from names or platform.",
+        )
+        funnel_stage = st.selectbox(
+            "Funnel stage *",
+            _options(FUNNEL_STAGES, detail.funnel_stage),
+            index=_options(FUNNEL_STAGES, detail.funnel_stage).index(
+                detail.funnel_stage
+            ),
+            format_func=readable_label,
+        )
+        pooling_group_id = st.text_input(
+            "Comparable activity group",
+            value=_text(detail.pooling_group_id),
+            help="Stable cross-market reporting identity only; it does not choose statistical pooling.",
+        )
+
+        st.markdown("#### Model and planning")
+        model_input_column = st.selectbox(
+            "Media input column *",
+            _options(available_model_inputs, detail.resolved_model_input_column),
+            index=_options(
+                available_model_inputs, detail.resolved_model_input_column
+            ).index(detail.resolved_model_input_column),
+            format_func=readable_label,
+            help="The observed model input. It may be spend, impressions, clicks, TVRs, GRPs, or another governed unit.",
+        )
+        model_a, model_b = st.columns(2)
+        activity_ownership = model_a.selectbox(
+            "Activity ownership *",
+            sorted(OWNERSHIP),
+            index=sorted(OWNERSHIP).index(detail.activity_ownership)
+            if detail.activity_ownership in OWNERSHIP
+            else 0,
+            format_func=readable_label,
+        )
+        model_role = model_b.selectbox(
+            "Model role *",
+            sorted(MODEL_ROLES),
+            index=sorted(MODEL_ROLES).index(detail.model_role)
+            if detail.model_role in MODEL_ROLES
+            else 0,
+            format_func=readable_label,
+        )
+        economics_a, economics_b = st.columns(2)
+        economic_treatment = economics_a.selectbox(
+            "Cost treatment *",
+            sorted(ECONOMIC_TREATMENTS),
+            index=sorted(ECONOMIC_TREATMENTS).index(detail.economic_treatment)
+            if detail.economic_treatment in ECONOMIC_TREATMENTS
+            else 0,
+            format_func=readable_label,
+        )
+        planning_eligibility = economics_b.selectbox(
+            "Planning eligibility *",
+            sorted(PLANNING_ELIGIBILITY),
+            index=sorted(PLANNING_ELIGIBILITY).index(detail.planning_eligibility)
+            if detail.planning_eligibility in PLANNING_ELIGIBILITY
+            else 0,
+            format_func=readable_label,
+        )
+        pathway_ids = st.text_input(
+            "Linked pathways",
+            value=", ".join(detail.pathway_ids),
+            help="Comma-separated governed pathway IDs.",
+        )
+
+        st.markdown("#### Evidence and review")
+        evidence_a, evidence_b = st.columns(2)
+        evidence_status = evidence_a.text_input(
+            "Evidence status", value=_text(detail.evidence_status)
+        )
+        evidence_source = evidence_b.text_input(
+            "Evidence source", value=_text(detail.evidence_source)
+        )
+        rationale = st.text_area(
+            "Reason for this mapping", value=_text(detail.rationale)
+        )
+        limitations = st.text_area("Known limitations", value=_text(detail.limitations))
+        review_a, review_b = st.columns(2)
+        approval_status = review_a.selectbox(
+            "Review status *",
+            sorted(APPROVAL_STATUSES),
+            index=sorted(APPROVAL_STATUSES).index(detail.approval_status)
+            if detail.approval_status in APPROVAL_STATUSES
+            else 0,
+            format_func=readable_label,
+        )
+        reviewed_by = review_b.text_input(
+            "Reviewed by", value=_text(detail.reviewed_by)
+        )
+        review_dates_a, review_dates_b = st.columns(2)
+        reviewed_at = review_dates_a.text_input(
+            "Reviewed on", value=_text(detail.reviewed_at)
+        )
+        approved_by = review_dates_b.text_input(
+            "Approved by", value=_text(detail.approved_by)
+        )
+        approved_at = st.text_input("Approved on", value=_text(detail.approved_at))
+
+        with st.expander("Technical and provenance", expanded=False):
+            source = st.text_input("Source / provenance", value=_text(detail.source))
+            governance_notes = st.text_area(
+                "Governance notes", value=_text(detail.governance_notes)
+            )
+            supersedes_activity_id = st.text_input(
+                "Supersedes activity ID", value=_text(detail.supersedes_activity_id)
+            )
+            st.caption(
+                f"Schema version: {detail.schema_version}. "
+                f"Change-history entries: {len(detail.change_history)}."
+            )
+
+        save_activity = st.form_submit_button(
+            "Save required activity governance", type="primary"
+        )
+
+    if save_activity:
+        try:
+            if not activity_id.strip() or not channel.strip() or not source.strip():
+                raise ValueError(
+                    "Activity ID, reporting channel, and source / provenance are required."
+                )
+            candidate_values = {
+                "activity_id": activity_id.strip(),
+                "market": market,
+                "channel": channel.strip(),
+                "platform": platform.strip(),
+                "campaign_type": campaign_type.strip(),
+                "product_advertised": product_advertised.strip(),
+                "message_type": message_type.strip(),
+                "marketing_objective": marketing_objective.strip(),
+                "funnel_stage": funnel_stage,
+                "model_input_column": model_input_column,
+                "activity_ownership": activity_ownership,
+                "model_role": model_role,
+                "economic_treatment": economic_treatment,
+                "planning_eligibility": planning_eligibility,
+                "pooling_group_id": pooling_group_id.strip() or None,
+                "pathway_ids": tuple(
+                    item.strip() for item in pathway_ids.split(",") if item.strip()
+                ),
+                "evidence_status": evidence_status.strip() or "not_assessed",
+                "evidence_source": evidence_source.strip(),
+                "rationale": rationale.strip(),
+                "limitations": limitations.strip(),
+                "approval_status": approval_status,
+                "reviewed_by": reviewed_by.strip(),
+                "reviewed_at": reviewed_at.strip(),
+                "approved_by": approved_by.strip() or None,
+                "approved_at": approved_at.strip() or None,
+                "source": source.strip(),
+                "governance_notes": governance_notes.strip(),
+                "supersedes_activity_id": supersedes_activity_id.strip() or None,
+            }
+            candidate = (
+                ActivityDefinition(**candidate_values)
+                if is_new_activity
+                else replace(cast(ActivityDefinition, detail), **candidate_values)
+            )
+            updated = list(activity_definitions)
+            if is_new_activity:
+                updated.append(candidate)
+            else:
+                updated[selected_index] = candidate
+            seen_keys = set()
+            seen_inputs = set()
+            for item in updated:
+                if item.activity_key in seen_keys:
+                    raise ValueError(
+                        f"duplicate market/activity_id {item.activity_key}"
+                    )
+                if (item.market, item.resolved_model_input_column) in seen_inputs:
+                    raise ValueError(
+                        "duplicate market/model input column "
+                        f"{(item.market, item.resolved_model_input_column)}"
+                    )
+                seen_keys.add(item.activity_key)
+                seen_inputs.add((item.market, item.resolved_model_input_column))
+
+            previous = [
+                ActivityDefinition.from_dict(item) for item in existing_activity_items
+            ]
+            previous_by_key = {item.activity_key: item for item in previous}
+            refit_required = set(previous_by_key) != {
+                item.activity_key for item in updated
+            }
+            rebuild_curves = refit_required
+            rebuild_scenarios = refit_required
+            for definition in updated:
+                prior = previous_by_key.get(definition.activity_key)
+                if prior is None:
+                    continue
+                impact = activity_invalidation(prior, definition)
+                refit_required = refit_required or impact.refit_model
+                rebuild_curves = (
+                    rebuild_curves or impact.rebuild_curves or impact.rebuild_economics
+                )
+                rebuild_scenarios = rebuild_scenarios or impact.rebuild_scenarios
+            set_state("activity_definitions", [item.to_dict() for item in updated])
+            activity_definitions = updated
+            if refit_required and get_state("model_trained"):
+                clear_model_state()
                 set_state("scenarios", [])
-            if rebuild_curves or rebuild_scenarios:
                 st.warning(
-                    "Saved. A downstream governance field changed, so stale "
-                    "curve/economics references and affected scenarios were "
-                    "invalidated according to the activity change matrix."
+                    "Saved. The activity role or media-input mapping changed, so "
+                    "the fitted model, approval, curves, and scenarios were invalidated."
                 )
             else:
-                st.success("Required activity governance saved.")
-_activity_section.__exit__(None, None, None)
+                if rebuild_curves:
+                    set_state("curve_bank_entry_id", None)
+                if rebuild_scenarios:
+                    set_state("scenarios", [])
+                if rebuild_curves or rebuild_scenarios:
+                    st.warning(
+                        "Saved. A downstream governance field changed, so stale "
+                        "curve/economics references and affected scenarios were "
+                        "invalidated according to the activity change matrix."
+                    )
+                else:
+                    st.success("Required activity governance saved.")
+            st.session_state["activity_detail_mode"] = "edit"
+        except (TypeError, ValueError) as exc:
+            st.error(f"Nothing was saved. Resolve this activity first: {exc}")
 
 st.markdown("---")
 _search_section = SectionCard(
@@ -671,16 +788,16 @@ for row_number, row in search_object_editor.fillna("").iterrows():
             )
             search_object_versions_to_record.append(candidate)
         search_object_definitions.append(candidate)
-    except ValueError as error:
-        search_object_errors.append(f"Row {row_number + 1}: {error}")
+    except ValueError as exc:
+        search_object_errors.append(f"Row {row_number + 1}: {exc}")
 
 for issue in validate_search_object_catalogue(search_object_definitions):
     search_object_errors.append(
         f"{issue.search_object_id} (market {issue.market}): {issue.detail}"
     )
 
-for error in search_object_errors:
-    st.error(error)
+for search_error in search_object_errors:
+    st.error(search_error)
 
 if st.button("Save Search object governance"):
     if search_object_errors:
