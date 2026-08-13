@@ -230,6 +230,7 @@ def prepare_fh_modeling_frame(
     net_billthrough_metadata: Optional[
         NetBillthroughCompletenessMetadata | dict
     ] = None,
+    activity_definitions: Optional[List[Any]] = None,
 ) -> Dict[str, Any]:
     """
     Turn a joined, transformed DataFrame + ModelSpec into the arrays the
@@ -521,5 +522,6 @@ def prepare_fh_modeling_frame(
         "trend": trend,
         "unpooled_markets": spec.unpooled_markets,
         "media_outcome_pathways": resolved_pathways,
+        "activity_definitions": list(activity_definitions or []),
         "net_billthrough_metadata": net_billthrough_metadata,
     }

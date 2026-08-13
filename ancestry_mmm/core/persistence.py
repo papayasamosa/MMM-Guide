@@ -161,7 +161,7 @@ from .curve_artifact import (
 )
 from .hierarchical_model import FHModelMeta
 from .outcomes import outcome_catalogue_fingerprint_payload
-from .pathways import pathway_catalogue_fingerprint_payload
+from .pathways import MediaOutcomePathway, pathway_catalogue_fingerprint_payload
 from .planning.value import CurrencyContext, OutcomeValueMapping
 from .predict import extract_posterior_params
 from .scenario_governance import CounterfactualPolicy
@@ -874,6 +874,41 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
             result["notes"] = notes_path.read_text()
 
     return result
+
+
+def resolve_imported_media_outcome_pathways(
+    imported: Dict[str, Any],
+) -> Tuple[List[dict], List[str]]:
+    """Normalise pathway records without guessing their activity identity.
+
+    A legacy row is retained as a valid compatibility record until the
+    activity registry is available. Malformed rows are quarantined with an
+    indexed warning; ambiguous activity migration is handled separately by
+    ``migrate_pathways_to_activity_identity`` so the review state is explicit
+    rather than hidden in bundle loading.
+    """
+
+    raw_pathways = imported.get("media_outcome_pathways")
+    if not raw_pathways:
+        return [], []
+    normalised: List[dict] = []
+    warnings: List[str] = []
+    for index, item in enumerate(raw_pathways):
+        if not isinstance(item, Mapping):
+            warnings.append(
+                f"Media-outcome pathway record {index} is not a mapping and was "
+                "quarantined (dropped, not silently kept)."
+            )
+            continue
+        try:
+            normalised.append(MediaOutcomePathway.from_dict(dict(item)).to_dict())
+        except (TypeError, ValueError, KeyError, AttributeError) as exc:
+            pathway_id = item.get("pathway_id", "<unknown>")
+            warnings.append(
+                f"Media-outcome pathway record {index} (pathway_id={pathway_id!r}) "
+                f"was malformed and was quarantined (dropped, not silently kept): {exc}"
+            )
+    return normalised, warnings
 
 
 def resolve_imported_outcome_approvals(
@@ -2281,7 +2316,10 @@ def reconstruct_model_state(imported: Dict[str, Any]) -> Dict[str, Any]:
                 o for o in outcome_definitions if o.source_column in available_columns
             ]
             result["frame"] = prepare_fh_modeling_frame(
-                transformed_data, spec, outcomes=usable_outcomes
+                transformed_data,
+                spec,
+                outcomes=usable_outcomes,
+                activity_definitions=imported.get("activity_definitions") or [],
             )
         except (ValueError, KeyError):
             result["frame"] = None

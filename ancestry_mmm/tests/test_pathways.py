@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from ancestry_mmm.core.outcomes import DNA, FAMILY_HISTORY
+from ancestry_mmm.core.activities import ActivityDefinition
 from ancestry_mmm.core.pathways import (
     PATHWAY_DRIFT_STATUSES,
     PATHWAY_ROLE_ACTIVE_CROSS_PRODUCT,
@@ -17,6 +18,7 @@ from ancestry_mmm.core.pathways import (
     PATHWAY_ROLES,
     RECONCILIATION_RELATIONS,
     MediaOutcomePathway,
+    migrate_pathways_to_activity_identity,
     OutcomeReconciliationGroup,
     ResolvedPathwayMasks,
     legacy_governance_change_summary,
@@ -719,3 +721,54 @@ class TestResolvedPathwayMasksConversionHelpers:
 
     def test_from_dict_none_gives_empty_masks(self):
         assert ResolvedPathwayMasks.from_dict(None) == ResolvedPathwayMasks()
+
+
+def _identity_activity(activity_id, model_input_column):
+    return ActivityDefinition(
+        activity_id=activity_id,
+        market="UK",
+        channel="Paid Social",
+        model_input_column=model_input_column,
+        activity_ownership="paid",
+        model_role="intervention",
+        economic_treatment="paid_media_cost",
+        planning_eligibility="optimisable",
+        source="approved media mapping",
+        platform="Meta",
+    )
+
+
+def test_legacy_pathway_migration_resolves_physical_predictor_to_activity():
+    pathway = MediaOutcomePathway(
+        channel="meta_paid",
+        source_product=FAMILY_HISTORY,
+        target_outcome_id="fh_new",
+    )
+    result = migrate_pathways_to_activity_identity(
+        [pathway],
+        [_identity_activity("meta-paid", "meta_paid")],
+    )
+    assert result.errors == ()
+    assert result.migrated_count == 1
+    [migrated] = result.pathways
+    assert migrated.activity_id == "meta-paid"
+    assert migrated.activity_market == "UK"
+    assert migrated.channel == "meta_paid"
+
+
+def test_legacy_pathway_migration_fails_closed_for_ambiguous_reporting_channel():
+    pathway = MediaOutcomePathway(
+        channel="Paid Social",
+        source_product=FAMILY_HISTORY,
+        target_outcome_id="fh_new",
+    )
+    result = migrate_pathways_to_activity_identity(
+        [pathway],
+        [
+            _identity_activity("meta-paid", "meta_paid"),
+            _identity_activity("meta-owned", "meta_owned"),
+        ],
+    )
+    assert result.requires_review is True
+    assert any("ambiguous legacy channel" in error for error in result.errors)
+    assert result.pathways[0].activity_id == ""

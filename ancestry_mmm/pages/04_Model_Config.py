@@ -608,6 +608,7 @@ elif st.button("Prepare modelling frame", type="primary"):
             spec,
             outcomes=outcome_definitions,
             media_outcome_pathways=get_state("media_outcome_pathways") or [],
+            activity_definitions=get_state("activity_definitions") or [],
             net_billthrough_metadata=get_state("net_billthrough_metadata"),
         )
         set_state("frame", frame)

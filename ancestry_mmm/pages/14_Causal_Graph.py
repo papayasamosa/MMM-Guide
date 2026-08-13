@@ -68,6 +68,13 @@ from ancestry_mmm.core.graph_model_compiler import (
     check_graph_approval_eligibility,
 )
 from ancestry_mmm.core.schema import ModelSpec
+from ancestry_mmm.core.activities import (
+    ActivityDefinition,
+    activity_node_id,
+    activity_node_label,
+    governed_activities_in_model_scope,
+    legacy_activity_definitions_from_model_spec,
+)
 from ancestry_mmm.core.search_objects import (
     SearchObjectDefinition,
     graph_node_role_for_search_object,
@@ -83,6 +90,15 @@ _NODE_ROLE_COLORS = {
     "control_or_confounder": "#E5E8E6",
     "diagnostic": "#F2F0EB",
     "excluded": "#F5D1CF",
+}
+
+_ACTIVITY_GRAPH_ROLE = {
+    # Governed model-role mapping; no funnel or name inference is involved.
+    "intervention": "intervention",
+    "mediator": "mediator",
+    "demand_capture": "demand_capture",
+    "control": "control_or_confounder",
+    "event": "diagnostic",
 }
 
 
@@ -103,9 +119,51 @@ def _persist_graph(graph: CausalGraph) -> None:
     set_state("causal_graph", graph.to_dict())
 
 
+def _graph_activity_definitions() -> list[ActivityDefinition]:
+    rows = get_state("activity_definitions") or []
+    definitions = [ActivityDefinition.from_dict(item) for item in rows]
+    if definitions:
+        return definitions
+    spec_dict = get_state("model_spec")
+    if spec_dict:
+        return legacy_activity_definitions_from_model_spec(
+            ModelSpec.from_dict(spec_dict)
+        )
+    return []
+
+
 def _node_label(node: CausalNode) -> str:
     label = node.label or node.node_id
     return f"**{label}**\n\n_{node.role}_"
+
+
+def _node_option_labels(graph: CausalGraph) -> dict[str, str]:
+    """Return concise, business-readable selector labels for graph nodes.
+
+    The graph node ID remains the selectbox value and is therefore stable for
+    persistence/compilation.  A governed activity's reporting channel is a
+    useful concise label when it is unique in this graph; when several
+    governed activities share that channel, retain the full registry-derived
+    node label so the choices remain distinguishable.
+    """
+    nodes = list(graph.nodes)
+    channel_counts: dict[str, int] = {}
+    candidates: dict[str, str] = {}
+    for node in nodes:
+        candidate = str(node.metadata.get("reporting_channel", "")).strip()
+        if not candidate:
+            candidate = node.label or node.node_id
+        candidates[node.node_id] = candidate
+        channel_counts[candidate] = channel_counts.get(candidate, 0) + 1
+
+    return {
+        node.node_id: (
+            candidates[node.node_id]
+            if channel_counts[candidates[node.node_id]] == 1
+            else (node.label or node.node_id)
+        )
+        for node in nodes
+    }
 
 
 def _edge_label(edge: CausalEdge) -> str:
@@ -345,7 +403,17 @@ _lib_section.__enter__()
 with st.expander("Seed nodes from current Structure (optional)"):
     spec_dict = get_state("model_spec")
     outcome_defs = get_state("outcome_definitions") or []
-    seed_channels = ModelSpec.from_dict(spec_dict).channels if spec_dict else []
+    seed_spec = ModelSpec.from_dict(spec_dict) if spec_dict else None
+    seed_activity_definitions = _graph_activity_definitions()
+    seed_scoped_activities = (
+        governed_activities_in_model_scope(
+            seed_activity_definitions,
+            markets=seed_spec.markets,
+            model_input_columns=seed_spec.channels,
+        )
+        if seed_spec is not None
+        else []
+    )
     seed_outcome_ids = [
         item.get("outcome_id") for item in outcome_defs if item.get("outcome_id")
     ]
@@ -360,24 +428,48 @@ with st.expander("Seed nodes from current Structure (optional)"):
         defn for defn in seed_search_objects if graph_node_role_for_search_object(defn)
     ]
     st.caption(
-        f"Detected {len(seed_channels)} channel(s), {len(seed_outcome_ids)} "
+        f"Detected {len(seed_scoped_activities)} governed activity node(s), {len(seed_outcome_ids)} "
         f"outcome(s), and {len(seedable_search_objects)} governed Search "
         "object(s) from Model Structure / Media Mapping. Adds one node per "
         "item using its governed Search role - no edges are inferred or invented."
     )
     if st.button(
         "Add these as nodes",
-        disabled=not (seed_channels or seed_outcome_ids or seedable_search_objects),
+        disabled=not (
+            seed_scoped_activities or seed_outcome_ids or seedable_search_objects
+        ),
         key="cg_seed_button",
     ):
         existing_ids = {n.node_id for n in graph.nodes}
         added_nodes = list(graph.nodes)
         positions = dict(graph.layout.positions)
-        for index, channel in enumerate(seed_channels):
-            if channel in existing_ids:
+        for index, (market, definition) in enumerate(seed_scoped_activities):
+            node_id = activity_node_id(
+                market=market, activity_id=definition.activity_id
+            )
+            if node_id in existing_ids:
                 continue
-            added_nodes.append(CausalNode(node_id=channel, role="intervention"))
-            positions[channel] = NodePosition(x=0.0, y=float(index) * 90.0)
+            added_nodes.append(
+                CausalNode(
+                    node_id=node_id,
+                    label=activity_node_label(definition, market=market),
+                    role=_ACTIVITY_GRAPH_ROLE[definition.model_role],
+                    product=definition.product_advertised,
+                    market=market,
+                    metadata={
+                        "activity_id": definition.activity_id,
+                        "activity_market": market,
+                        "reporting_channel": definition.channel,
+                        "model_input_column": definition.resolved_model_input_column,
+                        "platform": definition.platform,
+                        "campaign_type": definition.campaign_type,
+                        "marketing_objective": definition.marketing_objective,
+                        "funnel_stage": definition.funnel_stage,
+                        "activity_source": definition.source,
+                    },
+                )
+            )
+            positions[node_id] = NodePosition(x=0.0, y=float(index) * 90.0)
         for index, outcome_id in enumerate(seed_outcome_ids):
             if outcome_id in existing_ids:
                 continue
@@ -445,12 +537,17 @@ with st.form("cg_add_edge_form", clear_on_submit=True):
         "two nodes' handles on the canvas)."
     )
     node_ids = [n.node_id for n in graph.nodes]
+    node_option_labels = _node_option_labels(graph)
     edge_cols = st.columns([2, 2, 2])
     new_edge_source = edge_cols[0].selectbox(
-        "Source node", node_ids or ["(add a node first)"]
+        "Source node",
+        node_ids or ["(add a node first)"],
+        format_func=lambda node_id: node_option_labels.get(node_id, node_id),
     )
     new_edge_target = edge_cols[1].selectbox(
-        "Target node", node_ids or ["(add a node first)"]
+        "Target node",
+        node_ids or ["(add a node first)"],
+        format_func=lambda node_id: node_option_labels.get(node_id, node_id),
     )
     new_edge_role = edge_cols[2].selectbox("Role", EDGE_ROLES)
     if st.form_submit_button("Add edge"):
@@ -530,17 +627,26 @@ st.caption(
     "- reads and writes the exact same graph state as the canvas."
 )
 
+node_option_labels = _node_option_labels(graph)
 node_options = ["(none)"] + [n.node_id for n in graph.nodes]
 edge_options = ["(none)"] + [e.edge_id for e in graph.edges]
 edge_option_labels = {
-    e.edge_id: f"{e.source_node_id} -> {e.target_node_id} ({e.role})"
+    e.edge_id: (
+        f"{node_option_labels.get(e.source_node_id, e.source_node_id)} -> "
+        f"{node_option_labels.get(e.target_node_id, e.target_node_id)} ({e.role})"
+    )
     for e in graph.edges
 }
 edge_option_labels["(none)"] = "(none)"
 selected_kind = st.radio("Edit", ["Node", "Edge"], horizontal=True, key="cg_edit_kind")
 
 if selected_kind == "Node" and len(node_options) > 1:
-    selected_node_id = st.selectbox("Node", node_options, key="cg_selected_node")
+    selected_node_id = st.selectbox(
+        "Node",
+        node_options,
+        format_func=lambda node_id: node_option_labels.get(node_id, node_id),
+        key="cg_selected_node",
+    )
     if selected_node_id != "(none)":
         node = next(n for n in graph.nodes if n.node_id == selected_node_id)
         with st.form("cg_node_form"):
@@ -693,7 +799,9 @@ st.caption(
     "capability check yet (see section 6 for that)."
 )
 if validation.is_valid:
-    plan = build_compilation_plan_preview(graph)
+    plan = build_compilation_plan_preview(
+        graph, activity_definitions=_graph_activity_definitions()
+    )
     preview_cols = st.columns(2)
     preview_cols[0].markdown("**Outcome ordering**")
     preview_cols[0].write(list(plan.outcome_ids))
@@ -747,7 +855,9 @@ if compile_col.button(
     "Prepare model configuration", disabled=graph.status != GRAPH_STATUS_APPROVED
 ):
     try:
-        result = GraphModelCompiler().compile(graph)
+        result = GraphModelCompiler(
+            activity_definitions=_graph_activity_definitions()
+        ).compile(graph)
     except UnsupportedGraphStructureError as exc:
         st.error(f"The current engine cannot compile this graph: {exc}")
     else:

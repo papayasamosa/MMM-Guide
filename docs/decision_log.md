@@ -2217,3 +2217,47 @@ media. No model equations or causal graph semantics changed. Real UK
 end-to-end data validation: DEFERRED pending source-data availability.
 **Owner:** Platform engineering / Data Science.
 **Status:** Accepted; implementation in Work Package 2.
+
+## Causal graph and pathway identity follow governed activities (Work Package 3)
+
+**Date:** 2026-08-13
+**Decision:** Seed causal graphs from governed `ActivityDefinition` rows in
+model scope, using the stable scoped node key `activity:{market}:{activity_id}`.
+Graph node metadata may carry business-readable labels and taxonomy for display,
+but the Activity Mapping registry remains authoritative for funnel stage and
+the physical model-input predictor. `MediaOutcomePathway` records now carry
+`activity_id` and explicit `activity_market` for new rows while retaining the
+legacy physical `channel` field as the engine compatibility view.
+
+**Reason:** A reporting channel can contain several distinct activities, such
+as multiple Paid Social activities with different funnel stages and fitted
+predictors. Seeding and compiling from free-form channel strings would merge
+those activities and make the causal graph ambiguous. The graph must preserve
+outcomes and governed Search objects as separate node types while resolving
+activity nodes to predictors through an explicit registry boundary.
+
+**Alternatives considered:** Using `ActivityDefinition.channel` as the graph
+node ID (rejected - it is a reporting family and is intentionally shareable);
+using funnel-stage metadata as causal structure (rejected - taxonomy is
+descriptive and changing it must not add, remove, or reverse graph edges);
+guessing a legacy pathway's activity from a name or first matching row
+(rejected - zero and multiple candidates remain review-required); renaming
+the engine's physical `ModelSpec.channels` contract (rejected - the stable
+adapter preserves saved projects and avoids a mathematical change).
+
+**Impact:** Added scoped activity-node identity and model-scope resolvers,
+activity-aware graph compilation and previews, explicit pathway identity and
+legacy migration/quarantine helpers, graph/pathway UI labels, and persisted
+round-trip coverage. Legacy graph node IDs and pathway predictor fields remain
+compatible; ambiguous activity migration fails closed. No model equations,
+funnel inference, or layout fingerprint semantics changed. Business question:
+which governed activity intervention is connected to which outcome? Estimand:
+the existing graph-selected direct/cross-product pathway cell on the outcome
+scale. Output scale/units: physical fitted model-input columns, outcome IDs,
+and governed activity IDs; no new numeric response is introduced. Upstream
+modelling references: none consulted because this package changes identity and
+compilation metadata only, not PyMC/PyMC Marketing model APIs. Real UK
+end-to-end data validation: DEFERRED pending source-data availability.
+
+**Owner:** Platform engineering / Data Science.
+**Status:** Accepted; implementation in Work Package 3.

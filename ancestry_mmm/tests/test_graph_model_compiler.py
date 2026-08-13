@@ -9,6 +9,7 @@ fixed-parameter prediction. Any unexplained difference blocks merge.
 import numpy as np
 import pytest
 
+from ancestry_mmm.core.activities import ActivityDefinition, activity_node_id
 from ancestry_mmm.core.causal_graph import (
     EDGE_ROLE_CROSS_PRODUCT_HALO,
     EDGE_ROLE_DIRECT,
@@ -251,6 +252,94 @@ class TestResolvedPathwayMasksFromGraph:
         )
         masks = resolved_pathway_masks_from_graph(graph)
         assert masks.components == []
+
+    def test_scoped_activity_nodes_resolve_to_independent_predictors(self):
+        activities = [
+            ActivityDefinition(
+                activity_id="meta-brand",
+                market="UK",
+                channel="Paid Social",
+                model_input_column="meta_brand",
+                activity_ownership="paid",
+                model_role="intervention",
+                economic_treatment="paid_media_cost",
+                planning_eligibility="optimisable",
+                source="approved media mapping",
+                platform="Meta",
+                funnel_stage="brand_upper",
+            ),
+            ActivityDefinition(
+                activity_id="meta-performance",
+                market="UK",
+                channel="Paid Social",
+                model_input_column="meta_performance",
+                activity_ownership="paid",
+                model_role="intervention",
+                economic_treatment="paid_media_cost",
+                planning_eligibility="optimisable",
+                source="approved media mapping",
+                platform="Meta",
+                funnel_stage="performance_lower",
+            ),
+        ]
+        brand_node = activity_node_id(market="UK", activity_id="meta-brand")
+        performance_node = activity_node_id(market="UK", activity_id="meta-performance")
+        graph = _approved_direct_graph(
+            nodes=[
+                CausalNode(
+                    node_id=brand_node,
+                    role=NODE_ROLE_INTERVENTION,
+                    market="UK",
+                    metadata={
+                        "activity_id": "meta-brand",
+                        "activity_market": "UK",
+                        "funnel_stage": "brand_upper",
+                    },
+                ),
+                CausalNode(
+                    node_id=performance_node,
+                    role=NODE_ROLE_INTERVENTION,
+                    market="UK",
+                    metadata={
+                        "activity_id": "meta-performance",
+                        "activity_market": "UK",
+                        "funnel_stage": "performance_lower",
+                    },
+                ),
+                CausalNode(node_id="A", role=NODE_ROLE_OUTCOME),
+            ],
+            edges=[
+                CausalEdge(
+                    source_node_id=brand_node,
+                    target_node_id="A",
+                    role=EDGE_ROLE_DIRECT,
+                ),
+                CausalEdge(
+                    source_node_id=performance_node,
+                    target_node_id="A",
+                    role=EDGE_ROLE_DIRECT,
+                ),
+            ],
+        )
+
+        result = GraphModelCompiler(activity_definitions=activities).compile(graph)
+
+        assert result.plan.modelling_columns == ("meta_brand", "meta_performance")
+        assert result.pathway_masks.primary_channels_by_outcome == {
+            "A": ["meta_brand", "meta_performance"]
+        }
+        assert {
+            (component.activity_id, component.channel)
+            for component in result.pathway_masks.components
+        } == {
+            ("meta-brand", "meta_brand"),
+            ("meta-performance", "meta_performance"),
+        }
+
+    def test_legacy_graph_node_ids_remain_engine_compatible(self):
+        graph = _approved_direct_graph()
+        result = GraphModelCompiler(activity_definitions=[]).compile(graph)
+        assert result.pathway_masks.primary_channels_by_outcome == {"A": ["TV"]}
 
 
 class TestGraphModelCompiler:

@@ -48,11 +48,12 @@ from __future__ import annotations
 
 import hashlib
 from copy import deepcopy
-from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List, Optional, Sequence
+from dataclasses import asdict, dataclass, field, replace
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 import pandas as pd
 
+from .activities import ActivityDefinition, resolve_activity_definition
 from .outcomes import DNA, FAMILY_HISTORY, KNOWN_PRODUCTS
 
 # ---------------------------------------------------------------------------
@@ -121,16 +122,35 @@ DEFAULT_PATHWAY_EXPECTATIONS = (
 
 
 def pathway_natural_key(
-    channel: str, target_outcome_id: str, component_type: str
+    channel: str,
+    target_outcome_id: str,
+    component_type: str,
+    *,
+    activity_id: str = "",
+    activity_market: str = "",
 ) -> str:
-    return f"{channel}\x1f{target_outcome_id}\x1f{component_type}"
+    """Return the stable pathway natural key, preferring governed identity."""
+
+    identity = f"{activity_market}\x1f{activity_id}" if activity_id else channel
+    return f"{identity}\x1f{target_outcome_id}\x1f{component_type}"
 
 
 def _deterministic_pathway_id(
-    channel: str, target_outcome_id: str, component_type: str
+    channel: str,
+    target_outcome_id: str,
+    component_type: str,
+    *,
+    activity_id: str = "",
+    activity_market: str = "",
 ) -> str:
     return hashlib.sha256(
-        pathway_natural_key(channel, target_outcome_id, component_type).encode()
+        pathway_natural_key(
+            channel,
+            target_outcome_id,
+            component_type,
+            activity_id=activity_id,
+            activity_market=activity_market,
+        ).encode()
     ).hexdigest()[:12]
 
 
@@ -193,6 +213,10 @@ class MediaOutcomePathway:
     # metadata. It is an audit hint, not modelling authority.
     source_product_inferred: bool = False
     pathway_id: str = ""
+    # Governed business identity for new rows. ``channel`` remains the
+    # physical model-input column for engine compatibility and old bundles.
+    activity_id: str = ""
+    activity_market: str = ""
 
     def __post_init__(self) -> None:
         # Constructor-level compatibility with catalogues created before
@@ -206,7 +230,11 @@ class MediaOutcomePathway:
             self.component_type = "excluded"
         if not self.pathway_id and self.channel and self.target_outcome_id:
             self.pathway_id = _deterministic_pathway_id(
-                self.channel, self.target_outcome_id, self.component_type
+                self.channel,
+                self.target_outcome_id,
+                self.component_type,
+                activity_id=self.activity_id,
+                activity_market=self.activity_market,
             )
 
     def to_dict(self) -> dict:
@@ -253,6 +281,140 @@ class MediaOutcomePathway:
             d["prior_scale"] = None
         known = set(cls.__dataclass_fields__)
         return cls(**{k: v for k, v in d.items() if k in known})
+
+
+@dataclass(frozen=True)
+class PathwayActivityMigration:
+    """Explicit result of resolving legacy pathway rows to activity IDs."""
+
+    pathways: tuple[MediaOutcomePathway, ...]
+    errors: tuple[str, ...] = ()
+    migrated_count: int = 0
+
+    @property
+    def requires_review(self) -> bool:
+        return bool(self.errors)
+
+
+def migrate_pathways_to_activity_identity(
+    pathways: Sequence[MediaOutcomePathway | Mapping[str, object]],
+    definitions: Sequence[ActivityDefinition | Mapping[str, object]],
+) -> PathwayActivityMigration:
+    """Resolve old pathway ``channel`` values to governed activity identity.
+
+    Matching first uses the governed physical model-input column. A legacy
+    reporting-channel match is allowed only when it produces exactly one
+    candidate. Multiple candidates are retained unchanged and returned as a
+    blocking review error; no first-row or name-based guess is permitted.
+    """
+
+    resolved_definitions = [
+        item
+        if isinstance(item, ActivityDefinition)
+        else ActivityDefinition.from_dict(item)
+        for item in definitions
+    ]
+    resolved_pathways = [
+        item
+        if isinstance(item, MediaOutcomePathway)
+        else MediaOutcomePathway.from_dict(dict(item))
+        for item in pathways
+    ]
+    if not resolved_definitions:
+        # A pre-activity bundle has no candidate registry against which a
+        # legacy predictor can be ambiguous. Preserve its old compatibility
+        # row for the existing governed pathway review; once definitions are
+        # available, the resolver below fails closed on zero or multiple
+        # candidates.
+        return PathwayActivityMigration(
+            pathways=tuple(resolved_pathways),
+            errors=(),
+        )
+
+    migrated: list[MediaOutcomePathway] = []
+    errors: list[str] = []
+    migrated_count = 0
+    for pathway in resolved_pathways:
+        label = pathway.pathway_id or pathway.channel or "(unnamed pathway)"
+        if pathway.activity_id:
+            if not pathway.activity_market:
+                errors.append(
+                    f"Pathway '{label}' has activity_id '{pathway.activity_id}' "
+                    "but no activity_market; migration review is required."
+                )
+                migrated.append(pathway)
+                continue
+            try:
+                definition = resolve_activity_definition(
+                    resolved_definitions,
+                    market=pathway.activity_market,
+                    activity_id=pathway.activity_id,
+                )
+            except (KeyError, ValueError) as exc:
+                errors.append(
+                    f"Pathway '{label}' activity identity is unresolved: {exc}"
+                )
+                migrated.append(pathway)
+                continue
+            expected_column = definition.resolved_model_input_column
+            if pathway.channel != expected_column:
+                errors.append(
+                    f"Pathway '{label}' activity '{pathway.activity_id}' resolves to "
+                    f"model input '{expected_column}', not '{pathway.channel}'; "
+                    "migration review is required."
+                )
+                migrated.append(pathway)
+                continue
+            migrated.append(pathway)
+            continue
+
+        exact_candidates = [
+            definition
+            for definition in resolved_definitions
+            if definition.resolved_model_input_column == pathway.channel
+        ]
+        candidates = exact_candidates or [
+            definition
+            for definition in resolved_definitions
+            if definition.channel == pathway.channel
+        ]
+        candidate_keys = {
+            (definition.market, definition.activity_id) for definition in candidates
+        }
+        if len(candidate_keys) != 1:
+            if not candidate_keys:
+                errors.append(
+                    f"Pathway '{label}' could not resolve legacy channel "
+                    f"'{pathway.channel}' to a governed activity; migration review is required."
+                )
+            else:
+                rendered = ", ".join(
+                    f"{market}/{activity_id}"
+                    for market, activity_id in sorted(candidate_keys)
+                )
+                errors.append(
+                    f"Pathway '{label}' has ambiguous legacy channel "
+                    f"'{pathway.channel}' (candidates: {rendered}); migration review is required."
+                )
+            migrated.append(pathway)
+            continue
+
+        definition = candidates[0]
+        migrated.append(
+            replace(
+                pathway,
+                channel=definition.resolved_model_input_column,
+                activity_id=definition.activity_id,
+                activity_market=definition.market,
+            )
+        )
+        migrated_count += 1
+
+    return PathwayActivityMigration(
+        pathways=tuple(migrated),
+        errors=tuple(errors),
+        migrated_count=migrated_count,
+    )
 
 
 def validate_media_outcome_pathways(
@@ -302,6 +464,11 @@ def validate_media_outcome_pathways(
         elif known_channels is not None and p.channel not in known_channels:
             errors.append(
                 f"Pathway '{label}' references unknown channel '{p.channel}'."
+            )
+        if p.activity_id and not p.activity_market:
+            errors.append(
+                f"Pathway '{label}' has activity_id '{p.activity_id}' but no "
+                "activity_market; migrate the row explicitly before saving."
             )
 
         if p.source_product not in KNOWN_PRODUCTS:
@@ -466,10 +633,21 @@ def validate_media_outcome_pathways(
                     f"Pathway '{label}' is {p.component_type} and cannot be headline-enabled."
                 )
 
-        pair = (p.channel, p.target_outcome_id, p.component_type)
+        pair = pathway_natural_key(
+            p.channel,
+            p.target_outcome_id,
+            p.component_type,
+            activity_id=p.activity_id,
+            activity_market=p.activity_market,
+        )
         if pair in seen_pairs:
+            identity = (
+                f"activity '{p.activity_market}/{p.activity_id}'"
+                if p.activity_id
+                else f"channel '{p.channel}'"
+            )
             errors.append(
-                f"Duplicate pathway for channel '{p.channel}' -> outcome '{p.target_outcome_id}' "
+                f"Duplicate pathway for {identity} -> outcome '{p.target_outcome_id}' "
                 f"component '{p.component_type}'."
             )
         seen_pairs.add(pair)
@@ -581,6 +759,10 @@ class ResolvedPathwayComponent:
     approved_at: str = ""
     evidence_status: str = "unreviewed"
     included_in_fit: bool = True
+    # Business identity is retained alongside the physical predictor used by
+    # the current engine. Legacy components leave these fields empty.
+    activity_id: str = ""
+    activity_market: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -1646,6 +1828,8 @@ _PATHWAY_FINGERPRINT_FIELDS = (
     "allow_same_product_cross_product",
     "allow_cross_product_primary",
     "planning_eligibility_confirmed",
+    "activity_id",
+    "activity_market",
 )
 
 
@@ -1660,13 +1844,30 @@ def pathway_catalogue_fingerprint_payload(
     fingerprinted anyway because it is calculation-*adjacent* configuration
     a future estimation PR will read, the same treatment given to
     `core.funnel.FunnelLink`."""
-    return [
-        {f: getattr(p, f) for f in _PATHWAY_FINGERPRINT_FIELDS}
-        for p in sorted(
-            pathways,
-            key=lambda p: (p.channel, p.target_outcome_id, p.component_type, p.role),
-        )
-    ]
+    payload = []
+    for pathway in sorted(
+        pathways,
+        key=lambda p: (
+            p.activity_market,
+            p.activity_id,
+            p.channel,
+            p.target_outcome_id,
+            p.component_type,
+            p.role,
+        ),
+    ):
+        row = {
+            f: getattr(pathway, f)
+            for f in _PATHWAY_FINGERPRINT_FIELDS
+            if f not in {"activity_id", "activity_market"}
+        }
+        # Keep the payload byte-compatible for pre-identity rows while
+        # fingerprinting governed identity whenever it is present.
+        if pathway.activity_id:
+            row["activity_id"] = pathway.activity_id
+            row["activity_market"] = pathway.activity_market
+        payload.append(row)
+    return payload
 
 
 # ---------------------------------------------------------------------------
@@ -1696,7 +1897,13 @@ def pathway_catalogue_at_fit_by_id(
         return {}
     catalogue = getattr(model_meta, "pathway_catalogue_at_fit", None) or []
     return {
-        pathway_natural_key(p.channel, p.target_outcome_id, p.component_type): p
+        pathway_natural_key(
+            p.channel,
+            p.target_outcome_id,
+            p.component_type,
+            activity_id=p.activity_id,
+            activity_market=p.activity_market,
+        ): p
         for p in catalogue
     }
 
@@ -1741,7 +1948,13 @@ def pathways_drift_dataframe(
         return pd.DataFrame(columns=["pathway_id", "drift_status"])
     fit_by_id = pathway_catalogue_at_fit_by_id(model_meta)
     current_by_id = {
-        pathway_natural_key(p.channel, p.target_outcome_id, p.component_type): p
+        pathway_natural_key(
+            p.channel,
+            p.target_outcome_id,
+            p.component_type,
+            activity_id=p.activity_id,
+            activity_market=p.activity_market,
+        ): p
         for p in pathways
     }
     all_ids = list(dict.fromkeys(list(current_by_id) + list(fit_by_id)))

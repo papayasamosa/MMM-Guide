@@ -404,6 +404,106 @@ def resolve_activity_model_input(
     ).resolved_model_input_column
 
 
+def activity_node_id(*, market: str, activity_id: str) -> str:
+    """Return the stable causal-graph identity for one scoped activity.
+
+    ``ActivityDefinition.activity_id`` is unique at market grain, not
+    necessarily across a whole project.  Keeping the market in the graph
+    node key prevents two markets with the same local activity ID from
+    collapsing into one intervention.  The display label belongs to the
+    definition; this key is deliberately boring and deterministic.
+    """
+
+    if not market or not activity_id:
+        raise ValueError("market and activity_id are required for an activity node")
+    return f"activity:{market}:{activity_id}"
+
+
+def activity_node_label(definition: ActivityDefinition, *, market: str) -> str:
+    """Build a business-readable graph label from governed activity fields."""
+
+    return (
+        f"{definition.channel} · {definition.activity_id}"
+        f" [{definition.resolved_model_input_column}] · {market}"
+    )
+
+
+def governed_activities_in_model_scope(
+    definitions: Iterable[ActivityDefinition | Mapping[str, object]],
+    *,
+    markets: Iterable[str],
+    model_input_columns: Iterable[str],
+) -> list[tuple[str, ActivityDefinition]]:
+    """Resolve governed activities for each market and fitted predictor.
+
+    The physical model-input column is the only lookup used at this engine
+    boundary.  Reporting ``channel`` is never used as a proxy, and missing
+    or duplicate mappings remain visible to the caller instead of being
+    filled by a name heuristic.
+    """
+
+    resolved_definitions = [
+        item
+        if isinstance(item, ActivityDefinition)
+        else ActivityDefinition.from_dict(item)
+        for item in definitions
+    ]
+    model_inputs = tuple(str(column) for column in model_input_columns)
+    result: list[tuple[str, ActivityDefinition]] = []
+    seen: set[tuple[str, str]] = set()
+    for market in markets:
+        by_model_input = activity_by_model_input(resolved_definitions, str(market))
+        for model_input in model_inputs:
+            definition = by_model_input.get(model_input)
+            if definition is None:
+                continue
+            key = (str(market), definition.activity_id)
+            if key not in seen:
+                result.append((str(market), definition))
+                seen.add(key)
+    return result
+
+
+def resolve_graph_activity_predictor(
+    node: Any,
+    definitions: Iterable[ActivityDefinition | Mapping[str, object]],
+) -> tuple[str, ActivityDefinition | None]:
+    """Resolve a governed graph activity node to its physical predictor.
+
+    Graph metadata carries only the stable reference (activity ID and
+    market) plus display information.  The supplied activity registry is
+    authoritative for the model-input column and all governed taxonomy; a
+    missing, ambiguous, or tampered reference fails closed.
+    """
+
+    metadata = getattr(node, "metadata", {}) or {}
+    activity_id = str(metadata.get("activity_id") or "")
+    market = str(metadata.get("activity_market") or getattr(node, "market", "") or "")
+    if not activity_id:
+        return str(getattr(node, "node_id", "")), None
+    if not market:
+        raise ValueError(
+            f"Graph activity node '{getattr(node, 'node_id', '')}' has an activity_id "
+            "but no explicit activity market; migration review is required."
+        )
+    expected_node_id = activity_node_id(market=market, activity_id=activity_id)
+    if getattr(node, "node_id", "") != expected_node_id:
+        raise ValueError(
+            f"Graph activity node '{getattr(node, 'node_id', '')}' does not match "
+            f"its governed identity {expected_node_id!r}; migration review is required."
+        )
+    resolved = [
+        item
+        if isinstance(item, ActivityDefinition)
+        else ActivityDefinition.from_dict(item)
+        for item in definitions
+    ]
+    definition = resolve_activity_definition(
+        resolved, market=market, activity_id=activity_id
+    )
+    return definition.resolved_model_input_column, definition
+
+
 def legacy_activity_definitions_from_model_spec(
     model_spec: Any,
 ) -> list[ActivityDefinition]:

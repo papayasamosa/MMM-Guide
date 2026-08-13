@@ -30,6 +30,7 @@ import json
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
+from .activities import resolve_graph_activity_predictor
 from .pathways import LAG_TYPES
 
 # --- Node roles (REQ-GRAPH-001 S4) -----------------------------------------
@@ -679,7 +680,11 @@ _MODELLING_COLUMN_ROLES = (
 )
 
 
-def build_compilation_plan_preview(graph: CausalGraph) -> GraphCompilationPlan:
+def build_compilation_plan_preview(
+    graph: CausalGraph,
+    *,
+    activity_definitions: Optional[Sequence[Any]] = None,
+) -> GraphCompilationPlan:
     """Raises ValueError if `graph` has any blocking validation error - a
     preview of an invalid graph is not meaningful."""
     result = validate_causal_graph(graph)
@@ -692,33 +697,41 @@ def build_compilation_plan_preview(graph: CausalGraph) -> GraphCompilationPlan:
     outcome_ids = tuple(
         sorted(node.node_id for node in graph.nodes if node.role == NODE_ROLE_OUTCOME)
     )
-    modelling_columns = tuple(
-        sorted(
-            node.node_id for node in graph.nodes if node.role in _MODELLING_COLUMN_ROLES
-        )
-    )
+    predictor_by_node_id = {
+        node.node_id: resolve_graph_activity_predictor(
+            node, activity_definitions or []
+        )[0]
+        for node in graph.nodes
+        if node.role in _MODELLING_COLUMN_ROLES
+    }
+    modelling_columns = tuple(sorted(set(predictor_by_node_id.values())))
     structural_edges = sorted(
         (e for e in graph.edges if e.role != EDGE_ROLE_EXCLUDED_DIAGNOSTIC_ONLY),
         key=lambda e: (e.source_node_id, e.target_node_id, e.role),
     )
-    pathway_mask_preview = tuple(
-        {
-            "source_node_id": e.source_node_id,
-            "target_node_id": e.target_node_id,
-            "role": e.role,
+    pathway_preview_rows = []
+    lag_rows = []
+    for edge in structural_edges:
+        predictor = predictor_by_node_id.get(edge.source_node_id, edge.source_node_id)
+        pathway_row = {
+            "source_node_id": predictor,
+            "target_node_id": edge.target_node_id,
+            "role": edge.role,
         }
-        for e in structural_edges
-    )
-    lag_structure = tuple(
-        {
-            "edge_id": e.edge_id,
-            "source_node_id": e.source_node_id,
-            "target_node_id": e.target_node_id,
-            "lag_type": e.lag_type,
-            "lag_weeks": e.lag_weeks,
+        lag_row = {
+            "edge_id": edge.edge_id,
+            "source_node_id": predictor,
+            "target_node_id": edge.target_node_id,
+            "lag_type": edge.lag_type,
+            "lag_weeks": edge.lag_weeks,
         }
-        for e in structural_edges
-    )
+        if predictor != edge.source_node_id:
+            pathway_row["source_activity_node_id"] = edge.source_node_id
+            lag_row["source_activity_node_id"] = edge.source_node_id
+        pathway_preview_rows.append(pathway_row)
+        lag_rows.append(lag_row)
+    pathway_mask_preview = tuple(pathway_preview_rows)
+    lag_structure = tuple(lag_rows)
     return GraphCompilationPlan(
         outcome_ids=outcome_ids,
         modelling_columns=modelling_columns,
