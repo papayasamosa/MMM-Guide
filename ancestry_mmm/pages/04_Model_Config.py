@@ -25,6 +25,9 @@ from ancestry_mmm.components import (
     render_drift_status,
     page_readiness,
     render_workspace_note,
+    render_definition_help,
+    render_decision_help,
+    render_technical_details,
     SectionCard,
 )
 from ancestry_mmm.core.schema import ModelSpec
@@ -134,6 +137,23 @@ _model_structure_section = SectionCard(
     description="Shared curve across markets, or market-specific partially-pooled curves.",
 )
 _model_structure_section.__enter__()
+render_definition_help(
+    "partial pooling",
+    "Markets get their own response estimates while borrowing strength from the other markets, so smaller markets are less likely to produce unstable curves.",
+)
+render_decision_help(
+    "How should I choose the model strategy?",
+    controls="Whether channel response is shared across markets or allowed to vary with partial pooling.",
+    why="The choice balances stability against local market differences. More flexibility is useful only when the data can identify it.",
+    options={
+        "Shared response": "Use when a common curve is a reasonable starting point or market-level data are limited.",
+        "Market-specific with partial pooling": "Use when markets may differ but should still borrow strength; this is often the practical middle path.",
+        "Unpooled market response": "Available through Structure for an approved use case where markets are structurally distinct and well supported.",
+    },
+    normal_path="Start with the shared or partially pooled strategy, inspect convergence, predictive fit, coverage, and plausibility, then decide what to take forward.",
+    downstream="It changes the parameter structure, the curves available by market, and the evidence that Diagnostics and Planning Curves can review.",
+    invalidates="Changing the strategy changes the model identity. Fit again, recompute diagnostics, and repeat approval before governed reporting or planning.",
+)
 n_markets = len(spec.markets)
 model_type_options = ["shared", "market_specific"]
 model_type_labels = {
@@ -293,7 +313,28 @@ with st.expander("Advanced model assumptions", expanded=False):
         help="Technical name: promotion sensitivity prior standard deviation.",
     )
 
+render_technical_details(
+    details={
+        "Media transformation": "The current model uses the configured adstock carryover and Hill saturation assumptions for fitted response terms.",
+        "Pooling controls": "The advanced controls set prior scales for segment differences, market differences, active cross-product effects, and exploratory cross-product effects.",
+        "Exact values": "The saved prior configuration, DNA lag, Search treatment, and model strategy are retained in the model specification and fingerprint.",
+    }
+)
+
 st.markdown("#### Search treatment")
+render_decision_help(
+    "How should I treat Paid Search?",
+    controls="Whether Search is fitted as a direct channel, excluded, shown as a diagnostic demand-capture view, or calibrated with experiment evidence.",
+    why="Search demand, paid delivery, paid spend, organic traffic, direct navigation, and a cap represent different parts of the funnel. A post-hoc reallocation is not fitted mediation.",
+    options={
+        "Direct paid Search": "Use when the selected Search input is treated as a direct channel in the fit.",
+        "Excluded": "Use when Search should not be fitted; the governed Search and pathway records still need to be coherent.",
+        "Diagnostic or calibrated view": "Use for assumption-based demand capture, experimental mediation, or experiment-calibrated incrementality; these labels do not make the view production mediation.",
+    },
+    normal_path="Choose the treatment that matches the approved causal interpretation, keep its Search objects mapped separately, then review the evidence before planning use.",
+    downstream="The choice changes the fitted or diagnostic outputs and the pathways that can be considered for attribution, planning, or optimisation.",
+    invalidates="Changing Search treatment changes the model specification or its evidence interpretation. Refit and repeat the relevant diagnostics and approvals.",
+)
 st.caption(
     "Choose an explicit interpretation for paid Search. Direct and excluded are fit choices; demand-capture and experiment-calibrated options are labelled sensitivity or calibration views. "
     "A post-hoc demand-capture reallocation is not production mediation, and excluding Search from the fit still requires the matching pathway role on Model Structure."
@@ -418,6 +459,20 @@ with st.expander("Advanced sampling", expanded=False):
         0.01,
         key="mcmc_target_accept_input",
     )
+
+render_decision_help(
+    "How should I choose sampling settings?",
+    controls="The number of posterior draws, tuning steps, chains, and the target acceptance rate used when fitting.",
+    why="More sampling can improve the reliability of convergence evidence but costs time. These controls do not change the business definition of an outcome.",
+    options={
+        "Default settings": "Use for the normal fit when the model is behaving as expected.",
+        "More draws or tuning": "Use when convergence or effective sample size needs more evidence and the fit can take longer.",
+        "Higher target acceptance": "Use as a diagnostic response to sampling problems, with the trade-off of slower sampling.",
+    },
+    normal_path="Start with the defaults, then respond to Diagnostics evidence rather than changing settings speculatively.",
+    downstream="Sampling settings change the posterior evidence and therefore the model identity and downstream diagnostics.",
+    invalidates="Changing them requires a new fit and fresh diagnostics; an existing approval cannot be carried across a changed fit.",
+)
 
 render_drift_status(
     outcome_definitions, get_state("model_meta"), available_columns=set(df.columns)

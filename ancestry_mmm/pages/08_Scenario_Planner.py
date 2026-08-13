@@ -24,7 +24,9 @@ from ancestry_mmm.components import (
     render_page_header,
     render_next_step,
     render_empty_state,
-    render_glossary,
+    render_definition_help,
+    render_decision_help,
+    render_technical_details,
     render_drift_status,
     render_status_badge,
     render_workspace_note,
@@ -124,12 +126,19 @@ render_workspace_note(
     kind="derived",
 )
 st.info(
-    "**Steady-state monthly approximation.** Predicted outcomes hold spend constant within a "
-    "month and treat it as having reached its adstock steady state, so a month's outcome is a "
-    "closed-form function of that month's spend - no MCMC in the planning loop, no sequential "
-    "week-over-week carry-in simulation, no capacity-constrained delivery model, and no "
-    "Chronos-2 (or other external) forecasting path. This is what is actually implemented today "
-    "The calculation is deliberately limited to this steady-state monthly view."
+    "**Steady-state monthly approximation.** Current planning method: each month is evaluated "
+    "as a steady monthly state. Media carryover between months is not simulated, and future "
+    "external factors are not forecast automatically. There is no sequential week-over-week "
+    "carry-in simulation, no capacity-constrained delivery model, and no Chronos-2 (or other "
+    "external) forecasting path."
+)
+render_technical_details(
+    body=(
+        "The current calculation holds each month's media input constant and evaluates the fitted "
+        "response at its adstock steady state. It uses a closed-form planning calculation rather "
+        "than MCMC in the planning loop; it does not run sequential week-over-week carry-in "
+        "simulation, a capacity-constrained delivery model, or an external Chronos-2 forecast path."
+    )
 )
 
 _dashboard_trained = all(
@@ -349,7 +358,33 @@ if render_drift_status(
 ):
     st.stop()
 
-render_glossary(["Scenario", "Constraint", "Response curve", "Incremental outcome"])
+render_definition_help(
+    "a scenario",
+    "A named plan or calculated proposal that records the assumptions, governance context, and outputs used for a planning decision.",
+)
+render_definition_help(
+    "a constraint",
+    "A limit or rule applied to a plan, such as a spend bound, share limit, or operational cap.",
+)
+render_definition_help(
+    "an incremental outcome",
+    "The additional outcome attributed to the proposed plan relative to the approved counterfactual under the selected definition.",
+)
+render_decision_help(
+    "How should I read plan states?",
+    controls="The difference between the current reference, your edited inputs, calculated outputs, proposed optimised plans, and saved scenarios.",
+    why="A calculated result is not automatically a proposal, and a proposal is not saved until you explicitly choose to save it.",
+    options={
+        "Current": "The reference state inherited from the approved fit and current planning context.",
+        "Edited": "The plan inputs you are changing before evaluation.",
+        "Calculated": "Read-only outputs calculated from the edited plan.",
+        "Proposed": "A constrained or unconstrained benchmark plan produced by the optimiser for review.",
+        "Saved": "A named scenario explicitly persisted for later comparison or export.",
+    },
+    normal_path="Review the current state, edit inputs, calculate, inspect constraints and economics, review any proposal, then save only the scenario you intend to keep.",
+    downstream="Each state carries different assumptions and governance dependencies; only the explicitly saved scenario becomes part of the project's planning record.",
+    invalidates="Changing the approved fit, policy, cost mapping, counterfactual, or outcome authorisation invalidates affected planning results and may require recalculation or re-approval.",
+)
 
 with SectionCard(
     "Plan setup",

@@ -29,6 +29,8 @@ from ancestry_mmm.components import (
     SectionCard,
     InfoPanel,
     render_status_badge,
+    render_decision_help,
+    render_technical_details,
 )
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.causal_graph import GRAPH_STATUS_APPROVED, CausalGraph
@@ -248,11 +250,31 @@ def _proposed_model_fingerprint(fingerprint_model_type: str) -> str:
 
 st.markdown("---")
 st.markdown("### Pre-fit prior check")
+render_decision_help(
+    "What does the prior check do?",
+    controls="It samples from the proposed model's prior assumptions before fitting.",
+    why="It helps reveal implausible outcome ranges or warnings early, before time is spent fitting the posterior.",
+    options={
+        "Run it before fitting": "Use it after changing structure or priors and before starting a fit.",
+        "Read the outcome-scale ranges": "Look for values or warnings that are inconsistent with the business context.",
+        "Treat it as a preview": "It does not fit the model, validate posterior behaviour, or create approval evidence.",
+    },
+    normal_path="Check the preview, adjust an approved configuration if needed, then build and fit the model.",
+    downstream="Changing the setup or priors makes the preview stale. A fit creates separate posterior and diagnostics evidence.",
+    invalidates="The preview itself does not invalidate an existing fit, but changing the configuration does; the next fit and approval must use the changed identity.",
+)
 st.caption(
     "Samples from the proposed model's priors before fitting. This helps you "
     "spot implausible ranges and warnings before committing to a run. It does "
     "not fit the model and does not replace the evidence created by the fitted "
     "model on Model Diagnostics. Run it again after changing the setup or priors."
+)
+render_technical_details(
+    details={
+        "Preview method": "Prior-predictive sampling from the proposed model before MCMC fitting; no posterior trace is used.",
+        "Freshness": "The preview is bound to the proposed data and model-configuration fingerprint and is marked stale when those inputs change.",
+        "Evidence boundary": "Preview output is diagnostic context only. It does not create a model run, readiness result, or approval.",
+    }
 )
 preview_col1, preview_col2 = st.columns(2)
 preview_n_samples = preview_col1.number_input(
@@ -464,11 +486,16 @@ if get_state("model_trained"):
         render_status_badge("validated", label="Trained")
         _completed_run_id = get_state("model_run_id") or ""
         st.markdown(f"""
-- **Model run:** `{_completed_run_id[:8] if _completed_run_id else "(unknown)"}`
 - **Model structure:** {MODEL_TYPE_LABELS[get_state("model_type")]}
-- **MCMC:** {format_number(get_state("mcmc_draws"))} draws, {format_number(get_state("mcmc_tune"))} tune, {get_state("mcmc_chains")} chains
 - **Approval status:** {"Approved" if get_state("model_approval") else "Not yet approved"}
 """)
+        render_technical_details(
+            details={
+                "Model run ID": _completed_run_id or "Unknown",
+                "Sampling configuration": f"{format_number(get_state('mcmc_draws'))} draws, {format_number(get_state('mcmc_tune'))} tune, {get_state('mcmc_chains')} chains",
+                "Posterior identity": "The run ID, data fingerprint, model specification, and posterior artefact identity bind the fit to its diagnostics and approval evidence.",
+            }
+        )
 
     st.markdown("### Save as a comparison candidate")
     st.caption(

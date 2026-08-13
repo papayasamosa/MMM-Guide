@@ -30,7 +30,9 @@ from ancestry_mmm.components import (
     render_page_header,
     render_next_step,
     render_empty_state,
-    render_glossary,
+    render_definition_help,
+    render_decision_help,
+    render_technical_details,
     page_readiness,
     render_workspace_note,
     SectionCard,
@@ -91,7 +93,24 @@ if not spec_dict or df is None:
     st.stop()
 
 spec = ModelSpec.from_dict(spec_dict)
-render_glossary(["Response curve"])
+render_definition_help(
+    "a response curve",
+    "A range of predicted incremental outcomes as a media input changes. It is interpreted on the outcome scale and carries its own observed-support and governance status.",
+)
+render_decision_help(
+    "How should I map media and Search inputs?",
+    controls="The relationship between the fitted model input, monetary spend, physical delivery, Search demand, Search delivery, and any cap.",
+    why="These are different objects. Keeping them separate prevents a spend value, a delivery measure, a demand signal, and a cap from being silently used as one another.",
+    options={
+        "Model input": "Choose the observed series the fitted response uses; it may be spend, impressions, clicks, TVRs, GRPs, or another governed unit.",
+        "Physical delivery": "Map the observed delivery measure when you need delivery or response-unit reporting.",
+        "Search demand / delivery / cap": "Register the Search role explicitly. A cap constrains delivery and is never realised spend; demand and delivery are not interchangeable.",
+        "Planning eligibility": "Allow planning only when the input, evidence, cost translation, and governance support it.",
+    },
+    normal_path="Map the model input first, add separate activity and Search objects where relevant, then add physical and cost mappings only when the source supports them.",
+    downstream="The mappings determine attribution labels, response-unit views, monetary conversion, and whether a channel can be used by Planning Curves or Scenario Planner.",
+    invalidates="Changing a mapping or Search role changes fit identity or planning evidence as applicable. Save the mapping, then refit or regenerate the affected governed artefact before relying on it.",
+)
 st.caption(
     "Keep fitted inputs, Search demand/delivery/caps, and physical delivery or cost mappings "
     "separate. These fields answer different causal, reporting, and planning questions."
@@ -120,6 +139,13 @@ with st.container(border=True):
     summary_cols[1].metric("Model-input channels", len(spec.channels))
     summary_cols[2].metric("Saved Search objects", len(saved_search_object_items))
     summary_cols[3].metric("Physical mappings", saved_media_unit_count)
+render_technical_details(
+    details={
+        "Persisted values": "Editor labels are display-only. Raw activity roles, Search roles, units, approval states, and planning states are restored before validation and saving.",
+        "Search identity": "Search object IDs are versioned by market and lineage; editing a saved row creates a new version and keeps the prior version in history.",
+        "Provenance": "Source, effective dates, approval fields, and cost-mapping assumptions remain part of the governed mapping record.",
+    }
+)
 
 _activity_section = SectionCard(
     "Activity and causal-role mapping",
@@ -400,6 +426,10 @@ _search_section = SectionCard(
     ),
 )
 _search_section.__enter__()
+render_definition_help(
+    "a Search cap",
+    "A budget, delivery, or operational limit on Paid Search. It is a constraint, not a promise that the same amount will be spent or delivered.",
+)
 st.caption(
     "Branded-search demand, Paid Search spend/delivery/cap, organic-search "
     "capture, and direct-navigation capture are separate governed objects "

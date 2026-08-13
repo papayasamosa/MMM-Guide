@@ -25,7 +25,9 @@ from ancestry_mmm.components import (
     render_page_header,
     render_next_step,
     render_empty_state,
-    render_glossary,
+    render_definition_help,
+    render_decision_help,
+    render_technical_details,
     render_drift_status,
     render_status_badge,
     render_top_line,
@@ -123,6 +125,32 @@ render_workspace_note(
     "Evidence first",
     "Start with the summary rail, inspect domain detail, then evaluate readiness before approval.",
     kind="governed",
+)
+render_decision_help(
+    "How should I read Diagnostics?",
+    controls="Whether the fitted model is trustworthy enough for the next governed step, using convergence, fit, predictive coverage, plausibility, identification, and policy gates.",
+    why="Readiness is not the same as a good-looking fit. A model can predict well while effects remain weakly identified, or converge while failing a policy gate.",
+    options={
+        "Trust summary": "Start with the top line and domain rail to see what needs attention.",
+        "Problems": "Inspect warnings and errors for their consequence, then open the relevant evidence domain.",
+        "Readiness": "Evaluate the current evidence against the configured policy before deciding whether approval is justified.",
+        "Approval": "Approve only when the evidence and known limitations support the intended use; approval is bound to the current fit and evidence.",
+    },
+    normal_path="Compute evidence, review the trust summary, inspect problems, evaluate readiness, and approve only if justified.",
+    downstream="A current readiness and approval are prerequisites for governed results, curves, and planning; stale evidence is not silently reused.",
+    invalidates="Changing the fit, policy, model identity, or diagnostic evidence invalidates readiness and approval and requires the workflow to be repeated.",
+)
+render_definition_help(
+    "R-hat",
+    "A convergence check comparing variation within and between sampling chains; values close to 1 indicate the chains are behaving consistently.",
+)
+render_definition_help(
+    "effective sample size",
+    "An estimate of how much independent information remains in the posterior draws after accounting for autocorrelation.",
+)
+render_definition_help(
+    "posterior predictive coverage",
+    "The share of observed outcomes that falls inside the model's posterior predictive interval.",
 )
 
 trace = get_state("trace")
@@ -252,7 +280,7 @@ with st.container(border=True):
     summary_cols[0].metric(
         "Model type", "Market-specific" if model_type == "market_specific" else "Shared"
     )
-    summary_cols[1].metric("Run", (model_run_id or "Unknown")[:8])
+    summary_cols[1].metric("Fit state", "Trained")
     summary_cols[2].metric(
         "Scorecard", "Computed" if get_state("scorecard") else "Not computed"
     )
@@ -320,6 +348,25 @@ scorecard = get_state("scorecard")
 # earlier, instead of being duplicated further down the page.
 validation_policy_dict = get_state("validation_policy")
 _current_policy, _policy_config_error = load_threshold_policy(validation_policy_dict)
+
+render_technical_details(
+    details={
+        "Model run ID": model_run_id or "Unavailable",
+        "Model identity fingerprint": current_model_identity.fingerprint()
+        if current_model_identity
+        else "Unavailable",
+        "Diagnostics evidence ID": getattr(diag_artefact, "artefact_id", "Unavailable")
+        if diag_artefact
+        else "Not computed",
+        "Diagnostics evidence fingerprint": diag_artefact.fingerprint()
+        if diag_artefact
+        else "Not computed",
+        "Validation policy fingerprint": _current_policy.fingerprint()
+        if _current_policy
+        else "Unavailable",
+        "Technical boundary": "These identifiers bind diagnostics, readiness, and approval to the same fit. They are shown here for audit and recovery, not as the routine decision cue.",
+    }
+)
 
 validation_service_result = get_state("validation_service_result")
 approval_readiness_dict = get_state("approval_readiness")
@@ -706,7 +753,18 @@ if validation_service_result:
 
 st.markdown("### Model approval")
 st.caption(FIELD_HELP["approval"])
-render_glossary(["Prior", "Posterior", "Approval"])
+render_definition_help(
+    "a prior",
+    "An assumption about a model parameter before the current data are used.",
+)
+render_definition_help(
+    "a posterior",
+    "The updated distribution of model parameters after fitting the current data.",
+)
+render_definition_help(
+    "an approval",
+    "A governed decision that the current fit and evidence are suitable for a specified use.",
+)
 
 # REQ-COVERAGE-001 S6, Work Package 5 (review finding, PR #158): surface the
 # same rectangular-engine capability check used on Model Config here too, so

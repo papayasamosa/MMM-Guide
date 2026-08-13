@@ -28,6 +28,9 @@ from ancestry_mmm.components import (
     render_empty_state,
     render_drift_status,
     render_workspace_note,
+    render_definition_help,
+    render_decision_help,
+    render_technical_details,
     page_readiness,
     SectionCard,
 )
@@ -116,6 +119,30 @@ if df is None:
     )
     st.stop()
 
+render_definition_help(
+    "an outcome",
+    "A measurable event or value definition that is fitted separately, such as a sign-up, GSA, or DNA kit sale. Outcomes are not interchangeable just because they share a segment.",
+)
+render_decision_help(
+    "How should I choose market pooling?",
+    controls="Whether response curves share information across markets or are estimated with market-level differences.",
+    why="Pooling can stabilise estimates when markets have limited data; allowing differences can preserve meaningful local behaviour.",
+    options={
+        "Shared response": "Use when the available evidence does not justify distinct market curves.",
+        "Market-specific with partial pooling": "Use when markets may differ but should still borrow strength from one another.",
+        "Unpooled market response": "Use only when an approved decision and strong data support structurally distinct markets.",
+    },
+    normal_path="Start with shared or partially pooled responses, then review evidence before making a market fully unpooled.",
+    downstream="The choice changes the fitted response parameters and the evidence available for market-level curves, attribution, and planning.",
+    invalidates="Saving a changed structure makes downstream fit evidence stale; refit and repeat the required readiness and approval checks.",
+)
+render_technical_details(
+    details={
+        "Saved identifiers": "Outcome IDs, pathway IDs, source columns, and enum values remain unchanged for validation, persistence, joins, and model fingerprints.",
+        "Fit scope": "Only rows marked Included in next fit are passed to the next model fit; excluded rows remain in the governed catalogue.",
+    }
+)
+
 _saved_spec_dict = get_state("model_spec")
 _saved_spec = ModelSpec.from_dict(_saved_spec_dict) if _saved_spec_dict else None
 _saved_outcome_rows = get_state("outcome_definitions") or []
@@ -190,7 +217,7 @@ default_channels = [
     c for c in numeric_cols if not any(h in c.lower() for h in _non_channel_hints)
 ]
 channels = st.multiselect(
-    "Channel spend columns *",
+    "Media input columns *",
     numeric_cols,
     default=default_channels or numeric_cols,
     format_func=readable_label,
@@ -210,6 +237,19 @@ _outcome_section = SectionCard(
     description="The primary outcome catalogue, with segment and product scope kept explicit.",
 )
 _outcome_section.__enter__()
+render_decision_help(
+    "How should I define outcomes?",
+    controls="Which measurable events or values are tracked, their segment/product scope, and whether each row is included in the next fit.",
+    why="A model, curve, scenario, and approval must each refer to a specific approved outcome definition; a sign-up, GSA, and kit sale are separate measures.",
+    options={
+        "Include in next fit": "Use for an outcome with a valid source column and an approved definition you want the next fit to estimate.",
+        "Exclude from next fit": "Use to retain and validate a governed outcome without fitting it in the next run.",
+        "DNA purchase outcome": "Use a New Customer / Existing Family History split when the source data supports it; otherwise use the explicitly labelled combined fallback.",
+    },
+    normal_path="Define the outcome row, validate it, save the catalogue, then review the resulting scope on Model Setup before fitting.",
+    downstream="Included rows shape the model likelihood and every downstream result. DNA rows also determine which direct DNA responses are available.",
+    invalidates="Changing a saved outcome definition or fit inclusion makes model evidence stale and requires a refit before governed use.",
+)
 st.caption(
     "The main configuration surface for what this project actually fits - one row per measurable "
     "outcome, not one weekly GSA column per segment. A sign-up KPI and a GSA KPI on the same segment "
@@ -288,6 +328,10 @@ with st.expander("Add standard Family History outcomes"):
         st.rerun()
 
 with st.expander("Add DNA purchase outcomes"):
+    render_definition_help(
+        "a DNA purchase outcome",
+        "A DNA kit-sale measure for a defined customer segment. It is a separate outcome from Family History sign-up, GSA, or cross-product halo effects.",
+    )
     st.caption(
         "DNA kit purchases are a separate business outcome (product='DNA', metric='Kit sale') from any "
         "Family History outcome - a kit sale is never the same KPI as an FH sign-up or an FH GSA, even "
@@ -556,6 +600,20 @@ _pathway_section = SectionCard(
     description="Which (channel, target outcome) relationships this project believes exist, and their governance.",
 )
 _pathway_section.__enter__()
+render_decision_help(
+    "How should I use pathway roles?",
+    controls="Whether a channel-to-outcome relationship is fitted, visible in attribution, eligible for headline reporting, or eligible for planning.",
+    why="Known mechanisms such as direct response, cross-product halo, mediation, and exclusion have different evidence and governance requirements.",
+    options={
+        "Direct effect": "Use when the channel affects the outcome without a selected funnel mediator.",
+        "Cross-product effect": "Use for a separately governed halo from one product into another outcome.",
+        "Mediated diagnostic": "Use only for an explicitly selected mediator; it remains outside the standard likelihood and is not automatically planning-eligible.",
+        "Excluded": "Use when the relationship is intentionally not fitted; keep the row when an auditable exclusion is useful.",
+    },
+    normal_path="Start with the known structural mechanism, set evidence and approval fields, then save and refit before relying on the changed catalogue.",
+    downstream="Each role controls which coefficients are estimated and which outputs can be shown or used later; fitted does not mean approved for reporting or optimisation.",
+    invalidates="Changing a pathway that belongs to a fitted model makes the fit and any bound approval stale. Review and refit before governed use.",
+)
 st.caption(
     "Declares which `(channel, target outcome)` relationships this project believes exist - a "
     "primary direct effect, a trusted delayed cross-product effect (e.g. DNA media's halo onto FH), "

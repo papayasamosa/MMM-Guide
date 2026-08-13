@@ -31,6 +31,9 @@ from ancestry_mmm.components import (
     render_next_step,
     render_empty_state,
     render_workspace_note,
+    render_definition_help,
+    render_decision_help,
+    render_technical_details,
     SectionCard,
     BlockingPanel,
 )
@@ -284,6 +287,31 @@ st.caption(
     "Supports both model-input curves and "
     "monetary curves (an approved, effective cost mapping plus currency/FX "
     "evidence is required for the latter)."
+)
+render_definition_help(
+    "observed support",
+    "The range of model-input values represented in the source data for the selected market, channel, and reference context. A curve should not be treated as equally supported outside that range.",
+)
+render_decision_help(
+    "How should I generate a Planning Curve?",
+    controls="The approved outcome, market/reference context, observed support, curve representation, and any monetary cost translation used by the generated artifact.",
+    why="A Planning Curve is intended for governed planning use, so its outcome and conditions must be explicit and its support must be adequate.",
+    options={
+        "Model-input curve": "Use when the curve should remain in the fitted input units and no approved cost translation is required.",
+        "Monetary curve": "Use only when every selected market/channel has an effective approved cost mapping and the currency/FX evidence is complete.",
+        "Reference context": "Review and confirm the historical or explicitly hypothetical conditions that the curve represents.",
+        "Requested use": "Check whether the resulting artifact is authorised for planning, reporting, optimisation, or external distribution.",
+    },
+    normal_path="Confirm model approval, choose the outcome, select markets, choose the representation, review support and context, resolve blockers, then generate and review the saved artifact.",
+    downstream="The artifact records its outcome definition, market context, support, evidence, cost mapping, and authorization state; it is separate from exploratory curves in Results.",
+    invalidates="A changed fit, outcome approval, context, support, cost mapping, or policy invalidates the affected artifact or its use authorization and requires a fresh generation/review.",
+)
+render_technical_details(
+    details={
+        "Artifact identity": "The saved artifact carries an explicit artifact ID, model identity, outcome definition, reference context, support evidence, and governance dependencies.",
+        "Generation boundary": "The UI delegates governed generation to the application curve-generation service; the technical entry point is available here for audit without being part of the routine workflow.",
+        "Monetary restriction": "Currency/FX evidence and an effective approved cost mapping are required for monetary curves; model-input curves remain in their observed input units.",
+    }
 )
 
 _dashboard_trained = all(
@@ -1057,7 +1085,7 @@ for market in selected_markets:
                     "page, then retry."
                 )
 
-st.markdown("**Diagnostic spend axis**")
+st.markdown("**Diagnostic spend / model-input axis**")
 st.caption(
     "Leave blank to derive each channel's axis from its own observed/"
     "planning support range instead (a unit-specific axis per channel). "
