@@ -2679,3 +2679,38 @@ connected browser was unavailable.
 
 **Owner:** Platform engineering / Data Science.
 **Status:** Implemented in UX/UI coherence Phase 8.
+
+## Scenario Planner limitation hierarchy (UX/UI coherence Phase 9)
+
+**Date:** 2026-08-13
+**Decision:** Keep the steady-state monthly limitation as the prominent first-
+viewport decision cue, but shorten it to the practical consequence for an
+analyst. Keep the full boundary—no sequential week-over-week carry-in
+simulation, no capacity-constrained delivery model, and no Chronos-2 or other
+external forecast path—in the existing collapsed Technical details disclosure.
+Retain the allocation desk, editable/calculated/proposed/saved state flow,
+official-versus-exploratory governance, and unconstrained benchmark warning
+unchanged.
+
+**Reason:** The existing limitation was accurate but warning-heavy at the top
+of the page. The first viewport should answer the main modelling-method
+question quickly, while the technical boundary remains available before a
+planning decision is made.
+
+**Impact:** Updated only the Scenario Planner's top limitation copy and its
+AppTest expectation. No scenario calculations, counterfactual policy,
+capacity/cap semantics, approval/readiness gate, optimisation eligibility,
+currency/value mapping, persistence, or saved-state behaviour changed. The
+existing model-approval/readiness gate remains the authoritative prerequisite
+for governed planning; no duplicate or weaker readiness signal was added.
+Business question: what does this planner evaluate, and which important
+planning behaviours are outside its current method? Estimand: none
+introduced. Output scale/units: unchanged scenario outcome, value, spend, and
+uncertainty outputs. Upstream modelling references: none consulted because
+this package changes presentation only and does not change PyMC or PyMC
+Marketing model APIs. Remaining limitation: interactive browser screenshot
+review uses the repository's synthetic-data browser journey because the local
+connected browser was unavailable.
+
+**Owner:** Platform engineering / Data Science.
+**Status:** Implemented in UX/UI coherence Phase 9.

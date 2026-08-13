@@ -126,18 +126,16 @@ render_workspace_note(
     kind="derived",
 )
 st.info(
-    "**Steady-state monthly approximation.** Current planning method: each month is evaluated "
-    "as a steady monthly state. Media carryover between months is not simulated, and future "
-    "external factors are not forecast automatically. There is no sequential week-over-week "
-    "carry-in simulation, no capacity-constrained delivery model, and no Chronos-2 (or other "
-    "external) forecasting path."
+    "**Steady-state monthly approximation.** Each month is evaluated as a steady "
+    "monthly state; media carryover and future external factors are not simulated."
 )
 render_technical_details(
     body=(
         "The current calculation holds each month's media input constant and evaluates the fitted "
         "response at its adstock steady state. It uses a closed-form planning calculation rather "
-        "than MCMC in the planning loop; it does not run sequential week-over-week carry-in "
-        "simulation, a capacity-constrained delivery model, or an external Chronos-2 forecast path."
+        "than MCMC in the planning loop. It does not run sequential week-over-week carry-in "
+        "simulation, a capacity-constrained delivery model, or an external Chronos-2 (or other "
+        "external) forecast path."
     )
 )
 
