@@ -137,6 +137,35 @@ def _node_label(node: CausalNode) -> str:
     return f"**{label}**\n\n_{node.role}_"
 
 
+def _node_option_labels(graph: CausalGraph) -> dict[str, str]:
+    """Return concise, business-readable selector labels for graph nodes.
+
+    The graph node ID remains the selectbox value and is therefore stable for
+    persistence/compilation.  A governed activity's reporting channel is a
+    useful concise label when it is unique in this graph; when several
+    governed activities share that channel, retain the full registry-derived
+    node label so the choices remain distinguishable.
+    """
+    nodes = list(graph.nodes)
+    channel_counts: dict[str, int] = {}
+    candidates: dict[str, str] = {}
+    for node in nodes:
+        candidate = str(node.metadata.get("reporting_channel", "")).strip()
+        if not candidate:
+            candidate = node.label or node.node_id
+        candidates[node.node_id] = candidate
+        channel_counts[candidate] = channel_counts.get(candidate, 0) + 1
+
+    return {
+        node.node_id: (
+            candidates[node.node_id]
+            if channel_counts[candidates[node.node_id]] == 1
+            else (node.label or node.node_id)
+        )
+        for node in nodes
+    }
+
+
 def _edge_label(edge: CausalEdge) -> str:
     lag = f" ({edge.lag_type}={edge.lag_weeks})" if edge.lag_type != "none" else ""
     return f"{edge.role}{lag}"
@@ -508,12 +537,17 @@ with st.form("cg_add_edge_form", clear_on_submit=True):
         "two nodes' handles on the canvas)."
     )
     node_ids = [n.node_id for n in graph.nodes]
+    node_option_labels = _node_option_labels(graph)
     edge_cols = st.columns([2, 2, 2])
     new_edge_source = edge_cols[0].selectbox(
-        "Source node", node_ids or ["(add a node first)"]
+        "Source node",
+        node_ids or ["(add a node first)"],
+        format_func=lambda node_id: node_option_labels.get(node_id, node_id),
     )
     new_edge_target = edge_cols[1].selectbox(
-        "Target node", node_ids or ["(add a node first)"]
+        "Target node",
+        node_ids or ["(add a node first)"],
+        format_func=lambda node_id: node_option_labels.get(node_id, node_id),
     )
     new_edge_role = edge_cols[2].selectbox("Role", EDGE_ROLES)
     if st.form_submit_button("Add edge"):
@@ -593,17 +627,26 @@ st.caption(
     "- reads and writes the exact same graph state as the canvas."
 )
 
+node_option_labels = _node_option_labels(graph)
 node_options = ["(none)"] + [n.node_id for n in graph.nodes]
 edge_options = ["(none)"] + [e.edge_id for e in graph.edges]
 edge_option_labels = {
-    e.edge_id: f"{e.source_node_id} -> {e.target_node_id} ({e.role})"
+    e.edge_id: (
+        f"{node_option_labels.get(e.source_node_id, e.source_node_id)} -> "
+        f"{node_option_labels.get(e.target_node_id, e.target_node_id)} ({e.role})"
+    )
     for e in graph.edges
 }
 edge_option_labels["(none)"] = "(none)"
 selected_kind = st.radio("Edit", ["Node", "Edge"], horizontal=True, key="cg_edit_kind")
 
 if selected_kind == "Node" and len(node_options) > 1:
-    selected_node_id = st.selectbox("Node", node_options, key="cg_selected_node")
+    selected_node_id = st.selectbox(
+        "Node",
+        node_options,
+        format_func=lambda node_id: node_option_labels.get(node_id, node_id),
+        key="cg_selected_node",
+    )
     if selected_node_id != "(none)":
         node = next(n for n in graph.nodes if n.node_id == selected_node_id)
         with st.form("cg_node_form"):

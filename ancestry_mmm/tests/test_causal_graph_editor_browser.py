@@ -47,6 +47,7 @@ from ancestry_mmm.tests.support.lifecycle_fixture import build_lifecycle_project
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 STARTUP_TIMEOUT_SECONDS = 60
+TV_BRAND_ACTIVITY_NODE_ID = "activity:UK:tv-brand-paid"
 # CI's "Upload failure artefacts" step (.github/workflows/tests.yml, job
 # `browser`) uploads test-artifacts/playwright/** only `if: failure()` - a
 # repo-relative, not a pytest tmp_path, location so it survives test
@@ -421,7 +422,7 @@ def test_causal_graph_editor_journey_in_browser(
     # its own sandboxed iframe, so the canvas node must be located through
     # a frame_locator rather than the top-level page.
     node_locator = page.frame_locator("iframe").locator(
-        '.react-flow__node[data-id="TV_Brand"]'
+        f'.react-flow__node[data-id="{TV_BRAND_ACTIVITY_NODE_ID}"]'
     )
     expect(node_locator).to_be_visible(timeout=15_000)
     box = node_locator.bounding_box()
