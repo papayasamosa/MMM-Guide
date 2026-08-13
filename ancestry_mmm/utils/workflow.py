@@ -58,7 +58,7 @@ WORKFLOW_STEPS: List[Dict[str, Any]] = [
             "Propose and approve a treatment for any variable you want eligible for official use.",
             "Save the reviewed matrix as a new version.",
         ],
-        "next": "Govern the activities and variable mappings used by the model.",
+        "next": "Govern the activities and variable mappings in Activity Mapping.",
     },
     {
         "key": "channel_media_units",
@@ -102,7 +102,7 @@ WORKFLOW_STEPS: List[Dict[str, Any]] = [
             "Save a draft, or approve the graph once it passes validation.",
             "Prepare a compiled model configuration from the approved graph.",
         ],
-        "next": "Configure media response and hierarchy in Model Setup.",
+        "next": "Review currency and optional market context in Market Context.",
     },
     {
         "key": "market_descriptors",
@@ -144,7 +144,7 @@ WORKFLOW_STEPS: List[Dict[str, Any]] = [
             "Wait for training to complete - this can take several minutes.",
             "Optionally save this fit as a candidate for model comparison.",
         ],
-        "next": "Compare this fit with other candidates, if you have more than one.",
+        "next": "Compare this fit with other candidates in Model Comparison, if you have more than one.",
     },
     {
         "key": "compare_models",
@@ -170,7 +170,7 @@ WORKFLOW_STEPS: List[Dict[str, Any]] = [
             "Review convergence, in-sample fit, posterior predictive coverage and plausibility flags.",
             "Approve the model once you're satisfied it's trustworthy.",
         ],
-        "next": "Review results and save response curves.",
+        "next": "Review results and save response curves in Results & Response Curves.",
     },
     {
         "key": "curve_bank",
@@ -211,7 +211,7 @@ WORKFLOW_STEPS: List[Dict[str, Any]] = [
             "Edit the spend plan directly, or add constraints and run optimisation.",
             "Save the scenarios you want to keep.",
         ],
-        "next": "Export the project bundle for recovery or archival.",
+        "next": "Export the project bundle for recovery or archival in Export & Recovery.",
     },
     {
         "key": "export",
@@ -277,7 +277,7 @@ def next_step_key(key: str) -> Optional[str]:
             break
     if idx is None or idx + 1 >= len(WORKFLOW_STEPS):
         return None
-    return WORKFLOW_STEPS[idx + 1]["key"]
+    return str(WORKFLOW_STEPS[idx + 1]["key"])
 
 
 def sidebar_entries() -> List[Dict[str, Any]]:

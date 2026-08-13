@@ -29,6 +29,11 @@ def test_empty_state_loads_without_error():
     at.run()
     assert not at.exception, f"page raised: {at.exception}"
 
+    assert any(expander.label == "Role legend" for expander in at.expander)
+    assert any("Node roles:" in (caption.value or "") for caption in at.caption)
+    node_role_select = next(select for select in at.selectbox if select.label == "Role")
+    assert "Planned intervention" in node_role_select.options
+
 
 def _add_node_form_submit_button(at):
     return next(b for b in at.button if b.label == "Add node")
@@ -96,6 +101,13 @@ def test_add_edge_via_form_creates_an_edge_and_passes_validation():
     assert stored["edges"][0]["source_node_id"] == "TV"
     assert stored["edges"][0]["target_node_id"] == "fh_new"
     assert any(s.value == "Graph passes deterministic validation." for s in at.success)
+
+    next(radio for radio in at.radio if radio.label == "Edit").set_value("Edge").run()
+    edge_select = next(select for select in at.selectbox if select.label == "Edge")
+    assert any("Direct" in option for option in edge_select.options)
+    edge_select.set_value(stored["edges"][0]["edge_id"]).run()
+    lag_select = next(select for select in at.selectbox if select.label == "Lag type")
+    assert "Fixed delay" in lag_select.options
 
 
 def test_approve_is_disabled_until_valid_then_enabled():

@@ -22,6 +22,7 @@ approved graph simply keeps using the pathway catalogue exactly as before.
 import sys
 from dataclasses import replace
 from pathlib import Path
+from typing import cast
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -31,7 +32,7 @@ from streamlit_flow.elements import StreamlitFlowEdge, StreamlitFlowNode
 from streamlit_flow.layouts import ManualLayout
 from streamlit_flow.state import StreamlitFlowState
 
-from ancestry_mmm.utils import get_state, init_session_state, set_state
+from ancestry_mmm.utils import get_state, init_session_state, readable_label, set_state
 from ancestry_mmm.components import (
     apply_theme,
     render_next_step,
@@ -71,7 +72,6 @@ from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.activities import (
     ActivityDefinition,
     activity_node_id,
-    activity_node_label,
     governed_activities_in_model_scope,
     legacy_activity_definitions_from_model_spec,
 )
@@ -101,6 +101,55 @@ _ACTIVITY_GRAPH_ROLE = {
     "event": "diagnostic",
 }
 
+_NODE_ROLE_LABELS: dict[str, str] = {
+    "outcome": "Outcome",
+    "intervention": "Planned intervention",
+    "mediator": "Funnel mediator",
+    "demand_capture": "Demand capture",
+    "capacity_or_cap": "Capacity or cap",
+    "moderator": "Moderator",
+    "control_or_confounder": "Control or confounder",
+    "diagnostic": "Diagnostic only",
+    "excluded": "Excluded",
+}
+
+_EDGE_ROLE_LABELS: dict[str, str] = {
+    "direct": "Direct",
+    "mediated": "Mediated",
+    "capacity_constrained": "Capacity-constrained",
+    "cross_product_halo": "Cross-product halo",
+    "moderated": "Moderated",
+    "residual_interaction": "Residual interaction",
+    "excluded_diagnostic_only": "Excluded / diagnostic only",
+}
+
+_LAG_TYPE_LABELS: dict[str, str] = {
+    "none": "No additional delay",
+    "fixed_weeks": "Fixed delay",
+    "adstock_only": "Media carryover",
+    "delayed_adstock": "Delayed media carryover",
+}
+
+
+def _node_role_label(role: str) -> str:
+    return _NODE_ROLE_LABELS.get(role, str(readable_label(role)))
+
+
+def _edge_role_label(role: str) -> str:
+    return _EDGE_ROLE_LABELS.get(role, str(readable_label(role)))
+
+
+def _lag_type_label(lag_type: str) -> str:
+    return _LAG_TYPE_LABELS.get(lag_type, str(readable_label(lag_type)))
+
+
+def _activity_graph_label(definition: ActivityDefinition, *, market: str) -> str:
+    """Keep seeded graph labels useful without exposing source-column syntax."""
+    return (
+        f"{readable_label(definition.activity_id)} · "
+        f"{readable_label(market)} · {readable_label(definition.channel)}"
+    )
+
 
 def _new_graph_id() -> str:
     import uuid
@@ -126,15 +175,16 @@ def _graph_activity_definitions() -> list[ActivityDefinition]:
         return definitions
     spec_dict = get_state("model_spec")
     if spec_dict:
-        return legacy_activity_definitions_from_model_spec(
-            ModelSpec.from_dict(spec_dict)
+        return cast(
+            list[ActivityDefinition],
+            legacy_activity_definitions_from_model_spec(ModelSpec.from_dict(spec_dict)),
         )
     return []
 
 
 def _node_label(node: CausalNode) -> str:
     label = node.label or node.node_id
-    return f"**{label}**\n\n_{node.role}_"
+    return f"**{readable_label(label)}**\n\n_{_node_role_label(node.role)}_"
 
 
 def _node_option_labels(graph: CausalGraph) -> dict[str, str]:
@@ -152,7 +202,9 @@ def _node_option_labels(graph: CausalGraph) -> dict[str, str]:
     for node in nodes:
         candidate = str(node.metadata.get("reporting_channel", "")).strip()
         if not candidate:
-            candidate = node.label or node.node_id
+            candidate = readable_label(node.label or node.node_id)
+        else:
+            candidate = readable_label(candidate)
         candidates[node.node_id] = candidate
         channel_counts[candidate] = channel_counts.get(candidate, 0) + 1
 
@@ -160,15 +212,19 @@ def _node_option_labels(graph: CausalGraph) -> dict[str, str]:
         node.node_id: (
             candidates[node.node_id]
             if channel_counts[candidates[node.node_id]] == 1
-            else (node.label or node.node_id)
+            else readable_label(node.label or node.node_id)
         )
         for node in nodes
     }
 
 
 def _edge_label(edge: CausalEdge) -> str:
-    lag = f" ({edge.lag_type}={edge.lag_weeks})" if edge.lag_type != "none" else ""
-    return f"{edge.role}{lag}"
+    relation = _edge_role_label(edge.role)
+    if edge.lag_type == "none":
+        return relation
+    if edge.lag_type == "fixed_weeks":
+        return f"{relation} · {_lag_type_label(edge.lag_type)} {edge.lag_weeks} weeks"
+    return f"{relation} · {_lag_type_label(edge.lag_type)}"
 
 
 def _build_flow_state(graph: CausalGraph) -> StreamlitFlowState:
@@ -339,10 +395,12 @@ with InfoPanel(
     description="Draft/approved lifecycle and whether this session's edits are structural (would restale a compiled configuration) or layout-only.",
 ):
     status_summary_cols = st.columns(4)
-    status_summary_cols[0].metric("Status", graph.status)
-    status_summary_cols[0].caption(
-        "draft = editable, not authoritative; approved = authoritative for compilation"
-    )
+    with status_summary_cols[0]:
+        st.caption("Status")
+        render_status_badge(graph.status)
+        st.caption(
+            "Draft is editable and not authoritative; approved is authoritative for compilation."
+        )
     status_summary_cols[1].metric("Version", graph.graph_version)
     if not _has_saved_version:
         status_summary_cols[2].metric(
@@ -379,7 +437,7 @@ if _structural_unsaved:
     ):
         st.caption(
             "Use Save draft (section 3 below) to record an auditable version, "
-            "or Approve once validation and engine readiness both pass."
+            "or Approve once validation and compilation readiness both pass."
         )
 
 st.markdown("---")
@@ -389,6 +447,15 @@ st.caption(
     "edges start as direct until their real role and lag are set in the inspector; "
     "node and edge removal is explicit and auditable."
 )
+
+with st.expander("Role legend", expanded=False):
+    st.caption(
+        "Node roles: " + " · ".join(_NODE_ROLE_LABELS[role] for role in NODE_ROLES)
+    )
+    st.caption(
+        "Edge roles: " + " · ".join(_EDGE_ROLE_LABELS[role] for role in EDGE_ROLES)
+    )
+    st.caption("Canvas colour reinforces these labels; it is not the only cue.")
 _workbench_lib_col, _workbench_canvas_col, _workbench_inspector_col = st.columns(
     [1, 1.6, 1.4]
 )
@@ -452,7 +519,7 @@ with st.expander("Seed nodes from current Structure (optional)"):
             added_nodes.append(
                 CausalNode(
                     node_id=node_id,
-                    label=activity_node_label(definition, market=market),
+                    label=_activity_graph_label(definition, market=market),
                     role=_ACTIVITY_GRAPH_ROLE[definition.model_role],
                     product=definition.product_advertised,
                     market=market,
@@ -505,7 +572,9 @@ with st.form("cg_add_node_form", clear_on_submit=True):
     st.caption("Keyboard-accessible node creation (equivalent to a canvas drop).")
     add_cols = st.columns([2, 2, 2])
     new_node_id = add_cols[0].text_input("Node id")
-    new_node_role = add_cols[1].selectbox("Role", NODE_ROLES)
+    new_node_role = add_cols[1].selectbox(
+        "Role", NODE_ROLES, format_func=_node_role_label
+    )
     new_node_label = add_cols[2].text_input("Label (optional)")
     if st.form_submit_button("Add node"):
         if not new_node_id:
@@ -549,7 +618,9 @@ with st.form("cg_add_edge_form", clear_on_submit=True):
         node_ids or ["(add a node first)"],
         format_func=lambda node_id: node_option_labels.get(node_id, node_id),
     )
-    new_edge_role = edge_cols[2].selectbox("Role", EDGE_ROLES)
+    new_edge_role = edge_cols[2].selectbox(
+        "Role", EDGE_ROLES, format_func=_edge_role_label
+    )
     if st.form_submit_button("Add edge"):
         if not node_ids:
             st.error("Add at least one node before adding an edge.")
@@ -617,7 +688,7 @@ _workbench_canvas_col.__exit__(None, None, None)
 
 _inspector_section = SectionCard(
     "Inspector",
-    description="Selected node/edge properties, validation, and engine readiness - reads and writes the exact same graph state as the canvas.",
+    description="Selected node/edge properties, validation, and compilation readiness - reads and writes the exact same graph state as the canvas.",
 )
 _workbench_inspector_col.__enter__()
 _inspector_section.__enter__()
@@ -633,7 +704,7 @@ edge_options = ["(none)"] + [e.edge_id for e in graph.edges]
 edge_option_labels = {
     e.edge_id: (
         f"{node_option_labels.get(e.source_node_id, e.source_node_id)} -> "
-        f"{node_option_labels.get(e.target_node_id, e.target_node_id)} ({e.role})"
+        f"{node_option_labels.get(e.target_node_id, e.target_node_id)} ({_edge_label(e)})"
     )
     for e in graph.edges
 }
@@ -651,7 +722,12 @@ if selected_kind == "Node" and len(node_options) > 1:
         node = next(n for n in graph.nodes if n.node_id == selected_node_id)
         with st.form("cg_node_form"):
             label = st.text_input("Label", value=node.label)
-            role = st.selectbox("Role", NODE_ROLES, index=NODE_ROLES.index(node.role))
+            role = st.selectbox(
+                "Role",
+                NODE_ROLES,
+                index=NODE_ROLES.index(node.role),
+                format_func=_node_role_label,
+            )
             product = st.text_input("Product", value=node.product)
             segment = st.text_input("Segment", value=node.segment)
             market = st.text_input("Market", value=node.market)
@@ -709,13 +785,19 @@ elif selected_kind == "Edge" and len(edge_options) > 1:
         edge = next(e for e in graph.edges if e.edge_id == selected_edge_id)
         with st.form("cg_edge_form"):
             st.caption(f"{edge.source_node_id} -> {edge.target_node_id}")
-            role = st.selectbox("Role", EDGE_ROLES, index=EDGE_ROLES.index(edge.role))
+            role = st.selectbox(
+                "Role",
+                EDGE_ROLES,
+                index=EDGE_ROLES.index(edge.role),
+                format_func=_edge_role_label,
+            )
             lag_type = st.selectbox(
                 "Lag type",
                 ["none", "fixed_weeks", "adstock_only", "delayed_adstock"],
                 index=["none", "fixed_weeks", "adstock_only", "delayed_adstock"].index(
                     edge.lag_type
                 ),
+                format_func=_lag_type_label,
             )
             lag_weeks = st.number_input(
                 "Lag weeks", min_value=0, value=edge.lag_weeks or 0, step=1
@@ -768,10 +850,9 @@ else:
 for warning in validation.warnings:
     st.warning(warning)
 
-st.markdown("#### Engine readiness")
+st.markdown("#### Compilation readiness")
 st.caption(
-    f"Whether engine '{GRAPH_ENGINE_PYMC_HIERARCHICAL}' - the current "
-    "production fitting engine - can compile this graph. Checked before "
+    "Whether the current model setup can compile this graph. Checked before "
     "Approve is enabled, not only when preparing a model configuration "
     "afterwards, so an unsupported structure is never approved in the "
     "first place."
@@ -780,13 +861,13 @@ approval_eligibility = check_graph_approval_eligibility(
     graph, engine=GRAPH_ENGINE_PYMC_HIERARCHICAL
 )
 if not validation.is_valid:
-    st.info("Fix validation errors above before engine readiness can be checked.")
+    st.info("Fix validation errors above before compilation readiness can be checked.")
 elif approval_eligibility.is_eligible:
-    st.success(f"Engine '{GRAPH_ENGINE_PYMC_HIERARCHICAL}' can compile this graph.")
+    st.success("This graph is ready for model compilation.")
 else:
     st.error(
-        "This graph is structurally valid but the current engine cannot "
-        "compile it - fix these before approving:\n\n"
+        "This graph is structurally valid but cannot be used for model "
+        "compilation yet - fix these before approving:\n\n"
         + "\n".join(f"- {reason}" for reason in approval_eligibility.capability_reasons)
     )
 _inspector_section.__exit__(None, None, None)
@@ -796,7 +877,7 @@ st.markdown("---")
 st.markdown("### Model-plan preview")
 st.caption(
     "A pure preview of what this graph would compile to - no engine "
-    "capability check yet (see section 6 for that)."
+    "capability check yet (see Compilation readiness above for that)."
 )
 if validation.is_valid:
     plan = build_compilation_plan_preview(
@@ -859,7 +940,7 @@ if compile_col.button(
             activity_definitions=_graph_activity_definitions()
         ).compile(graph)
     except UnsupportedGraphStructureError as exc:
-        st.error(f"The current engine cannot compile this graph: {exc}")
+        st.error(f"This graph cannot be compiled with the current model setup: {exc}")
     else:
         set_state(
             "causal_graph_compiled_structural_fingerprint",

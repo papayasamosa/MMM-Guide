@@ -91,7 +91,7 @@ def test_model_structure_lists_governed_activities_and_resolves_inputs():
         for item in at.multiselect
         if item.label == "Governed activities in this model *"
     ][0]
-    assert activity_select.options == ["meta brand / Paid Social / meta brand input"]
+    assert activity_select.options == ["meta brand · UK · Paid Social"]
     assert activity_select.value == ["UK::meta_brand"]
 
 
