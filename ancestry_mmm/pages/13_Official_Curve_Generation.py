@@ -164,7 +164,9 @@ _AUTHORIZATION_STATUS_LABELS = {
 
 def _permission_label(permission_key: str) -> str:
     """Return the analyst-facing label for a stored use/permission key."""
-    return _REQUESTED_USE_LABELS.get(permission_key, permission_key.replace("_", " ").title())
+    return _REQUESTED_USE_LABELS.get(
+        permission_key, permission_key.replace("_", " ").title()
+    )
 
 
 def _humanise_permission_text(message: str) -> str:
@@ -195,7 +197,12 @@ def _merge_cost_mapping_rows(
     merged: list[dict] = []
     for index, primary in enumerate(primary_rows):
         row = dict(original_rows[index]) if index < len(original_rows) else {}
-        row.update({column: primary.get(column, "") for column in _COST_MAPPING_PRIMARY_COLUMNS})
+        row.update(
+            {
+                column: primary.get(column, "")
+                for column in _COST_MAPPING_PRIMARY_COLUMNS
+            }
+        )
         if advanced_rows is not None and index < len(advanced_rows):
             row.update(
                 {
@@ -412,7 +419,8 @@ with st.container(border=True):
         "Model approval", "Current" if get_state("model_approval") else "Needs review"
     )
     _curve_status[3].metric(
-        "Planning Curve state", "Configure and review" if _dashboard_trained else "Blocked"
+        "Planning Curve state",
+        "Configure and review" if _dashboard_trained else "Blocked",
     )
     st.caption(
         "This page creates official, evaluated Planning Curves. Readiness blockers are "
@@ -704,9 +712,7 @@ if curve_type == "monetary":
             "method": st.column_config.SelectboxColumn(
                 "Cost method", options=sorted(SUPPORTED_METHODS), required=True
             ),
-            "currency": st.column_config.TextColumn(
-                "Currency (ISO)", required=True
-            ),
+            "currency": st.column_config.TextColumn("Currency (ISO)", required=True),
             "effective_period_start": st.column_config.TextColumn("Effective from"),
             "effective_period_end": st.column_config.TextColumn("Effective to"),
             "approval_status": st.column_config.SelectboxColumn(
@@ -738,9 +744,7 @@ if curve_type == "monetary":
             },
         )
         advanced_rows = advanced_editor.fillna("").to_dict("records")
-    cost_mapping_rows = _merge_cost_mapping_rows(
-        grid_rows, primary_rows, advanced_rows
-    )
+    cost_mapping_rows = _merge_cost_mapping_rows(grid_rows, primary_rows, advanced_rows)
     cost_registry_preview, cost_mapping_errors = _build_cost_mapping_registry(
         cost_mapping_rows
     )

@@ -323,16 +323,14 @@ def test_official_lifecycle_journey_in_browser(
     # its default, unchecked "include support" state), so generation needs
     # an explicit diagnostic spend axis instead - otherwise it fails closed
     # with "Observed support is missing" rather than silently guessing one.
-    page.get_by_role("textbox", name="Curve-axis values (comma-separated, optional)").fill(
-        "0, 50, 100"
-    )
-    generate_button = page.get_by_role(
-        "button", name="Save Planning Curve"
-    )
+    page.get_by_role(
+        "textbox", name="Curve-axis values (comma-separated, optional)"
+    ).fill("0, 50, 100")
+    generate_button = page.get_by_role("button", name="Save Planning Curve")
     generate_button.click()
-    expect(
-        page.get_by_text(re.compile(r"Saved Planning Curve"))
-    ).to_be_visible(timeout=30_000)
+    expect(page.get_by_text(re.compile(r"Saved Planning Curve"))).to_be_visible(
+        timeout=30_000
+    )
     # --- Results: all three official response curves are visible ---------
     page.get_by_role("link", name="Results & Response Curves").click()
     expect(page.get_by_text("Official response curves", exact=True)).to_be_visible(

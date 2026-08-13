@@ -348,9 +348,7 @@ def test_blocker_panel_shown_and_generate_disabled_before_context_confirmed(
         "Reference context is not yet reviewed and confirmed" in (m.value or "")
         for m in at.markdown
     )
-    generate_button = next(
-        b for b in at.button if b.label == "Save Planning Curve"
-    )
+    generate_button = next(b for b in at.button if b.label == "Save Planning Curve")
     assert generate_button.disabled is True
 
 
@@ -369,9 +367,7 @@ def test_blocker_panel_clears_and_generate_enabled_once_ready(monkeypatch, tmp_p
     assert not at.exception, f"confirmation click raised: {at.exception}"
     assert any("All readiness checks pass" in (c.value or "") for c in at.caption)
     assert not any("Not ready to generate" in (m.value or "") for m in at.markdown)
-    generate_button = next(
-        b for b in at.button if b.label == "Save Planning Curve"
-    )
+    generate_button = next(b for b in at.button if b.label == "Save Planning Curve")
     assert generate_button.disabled is False
 
 
@@ -396,9 +392,7 @@ def test_full_governance_generates_and_saves_an_artifact(monkeypatch, tmp_path):
     assert not at.exception, f"confirmation click raised: {at.exception}"
 
     at.session_state["ocg_artifact_id"] = "art-ocg-1"
-    generate_button = next(
-        b for b in at.button if b.label == "Save Planning Curve"
-    )
+    generate_button = next(b for b in at.button if b.label == "Save Planning Curve")
     generate_button.click().run()
     assert not at.exception, f"generate click raised: {at.exception}"
     assert any("Saved Planning Curve" in (s.value or "") for s in at.success)
@@ -422,12 +416,11 @@ def test_outcome_not_approved_for_curve_publication_blocks_generation(
     at.run()
     assert not at.exception, f"page raised: {at.exception}"
     assert any(
-        "No outcome is currently approved for Planning Curve creation" in (i.value or "")
+        "No outcome is currently approved for Planning Curve creation"
+        in (i.value or "")
         for i in at.info
     )
-    assert not any(
-        b.label == "Save Planning Curve" for b in at.button
-    )
+    assert not any(b.label == "Save Planning Curve" for b in at.button)
 
 
 def test_artifact_id_collision_is_reported_not_raised(monkeypatch, tmp_path):
@@ -443,24 +436,17 @@ def test_artifact_id_collision_is_reported_not_raised(monkeypatch, tmp_path):
     at.run()
     _confirm_market_context(at, "UK")
     at.session_state["ocg_artifact_id"] = "art-dup"
-    generate_button = next(
-        b for b in at.button if b.label == "Save Planning Curve"
-    )
+    generate_button = next(b for b in at.button if b.label == "Save Planning Curve")
     generate_button.click().run()
     assert not at.exception
     assert any("Saved Planning Curve" in (s.value or "") for s in at.success)
 
     # Second attempt at the same artifact_id must be reported, not raised.
     at.session_state["ocg_artifact_id"] = "art-dup"
-    generate_button = next(
-        b for b in at.button if b.label == "Save Planning Curve"
-    )
+    generate_button = next(b for b in at.button if b.label == "Save Planning Curve")
     generate_button.click().run()
     assert not at.exception, f"collision click raised: {at.exception}"
-    assert any(
-        "Could not save the Planning Curve" in (e.value or "")
-        for e in at.error
-    )
+    assert any("Could not save the Planning Curve" in (e.value or "") for e in at.error)
 
 
 _MONETARY_RADIO_LABEL = "Monetary curve (requires an approved cost mapping)"
@@ -518,9 +504,7 @@ def test_monetary_curve_with_approved_cost_mapping_generates_and_saves_an_artifa
     _confirm_market_context(at, "UK")
 
     at.session_state["ocg_artifact_id"] = "art-monetary-1"
-    generate_button = next(
-        b for b in at.button if b.label == "Save Planning Curve"
-    )
+    generate_button = next(b for b in at.button if b.label == "Save Planning Curve")
     generate_button.click().run()
     assert not at.exception, f"monetary generate click raised: {at.exception}"
     assert any("Saved Planning Curve" in (s.value or "") for s in at.success)
@@ -554,9 +538,7 @@ def test_monetary_curve_without_cost_mapping_blocks_generation(monkeypatch, tmp_
     _confirm_market_context(at, "UK")
 
     at.session_state["ocg_artifact_id"] = "art-monetary-blocked"
-    generate_button = next(
-        b for b in at.button if b.label == "Save Planning Curve"
-    )
+    generate_button = next(b for b in at.button if b.label == "Save Planning Curve")
     generate_button.click().run()
     assert not at.exception, f"blocked monetary click raised: {at.exception}"
     assert any(
@@ -626,9 +608,7 @@ def test_monetary_support_out_of_domain_blocks_generation_without_crashing_the_p
     assert not at.exception, f"confirmation click raised: {at.exception}"
 
     at.session_state["ocg_artifact_id"] = "art-out-of-domain"
-    generate_button = next(
-        b for b in at.button if b.label == "Save Planning Curve"
-    )
+    generate_button = next(b for b in at.button if b.label == "Save Planning Curve")
     generate_button.click().run()
     assert not at.exception, f"generate click raised: {at.exception}"
     assert any(
@@ -636,9 +616,7 @@ def test_monetary_support_out_of_domain_blocks_generation_without_crashing_the_p
         in (e.value or "")
         for e in at.error
     ), [e.value for e in at.error]
-    assert not any(
-        "Saved Planning Curve" in (s.value or "") for s in at.success
-    )
+    assert not any("Saved Planning Curve" in (s.value or "") for s in at.success)
 
 
 def test_monetary_support_out_of_domain_is_resolved_after_widening_the_mapping(
@@ -683,9 +661,7 @@ def test_monetary_support_out_of_domain_is_resolved_after_widening_the_mapping(
 
     _confirm_market_context(at, "UK")
     at.session_state["ocg_artifact_id"] = "art-out-of-domain-fixed"
-    generate_button = next(
-        b for b in at.button if b.label == "Save Planning Curve"
-    )
+    generate_button = next(b for b in at.button if b.label == "Save Planning Curve")
     generate_button.click().run()
     assert not at.exception, f"generate click raised: {at.exception}"
     assert any("Saved Planning Curve" in (s.value or "") for s in at.success)
@@ -720,17 +696,13 @@ def test_reference_context_confirmation_is_required_before_generation(
     assert not at.exception, f"initial load raised: {at.exception}"
 
     at.session_state["ocg_artifact_id"] = "art-unconfirmed"
-    generate_button = next(
-        b for b in at.button if b.label == "Save Planning Curve"
-    )
+    generate_button = next(b for b in at.button if b.label == "Save Planning Curve")
     generate_button.click().run()
     assert not at.exception, f"generate click raised: {at.exception}"
     assert any(
         "Review and confirm the reference context" in (e.value or "") for e in at.error
     )
-    assert not any(
-        "Saved Planning Curve" in (s.value or "") for s in at.success
-    )
+    assert not any("Saved Planning Curve" in (s.value or "") for s in at.success)
 
 
 def test_changing_context_after_confirmation_invalidates_it_and_blocks_generation(
@@ -770,17 +742,13 @@ def test_changing_context_after_confirmation_invalidates_it_and_blocks_generatio
     assert checkbox_after_change.value is False
 
     at.session_state["ocg_artifact_id"] = "art-invalidated"
-    generate_button = next(
-        b for b in at.button if b.label == "Save Planning Curve"
-    )
+    generate_button = next(b for b in at.button if b.label == "Save Planning Curve")
     generate_button.click().run()
     assert not at.exception, f"generate click raised: {at.exception}"
     assert any(
         "Review and confirm the reference context" in (e.value or "") for e in at.error
     )
-    assert not any(
-        "Saved Planning Curve" in (s.value or "") for s in at.success
-    )
+    assert not any("Saved Planning Curve" in (s.value or "") for s in at.success)
 
 
 def test_blank_spend_axis_derives_per_channel_axis_from_support(monkeypatch, tmp_path):
@@ -804,9 +772,7 @@ def test_blank_spend_axis_derives_per_channel_axis_from_support(monkeypatch, tmp
     _confirm_market_context(at, "UK")
 
     at.session_state["ocg_artifact_id"] = "art-per-channel-axis"
-    generate_button = next(
-        b for b in at.button if b.label == "Save Planning Curve"
-    )
+    generate_button = next(b for b in at.button if b.label == "Save Planning Curve")
     generate_button.click().run()
     assert not at.exception, f"generate click raised: {at.exception}"
     assert any("Saved Planning Curve" in (s.value or "") for s in at.success)
@@ -834,9 +800,7 @@ def test_deselecting_a_market_generates_only_for_the_selected_subset(
     _confirm_market_context(at, "UK")
 
     at.session_state["ocg_artifact_id"] = "art-market-subset"
-    generate_button = next(
-        b for b in at.button if b.label == "Save Planning Curve"
-    )
+    generate_button = next(b for b in at.button if b.label == "Save Planning Curve")
     generate_button.click().run()
     assert not at.exception, f"generate click raised: {at.exception}"
     assert any("Saved Planning Curve" in (s.value or "") for s in at.success)
@@ -954,9 +918,7 @@ def test_official_curve_generation_preview_plots_actual_model_input_axis_values(
     _confirm_market_context(at, "UK")
 
     at.session_state["ocg_artifact_id"] = "art-axis-model-input"
-    generate_button = next(
-        b for b in at.button if b.label == "Save Planning Curve"
-    )
+    generate_button = next(b for b in at.button if b.label == "Save Planning Curve")
     generate_button.click().run()
     assert not at.exception, f"generate click raised: {at.exception}"
     assert any("Saved Planning Curve" in (s.value or "") for s in at.success)
@@ -997,9 +959,7 @@ def test_official_curve_generation_preview_plots_local_spend_not_reporting_curre
     _confirm_market_context(at, "UK")
 
     at.session_state["ocg_artifact_id"] = "art-axis-monetary"
-    generate_button = next(
-        b for b in at.button if b.label == "Save Planning Curve"
-    )
+    generate_button = next(b for b in at.button if b.label == "Save Planning Curve")
     generate_button.click().run()
     assert not at.exception, f"monetary generate click raised: {at.exception}"
     assert any("Saved Planning Curve" in (s.value or "") for s in at.success)
