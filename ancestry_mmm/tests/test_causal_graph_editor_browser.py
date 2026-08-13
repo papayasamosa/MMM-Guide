@@ -320,15 +320,19 @@ def test_causal_graph_editor_journey_in_browser(
     page.get_by_text("Seed nodes from current Structure", exact=False).click()
     _click_until_condition(
         page.get_by_role("button", name="Add these as nodes"),
-        lambda: page.get_by_text("TV_Brand", exact=False).count() > 0,
+        lambda: (
+            page.get_by_role("combobox", name="Source node").count() > 0
+            and page.get_by_role("combobox", name="Source node").input_value()
+            == "TV Brand"
+        ),
         attempts=8,
         wait_ms=2000,
     )
 
     # --- attempt a prohibited reverse edge (outcome -> intervention) -------
-    _add_node(page, "branded_demand", "mediator")
-    _add_edge(page, "TV_Brand", "branded_demand", "mediated")
-    _add_edge(page, "New", "TV_Brand", "direct")
+    _add_node(page, "branded_demand", "Funnel mediator")
+    _add_edge(page, "TV Brand", "branded demand", "Mediated")
+    _add_edge(page, "New", "TV Brand", "Direct")
 
     # --- deterministic rejection: the graph is reported invalid, and
     # Approve is disabled - it is categorically impossible to approve an
@@ -338,7 +342,7 @@ def test_causal_graph_editor_journey_in_browser(
     )
     approve_button = page.get_by_role("button", name="Approve")
     expect(approve_button).to_be_disabled(timeout=15_000)
-    expect(page.get_by_text("draft", exact=True).first).to_be_visible(timeout=15_000)
+    expect(page.get_by_text("Draft", exact=False).first).to_be_visible(timeout=15_000)
 
     # --- remove both non-final edges via the property panel: the bad
     # reverse edge, and the mediated edge (the current PyMC engine cannot
@@ -347,10 +351,10 @@ def test_causal_graph_editor_journey_in_browser(
     # engine capability being checked per-edge, not per-node) ---------------
     page.get_by_role("radio", name="Edge").click(force=True)
     for pattern, label in (
-        (re.compile(r"^New -> TV_Brand"), "New -> TV_Brand (direct)"),
+        (re.compile(r"^New -> TV Brand"), "New -> TV Brand (Direct)"),
         (
-            re.compile(r"^TV_Brand -> branded_demand"),
-            "TV_Brand -> branded_demand (mediated)",
+            re.compile(r"^TV Brand -> branded demand"),
+            "TV Brand -> branded demand (Mediated)",
         ),
     ):
         _select_option(page, "Edge", pattern, verify_text=label)
@@ -367,7 +371,7 @@ def test_causal_graph_editor_journey_in_browser(
         )
 
     # --- add the real, engine-supported edge -------------------------------
-    _add_edge(page, "TV_Brand", "New", "direct")
+    _add_edge(page, "TV Brand", "New", "Direct")
 
     # --- inspect the model-plan preview -------------------------------------
     # `.first` (same pattern as the "draft" status-badge check above): a
@@ -398,7 +402,7 @@ def test_causal_graph_editor_journey_in_browser(
     expect(approve_button).to_be_enabled(timeout=15_000)
     _click_until_condition(
         approve_button,
-        lambda: page.get_by_text("approved", exact=True).count() > 0,
+        lambda: page.locator(".mmm-badge").filter(has_text="Approved").count() > 0,
     )
 
     # --- prepare model configuration: succeeds, binds a structural
@@ -442,10 +446,10 @@ def test_causal_graph_editor_journey_in_browser(
     _select_option(
         page,
         "Edge",
-        re.compile(r"^TV_Brand -> New"),
-        verify_text="TV_Brand -> New (direct)",
+        re.compile(r"^TV Brand -> New"),
+        verify_text="TV Brand -> New (Direct)",
     )
-    _select_option(page, "Lag type", "adstock_only")
+    _select_option(page, "Lag type", "Media carryover")
     _click_until_condition(
         page.get_by_role("button", name="Save edge"),
         lambda: page.get_by_text("it is now stale", exact=False).count() > 0,
