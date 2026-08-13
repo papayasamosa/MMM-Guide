@@ -187,9 +187,9 @@ def test_official_preparation_has_explicit_decision_required_gate():
     at = _run_at()
     assert not at.exception, f"page raised: {at.exception}"
     assert any(
-        "Official preparation blocked" in (w.value or "")
-        and "decision required" in (w.value or "")
-        for w in at.warning
+        "Official preparation blocked" in (i.value or "")
+        and "decision required" in (i.value or "")
+        for i in at.info
     )
 
     official_button = next(

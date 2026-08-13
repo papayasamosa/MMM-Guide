@@ -622,7 +622,7 @@ elif _official_preparation.status == "unsupported_no_approved_method":
         + _official_preparation.reason
     )
 else:
-    st.warning(
+    st.info(
         "Official preparation blocked · decision required. "
         + _official_preparation.reason
     )
