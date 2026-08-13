@@ -274,15 +274,14 @@ render_page_header(
     task_prompt="Can this approved fit support a governed official curve artifact?",
 )
 render_workspace_note(
-    "Governed artifact",
+    "Planning Curve",
     "This workflow publishes evaluated official curves only when fit identity, outcome approval, evidence, and cost mappings satisfy their gates.",
     kind="governed",
 )
 st.caption(
-    "Produces a governed, evaluated official curve artifact through "
-    "CurveService.create_official_artifact - distinct from the legacy curve "
-    "bank's fitted-parameter snapshots (Results & Curve Bank), which are "
-    "never official evaluated curves. Supports both model-input curves and "
+    "Generates an evaluated Planning Curve from the approved fit. It is distinct "
+    "from exploratory fitted-parameter snapshots in Results & Response Curves. "
+    "Supports both model-input curves and "
     "monetary curves (an approved, effective cost mapping plus currency/FX "
     "evidence is required for the latter)."
 )
@@ -328,8 +327,8 @@ if (
     or spec_dict is None
 ):
     render_empty_state(
-        "No trained model yet. Complete Model Training first.",
-        button_label="Go to Model Training",
+        "No fitted model yet. Complete Fit Model first.",
+        button_label="Go to Fit Model",
         target_key="model_training",
     )
     st.stop()
@@ -429,8 +428,8 @@ if not current_identity or not approval_dict:
     st.markdown("---")
     render_empty_state(
         "No current model identity/approval available - approve this model "
-        "on Diagnostics first.",
-        button_label="Go to Diagnostics",
+        "on Model Diagnostics first.",
+        button_label="Go to Model Diagnostics",
         target_key="diagnostics",
     )
     st.stop()
@@ -466,7 +465,7 @@ with SectionCard(
         render_empty_state(
             "No outcome is currently approved for curve_publication. Review "
             "outcome approvals on Structure -> Outcome Governance first.",
-            button_label="Go to Structure: Segments & Markets",
+            button_label="Go to Model Structure",
             target_key="structure",
         )
         st.stop()

@@ -107,8 +107,8 @@ df = get_state("transformed_data")
 if df is None:
     st.markdown("---")
     render_empty_state(
-        "No transformed data yet. Complete Transform Pipeline first.",
-        button_label="Go to Transform Pipeline",
+        "No prepared data yet. Complete Prepare Data first.",
+        button_label="Go to Prepare Data",
         target_key="transform_pipeline",
     )
     st.stop()
@@ -622,8 +622,8 @@ if _legacy_governance_review:
             _legacy_review_confirmed = st.checkbox(
                 "I reviewed every migrated pathway and its governance fields",
                 help=(
-                    "Saving clears the legacy fit and approval. Model Configuration "
-                    "and Model Training must then be rerun before headline or planning use."
+                    "Saving clears the legacy fit and approval. Model Setup and Fit Model "
+                    "must then be rerun before headline or planning use."
                 ),
                 key="legacy_pathway_review_confirmed",
             )
@@ -1413,7 +1413,7 @@ if st.button("Save structure and validate", type="primary"):
             "here only; `Excluded` means captured "
             "but held back from the next fit; `Missing source column` means its mapped column isn't "
             "in the current data; `Included in prepared frame` / `Included in fitted run` reflect "
-            "this session's actual Model Configuration / Model Training state, if any; `Stale after "
+            "this session's actual Model Setup / Fit Model state, if any; `Stale after "
             "configuration changes` means it used to be prepared or fit but its column has since "
             "disappeared from the data."
         )

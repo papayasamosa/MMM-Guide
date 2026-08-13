@@ -104,14 +104,14 @@ if not _data_ready:
         "No joined data with a market column yet. Complete Transform "
         "Pipeline first - the coverage matrix is built per market, so a "
         "market column is required.",
-        button_label="Go to Transform Pipeline",
+        button_label="Go to Prepare Data",
         target_key="transform_pipeline",
         what_for=(
             "Reviewing each governed variable's coverage and missingness "
             "by market before defining model structure."
         ),
-        dependency="A joined dataset with a market column (Transform Pipeline).",
-        next_action="Go to Transform Pipeline to join your sources and select a market column.",
+        dependency="Prepared data with a market column (Prepare Data).",
+        next_action="Go to Prepare Data to join your sources and select a market column.",
     )
     st.stop()
 
@@ -216,7 +216,7 @@ if variable_columns:
         "Variable class gates which frequency-"
         "conversion methods are eligible - never one default applied "
         "across classes. Source ID/version identify which governed upload "
-        "(Data Upload page) this variable's values came from."
+        "(Data Sources page) this variable's values came from."
     )
     metadata_rows = []
     for column in variable_columns:

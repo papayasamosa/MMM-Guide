@@ -1,6 +1,6 @@
 """Compare fitted candidate models side by side before
-choosing which to take forward to Diagnostics for approval - the model
-comparison workflow from docs/model_validation.md."""
+choosing which to take forward to Model Diagnostics for approval - the model
+comparison workflow."""
 
 import sys
 from pathlib import Path
@@ -60,8 +60,8 @@ st.markdown(
     "credible market differentiation, and acceptable diagnostics."
 )
 st.caption(
-    "To get a Model B candidate: go to Structure: Segments & Markets, select a single market, save, "
-    "then fit and save a candidate on Model Training as usual - fitting the shared-curve model "
+    "To get an independent single-market candidate: go to Model Structure, select a single market, save, "
+    "then fit and save a candidate on Fit Model as usual - fitting the shared-curve model "
     "(Model A) against one market's data *is* an independent per-market fit."
 )
 
@@ -79,7 +79,7 @@ with st.container(border=True):
     )
 if not candidate_dicts:
     st.info(
-        "No comparison candidates saved yet. Fit a model on Model Training, then use "
+        "No comparison candidates saved yet. Fit a model on Fit Model, then use "
         '"Save this fit as a comparison candidate" to add it here.'
     )
 else:

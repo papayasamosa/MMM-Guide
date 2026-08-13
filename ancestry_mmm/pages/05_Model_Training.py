@@ -77,8 +77,8 @@ frame = get_state("frame")
 spec_dict = get_state("model_spec")
 if frame is None or not spec_dict:
     render_empty_state(
-        "No modelling frame ready yet. Complete Model Configuration first.",
-        button_label="Go to Model Configuration",
+        "No modelling frame ready yet. Complete Model Setup first.",
+        button_label="Go to Model Setup",
         target_key="model_config",
     )
     st.stop()
@@ -90,7 +90,7 @@ model_type = get_state("model_type", "shared")
 if model_type == "market_specific" and len(frame["markets"]) < 2:
     st.warning(
         "This project has only 1 market, so market-specific curves aren't available - fitting the "
-        "shared-curve model (Model A) instead. Change this on Model Configuration for future fits."
+        "shared-curve model instead. Change this on Model Setup for future fits."
     )
     model_type = "shared"
 
@@ -249,15 +249,10 @@ def _proposed_model_fingerprint(fingerprint_model_type: str) -> str:
 st.markdown("---")
 st.markdown("### Pre-fit prior check")
 st.caption(
-    "Samples from the PROPOSED model's declared priors - never a "
-    "posterior, no MCMC, no trace - before committing to the fit below, "
-    "reusing REQ-VAL-001's prior-predictive sampling function in a new "
-    "pre-fit context. Builds the model from the current spec/prior "
-    "configuration exactly as 'Build & fit model' would, but stops after "
-    "sampling priors; this preview is never written as this project's "
-    "official fit-time evidence (see Diagnostics' own 'Prior predictive "
-    "check', computed against the actual fitted model, for that) and is "
-    "not itself an approved REQ-VAL-001 work package."
+    "Samples from the proposed model's priors before fitting. This helps you "
+    "spot implausible ranges and warnings before committing to a run. It does "
+    "not fit the model and does not replace the evidence created by the fitted "
+    "model on Model Diagnostics. Run it again after changing the setup or priors."
 )
 preview_col1, preview_col2 = st.columns(2)
 preview_n_samples = preview_col1.number_input(

@@ -255,11 +255,11 @@ def _render_media_unit_section(
 ) -> None:
     """Historical cost trend, response-unit curve, and equivalent delivery/
     response calculators for one (market, channel) - only shown where a
-    media-unit mapping exists (Channel & Media Units page)."""
+    media-unit mapping exists (Media Mapping page)."""
     config = market_config.get_media_unit_config(market, channel)
     if not (config and config.has_media_unit()):
         st.caption(
-            f"No media-unit mapping for {market} / {channel} yet - add one on Channel & Media Units "
+            f"No media-unit mapping for {market} / {channel} yet - add one on Media Mapping "
             "to see a response-unit curve, historical cost trend, and delivery/response equivalence "
             "calculators here."
         )
@@ -669,8 +669,8 @@ coverage_matrix_dict = get_state("variable_coverage_matrix")
 if trace is None or frame is None or meta is None or params is None:
     st.markdown("---")
     render_empty_state(
-        "No trained model yet. Complete Model Training first.",
-        button_label="Go to Model Training",
+        "No fitted model yet. Complete Fit Model first.",
+        button_label="Go to Fit Model",
         target_key="model_training",
     )
     st.stop()
@@ -1157,8 +1157,8 @@ if not approval_dict:
     st.markdown("---")
     render_empty_state(
         "This model hasn't been approved yet. Results above are still visible for review, but "
-        "saving to the curve bank is blocked until the model is approved on Diagnostics.",
-        button_label="Go to Diagnostics",
+        "saving to the curve bank is blocked until the model is approved on Model Diagnostics.",
+        button_label="Go to Model Diagnostics",
         target_key="diagnostics",
     )
 elif not approval_matches_current:
@@ -1169,7 +1169,7 @@ elif not approval_matches_current:
         "it was approved, or the bound policy/readiness has drifted)"
         + (f": {approval_invalid_reason}" if approval_invalid_reason else "")
         + ". Saving to the curve bank is blocked until it's reviewed and approved again.",
-        button_label="Go to Diagnostics",
+        button_label="Go to Model Diagnostics",
         target_key="diagnostics",
     )
 else:

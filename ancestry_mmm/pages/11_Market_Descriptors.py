@@ -63,8 +63,8 @@ df = get_state("transformed_data")
 if not spec_dict or df is None:
     st.markdown("---")
     render_empty_state(
-        "No structure defined yet. Complete Structure: Segments & Markets first.",
-        button_label="Go to Structure: Segments & Markets",
+        "No model structure defined yet. Complete Model Structure first.",
+        button_label="Go to Model Structure",
         target_key="structure",
     )
     st.stop()
@@ -135,7 +135,7 @@ for market in spec.markets:
         profile = market_config.get_profile(market)
         with SectionCard(
             "Currency",
-            description="Required for monetary curves and CPA/ROI; also contributes to the model-specification fingerprint once saved.",
+            description="Required for monetary curves and CPA/ROI. Saving a currency change makes the current fit and downstream evidence stale.",
         ):
             c1, c2 = st.columns(2)
             local_currency = c1.text_input(
