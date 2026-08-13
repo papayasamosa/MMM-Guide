@@ -51,6 +51,11 @@ from ancestry_mmm.core.canonical_curves import (
     resolve_curve_axis_label,
     summarize_component_response_by_draw,
 )
+from ancestry_mmm.core.reporting_rollups import (
+    ReportingEnrichmentError,
+    build_reporting_views,
+    summarize_reporting_draws,
+)
 from ancestry_mmm.core.curve_artifact import (
     CurveArtifactError,
     governed_context_fields,
@@ -517,6 +522,51 @@ def _render_official_artifact_curves(artifact):
             st.caption(annotation.monetary_blocked_reason)
 
 
+def _render_official_reporting_views(artifact, activity_definitions):
+    """Render governed funnel/channel/activity drill-downs from artifact draws."""
+    draws = artifact.draws
+    if draws.empty or "posterior_draw" not in draws.columns:
+        return
+    st.markdown("#### Governed reporting roll-ups")
+    st.caption(
+        "These views group the persisted posterior contribution/curve rows by "
+        "governed activity metadata. Funnel stage is a reporting dimension, "
+        "not a causal or mediation label; direct, mediated, halo, and total "
+        "effects remain separate."
+    )
+    try:
+        views = build_reporting_views(
+            draws,
+            activity_definitions,
+            strict=True,
+        )
+    except ReportingEnrichmentError as exc:
+        st.error(
+            "This artifact cannot be rendered as a governed activity report "
+            f"until its activity mapping is resolved: {exc}"
+        )
+        return
+
+    tabs = st.tabs(["Funnel", "Channel / platform", "Activity drill-down"])
+    for tab, (_view_name, view) in zip(tabs, views.items()):
+        with tab:
+            summary = summarize_reporting_draws(view)
+            if summary.empty:
+                st.info("No rows are available for this reporting view.")
+                continue
+            st.dataframe(
+                summary,
+                width="stretch",
+                column_config=dataframe_column_config(summary),
+            )
+            if view["funnel_rollup_status"].eq("contains_unclassified").any():
+                st.warning(
+                    "This view includes an Unclassified bucket. Funnel totals "
+                    "are not a complete taxonomy decomposition until every "
+                    "activity has an approved funnel classification."
+                )
+
+
 def _render_official_artifact(
     artifact,
     current_identity,
@@ -599,6 +649,7 @@ def _render_official_artifact(
         column_config=dataframe_column_config(meta_df),
     )
     _render_official_artifact_curves(artifact)
+    _render_official_reporting_views(artifact, activity_definitions)
 
 
 def _render_official_artifact_section(

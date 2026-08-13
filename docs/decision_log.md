@@ -2261,3 +2261,49 @@ end-to-end data validation: DEFERRED pending source-data availability.
 
 **Owner:** Platform engineering / Data Science.
 **Status:** Accepted; implementation in Work Package 3.
+
+## Governed activity roll-ups in attribution and reporting (Work Package 4)
+
+**Date:** 2026-08-13
+**Decision:** Add a framework-independent reporting enrichment boundary that
+joins contribution, curve, and economic rows to the governed activity
+dictionary, then supports deterministic roll-ups by activity, reporting
+channel, platform, campaign type, marketing objective, message type, funnel
+stage, product, market, outcome, segment, and explicit pathway/effect type.
+Posterior rows are aggregated by `posterior_draw` before summary statistics.
+Direct, mediated, halo, and total effects remain separate; funnel stage is
+never used to infer a causal effect.
+
+**Reason:** The activity taxonomy is analytically useful only if business
+views can move from funnel to channel/platform to activity without merging
+distinct Meta or CRM activities or relabelling a descriptive funnel bucket as
+mediation. Unclassified activities must remain visible and mark a funnel
+decomposition incomplete rather than being dropped.
+
+**Alternatives considered:** Grouping raw model-input columns directly
+(rejected - they are engine predictors, not governed business identity);
+inferring mediated effects from `funnel_stage` (rejected - funnel taxonomy is
+descriptive); summing posterior summaries or independently summarised
+component medians (rejected - this understates or distorts uncertainty);
+allocating the same component spend to direct and mediated rows (rejected -
+component economics require an explicit cost allocation and channel spend is
+counted once).
+
+**Impact:** Added `core.reporting_rollups` enrichment, draw-safe aggregation,
+posterior summaries, explicit Unclassified handling, and official artifact
+Funnel, Channel/platform, and Activity drill-down views. Persisted official
+curve artifacts already carry the activity-governance snapshot and its
+fingerprint; roll-up outputs expose that same taxonomy fingerprint. No model
+equations, causal edges, pathway estimands, or curve generation math changed.
+Business question: how much approved response/contribution is associated with
+each governed activity and its reporting groups? Estimand: the supplied
+outcome-scale contribution/curve/economic row under its existing pathway and
+governance definition, aggregated at draw level. Output scale/units: the
+input row's declared response/value/spend units; no conversion or causal
+reinterpretation is introduced. Upstream modelling references: none
+consulted because this package changes reporting enrichment and aggregation,
+not PyMC/PyMC Marketing model APIs. Real UK end-to-end data validation:
+DEFERRED pending source-data availability.
+
+**Owner:** Platform engineering / Data Science.
+**Status:** Accepted; implementation in Work Package 4.

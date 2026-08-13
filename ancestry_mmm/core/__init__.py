@@ -136,6 +136,15 @@ from .attribution import (
     decompose_sales,
     calculate_roi,
 )
+from .reporting_rollups import (
+    FUNNEL_STAGE_LABELS,
+    REPORTING_DIMENSIONS,
+    ReportingEnrichmentError,
+    build_reporting_views,
+    enrich_reporting_rows,
+    roll_up_reporting_draws,
+    summarize_reporting_draws,
+)
 from .optimization import (
     OptimizationResource,
     PlanningObjective,
@@ -361,6 +370,13 @@ __all__ = [
     "compute_shapley_values",
     "decompose_sales",
     "calculate_roi",
+    "FUNNEL_STAGE_LABELS",
+    "REPORTING_DIMENSIONS",
+    "ReportingEnrichmentError",
+    "build_reporting_views",
+    "enrich_reporting_rows",
+    "roll_up_reporting_draws",
+    "summarize_reporting_draws",
     "SpendConstraint",
     "OptimizationResource",
     "monetary_optimization_resource",
