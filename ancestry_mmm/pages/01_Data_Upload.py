@@ -27,6 +27,7 @@ from ancestry_mmm.data import (
     load_file_with_source_version,
     load_standard_workbook_with_source_version,
     load_all_sample_sources,
+    load_realistic_sample_sources,
     get_data_summary,
 )
 from ancestry_mmm.data.templates import STANDARD_TEMPLATE_SCHEMA_VERSION
@@ -256,6 +257,52 @@ with tab_demo:
             clear_model_state()
             st.success(
                 f"Loaded demo sources: {', '.join(f'{k} ({v.shape[0]} rows x {v.shape[1]} cols)' for k, v in frames.items())}"
+            )
+
+    st.divider()
+    st.markdown("#### Realistic source-pack demo")
+    st.caption(
+        "Exercises source-native activity identities, market availability, ragged "
+        "coverage, mixed weekly/monthly context, and irregular events. It remains "
+        "synthetic and is intentionally not pre-joined into a model matrix."
+    )
+    if st.button("Load realistic source pack"):
+        frames, err = load_realistic_sample_sources()
+        if err:
+            st.error(err)
+        else:
+            ltv_df = frames.pop("segment_ltv")
+            st.session_state["raw_sources"] = frames
+            st.session_state["sample_ltv"] = {
+                row.segment: row.ltv for row in ltv_df.itertuples()
+            }
+            st.session_state["active_source_upload_version"] = {}
+            realistic_domains = {
+                "activity_data": DOMAIN_ACTIVITY_AND_MEDIA,
+                "activity_dictionary": DOMAIN_ACTIVITY_AND_MEDIA,
+                "outcomes": DOMAIN_OUTCOMES,
+                "outcome_dictionary": DOMAIN_OUTCOMES,
+                "context_data": DOMAIN_CONTEXT_AND_EXTERNAL_FACTORS,
+                "variable_dictionary": DOMAIN_CONTEXT_AND_EXTERNAL_FACTORS,
+                "events": DOMAIN_CONTEXT_AND_EXTERNAL_FACTORS,
+            }
+            st.session_state["source_definitions"] = [
+                SourceDefinition(
+                    source_id=name,
+                    name=name,
+                    logical_domain=domain,
+                ).to_dict()
+                for name, domain in realistic_domains.items()
+            ]
+            st.session_state["data_loaded"] = True
+            st.session_state["demo_source_pack"] = "realistic-source-pack-v1"
+            clear_model_state()
+            st.success(
+                "Loaded realistic synthetic source pack: "
+                + ", ".join(
+                    f"{name} ({frame.shape[0]} rows x {frame.shape[1]} cols)"
+                    for name, frame in frames.items()
+                )
             )
 
 with tab_upload:

@@ -2373,3 +2373,37 @@ model equation, or statistical method was added.
 **Owner:** Data Science / Platform engineering.
 **Status:** Implemented at the governance boundary; concrete method decision
 and conversion executor remain open.
+
+## Realistic source-native synthetic demo pack (Work Package 7)
+
+**Date:** 2026-08-13
+**Decision:** Keep the fast rectangular weekly fixture for quick exploration,
+and add a separate deterministic source-native fixture for ingestion-contract
+and end-to-end source-pack testing. The realistic fixture retains tidy activity
+rows, dictionaries, outcomes, native weekly/monthly context, and irregular
+events as separate tables until an explicit canonicalisation boundary.
+
+**Reason:** The application must demonstrate the approved data-input contract
+without implying that all real data arrives as one rectangular weekly-wide
+media/control table. The fixture exposes multiple activities within a
+channel, multiple CRM purposes, cross-market identity, market-specific absence,
+ragged history, mixed native frequency, and irregular events.
+
+**Impact:** Added the deterministic `realistic-source-pack-v1` loader and a
+Data Sources action alongside the existing quick demo. Added contract tests
+for reproducibility, source-native missingness, identity/pooling metadata,
+domain canonicalisation, native frequencies, and irregular events. No
+frequency conversion, zero-fill, causal inference, model equation, or
+persistence-schema change was introduced. Business question: can a realistic
+synthetic source pack exercise the approved ingestion boundary without losing
+source grain or semantics? Estimand: none introduced; outputs remain source
+rows and explicitly mapped model-input columns. Output scale/units: source
+native activity values (`spend`/`sends`), outcome counts, context indices, and
+event dates. Upstream modelling references: none consulted because this
+package changes demo/source-contract fixtures and UI loading only, not PyMC or
+PyMC Marketing model APIs. Remaining limitation: the realistic fixture is
+synthetic and does not represent Ancestry calibration or official business
+definitions.
+
+**Owner:** Platform engineering / Data Science.
+**Status:** Implemented in Work Package 7.

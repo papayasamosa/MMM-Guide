@@ -9,6 +9,7 @@ from typing import Iterable, Optional, Tuple, List, Dict, Any
 
 from ancestry_mmm.core.coverage import SourceVersion, compute_checksum
 from ancestry_mmm.data.templates import StandardWorkbook, parse_standard_workbook
+from ancestry_mmm.sample_data.realistic_source_pack import build_realistic_source_pack
 
 
 def load_file(uploaded_file) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
@@ -199,6 +200,20 @@ def load_all_sample_sources() -> Tuple[Dict[str, pd.DataFrame], Optional[str]]:
             return {}, err
         frames[name] = df
     return frames, None
+
+
+def load_realistic_sample_sources() -> Tuple[Dict[str, pd.DataFrame], Optional[str]]:
+    """Load the deterministic source-native demo pack.
+
+    Unlike :func:`load_all_sample_sources`, this deliberately returns separate
+    tidy activity, dictionary, outcome, context, and event tables.  It is an
+    ingestion/source-contract fixture, not a pre-joined model matrix.
+    """
+
+    try:
+        return build_realistic_source_pack(), None
+    except Exception as exc:
+        return {}, f"Error building realistic sample data: {exc}"
 
 
 def detect_column_types(df: pd.DataFrame) -> Dict[str, List[str]]:
