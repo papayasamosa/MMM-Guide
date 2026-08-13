@@ -15,7 +15,7 @@ invented, and no analytical/governance behaviour changed.
 
 import contextlib
 import html as _html
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
 
 import streamlit as st
 
@@ -523,6 +523,63 @@ def render_glossary(terms: Optional[Iterable[str]] = None) -> None:
     with st.popover("Help for this workspace"):
         for term, definition in entries.items():
             st.markdown(f"**{term}** - {definition}")
+
+
+def render_definition_help(term: str, definition: str) -> None:
+    """Render one short, page-local definition on demand.
+
+    Definitions answer what a concept means.  They are deliberately separate
+    from decision guidance and technical provenance so a small question does
+    not open a wall of implementation detail.
+    """
+    with st.popover(f"What is {term}?"):
+        st.markdown(f"### What is {term}?")
+        st.write(definition)
+
+
+def render_decision_help(
+    title: str,
+    *,
+    controls: str,
+    why: str,
+    options: Optional[Mapping[str, str]] = None,
+    normal_path: str,
+    downstream: str,
+    invalidates: str,
+) -> None:
+    """Render structured guidance for a real modelling or workflow choice."""
+    with st.popover(title):
+        st.markdown("**What this controls**")
+        st.write(controls)
+        st.markdown("**Why it matters**")
+        st.write(why)
+        if options:
+            st.markdown("**When to use each option**")
+            for option, guidance in options.items():
+                st.markdown(f"- **{option}:** {guidance}")
+        st.markdown("**Normal path**")
+        st.write(normal_path)
+        st.markdown("**What changes downstream**")
+        st.write(downstream)
+        st.markdown("**Does changing it invalidate a fit or approval?**")
+        st.write(invalidates)
+
+
+def render_technical_details(
+    *,
+    details: Optional[Mapping[str, str]] = None,
+    body: Optional[str] = None,
+    title: str = "Technical details",
+    expanded: bool = False,
+) -> None:
+    """Keep implementation identity and provenance available, but secondary."""
+    if not details and not body:
+        return
+    with st.expander(title, expanded=expanded):
+        if body:
+            st.markdown(body)
+        for label, value in (details or {}).items():
+            st.markdown(f"**{label}:** {value}")
 
 
 def render_drift_status(

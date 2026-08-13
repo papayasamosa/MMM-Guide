@@ -26,6 +26,8 @@ from ancestry_mmm.components import (
     render_empty_state,
     render_drift_status,
     render_workspace_note,
+    render_decision_help,
+    render_technical_details,
     SectionCard,
 )
 from ancestry_mmm.core.approval import (
@@ -133,6 +135,28 @@ render_workspace_note(
     "Inspect observed support, uncertainty, and evidence tier before using a curve; official artifacts are governed separately from exploratory snapshots.",
     kind="governed",
 )
+render_decision_help(
+    "What this chart shows",
+    controls="The fitted response as one channel's media input changes, with the other channels held at the reference conditions used for this curve.",
+    why="This is a channel-level response view, not a whole-plan result. It helps you see the observed support, uncertainty, and how average and marginal economics change near saturation.",
+    options={
+        "Observed support": "The shaded or marked range shows where this channel has historical input data; it is not invented from a saturation parameter.",
+        "Current point": "The diamond marks the current historical average input used as the reference point for this view.",
+        "Average CPA": "Spend divided by incremental outcomes at a point on the curve.",
+        "Marginal CPA": "The change in spend divided by the change in incremental outcomes between nearby points.",
+        "Unavailable economics": "CPA or ROI is left unavailable when a governed cost translation or a positive response change is not available.",
+    },
+    normal_path="Use exploratory curves to understand response evidence, then use the separate Planning Curves workflow when a governed planning curve is required.",
+    downstream="The selected outcome, market context, support, and cost mapping determine which response and economic views are shown.",
+    invalidates="Changing the fit, outcome definition, mapping, or governed context can make a curve snapshot stale; official curves require their own readiness and approval checks.",
+)
+render_technical_details(
+    details={
+        "Curve source": "Exploratory views are generated from the current fitted posterior and model frame; official curve artifacts are rendered separately with governance checks.",
+        "Economic units": "Monetary CPA/ROI is shown only when an approved cost translation maps the model-input units to currency. TVRs, impressions, clicks, GRPs, and spend are not treated as interchangeable.",
+        "Uncertainty": "Posterior bands use sampled posterior draws when requested; the displayed support range remains historical observed support.",
+    }
+)
 
 _dashboard_meta = get_state("model_meta")
 _dashboard_trained = all(
@@ -209,15 +233,12 @@ def _render_curve_with_cpa(
         )
     st.markdown("**Spend curve with CPA**")
     st.caption(
-        "**Spend scope: channel-incremental** - this channel's own response curve at varying spend, "
-        "holding every other channel fixed (`channel_incremental_cost_per_fh_gsa`, alias `avg_cpa`/"
-        "`cost_per_fh_gsa`) - never a whole-plan number (see Scenario Planner for that scope instead). "
-        "Average CPA = spend / incremental outcomes; marginal CPA = change in spend / change in "
-        "incremental outcomes - both shown together since they diverge near saturation. Left blank "
-        "wherever response (or its change between points) is zero or negative. Against Family History "
-        "GSA outcomes only; where this channel also has a mapped DNA-kit outcome or a distinct FH "
-        "sign-up outcome, `dna_avg_cpa`/`cost_per_dna_kit` and `fh_signup_avg_cpa`/`cost_per_fh_signup` "
-        "are shown separately - none of the three are ever combined into one number."
+        "**Channel view:** this channel's incremental response as its media input changes, "
+        "holding other channels at the reference conditions. It is not a whole-plan result. "
+        "Average CPA is spend divided by incremental outcomes; marginal CPA is the change in "
+        "spend divided by the change in incremental outcomes. They diverge near saturation and "
+        "are shown separately for each approved outcome. Economics are unavailable when the "
+        "response change is zero or negative, or when a valid cost translation is missing."
     )
     st.dataframe(cpa_df, width="stretch", column_config=dataframe_column_config(cpa_df))
     for f in cpa_stability_flags(curve_df)[:5]:

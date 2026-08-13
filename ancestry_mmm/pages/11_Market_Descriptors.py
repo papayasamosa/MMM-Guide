@@ -26,7 +26,9 @@ from ancestry_mmm.components import (
     render_page_header,
     render_next_step,
     render_empty_state,
-    render_glossary,
+    render_definition_help,
+    render_decision_help,
+    render_technical_details,
     page_readiness,
     render_workspace_note,
     SectionCard,
@@ -70,7 +72,29 @@ if not spec_dict or df is None:
     st.stop()
 
 spec = ModelSpec.from_dict(spec_dict)
-render_glossary(["Partial pooling"])
+render_definition_help(
+    "partial pooling",
+    "Market-level responses can differ while borrowing strength from one another, which helps smaller markets avoid unstable estimates.",
+)
+render_decision_help(
+    "How should I use market context?",
+    controls="The local/reporting currency used for monetary views, plus optional descriptive context about each market.",
+    why="Currency is needed for valid monetary conversion. Descriptors help analysts interpret a market but must not be mistaken for observed model data or a required modelling input.",
+    options={
+        "Currency": "Enter the governed ISO currency needed for monetary curves, CPA, and ROI.",
+        "Optional descriptors": "Add audience, penetration, awareness, or maturity context only when it is useful for interpretation.",
+        "Missing context": "Leave optional descriptors blank when they are unavailable; this does not block modelling readiness by itself.",
+    },
+    normal_path="Set currency where monetary reporting is needed, add optional context when supported, then save and review any downstream freshness message.",
+    downstream="Currency affects monetary conversion and model identity. Descriptors remain informational and do not explain fitted market differences automatically.",
+    invalidates="Saving a currency change can stale fit and downstream economic evidence. Editing optional descriptors alone does not change the model calculation contract.",
+)
+render_technical_details(
+    details={
+        "Persisted identity": "Currency configuration participates in the model specification identity when saved; optional descriptor fields are retained as informational context only.",
+        "Data boundary": "Descriptors are not substituted for observed model data and are not currently used as model covariates.",
+    }
+)
 
 st.markdown("---")
 st.info(
@@ -79,7 +103,7 @@ st.info(
     "used to explain market-level curve differences."
 )
 st.caption(
-    "This context supports market interpretation and is included in the model identity when saved."
+    "Currency supports monetary interpretation; optional descriptors support market context. They are shown separately so optional information is not mistaken for a modelling requirement."
 )
 
 config_dict = get_state("market_spec_config")

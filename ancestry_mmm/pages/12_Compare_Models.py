@@ -21,7 +21,9 @@ from ancestry_mmm.components import (
     render_sidebar,
     render_page_header,
     render_next_step,
-    render_glossary,
+    render_definition_help,
+    render_decision_help,
+    render_technical_details,
     render_workspace_note,
     SectionCard,
     render_status_badge,
@@ -43,8 +45,31 @@ render_page_header(
     "compare_models",
     task_prompt="Which fitted candidate should be taken forward?",
 )
-render_glossary(
-    ["Model comparison", "Market-specific curve", "Shrinkage", "Partial pooling"]
+render_decision_help(
+    "How should I compare fitted candidates?",
+    controls="Convergence, predictive fit, posterior predictive coverage, and plausibility are reviewed as separate evidence dimensions.",
+    why="A candidate can converge cleanly and still fit poorly, or fit well while its effects remain difficult to distinguish. One score would hide those trade-offs.",
+    options={
+        "Convergence": "Check R-hat, effective sample size, and divergences for reliable posterior sampling.",
+        "Predictive fit": "Review in-sample fit and error metrics for how closely the model follows observed outcomes.",
+        "Posterior predictive coverage": "Check whether simulated outcomes cover the observed data at the intended level.",
+        "Plausibility": "Inspect flags and domain knowledge before taking a candidate forward.",
+    },
+    normal_path="Review the independent dimensions, inspect the chosen candidate in detail, then take it to Diagnostics for the formal readiness and approval workflow.",
+    downstream="The selected candidate determines which model identity, posterior evidence, curves, and diagnostics are carried forward.",
+    invalidates="Selecting a candidate does not alter a fit. Any changed candidate configuration or newly fitted posterior requires fresh diagnostics and approval.",
+)
+render_definition_help(
+    "R-hat",
+    "A convergence check comparing variation within and between sampling chains; values close to 1 indicate the chains are behaving consistently.",
+)
+render_definition_help(
+    "effective sample size",
+    "An estimate of how much independent information remains in the posterior draws after accounting for autocorrelation.",
+)
+render_definition_help(
+    "posterior predictive coverage",
+    "The share of observed outcomes that falls inside the model's posterior predictive interval.",
 )
 render_workspace_note(
     "Decision rule",
@@ -118,7 +143,14 @@ else:
     chosen_label = st.selectbox("Candidate", labels)
     chosen = next(c for c in candidates if c.label == chosen_label)
     st.caption(
-        f"Model run: `{chosen.model_run_id[:8]}` - {chosen.n_plausibility_flags} plausibility flag(s)."
+        f"{chosen.n_plausibility_flags} plausibility flag(s) for this candidate."
+    )
+    render_technical_details(
+        details={
+            "Model run ID": chosen.model_run_id,
+            "Candidate label": chosen.label,
+            "Stored evidence": "The full comparison table retains convergence, fit, predictive coverage, and plausibility evidence separately; no composite score is stored.",
+        }
     )
 
     tab_conv, tab_fit, tab_ppc = st.tabs(
