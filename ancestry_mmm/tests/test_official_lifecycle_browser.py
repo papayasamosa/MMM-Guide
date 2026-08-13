@@ -235,9 +235,9 @@ def test_official_lifecycle_journey_in_browser(
             exact=True,
         )
     ).to_be_visible(timeout=30_000)
-    expect(
-        page.get_by_text(re.compile(r"Restored \d+ official curve artifact"))
-    ).to_be_visible(timeout=30_000)
+    expect(page.get_by_text(re.compile(r"Restored \d+ Planning Curve"))).to_be_visible(
+        timeout=30_000
+    )
     # A bundle can import "successfully" while still being unable to resume
     # its own saved scenario (e.g. missing raw source data) - the page's own
     # resumability audit is the thing that actually proves this fixture

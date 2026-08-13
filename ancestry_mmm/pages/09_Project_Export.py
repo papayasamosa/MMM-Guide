@@ -129,30 +129,30 @@ _CURVE_SERVICE = CurveService()
 # from the bundle's own manifest after a real build/import, rather than
 # re-deriving a second, possibly-drifting notion of bundle contents here.
 _CONTAINS_LABELS = {
-    "raw_data": "Raw uploaded source data",
-    "transformed_data": "Transformed / joined data",
-    "model_spec": "Model structure (segments, markets, channels)",
-    "posterior": "Fitted model draws",
+    "raw_data": "Original source files and tables",
+    "transformed_data": "Prepared modelling data",
+    "model_spec": "Model definition (segments, markets, channels)",
+    "posterior": "Fitted model and posterior draws",
     "diagnostics": "Diagnostics scorecard / backtest results",
-    "curves": "Legacy curve bank entries",
-    "official_curve_artifacts": "Planning Curves",
-    "approval": "Model approval",
+    "curves": "Exploratory curve snapshots",
+    "official_curve_artifacts": "Governed Planning Curves",
+    "approval": "Model approval record",
     "outcome_approvals": "Outcome approvals",
     "scenarios": "Saved scenarios",
     "notes": "Analyst notes",
-    "validation_policy": "Validation / threshold policy",
-    "diagnostics_artefact": "Diagnostic evidence",
+    "validation_policy": "Validation policy and thresholds",
+    "diagnostics_artefact": "Diagnostic evidence record",
     "validation_results": "Validation results",
     "approval_readiness": "Approval readiness evidence",
     "counterfactual_policy": "Counterfactual policy",
     "currency_context": "Currency context",
     "value_mapping": "Outcome value mapping",
     "causal_graphs": "Causal graph versions",
-    "search_objects": "Search object versions",
-    "source_versions": "Source upload version history",
-    "source_definitions": "Source logical-domain definitions",
-    "variable_coverage_matrices": "Variable coverage matrix versions",
-    "join_config": "Join configuration",
+    "search_objects": "Search definitions and versions",
+    "source_versions": "Source file version history",
+    "source_definitions": "Source categories and roles",
+    "variable_coverage_matrices": "Coverage and frequency review history",
+    "join_config": "Source join settings",
 }
 
 _CHECKPOINT_LABELS = {
@@ -487,12 +487,10 @@ with SectionCard(
         st.markdown("**Current project**")
         st.caption(f"Project name: {get_state('project_name', 'ancestry-fh-uk')}")
         st.caption(
-            f"Data sources loaded: {len(get_state('raw_sources') or {})} "
+            f"Source files/tables loaded: {len(get_state('raw_sources') or {})} "
             f"(source versions recorded: {len(get_state('source_versions') or [])})"
         )
-        st.caption(
-            f"Transformation pipeline steps: {len(get_state('pipeline_steps') or [])}"
-        )
+        st.caption(f"Preparation steps saved: {len(get_state('pipeline_steps') or [])}")
         _model_run_id = get_state("model_run_id")
         st.caption(
             "Fitted model: "
@@ -503,19 +501,23 @@ with SectionCard(
             f"Causal graph versions saved: {len(get_state('causal_graph_versions') or [])}"
         )
         st.caption(
-            "Search object versions saved: "
+            "Search definitions saved: "
             f"{len(get_state('search_object_versions') or [])}"
         )
         st.caption(
-            "Coverage matrix versions saved: "
+            "Coverage and frequency reviews saved: "
             f"{len(get_state('variable_coverage_matrix_versions') or [])}"
         )
-        st.caption(f"Legacy curve bank entries: {len(_curve_bank_entries)}")
+        st.caption(f"Exploratory curve snapshots: {len(_curve_bank_entries)}")
         st.caption(
-            f"Official curve artifacts: {len(_official_curve_artifact_rows)} "
-            f"({_authorized_artifact_count} currently authorized for headline reporting)"
+            f"Saved Planning Curves: {len(_official_curve_artifact_rows)} "
+            f"({_authorized_artifact_count} currently authorised for headline reporting)"
             if _official_curve_artifact_rows
-            else "Official curve artifacts: none generated yet"
+            else "Saved Planning Curves: none created yet"
+        )
+        st.caption(
+            "Activity taxonomy entries saved: "
+            f"{len(get_state('activity_definitions') or [])}"
         )
         st.caption(f"Saved scenarios: {len(get_state('scenarios') or [])}")
     with _status_col2:
@@ -731,7 +733,8 @@ if st.button("Build export bundle", type="primary"):
 st.markdown("---")
 st.markdown("### Restore from a project bundle")
 st.caption(
-    "Restore a bundle from another analyst, session, or date. Restored artefacts are re-verified before official use."
+    "Restore a bundle from another analyst, session, or date. Restored project "
+    "evidence is re-verified before official use."
 )
 uploaded_zip = st.file_uploader("Upload a previously exported .zip", type=["zip"])
 if uploaded_zip is not None and st.button("Import bundle"):
@@ -1004,16 +1007,16 @@ if uploaded_zip is not None and st.button("Import bundle"):
             else:
                 if artifact_load_result.malformed:
                     st.warning(
-                        f"{len(artifact_load_result.malformed)} imported official "
-                        "curve artifact(s) failed to verify and are reported below "
+                        f"{len(artifact_load_result.malformed)} imported Planning "
+                        "Curve(s) failed to verify and are reported below "
                         "- never silently skipped."
                     )
                     for entry in artifact_load_result.malformed:
                         st.caption(f"{entry.artifact_dir.name}: {entry.error}")
                 if artifact_load_result.loaded:
                     st.success(
-                        f"Restored {len(artifact_load_result.loaded)} official "
-                        "curve artifact(s) and verified their stored integrity."
+                        f"Restored {len(artifact_load_result.loaded)} Planning "
+                        "Curve(s) and verified their stored integrity."
                     )
         if imported["market_spec_config"] is None:
             st.caption(
