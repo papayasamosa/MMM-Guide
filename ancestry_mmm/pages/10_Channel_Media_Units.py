@@ -47,6 +47,8 @@ from ancestry_mmm.core.market_config import (
 from ancestry_mmm.core.activities import (
     APPROVAL_STATUSES,
     ECONOMIC_TREATMENTS,
+    FUNNEL_STAGES,
+    MARKETING_OBJECTIVE_SUGGESTIONS,
     MODEL_ROLES,
     OWNERSHIP,
     PLANNING_ELIGIBILITY,
@@ -173,6 +175,8 @@ else:
             campaign_type="",
             product_advertised="",
             message_type="",
+            marketing_objective="",
+            funnel_stage="unclassified",
             model_input_column=channel,
             activity_ownership="paid",
             model_role="intervention",
@@ -192,6 +196,9 @@ activity_columns = [
     "campaign_type",
     "product_advertised",
     "message_type",
+    "marketing_objective",
+    "funnel_stage",
+    "pooling_group_id",
     "model_input_column",
     "activity_ownership",
     "model_role",
@@ -215,6 +222,7 @@ _activity_enum_values = {
     "economic_treatment": ECONOMIC_TREATMENTS,
     "planning_eligibility": PLANNING_ELIGIBILITY,
     "approval_status": APPROVAL_STATUSES,
+    "funnel_stage": FUNNEL_STAGES,
 }
 _activity_editor_df = display_enum_frame(
     pd.DataFrame(activity_rows).reindex(columns=activity_columns),
@@ -247,10 +255,41 @@ activity_editor = st.data_editor(
                 "may share it when their model-input columns differ."
             ),
         ),
-        "platform": st.column_config.TextColumn("Platform"),
-        "campaign_type": st.column_config.TextColumn("Campaign type"),
-        "product_advertised": st.column_config.TextColumn("Product advertised"),
-        "message_type": st.column_config.TextColumn("Message type"),
+        "platform": st.column_config.TextColumn(
+            "Platform / supplier",
+            help="Platform or supplier, such as Meta, Google Ads, Email, or a TV network. It is separate from the reporting channel.",
+        ),
+        "campaign_type": st.column_config.TextColumn(
+            "Campaign / tactic",
+            help="Execution or tactic, such as prospecting, newsletter, lifecycle, winback, promotional, or transactional.",
+        ),
+        "product_advertised": st.column_config.TextColumn(
+            "Product advertised",
+            help="Product promoted by the activity; keep it separate from the model outcome and pathway target.",
+        ),
+        "message_type": st.column_config.TextColumn(
+            "Message / content",
+            help="Content or message type, such as brand/editorial, educational, offer/discount, product, reminder, or service.",
+        ),
+        "marketing_objective": st.column_config.TextColumn(
+            "Marketing objective",
+            help=(
+                "Optional normalized business purpose, separate from campaign and message. "
+                "Suggestions: "
+                + ", ".join(MARKETING_OBJECTIVE_SUGGESTIONS)
+                + ". Never inferred from names or platform."
+            ),
+        ),
+        "funnel_stage": st.column_config.SelectboxColumn(
+            "Funnel stage",
+            options=display_enum_options(FUNNEL_STAGES),
+            required=True,
+            help="Explicit reporting classification only. It does not create a causal edge, mediator, model role, prior, or planning permission.",
+        ),
+        "pooling_group_id": st.column_config.TextColumn(
+            "Comparable activity group",
+            help="Optional stable identity for comparable activities across markets. It never enables statistical pooling by itself.",
+        ),
         "model_input_column": st.column_config.SelectboxColumn(
             "Media input column",
             options=spec.channels,
@@ -303,19 +342,6 @@ activity_editor = restore_enum_frame(
     _activity_enum_values,
 )
 
-# REQ-DATAIN-001 review finding: pooling_group_id is not an editable
-# column in this grid (activity_columns above), so reconstructing every
-# row's ActivityDefinition without carrying it forward would silently wipe
-# a previously-set cross-market identity on *any* unrelated edit through
-# this page. Look it up by (market, activity_id) - the same key already
-# used for duplicate detection below - from the pre-edit roster.
-_existing_pooling_group_ids = {
-    (str(item.get("market", "*")), str(item.get("activity_id", ""))): item.get(
-        "pooling_group_id"
-    )
-    for item in existing_activity_items
-}
-
 activity_definitions = []
 activity_errors = []
 seen_keys = set()
@@ -339,12 +365,14 @@ for row_number, row in activity_editor.fillna("").iterrows():
                 campaign_type=str(row["campaign_type"]),
                 product_advertised=str(row["product_advertised"]),
                 message_type=str(row["message_type"]),
+                marketing_objective=str(row["marketing_objective"]),
+                funnel_stage=str(row["funnel_stage"]),
                 model_input_column=str(row["model_input_column"]),
                 activity_ownership=str(row["activity_ownership"]),
                 model_role=str(row["model_role"]),
                 economic_treatment=str(row["economic_treatment"]),
                 planning_eligibility=str(row["planning_eligibility"]),
-                pooling_group_id=_existing_pooling_group_ids.get(activity_key),
+                pooling_group_id=str(row["pooling_group_id"]).strip() or None,
                 pathway_ids=tuple(
                     item.strip()
                     for item in str(row["pathway_ids"]).split(",")

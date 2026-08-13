@@ -2150,3 +2150,38 @@ Fixed by excluding `pooling_group_id` from `activity_definitions_fingerprint`'s 
 the same way it was already excluded from `activity_fit_fingerprint`. See
 `docs/approved_requirements/REQ-DATAIN-001.md`'s E3 resolved-decision note for the corrected
 description.
+
+## Governed activity taxonomy (Work Package 1)
+
+**Date:** 2026-08-13
+**Decision:** Extend `ActivityDefinition` (schema v3 → v4) with explicit
+`funnel_stage` and optional `marketing_objective` fields. `funnel_stage` uses
+the closed vocabulary `brand_upper`, `mid_funnel`, `performance_lower`,
+`cross_funnel`, `not_applicable`, and `unclassified`; missing legacy values
+migrate to `unclassified` and an empty objective without name/platform/source
+inference. The Media Mapping editor exposes both fields and the existing
+`pooling_group_id`, while preserving platform, campaign, product, message and
+shared reporting-channel semantics.
+**Reason:** Work Package 1 requires a reproducible reporting taxonomy while
+the repository's existing `ActivityDefinition` already owns the activity
+identity and persistence contract. Funnel stage is descriptive metadata, not
+a causal role, graph edge, model prior, coefficient, planning permission, or
+optimisation rule. `marketing_objective` remains a normalized string with UI
+suggestions rather than an invented closed business enum.
+**Alternatives considered:** Inferring funnel stage from channel, platform,
+campaign type, message type or source-column names (rejected - those mappings
+are ambiguous and the approved brief explicitly requires explicit
+classification). Adding taxonomy fields to `ModelSpec.channels` or making
+them fit-relevant (rejected - `channel` is a reporting roll-up and taxonomy
+changes do not change model equations). Adding taxonomy to the hard
+curve/scenario fingerprint (rejected - materialised grouped reports need a
+separate `activity_reporting_fingerprint`, while fit and curve identity must
+remain unchanged for descriptive edits).
+**Impact:** `core.activities.ActivityDefinition`, explicit legacy migration,
+`activity_reporting_fingerprint`, Media Mapping UI, display labels, project
+round-trip coverage, and `REQ-ACTIVITY-001`. No model equations, graph
+structure, pooling configuration, attribution aggregation or mixed-frequency
+behaviour changed. Real UK end-to-end data validation: DEFERRED pending
+source-data availability.
+**Owner:** Platform engineering / Data Science.
+**Status:** Accepted; implementation in Work Package 1.

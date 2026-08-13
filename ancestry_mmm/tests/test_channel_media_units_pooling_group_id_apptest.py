@@ -66,6 +66,8 @@ def test_save_preserves_pooling_group_id_through_an_unrelated_edit():
         economic_treatment="paid_media_cost",
         planning_eligibility="optimisable",
         pooling_group_id="tv-brand-uk-au",
+        marketing_objective="brand awareness",
+        funnel_stage="brand_upper",
         source="activity governance UI",
     )
     at = _run_at(df, spec, activity_definitions=[existing.to_dict()])
@@ -80,6 +82,8 @@ def test_save_preserves_pooling_group_id_through_an_unrelated_edit():
     saved = at.session_state["activity_definitions"]
     assert len(saved) == 1
     assert saved[0]["pooling_group_id"] == "tv-brand-uk-au"
+    assert saved[0]["marketing_objective"] == "brand awareness"
+    assert saved[0]["funnel_stage"] == "brand_upper"
 
 
 def test_save_does_not_fabricate_pooling_group_id_for_a_new_row():

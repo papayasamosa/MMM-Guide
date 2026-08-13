@@ -365,6 +365,27 @@
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable"
       ]
+    },
+    {
+      "requirement_id": "REQ-ACTIVITY-001",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-ACTIVITY-001.md",
+      "affected_modules": [
+        "ancestry_mmm/core/activities.py",
+        "ancestry_mmm/pages/10_Channel_Media_Units.py",
+        "ancestry_mmm/utils/display.py",
+        "ancestry_mmm/tests/test_activities.py",
+        "ancestry_mmm/tests/test_channel_media_units_pooling_group_id_apptest.py"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable"
+      ]
     }
   ]
 }
