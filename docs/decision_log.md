@@ -2544,3 +2544,35 @@ separate governed capability and is not invented by this phase.
 
 **Owner:** Platform engineering / Data Science.
 **Status:** Implemented in UX/UI coherence Phase 4.
+
+## Diagnostics and model-comparison language (UX/UI coherence Phase 5)
+
+**Date:** 2026-08-13
+**Decision:** Lead Diagnostics drift messaging with the analyst consequence:
+outcome definitions have changed since the model was fitted. Show the affected
+outcomes with human-readable labels and what action is needed, while retaining
+exact outcome IDs and status keys in collapsed Technical details. Describe
+Model Comparison candidates by their response structure before any internal
+aliasing.
+
+**Reason:** The previous drift message exposed repository vocabulary and an
+internal catalogue metaphor before explaining what the analyst should do.
+The comparison introduction likewise led with A/B/C aliases even though the
+decision depends on shared, independent, or partially pooled response
+structures.
+
+**Impact:** Updated the shared drift component used across analytical pages,
+Diagnostics model labels, Model Comparison guidance, and their tests. The
+existing changed/removed blocking statuses, independent evidence dimensions,
+stored identifiers, and approval/readiness behaviour are unchanged. Business
+question: have outcome definitions changed since this model was fitted, what
+does that mean for current evidence, and which model structure is being
+compared? Estimand: none introduced. Output scale/units: presentation copy and
+human-readable outcome-definition change summaries; underlying outcome values
+and diagnostic units are unchanged. Upstream modelling references: none
+consulted because this package changes presentation only and does not change
+PyMC or PyMC Marketing model APIs. Remaining limitation: exact model-run and
+outcome identifiers remain technical fields for audit and recovery.
+
+**Owner:** Platform engineering / Data Science.
+**Status:** Implemented in UX/UI coherence Phase 5.

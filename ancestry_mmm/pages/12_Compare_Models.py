@@ -78,16 +78,17 @@ render_workspace_note(
 )
 
 st.markdown(
-    "Three candidate model structures are worth comparing before trusting a market-specific fit: "
-    "**Shared response across markets** (Model A), **independent single-market response** (Model B), "
-    "and **market-specific response with partial pooling** (Model C). The partially pooled model isn't "
-    "adopted just for being more sophisticated - it should show comparable-or-better prediction, "
-    "credible market differentiation, and acceptable diagnostics."
+    "Three candidate model structures are worth comparing before trusting a "
+    "market-specific fit: **shared response across markets**, **independent "
+    "single-market response**, and **market-specific response with partial "
+    "pooling**. The partially pooled model is not adopted just for being more "
+    "sophisticated - it should show comparable-or-better prediction, credible "
+    "market differentiation, and acceptable diagnostics."
 )
 st.caption(
     "To get an independent single-market candidate: go to Model Structure, select a single market, save, "
     "then fit and save a candidate on Fit Model as usual - fitting the shared-response model "
-    "against one market's data *is* an independent single-market fit."
+    "against one market's data is the independent single-market comparison."
 )
 
 candidate_dicts = get_state("model_comparison_candidates") or []

@@ -70,8 +70,11 @@ def test_calculation_relevant_drift_shows_warning_by_default(monkeypatch):
     had_drift = ui_module.render_drift_status(outcomes, model_meta)
     assert had_drift is True
     assert len(calls["warning"]) == 1
-    assert "fh_new" in calls["warning"][0]
-    assert "Changed since fit" in calls["warning"][0]
+    assert (
+        "Outcome definitions have changed since this model was fitted"
+        in calls["warning"][0]
+    )
+    assert "Refit the model" in calls["warning"][0]
     assert calls["error"] == []
 
 

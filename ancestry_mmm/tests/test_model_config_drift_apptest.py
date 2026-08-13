@@ -66,7 +66,7 @@ def test_no_model_meta_shows_no_drift_warning():
     assert len(at.warning) == 0
 
 
-def test_changed_catalogue_shows_drift_warning_with_exact_field():
+def test_changed_catalogue_shows_human_warning_and_technical_details():
     df, spec, outcome_defs = _base_state()
     fit_time_outcome = OutcomeDefinition(
         outcome_id="fh_new",
@@ -87,5 +87,13 @@ def test_changed_catalogue_shows_drift_warning_with_exact_field():
     assert not at.exception, f"page raised: {at.exception}"
 
     assert len(at.warning) == 1
-    assert "fh_new" in at.warning[0].value
-    assert "Changed since fit" in at.warning[0].value
+    assert (
+        "Outcome definitions have changed since this model was fitted"
+        in at.warning[0].value
+    )
+    assert "Refit the model" in at.warning[0].value
+    assert any(
+        expander.label == "Technical details · outcome definition changes"
+        for expander in at.expander
+    )
+    assert any("fh_new" in (markdown.value or "") for markdown in at.markdown)
