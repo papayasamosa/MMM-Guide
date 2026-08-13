@@ -2576,3 +2576,43 @@ outcome identifiers remain technical fields for audit and recovery.
 
 **Owner:** Platform engineering / Data Science.
 **Status:** Implemented in UX/UI coherence Phase 5.
+
+## Results language and reporting views (UX/UI coherence Phase 6)
+
+**Date:** 2026-08-13
+**Decision:** Present Results as fitted contribution evidence, exploratory
+response curves, official response curves, and saved parameter snapshots.
+Reporting roll-ups are labelled by the analyst question they answer: funnel
+group, channel and platform, or activity. Funnel group remains a reporting
+dimension rather than a causal or mediation label, and direct, mediated,
+cross-product, halo, residual-interaction, and total effects remain separate.
+Stable outcome IDs, roll-up status keys, and saved-curve identifiers remain
+available in collapsed Technical details.
+
+**Reason:** The Results page had accumulated storage-oriented language such as
+artifact store, legacy viewers, and curve-bank terminology. The reporting tabs
+also exposed schema dimensions and technical roll-up flags before explaining
+what the view was for. The revised hierarchy should help an analyst choose the
+right level of reporting without weakening the causal and governance
+distinctions.
+
+**Impact:** Updated Results headings, captions, contribution tables, waterfall
+selectors, official response-curve summaries, reporting-view tabs, and saved
+parameter history labels. Visible tables now use human-readable outcome and
+effect labels; technical identifiers and aggregation metadata are disclosed
+secondarily. Posterior-draw aggregation, response values, curve economics,
+effect taxonomy, authorization gates, persistence keys, and approval semantics
+are unchanged. No analytical or governance behaviour changed. Business
+question: can an analyst understand what each Results view answers, retain
+context while moving from funnel to channel/platform to activity, and tell
+exploratory evidence from official response curves? Estimand: none introduced.
+Output scale/units: existing outcome-scale incremental response, spend/cost
+measures, posterior uncertainty summaries, and model-input or monetary curve
+axes; only their presentation labels and grouping context changed. Upstream
+modelling references: none consulted because this package changes presentation
+only and does not change PyMC or PyMC Marketing model APIs. Remaining
+limitation: browser screenshot verification uses the repository's CI browser
+journey because an interactive browser was unavailable in the local session.
+
+**Owner:** Platform engineering / Data Science.
+**Status:** Implemented in UX/UI coherence Phase 6.

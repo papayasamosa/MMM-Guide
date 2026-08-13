@@ -337,7 +337,7 @@ def test_official_approval_with_matching_policy_and_readiness_allows_save():
     at.run()
     assert not at.exception, f"page raised: {at.exception}"
     assert any(
-        "will record this approval on every curve entry (fitted parameter snapshot) saved"
+        "this approval will be recorded with each saved parameter snapshot"
         in (c.value or "")
         for c in at.caption
     )
@@ -470,12 +470,12 @@ def test_curve_bank_section_labels_entries_as_parameter_snapshots_not_official()
     # Section caption under "## Curve bank" carries the qualifier.
     assert "fitted parameter snapshots" in source
     # The save flow labels what is saved as a fitted parameter snapshot.
-    assert "every curve entry (fitted parameter snapshot) saved" in source
+    assert "saved parameter snapshot" in source
     # The legacy curve bank is never called official.
     assert "official curve bank" not in source
     # The qualifier caption points to the official section as the only
     # official rendering path.
-    assert "'Official curve artifacts' section." in source
+    assert "Official response curves" in source
 
 
 # ---------------------------------------------------------------------------
@@ -613,14 +613,31 @@ def test_official_curve_artifact_renders_when_authorized(monkeypatch, tmp_path):
     at.run()
     assert not at.exception, f"page raised: {at.exception}"
     assert any(
-        "governed official response-curve artifact store" in (c.value or "")
+        "Saved response curves that have passed" in (c.value or "") for c in at.caption
+    )
+    assert any("art-official-1" in (markdown.value or "") for markdown in at.markdown)
+    # Exploratory viewers stay clearly separate from official response curves.
+    assert any(
+        "Exploratory response curve (point estimates)" in (c.value or "")
         for c in at.caption
     )
-    assert any("art-official-1" in str(df.value) for df in at.dataframe)
-    # The legacy viewers must stay labelled exploratory, not official.
-    assert any(
-        "Exploratory / legacy (point estimates)" in (c.value or "") for c in at.caption
-    )
+    assert [
+        tab.label
+        for tab in at.tabs
+        if tab.label
+        in {
+            "By funnel group",
+            "By channel and platform",
+            "By activity",
+        }
+    ] == ["By funnel group", "By channel and platform", "By activity"]
+    reporting_tables = [
+        dataframe.value
+        for dataframe in at.dataframe
+        if "Effect component" in getattr(dataframe.value, "columns", [])
+    ]
+    assert reporting_tables, "expected the reporting views to render"
+    assert all("outcome_id" not in dataframe.columns for dataframe in reporting_tables)
 
 
 def test_official_section_empty_store_shows_info(monkeypatch, tmp_path):
@@ -631,7 +648,10 @@ def test_official_section_empty_store_shows_info(monkeypatch, tmp_path):
     _patch_store_root(monkeypatch, tmp_path)
     at.run()
     assert not at.exception, f"page raised: {at.exception}"
-    assert any("No official curve artifacts exist" in (i.value or "") for i in at.info)
+    assert any(
+        "No official response curves have been saved" in (i.value or "")
+        for i in at.info
+    )
 
 
 def test_official_artifact_blocked_without_outcome_approval(monkeypatch, tmp_path):
@@ -647,7 +667,9 @@ def test_official_artifact_blocked_without_outcome_approval(monkeypatch, tmp_pat
     )
     at.run()
     assert not at.exception, f"page raised: {at.exception}"
-    assert any("cannot be resolved" in (w.value or "") for w in at.warning)
+    assert any(
+        "cannot be shown as official evidence" in (w.value or "") for w in at.warning
+    )
 
 
 def test_official_section_reports_malformed_artifact(monkeypatch, tmp_path):
@@ -663,7 +685,7 @@ def test_official_section_reports_malformed_artifact(monkeypatch, tmp_path):
     )
     at.run()
     assert not at.exception, f"page raised: {at.exception}"
-    assert any("malformed or unsupported" in (w.value or "") for w in at.warning)
+    assert any("could not be read" in (w.value or "") for w in at.warning)
 
 
 def test_official_artifact_blocked_when_approval_lacks_curve_publication(
@@ -695,10 +717,12 @@ def test_official_artifact_blocked_when_approval_lacks_curve_publication(
     at.run()
     assert not at.exception, f"page raised: {at.exception}"
     assert any(
-        "Not currently authorized for headline reporting" in (w.value or "")
+        "not currently approved for headline reporting" in (w.value or "")
         for w in at.warning
     )
-    assert not any("art-official-1" in str(df.value) for df in at.dataframe)
+    assert not any(
+        "art-official-1" in (markdown.value or "") for markdown in at.markdown
+    )
 
 
 def test_official_curve_chart_renders_for_model_input_curve_with_two_components(
@@ -789,12 +813,11 @@ def test_official_curve_chart_renders_for_model_input_curve_with_two_components(
     # snapshot.segment field, never the pre-existing bare outcome_id
     # ("New") the table already showed.
     meta_dataframes = [
-        df.value
-        for df in at.dataframe
-        if "artifact_id" in getattr(df.value, "columns", [])
+        df.value for df in at.dataframe if "Curve" in getattr(df.value, "columns", [])
     ]
-    assert meta_dataframes, "expected the official-artifact metadata table to render"
-    assert meta_dataframes[0]["segment"].iloc[0] == "NewSegment"
+    assert meta_dataframes, "expected the official response-curve summary to render"
+    assert meta_dataframes[0]["Curve"].iloc[0] == "Official response curve"
+    assert any("NewSegment" in (markdown.value or "") for markdown in at.markdown)
 
 
 # ---------------------------------------------------------------------------
@@ -930,9 +953,9 @@ def test_results_dashboard_separates_summary_and_exploratory_curve_context():
     captions = [c.value or "" for c in at.caption]
     assert any("Results dashboard" in text for text in markdown)
     assert any("Contribution summary" in text for text in markdown)
-    assert any("Response curve library" in text for text in markdown)
+    assert any("Exploratory response curves" in text for text in markdown)
     assert any(
-        "exploratory evidence" in text and "official published curve artifact" in text
+        "exploratory evidence" in text and "official response curves" in text
         for text in captions
     )
     metric_labels = {metric.label for metric in at.metric}

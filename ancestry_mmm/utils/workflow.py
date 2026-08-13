@@ -177,13 +177,14 @@ WORKFLOW_STEPS: List[Dict[str, Any]] = [
         "label": "Results & Response Curves",
         "path": "pages/07_Results_Curve_Bank.py",
         "title": "Results & Response Curves",
-        "purpose": "Review channel and segment contributions, then save an approved model's curves to the versioned curve bank.",
+        "purpose": "Review fitted contributions and response evidence, then continue to governed planning when required.",
         "steps": [
-            "Review contribution and DNA halo results.",
+            "Review contribution, reporting, and pathway results.",
+            "Review exploratory response evidence and observed support.",
             "Approve the model on Diagnostics if you haven't already.",
-            "Save the current curves to the curve bank.",
+            "Save parameter snapshots for calibration tracking, if needed.",
         ],
-        "next": "Generate a governed planning curve artifact in Planning Curves.",
+        "next": "Create a governed Planning Curve in Planning Curves.",
     },
     {
         "key": "official_curve_generation",
