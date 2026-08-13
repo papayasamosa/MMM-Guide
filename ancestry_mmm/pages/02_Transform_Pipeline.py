@@ -226,6 +226,12 @@ st.markdown("### Transformation sequence")
 st.caption(
     "Add a step, review its preview, and keep the ordered sequence saved with the project."
 )
+st.info(
+    "Exploratory transformations remain available here for analyst investigation. "
+    "They do not approve an official mixed-frequency conversion: interpolation, "
+    "allocation, forward-fill, and other fill choices must not be treated as an "
+    "official method."
+)
 
 steps_json = get_state("pipeline_steps") or []
 steps = pipeline_from_json(steps_json)

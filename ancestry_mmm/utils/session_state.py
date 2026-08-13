@@ -116,6 +116,14 @@ def init_session_state():
         # causal_graph_compiled_structural_fingerprint's live-comparison
         # staleness pattern.
         "variable_coverage_matrix_built_against_fingerprint": None,
+        # WP6: last read-only official-preparation decision. This is a
+        # derived review result, never a source-data or conversion artefact;
+        # it is cleared whenever model/data state is invalidated.
+        "official_preparation_result": None,
+        # Optional explicit project-calendar configuration. It is intentionally
+        # empty by default: official preparation must not infer a calendar
+        # from source intersection or observed dates.
+        "canonical_calendar": None,
         # Model configuration
         "prior_config": dict(DEFAULT_FH_PRIORS),
         "dna_lag_weeks": DEFAULT_DNA_LAG_WEEKS,
@@ -244,6 +252,7 @@ def clear_model_state() -> None:
         "validation_results",
         "approval_readiness",
         "validation_service_result",
+        "official_preparation_result",
     ]
     for key in model_keys:
         st.session_state[key] = None
