@@ -2776,3 +2776,32 @@ browser journey because the local connected browser was unavailable.
 
 **Owner:** Platform engineering / Data Science.
 **Status:** Implemented in UX/UI coherence Phase 11.
+
+## Analyst-readable typography (UX/UI coherence Phase 12)
+
+**Date:** 2026-08-13
+**Decision:** Raise the shared shell's smallest supporting text to a readable
+common scale, including navigation group labels, context labels, the sidebar
+footnote, workbench-note labels, captions, and metric labels. Preserve strong
+page and section hierarchy, allow status/context/metric text to wrap, and add
+responsive sidebar/context spacing at narrower target widths. Important copy
+must wrap before it is reduced to a tiny label.
+
+**Reason:** Several repeated shell labels were between roughly 0.66rem and
+0.72rem. That density made workflow context and analyst-facing qualifiers
+harder to scan, especially at the 1024px target width. A shared type scale
+improves readability without adding a brand font or changing page content.
+
+**Impact:** Presentation-only CSS/token changes and shell CSS tests. No page
+content, metrics, analytical calculations, workflow state, governance rules,
+or persistence behaviour changed. Business question: can an analyst read the
+workflow context, metric labels, captions, and technical qualifiers at the
+supported widths? Estimand: none introduced. Output scale/units: unchanged.
+Upstream modelling references: none consulted because this package changes
+presentation only and does not change PyMC or PyMC Marketing model APIs.
+Remaining limitation: interactive browser screenshot review uses the
+repository's synthetic-data browser journey because the local connected
+browser was unavailable.
+
+**Owner:** Platform engineering / Data Science.
+**Status:** Implemented in UX/UI coherence Phase 12.

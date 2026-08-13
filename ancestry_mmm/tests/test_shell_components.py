@@ -39,6 +39,22 @@ class TestTokens:
         assert "mmm-brand-lockup" in css
         assert "#0E1512" not in css
 
+    def test_typography_scale_keeps_supporting_text_readable_and_wraps(self):
+        css = tokens_module.shell_css()
+        assert tokens_module.TYPE_SCALE["micro"] == "0.74rem"
+        assert tokens_module.TYPE_SCALE["caption"] == "0.82rem"
+        for selector in (
+            ".mmm-nav-group",
+            ".mmm-context-label",
+            ".mmm-sidebar-footnote",
+            ".mmm-workbench-note-label",
+            '[data-testid="stMetricLabel"]',
+        ):
+            assert selector in css
+        assert '[data-testid="stCaptionContainer"]' in css
+        assert "white-space: normal" in css
+        assert "@media (max-width: 1100px)" in css
+
     def test_status_color_covers_every_semantic_key_status_badges_uses(self):
         used_color_keys = {c for (_, _, c) in status_module.STATUS_BADGES.values()}
         assert used_color_keys <= set(tokens_module.STATUS_COLOR.keys())

@@ -49,6 +49,16 @@ STATUS_COLOR = {
     "info": THEME_COLORS["info"],
 }
 
+# Shared type scale for shell chrome. Keep supporting labels readable at the
+# analytical workbench's target widths; important text should wrap before it
+# is reduced to a tiny micro-label (UX/UI coherence Phase 12, Finding 19).
+TYPE_SCALE = {
+    "micro": "0.74rem",
+    "caption": "0.82rem",
+    "body_small": "0.88rem",
+    "metric_label": "0.82rem",
+}
+
 
 def shell_css() -> str:
     """Return the shared CSS for shell chrome and analytical surfaces."""
@@ -107,8 +117,9 @@ def shell_css() -> str:
         margin-top: 0.5rem;
     }}
     .mmm-nav-group {{
-        font-size: 0.67rem;
+        font-size: {TYPE_SCALE["micro"]};
         letter-spacing: 0.12em;
+        line-height: 1.3;
         text-transform: uppercase;
         color: {TEXT["muted"]};
         margin: 1.2rem 0 0.35rem 0.35rem;
@@ -134,8 +145,8 @@ def shell_css() -> str:
     .mmm-sidebar-footnote {{
         border-top: 1px solid {SURFACE["border"]};
         color: {TEXT["muted"]};
-        font-size: 0.72rem;
-        line-height: 1.45;
+        font-size: {TYPE_SCALE["caption"]};
+        line-height: 1.5;
         margin-top: 1.2rem;
         padding: 0.75rem 0.35rem 0;
     }}
@@ -146,7 +157,7 @@ def shell_css() -> str:
         padding: 0.55rem 0 0.85rem;
         margin-bottom: 1.35rem;
         border-bottom: 1px solid {SURFACE["border"]};
-        font-size: 0.8rem;
+        font-size: {TYPE_SCALE["body_small"]};
         align-items: center;
     }}
     .mmm-context-item {{
@@ -156,14 +167,16 @@ def shell_css() -> str:
         min-width: 0;
     }}
     .mmm-context-label {{
-        font-size: 0.66rem;
+        font-size: {TYPE_SCALE["micro"]};
         letter-spacing: 0.05em;
+        line-height: 1.25;
         text-transform: uppercase;
         color: {TEXT["muted"]};
     }}
     .mmm-context-value {{
         color: {TEXT["primary"]};
         font-weight: 600;
+        line-height: 1.35;
         overflow-wrap: anywhere;
     }}
     /* Narrow dashboard cards must show the complete state value. Streamlit's
@@ -180,8 +193,14 @@ def shell_css() -> str:
     }}
     @media (max-width: 1100px) {{
         [data-testid="stMetricLabel"] p {{
-            font-size: 0.72rem;
-            line-height: 1.2;
+            font-size: {TYPE_SCALE["metric_label"]};
+            line-height: 1.3;
+        }}
+        .mmm-context-bar {{ gap: 0.85rem; }}
+        .mmm-context-item {{ flex: 1 1 10rem; }}
+        section[data-testid="stSidebar"] [data-testid="stPageLink-NavLink"] {{
+            line-height: 1.35;
+            min-height: 2.3rem;
         }}
         [data-testid="stMetricValue"] {{
             font-size: 1.45rem;
@@ -194,10 +213,12 @@ def shell_css() -> str:
         gap: 4px;
         padding: 2px 8px;
         border-radius: {RADIUS["sm"]};
-        font-size: 0.72rem;
+        font-size: {TYPE_SCALE["caption"]};
         font-weight: 650;
         border: 1px solid transparent;
-        white-space: nowrap;
+        line-height: 1.35;
+        max-width: 100%;
+        overflow-wrap: anywhere;
         margin-right: 6px;
     }}
     .mmm-panel-title {{
@@ -215,14 +236,14 @@ def shell_css() -> str:
     }}
     .mmm-task-prompt {{
         color: {TEXT["primary"]};
-        font-size: 0.86rem;
+        font-size: {TYPE_SCALE["body_small"]};
         line-height: 1.45;
         margin: -0.35rem 0 {SPACING["md"]};
         max-width: 72ch;
     }}
     .mmm-task-prompt span {{
         color: {TEXT["accent"]};
-        font-size: 0.68rem;
+        font-size: {TYPE_SCALE["micro"]};
         font-weight: 750;
         letter-spacing: 0.06em;
         margin-right: 0.45rem;
@@ -239,13 +260,14 @@ def shell_css() -> str:
     }}
     .mmm-next-step-label {{
         color: {TEXT["accent"]};
-        font-size: 0.68rem;
+        font-size: {TYPE_SCALE["micro"]};
         font-weight: 750;
         letter-spacing: 0.06em;
+        line-height: 1.3;
     }}
     .mmm-next-step-copy {{
         color: {TEXT["muted"]};
-        font-size: 0.86rem;
+        font-size: {TYPE_SCALE["body_small"]};
         line-height: 1.45;
     }}
     .mmm-workbench-note {{
@@ -262,15 +284,28 @@ def shell_css() -> str:
     .mmm-workbench-note.governed {{ border-left-color: {STATUS_COLOR["caution"]}; }}
     .mmm-workbench-note-label {{
         color: {TEXT["primary"]};
-        font-size: 0.68rem;
+        font-size: {TYPE_SCALE["micro"]};
         font-weight: 750;
         letter-spacing: 0.055em;
+        line-height: 1.3;
         text-transform: uppercase;
     }}
     .mmm-workbench-note-copy {{
         color: {TEXT["muted"]};
-        font-size: 0.82rem;
+        font-size: {TYPE_SCALE["body_small"]};
         line-height: 1.45;
+    }}
+    [data-testid="stCaptionContainer"] {{
+        font-size: {TYPE_SCALE["caption"]};
+        line-height: 1.4;
+    }}
+    [data-testid="stMetricLabel"] {{
+        font-size: {TYPE_SCALE["metric_label"]};
+        line-height: 1.3;
+    }}
+    [data-testid="stMetricLabel"] > div {{
+        overflow-wrap: anywhere;
+        white-space: normal;
     }}
     /* Native dividers are retained as structural spacing, not card borders. */
     hr {{
