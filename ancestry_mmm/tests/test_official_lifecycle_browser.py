@@ -370,7 +370,10 @@ def test_official_lifecycle_journey_in_browser(
     # scenario content is already proved by the AppTest and integration
     # test coverage.
     page.get_by_role("link", name="Scenario Planner").click()
-    expect(page.get_by_text("Saved scenarios", exact=True)).to_be_visible(
+    # The dashboard metric and the saved-scenario section intentionally share
+    # this analyst-facing label; either visible instance proves the page has
+    # loaded the saved-scenario workspace.
+    expect(page.get_by_text("Saved scenarios", exact=True).first).to_be_visible(
         timeout=30_000
     )
     expect(page.get_by_text("No scenarios saved yet.", exact=True)).not_to_be_visible()

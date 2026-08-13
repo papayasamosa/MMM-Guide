@@ -84,8 +84,8 @@ df = get_state("transformed_data")
 if not spec_dict or df is None:
     st.markdown("---")
     render_empty_state(
-        "No structure defined yet. Complete Structure: Segments & Markets first.",
-        button_label="Go to Structure: Segments & Markets",
+        "No model structure defined yet. Complete Model Structure first.",
+        button_label="Go to Model Structure",
         target_key="structure",
     )
     st.stop()
@@ -144,7 +144,7 @@ current_model_type = get_state("model_type", "shared")
 if n_markets < 2 and current_model_type == "market_specific":
     st.warning(
         "Market-specific curves need at least 2 markets; this project has 1. Falling back to the "
-        "shared-curve model. Add another market on Structure: Segments & Markets to use "
+        "shared-curve model. Add another market on Model Structure to use "
         "market-specific curves."
     )
     current_model_type = "shared"
@@ -439,7 +439,7 @@ else:
 if spec.dna_channels and not spec.fh_dna_cross_sell_outcome_id:
     st.warning(
         "DNA-targeted media is configured but no FH DNA cross-sell outcome was selected on the "
-        "Structure page - Model Training will fail to fit until one is chosen there (automatic "
+        "Model Structure - Fit Model will stop until one is chosen there (automatic "
         "name-based inference is no longer used for a live fit)."
     )
 _included_outcomes_section.__exit__(None, None, None)

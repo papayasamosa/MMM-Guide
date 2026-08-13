@@ -130,8 +130,8 @@ frame = get_state("frame")
 meta = get_state("model_meta")
 if trace is None or frame is None or meta is None:
     render_empty_state(
-        "No trained model yet. Complete Model Training first.",
-        button_label="Go to Model Training",
+        "No fitted model yet. Complete Fit Model first.",
+        button_label="Go to Fit Model",
         target_key="model_training",
     )
     st.stop()
@@ -160,10 +160,10 @@ if spec_dict:
         ]
         if not _changed_pathways.empty:
             st.warning(
-                f"{len(_changed_pathways)} media-outcome pathway(s) differ from this fit's captured "
-                "pathway metadata - since PR G1 the pathway catalogue drives which coefficients get "
-                "estimated, so this fit's results no longer reflect the catalogue currently configured "
-                "on the Structure page. Re-run Model Training to pick up the change."
+                f"{len(_changed_pathways)} media-outcome pathway(s) differ from this fit's saved "
+                "pathway setup. These results no longer reflect the pathways currently configured "
+                "on Model Structure. Refit the model before relying on these diagnostics or using "
+                "the results downstream."
             )
 
 posterior_params = get_state("posterior_params")
@@ -842,14 +842,13 @@ elif not scorecard:
 elif not activity_governance_ready:
     st.error(
         "Model approval is blocked until Activity & causal-role governance "
-        "is complete and approved on Channel & Media Units: "
+        "is complete and approved on Media Mapping: "
         + "; ".join(activity_governance_errors)
     )
 elif current_identity is None:
     st.warning(
-        "Can't approve yet: the current model run's identity (run ID, data/specification/"
-        "posterior fingerprints) isn't fully available. This shouldn't normally happen once "
-        "a model has trained - try recomputing the scorecard, or retrain if the problem persists."
+        "Can't approve yet: the current fit's verification details are incomplete. "
+        "Recompute the scorecard, or refit the model if the problem persists."
     )
 elif validation_policy_dict is None:
     st.warning(
@@ -1187,7 +1186,7 @@ st.markdown("### Out-of-sample accuracy (expanding-window backtest)")
 st.caption(
     "Each fold refits the full model on an expanding training window and evaluates the next "
     "held-out block - this can take a while (it's a real fit per fold). Use a reduced draws/tune "
-    "budget for a quicker check. Refits use the model structure chosen on Model Configuration "
+    "budget for a quicker check. Refits use the model structure chosen on Model Setup "
     f"({MODEL_TYPE_LABEL.get(model_type, model_type)})."
 )
 

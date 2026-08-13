@@ -81,8 +81,8 @@ df = get_state("transformed_data")
 if not spec_dict or df is None:
     st.markdown("---")
     render_empty_state(
-        "No structure defined yet. Complete Structure: Segments & Markets first.",
-        button_label="Go to Structure: Segments & Markets",
+        "No model structure defined yet. Complete Model Structure first.",
+        button_label="Go to Model Structure",
         target_key="structure",
     )
     st.stop()

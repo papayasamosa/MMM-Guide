@@ -87,7 +87,7 @@ WORKFLOW_STEPS: List[Dict[str, Any]] = [
             "Save a draft, or approve the graph once it passes validation.",
             "Prepare a compiled model configuration from the approved graph.",
         ],
-        "next": "Map each channel's spend and physical media units in Channel & Media Units.",
+        "next": "Map each channel's media inputs in Media Mapping.",
     },
     {
         "key": "channel_media_units",
@@ -122,7 +122,7 @@ WORKFLOW_STEPS: List[Dict[str, Any]] = [
         "title": "Model Setup",
         "purpose": "Choose the model structure, and set the adstock, saturation, pooling and MCMC settings the model will fit with.",
         "steps": [
-            "Choose a shared curve (Model A) or market-specific, partially pooled curves (Model C).",
+            "Choose a shared response across markets, or market-specific responses with partial pooling.",
             "Review the geo hierarchy detected from your structure.",
             "Adjust curve and pooling priors if needed - the defaults are reasonable starting points.",
             "Set sampling controls under Advanced settings if needed.",
@@ -151,11 +151,11 @@ WORKFLOW_STEPS: List[Dict[str, Any]] = [
         "title": "Model Comparison",
         "purpose": "Compare fitted candidate models side by side before deciding which to review and approve.",
         "steps": [
-            "Fit more candidates on Model Training if you want to compare model structures - a shared curve, market-specific curves, or a single-market fit.",
+            "Fit more candidates on Fit Model if you want to compare model structures - a shared curve, market-specific curves, or a single-market fit.",
             "Review convergence, in-sample fit and posterior predictive coverage side by side.",
             "Decide which fitted model to take forward to Diagnostics.",
         ],
-        "next": "Review model diagnostics before approval.",
+        "next": "Review model diagnostics before approval in Model Diagnostics.",
     },
     {
         "key": "diagnostics",
@@ -242,6 +242,20 @@ def get_step(key: str) -> Optional[Dict[str, Any]]:
     if key == HOME_KEY:
         return _HOME
     return _BY_KEY.get(key)
+
+
+def workflow_label(key: str, fallback: Optional[str] = None) -> str:
+    """Return the current analyst-facing destination label for ``key``.
+
+    Workflow keys and routes are stable persistence/navigation contracts;
+    labels are presentation metadata. Centralising this lookup prevents
+    empty states, warnings, and next actions from drifting away from the
+    sidebar when a page is renamed.
+    """
+    step = get_step(key)
+    if step is not None:
+        return str(step["label"])
+    return fallback if fallback is not None else key
 
 
 def step_number(key: str) -> Optional[int]:

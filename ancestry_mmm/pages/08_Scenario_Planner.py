@@ -129,7 +129,7 @@ st.info(
     "closed-form function of that month's spend - no MCMC in the planning loop, no sequential "
     "week-over-week carry-in simulation, no capacity-constrained delivery model, and no "
     "Chronos-2 (or other external) forecasting path. This is what is actually implemented today "
-    "(see core/predict.py) - not a placeholder description of a future capability."
+    "The calculation is deliberately limited to this steady-state monthly view."
 )
 
 _dashboard_trained = all(
@@ -182,8 +182,8 @@ nbt_completeness_metadata = get_state("net_billthrough_metadata")
 if frame is None or meta is None or params is None:
     st.markdown("---")
     render_empty_state(
-        "No trained model yet. Complete Model Training first.",
-        button_label="Go to Model Training",
+        "No fitted model yet. Complete Fit Model first.",
+        button_label="Go to Fit Model",
         target_key="model_training",
     )
     st.stop()
@@ -300,10 +300,10 @@ if approval_dict is not None and current_identity is not None:
 
 if not approval_dict:
     st.warning(
-        "This model hasn't been approved yet. Approve it on Diagnostics before planning scenarios - "
+        "This model hasn't been approved yet. Approve it on Model Diagnostics before planning scenarios - "
         "only an approved model's results may drive the planner."
     )
-    if st.button("Go to Diagnostics"):
+    if st.button("Go to Model Diagnostics"):
         st.switch_page("pages/06_Diagnostics.py")
     st.stop()
 if not approval_matches_current:
@@ -311,10 +311,10 @@ if not approval_matches_current:
         "This model's approval no longer matches the current fitted model, policy, or "
         "readiness evidence"
         + (f": {approval_invalid_reason}" if approval_invalid_reason else "")
-        + " - the model must be reviewed and approved again on Diagnostics before "
+        + " - the model must be reviewed and approved again on Model Diagnostics before "
         "planning scenarios."
     )
-    if st.button("Go to Diagnostics", key="stale_approval_diagnostics"):
+    if st.button("Go to Model Diagnostics", key="stale_approval_diagnostics"):
         st.switch_page("pages/06_Diagnostics.py")
     st.stop()
 
@@ -480,7 +480,7 @@ if unmapped_cost_bearing_channels:
         "Defaulted to 0 for cost-bearing activities with no approved, effective "
         "cost mapping (never inferred from the raw model input): "
         + ", ".join(readable_label(c) for c in sorted(unmapped_cost_bearing_channels))
-        + ". Configure a mapping on Channel & Media Units to seed a spend default."
+        + ". Configure a mapping on Media Mapping to seed a spend default."
     )
 if historical_reference_date is not None and any(
     definition.is_cost_bearing for definition in by_input_for_seeding.values()

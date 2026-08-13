@@ -27,6 +27,7 @@ from ancestry_mmm.utils.workflow import (
     nav_groups,
     next_step_key,
     step_number,
+    workflow_label,
 )
 from ancestry_mmm.utils.workflow_state import (
     next_workflow_step_key,
@@ -196,7 +197,7 @@ def render_sidebar(active_key: str) -> None:
         satisfied = sum(1 for state in required if state.satisfied)
         st.markdown(
             f'<div class="mmm-sidebar-footnote">'
-            f"{satisfied}/{len(required)} required stages satisfied · iterative workflow"
+            f"{satisfied} of {len(required)} workflow stages complete · iterative workflow"
             "</div>",
             unsafe_allow_html=True,
         )
@@ -237,8 +238,15 @@ def render_context_bar() -> None:
     date_col = get_state("date_col")
     if df is not None and date_col and date_col in getattr(df, "columns", []):
         try:
+            from ancestry_mmm.utils.display import format_date
+
             start, end = df[date_col].min(), df[date_col].max()
-            items.append(("Model window", _html.escape(f"{start} to {end}")))
+            items.append(
+                (
+                    "Model window",
+                    _html.escape(f"{format_date(start)} to {format_date(end)}"),
+                )
+            )
         except (TypeError, ValueError, KeyError):
             pass
 
@@ -464,12 +472,16 @@ def render_empty_state(
         st.error(text)
     else:
         st.info(text)
-    if button_label and target_key:
+    if target_key:
         target = get_step(target_key)
-        if target and st.button(
-            button_label, key=f"empty_state_{target_key}{key_suffix}"
-        ):
-            st.switch_page(target["path"])
+        if target:
+            label = (
+                f"Go to {workflow_label(target_key)}"
+                if not button_label or button_label.lower().startswith("go to ")
+                else button_label
+            )
+            if st.button(label, key=f"empty_state_{target_key}{key_suffix}"):
+                st.switch_page(target["path"])
 
 
 def render_workspace_note(label: str, message: str, *, kind: str = "") -> None:

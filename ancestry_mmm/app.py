@@ -28,7 +28,12 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from ancestry_mmm.utils import init_session_state, get_state, clear_model_state
-from ancestry_mmm.utils.workflow import WORKFLOW_STEPS, get_step, nav_groups
+from ancestry_mmm.utils.workflow import (
+    WORKFLOW_STEPS,
+    get_step,
+    nav_groups,
+    workflow_label,
+)
 from ancestry_mmm.components import (
     apply_theme,
     render_sidebar,
@@ -245,7 +250,7 @@ def _render_topology() -> None:
                 with st.container():
                     st.caption(group["label"])
                     render_status_badges([status])
-                    st.caption(f"{complete}/{len(keys)} pages with recorded state")
+                    st.caption(f"{complete} of {len(keys)} stages progressed")
 
 
 def _collect_issues() -> list[str]:
@@ -282,8 +287,8 @@ def _collect_issues() -> list[str]:
                 outcome_ids = ", ".join(sorted(drifted["outcome_id"].astype(str)))
                 issues.append(
                     f"{len(drifted)} outcome(s) have drifted from the fitted model's "
-                    f"catalogue ({outcome_ids}) - review on Diagnostics or Results & "
-                    "Curve Bank."
+                    f"catalogue ({outcome_ids}) - review on {workflow_label('diagnostics')} "
+                    f"or {workflow_label('curve_bank')}."
                 )
 
     trained = bool(get_state("model_trained"))
@@ -299,18 +304,18 @@ def _collect_issues() -> list[str]:
             detail = f" ({', '.join(gate_names)})" if gate_names else ""
             issues.append(
                 f"{len(blocking)} blocking validation gate(s) failing{detail} - the "
-                "model cannot be approved until resolved (Diagnostics)."
+                f"model cannot be approved until resolved ({workflow_label('diagnostics')})."
             )
         else:
             issues.append(
                 "Model fit and diagnostics computed, but not yet approved for "
-                "planning (Diagnostics)."
+                f"planning ({workflow_label('diagnostics')})."
             )
 
     if approval and not get_state("curve_bank_entry_id"):
         issues.append(
             "Model is approved but no curves have been saved to the curve bank "
-            "yet (Results & Curve Bank)."
+            f"yet ({workflow_label('curve_bank')})."
         )
 
     return issues
@@ -329,7 +334,7 @@ def _render_project_state() -> None:
                 if get_state("active_source_upload_version")
                 else "Demo data"
             )
-            st.caption(f"Data: {source_kind} · {len(raw_sources)} source area(s)")
+            st.caption(f"Data: {source_kind} · {len(raw_sources)} data sources")
         else:
             st.caption("Data: no sources loaded")
         if get_state("model_approval"):
@@ -373,7 +378,7 @@ def _render_lineage() -> None:
     model_run_id = get_state("model_run_id")
     if not model_run_id:
         return
-    with InfoPanel("Current model lineage"):
+    with InfoPanel("Model lineage"):
         approval = get_state("model_approval")
         approval_status = (
             "Approved"
@@ -388,11 +393,12 @@ def _render_lineage() -> None:
         )
         scenarios = get_state("scenarios") or []
         st.markdown(
-            f"**Model run:** `{str(model_run_id)[:8]}` &nbsp;·&nbsp; "
             f"**Approval:** {approval_status} &nbsp;·&nbsp; "
             f"**Curve bank:** {curve_status} &nbsp;·&nbsp; "
             f"**Scenarios saved:** {len(scenarios)}"
         )
+        with st.expander("Technical details"):
+            st.caption(f"Model run ID: {str(model_run_id)[:8]}")
 
 
 def _render_quick_links() -> None:

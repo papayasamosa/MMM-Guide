@@ -16,6 +16,7 @@ from ancestry_mmm.utils.workflow import (
     next_step_key,
     sidebar_entries,
     step_number,
+    workflow_label,
 )
 
 EXPECTED_LABELS = [
@@ -92,6 +93,14 @@ class TestWorkflowStepMetadata:
 
     def test_get_step_unknown_key_returns_none(self):
         assert get_step("not_a_real_page") is None
+
+    def test_destination_labels_are_resolved_from_the_registry(self):
+        assert workflow_label("model_training") == "Fit Model"
+        assert workflow_label("diagnostics") == "Model Diagnostics"
+        assert workflow_label("curve_bank") == "Results & Response Curves"
+
+    def test_unknown_destination_can_use_a_safe_fallback(self):
+        assert workflow_label("future_page", "Future page") == "Future page"
 
 
 class TestHomeWorkflowLines:

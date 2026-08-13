@@ -131,18 +131,18 @@ _CONTAINS_LABELS = {
     "raw_data": "Raw uploaded source data",
     "transformed_data": "Transformed / joined data",
     "model_spec": "Model structure (segments, markets, channels)",
-    "posterior": "Fitted posterior trace",
+    "posterior": "Fitted model draws",
     "diagnostics": "Diagnostics scorecard / backtest results",
     "curves": "Legacy curve bank entries",
-    "official_curve_artifacts": "Official curve artifacts",
+    "official_curve_artifacts": "Planning Curves",
     "approval": "Model approval",
     "outcome_approvals": "Outcome approvals",
     "scenarios": "Saved scenarios",
     "notes": "Analyst notes",
     "validation_policy": "Validation / threshold policy",
-    "diagnostics_artefact": "Diagnostics artefact evidence",
+    "diagnostics_artefact": "Diagnostic evidence",
     "validation_results": "Validation results",
-    "approval_readiness": "Approval readiness proof",
+    "approval_readiness": "Approval readiness evidence",
     "counterfactual_policy": "Counterfactual policy",
     "currency_context": "Currency context",
     "value_mapping": "Outcome value mapping",
@@ -1012,7 +1012,7 @@ if uploaded_zip is not None and st.button("Import bundle"):
         if imported["market_spec_config"] is None:
             st.caption(
                 "This bundle predates the market-specific redesign - no market descriptors or "
-                "media-unit mappings to import. Add them on Channel & Media Units / Market "
+                "media-unit mappings to import. Add them on Media Mapping / Market "
                 "Descriptors if needed."
             )
         if imported["outcome_definitions"] is None:
@@ -1164,7 +1164,7 @@ if uploaded_zip is not None and st.button("Import bundle"):
         if imported["trace"] is not None and reconstructed["frame"] is None:
             st.info(
                 "Imported a fitted trace, but couldn't reconstruct the modelling frame (missing "
-                "or inconsistent transformed data / model spec) - re-run Model Configuration's "
+                "or inconsistent prepared data / model structure) - re-run Model Setup's "
                 '"Prepare modelling frame" step, or re-fit, to continue.'
             )
         # Read this imported bundle's own manifest.json (already parsed by

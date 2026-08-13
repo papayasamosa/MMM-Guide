@@ -88,8 +88,8 @@ render_workspace_note(
 if not sources:
     st.markdown("---")
     render_empty_state(
-        "No data sources loaded yet. Complete Data Upload first.",
-        button_label="Go to Data Upload",
+        "No data sources loaded yet. Add sources in Data Sources first.",
+        button_label="Go to Data Sources",
         target_key="data_upload",
     )
     st.stop()

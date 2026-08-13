@@ -156,7 +156,7 @@ class TestLineagePanel:
         at = _run_at()
         assert not at.exception, f"page raised: {at.exception}"
         rendered = " ".join((m.value or "") for m in at.markdown)
-        assert "Current model lineage" not in rendered
+        assert "Model lineage" not in rendered
 
     def test_shown_once_a_model_run_exists(self):
         at = _run_at(
@@ -168,8 +168,9 @@ class TestLineagePanel:
         )
         assert not at.exception, f"page raised: {at.exception}"
         rendered = " ".join((m.value or "") for m in at.markdown)
-        assert "Current model lineage" in rendered
-        assert "abcdef12" in rendered
+        assert "Model lineage" in rendered
+        assert "Current model lineage" not in rendered
+        assert any(e.label == "Technical details" for e in at.expander)
         assert "Approved" in rendered
         assert "Scenarios saved:** 1" in rendered
 
