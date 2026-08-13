@@ -33,7 +33,6 @@ StateGetter = Callable[[str, Any], Any]
 _OPTIONAL_PAGES = {
     "data_coverage",
     "causal_graph",
-    "channel_media_units",
     "market_descriptors",
     "compare_models",
 }
@@ -437,31 +436,37 @@ def workflow_page_state(
     if key == "structure":
         if spec:
             return _state(key, "configured", satisfied=True)
+        activities = bool(_get(getter, "activity_definitions"))
         return _state(
             key,
             "not_started" if transformed else "blocked",
             satisfied=False,
             access_status="available" if transformed else "blocked",
-            reason="Transform the joined data before defining model structure."
-            if not transformed
-            else "",
+            reason=(
+                "Transform the joined data before defining model structure."
+                if not transformed
+                else "Map at least one governed activity before defining model structure."
+                if not activities
+                else ""
+            ),
         )
     if key == "causal_graph":
         return _causal_graph_status(getter, key)
     if key == "channel_media_units":
-        config = MarketSpecConfig.from_dict(_get(getter, "market_spec_config"))
-        configured = bool(config.channel_media_units) or bool(
-            _get(getter, "media_cost_mappings")
-        )
+        configured = bool(_get(getter, "activity_definitions"))
         return _state(
             key,
-            "configured" if configured else "optional",
-            satisfied=True,
-            access_status="available" if configured else "optional",
-            optional=True,
-            reason="Channel/media-unit configuration exists."
-            if configured
-            else "Optional mapping page.",
+            "configured" if configured else "not_started" if transformed else "blocked",
+            satisfied=configured,
+            access_status="available" if transformed else "blocked",
+            optional=False,
+            reason=(
+                "Prepare the joined data before mapping activities."
+                if not transformed
+                else "Create and save governed activity mappings before Model Structure."
+                if not configured
+                else "Activity and variable mappings are available."
+            ),
         )
     if key == "market_descriptors":
         config = MarketSpecConfig.from_dict(_get(getter, "market_spec_config"))

@@ -347,6 +347,94 @@ def activity_by_model_input(
     return result
 
 
+def resolve_activity_definition(
+    definitions: Iterable[ActivityDefinition],
+    *,
+    market: str,
+    activity_id: str,
+) -> ActivityDefinition:
+    """Resolve one governed activity for a market and stable activity ID.
+
+    Exact market rows take precedence over a wildcard row.  Ambiguous rows
+    fail closed rather than selecting the first match.  The returned object
+    remains the business identity; callers use
+    ``resolved_model_input_column`` only at the engine boundary.
+    """
+
+    candidates = [
+        definition
+        for definition in definitions
+        if definition.activity_id == activity_id
+        and definition.applies_to_market(market)
+    ]
+    exact = [definition for definition in candidates if definition.market == market]
+    if len(exact) > 1:
+        raise ValueError(
+            f"duplicate activity definitions for {market}/{activity_id}; "
+            "review the activity mapping"
+        )
+    if exact:
+        return exact[0]
+    wildcard = [definition for definition in candidates if definition.market == "*"]
+    if len(wildcard) > 1:
+        raise ValueError(
+            f"duplicate wildcard activity definitions for {market}/{activity_id}; "
+            "review the activity mapping"
+        )
+    if wildcard:
+        return wildcard[0]
+    raise KeyError(f"no governed activity {activity_id!r} applies to market {market!r}")
+
+
+def resolve_activity_model_input(
+    definitions: Iterable[ActivityDefinition],
+    *,
+    market: str,
+    activity_id: str,
+) -> str:
+    """Resolve ``market + activity_id`` to its physical model-input column.
+
+    This is the explicit boundary used by business-facing workflow code.
+    ``ActivityDefinition.channel`` is deliberately not returned: it is a
+    reporting roll-up and may be shared by several activities.
+    """
+
+    return resolve_activity_definition(
+        definitions, market=market, activity_id=activity_id
+    ).resolved_model_input_column
+
+
+def legacy_activity_definitions_from_model_spec(
+    model_spec: Any,
+) -> list[ActivityDefinition]:
+    """Adapt a pre-activity-governance ``ModelSpec`` into explicit activities.
+
+    Older saved projects stored only ``ModelSpec.channels``.  This adapter
+    preserves those projects without guessing from names or creating a second
+    registry.  The returned rows are intentionally marked as a legacy
+    compatibility source and remain reviewable in Activity Mapping before a
+    new governed save.
+    """
+
+    markets = [str(market) for market in getattr(model_spec, "markets", ())]
+    channels = [str(channel) for channel in getattr(model_spec, "channels", ())]
+    return [
+        ActivityDefinition(
+            activity_id=f"{market}:{channel}",
+            market=market,
+            channel=channel,
+            model_input_column=channel,
+            activity_ownership="paid",
+            model_role="intervention",
+            economic_treatment="paid_media_cost",
+            planning_eligibility="optimisable",
+            source="legacy ModelSpec.channels compatibility adapter; review required",
+        )
+        for market in markets
+        for channel in channels
+    ]
+
+
 def activity_by_channel(
     definitions: Iterable[ActivityDefinition],
     market: str = "*",

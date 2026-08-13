@@ -100,3 +100,16 @@ def test_save_does_not_fabricate_pooling_group_id_for_a_new_row():
     saved = at.session_state["activity_definitions"]
     assert len(saved) == 1
     assert saved[0]["pooling_group_id"] is None
+
+
+def test_activity_mapping_is_reachable_before_model_structure():
+    df, _ = _base_state()
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.session_state["transformed_data"] = df
+    at.session_state["date_col"] = "date"
+    at.session_state["market_col"] = "market"
+    at.run()
+
+    assert not at.exception, f"pre-structure mapping page raised: {at.exception}"
+    assert any(item.label == "Save required activity governance" for item in at.button)
+    assert any("No governed activities exist yet" in item.value for item in at.info)

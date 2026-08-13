@@ -25,6 +25,7 @@ from ancestry_mmm.core.outcomes import (
     METRIC_SIGNUP,
     OutcomeDefinition,
 )
+from ancestry_mmm.core.activities import ActivityDefinition
 from ancestry_mmm.core.pathways import ResolvedPathwayMasks
 
 st.page_link = lambda *a, **k: None
@@ -62,6 +63,36 @@ def test_page_loads_with_two_kpis_already_configured_on_one_segment():
     cross_sell = [sb for sb in at.selectbox if sb.label == "FH DNA cross-sell outcome"]
     assert cross_sell, "FH DNA cross-sell outcome selectbox not found"
     assert "(none)" in cross_sell[0].options
+
+
+def test_model_structure_lists_governed_activities_and_resolves_inputs():
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.session_state["transformed_data"] = _transformed_data()
+    at.session_state["date_col"] = "date"
+    at.session_state["market_col"] = "market"
+    at.session_state["activity_definitions"] = [
+        ActivityDefinition(
+            activity_id="meta_brand",
+            market="UK",
+            channel="Paid Social",
+            model_input_column="meta_brand_input",
+            activity_ownership="paid",
+            model_role="intervention",
+            economic_treatment="paid_media_cost",
+            planning_eligibility="optimisable",
+            source="test",
+        ).to_dict()
+    ]
+    at.run()
+
+    assert not at.exception, f"governed structure load raised: {at.exception}"
+    activity_select = [
+        item
+        for item in at.multiselect
+        if item.label == "Governed activities in this model *"
+    ][0]
+    assert activity_select.options == ["meta brand / Paid Social / meta brand input"]
+    assert activity_select.value == ["UK::meta_brand"]
 
 
 def test_quick_start_wizard_seeds_the_catalogue_without_requiring_it():  # noqa: E501

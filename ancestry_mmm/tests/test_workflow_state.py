@@ -44,6 +44,7 @@ def test_configured_structure_skips_optional_pages():
             "data_loaded": True,
             "transformed_data": object(),
             "model_spec": {"markets": ["UK"]},
+            "activity_definitions": [{"activity_id": "uk-tv"}],
         }
     )
 
@@ -52,7 +53,7 @@ def test_configured_structure_skips_optional_pages():
     )
     assert (
         workflow_page_state("channel_media_units", getter=getter).display_status
-        == "optional"
+        == "configured"
     )
     assert next_workflow_step_key(getter=getter) == "model_config"
 
