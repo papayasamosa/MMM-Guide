@@ -166,6 +166,28 @@ def shell_css() -> str:
         font-weight: 600;
         overflow-wrap: anywhere;
     }}
+    /* Narrow dashboard cards must show the complete state value. Streamlit's
+       default metric value uses a single line with hidden overflow, which
+       clips useful states such as "Not ready" and "Needs review" at the
+       smallest supported desktop width. */
+    [data-testid="stMetricValue"] {{
+        overflow: visible;
+    }}
+    [data-testid="stMetricValue"] p {{
+        line-height: 1.15;
+        overflow-wrap: anywhere;
+        white-space: normal;
+    }}
+    @media (max-width: 1100px) {{
+        [data-testid="stMetricLabel"] p {{
+            font-size: 0.72rem;
+            line-height: 1.2;
+        }}
+        [data-testid="stMetricValue"] {{
+            font-size: 1.45rem;
+            line-height: 1.15;
+        }}
+    }}
     .mmm-badge {{
         display: inline-flex;
         align-items: center;

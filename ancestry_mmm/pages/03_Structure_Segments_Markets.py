@@ -251,15 +251,12 @@ render_decision_help(
     invalidates="Changing a saved outcome definition or fit inclusion makes model evidence stale and requires a refit before governed use.",
 )
 st.caption(
-    "The main configuration surface for what this project actually fits - one row per measurable "
-    "outcome, not one weekly GSA column per segment. A sign-up KPI and a GSA KPI on the same segment "
-    "are two separate rows here, each with its own `outcome_id`, `metric` and `unit`, so they are fit "
-    "as fully independent outcomes - never combined anywhere downstream just because they share a "
-    "segment). Add, edit, or remove rows directly below; the optional helpers "
-    "further down are only shortcuts, not a second configuration surface - a sign-up-only or GSA-only "
-    "project can add its rows here without opening them. "
-    "`included_in_fit` is the persisted 'exclude from next fit' control: unchecking a row here still "
-    "captures and validates it, just holds it back from the next fit."
+    "The main configuration surface for what this project fits - one row per measurable outcome, "
+    "not one weekly GSA column per segment. A sign-up measure and a GSA measure on the same segment "
+    "are separate outcomes and remain independent throughout the model. Add, edit, or remove rows "
+    "directly below; the optional helpers are shortcuts, not a second configuration surface. "
+    "Turning off Include in next fit keeps the outcome in the governed catalogue and holds it back "
+    "from the next model run."
 )
 
 if "structure_outcome_rows" not in st.session_state:
@@ -333,8 +330,8 @@ with st.expander("Add DNA purchase outcomes"):
         "A DNA kit-sale measure for a defined customer segment. It is a separate outcome from Family History sign-up, GSA, or cross-product halo effects.",
     )
     st.caption(
-        "DNA kit purchases are a separate business outcome (product='DNA', metric='Kit sale') from any "
-        "Family History outcome - a kit sale is never the same KPI as an FH sign-up or an FH GSA, even "
+        "DNA kit purchases are a separate business outcome from any Family History outcome - a kit sale "
+        "is never the same KPI as an FH sign-up or an FH GSA, even "
         "for the DNA cross-sell segment. Once added, they're **automatically included in the joint "
         "model fit** on Model Setup/Fit Model: DNA-targeted media gets direct response on these outcomes, "
         "separate from the cross-product halo pathway used for other outcomes."
@@ -615,15 +612,12 @@ render_decision_help(
     invalidates="Changing a pathway that belongs to a fitted model makes the fit and any bound approval stale. Review and refit before governed use.",
 )
 st.caption(
-    "Declares which `(channel, target outcome)` relationships this project believes exist - a "
-    "primary direct effect, a trusted delayed cross-product effect (e.g. DNA media's halo onto FH), "
-    "an exploratory one strongly shrunk toward zero, a diagnostic-only mediated assumption, or an "
-    "excluded relationship with deterministically zero contribution. Mediated records do not enter "
-    "the standard MMM likelihood and cannot drive planning or headline reporting. The model reads this "
-    "catalogue directly to decide which coefficients are estimated and how; a cell left uncovered here "
-    "uses the existing default (`dna_channels` above drives that default exactly as before). It can already "
-    "target planned future outcome_ids (e.g. a net bill-through count) the moment a matching row "
-    "exists in the outcome catalogue above, even before any dedicated transformation computes it."
+    "Use this catalogue to describe which media-to-outcome relationships the project believes exist: "
+    "a direct effect, a delayed cross-product effect such as DNA media's halo onto Family History, "
+    "an exploratory relationship, a diagnostic-only mediated assumption, or an excluded relationship. "
+    "Mediated records remain outside the standard fit and cannot drive planning or headline reporting. "
+    "If no row is set for a relationship, the existing default based on DNA-targeted media still applies. "
+    "A pathway can target any outcome already defined above, including an outcome planned for a future fit."
 )
 if "media_outcome_pathways" not in st.session_state:
     st.session_state["media_outcome_pathways"] = (
@@ -832,9 +826,9 @@ pathway_catalogue_df = restore_enum_frame(
     _pathway_enum_values,
 )
 st.caption(
-    "Component-specific fields are read-only in the grid. Select a row below to edit "
-    "them: `prior_scale` is the HalfNormal sigma for the cross-product "
-    "`pathway_strength` multiplier and is unavailable for every other component type."
+    "Component-specific fields are read-only in the grid. Select a row below to edit them. "
+    "Cross-product strength is available only for cross-product rows; other pathway types use "
+    "their own governed settings."
 )
 
 if not pathway_catalogue_df.empty:

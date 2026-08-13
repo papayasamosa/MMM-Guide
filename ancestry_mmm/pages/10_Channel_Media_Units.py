@@ -432,13 +432,11 @@ render_definition_help(
 )
 st.caption(
     "Branded-search demand, Paid Search spend/delivery/cap, organic-search "
-    "capture, and direct-navigation capture are separate governed objects "
-    "distinct objects here - never inferred by name-matching a column. A "
-    "raw column already governed under one Search role cannot also be "
-    "registered under a different one. A paid_search_cap row's Channel must "
-    "exactly match the Channel of the paid_search_spend/paid_search_delivery "
-    "row it constrains, in the same market - a cap with no matching channel "
-    "counterpart is rejected."
+    "capture, and direct-navigation capture are separate governed objects - "
+    "never inferred by name-matching a column. A source column already assigned "
+    "one Search role cannot also be registered under another role. A Paid Search "
+    "cap must be linked to the matching Paid Search spend or delivery object in "
+    "the same market; a cap without a matching object is rejected."
 )
 existing_search_object_items = saved_search_object_items
 if existing_search_object_items:
