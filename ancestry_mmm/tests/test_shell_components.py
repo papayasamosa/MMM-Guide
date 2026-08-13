@@ -465,7 +465,7 @@ render_empty_state("Plain message.")
         assert not at.exception
         assert any("Plain message." == (i.value or "") for i in at.info)
 
-    def test_structured_fields_are_appended_under_the_message(self):
+    def test_structured_fields_are_quieter_supporting_details(self):
         script = """
 from ancestry_mmm.components import render_empty_state
 render_empty_state(
@@ -479,11 +479,11 @@ render_empty_state(
         at.run()
         assert not at.exception
         assert len(at.info) == 1
-        value = at.info[0].value or ""
-        assert "Base message." in value
-        assert "Testing." in value
-        assert "A missing thing." in value
-        assert "Do the next thing." in value
+        assert at.info[0].value == "Base message."
+        captions = [caption.value or "" for caption in at.caption]
+        assert "Purpose: Testing." in captions
+        assert "Dependency: A missing thing." in captions
+        assert "Next action: Do the next thing." in captions
 
     def test_blocking_renders_as_error_not_info(self):
         script = """

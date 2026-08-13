@@ -2834,3 +2834,32 @@ browser journey because the local connected browser was unavailable.
 
 **Owner:** Platform engineering / Data Science.
 **Status:** Implemented in UX/UI coherence Phase 13.
+
+## Concise empty and blocked states (UX/UI coherence Phase 14)
+
+**Date:** 2026-08-13
+**Decision:** Keep the primary empty/blocked message as the single prominent
+explanation. Render optional purpose, dependency, and next-action details as
+supporting captions beneath it, followed by the existing safe navigation
+button. Preserve the existing info-versus-error severity and target workflow
+route.
+
+**Reason:** Structured empty-state details were previously bolded inside the
+primary info/error surface. On prerequisite pages that made secondary context
+compete with the actual blocker and increased first-viewport prose. The
+analyst still sees the same explanation and action, but the hierarchy is now
+message first, supporting detail second, action third.
+
+**Impact:** Presentation-only shared-component rendering and AppTest updates.
+No workflow routes, blocking conditions, page content, analytical
+calculations, governance rules, or persistence behaviour changed. Business
+question: what is unavailable, why, and what safe action should the analyst
+take next? Estimand: none introduced. Output scale/units: unchanged. Upstream
+modelling references: none consulted because this package changes
+presentation only and does not change PyMC or PyMC Marketing model APIs.
+Remaining limitation: interactive browser screenshot review uses the
+repository's synthetic-data browser journey because the local connected
+browser was unavailable.
+
+**Owner:** Platform engineering / Data Science.
+**Status:** Implemented in UX/UI coherence Phase 14.
