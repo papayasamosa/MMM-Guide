@@ -175,10 +175,13 @@ def test_capability_warning_never_blocks_preparing_the_frame():
     """REQ-COVERAGE-001 S6: this is a report, never a gate - an exploratory
     fit must remain available even when the engine-capability check fails."""
     at = _run_at(variable_coverage_matrix=_unresolved_matrix().to_dict())
-    prepare_button = next(b for b in at.button if b.label == "Prepare modelling frame")
+    prepare_button = next(
+        b for b in at.button if b.label == "Prepare exploratory modelling frame"
+    )
     prepare_button.click().run()
     assert not at.exception, f"prepare click raised: {at.exception}"
     assert at.session_state["frame"] is not None
+    assert any("Exploratory modelling frame prepared" in (s.value or "") for s in at.success)
 
 
 def test_official_preparation_has_explicit_decision_required_gate():
@@ -186,11 +189,17 @@ def test_official_preparation_has_explicit_decision_required_gate():
     action cannot proceed without a coverage matrix and governed calendar."""
     at = _run_at()
     assert not at.exception, f"page raised: {at.exception}"
+    rendered = " ".join((m.value or "") for m in at.markdown)
     assert any(
-        "Official preparation blocked" in (i.value or "")
-        and "decision required" in (i.value or "")
-        for i in at.info
+        "Official preparation blocked" in value
+        for value in (rendered, " ".join((c.value or "") for c in at.caption))
     )
+    normal_messages = " ".join(
+        (element.value or "")
+        for elements in (at.info, at.warning, at.error, at.success, at.caption)
+        for element in elements
+    )
+    assert "unsupported_no_approved_method" not in normal_messages
 
     official_button = next(
         b for b in at.button if b.label == "Prepare official modelling frame"
@@ -202,3 +211,15 @@ def test_official_preparation_has_explicit_decision_required_gate():
     assert any(
         "Official modelling frame not created" in (e.value or "") for e in at.error
     )
+
+
+def test_official_action_remains_primary_when_exploratory_is_available():
+    at = _run_at()
+    official_button = next(
+        b for b in at.button if b.label == "Prepare official modelling frame"
+    )
+    exploratory_button = next(
+        b for b in at.button if b.label == "Prepare exploratory modelling frame"
+    )
+    assert official_button.proto.type == "primary"
+    assert exploratory_button.proto.type != "primary"

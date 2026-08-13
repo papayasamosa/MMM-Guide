@@ -297,6 +297,24 @@ def _collect_issues() -> list[str]:
     scorecard = get_state("scorecard")
     approval = get_state("model_approval")
     readiness = get_state("approval_readiness")
+    official_preparation = get_state("official_preparation_result")
+    if (
+        isinstance(official_preparation, dict)
+        and official_preparation
+        and official_preparation.get("status") != "ready"
+    ):
+        if official_preparation.get("status") == "unsupported_no_approved_method":
+            issues.append(
+                "Official preparation is unavailable: no approved method currently "
+                "exists for converting one or more source frequencies for official "
+                "modelling. Review the frequency decisions on Model Setup."
+            )
+        else:
+            issues.append(
+                "Official preparation is blocked by unresolved coverage, calendar, "
+                "or frequency decisions. Review the official preparation panel on "
+                "Model Setup."
+            )
     if trained and scorecard and not approval:
         if readiness and not readiness.get("overall_ready", False):
             blocking = readiness.get("blocking_failures", []) or []
@@ -363,6 +381,18 @@ def _render_project_state() -> None:
             st.caption("Model: approved")
         elif get_state("model_trained"):
             st.caption("Model: fitted, review still required")
+        elif get_state("frame") is not None:
+            official_preparation = get_state("official_preparation_result")
+            if (
+                isinstance(official_preparation, dict)
+                and official_preparation.get("status") != "ready"
+            ):
+                st.caption(
+                    "Model: exploratory frame prepared; official preparation "
+                    "remains blocked"
+                )
+            else:
+                st.caption("Model: official frame prepared, not fitted")
         elif get_state("transformed_data") is not None:
             st.caption("Model: data prepared, not fitted")
         else:
@@ -370,7 +400,13 @@ def _render_project_state() -> None:
         states = workflow_page_states(getter=get_state)
         required = [state for state in states if not state.optional]
         complete = sum(1 for state in required if state.satisfied)
-        st.caption(f"Workflow: {complete} of {len(required)} stages complete")
+        exploratory = sum(
+            1 for state in required if state.display_status == "exploratory"
+        )
+        progress = f"Workflow: {complete} of {len(required)} stages complete"
+        if exploratory:
+            progress += f"; {exploratory} exploratory"
+        st.caption(progress)
 
 
 def _render_issues(*, compact: bool = False) -> None:

@@ -28,6 +28,7 @@ from ancestry_mmm.components import (
     render_definition_help,
     render_decision_help,
     render_technical_details,
+    render_status_badges,
     SectionCard,
 )
 from ancestry_mmm.core.schema import ModelSpec
@@ -597,7 +598,9 @@ _frequency_section = SectionCard(
     description=(
         "Official preparation must use an approved, variable-class-specific "
         "frequency method. Native source data and the exploratory Transform "
-        "Pipeline remain unchanged while that decision is unresolved."
+        "Pipeline remain unchanged while that decision is unresolved. "
+        "Exploratory preparation is clearly separate and never approves "
+        "frequency treatment for official modelling."
     ),
 )
 _frequency_section.__enter__()
@@ -612,23 +615,82 @@ _official_preparation = assess_official_preparation(
 set_state("official_preparation_result", _official_preparation.to_dict())
 
 if _official_preparation.ready:
-    st.success(
-        "Official preparation is ready. No frequency conversion is needed; "
-        "the reviewed variables are already at the governed target frequency."
+    _official_status_label = "Official preparation ready"
+    _official_status_badge = "ready"
+    _official_status_reason = (
+        "The reviewed variables are already at the governed target frequency, "
+        "so no frequency conversion is needed."
     )
 elif _official_preparation.status == "unsupported_no_approved_method":
-    st.error(
-        "Official preparation blocked · unsupported_no_approved_method. "
-        + _official_preparation.reason
+    _official_status_label = "Official preparation unavailable"
+    _official_status_badge = "blocked"
+    _official_status_reason = (
+        "No approved method currently exists for converting one or more source "
+        "frequencies for official modelling."
+    )
+elif _official_preparation.status == "method_available":
+    _official_status_label = "Official preparation blocked"
+    _official_status_badge = "blocked"
+    _official_status_reason = (
+        "An approved frequency method is available, but the governed conversion "
+        "executor has not been validated for official modelling yet."
+    )
+elif _official_preparation.status == "unsupported_definition_break":
+    _official_status_label = "Official preparation blocked"
+    _official_status_badge = "blocked"
+    _official_status_reason = (
+        "The reviewed frequency definition changes across the available source "
+        "support, so official preparation needs an explicit resolution."
+    )
+elif _official_preparation.status == "unsupported_leakage":
+    _official_status_label = "Official preparation blocked"
+    _official_status_badge = "blocked"
+    _official_status_reason = (
+        "The reviewed frequency treatment would use information outside the "
+        "approved preparation boundary. Resolve the frequency decision before "
+        "official modelling."
     )
 else:
-    st.info(
-        "Official preparation blocked · decision required. "
-        + _official_preparation.reason
+    _official_status_label = "Official preparation blocked"
+    _official_status_badge = "blocked"
+    _official_status_reason = (
+        "Required coverage, calendar, or frequency decisions are still needed "
+        "before official modelling can be prepared."
     )
 
+_status_col, _conversion_col = st.columns(2)
+with _status_col:
+    render_status_badges([_official_status_badge])
+    st.markdown(f"**{_official_status_label}**")
+    st.caption(_official_status_reason)
+with _conversion_col:
+    _conversion_classes = _official_preparation.conversion_variable_classes
+    st.metric(
+        "Frequency conversion needed",
+        "Yes" if _conversion_classes else "No",
+    )
+    if _conversion_classes:
+        st.caption(
+            "Reviewed variable classes: "
+            + ", ".join(
+                str(variable_class).replace("_", " ").title()
+                for variable_class in _conversion_classes
+            )
+        )
+
+st.markdown("**Why this status**")
+st.write(_official_status_reason)
+st.markdown("**Safe next action**")
+if _official_preparation.ready:
+    st.caption("Prepare the official modelling frame below.")
+else:
+    st.caption(
+        "Resolve the decisions listed below before official modelling. You may "
+        "prepare an exploratory frame for investigation, but it remains "
+        "restricted from official reporting, planning, and optimisation."
+    )
 if _official_preparation.decisions_required:
-    with st.expander("Frequency decisions still required"):
+    with st.expander("Decisions needed before official preparation"):
         st.caption(
             "These are governance decisions, not defaults. No interpolation, "
             "allocation, forward-fill, or other frequency conversion is "
@@ -639,8 +701,15 @@ if _official_preparation.decisions_required:
 
 st.caption(
     "Native-frequency source rows and missingness are preserved. The "
-    "Transform Pipeline remains available for explicitly exploratory work; "
-    "it does not approve an official frequency alignment."
+    "Transform Pipeline remains available for explicitly exploratory work "
+    "only; it does not approve an official frequency alignment or unlock "
+    "official reporting, planning, or optimisation."
+)
+render_technical_details(
+    details={
+        "Preparation status key": _official_preparation.status,
+        "Assessor detail": _official_preparation.reason,
+    }
 )
 _frequency_section.__exit__(None, None, None)
 
@@ -648,8 +717,9 @@ st.markdown("---")
 _prepare_frame_section = SectionCard(
     "Prepared-frame readiness",
     description=(
-        "Prepare an exploratory modelling frame once structure and priors are "
-        "set. Official preparation has its separate frequency gate above."
+        "Prepare an official modelling frame when the frequency gate is ready. "
+        "An exploratory frame is available for investigation only and does not "
+        "satisfy official preparation or approve frequency treatment."
     ),
 )
 _prepare_frame_section.__enter__()
@@ -658,13 +728,15 @@ if brand_search_errors:
         "Fix the Brand Search configuration errors above before preparing the modelling frame."
     )
 else:
-    _official_requested = st.button("Prepare official modelling frame")
-    _exploratory_requested = st.button("Prepare modelling frame", type="primary")
+    _official_requested = st.button(
+        "Prepare official modelling frame", type="primary"
+    )
+    _exploratory_requested = st.button("Prepare exploratory modelling frame")
     if _official_requested and not _official_preparation.ready:
         st.error(
-            "Official modelling frame not created. Resolve the "
-            f"{_official_preparation.status} status above first. Native data "
-            "and exploratory output were not changed."
+            "Official modelling frame not created. Resolve the official "
+            "preparation decisions above first. Native data and exploratory "
+            "output were not changed."
         )
     elif _official_requested or _exploratory_requested:
         try:
@@ -691,8 +763,10 @@ else:
             clear_model_state()
             set_state("official_preparation_result", _official_preparation.to_dict())
             set_state("frame", frame)  # clear_model_state wipes frame too - reset after
+            _frame_mode = "official" if _official_requested else "exploratory"
             st.success(
-                f"Frame prepared: {format_number(frame['X_media'].shape[0])} observations, "
+                f"{_frame_mode.capitalize()} modelling frame prepared: "
+                f"{format_number(frame['X_media'].shape[0])} observations, "
                 f"{len(frame['channels'])} channels, {len(frame['outcome_ids'])} outcomes, "
                 f"{len(frame['markets'])} market(s). Model structure: {model_type_labels[model_type]}."
             )

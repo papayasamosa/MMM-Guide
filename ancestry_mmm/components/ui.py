@@ -116,6 +116,7 @@ _READINESS_ICON = {
     "validated": ":material/verified:",
     "draft": ":material/edit:",
     "approved": ":material/check_circle:",
+    "exploratory": ":material/science:",
     "stale": ":material/warning:",
     "review": ":material/help:",
     "unavailable": ":material/error:",
@@ -195,9 +196,15 @@ def render_sidebar(active_key: str) -> None:
         states = workflow_page_states(getter=get_state)
         required = [state for state in states if not state.optional]
         satisfied = sum(1 for state in required if state.satisfied)
+        exploratory = sum(
+            1 for state in required if state.display_status == "exploratory"
+        )
+        progress = f"{satisfied} of {len(required)} workflow stages complete"
+        if exploratory:
+            progress += f" · {exploratory} exploratory"
         st.markdown(
             f'<div class="mmm-sidebar-footnote">'
-            f"{satisfied} of {len(required)} workflow stages complete · iterative workflow"
+            f"{progress} · iterative workflow"
             "</div>",
             unsafe_allow_html=True,
         )
