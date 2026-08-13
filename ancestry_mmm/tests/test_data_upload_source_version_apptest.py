@@ -222,9 +222,7 @@ def test_domain_selectbox_defaults_to_an_unselected_placeholder():
     at.run()
     assert not at.exception, f"page load raised: {at.exception}"
 
-    domain_selectbox = next(
-        sb for sb in at.selectbox if sb.label == "Logical source domain *"
-    )
+    domain_selectbox = next(sb for sb in at.selectbox if sb.label == "Data category *")
     assert domain_selectbox.value not in (
         "outcomes",
         "activity_and_media",

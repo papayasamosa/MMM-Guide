@@ -29,6 +29,9 @@ from ancestry_mmm.data import (
     load_all_sample_sources,
     load_realistic_sample_sources,
     get_data_summary,
+    summarise_source_inventory,
+    source_lineage_id,
+    source_table_name,
 )
 from ancestry_mmm.data.templates import STANDARD_TEMPLATE_SCHEMA_VERSION
 from ancestry_mmm.core.coverage import (
@@ -171,6 +174,37 @@ for name, df in sources.items():
     domain = resolve_source_logical_domain(name, definitions)
     sources_by_domain.setdefault(domain, []).append((name, df))
 
+source_inventory = summarise_source_inventory(
+    sources,
+    definitions,
+    st.session_state.get("source_versions") or [],
+    st.session_state.get("active_source_upload_version") or {},
+    st.session_state.get("demo_source_pack"),
+)
+
+if sources:
+    with st.container(border=True):
+        st.markdown("### Source inventory")
+        st.caption(
+            "A workbook can contain several recognised tables. The counts below "
+            "keep uploaded files, data categories, and tables separate."
+        )
+        inventory_cols = st.columns(5)
+        inventory_cols[0].metric(
+            "Uploaded files/workbooks", source_inventory.uploaded_file_count
+        )
+        inventory_cols[1].metric(
+            "Data categories", source_inventory.data_category_count
+        )
+        inventory_cols[2].metric("Tables/sheets", source_inventory.table_count)
+        inventory_cols[3].metric(
+            "Recognised standard tables",
+            source_inventory.recognised_standard_table_count,
+        )
+        inventory_cols[4].metric(
+            "Active source versions", source_inventory.active_source_version_count
+        )
+
 with st.container(border=True):
     st.markdown("### Source readiness")
     st.caption(
@@ -217,8 +251,9 @@ tab_demo, tab_upload = st.tabs(["Demo data", "Add source"])
 
 with tab_demo:
     st.markdown(
-        "Use the deterministic weekly UK / Australia / Canada fixture to explore the "
-        "workflow end-to-end. **This is not real Ancestry data.**"
+        "**Quick demo:** use the small rectangular weekly UK / Australia / Canada "
+        "fixture for fast end-to-end exploration. It is ready for the supported "
+        "Prepare Data workflow. **This is not real Ancestry data.**"
     )
     if st.button("Load demo data", type="primary"):
         frames, err = load_all_sample_sources()
@@ -227,6 +262,7 @@ with tab_demo:
         else:
             ltv_df = frames.pop("ltv")
             st.session_state["raw_sources"] = frames
+            st.session_state["demo_source_pack"] = "quick-rectangular-demo-v1"
             st.session_state["sample_ltv"] = {
                 row.segment: row.ltv for row in ltv_df.itertuples()
             }
@@ -262,9 +298,10 @@ with tab_demo:
     st.divider()
     st.markdown("#### Realistic source-pack demo")
     st.caption(
-        "Exercises source-native activity identities, market availability, ragged "
-        "coverage, mixed weekly/monthly context, and irregular events. It remains "
-        "synthetic and is intentionally not pre-joined into a model matrix."
+        "Exercises the source-input contract: tidy activity identities, dictionaries, "
+        "market availability, ragged coverage, mixed weekly/monthly context, and "
+        "irregular events. It remains synthetic and is intentionally not pre-joined "
+        "into a model matrix; use it to review ingestion, not to run a full model."
     )
     if st.button("Load realistic source pack"):
         frames, err = load_realistic_sample_sources()
@@ -306,8 +343,11 @@ with tab_demo:
             )
 
 with tab_upload:
-    st.caption("Add one or more governed source files. You can add more later.")
-    with st.expander("Standard workbook pack schema", expanded=False):
+    st.caption(
+        "Preferred route: add a standard workbook pack. You can add more than one "
+        "workbook under a data category; each recognised table remains separate."
+    )
+    with st.expander("Preferred standard workbook pack", expanded=True):
         st.caption(
             f"Schema version: `{STANDARD_TEMPLATE_SCHEMA_VERSION}`. Standard "
             "Excel packs are read sheet-by-sheet; physical tables remain separate "
@@ -321,9 +361,8 @@ with tab_upload:
             "- Experiment Evidence: `experiment_evidence`"
         )
         st.info(
-            "Use the standard schema when available. Generic Excel import remains "
-            "available with an explicit warning when a workbook is not a recognised "
-            "standard pack."
+            "Use this route when the workbook matches the standard schema. Generic "
+            "Excel import is a fallback for a workbook that needs separate review."
         )
     source_name = st.text_input(
         "Source name *", value="media", help="e.g. media, outcomes, controls"
@@ -338,7 +377,7 @@ with tab_upload:
     # instead, and "Add source" blocks until a real domain is chosen.
     _DOMAIN_PLACEHOLDER = "— Select a logical domain —"
     logical_domain_choice = st.selectbox(
-        "Logical source domain *",
+        "Data category *",
         [_DOMAIN_PLACEHOLDER, *LOGICAL_SOURCE_DOMAINS],
         format_func=lambda d: _DOMAIN_LABELS.get(d, d),
         help=(
@@ -356,7 +395,7 @@ with tab_upload:
 
     add_standard_source = st.button("Add source", type="primary")
     add_generic_excel = st.button(
-        "Add as generic Excel source",
+        "Add as generic Excel fallback",
         disabled=uploaded is None or not _is_excel_filename(uploaded.name),
         help=(
             "Use only when the workbook is not a standard source pack. The first "
@@ -401,7 +440,7 @@ with tab_upload:
                         st.warning(message)
                     st.info(
                         "Correct the standard workbook, or choose 'Add as generic "
-                        "Excel source' to use the explicit legacy path."
+                        "Excel fallback' to import only its first sheet."
                     )
                 else:
                     if (
@@ -437,6 +476,7 @@ with tab_upload:
                                 v.to_dict() for v in existing_versions
                             ] + [source_version.to_dict()]
                             st.session_state["data_loaded"] = True
+                            st.session_state["demo_source_pack"] = None
                             clear_model_state()
                             st.warning(
                                 "Generic Excel import loaded only the first sheet "
@@ -464,6 +504,7 @@ with tab_upload:
                             v.to_dict() for v in existing_versions
                         ] + [source_version.to_dict()]
                         st.session_state["data_loaded"] = True
+                        st.session_state["demo_source_pack"] = None
                         clear_model_state()
                         for message in workbook.manifest.warnings:
                             st.warning(message)
@@ -500,11 +541,11 @@ with tab_upload:
                         ).to_dict(),
                     ]
                     st.session_state["data_loaded"] = True
+                    st.session_state["demo_source_pack"] = None
                     clear_model_state()
                     st.success(
                         f"Loaded {df.shape[0]} rows from {uploaded.name} as source "
-                        f"'{source_name}' (v{source_version.version}, checksum "
-                        f"{source_version.checksum[:12]}...)."
+                        f"'{source_name}' (version {source_version.version})."
                     )
 
 
@@ -513,9 +554,13 @@ def _render_source_detail(name: str, df) -> None:
     row/column summary and preview - identical content regardless of which
     domain group it's rendered under, so several physical files can share
     one logical domain's card without duplicating this logic per domain."""
-    with st.expander(
-        f"**{name}** - {df.shape[0]} rows x {df.shape[1]} columns", expanded=False
-    ):
+    table_name = source_table_name(name)
+    title = (
+        f"**{table_name}** - {df.shape[0]} rows x {df.shape[1]} columns"
+        if table_name != name
+        else f"**{name}** - {df.shape[0]} rows x {df.shape[1]} columns"
+    )
+    with st.expander(title, expanded=False):
         # Look up the *specific* version that actually produced this name's
         # current frame (never "the latest history entry for this name" - a
         # prior real upload's provenance must not be displayed against a
@@ -524,7 +569,7 @@ def _render_source_detail(name: str, df) -> None:
         active_version = (
             st.session_state.get("active_source_upload_version") or {}
         ).get(name)
-        workbook_source_id = name.rsplit("__sheet__", 1)[0]
+        workbook_source_id = source_lineage_id(name)
         active_record = next(
             (
                 v
@@ -559,7 +604,7 @@ def _render_source_detail(name: str, df) -> None:
             name, st.session_state.get("source_definitions") or []
         )
         st.caption(
-            f"Logical domain: **"
+            f"Data category: **"
             f"{_DOMAIN_LABELS.get(domain, 'Unclassified (no domain recorded)')}"
             "**"
         )
@@ -588,13 +633,12 @@ def _render_source_detail(name: str, df) -> None:
 
 
 if sources:
-    st.markdown("## Sources by logical domain")
+    st.markdown("## Data by category")
     st.caption(
-        "A logical domain is not a physical file - any number of physical "
-        "source files or versions may exist under one "
-        "domain. A source belongs to exactly one of the three required "
-        "domains (Outcomes, Activity and Media, Context and External "
-        "Factors) or the optional Experiment Evidence domain."
+        "A data category is not a physical file. Any number of uploaded files or "
+        "workbooks can belong to one category, and a workbook can contain several "
+        "tables. Each stored table remains separate and belongs to one governed "
+        "category."
     )
 
     missing_required_labels = []
@@ -610,8 +654,8 @@ if sources:
                 st.caption("No source supplied yet for this required domain.")
             else:
                 st.caption(
-                    f"{len(supplied)} physical source file(s) supplied under "
-                    "this domain."
+                    f"{len(supplied)} table(s) supplied under this category. "
+                    "See Source inventory above for uploaded file/workbook count."
                 )
                 for name, df in supplied:
                     _render_source_detail(name, df)
@@ -624,8 +668,7 @@ if sources:
         render_status_badges(["ready" if optional_supplied else "optional"])
         if optional_supplied:
             st.caption(
-                f"{len(optional_supplied)} physical source file(s) supplied "
-                "under this domain."
+                f"{len(optional_supplied)} table(s) supplied under this category."
             )
             for name, df in optional_supplied:
                 _render_source_detail(name, df)

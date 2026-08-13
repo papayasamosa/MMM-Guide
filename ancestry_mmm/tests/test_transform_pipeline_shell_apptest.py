@@ -11,6 +11,8 @@ import pandas as pd
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
+from ancestry_mmm.data.loader import load_realistic_sample_sources
+
 st.page_link = lambda *a, **k: None
 
 ROOT = Path(__file__).parent.parent
@@ -48,6 +50,25 @@ def test_sources_loaded_but_not_joined_shows_source_alignment_section():
     at = _run_at(raw_sources=_matching_sources())
     assert not at.exception, f"page raised: {at.exception}"
     assert any("Join setup" in (m.value or "") for m in at.markdown)
+
+
+def test_realistic_source_pack_stops_before_generic_join():
+    frames, error = load_realistic_sample_sources()
+    frames.pop("segment_ltv")
+    assert error is None
+    at = _run_at(
+        raw_sources=frames,
+        data_loaded=True,
+        demo_source_pack="realistic-source-pack-v1",
+    )
+    assert not at.exception, f"source-native page raised: {at.exception}"
+    assert any(
+        "Source-native preparation boundary" in (m.value or "") for m in at.markdown
+    )
+    assert any(
+        "does not have an approved end-to-end" in (w.value or "") for w in at.warning
+    )
+    assert not any(button.label == "Join sources" for button in at.button)
 
 
 def test_after_join_shows_diagnostics_panel_as_a_distinct_section():
