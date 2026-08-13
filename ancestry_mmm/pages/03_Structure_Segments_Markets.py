@@ -40,6 +40,7 @@ from ancestry_mmm.core.activities import (
     activity_by_model_input,
     legacy_activity_definitions_from_model_spec,
     resolve_activity_definition,
+    resolve_activity_model_input,
 )
 
 from ancestry_mmm.core.outcomes import (
@@ -77,6 +78,7 @@ from ancestry_mmm.core.pathways import (
     LAG_TYPES,
     PATHWAY_ROLES,
     MediaOutcomePathway,
+    migrate_pathways_to_activity_identity,
     legacy_governance_review_catalogue,
     legacy_governance_change_summary,
     pathways_drift_dataframe,
@@ -834,12 +836,29 @@ if _legacy_governance_review:
                 ),
                 key="legacy_pathway_review_confirmed",
             )
+_pathway_identity_migration = migrate_pathways_to_activity_identity(
+    st.session_state["media_outcome_pathways"],
+    _governed_activity_definitions,
+)
+if _pathway_identity_migration.errors:
+    st.warning(
+        "Some pathway records still need explicit activity-identity migration. "
+        "They remain review-required and cannot be saved as governed rows until "
+        "the ambiguity is resolved."
+    )
+    for _migration_error in _pathway_identity_migration.errors:
+        st.error(_migration_error)
+
 _pathway_default_df = (
-    pd.DataFrame(st.session_state["media_outcome_pathways"])
-    if st.session_state["media_outcome_pathways"]
+    pd.DataFrame(
+        [pathway.to_dict() for pathway in _pathway_identity_migration.pathways]
+    )
+    if _pathway_identity_migration.pathways
     else pd.DataFrame(
         columns=[
             "pathway_id",
+            "activity_id",
+            "activity_market",
             "channel",
             "source_product",
             "target_outcome_id",
@@ -868,6 +887,12 @@ _pathway_enum_values = {
     "headline_approval_status": HEADLINE_APPROVAL_STATUSES,
     "evidence_status": EVIDENCE_STATUSES + LEGACY_EVIDENCE_STATUSES,
 }
+_activity_ids = sorted(
+    {definition.activity_id for definition in _governed_activity_definitions}
+)
+_activity_markets = sorted(
+    {definition.market for definition in _governed_activity_definitions} | set(markets)
+)
 _pathway_editor_df = display_enum_frame(
     _pathway_default_df, _pathway_enum_values.keys()
 )
@@ -882,8 +907,23 @@ pathway_catalogue_editor = st.data_editor(
     ],
     column_config={
         "pathway_id": None,  # auto-managed identity, not hand-edited
+        "activity_id": st.column_config.SelectboxColumn(
+            "Governed activity",
+            options=_activity_ids,
+            required=False,
+            help="Stable activity identity; funnel stage remains sourced from Activity Mapping.",
+        ),
+        "activity_market": st.column_config.SelectboxColumn(
+            "Activity market",
+            options=_activity_markets,
+            required=False,
+            help="Explicit market scope for the governed activity identity.",
+        ),
         "channel": st.column_config.SelectboxColumn(
-            "Media channel", options=channels, required=True
+            "Physical model input",
+            options=channels,
+            required=True,
+            help="Engine predictor resolved from the governed activity; it is not the reporting channel.",
         ),
         "source_product": st.column_config.SelectboxColumn(
             "Source product",
@@ -974,10 +1014,11 @@ if not pathway_catalogue_df.empty:
 
     def _pathway_row_label(index: int) -> str:
         row = pathway_catalogue_df.iloc[index]
-        channel = row.get("channel") or "(channel not set)"
+        activity = row.get("activity_id") or row.get("channel") or "(activity not set)"
+        market = row.get("activity_market") or "*"
         outcome = row.get("target_outcome_id") or "(outcome not set)"
         component = row.get("component_type") or "direct"
-        return f"Row {index + 1}: {channel} -> {outcome} [{component}]"
+        return f"Row {index + 1}: {activity} ({market}) -> {outcome} [{component}]"
 
     _selected_pathway_row = st.selectbox(
         "Component-specific pathway fields",
@@ -1062,6 +1103,33 @@ if not pathway_catalogue_df.empty:
         _edited_headline_status if not _is_governance_only else "not_applicable"
     )
 
+# Resolve the engine predictor from the selected governed activity before
+# constructing pathway records. The reporting channel is never used here.
+_editor_identity_errors = []
+
+
+def _pathway_from_editor_row(row: dict) -> MediaOutcomePathway:
+    payload = dict(row)
+    activity_id = payload.get("activity_id")
+    activity_market = payload.get("activity_market")
+    if pd.isna(activity_id):
+        activity_id = ""
+    if pd.isna(activity_market):
+        activity_market = ""
+    payload["activity_id"] = str(activity_id or "")
+    payload["activity_market"] = str(activity_market or "")
+    if payload["activity_id"] and payload["activity_market"]:
+        try:
+            payload["channel"] = resolve_activity_model_input(
+                _governed_activity_definitions,
+                market=payload["activity_market"],
+                activity_id=payload["activity_id"],
+            )
+        except (KeyError, ValueError) as error:
+            _editor_identity_errors.append(str(error))
+    return MediaOutcomePathway.from_dict(payload)
+
+
 # Enforce the UI contract for every row, including rows not currently selected.
 # This prevents stale values from an older bundle or a component-type change from
 # becoming operational merely because the grid retains a hidden cell value.
@@ -1079,12 +1147,16 @@ for _pathway_index, _pathway_row in pathway_catalogue_df.iterrows():
         pathway_catalogue_df.at[_pathway_index, "include_in_attribution"] = False
 
 _edited_pathways = [
-    MediaOutcomePathway.from_dict(row)
+    _pathway_from_editor_row(row)
     for row in pathway_catalogue_df.to_dict("records")
-    if row.get("channel") and row.get("target_outcome_id")
+    if (row.get("channel") or row.get("activity_id")) and row.get("target_outcome_id")
 ]
-_preview_errors = validate_media_outcome_pathways(
+_edited_identity_migration = migrate_pathways_to_activity_identity(
     _edited_pathways,
+    _governed_activity_definitions,
+)
+_preview_errors = validate_media_outcome_pathways(
+    list(_edited_identity_migration.pathways),
     channels=channels,
     outcome_ids=[
         row["outcome_id"]
@@ -1092,6 +1164,8 @@ _preview_errors = validate_media_outcome_pathways(
         if row.get("outcome_id")
     ],
 )
+_preview_errors += list(_edited_identity_migration.errors)
+_preview_errors += sorted(set(_editor_identity_errors))
 with st.expander("Resolved model-equation component preview", expanded=False):
     st.caption(
         "This is the authoritative component view used by fitting, replay, attribution, "
@@ -1119,7 +1193,7 @@ with st.expander("Resolved model-equation component preview", expanded=False):
         _resolved_preview = resolve_pathway_masks(
             _preview_outcomes,
             channels,
-            _edited_pathways,
+            list(_edited_identity_migration.pathways),
             dna_channel_idx=_dna_idx,
             dna_outcome_id=fh_dna_cross_sell_outcome_id or None,
             direct_dna_outcome_ids=list(dict.fromkeys(_direct_dna_ids)),
@@ -1538,12 +1612,19 @@ if st.button("Save structure and validate", type="primary"):
     media_outcome_pathways = []
     for row in pathway_catalogue_df.to_dict("records"):
         if not (
-            row.get("channel")
+            (row.get("channel") or row.get("activity_id"))
             and row.get("source_product")
             and row.get("target_outcome_id")
         ):
             continue  # a blank row added by the editor but never filled in
-        media_outcome_pathways.append(MediaOutcomePathway.from_dict(row))
+        media_outcome_pathways.append(_pathway_from_editor_row(row))
+    _save_identity_migration = migrate_pathways_to_activity_identity(
+        media_outcome_pathways,
+        _governed_activity_definitions,
+    )
+    errors += list(_save_identity_migration.errors)
+    errors += sorted(set(_editor_identity_errors))
+    media_outcome_pathways = list(_save_identity_migration.pathways)
     errors += validate_media_outcome_pathways(
         media_outcome_pathways,
         channels=channels,

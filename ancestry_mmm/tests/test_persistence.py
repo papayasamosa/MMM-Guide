@@ -56,6 +56,7 @@ from ancestry_mmm.core.persistence import (
     reconstruct_model_state,
     replace_curve_artifact_store,
     resolve_imported_causal_graphs,
+    resolve_imported_media_outcome_pathways,
     resolve_imported_outcome_approvals,
     resolve_imported_search_objects,
     resolve_imported_source_definitions,
@@ -2368,7 +2369,11 @@ def test_export_then_import_reproduces_media_outcome_pathways(tmp_path, sample_p
 
     pathways = [
         MediaOutcomePathway(
-            channel="DNA_Media", source_product="DNA", target_outcome_id="dna_new_kit"
+            channel="DNA_Media",
+            source_product="DNA",
+            target_outcome_id="dna_new_kit",
+            activity_id="dna-paid-social",
+            activity_market="UK",
         ).to_dict(),
     ]
     sample_project = dict(sample_project)
@@ -2378,6 +2383,24 @@ def test_export_then_import_reproduces_media_outcome_pathways(tmp_path, sample_p
     imported = import_project(output_path)
 
     assert imported["media_outcome_pathways"] == pathways
+
+
+def test_resolve_imported_media_outcome_pathways_quarantines_malformed_rows():
+    resolved, warnings = resolve_imported_media_outcome_pathways(
+        {
+            "media_outcome_pathways": [
+                {
+                    "channel": "TV",
+                    "source_product": "Family History",
+                    "target_outcome_id": "fh",
+                },
+                "not-a-mapping",
+            ]
+        }
+    )
+    assert len(resolved) == 1
+    assert len(warnings) == 1
+    assert "not a mapping" in warnings[0]
 
 
 def test_export_then_import_preserves_migration_review_audit(tmp_path, sample_project):

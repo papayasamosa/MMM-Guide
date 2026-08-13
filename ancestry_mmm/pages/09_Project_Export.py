@@ -45,6 +45,7 @@ from ancestry_mmm.core.persistence import (
     reconstruct_model_state,
     replace_curve_artifact_store,
     resolve_imported_outcome_approvals,
+    resolve_imported_media_outcome_pathways,
     resolve_imported_causal_graphs,
     resolve_imported_search_objects,
     resolve_imported_source_versions,
@@ -812,7 +813,12 @@ if uploaded_zip is not None and st.button("Import bundle"):
                 "Go to Structure → Outcome Governance to review."
             )
         set_state("funnel_links", imported["funnel_links"])
-        set_state("media_outcome_pathways", imported["media_outcome_pathways"])
+        _resolved_pathways, _pathway_warnings = resolve_imported_media_outcome_pathways(
+            imported
+        )
+        set_state("media_outcome_pathways", _resolved_pathways)
+        for _pathway_warning in _pathway_warnings:
+            st.warning(_pathway_warning)
         set_state("net_billthrough_metadata", imported["net_billthrough_metadata"])
         # REQ-GRAPH-001 work package (graph portability): restore every
         # quarantine-checked graph version, and make the highest-numbered

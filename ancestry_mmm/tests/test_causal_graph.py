@@ -70,6 +70,38 @@ class TestCausalNodeRoundTrip:
         restored = CausalNode.from_dict(node.to_dict())
         assert restored == node
 
+    def test_activity_taxonomy_metadata_does_not_change_graph_structure(self):
+        node = CausalNode(
+            node_id="activity:UK:meta-brand",
+            role=NODE_ROLE_INTERVENTION,
+            market="UK",
+            metadata={
+                "activity_id": "meta-brand",
+                "activity_market": "UK",
+                "funnel_stage": "brand_upper",
+            },
+        )
+        graph = _minimal_valid_graph(
+            nodes=[node, CausalNode(node_id="fh_new", role=NODE_ROLE_OUTCOME)]
+        )
+        changed_taxonomy = replace(
+            graph,
+            nodes=[
+                replace(
+                    item,
+                    metadata={**item.metadata, "funnel_stage": "performance_lower"},
+                )
+                if item.node_id == node.node_id
+                else item
+                for item in graph.nodes
+            ],
+        )
+
+        assert (
+            changed_taxonomy.structural_fingerprint() == graph.structural_fingerprint()
+        )
+        assert changed_taxonomy.layout_fingerprint() == graph.layout_fingerprint()
+
 
 class TestCausalEdgeRoundTrip:
     def test_to_dict_from_dict_round_trips(self):

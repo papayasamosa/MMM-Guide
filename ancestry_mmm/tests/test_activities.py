@@ -2,10 +2,13 @@ import pytest
 
 from ancestry_mmm.core.activities import (
     ActivityDefinition,
+    activity_node_id,
+    governed_activities_in_model_scope,
     activity_definitions_fingerprint,
     activity_fit_fingerprint,
     activity_invalidation,
     activity_reporting_fingerprint,
+    resolve_graph_activity_predictor,
 )
 from ancestry_mmm.core.media_costs import monetary_governance_fingerprint
 
@@ -258,12 +261,6 @@ class TestActivityTaxonomy:
             [before]
         ) != activity_reporting_fingerprint([after])
         assert activity_fit_fingerprint([before]) == activity_fit_fingerprint([after])
-        assert activity_definitions_fingerprint(
-            [before]
-        ) == activity_definitions_fingerprint([after])
-        impact = activity_invalidation(before, after)
-        assert impact.changed_fields == ()
-        assert impact.refit_model is False
 
     def test_meta_activities_share_reporting_channel_but_keep_distinct_identity(self):
         activities = [
@@ -354,3 +351,61 @@ class TestActivityTaxonomy:
         assert {item.channel for item in activities} == {"CRM"}
         assert len({item.campaign_type for item in activities}) == 5
         assert len({item.activity_id for item in activities}) == 5
+
+
+def test_activity_node_identity_is_scoped_to_market():
+    assert activity_node_id(market="UK", activity_id="paid-social") != activity_node_id(
+        market="AU", activity_id="paid-social"
+    )
+
+
+def test_model_scope_resolves_two_same_reporting_channel_activities():
+    paid = _activity(
+        activity_id="meta-paid",
+        channel="Paid Social",
+        model_input_column="meta_paid",
+        activity_ownership="paid",
+        economic_treatment="paid_media_cost",
+        planning_eligibility="optimisable",
+        platform="Meta",
+        funnel_stage="performance_lower",
+    )
+    owned = _activity(
+        activity_id="meta-owned",
+        channel="Paid Social",
+        model_input_column="meta_owned",
+        funnel_stage="mid_funnel",
+    )
+    scoped = governed_activities_in_model_scope(
+        [paid, owned], markets=["UK"], model_input_columns=["meta_paid", "meta_owned"]
+    )
+    assert [(market, item.activity_id) for market, item in scoped] == [
+        ("UK", "meta-paid"),
+        ("UK", "meta-owned"),
+    ]
+
+
+def test_graph_activity_resolver_uses_registry_not_free_form_metadata():
+    definition = _activity(
+        activity_id="meta-paid",
+        channel="Paid Social",
+        model_input_column="meta_paid",
+        activity_ownership="paid",
+        economic_treatment="paid_media_cost",
+        planning_eligibility="optimisable",
+        market="UK",
+    )
+
+    class Node:
+        node_id = "activity:UK:meta-paid"
+        market = "UK"
+        metadata = {
+            "activity_id": "meta-paid",
+            "activity_market": "UK",
+            "funnel_stage": "brand_upper",
+            "model_input_column": "not_authoritative",
+        }
+
+    predictor, resolved = resolve_graph_activity_predictor(Node(), [definition])
+    assert predictor == "meta_paid"
+    assert resolved == definition

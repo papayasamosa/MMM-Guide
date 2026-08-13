@@ -31,8 +31,9 @@ not imply a dependency natively supports a capability it does not).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
+from .activities import ActivityDefinition, resolve_graph_activity_predictor
 from .causal_graph import (
     CausalGraph,
     EDGE_ROLE_CROSS_PRODUCT_HALO,
@@ -168,7 +169,13 @@ def check_engine_capability(
     return reasons
 
 
-def resolved_pathway_masks_from_graph(graph: CausalGraph) -> ResolvedPathwayMasks:
+def resolved_pathway_masks_from_graph(
+    graph: CausalGraph,
+    *,
+    activity_definitions: Optional[
+        Sequence[ActivityDefinition | Mapping[str, object]]
+    ] = None,
+) -> ResolvedPathwayMasks:
     """Compiles a graph's structural edges directly into a
     `ResolvedPathwayMasks` - the same operational object
     `resolve_validated_pathway_masks` produces from a `MediaOutcomePathway`
@@ -188,6 +195,7 @@ def resolved_pathway_masks_from_graph(graph: CausalGraph) -> ResolvedPathwayMask
     governance/evidence-tier distinction carried in metadata, mirroring how
     `MediaOutcomePathway.evidence_status` already works.
     """
+    node_by_id = {node.node_id: node for node in graph.nodes}
     components: List[ResolvedPathwayComponent] = []
     for edge in graph.edges:
         if edge.role == EDGE_ROLE_EXCLUDED_DIAGNOSTIC_ONLY:
@@ -210,10 +218,14 @@ def resolved_pathway_masks_from_graph(graph: CausalGraph) -> ResolvedPathwayMask
                 f"Edge '{edge.edge_id}' has role '{edge.role}', which "
                 "cannot be compiled - call check_engine_capability first."
             )
+        source_node = node_by_id[edge.source_node_id]
+        predictor, definition = resolve_graph_activity_predictor(
+            source_node, activity_definitions or []
+        )
         components.append(
             ResolvedPathwayComponent(
                 outcome_id=edge.target_node_id,
-                channel=edge.source_node_id,
+                channel=predictor,
                 component_type=component_type,
                 role=role,
                 lag_weeks=lag_weeks,
@@ -232,6 +244,15 @@ def resolved_pathway_masks_from_graph(graph: CausalGraph) -> ResolvedPathwayMask
                 ),
                 evidence_status=edge.metadata.get("evidence_status", "unreviewed"),
                 included_in_fit=True,
+                activity_id=definition.activity_id if definition else "",
+                activity_market=(
+                    str(
+                        source_node.metadata.get("activity_market")
+                        or source_node.market
+                    )
+                    if definition
+                    else ""
+                ),
             )
         )
     return ResolvedPathwayMasks(components=components)
@@ -248,8 +269,16 @@ class GraphModelCompiler:
     """The one graph-to-model boundary (REQ-GRAPH-001 work package D).
     Never mutates the graph it compiles."""
 
-    def __init__(self, engine: str = GRAPH_ENGINE_PYMC_HIERARCHICAL) -> None:
+    def __init__(
+        self,
+        engine: str = GRAPH_ENGINE_PYMC_HIERARCHICAL,
+        *,
+        activity_definitions: Optional[
+            Sequence[ActivityDefinition | Mapping[str, object]]
+        ] = None,
+    ) -> None:
         self.engine = engine
+        self.activity_definitions = activity_definitions
 
     def compile(self, graph: CausalGraph) -> GraphCompilationResult:
         """Raises UnsupportedGraphStructureError - always with the specific
@@ -274,8 +303,12 @@ class GraphModelCompiler:
                 f"Graph is not supported by engine '{self.engine}': "
                 + "; ".join(capability_issues)
             )
-        plan = build_compilation_plan_preview(graph)
-        pathway_masks = resolved_pathway_masks_from_graph(graph)
+        plan = build_compilation_plan_preview(
+            graph, activity_definitions=self.activity_definitions
+        )
+        pathway_masks = resolved_pathway_masks_from_graph(
+            graph, activity_definitions=self.activity_definitions
+        )
         return GraphCompilationResult(
             plan=plan,
             pathway_masks=pathway_masks,
@@ -297,6 +330,9 @@ def resolve_pathway_masks_preferring_graph(
     dna_outcome_id: Optional[str],
     direct_dna_outcome_ids: Sequence[str],
     dna_lag_weeks: int,
+    activity_definitions: Optional[
+        Sequence[ActivityDefinition | Mapping[str, object]]
+    ] = None,
 ) -> ResolvedPathwayMasks:
     """The one place both `core.hierarchical_model` and
     `core.market_specific_model` resolve pathway masks. If an approved
@@ -310,7 +346,11 @@ def resolve_pathway_masks_preferring_graph(
     every existing caller already gets.
     """
     if causal_graph is not None:
-        return GraphModelCompiler().compile(causal_graph).pathway_masks
+        return (
+            GraphModelCompiler(activity_definitions=activity_definitions)
+            .compile(causal_graph)
+            .pathway_masks
+        )
     return resolve_validated_pathway_masks(
         outcome_ids,
         channels,

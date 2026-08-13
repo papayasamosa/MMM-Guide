@@ -173,6 +173,7 @@ def build_fh_market_specific_model(
         dna_outcome_id=dna_outcome_id,
         direct_dna_outcome_ids=direct_dna_outcome_ids,
         dna_lag_weeks=dna_lag_weeks,
+        activity_definitions=frame.get("activity_definitions"),
     )
 
     channel_mean_spend = X_media.mean(axis=0)
