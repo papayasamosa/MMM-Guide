@@ -18,6 +18,7 @@ from ancestry_mmm.core.coverage import (
     DOMAIN_OUTCOMES,
     SourceDefinition,
 )
+from ancestry_mmm.data.loader import load_realistic_sample_sources
 
 st.page_link = lambda *a, **k: None
 
@@ -123,3 +124,20 @@ def test_all_three_required_domains_supplied_shows_ready_badge():
         "Missing required logical domain(s)" in (w.value or "") for w in at.warning
     )
     assert any("Ready" in (m.value or "") for m in at.markdown)
+
+
+def test_realistic_source_pack_demo_loads_as_separate_governed_sources():
+    at = _run_at()
+    realistic_button = next(
+        button for button in at.button if button.label == "Load realistic source pack"
+    )
+    realistic_button.click().run()
+
+    assert not at.exception, f"realistic demo click raised: {at.exception}"
+    frames, error = load_realistic_sample_sources()
+    frames.pop("segment_ltv")
+    assert error is None
+    assert set(at.session_state["raw_sources"]) == set(frames)
+    assert at.session_state["demo_source_pack"] == "realistic-source-pack-v1"
+    assert len(at.session_state["source_definitions"]) == len(frames)
+    assert at.session_state["active_source_upload_version"] == {}
