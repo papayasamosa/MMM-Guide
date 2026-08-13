@@ -16,6 +16,9 @@ from ancestry_mmm.utils import (
     readable_label,
     FIELD_HELP,
     dataframe_column_config,
+    display_enum_frame,
+    display_enum_options,
+    restore_enum_frame,
 )
 from ancestry_mmm.components import (
     apply_theme,
@@ -376,54 +379,68 @@ if st.button(
     st.session_state["structure_outcome_rows"] = []
     st.session_state.pop("outcome_catalogue_editor", None)
     st.rerun()
-outcome_catalogue_df = st.data_editor(
-    _default_outcome_df,
+_outcome_enum_values = {
+    "product": KNOWN_PRODUCTS,
+    "role": OUTCOME_ROLES,
+}
+_outcome_editor_df = display_enum_frame(
+    _default_outcome_df, _outcome_enum_values.keys()
+)
+outcome_catalogue_editor = st.data_editor(
+    _outcome_editor_df,
     num_rows="dynamic",
     column_config={
         "outcome_id": st.column_config.TextColumn(
-            "outcome_id", required=True, help="Stable identity - unique per outcome."
+            "Outcome ID", required=True, help="Stable identity - unique per outcome."
         ),
         "product": st.column_config.SelectboxColumn(
-            "product", options=list(KNOWN_PRODUCTS), required=True
+            "Product", options=display_enum_options(KNOWN_PRODUCTS), required=True
         ),
         "segment": st.column_config.TextColumn(
-            "segment",
+            "Customer segment",
             required=True,
             help="Descriptive customer-segment grouping - not unique.",
         ),
         "metric": st.column_config.TextColumn(
-            "metric",
+            "Outcome measure",
             required=True,
             help=f"What's being counted - e.g. '{METRIC_GSA}', '{METRIC_SIGNUP}', '{METRIC_KIT_SALE}'. "
             "A sign-up and a GSA must never share a metric value. Display label only - matching logic "
             "uses the stable metric_key derived from this automatically.",
         ),
         "source_column": st.column_config.SelectboxColumn(
-            "source_column", options=numeric_cols, required=True
+            "Source column", options=numeric_cols, required=True
         ),
         "unit": st.column_config.TextColumn(
-            "unit",
+            "Counting unit",
             help="Counting unit - defaults from the metric registry if left blank; a custom metric needs one set explicitly.",
         ),
         "value_weight": st.column_config.NumberColumn(
-            "value_weight",
+            "Value per outcome",
             min_value=0.0,
             help="Per-unit value (LTV for FH, an analogous per-kit value for DNA).",
         ),
         "value_currency": st.column_config.TextColumn(
-            "value_currency",
+            "Value currency",
             help="e.g. USD - the currency value_weight is denominated in.",
         ),
         "role": st.column_config.SelectboxColumn(
-            "role", options=list(OUTCOME_ROLES), required=True
+            "Modelling role",
+            options=display_enum_options(OUTCOME_ROLES),
+            required=True,
         ),
         "included_in_fit": st.column_config.CheckboxColumn(
-            "included_in_fit", default=True
+            "Include in next fit", default=True
         ),
-        "exclusion_reason": st.column_config.TextColumn("exclusion_reason"),
+        "exclusion_reason": st.column_config.TextColumn("Reason excluded"),
     },
     key="outcome_catalogue_editor",
     width="stretch",
+)
+outcome_catalogue_df = restore_enum_frame(
+    outcome_catalogue_editor,
+    _outcome_enum_values.keys(),
+    _outcome_enum_values,
 )
 
 if get_state("model_meta") is not None:
@@ -480,13 +497,13 @@ _outcome_section.__exit__(None, None, None)
 st.markdown("---")
 _funnel_section = SectionCard(
     "Advanced causal links (optional)",
-    description="Diagnostics/warnings only - not a constrained funnel model.",
+    description="For review and warnings only - not a constrained funnel model.",
 )
 _funnel_section.__enter__()
 st.caption(
     "Declare which sign-up and GSA outcomes (or any other upstream/downstream pair) form a funnel, "
     "e.g. a sign-up that later converts to a GSA. Sign-ups and GSAs are still fitted as independent "
-    "outcome equations - this is diagnostics/warnings only (Diagnostics page), not a constrained "
+    "outcome equations - this is for review and warnings only (Model Diagnostics), not a constrained "
     "funnel model."
 )
 if "funnel_links" not in st.session_state:
@@ -653,8 +670,19 @@ _pathway_default_df = (
         ]
     )
 )
-pathway_catalogue_df = st.data_editor(
-    _pathway_default_df,
+_pathway_enum_values = {
+    "source_product": KNOWN_PRODUCTS,
+    "component_type": COMPONENT_TYPES,
+    "role": PATHWAY_ROLES,
+    "lag_type": LAG_TYPES,
+    "headline_approval_status": HEADLINE_APPROVAL_STATUSES,
+    "evidence_status": EVIDENCE_STATUSES + LEGACY_EVIDENCE_STATUSES,
+}
+_pathway_editor_df = display_enum_frame(
+    _pathway_default_df, _pathway_enum_values.keys()
+)
+pathway_catalogue_editor = st.data_editor(
+    _pathway_editor_df,
     num_rows="dynamic",
     disabled=[
         "prior_scale",
@@ -665,13 +693,15 @@ pathway_catalogue_df = st.data_editor(
     column_config={
         "pathway_id": None,  # auto-managed identity, not hand-edited
         "channel": st.column_config.SelectboxColumn(
-            "channel", options=channels, required=True
+            "Media channel", options=channels, required=True
         ),
         "source_product": st.column_config.SelectboxColumn(
-            "source_product", options=list(KNOWN_PRODUCTS), required=True
+            "Source product",
+            options=display_enum_options(KNOWN_PRODUCTS),
+            required=True,
         ),
         "target_outcome_id": st.column_config.SelectboxColumn(
-            "target_outcome_id",
+            "Target outcome",
             options=[
                 r["outcome_id"]
                 for r in outcome_catalogue_df.to_dict("records")
@@ -680,20 +710,26 @@ pathway_catalogue_df = st.data_editor(
             required=True,
         ),
         "component_type": st.column_config.SelectboxColumn(
-            "Component type",
-            options=list(COMPONENT_TYPES),
+            "Pathway type",
+            options=display_enum_options(COMPONENT_TYPES),
             required=True,
             default="direct",
             help="Direct effect, delayed/cross-product effect, diagnostic mediation, or exclusion.",
         ),
         "role": st.column_config.SelectboxColumn(
-            "Role", options=list(PATHWAY_ROLES), required=True, default=PATHWAY_ROLES[0]
+            "Planning/reporting role",
+            options=display_enum_options(PATHWAY_ROLES),
+            required=True,
+            default=readable_label(PATHWAY_ROLES[0]),
         ),
         "lag_type": st.column_config.SelectboxColumn(
-            "Lag type", options=list(LAG_TYPES), required=True, default="none"
+            "Timing assumption",
+            options=display_enum_options(LAG_TYPES),
+            required=True,
+            default=readable_label("none"),
         ),
         "lag_weeks": st.column_config.NumberColumn(
-            "lag_weeks",
+            "Additional lag (weeks)",
             min_value=0,
             help="Only meaningful if lag_type implies a delay.",
         ),
@@ -703,17 +739,17 @@ pathway_catalogue_df = st.data_editor(
             help="Operational only for cross_product: sigma of its HalfNormal pathway-strength prior. Leave blank for direct, mediated, and excluded rows.",
         ),
         "include_in_attribution": st.column_config.CheckboxColumn(
-            "include_in_attribution", default=True
+            "Show in analyst attribution", default=True
         ),
         "include_in_planning": st.column_config.CheckboxColumn(
-            "include_in_planning", default=True
+            "Eligible for planning", default=True
         ),
         "include_in_headline": st.column_config.CheckboxColumn(
-            "include_in_headline", default=False
+            "Eligible for headline reporting", default=False
         ),
         "headline_approval_status": st.column_config.SelectboxColumn(
             "Headline approval",
-            options=list(HEADLINE_APPROVAL_STATUSES),
+            options=display_enum_options(HEADLINE_APPROVAL_STATUSES),
             required=True,
             default="not_reviewed",
         ),
@@ -724,13 +760,18 @@ pathway_catalogue_df = st.data_editor(
         ),
         "evidence_status": st.column_config.SelectboxColumn(
             "Evidence status",
-            options=list(EVIDENCE_STATUSES + LEGACY_EVIDENCE_STATUSES),
+            options=display_enum_options(EVIDENCE_STATUSES + LEGACY_EVIDENCE_STATUSES),
             required=True,
             default="unreviewed",
         ),
     },
     key="pathway_catalogue_editor",
     width="stretch",
+)
+pathway_catalogue_df = restore_enum_frame(
+    pathway_catalogue_editor,
+    _pathway_enum_values.keys(),
+    _pathway_enum_values,
 )
 st.caption(
     "Component-specific fields are read-only in the grid. Select a row below to edit "

@@ -52,8 +52,8 @@ from ancestry_mmm.core.search_objects import search_object_fit_fingerprint
 from ancestry_mmm.core.coverage import VariableCoverageMatrix
 
 MODEL_TYPE_LABELS = {
-    "shared": "Model A - shared curve",
-    "market_specific": "Model C - market-specific, partially pooled",
+    "shared": "Shared response across markets (Model A)",
+    "market_specific": "Market-specific response with partial pooling (Model C)",
 }
 
 st.set_page_config(

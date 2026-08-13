@@ -20,6 +20,9 @@ from ancestry_mmm.utils import (
     init_session_state,
     readable_label,
     set_state,
+    display_enum_frame,
+    display_enum_options,
+    restore_enum_frame,
 )
 from ancestry_mmm.components import (
     apply_theme,
@@ -180,14 +183,35 @@ activity_columns = [
     "approved_at",
     "source",
 ]
-activity_editor = st.data_editor(
+_activity_enum_values = {
+    "activity_ownership": OWNERSHIP,
+    "model_role": MODEL_ROLES,
+    "economic_treatment": ECONOMIC_TREATMENTS,
+    "planning_eligibility": PLANNING_ELIGIBILITY,
+    "approval_status": APPROVAL_STATUSES,
+}
+_activity_editor_df = display_enum_frame(
     pd.DataFrame(activity_rows).reindex(columns=activity_columns),
+    _activity_enum_values.keys(),
+)
+_activity_editor_df["pathway_ids"] = _activity_editor_df["pathway_ids"].map(
+    lambda value: (
+        ", ".join(value) if isinstance(value, (list, tuple, set)) else str(value or "")
+    )
+)
+activity_editor = st.data_editor(
+    _activity_editor_df,
     num_rows="dynamic",
     width="stretch",
     key="activity_governance_editor",
     column_config={
         "market": st.column_config.SelectboxColumn(
             "Market", options=spec.markets, required=True
+        ),
+        "activity_id": st.column_config.TextColumn(
+            "Activity ID",
+            required=True,
+            help="Stable identity for this activity in this market.",
         ),
         "channel": st.column_config.TextColumn(
             "Reporting channel",
@@ -197,27 +221,60 @@ activity_editor = st.data_editor(
                 "may share it when their model-input columns differ."
             ),
         ),
+        "platform": st.column_config.TextColumn("Platform"),
+        "campaign_type": st.column_config.TextColumn("Campaign type"),
+        "product_advertised": st.column_config.TextColumn("Product advertised"),
+        "message_type": st.column_config.TextColumn("Message type"),
         "model_input_column": st.column_config.SelectboxColumn(
-            "Model-input column", options=spec.channels, required=True
+            "Media input column",
+            options=spec.channels,
+            required=True,
+            help="The observed column used by the fitted model; it is not assumed to be monetary spend.",
         ),
         "activity_ownership": st.column_config.SelectboxColumn(
-            "Ownership", options=sorted(OWNERSHIP), required=True
+            "Activity ownership",
+            options=display_enum_options(sorted(OWNERSHIP)),
+            required=True,
         ),
         "model_role": st.column_config.SelectboxColumn(
-            "Causal role", options=sorted(MODEL_ROLES), required=True
+            "Model role",
+            options=display_enum_options(sorted(MODEL_ROLES)),
+            required=True,
         ),
         "economic_treatment": st.column_config.SelectboxColumn(
-            "Economic treatment",
-            options=sorted(ECONOMIC_TREATMENTS),
+            "Cost treatment",
+            options=display_enum_options(sorted(ECONOMIC_TREATMENTS)),
             required=True,
         ),
         "planning_eligibility": st.column_config.SelectboxColumn(
-            "Planning", options=sorted(PLANNING_ELIGIBILITY), required=True
+            "Planning eligibility",
+            options=display_enum_options(sorted(PLANNING_ELIGIBILITY)),
+            required=True,
         ),
+        "pathway_ids": st.column_config.TextColumn(
+            "Pathway IDs",
+            help="Comma-separated pathway records linked to this activity.",
+        ),
+        "evidence_status": st.column_config.TextColumn("Evidence status"),
+        "evidence_source": st.column_config.TextColumn("Evidence source"),
+        "rationale": st.column_config.TextColumn("Reason for this mapping"),
+        "limitations": st.column_config.TextColumn("Known limitations"),
         "approval_status": st.column_config.SelectboxColumn(
-            "Approval", options=sorted(APPROVAL_STATUSES), required=True
+            "Review status",
+            options=display_enum_options(sorted(APPROVAL_STATUSES)),
+            required=True,
         ),
+        "reviewed_by": st.column_config.TextColumn("Reviewed by"),
+        "reviewed_at": st.column_config.TextColumn("Reviewed on"),
+        "approved_by": st.column_config.TextColumn("Approved by"),
+        "approved_at": st.column_config.TextColumn("Approved on"),
+        "source": st.column_config.TextColumn("Source / provenance"),
     },
+)
+activity_editor = restore_enum_frame(
+    activity_editor,
+    _activity_enum_values.keys(),
+    _activity_enum_values,
 )
 
 # REQ-DATAIN-001 review finding: pooling_group_id is not an editable
@@ -382,16 +439,34 @@ search_object_columns = [
     "approved_at",
     "search_object_version",
 ]
+_search_enum_values = {
+    "search_role": SEARCH_ROLES,
+    "unit": SEARCH_UNITS,
+    "state": SEARCH_OBJECT_STATES,
+    "planning_eligibility": PLANNING_ELIGIBILITY,
+    "approval_status": APPROVAL_STATUSES,
+}
 _search_object_df = pd.DataFrame(search_object_rows).reindex(
     columns=search_object_columns
 )
-for _text_col in ("effective_period_start", "effective_period_end"):
+for _text_col in (
+    "search_object_id",
+    "channel",
+    "source_column",
+    "currency",
+    "product",
+    "model_input_column",
+    "source",
+    "effective_period_start",
+    "effective_period_end",
+):
     # An empty (or all-null) reindexed column infers float64, which
     # TextColumn rejects outright - force object dtype so the column
     # renders as editable text even with no rows yet.
     _search_object_df[_text_col] = _search_object_df[_text_col].astype("object")
+_search_editor_df = display_enum_frame(_search_object_df, _search_enum_values.keys())
 search_object_editor = st.data_editor(
-    _search_object_df,
+    _search_editor_df,
     num_rows="dynamic",
     width="stretch",
     key="search_object_governance_editor",
@@ -400,19 +475,38 @@ search_object_editor = st.data_editor(
             "Market", options=spec.markets, required=True
         ),
         "search_role": st.column_config.SelectboxColumn(
-            "Search role", options=sorted(SEARCH_ROLES), required=True
+            "Search object",
+            options=display_enum_options(SEARCH_ROLES),
+            required=True,
         ),
+        "search_object_id": st.column_config.TextColumn(
+            "Search object ID", required=True
+        ),
+        "channel": st.column_config.TextColumn("Channel"),
+        "source_column": st.column_config.TextColumn("Source column", required=True),
         "unit": st.column_config.SelectboxColumn(
-            "Unit", options=sorted(SEARCH_UNITS), required=True
+            "Measurement unit",
+            options=display_enum_options(SEARCH_UNITS),
+            required=True,
         ),
+        "currency": st.column_config.TextColumn("Currency"),
+        "product": st.column_config.TextColumn("Product"),
         "state": st.column_config.SelectboxColumn(
-            "State", options=sorted(SEARCH_OBJECT_STATES), required=True
+            "Data status",
+            options=display_enum_options(SEARCH_OBJECT_STATES),
+            required=True,
         ),
         "planning_eligibility": st.column_config.SelectboxColumn(
-            "Planning", options=sorted(PLANNING_ELIGIBILITY), required=True
+            "Planning eligibility",
+            options=display_enum_options(PLANNING_ELIGIBILITY),
+            required=True,
         ),
+        "model_input_column": st.column_config.TextColumn("Model input column"),
+        "source": st.column_config.TextColumn("Source / provenance"),
         "approval_status": st.column_config.SelectboxColumn(
-            "Approval", options=sorted(APPROVAL_STATUSES), required=True
+            "Review status",
+            options=display_enum_options(APPROVAL_STATUSES),
+            required=True,
         ),
         "effective_period_start": st.column_config.TextColumn(
             "Effective from (YYYY-MM-DD)"
@@ -424,6 +518,11 @@ search_object_editor = st.data_editor(
             "Version", disabled=True, help="System-managed - see Save behaviour below."
         ),
     },
+)
+search_object_editor = restore_enum_frame(
+    search_object_editor,
+    _search_enum_values.keys(),
+    _search_enum_values,
 )
 st.caption(
     "Editing an already-saved row does not overwrite it in place - Save creates "

@@ -50,7 +50,7 @@ def _run_at(**extra_state):
 def test_page_shows_empty_state_without_joined_data():
     at = _run_at()
     assert not at.exception, f"page raised: {at.exception}"
-    assert any("Transform Pipeline" in (i.value or "") for i in at.info)
+    assert any("Prepare Data" in (i.value or "") for i in at.info)
 
 
 def test_page_renders_the_build_section_with_data_and_market_col():
