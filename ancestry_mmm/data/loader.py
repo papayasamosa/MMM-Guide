@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Iterable, Optional, Tuple, List, Dict, Any
 
 from ancestry_mmm.core.coverage import SourceVersion, compute_checksum
+from ancestry_mmm.data.templates import StandardWorkbook, parse_standard_workbook
 
 
 def load_file(uploaded_file) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
@@ -23,7 +24,15 @@ def load_file(uploaded_file) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
         if filename.endswith(".csv"):
             df = pd.read_csv(uploaded_file)
         elif filename.endswith((".xlsx", ".xls", ".xlsm")):
-            df = pd.read_excel(uploaded_file)
+            workbook = pd.ExcelFile(uploaded_file)
+            if len(workbook.sheet_names) > 1:
+                return (
+                    None,
+                    "Excel workbook contains multiple sheets. Use the standard "
+                    "workbook loader or explicitly choose the generic first-sheet "
+                    "path; sheets must not be combined silently.",
+                )
+            df = pd.read_excel(workbook, sheet_name=workbook.sheet_names[0])
         elif filename.endswith(".parquet"):
             df = pd.read_parquet(uploaded_file)
         else:
@@ -86,6 +95,57 @@ def load_file_with_source_version(
         parsed_representation_version=f"pandas-{pd.__version__}",
     )
     return df, source_version, None
+
+
+def load_standard_workbook_with_source_version(
+    uploaded_file,
+    source_id: str,
+    logical_domain: Optional[str] = None,
+    existing_versions: Optional[Iterable[SourceVersion]] = None,
+) -> Tuple[Optional[StandardWorkbook], Optional[SourceVersion], Optional[str]]:
+    """Parse an Excel source pack and capture workbook-level provenance.
+
+    The parser reads every sheet and returns a manifest even when standard
+    validation fails. Validation diagnostics therefore remain inspectable by
+    the caller, while an unreadable workbook produces no fabricated upload
+    version. Generic Excel workbooks are returned with an explicit warning so
+    the UI can offer the existing generic-source path without silently
+    pretending that the workbook is a governed standard pack.
+    """
+    filename = str(uploaded_file.name)
+    if not filename.lower().endswith((".xlsx", ".xls", ".xlsm")):
+        return None, None, "Standard source-pack parsing requires an Excel workbook."
+
+    raw_bytes = uploaded_file.getvalue()
+    workbook = parse_standard_workbook(
+        raw_bytes,
+        source_id=source_id,
+        filename=filename,
+        logical_domain=logical_domain,
+    )
+    if not workbook.manifest.sheet_names and workbook.manifest.errors:
+        return None, None, "; ".join(workbook.manifest.errors)
+
+    current_for_source = [
+        version for version in (existing_versions or ()) if version.source_id == source_id
+    ]
+    next_version = max((version.version for version in current_for_source), default=0) + 1
+    source_version = SourceVersion(
+        source_id=source_id,
+        version=next_version,
+        original_filename=filename,
+        checksum=compute_checksum(raw_bytes),
+        size_bytes=len(raw_bytes),
+        uploaded_at=datetime.now(timezone.utc).isoformat(),
+        parsed_representation_version=f"pandas-{pd.__version__}",
+        template_schema_version=workbook.manifest.template_schema_version,
+        standard_template=workbook.manifest.standard_template,
+        parsed_table_ids=workbook.manifest.table_ids,
+        workbook_sheet_names=workbook.manifest.sheet_names,
+        template_warnings=workbook.manifest.warnings,
+        template_errors=workbook.manifest.errors,
+    )
+    return workbook, source_version, None
 
 
 SAMPLE_DATA_DIR = Path(__file__).parent.parent / "sample_data"
@@ -163,7 +223,7 @@ def detect_column_types(df: pd.DataFrame) -> Dict[str, List[str]]:
     dna_hints = ["dna"]
     promo_hints = ["promo", "discount", "offer"]
 
-    result = {
+    result: Dict[str, List[str]] = {
         "date": [],
         "numeric": [],
         "categorical": [],

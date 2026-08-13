@@ -153,6 +153,47 @@ def test_shows_the_recorded_logical_domain_for_a_source():
     assert any("Activity and Media" in c for c in captions)
 
 
+def test_shows_standard_workbook_schema_and_table_identity():
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    table_id = "activity-pack__sheet__activity_data"
+    at.session_state["raw_sources"] = {
+        table_id: pd.DataFrame(
+            {
+                "period_start": ["2025-01-06"],
+                "market": ["UK"],
+                "activity_id": ["meta_brand"],
+            }
+        )
+    }
+    at.session_state["source_versions"] = [
+        {
+            **_source_version("activity-pack").to_dict(),
+            "original_filename": "activity-pack.xlsx",
+            "template_schema_version": "standard-source-pack-v1",
+            "standard_template": True,
+            "parsed_table_ids": ["activity_and_media:activity_data"],
+            "workbook_sheet_names": ["activity_data", "activity_dictionary"],
+            "template_warnings": [],
+            "template_errors": [],
+        }
+    ]
+    at.session_state["active_source_upload_version"] = {table_id: 1}
+    at.session_state["source_definitions"] = [
+        SourceDefinition(
+            source_id=table_id,
+            name="activity-pack/activity_data",
+            logical_domain=DOMAIN_ACTIVITY_AND_MEDIA,
+        ).to_dict()
+    ]
+    at.session_state["data_loaded"] = True
+    at.run()
+    assert not at.exception, f"page load raised: {at.exception}"
+
+    captions = [c.value for c in at.caption]
+    assert any("Standard workbook schema" in c for c in captions)
+    assert any("activity_and_media:activity_data" in c for c in captions)
+
+
 def test_shows_unclassified_for_a_source_with_no_recorded_domain():
     """A source with no SourceDefinition (e.g. a bundle imported before
     REQ-DATAIN-001 existed) must read as explicitly unclassified, never a

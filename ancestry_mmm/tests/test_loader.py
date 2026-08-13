@@ -197,6 +197,14 @@ def _xlsm_upload(name: str = "media.xlsm") -> _FakeUploadedFile:
     return _FakeUploadedFile(name, buf.getvalue())
 
 
+def _multi_sheet_excel_upload(name: str = "multi.xlsx") -> _FakeUploadedFile:
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        _frame().to_excel(writer, sheet_name="first", index=False)
+        _frame().to_excel(writer, sheet_name="second", index=False)
+    return _FakeUploadedFile(name, buf.getvalue())
+
+
 class TestParquetAndXlsmSupport:
     def test_parquet_file_loads(self):
         df, err = load_file(_parquet_upload())
@@ -209,6 +217,12 @@ class TestParquetAndXlsmSupport:
         assert err is None
         assert df is not None
         assert list(df.columns) == list(_frame().columns)
+
+    def test_generic_loader_rejects_multiple_excel_sheets_without_explicit_path(self):
+        df, err = load_file(_multi_sheet_excel_upload())
+        assert df is None
+        assert err is not None
+        assert "multiple sheets" in err
 
     def test_still_unsupported_format_rejected(self):
         df, err = load_file(_FakeUploadedFile("media.json", b"{}"))
