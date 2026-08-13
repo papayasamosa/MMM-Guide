@@ -1103,9 +1103,19 @@ def test_steady_state_label_is_prominent_and_honest():
     steady_state_text = next(
         text for text in info_texts if "Steady-state monthly approximation" in text
     )
-    assert "no sequential week-over-week carry-in simulation" in steady_state_text
-    assert "no capacity-constrained delivery model" in steady_state_text
-    assert "no Chronos-2" in steady_state_text
+    assert (
+        "media carryover and future external factors are not simulated"
+        in steady_state_text
+    )
+    assert "no sequential week-over-week carry-in simulation" not in steady_state_text
+    technical_text = " ".join(
+        (element.value or "")
+        for element in at.markdown
+        if element.value
+        and "sequential week-over-week carry-in simulation" in element.value
+    )
+    assert "capacity-constrained delivery model" in technical_text
+    assert "Chronos-2" in technical_text
 
 
 def test_spend_plan_grid_is_labelled_as_the_editable_decision():
