@@ -1,11 +1,11 @@
 """AppTest coverage for REQ-DATAIN-001's pooling_group_id survival through
 pages/10_Channel_Media_Units.py's "Save required activity governance" flow.
 
-Regression for a PR #167 review finding: pooling_group_id is not an
-editable column in the activity governance data_editor, so rebuilding each
-row's ActivityDefinition without carrying the prior value forward silently
-reset it to None on every save through this page - destroying the stable
-cross-market identity during an otherwise unrelated edit.
+Regression for a PR #167 review finding: pooling_group_id must survive the
+activity mapping save flow - an unrelated edit must not silently reset the
+stable cross-market identity. The Phase 2 workspace now uses a compact
+overview plus a selected-activity detail form rather than a giant governance
+grid.
 """
 
 from pathlib import Path
@@ -113,3 +113,27 @@ def test_activity_mapping_is_reachable_before_model_structure():
     assert not at.exception, f"pre-structure mapping page raised: {at.exception}"
     assert any(item.label == "Save required activity governance" for item in at.button)
     assert any("No governed activities exist yet" in item.value for item in at.info)
+
+
+def test_activity_mapping_uses_compact_overview_and_detail_form():
+    df, spec = _base_state()
+    existing = ActivityDefinition(
+        activity_id="UK:tv_spend",
+        market="UK",
+        channel="TV",
+        model_input_column="tv_spend",
+        activity_ownership="paid",
+        model_role="intervention",
+        economic_treatment="paid_media_cost",
+        planning_eligibility="optimisable",
+        source="activity governance UI",
+        funnel_stage="brand_upper",
+    )
+    at = _run_at(df, spec, activity_definitions=[existing.to_dict()])
+
+    assert not at.exception, f"compact activity mapping raised: {at.exception}"
+    assert any("Activity mapping" in (m.value or "") for m in at.markdown)
+    assert any("Selected activity" == select.label for select in at.selectbox)
+    assert any(
+        "Technical and provenance" in (expander.label or "") for expander in at.expander
+    )

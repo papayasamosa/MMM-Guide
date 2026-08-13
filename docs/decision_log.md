@@ -2441,3 +2441,36 @@ separate future packages subject to their existing decision/tooling boundaries.
 
 **Owner:** Platform engineering / Data Science.
 **Status:** Implemented in UX/UI coherence Phase 1.
+
+## Activity Mapping workspace hierarchy (UX/UI coherence Phase 2)
+
+**Date:** 2026-08-13
+**Decision:** Present governed activities as a compact comparison overview
+with one selected-activity detail form. The overview contains market,
+activity, reporting channel, platform, funnel stage, media input, planning
+eligibility, and review status. The detail form keeps the complete
+ActivityDefinition contract available in grouped Identity and reporting,
+Model and planning, Evidence and review, and Technical and provenance sections.
+
+**Reason:** The prior default editor exposed the full governance record as a
+wide multi-purpose grid. That made the first interaction feel like database
+administration and made the important identity and model-input choices harder
+to compare. The underlying record remains fully governed and auditable.
+
+**Impact:** Added native Streamlit overview, selected-activity actions, grouped
+detail editing, add/remove confirmation, and concise activity labels. Search
+objects and physical delivery/cost mappings remain separate. Existing
+ActivityDefinition validation, persistence, invalidation, multiple activities
+per reporting channel, market identity, and pooling-group semantics are reused
+unchanged. No analytical or governance behaviour was changed. Business
+question: can an analyst identify and compare activities quickly while keeping
+all governed fields accessible? Estimand: none introduced. Output scale/units:
+governed activity metadata and existing source/model-input identifiers in their
+stored units. Upstream modelling references: none consulted because this is a
+presentation/orchestration package and does not change PyMC or PyMC Marketing
+model APIs. Remaining limitation: the Search-object governance editor and
+physical delivery/cost sections remain separate work surfaces rather than a
+single master-detail inspector.
+
+**Owner:** Platform engineering / Data Science.
+**Status:** Implemented in UX/UI coherence Phase 2.
