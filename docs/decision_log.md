@@ -2616,3 +2616,31 @@ journey because an interactive browser was unavailable in the local session.
 
 **Owner:** Platform engineering / Data Science.
 **Status:** Implemented in UX/UI coherence Phase 6.
+
+## Response-curve annotation contrast (UX/UI coherence Phase 7)
+
+**Date:** 2026-08-13
+**Decision:** Use the existing light analytical surface for the fixed response-
+curve annotation box, with the existing dark primary text token and subtle
+border. Preserve the annotation content, position, chart values, uncertainty,
+observed-support band, current-point marker, and axis semantics.
+
+**Reason:** The previous annotation used a dark semi-transparent background
+with dark theme text, which reduced readability in the application's light
+analytical theme. The shared chart builder is the correct presentation boundary
+for all exploratory and official annotated response curves.
+
+**Impact:** Changed only Plotly annotation styling and added a contrast
+regression test. No analytical or governance behaviour changed. Business
+question: can an analyst read evidence, support, extrapolation, and economics
+annotations without losing the curve context? Estimand: none introduced.
+Output scale/units: unchanged response values, uncertainty intervals, model-
+input or monetary axes, and existing annotation text. Upstream modelling
+references: none consulted because this package changes chart presentation only
+and does not change PyMC or PyMC Marketing model APIs. Remaining limitation:
+visual screenshot review through the connected in-app browser was unavailable;
+the repository's synthetic-data browser journey and figure-level contrast test
+provide the available visual regression evidence.
+
+**Owner:** Platform engineering / Data Science.
+**Status:** Implemented in UX/UI coherence Phase 7.
