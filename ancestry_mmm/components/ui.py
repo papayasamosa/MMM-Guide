@@ -424,26 +424,25 @@ def render_empty_state(
     button to the prerequisite page, instead of a bare warning.
 
     `message` remains the required, freeform explanation and is always the
-    first line shown - every existing call site (`render_empty_state(msg,
+    primary line shown - every existing call site (`render_empty_state(msg,
     button_label=..., target_key=...)`) behaves identically to before this
-    change. The optional `what_for`/`dependency`/`next_action` let a caller
-    additionally state, as structured lines under `message` (Phase 1 item
-    #7): what this workspace is for, which dependency is missing, and the
-    next action to take. `blocking=True` renders as `st.error` instead of
-    `st.info`, for a page that must stop rather than just flag a gap.
+    change. The optional `what_for`/`dependency`/`next_action` remain visible
+    as quieter supporting captions (Phase 1 item #7): what this workspace is
+    for, which dependency is missing, and the next action to take.
+    `blocking=True` renders as `st.error` instead of `st.info`, for a page
+    that must stop rather than just flag a gap.
     """
-    lines = [message]
-    if what_for:
-        lines.append(f"**This workspace is for:** {what_for}")
-    if dependency:
-        lines.append(f"**Missing dependency:** {dependency}")
-    if next_action:
-        lines.append(f"**Next action:** {next_action}")
-    text = "\n\n".join(lines)
     if blocking:
-        st.error(text)
+        st.error(message)
     else:
-        st.info(text)
+        st.info(message)
+
+    if what_for:
+        st.caption(f"Purpose: {what_for}")
+    if dependency:
+        st.caption(f"Dependency: {dependency}")
+    if next_action:
+        st.caption(f"Next action: {next_action}")
     if target_key:
         target = get_step(target_key)
         if target:
