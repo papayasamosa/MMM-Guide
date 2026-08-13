@@ -8,6 +8,7 @@ needed.
 import numpy as np
 import pandas as pd
 
+from ancestry_mmm.utils import THEME_COLORS
 from ancestry_mmm.components.charts import (
     create_time_series_chart,
     create_bar_chart_with_ci,
@@ -222,6 +223,43 @@ def test_annotated_curve_renders_annotation_lines_as_a_text_box():
     text = fig.layout.annotations[0].text
     assert "Locally estimated" in text
     assert "Average CPA at current spend: 12.50" in text
+
+
+def test_annotated_curve_annotation_uses_readable_light_theme_contrast():
+    x = np.array([0.0, 50.0, 100.0])
+    y = np.array([0.0, 10.0, 15.0])
+    fig = create_annotated_response_curve(
+        x, y, "TV_Brand", annotation_lines=["Current fitted evidence"]
+    )
+    annotation = fig.layout.annotations[0]
+    assert annotation.bgcolor == THEME_COLORS["surface_subtle"]
+    assert annotation.font.color == THEME_COLORS["text_primary"]
+    assert annotation.bordercolor == THEME_COLORS["border_subtle"]
+
+    def _channel(value: str) -> float:
+        channel = int(value.lstrip("#")[0:2], 16) / 255
+        return (
+            channel / 12.92
+            if channel <= 0.04045
+            else ((channel + 0.055) / 1.055) ** 2.4
+        )
+
+    background = tuple(
+        _channel(annotation.bgcolor[index : index + 2]) for index in (1, 3, 5)
+    )
+    foreground = tuple(
+        _channel(annotation.font.color[index : index + 2]) for index in (1, 3, 5)
+    )
+    background_luminance = (
+        0.2126 * background[0] + 0.7152 * background[1] + 0.0722 * background[2]
+    )
+    foreground_luminance = (
+        0.2126 * foreground[0] + 0.7152 * foreground[1] + 0.0722 * foreground[2]
+    )
+    contrast = (max(background_luminance, foreground_luminance) + 0.05) / (
+        min(background_luminance, foreground_luminance) + 0.05
+    )
+    assert contrast >= 4.5
 
 
 def test_annotated_curve_no_annotation_box_when_no_lines_given():

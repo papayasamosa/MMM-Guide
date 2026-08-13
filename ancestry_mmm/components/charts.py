@@ -360,9 +360,11 @@ def create_annotated_response_curve(
     Adds, only where the corresponding value is given: a shaded band for the
     observed historical support range (never drawn from a saturation
     parameter - the caller must have derived it from real historical data),
-    a marker at the current spend/model-input point, and a small fixed text
-    box listing evidence/status, extrapolation, and any economics lines a
-    caller resolved. ``lower_values``/``upper_values`` optionally add the
+    a marker at the current spend/model-input point, and a small fixed light
+    text box listing evidence/status, extrapolation, and any economics lines a
+    caller resolved. The annotation uses the shared light analytical surface
+    and dark primary text so it remains readable against the current theme.
+    ``lower_values``/``upper_values`` optionally add the
     same credible-interval band ``create_response_curve_with_band`` draws -
     this function replaces neither existing chart function; both remain in
     use where no annotation layer is needed.
@@ -434,7 +436,7 @@ def create_annotated_response_curve(
             showarrow=False,
             align="left",
             text="<br>".join(annotation_lines),
-            bgcolor="rgba(20, 28, 24, 0.72)",
+            bgcolor=THEME_COLORS["surface_subtle"],
             bordercolor=THEME_COLORS["border_subtle"],
             borderwidth=1,
             borderpad=6,
