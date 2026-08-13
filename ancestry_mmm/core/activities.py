@@ -33,6 +33,51 @@ COST_BEARING_TREATMENTS = {
     "campaign_cost",
 }
 
+# Funnel classification is a governed reporting dimension. It is deliberately
+# a closed vocabulary so grouped reports cannot silently acquire spelling
+# variants, but it is not read by model builders or causal-graph compilation.
+FUNNEL_STAGES = (
+    "brand_upper",
+    "mid_funnel",
+    "performance_lower",
+    "cross_funnel",
+    "not_applicable",
+    "unclassified",
+)
+
+# Marketing objective remains an optional normalized string rather than a
+# closed enum. These values are UI suggestions only; the core never infers or
+# rewrites an analyst-provided objective.
+MARKETING_OBJECTIVE_SUGGESTIONS = (
+    "brand awareness",
+    "consideration",
+    "acquisition/performance",
+    "retention/lifecycle",
+    "promotion",
+    "winback",
+    "service/transactional",
+    "other",
+)
+
+ACTIVITY_SCHEMA_VERSION = 4
+
+# Reporting-only identity and classification fields. Keeping this list
+# explicit prevents a future taxonomy field from accidentally entering the
+# mathematical fit fingerprint or the hard curve/scenario governance gate.
+REPORTING_TAXONOMY_FIELDS = (
+    "market",
+    "activity_id",
+    "pooling_group_id",
+    "channel",
+    "platform",
+    "campaign_type",
+    "product_advertised",
+    "marketing_objective",
+    "message_type",
+    "funnel_stage",
+    "activity_ownership",
+)
+
 
 @dataclass(frozen=True)
 class ActivityDefinition:
@@ -80,7 +125,11 @@ class ActivityDefinition:
     approved_at: str | None = None
     change_history: tuple[Mapping[str, Any], ...] = ()
     supersedes_activity_id: str | None = None
-    schema_version: int = 3
+    # Kept after the pre-existing fields to avoid changing positional
+    # constructor meaning for callers that supplied schema_version directly.
+    schema_version: int = ACTIVITY_SCHEMA_VERSION
+    marketing_objective: str = ""
+    funnel_stage: str = "unclassified"
 
     def __post_init__(self) -> None:
         if not self.activity_id or not self.channel or not self.source:
@@ -97,6 +146,13 @@ class ActivityDefinition:
             raise ValueError("invalid planning_eligibility")
         if self.approval_status not in APPROVAL_STATUSES:
             raise ValueError("invalid approval_status")
+        if self.funnel_stage not in FUNNEL_STAGES:
+            raise ValueError(
+                f"invalid funnel_stage {self.funnel_stage!r}; "
+                f"expected one of {FUNNEL_STAGES}"
+            )
+        if not isinstance(self.marketing_objective, str):
+            raise ValueError("marketing_objective must be a string")
         if self.planning_eligibility == "optimisable" and self.model_role in {
             "mediator",
             "control",
@@ -149,19 +205,28 @@ class ActivityDefinition:
 
     @classmethod
     def from_dict(cls, values: Mapping[str, object]) -> ActivityDefinition:
-        payload = dict(values)
+        # Dataclass field values are validated by __post_init__; using Any
+        # here also reflects JSON's heterogeneous object values and keeps the
+        # migration adapter independent from the serialisation library.
+        payload: dict[str, Any] = dict(values)
         payload.setdefault("market", "*")
         payload.setdefault(
             "model_input_column",
             str(payload.get("channel", "")),
         )
+        # Explicit migration for the taxonomy fields. Missing values are
+        # intentionally unclassified/blank: no activity name, platform,
+        # campaign, or source-column heuristic is allowed here.
+        payload.setdefault("funnel_stage", "unclassified")
+        payload.setdefault("marketing_objective", "")
+
         # A payload with no schema_version key at all predates versioning
-        # entirely - treat it as the last-known pre-versioning floor (2),
-        # never the current default (3, REQ-DATAIN-001's pooling_group_id).
-        # It naturally has no pooling_group_id key either, so it already
-        # resolves to None via the dataclass default - this setdefault only
-        # fixes the recorded version number, not the field values.
+        # entirely. Preserve the existing legacy floor before normalising the
+        # object to the current serialised shape. A subsequent export writes
+        # schema v4 with the explicit taxonomy defaults.
         payload.setdefault("schema_version", 2)
+        if payload["schema_version"] < ACTIVITY_SCHEMA_VERSION:
+            payload["schema_version"] = ACTIVITY_SCHEMA_VERSION
         payload["pathway_ids"] = tuple(payload.get("pathway_ids") or ())
         payload["change_history"] = tuple(payload.get("change_history") or ())
         if (
@@ -195,12 +260,42 @@ def activity_definitions_fingerprint(
     ]
     for item in payload:
         item.pop("pooling_group_id", None)
+        # Funnel/objective are reporting taxonomy, not curve/scenario
+        # governance inputs. They have their own fingerprint below.
+        item.pop("marketing_objective", None)
+        item.pop("funnel_stage", None)
     payload.sort(
         key=lambda item: (
             str(item.get("market")),
             str(item.get("activity_id")),
         )
     )
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def activity_reporting_fingerprint(
+    definitions: Iterable[ActivityDefinition | Mapping[str, object]],
+) -> str:
+    """Fingerprint the taxonomy used by grouped activity reporting.
+
+    This is intentionally separate from ``activity_fit_fingerprint`` and the
+    hard ``activity_definitions_fingerprint`` gate. A taxonomy edit should
+    make a materialised grouped report reproducible against a new taxonomy
+    version without pretending that model equations or fitted curves changed.
+    """
+
+    payload = []
+    for item in definitions:
+        definition = (
+            item
+            if isinstance(item, ActivityDefinition)
+            else ActivityDefinition.from_dict(item)
+        )
+        payload.append(
+            {field: getattr(definition, field) for field in REPORTING_TAXONOMY_FIELDS}
+        )
+    payload.sort(key=lambda item: (str(item["market"]), str(item["activity_id"])))
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()
 

@@ -106,6 +106,8 @@ class TestReadableLabel:
         assert readable_label("paid_search_cap") == "Paid Search cap"
         assert readable_label("missing_expected") == "Expected data missing"
         assert readable_label("partially_pooled") != "partially_pooled"
+        assert readable_label("brand_upper") == "Brand / upper funnel"
+        assert readable_label("performance_lower") == "Performance / lower funnel"
 
     def test_enum_editor_round_trip_preserves_raw_values(self):
         original = pd.DataFrame({"role": ["paid_search_cap", "organic_search_capture"]})

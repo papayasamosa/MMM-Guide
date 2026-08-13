@@ -438,6 +438,9 @@ def test_media_input_and_cost_governance_round_trip(tmp_path, sample_project):
             "model_role": "intervention",
             "economic_treatment": "paid_media_cost",
             "planning_eligibility": "optimisable",
+            "pooling_group_id": "tv-brand-uk-au",
+            "marketing_objective": "brand awareness",
+            "funnel_stage": "brand_upper",
             "source": "media plan",
         }
     ]
@@ -454,6 +457,11 @@ def test_media_input_and_cost_governance_round_trip(tmp_path, sample_project):
         ActivityDefinition.from_dict(item).to_dict()
         for item in project["activity_definitions"]
     ]
+    assert imported["activity_definitions"][0]["pooling_group_id"] == "tv-brand-uk-au"
+    assert (
+        imported["activity_definitions"][0]["marketing_objective"] == "brand awareness"
+    )
+    assert imported["activity_definitions"][0]["funnel_stage"] == "brand_upper"
 
 
 def test_export_then_import_reproduces_scenarios_and_constraints(

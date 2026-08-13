@@ -5,6 +5,7 @@ from ancestry_mmm.core.activities import (
     activity_definitions_fingerprint,
     activity_fit_fingerprint,
     activity_invalidation,
+    activity_reporting_fingerprint,
 )
 from ancestry_mmm.core.media_costs import monetary_governance_fingerprint
 
@@ -115,8 +116,8 @@ class TestPoolingGroupId:
     def test_defaults_to_none(self):
         assert _activity().pooling_group_id is None
 
-    def test_current_schema_version_is_3(self):
-        assert _activity().schema_version == 3
+    def test_current_schema_version_is_4(self):
+        assert _activity().schema_version == 4
 
     def test_accepts_an_explicit_value(self):
         activity = _activity(pooling_group_id="tv-brand-uk-au")
@@ -131,8 +132,7 @@ class TestPoolingGroupId:
     def test_legacy_payload_with_no_key_at_all_resolves_to_none(self):
         """A payload predating this field entirely (dict with no
         pooling_group_id key) resolves to None, not fabricated, and its
-        schema_version resolves to the pre-existing legacy floor (2), not
-        the current default (3)."""
+        schema_version is migrated to the current taxonomy shape."""
         payload = {
             "activity_id": "organic-social",
             "channel": "Organic Social",
@@ -144,7 +144,7 @@ class TestPoolingGroupId:
         }
         restored = ActivityDefinition.from_dict(payload)
         assert restored.pooling_group_id is None
-        assert restored.schema_version == 2
+        assert restored.schema_version == 4
 
     def test_does_not_trigger_any_invalidation_flag(self):
         """REQ-DATAIN-001: pooling_group_id's presence must never, by
@@ -180,3 +180,177 @@ class TestPoolingGroupId:
         assert activity_definitions_fingerprint(
             before
         ) == activity_definitions_fingerprint(after)
+
+
+# ---------------------------------------------------------------------------
+# REQ-ACTIVITY-001: explicit reporting taxonomy (schema v4)
+# ---------------------------------------------------------------------------
+
+
+class TestActivityTaxonomy:
+    def test_legacy_payload_defaults_without_name_inference(self):
+        payload = _activity(
+            activity_id="meta-performance-prospecting",
+            channel="Paid Social",
+            platform="Meta",
+        ).to_dict()
+        payload.pop("funnel_stage")
+        payload.pop("marketing_objective")
+        payload["schema_version"] = 3
+
+        restored = ActivityDefinition.from_dict(payload)
+
+        assert restored.funnel_stage == "unclassified"
+        assert restored.marketing_objective == ""
+        assert restored.schema_version == 4
+
+    def test_unversioned_legacy_payload_migrates_to_explicit_defaults(self):
+        payload = {
+            "activity_id": "email-winback",
+            "channel": "CRM",
+            "platform": "Email",
+            "campaign_type": "winback",
+            "message_type": "offer/discount",
+            "activity_ownership": "owned",
+            "model_role": "intervention",
+            "economic_treatment": "response_only",
+            "planning_eligibility": "scenario_only",
+            "source": "crm export",
+        }
+
+        restored = ActivityDefinition.from_dict(payload)
+
+        assert restored.funnel_stage == "unclassified"
+        assert restored.marketing_objective == ""
+        assert restored.schema_version == 4
+
+    @pytest.mark.parametrize("value", ["brand", "upper", "performance", None])
+    def test_funnel_stage_vocabulary_is_closed(self, value):
+        with pytest.raises(ValueError, match="invalid funnel_stage"):
+            _activity(funnel_stage=value)
+
+    def test_taxonomy_fields_round_trip(self):
+        activity = _activity(
+            marketing_objective="retention/lifecycle",
+            funnel_stage="mid_funnel",
+            pooling_group_id="crm-uk-au",
+            platform="Meta",
+            campaign_type="lifecycle",
+            message_type="educational",
+        )
+
+        restored = ActivityDefinition.from_dict(activity.to_dict())
+
+        assert restored == activity
+        assert restored.to_dict()["funnel_stage"] == "mid_funnel"
+        assert restored.to_dict()["marketing_objective"] == "retention/lifecycle"
+
+    def test_taxonomy_changes_reporting_but_not_fit_or_hard_curve_fingerprints(self):
+        before = _activity(
+            funnel_stage="brand_upper", marketing_objective="brand awareness"
+        )
+        after = _activity(
+            funnel_stage="performance_lower",
+            marketing_objective="acquisition/performance",
+        )
+
+        assert activity_reporting_fingerprint(
+            [before]
+        ) != activity_reporting_fingerprint([after])
+        assert activity_fit_fingerprint([before]) == activity_fit_fingerprint([after])
+        assert activity_definitions_fingerprint(
+            [before]
+        ) == activity_definitions_fingerprint([after])
+        impact = activity_invalidation(before, after)
+        assert impact.changed_fields == ()
+        assert impact.refit_model is False
+
+    def test_meta_activities_share_reporting_channel_but_keep_distinct_identity(self):
+        activities = [
+            _activity(
+                activity_id="meta-brand-video",
+                channel="Paid Social",
+                platform="Meta",
+                model_input_column="meta_brand_video",
+                marketing_objective="brand awareness",
+                funnel_stage="brand_upper",
+            ),
+            _activity(
+                activity_id="meta-consideration",
+                channel="Paid Social",
+                platform="Meta",
+                model_input_column="meta_consideration",
+                marketing_objective="consideration",
+                funnel_stage="mid_funnel",
+            ),
+            _activity(
+                activity_id="meta-performance-prospecting",
+                channel="Paid Social",
+                platform="Meta",
+                model_input_column="meta_performance",
+                marketing_objective="acquisition/performance",
+                funnel_stage="performance_lower",
+            ),
+        ]
+
+        assert {item.channel for item in activities} == {"Paid Social"}
+        assert {item.platform for item in activities} == {"Meta"}
+        assert len({item.activity_id for item in activities}) == 3
+        assert {item.funnel_stage for item in activities} == {
+            "brand_upper",
+            "mid_funnel",
+            "performance_lower",
+        }
+
+    def test_crm_activities_keep_campaign_message_objective_and_funnel_separate(self):
+        activities = [
+            _activity(
+                activity_id="crm-brand-editorial",
+                channel="CRM",
+                platform="Email",
+                campaign_type="newsletter",
+                message_type="brand/editorial",
+                marketing_objective="brand awareness",
+                funnel_stage="brand_upper",
+            ),
+            _activity(
+                activity_id="crm-lifecycle",
+                channel="CRM",
+                platform="Email",
+                campaign_type="lifecycle",
+                message_type="reminder",
+                marketing_objective="retention/lifecycle",
+                funnel_stage="mid_funnel",
+            ),
+            _activity(
+                activity_id="crm-promotional",
+                channel="CRM",
+                platform="Email",
+                campaign_type="promotional",
+                message_type="offer/discount",
+                marketing_objective="promotion",
+                funnel_stage="performance_lower",
+            ),
+            _activity(
+                activity_id="crm-winback",
+                channel="CRM",
+                platform="Email",
+                campaign_type="winback",
+                message_type="offer/discount",
+                marketing_objective="winback",
+                funnel_stage="performance_lower",
+            ),
+            _activity(
+                activity_id="crm-transactional",
+                channel="CRM",
+                platform="Email",
+                campaign_type="transactional",
+                message_type="service/transactional",
+                marketing_objective="service/transactional",
+                funnel_stage="not_applicable",
+            ),
+        ]
+
+        assert {item.channel for item in activities} == {"CRM"}
+        assert len({item.campaign_type for item in activities}) == 5
+        assert len({item.activity_id for item in activities}) == 5
