@@ -2748,3 +2748,31 @@ the local connected browser was unavailable.
 
 **Owner:** Platform engineering / Data Science.
 **Status:** Implemented in UX/UI coherence Phase 10.
+
+## Restrained semantic status icons (UX/UI coherence Phase 11)
+
+**Date:** 2026-08-13
+**Decision:** Keep text as the authoritative status signal and reduce the
+shared badge system to six repeated semantic cues: completion, information,
+attention, blocked/failed, progress, and neutral. Keep sidebar icons only for
+attention states, using one warning cue for review/stale/unavailable and one
+block cue for blocked. Route the Diagnostics readiness and funnel-coherence
+headings through the shared status presentation.
+
+**Reason:** The existing badges were accessible because icons were paired with
+text, but the larger icon vocabulary made similar states look unrelated and
+required unnecessary memorisation. A restrained repeated vocabulary preserves
+non-colour meaning while making the interface calmer and more predictable.
+
+**Impact:** Presentation-only changes to shared status icons, sidebar attention
+icons, and two Diagnostics headings. No lifecycle values, readiness decisions,
+diagnostic calculations, governance gates, or analytical outputs changed.
+Business question: what does each status mean and what needs attention?
+Estimand: none introduced. Output scale/units: unchanged. Upstream modelling
+references: none consulted because this package changes presentation only and
+does not change PyMC or PyMC Marketing model APIs. Remaining limitation:
+interactive browser screenshot review uses the repository's synthetic-data
+browser journey because the local connected browser was unavailable.
+
+**Owner:** Platform engineering / Data Science.
+**Status:** Implemented in UX/UI coherence Phase 11.

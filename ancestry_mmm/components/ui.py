@@ -78,52 +78,15 @@ def apply_theme() -> None:
     st.markdown(shell_css(), unsafe_allow_html=True)
 
 
-# Readiness -> sidebar icon. Deliberately never colour-only: the same
-# readiness key also drives a text-labelled badge wherever it's shown
-# alongside a page header (components/status.py), this is just the compact
-# nav-row form of the same vocabulary.
+# Readiness -> sidebar icon. Deliberately show icons only for attention states;
+# the page link label remains authoritative. Reuse one cue for review/stale/
+# unavailable and one for blocked so the sidebar does not become a second,
+# decorative status legend (UX/UI coherence Phase 11, brief Finding 18).
 _READINESS_ICON = {
-    "complete": "\u2705",
-    "configured": "\u2699\ufe0f",
-    "saved": "\u2705",
-    "validated": "\u2705",
-    "draft": "\u270f\ufe0f",
-    "approved": "\u2705",
-    "stale": "\u26a0\ufe0f",
-    "review": "\u2753",
-    "unavailable": "\u26a0\ufe0f",
-    "ready": "✅",
-    "blocked": "🔒",
-    "not_started": "⚪",
-    "optional": "◽",
-}
-# Keep sidebar indicators compact and readable without emoji. Full status
-# labels remain in the page header and status badges; these symbols only flag
-# attention in the navigation.
-_READINESS_ICON.update(
-    {
-        "ready": "✓",
-        "blocked": "×",
-        "not_started": "—",
-        "optional": "·",
-    }
-)
-# Compact navigation cues; detailed labels remain in the header badges.
-_READINESS_ICON = {
-    "complete": ":material/check:",
-    "configured": ":material/settings:",
-    "saved": ":material/save:",
-    "validated": ":material/verified:",
-    "draft": ":material/edit:",
-    "approved": ":material/check_circle:",
-    "exploratory": ":material/science:",
     "stale": ":material/warning:",
-    "review": ":material/help:",
-    "unavailable": ":material/error:",
-    "ready": ":material/check:",
+    "review": ":material/warning:",
+    "unavailable": ":material/warning:",
     "blocked": ":material/block:",
-    "not_started": ":material/radio_button_unchecked:",
-    "optional": ":material/more_horiz:",
 }
 _ATTENTION_STATUSES = {"stale", "review", "unavailable", "blocked"}
 

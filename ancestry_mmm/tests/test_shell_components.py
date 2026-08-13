@@ -121,6 +121,23 @@ class TestStatusBadges:
             assert label, f"{key} has no text label"
             assert icon, f"{key} has no icon"
 
+    def test_status_icons_use_the_restrained_semantic_vocabulary(self):
+        # UX/UI coherence Phase 11 / brief Finding 18: text remains
+        # authoritative, with a small repeated cue set rather than one
+        # decorative glyph per lifecycle key.
+        icons = {icon for _, icon, _ in status_module.STATUS_BADGES.values()}
+        assert icons <= {"✓", "i", "!", "×", "•", "·"}
+        assert status_module.STATUS_BADGES["validated"][1] == "✓"
+        assert status_module.STATUS_BADGES["reported"][1] == "i"
+        assert status_module.STATUS_BADGES["stale"][1] == "!"
+        assert status_module.STATUS_BADGES["blocked"][1] == "×"
+        assert status_module.STATUS_BADGES["running"][1] == "•"
+        assert status_module.STATUS_BADGES["draft"][1] == "·"
+
+    def test_unknown_status_uses_information_cue(self):
+        markup = status_module.badge_html("not_a_real_status")
+        assert ">i Not A Real Status</span>" in markup
+
 
 class TestPageReadiness:
     @staticmethod

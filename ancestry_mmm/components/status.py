@@ -7,9 +7,11 @@ labels - should render through ``STATUS_BADGES`` / ``render_status_badge`` /
 ``render_status_badges`` here instead of re-deriving its own colour+icon
 mapping, so there is exactly one status vocabulary in the app.
 
-A badge is never colour-only: every entry always carries an icon and a text
-label alongside its semantic colour, so status is legible without relying
-on colour perception alone.
+A badge is never colour-only: every entry always carries a restrained semantic
+cue and a text label alongside its semantic colour, so status is legible
+without relying on colour perception alone. The cue vocabulary is deliberately
+small: completion, information, attention, blocked/failed, progress, and
+neutral.
 
 This module only renders presentation. It does not decide what status a
 page is in - callers pass the status key/label; the underlying governance
@@ -23,87 +25,78 @@ import streamlit as st
 
 from ancestry_mmm.components.tokens import STATUS_COLOR
 
+# A small, reusable cue vocabulary keeps status icons meaningful instead of
+# turning every lifecycle key into a decorative glyph (UX/UI coherence
+# Phase 11, brief Finding 18).
+_STATUS_ICON = {
+    "success": "✓",
+    "information": "i",
+    "attention": "!",
+    "negative": "×",
+    "progress": "•",
+    "neutral": "·",
+}
+
 # status_key -> (display label, icon, semantic colour key from
 # tokens.STATUS_COLOR). Keys are the vocabulary named in the Phase 1 brief
 # plus the readiness states used by the grouped sidebar navigation.
 STATUS_BADGES: Dict[str, Tuple[str, str, str]] = {
-    "draft": ("Draft", "✎", "neutral"),
-    "running": ("Running", "◐", "info"),
-    "failed": ("Failed", "✕", "negative"),
-    "exploratory": ("Exploratory", "◇", "neutral"),
-    "validated": ("Validated", "✓", "positive"),
-    "approved_for_reporting": ("Approved for reporting", "✓", "positive"),
-    "approved_for_planning": ("Approved for planning", "✓", "positive"),
+    "draft": ("Draft", _STATUS_ICON["neutral"], "neutral"),
+    "running": ("Running", _STATUS_ICON["progress"], "info"),
+    "failed": ("Failed", _STATUS_ICON["negative"], "negative"),
+    "exploratory": ("Exploratory", _STATUS_ICON["neutral"], "neutral"),
+    "validated": ("Validated", _STATUS_ICON["success"], "positive"),
+    "approved_for_reporting": (
+        "Approved for reporting",
+        _STATUS_ICON["success"],
+        "positive",
+    ),
+    "approved_for_planning": (
+        "Approved for planning",
+        _STATUS_ICON["success"],
+        "positive",
+    ),
     # Generic lifecycle states (e.g. core.causal_graph.GRAPH_STATUSES) that
     # are not specifically about outcome-use approval - additive, presentational
     # only, no existing call site used these keys before.
-    "approved": ("Approved", "✓", "positive"),
-    "deprecated": ("Deprecated", "×", "negative"),
-    "stale": ("Stale", "!", "caution"),
-    "superseded": ("Superseded", "»", "neutral"),
-    "not_configured": ("Not configured", "○", "neutral"),
-    "awaiting_data": ("Awaiting data", "○", "neutral"),
+    "approved": ("Approved", _STATUS_ICON["success"], "positive"),
+    "deprecated": ("Deprecated", _STATUS_ICON["negative"], "negative"),
+    "stale": ("Stale", _STATUS_ICON["attention"], "caution"),
+    "superseded": ("Superseded", _STATUS_ICON["neutral"], "neutral"),
+    "not_configured": ("Not configured", _STATUS_ICON["neutral"], "neutral"),
+    "awaiting_data": ("Awaiting data", _STATUS_ICON["neutral"], "neutral"),
     # Diagnostics domain-health rail (Phase 5, REQ-VAL-001): additive,
     # presentational only. "pass"/"review"/"fail" reuse
     # core.validation_policy.VALIDATION_STATUS_VALUES's own three-value
     # vocabulary verbatim - not a new domain-status concept invented here.
     # "reported" is for evidence that exists but carries no threshold/gate
     # (e.g. residual diagnostics) - descriptive, deliberately never pass/fail.
-    "pass": ("Pass", "✓", "positive"),
-    "review": ("Review", "⚑", "caution"),
-    "fail": ("Fail", "✕", "negative"),
-    "reported": ("Reported", "•", "info"),
-    "complete": ("Complete", "OK", "positive"),
-    "configured": ("Configured", "~", "neutral"),
-    "saved": ("Saved", "OK", "positive"),
-    "unavailable": ("Unavailable", "!", "negative"),
+    "pass": ("Pass", _STATUS_ICON["success"], "positive"),
+    "review": ("Review", _STATUS_ICON["attention"], "caution"),
+    "fail": ("Fail", _STATUS_ICON["negative"], "negative"),
+    "reported": ("Reported", _STATUS_ICON["information"], "info"),
+    "complete": ("Complete", _STATUS_ICON["success"], "positive"),
+    "configured": ("Configured", _STATUS_ICON["neutral"], "neutral"),
+    "saved": ("Saved", _STATUS_ICON["success"], "positive"),
+    "unavailable": ("Unavailable", _STATUS_ICON["negative"], "negative"),
     # Readiness states reused by the grouped sidebar nav (components/ui.py)
     # so a page's nav indicator and its own header badge always agree.
-    "ready": ("Ready", "✓", "positive"),
-    "blocked": ("Blocked", "⛔", "negative"),
-    "not_started": ("Not started", "○", "neutral"),
-    "current": ("In progress", "◐", "info"),
-    "optional": ("Optional", "·", "neutral"),
+    "ready": ("Ready", _STATUS_ICON["success"], "positive"),
+    "blocked": ("Blocked", _STATUS_ICON["negative"], "negative"),
+    "not_started": ("Not started", _STATUS_ICON["neutral"], "neutral"),
+    "current": ("In progress", _STATUS_ICON["progress"], "info"),
+    "optional": ("Optional", _STATUS_ICON["neutral"], "neutral"),
 }
-
-
-# Use compact, text-readable symbols rather than emoji as status chrome. The
-# label remains the authoritative accessible meaning; the symbol is a cue.
-STATUS_BADGES.update(
-    {
-        "draft": ("Draft", "•", "neutral"),
-        "running": ("Running", "→", "info"),
-        "failed": ("Failed", "!", "negative"),
-        "exploratory": ("Exploratory", "◇", "neutral"),
-        "validated": ("Validated", "✓", "positive"),
-        "approved_for_reporting": ("Approved for reporting", "✓", "positive"),
-        "approved_for_planning": ("Approved for planning", "✓", "positive"),
-        "approved": ("Approved", "✓", "positive"),
-        "deprecated": ("Deprecated", "×", "negative"),
-        "stale": ("Stale", "!", "caution"),
-        "superseded": ("Superseded", "↗", "neutral"),
-        "not_configured": ("Not configured", "—", "neutral"),
-        "awaiting_data": ("Awaiting data", "—", "neutral"),
-        "pass": ("Pass", "✓", "positive"),
-        "review": ("Review", "?", "caution"),
-        "fail": ("Fail", "!", "negative"),
-        "reported": ("Reported", "i", "info"),
-        "complete": ("Complete", "✓", "positive"),
-        "configured": ("Configured", "•", "neutral"),
-        "saved": ("Saved", "✓", "positive"),
-        "unavailable": ("Unavailable", "!", "negative"),
-        "ready": ("Ready", "✓", "positive"),
-        "blocked": ("Blocked", "×", "negative"),
-        "not_started": ("Not started", "—", "neutral"),
-        "current": ("In progress", "→", "info"),
-        "optional": ("Optional", "·", "neutral"),
-    }
-)
 
 
 def _lookup(status_key: str, label: Optional[str]) -> Tuple[str, str, str]:
     text, icon, color_key = STATUS_BADGES.get(
-        status_key, (status_key.replace("_", " ").title(), "•", "neutral")
+        status_key,
+        (
+            status_key.replace("_", " ").title(),
+            _STATUS_ICON["information"],
+            "neutral",
+        ),
     )
     if label:
         text = label

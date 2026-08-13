@@ -34,6 +34,7 @@ from ancestry_mmm.components import (
     render_primary_concern,
     render_domain_health_rail,
     render_workspace_note,
+    badge_html,
 )
 from ancestry_mmm.application.diagnostics_summary import (
     compute_domain_health,
@@ -715,9 +716,10 @@ if st.button("Evaluate readiness", type="secondary"):
 if validation_service_result:
     rd = validation_service_result.readiness
     if rd:
-        ready_icon = "✅" if rd.overall_ready else "❌"
         st.markdown(
-            f"### {ready_icon} Overall readiness: **{'Ready' if rd.overall_ready else 'Not ready'}**"
+            f"### {badge_html('ready' if rd.overall_ready else 'blocked')} "
+            f"Overall readiness: **{'Ready' if rd.overall_ready else 'Not ready'}**",
+            unsafe_allow_html=True,
         )
         if rd.lifecycle_issues:
             for li in rd.lifecycle_issues:
@@ -1407,9 +1409,11 @@ else:
             frame["Y"][:, down_idx],
             period_labels=list(frame["dates"]) if "dates" in frame else None,
         )
-        icon = "⚠️" if result["has_any_warning"] else "✅"
+        status_key = "review" if result["has_any_warning"] else "pass"
         st.markdown(
-            f"**{icon} {link.upstream_outcome_id} -> {link.downstream_outcome_id}**"
+            f"{badge_html(status_key)} **{link.upstream_outcome_id} -> "
+            f"{link.downstream_outcome_id}**",
+            unsafe_allow_html=True,
         )
         c1, c2, c3 = st.columns(3)
         c1.metric(
