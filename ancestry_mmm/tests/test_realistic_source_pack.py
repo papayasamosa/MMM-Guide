@@ -69,15 +69,17 @@ def test_activity_pack_exercises_identity_and_coverage_contracts():
         & activity_data["activity_id"].str.startswith("crm_")
     ].empty
     assert activity_data[
-        (activity_data["market"] == "AU")
-        & (activity_data["activity_id"] == "tv_brand")
+        (activity_data["market"] == "AU") & (activity_data["activity_id"] == "tv_brand")
     ].empty
-    assert activity_data["period_start"].nunique() > activity_data[
-        activity_data["market"] == "AU"
-    ]["period_start"].nunique()
-    assert activity_data.loc[
-        activity_data["activity_id"] == "meta_mid_funnel", "spend"
-    ].isna().any()
+    assert (
+        activity_data["period_start"].nunique()
+        > activity_data[activity_data["market"] == "AU"]["period_start"].nunique()
+    )
+    assert (
+        activity_data.loc[activity_data["activity_id"] == "meta_mid_funnel", "spend"]
+        .isna()
+        .any()
+    )
 
 
 def test_realistic_pack_keeps_native_frequency_and_irregular_events():

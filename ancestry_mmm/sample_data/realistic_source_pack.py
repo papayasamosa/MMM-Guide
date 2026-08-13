@@ -202,14 +202,14 @@ def _activity_data(periods: pd.DatetimeIndex) -> pd.DataFrame:
             if market == "UK":
                 available.append("tv_brand")
                 if index >= 2:
-                    available.extend(
-                        ["crm_brand", "crm_editorial", "crm_promotional"]
-                    )
+                    available.extend(["crm_brand", "crm_editorial", "crm_promotional"])
             for activity_id in available:
                 measure = "sends" if activity_id.startswith("crm_") else "spend"
                 value: object = values.get(
                     activity_id,
-                    18000 + index * 140 + (500 if activity_id == "crm_editorial" else 0),
+                    18000
+                    + index * 140
+                    + (500 if activity_id == "crm_editorial" else 0),
                 )
                 # A missing source observation is retained at its native grain;
                 # canonicalisation must preserve it as missing, not zero-fill it.
