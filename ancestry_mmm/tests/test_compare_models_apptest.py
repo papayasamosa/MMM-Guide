@@ -56,6 +56,19 @@ def test_empty_state_prompts_fitting_a_candidate():
     assert "Comparison dashboard" in _all_text(at)
 
 
+def test_comparison_guidance_leads_with_descriptive_model_structures():
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    text = _all_text(at)
+    assert "shared response across markets" in text.lower()
+    assert "independent single-market response" in text.lower()
+    assert "market-specific response with partial pooling" in text.lower()
+    assert "(Model A)" not in text
+    assert "(Model B)" not in text
+    assert "(Model C)" not in text
+
+
 def test_candidates_at_a_glance_table_has_no_composite_score_column():
     at = AppTest.from_file(str(PAGE), default_timeout=60)
     at.session_state["model_comparison_candidates"] = [

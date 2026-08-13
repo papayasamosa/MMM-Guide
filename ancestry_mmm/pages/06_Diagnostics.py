@@ -103,8 +103,8 @@ from ancestry_mmm.core.market_specific_predict import (
 from ancestry_mmm.data import prepare_fh_modeling_frame
 
 MODEL_TYPE_LABEL = {
-    "shared": "Model A - shared curve",
-    "market_specific": "Model C - market-specific, partially pooled",
+    "shared": "Shared response across markets",
+    "market_specific": "Market-specific response with partial pooling",
 }
 
 st.set_page_config(

@@ -599,9 +599,9 @@ def render_drift_status(
     first-class in the UI") for every page that reads a fitted model against
     a live outcome catalogue: Structure, Model Configuration, Model
     Training, Diagnostics, Results & Curve Bank, Scenario Planner, Project
-    Export. Shows the exact changed fields per outcome_id
-    (`core.outcomes.outcomes_drift_dataframe`), not just a bare "stale"
-    flag. Returns `True` if calculation-relevant drift was found
+    Export. Shows consequence-oriented outcome-definition changes and keeps
+    exact technical status in secondary detail, not just a bare "stale" flag.
+    Returns `True` if calculation-relevant drift was found
     (`core.outcomes.BLOCKING_DRIFT_STATUSES` - a changed or removed
     outcome) so a caller can gate on it; `blocking=True` renders that case
     as `st.error` instead of `st.warning`, for a page (Scenario Planner)
@@ -622,21 +622,58 @@ def render_drift_status(
         return False
     has_blocking = bool(drifted["drift_status"].isin(BLOCKING_DRIFT_STATUSES).any())
     message = (
-        f"{len(drifted)} outcome(s) have drifted from the fitted model's catalogue: "
-        f"{', '.join(f'{row.outcome_id} ({row.drift_status})' for row in drifted.itertuples())}."
+        "Outcome definitions have changed since this model was fitted. "
+        f"Review the {len(drifted)} affected outcome definition(s) below."
+    )
+    consequence = (
+        "Refit the model or restore the definitions used for the fit before "
+        "using calculation-dependent results."
+        if has_blocking
+        else "Review the changes before interpreting the current evidence."
     )
     if has_blocking and blocking:
-        st.error(
-            message
-            + " Calculation-relevant drift - this must be resolved (re-fit, or revert the catalogue change) before continuing."
-        )
+        st.error(message + " " + consequence)
     elif has_blocking:
-        st.warning(
-            message
-            + " Calculation-relevant - numbers shown may no longer reflect the live catalogue."
-        )
+        st.warning(message + " " + consequence)
     else:
-        st.info(message)
+        st.info(message + " " + consequence)
     with st.expander("See outcome changes"):
-        st.dataframe(drift_df[["outcome_id", "drift_status"]], width="stretch")
+        detail = drifted.copy()
+        detail["Outcome"] = detail.apply(
+            lambda row: " · ".join(
+                str(value).replace("_", " ").title()
+                for value in (
+                    row.get("product", "Outcome"),
+                    row.get("segment", ""),
+                    row.get("metric", ""),
+                )
+                if value
+            ),
+            axis=1,
+        )
+        detail["What changed"] = (
+            detail["drift_status"]
+            .map(
+                {
+                    "Changed since fit": "Definition changed; refit required",
+                    "Removed since fit": "Definition no longer exists; refit required",
+                    "Missing source column": "Source data is unavailable",
+                    "New since fit": "Not included in this fit",
+                    "Excluded from next fit": "Excluded from a future fit",
+                }
+            )
+            .fillna("Review the definition change")
+        )
+        st.dataframe(detail[["Outcome", "What changed"]], width="stretch")
+    render_technical_details(
+        title="Technical details · outcome definition changes",
+        details={
+            "Exact outcome IDs": ", ".join(
+                str(row.outcome_id) for row in drifted.itertuples()
+            ),
+            "Status keys": ", ".join(
+                f"{row.outcome_id}: {row.drift_status}" for row in drifted.itertuples()
+            ),
+        },
+    )
     return has_blocking
