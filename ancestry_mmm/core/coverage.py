@@ -323,6 +323,16 @@ class SourceVersion:
     uploaded_at: str
     parsed_representation_version: str
     byte_reference: Optional[str] = None
+    # Workbook-level identity is optional for legacy CSV/Parquet uploads. For
+    # standard Excel source packs these fields preserve the workbook schema,
+    # every parsed table identity, and validation diagnostics alongside the
+    # immutable raw-byte checksum.
+    template_schema_version: Optional[str] = None
+    standard_template: bool = False
+    parsed_table_ids: tuple[str, ...] = ()
+    workbook_sheet_names: tuple[str, ...] = ()
+    template_warnings: tuple[str, ...] = ()
+    template_errors: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.source_id or not self.original_filename:
@@ -353,7 +363,15 @@ class SourceVersion:
     @classmethod
     def from_dict(cls, values: Mapping[str, Any]) -> "SourceVersion":
         known = set(cls.__dataclass_fields__)
-        return cls(**{k: v for k, v in values.items() if k in known})
+        payload = {k: v for k, v in values.items() if k in known}
+        for key in (
+            "parsed_table_ids",
+            "workbook_sheet_names",
+            "template_warnings",
+            "template_errors",
+        ):
+            payload[key] = tuple(payload.get(key) or ())
+        return cls(**payload)
 
 
 def current_source_versions(

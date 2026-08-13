@@ -2307,3 +2307,42 @@ DEFERRED pending source-data availability.
 
 **Owner:** Platform engineering / Data Science.
 **Status:** Accepted; implementation in Work Package 4.
+
+## Standard source-pack parsing and workbook provenance (Work Package 5)
+
+**Date:** 2026-08-13
+**Decision:** Implement the approved `REQ-DATAIN-001` source-pack boundary as
+versioned logical-domain schemas. Excel workbooks are parsed sheet-by-sheet;
+standard tables retain their logical identity, unknown sheets remain separate
+and visible, and activity data is canonicalised into the existing model-ready
+wide boundary only through explicit dictionary mappings. Workbook checksum,
+schema version, sheet names, parsed table IDs, and validation diagnostics are
+persisted with the source-version history.
+
+**Reason:** The application must support multiple physical extracts under a
+logical domain without merging distinct semantics or silently treating a
+first sheet as the complete workbook. Activity identity, pooling metadata,
+native frequency, paid/owned/earned ownership, and missingness must survive
+the upload-to-model boundary without inference.
+
+**Impact:** Added standard schemas for Outcomes, Activity and Media, Context
+and External Factors, and Experiment Evidence; multi-sheet parsing and
+validation; explicit generic Excel fallback; activity canonicalisation;
+workbook-level provenance; Data Upload schema guidance; and UK/AU-style
+fixture coverage for partial activity history, native monthly context,
+events, activity ownership, and cross-market pooling identity. No frequency
+conversion, causal inference, or model algebra was added. Business question:
+can governed source packs be uploaded and mapped without losing physical
+table identity or activity semantics? Estimand: none introduced; the output
+is a model-input mapping at the declared source grain. Output scale/units:
+source-native rows plus explicitly mapped model-input columns and source
+provenance metadata. Upstream modelling references: none consulted because
+this package changes ingestion and canonicalisation contracts, not PyMC or
+PyMC Marketing model APIs. Remaining limitation: downloadable `.xlsx`
+template-byte generation is not included until the required spreadsheet
+artifact helper is available in the coding environment; the schema and
+validator are ready for that adapter.
+
+**Owner:** Platform engineering / Data Science.
+**Status:** Implemented in Work Package 5 ingestion scope; template-byte
+adapter remains environment-blocked.

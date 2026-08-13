@@ -1746,6 +1746,64 @@ def test_export_then_import_source_versions_round_trip(tmp_path, sample_project)
     assert versions[0]["checksum"] == source_version.checksum
 
 
+def test_export_then_import_standard_workbook_provenance_round_trip(
+    tmp_path, sample_project
+):
+    from ancestry_mmm.core.coverage import SourceVersion, compute_checksum
+
+    source_version = SourceVersion(
+        source_id="activity-pack",
+        version=1,
+        original_filename="activity-pack.xlsx",
+        checksum=compute_checksum(b"activity-pack-bytes"),
+        size_bytes=19,
+        uploaded_at="2026-08-13T00:00:00+00:00",
+        parsed_representation_version="pandas-test",
+        template_schema_version="standard-source-pack-v1",
+        standard_template=True,
+        parsed_table_ids=(
+            "activity_and_media:activity_data",
+            "activity_and_media:activity_dictionary",
+        ),
+        workbook_sheet_names=("activity_data", "activity_dictionary"),
+        template_warnings=("unknown sheet retained",),
+        template_errors=(),
+    )
+    project = dict(sample_project)
+    project["source_versions"] = [source_version.to_dict()]
+
+    bundle_path = export_project(tmp_path / "bundle.zip", **project)
+    imported = import_project(bundle_path)
+
+    versions, warnings = resolve_imported_source_versions(imported)
+    assert warnings == []
+    assert versions == [source_version.to_dict()]
+
+
+def test_standard_workbook_table_source_ids_survive_raw_source_round_trip(
+    tmp_path, sample_project
+):
+    table_id = "activity-pack__sheet__activity_data"
+    project = dict(sample_project)
+    project["raw_sources"] = {
+        table_id: pd.DataFrame(
+            {
+                "period_start": ["2025-01-06"],
+                "market": ["UK"],
+                "activity_id": ["meta_brand"],
+            }
+        )
+    }
+
+    bundle_path = export_project(tmp_path / "bundle.zip", **project)
+    imported = import_project(bundle_path)
+
+    assert list(imported["raw_sources"]) == [table_id]
+    pd.testing.assert_frame_equal(
+        imported["raw_sources"][table_id], project["raw_sources"][table_id]
+    )
+
+
 def test_import_project_source_versions_absent_for_legacy_bundle(
     tmp_path, sample_project
 ):

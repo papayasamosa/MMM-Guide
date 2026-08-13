@@ -25,9 +25,11 @@ from ancestry_mmm.components import (
 )
 from ancestry_mmm.data import (
     load_file_with_source_version,
+    load_standard_workbook_with_source_version,
     load_all_sample_sources,
     get_data_summary,
 )
+from ancestry_mmm.data.templates import STANDARD_TEMPLATE_SCHEMA_VERSION
 from ancestry_mmm.core.coverage import (
     SourceVersion,
     SourceDefinition,
@@ -50,6 +52,73 @@ _DOMAIN_LABELS = {
     DOMAIN_CONTEXT_AND_EXTERNAL_FACTORS: "Context and External Factors",
     DOMAIN_EXPERIMENT_EVIDENCE: "Experiment Evidence (optional)",
 }
+
+
+def _workbook_table_source_id(source_name: str, sheet_name: str) -> str:
+    """Stable session-state identity for one physical workbook table."""
+    # Keep the identity safe for persistence's Windows parquet filenames;
+    # Excel sheet names cannot contain these separator characters.
+    return f"{source_name}__sheet__{sheet_name}"
+
+
+def _is_excel_filename(filename: str) -> bool:
+    return filename.lower().endswith((".xlsx", ".xls", ".xlsm"))
+
+
+def _remove_source_lineage(source_name: str) -> None:
+    """Remove the currently displayed tables for one workbook lineage."""
+    prefix = f"{source_name}__sheet__"
+    sources = dict(st.session_state.get("raw_sources") or {})
+    for source_id in list(sources):
+        if source_id == source_name or source_id.startswith(prefix):
+            sources.pop(source_id, None)
+    st.session_state["raw_sources"] = sources
+
+    active = dict(st.session_state.get("active_source_upload_version") or {})
+    for source_id in list(active):
+        if source_id == source_name or source_id.startswith(prefix):
+            active.pop(source_id, None)
+    st.session_state["active_source_upload_version"] = active
+
+    definitions = [
+        definition
+        for definition in (st.session_state.get("source_definitions") or [])
+        if not (
+            definition.get("source_id") == source_name
+            or definition.get("source_id", "").startswith(prefix)
+        )
+    ]
+    st.session_state["source_definitions"] = definitions
+
+
+def _store_standard_workbook(
+    source_name: str, workbook, source_version, logical_domain: str
+) -> list[str]:
+    """Store standard tables separately while retaining one workbook version."""
+    _remove_source_lineage(source_name)
+    recognised_sheets = {item.sheet_name for item in workbook.table_metadata}
+    sources = dict(st.session_state.get("raw_sources") or {})
+    definitions = list(st.session_state.get("source_definitions") or [])
+    active = dict(st.session_state.get("active_source_upload_version") or {})
+    stored: list[str] = []
+    for sheet_name, table in workbook.tables.items():
+        source_id = _workbook_table_source_id(source_name, sheet_name)
+        sources[source_id] = table
+        active[source_id] = source_version.version
+        stored.append(source_id)
+        if sheet_name in recognised_sheets:
+            definitions.append(
+                SourceDefinition(
+                    source_id=source_id,
+                    name=f"{source_name}/{sheet_name}",
+                    logical_domain=logical_domain,
+                ).to_dict()
+            )
+    st.session_state["raw_sources"] = sources
+    st.session_state["source_definitions"] = definitions
+    st.session_state["active_source_upload_version"] = active
+    return stored
+
 
 st.set_page_config(
     page_title="Data Sources | Ancestry Family History & DNA MMM",
@@ -191,6 +260,24 @@ with tab_demo:
 
 with tab_upload:
     st.caption("Add one or more governed source files. You can add more later.")
+    with st.expander("Standard workbook pack schema", expanded=False):
+        st.caption(
+            f"Schema version: `{STANDARD_TEMPLATE_SCHEMA_VERSION}`. Standard "
+            "Excel packs are read sheet-by-sheet; physical tables remain separate "
+            "under one logical domain."
+        )
+        st.markdown(
+            "- Outcomes: `outcomes` plus optional `outcome_dictionary`\n"
+            "- Activity and Media: `activity_data` plus `activity_dictionary`\n"
+            "- Context and External Factors: `context_data`, `variable_dictionary`, "
+            "and optional `events`\n"
+            "- Experiment Evidence: `experiment_evidence`"
+        )
+        st.info(
+            "Use the standard schema when available. Generic Excel import remains "
+            "available with an explicit warning when a workbook is not a recognised "
+            "standard pack."
+        )
     source_name = st.text_input(
         "Source name *", value="media", help="e.g. media, outcomes, controls"
     )
@@ -220,7 +307,18 @@ with tab_upload:
         key="uploader",
     )
 
-    if uploaded is not None and st.button("Add source"):
+    add_standard_source = st.button("Add source", type="primary")
+    add_generic_excel = st.button(
+        "Add as generic Excel source",
+        disabled=uploaded is None or not _is_excel_filename(uploaded.name),
+        help=(
+            "Use only when the workbook is not a standard source pack. The first "
+            "sheet is loaded as the generic source and every workbook sheet is "
+            "recorded in provenance."
+        ),
+    )
+
+    if uploaded is not None and (add_standard_source or add_generic_excel):
         if not source_name.strip():
             st.error("Source name is required.")
         elif logical_domain_choice == _DOMAIN_PLACEHOLDER:
@@ -230,48 +328,137 @@ with tab_upload:
                 SourceVersion.from_dict(v)
                 for v in st.session_state.get("source_versions") or []
             ]
-            df, source_version, err = load_file_with_source_version(
-                uploaded, source_name, existing_versions
-            )
-            if err:
-                st.error(err)
+            if _is_excel_filename(uploaded.name):
+                workbook, source_version, err = (
+                    load_standard_workbook_with_source_version(
+                        uploaded,
+                        source_name,
+                        logical_domain_choice,
+                        existing_versions,
+                    )
+                )
+                if err:
+                    st.error(err)
+                elif workbook is None or source_version is None:
+                    st.error("The workbook could not be loaded.")
+                elif (
+                    add_standard_source
+                    and not workbook.manifest.valid_standard_template
+                ):
+                    st.error(
+                        "Standard workbook validation failed; source not accepted."
+                    )
+                    for message in workbook.manifest.errors:
+                        st.error(message)
+                    for message in workbook.manifest.warnings:
+                        st.warning(message)
+                    st.info(
+                        "Correct the standard workbook, or choose 'Add as generic "
+                        "Excel source' to use the explicit legacy path."
+                    )
+                else:
+                    if (
+                        add_generic_excel
+                        or not workbook.manifest.valid_standard_template
+                    ):
+                        if not workbook.tables:
+                            st.error("The workbook contains no readable sheets.")
+                        else:
+                            first_sheet = next(iter(workbook.tables))
+                            _remove_source_lineage(source_name)
+                            sources = dict(st.session_state.get("raw_sources") or {})
+                            sources[source_name] = workbook.tables[first_sheet]
+                            st.session_state["raw_sources"] = sources
+                            definitions = list(
+                                st.session_state.get("source_definitions") or []
+                            )
+                            definitions.append(
+                                SourceDefinition(
+                                    source_id=source_name,
+                                    name=source_name,
+                                    logical_domain=logical_domain_choice,
+                                ).to_dict()
+                            )
+                            st.session_state["source_definitions"] = definitions
+                            active = dict(
+                                st.session_state.get("active_source_upload_version")
+                                or {}
+                            )
+                            active[source_name] = source_version.version
+                            st.session_state["active_source_upload_version"] = active
+                            st.session_state["source_versions"] = [
+                                v.to_dict() for v in existing_versions
+                            ] + [source_version.to_dict()]
+                            st.session_state["data_loaded"] = True
+                            clear_model_state()
+                            st.warning(
+                                "Generic Excel import loaded only the first sheet "
+                                f"({first_sheet!r}); workbook sheets were not combined. "
+                                + " ".join(
+                                    [
+                                        *workbook.manifest.warnings,
+                                        *workbook.manifest.errors,
+                                    ]
+                                )
+                            )
+                            st.success(
+                                f"Loaded {sources[source_name].shape[0]} rows from "
+                                f"{uploaded.name} as generic source '{source_name}' "
+                                f"(v{source_version.version})."
+                            )
+                    else:
+                        stored = _store_standard_workbook(
+                            source_name,
+                            workbook,
+                            source_version,
+                            logical_domain_choice,
+                        )
+                        st.session_state["source_versions"] = [
+                            v.to_dict() for v in existing_versions
+                        ] + [source_version.to_dict()]
+                        st.session_state["data_loaded"] = True
+                        clear_model_state()
+                        for message in workbook.manifest.warnings:
+                            st.warning(message)
+                        st.success(
+                            f"Loaded standard workbook {uploaded.name} as {len(stored)} "
+                            f"separate table(s) under '{_DOMAIN_LABELS[logical_domain_choice]}' "
+                            f"(v{source_version.version})."
+                        )
             else:
-                sources = dict(st.session_state.get("raw_sources") or {})
-                sources[source_name] = df
-                st.session_state["raw_sources"] = sources
-                st.session_state["source_versions"] = [
-                    v.to_dict() for v in existing_versions
-                ] + [source_version.to_dict()]
-                active = dict(
-                    st.session_state.get("active_source_upload_version") or {}
+                df, source_version, err = load_file_with_source_version(
+                    uploaded, source_name, existing_versions
                 )
-                active[source_name] = source_version.version
-                st.session_state["active_source_upload_version"] = active
-                # REQ-DATAIN-001: record/update this source_id's governed
-                # SourceDefinition - one record per source_id, replaced
-                # (not appended) if the analyst re-adds the same name with
-                # a different domain, since a source has exactly one
-                # current logical domain.
-                definitions = [
-                    d
-                    for d in (st.session_state.get("source_definitions") or [])
-                    if d.get("source_id") != source_name
-                ]
-                definitions.append(
-                    SourceDefinition(
-                        source_id=source_name,
-                        name=source_name,
-                        logical_domain=logical_domain_choice,
-                    ).to_dict()
-                )
-                st.session_state["source_definitions"] = definitions
-                st.session_state["data_loaded"] = True
-                clear_model_state()
-                st.success(
-                    f"Loaded {df.shape[0]} rows from {uploaded.name} as source "
-                    f"'{source_name}' (v{source_version.version}, checksum "
-                    f"{source_version.checksum[:12]}...)."
-                )
+                if err:
+                    st.error(err)
+                else:
+                    _remove_source_lineage(source_name)
+                    sources = dict(st.session_state.get("raw_sources") or {})
+                    sources[source_name] = df
+                    st.session_state["raw_sources"] = sources
+                    st.session_state["source_versions"] = [
+                        v.to_dict() for v in existing_versions
+                    ] + [source_version.to_dict()]
+                    active = dict(
+                        st.session_state.get("active_source_upload_version") or {}
+                    )
+                    active[source_name] = source_version.version
+                    st.session_state["active_source_upload_version"] = active
+                    st.session_state["source_definitions"] = [
+                        *(st.session_state.get("source_definitions") or []),
+                        SourceDefinition(
+                            source_id=source_name,
+                            name=source_name,
+                            logical_domain=logical_domain_choice,
+                        ).to_dict(),
+                    ]
+                    st.session_state["data_loaded"] = True
+                    clear_model_state()
+                    st.success(
+                        f"Loaded {df.shape[0]} rows from {uploaded.name} as source "
+                        f"'{source_name}' (v{source_version.version}, checksum "
+                        f"{source_version.checksum[:12]}...)."
+                    )
 
 
 def _render_source_detail(name: str, df) -> None:
@@ -290,11 +477,13 @@ def _render_source_detail(name: str, df) -> None:
         active_version = (
             st.session_state.get("active_source_upload_version") or {}
         ).get(name)
+        workbook_source_id = name.rsplit("__sheet__", 1)[0]
         active_record = next(
             (
                 v
                 for v in st.session_state.get("source_versions") or []
-                if v.get("source_id") == name and v.get("version") == active_version
+                if v.get("source_id") == workbook_source_id
+                and v.get("version") == active_version
             ),
             None,
         )
@@ -308,6 +497,14 @@ def _render_source_detail(name: str, df) -> None:
                 f"checksum `{active_record['checksum'][:12]}...` - "
                 f"uploaded {active_record['uploaded_at']}"
             )
+            if active_record.get("standard_template"):
+                st.caption(
+                    "Standard workbook schema "
+                    f"`{active_record.get('template_schema_version')}`; "
+                    f"tables: {', '.join(active_record.get('parsed_table_ids') or ())}"
+                )
+            for message in active_record.get("template_warnings") or ():
+                st.warning(message)
         # REQ-DATAIN-001: a source with no recorded SourceDefinition (e.g. a
         # bundle imported from before this capability existed) reads as
         # "Unclassified", never a guessed domain.
@@ -335,6 +532,11 @@ def _render_source_detail(name: str, df) -> None:
             active = dict(st.session_state.get("active_source_upload_version") or {})
             active.pop(name, None)
             st.session_state["active_source_upload_version"] = active
+            st.session_state["source_definitions"] = [
+                definition
+                for definition in (st.session_state.get("source_definitions") or [])
+                if definition.get("source_id") != name
+            ]
             st.rerun()
 
 

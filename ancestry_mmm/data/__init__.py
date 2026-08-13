@@ -3,6 +3,7 @@
 from .loader import (
     load_file,
     load_file_with_source_version,
+    load_standard_workbook_with_source_version,
     load_sample_data,
     load_all_sample_sources,
     SAMPLE_SOURCES,
@@ -38,6 +39,7 @@ from .pipeline import (
 __all__ = [
     "load_file",
     "load_file_with_source_version",
+    "load_standard_workbook_with_source_version",
     "load_sample_data",
     "load_all_sample_sources",
     "SAMPLE_SOURCES",
