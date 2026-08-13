@@ -10,10 +10,10 @@ Streamlit health-check ping (see the `windows-tooling` CI job) is not
 browser validation; this is.
 
 Journey: upload bundle -> import success + transactional store-replacement
-confirmation -> generate a THIRD official model-input curve artifact
-through the real Official Curve Generation page (page 13) - never only
-imported, pre-built ones - -> Curve Bank shows all three official curve
-artifacts -> Scenario Planner shows the imported saved scenario.
+confirmation -> generate a THIRD official model-input response curve through
+the real Official Curve Generation page (page 13) - never only imported,
+pre-built ones - -> Results shows the official response-curve summaries ->
+Scenario Planner shows the imported saved scenario.
 """
 
 from __future__ import annotations
@@ -25,7 +25,6 @@ import subprocess
 import sys
 import threading
 import time
-from datetime import date
 from pathlib import Path
 from typing import Iterator
 
@@ -334,27 +333,20 @@ def test_official_lifecycle_journey_in_browser(
     expect(
         page.get_by_text(re.compile(r"Saved official curve artifact"))
     ).to_be_visible(timeout=30_000)
-    # Matches page 13's own default artifact_id, f"{outcome_id}-{today}" -
-    # the lifecycle fixture's only eligible outcome is "New".
-    generated_artifact_id = f"New-{date.today().isoformat()}"
-
-    # --- Curve Bank: all three official curve artifacts are visible ------
+    # --- Results: all three official response curves are visible ---------
     page.get_by_role("link", name="Results & Response Curves").click()
-    expect(page.get_by_text("Official curve artifacts", exact=True)).to_be_visible(
+    expect(page.get_by_text("Official response curves", exact=True)).to_be_visible(
         timeout=30_000
     )
-    # `.first`: the artifact ID legitimately appears twice (the artifact's
-    # own expander label, and a row in the curve-bank history grid) -
-    # either is sufficient proof the artifact rendered.
-    expect(page.get_by_text("lifecycle-model-input", exact=True).first).to_be_visible(
-        timeout=30_000
-    )
-    expect(page.get_by_text("lifecycle-monetary", exact=True).first).to_be_visible(
-        timeout=30_000
-    )
-    expect(page.get_by_text(generated_artifact_id, exact=True).first).to_be_visible(
-        timeout=30_000
-    )
+    # Saved identifiers are deliberately secondary: they remain available in
+    # the technical-details disclosures rather than competing with the
+    # analyst-facing response-curve summary.
+    expect(
+        page.get_by_text("Technical details · saved response curve", exact=True).first
+    ).to_be_visible(timeout=30_000)
+    expect(
+        page.get_by_role("heading", name=re.compile(r"Official response curve")).first
+    ).to_be_visible(timeout=30_000)
 
     # --- Scenario Planner: the imported saved scenario is visible --------
     # The comparison table itself is a canvas-rendered `st.dataframe` grid

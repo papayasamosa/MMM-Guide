@@ -1,4 +1,4 @@
-"""Page 7: segment + total-FH contributions, ROAS/CPA, LTV-weighted value, and the versioned curve bank."""
+"""Page 7: fitted contribution evidence, response curves, and saved parameter snapshots."""
 
 import sys
 from pathlib import Path
@@ -16,7 +16,6 @@ from ancestry_mmm.utils import (
     curve_artifact_store_dir,
     dataframe_column_config,
     format_date,
-    FIELD_HELP,
 )
 from ancestry_mmm.components import (
     apply_theme,
@@ -124,6 +123,148 @@ from ancestry_mmm.application.curve_annotations import (
     annotation_from_official_support,
 )
 
+
+_EFFECT_TYPE_LABELS = {
+    "direct": "Direct effect",
+    "mediated": "Mediated effect",
+    "halo": "Cross-product halo effect",
+    "cross_product": "Cross-product effect",
+    "interaction": "Residual interaction",
+    "total": "Total effect",
+}
+
+
+def _outcome_display_labels(outcome_definitions):
+    """Return analyst-readable outcome labels without changing stable IDs."""
+    return {
+        outcome.outcome_id: " · ".join(
+            part
+            for part in (outcome.product, outcome.segment, outcome.metric)
+            if str(part).strip()
+        )
+        for outcome in outcome_definitions
+    }
+
+
+def _display_outcome(value, outcome_labels):
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return value
+    return outcome_labels.get(str(value), value)
+
+
+def _humanise_outcome_columns(dataframe, outcome_labels):
+    """Use human outcome labels in visible tables, keeping IDs for calculations."""
+    displayed = dataframe.copy()
+    if "outcome_id" in displayed.columns:
+        displayed["Outcome"] = displayed["outcome_id"].map(
+            lambda value: _display_outcome(value, outcome_labels)
+        )
+        displayed = displayed.drop(columns=["outcome_id"])
+    return displayed
+
+
+def _humanise_pathway_table(dataframe, outcome_labels):
+    displayed = _humanise_outcome_columns(dataframe, outcome_labels)
+    if "role" in displayed.columns:
+        displayed["Pathway status"] = (
+            displayed["role"]
+            .map(
+                {
+                    "active_cross_product": "Active cross-product pathway",
+                    "exploratory_cross_product": "Exploratory cross-product pathway",
+                }
+            )
+            .fillna(displayed["role"])
+        )
+        displayed = displayed.drop(columns=["role"])
+    return displayed
+
+
+def _humanise_reporting_summary(dataframe, outcome_labels):
+    """Trim roll-up internals from the normal table while retaining measures."""
+    displayed = dataframe.copy()
+    if "outcome_id" in displayed.columns:
+        displayed["Outcome"] = displayed["outcome_id"].map(
+            lambda value: _display_outcome(value, outcome_labels)
+        )
+    if "funnel_stage_label" in displayed.columns:
+        displayed["Funnel reporting group"] = displayed["funnel_stage_label"]
+    if "effect_type" in displayed.columns:
+        displayed["Effect component"] = displayed["effect_type"].map(
+            lambda value: _EFFECT_TYPE_LABELS.get(
+                str(value), str(value).replace("_", " ").title()
+            )
+        )
+
+    technical_columns = {
+        "outcome_id",
+        "funnel_stage",
+        "funnel_stage_label",
+        "effect_type",
+        "pathway_role",
+        "reporting_enrichment_status",
+        "reporting_enrichment_issue",
+        "reporting_taxonomy_fingerprint",
+        "funnel_rollup_status",
+        "spend_scope",
+        "posterior_aggregation_status",
+        "activity_market",
+    }
+    displayed = displayed.drop(
+        columns=[column for column in technical_columns if column in displayed.columns]
+    )
+    rename = {
+        "reporting_channel": "Reporting channel",
+        "platform": "Platform / supplier",
+        "activity_id": "Activity",
+        "market": "Market",
+        "segment": "Segment",
+        "curve_type": "Curve basis",
+        "metric_key": "Metric",
+        "incremental_response_posterior_mean": "Incremental response · mean",
+        "incremental_response_posterior_median": "Incremental response · median",
+        "incremental_response_lower_interval": "Incremental response · lower",
+        "incremental_response_upper_interval": "Incremental response · upper",
+        "reporting_currency_spend_posterior_mean": "Reporting-currency spend · mean",
+        "reporting_currency_spend_posterior_median": "Reporting-currency spend · median",
+        "reporting_currency_spend_lower_interval": "Reporting-currency spend · lower",
+        "reporting_currency_spend_upper_interval": "Reporting-currency spend · upper",
+        "spend_point": "Input point",
+        "Outcome": "Outcome",
+        "Funnel reporting group": "Funnel reporting group",
+        "Effect component": "Effect component",
+    }
+    displayed = displayed.rename(
+        columns={
+            key: value for key, value in rename.items() if key in displayed.columns
+        }
+    )
+    preferred = [
+        "Funnel reporting group",
+        "Reporting channel",
+        "Platform / supplier",
+        "Activity",
+        "Market",
+        "Outcome",
+        "Segment",
+        "Effect component",
+        "Curve basis",
+        "Metric",
+        "Input point",
+        "Incremental response · mean",
+        "Incremental response · median",
+        "Incremental response · lower",
+        "Incremental response · upper",
+        "Reporting-currency spend · mean",
+        "Reporting-currency spend · median",
+        "Reporting-currency spend · lower",
+        "Reporting-currency spend · upper",
+    ]
+    ordered = [column for column in preferred if column in displayed.columns]
+    ordered.extend(column for column in displayed.columns if column not in ordered)
+    return displayed[ordered]
+
+
 st.set_page_config(
     page_title="Results & Response Curves | Ancestry Family History & DNA MMM",
     layout="wide",
@@ -137,7 +278,7 @@ render_page_header(
 )
 render_workspace_note(
     "Evidence and authority",
-    "Inspect observed support, uncertainty, and evidence tier before using a curve; official artifacts are governed separately from exploratory snapshots.",
+    "Inspect observed support, uncertainty, and evidence tier before using a curve; official response curves are kept separate from exploratory views and saved parameter snapshots.",
     kind="governed",
 )
 render_decision_help(
@@ -185,8 +326,8 @@ with st.container(border=True):
         "Outcomes in fit", len(_dashboard_meta.outcome_ids) if _dashboard_meta else "-"
     )
     st.caption(
-        "Use the contribution summary for fitted attribution and the response curve library "
-        "for exploratory response evidence. Official curve artifacts remain a separate, "
+        "Use the contribution summary for fitted attribution and the exploratory response curves "
+        "for exploratory response evidence. Official response curves remain a separate, "
         "governance-checked view; monetary CPA/ROI appears only where its cost mapping is valid."
     )
 
@@ -441,7 +582,7 @@ def _official_artifact_governance(
     )
 
 
-def _render_official_artifact_curves(artifact):
+def _render_official_artifact_curves(artifact, outcome_labels):
     """Render the incremental-response curve (posterior mean + credible
     interval) for one official artifact.
 
@@ -465,6 +606,7 @@ def _render_official_artifact_curves(artifact):
         return
     outcome_snapshot = artifact.metadata.outcome_definition_snapshot or {}
     outcome_id = outcome_snapshot.get("outcome_id")
+    outcome_label = _display_outcome(outcome_id, outcome_labels)
     definition_version = outcome_snapshot.get("definition_version")
     support_rows = (artifact.metadata.support_snapshot or {}).get("rows") or []
     summaries = artifact.summaries
@@ -472,7 +614,7 @@ def _render_official_artifact_curves(artifact):
         stats = summarize_component_response_by_draw(
             group, by=[], x_col=x_col
         ).sort_values(x_col)
-        title = f"Official curve - {market} / {channel} - {outcome_id}"
+        title = f"Official response curve · {market} · {channel} · {outcome_label}"
         if definition_version:
             title += f" (v{definition_version})"
         curve_type = (
@@ -522,17 +664,18 @@ def _render_official_artifact_curves(artifact):
             st.caption(annotation.monetary_blocked_reason)
 
 
-def _render_official_reporting_views(artifact, activity_definitions):
+def _render_official_reporting_views(artifact, activity_definitions, outcome_labels):
     """Render governed funnel/channel/activity drill-downs from artifact draws."""
     draws = artifact.draws
     if draws.empty or "posterior_draw" not in draws.columns:
         return
-    st.markdown("#### Governed reporting roll-ups")
+    st.markdown("#### Reporting views")
     st.caption(
-        "These views group the persisted posterior contribution/curve rows by "
-        "governed activity metadata. Funnel stage is a reporting dimension, "
-        "not a causal or mediation label; direct, mediated, halo, and total "
-        "effects remain separate."
+        "Choose the level that answers your question: funnel group for broad "
+        "reporting, channel and platform for investment context, or activity "
+        "for detail. Funnel groups are reporting buckets, not causal or "
+        "mediation labels; direct, mediated, halo, and total effects remain "
+        "separate."
     )
     try:
         views = build_reporting_views(
@@ -547,24 +690,34 @@ def _render_official_reporting_views(artifact, activity_definitions):
         )
         return
 
-    tabs = st.tabs(["Funnel", "Channel / platform", "Activity drill-down"])
+    tabs = st.tabs(["By funnel group", "By channel and platform", "By activity"])
     for tab, (_view_name, view) in zip(tabs, views.items()):
         with tab:
             summary = summarize_reporting_draws(view)
             if summary.empty:
                 st.info("No rows are available for this reporting view.")
                 continue
+            displayed_summary = _humanise_reporting_summary(summary, outcome_labels)
             st.dataframe(
-                summary,
+                displayed_summary,
                 width="stretch",
-                column_config=dataframe_column_config(summary),
+                column_config=dataframe_column_config(displayed_summary),
             )
             if view["funnel_rollup_status"].eq("contains_unclassified").any():
                 st.warning(
-                    "This view includes an Unclassified bucket. Funnel totals "
-                    "are not a complete taxonomy decomposition until every "
-                    "activity has an approved funnel classification."
+                    "Some activity results are grouped as Unclassified because "
+                    "their activity mapping does not yet define a funnel group. "
+                    "This does not change the fitted effects, but the funnel "
+                    "view is not a complete reporting breakdown until the "
+                    "mapping is reviewed."
                 )
+            render_technical_details(
+                title="Technical details · reporting view",
+                details={
+                    "Posterior aggregation": "Rows are combined within each posterior draw before the displayed uncertainty summary.",
+                    "Reporting taxonomy": "Funnel, channel/platform, and activity are reporting dimensions; they do not redefine causal pathway roles.",
+                },
+            )
 
 
 def _render_official_artifact(
@@ -580,7 +733,10 @@ def _render_official_artifact(
 ):
     """Render one official artifact, revalidated against current governance."""
     md = artifact.metadata
-    st.markdown(f"#### Artifact `{md.artifact_id}`")
+    outcome_labels = _outcome_display_labels(outcome_definitions)
+    outcome_id = (md.outcome_definition_snapshot or {}).get("outcome_id")
+    outcome_label = _display_outcome(outcome_id, outcome_labels)
+    st.markdown(f"#### Official response curve · {outcome_label}")
     governance = _official_artifact_governance(
         artifact,
         current_identity,
@@ -594,9 +750,10 @@ def _render_official_artifact(
     )
     if governance is None:
         st.warning(
-            "Current governance for this artifact cannot be resolved (missing "
-            "current model identity, model approval, or a matching current outcome "
-            "approval). It is **not** displayed as an official curve (fail closed)."
+            "This saved response curve cannot be shown as official evidence "
+            "because its current model, approval, or outcome approval could "
+            "not be confirmed. Review the model and outcome approvals before "
+            "using it for headline reporting."
         )
         return
     try:
@@ -604,11 +761,14 @@ def _render_official_artifact(
             artifact, "headline_reporting", current_governance=governance
         )
     except CurveGovernanceError as exc:
-        st.warning(f"Not currently authorized for headline reporting: {exc}")
+        st.warning(
+            f"This response curve is not currently approved for headline reporting: {exc}"
+        )
         return
     if not authorization.authorized:
         st.warning(
-            f"Not currently authorized for headline reporting: {authorization.reason}"
+            "This response curve is not currently approved for headline reporting: "
+            f"{authorization.reason}"
         )
         return
     planning_support = (
@@ -619,27 +779,24 @@ def _render_official_artifact(
         )
         else "n/a"
     )
+    curve_type = (
+        str(artifact.draws["curve_type"].iloc[0])
+        if "curve_type" in artifact.draws.columns and not artifact.draws.empty
+        else "model_input"
+    )
     meta_df = pd.DataFrame(
         [
             {
-                "artifact_id": md.artifact_id,
-                "created": md.creation_timestamp,
-                "schema_version": md.schema_version,
-                "outcome": (md.outcome_definition_snapshot or {}).get("outcome_id"),
-                "reference_context_id": (md.reference_context_snapshot or {}).get(
-                    "reference_context_id"
-                ),
-                "format_status": md.format_status,
-                "historical_integrity": md.historical_integrity,
-                "current_authorization": (authorization.current_authorization_status),
-                "requested_use_eligibility": (authorization.requested_use_eligibility),
-                "planning_support_eligible": planning_support,
-                # Corrective PR D4/D5: the governed context REQ-CURVE-001
-                # requires alongside a rendered official curve, beyond bare
-                # artifact_id/outcome_id - already captured in the
-                # artifact's own creation-time snapshots, just not
-                # previously surfaced here.
-                **governed_context_fields(md),
+                "Curve": "Official response curve",
+                "Created": md.creation_timestamp,
+                "Outcome": outcome_label,
+                "Curve basis": "Monetary units"
+                if curve_type == "monetary"
+                else "Model-input units",
+                "Current status": "Approved for headline reporting",
+                "Planning use": "Eligible"
+                if planning_support is True
+                else "Review required",
             }
         ]
     )
@@ -648,8 +805,24 @@ def _render_official_artifact(
         width="stretch",
         column_config=dataframe_column_config(meta_df),
     )
-    _render_official_artifact_curves(artifact)
-    _render_official_reporting_views(artifact, activity_definitions)
+    render_technical_details(
+        title="Technical details · saved response curve",
+        details={
+            "Saved curve ID": md.artifact_id,
+            "Outcome ID": outcome_id,
+            "Schema version": str(md.schema_version),
+            "Reference context ID": (md.reference_context_snapshot or {}).get(
+                "reference_context_id"
+            ),
+            "Format status": md.format_status,
+            "Historical integrity": md.historical_integrity,
+            "Current authorization status": authorization.current_authorization_status,
+            "Requested-use eligibility": authorization.requested_use_eligibility,
+            **{key: value for key, value in governed_context_fields(md).items()},
+        },
+    )
+    _render_official_artifact_curves(artifact, outcome_labels)
+    _render_official_reporting_views(artifact, activity_definitions, outcome_labels)
 
 
 def _render_official_artifact_section(
@@ -665,29 +838,25 @@ def _render_official_artifact_section(
     """Render the official curve artifact store section (fail closed)."""
     st.markdown("---")
     with SectionCard(
-        "Official curve artifacts",
+        "Official response curves",
         description=(
-            "The governed official response-curve artifact store. "
-            "Each artifact is revalidated against current governance at display "
-            "time (curve_publication approval, current model, outcome, and "
-            "activities). Legacy point-estimate curves - a structurally distinct "
-            "concept, never blended with these - remain available in the "
-            "exploratory viewers above and the curve bank below."
+            "Saved response curves that have passed the required model, outcome, "
+            "activity, and approval checks. They remain separate from exploratory "
+            "response curves and saved parameter snapshots."
         ),
     ):
         store_dir = curve_artifact_store_dir()
         try:
             load_result = load_curve_artifact_store(store_dir, raise_on_malformed=False)
         except CurveArtifactError as exc:
-            st.warning(f"Official curve artifact store could not be read: {exc}")
+            st.warning(f"Saved official response curves could not be read: {exc}")
             return
         if load_result.malformed:
             st.warning(
-                f"{len(load_result.malformed)} malformed or unsupported official "
-                "curve artifact(s) were found and are reported below - they are "
-                "never silently skipped."
+                f"{len(load_result.malformed)} saved official response curve record(s) "
+                "could not be read and are listed in the technical audit below."
             )
-            with st.expander("Show malformed-artifact audit"):
+            with st.expander("Technical details · saved curve audit"):
                 audit_df = pd.DataFrame(
                     [
                         {
@@ -705,9 +874,9 @@ def _render_official_artifact_section(
                 )
         if not load_result.loaded:
             st.info(
-                "No official curve artifacts exist for this project yet. Official "
-                "curves are produced through the governance-enforcing CurveService "
-                f"and stored in `{store_dir}`."
+                "No official response curves have been saved for this project yet. "
+                "Use the official curve workflow after the required approval checks "
+                "are complete."
             )
             return
         for artifact in load_result.loaded:
@@ -749,16 +918,22 @@ if trace is None or frame is None or meta is None or params is None:
 
 spec = ModelSpec.from_dict(spec_dict)
 ltv = spec.segment_ltv
+outcome_definitions = resolve_outcome_definitions(
+    get_state("outcome_definitions"), spec.segment_outcomes, spec.segment_ltv
+)
+outcome_labels = _outcome_display_labels(outcome_definitions)
 render_drift_status(
-    resolve_outcome_definitions(
-        get_state("outcome_definitions"), spec.segment_outcomes, spec.segment_ltv
-    ),
+    outcome_definitions,
     meta,
 )
 model_type = get_state("model_type", "shared")
 market_config = MarketSpecConfig.from_dict(get_state("market_spec_config"))
 
 st.markdown("### Contribution summary")
+st.caption(
+    "See where the fitted model attributes incremental outcomes. The views below "
+    "describe reporting groupings; they do not replace the causal pathway definitions."
+)
 
 if model_type == "market_specific":
     st.markdown("---")
@@ -767,15 +942,15 @@ if model_type == "market_specific":
             frame, meta, params, n_permutations=100
         )
 
-    st.markdown("#### Total contribution by channel")
+    st.markdown("#### Contribution by reporting channel")
     fh_gsa_ids = fh_gsa_outcome_ids(meta)
     fh_signup_ids = fh_signup_outcome_ids(meta)
     dna_kit_outcomes_in_fit = dna_kit_sale_outcome_ids(meta)
     if dna_kit_outcomes_in_fit or fh_signup_ids:
         st.caption(
-            f"Total impact per channel across FH GSA outcomes only ({', '.join(fh_gsa_ids) or '(none)'}) - "
-            f"FH sign-up outcomes ({', '.join(fh_signup_ids) or '(none)'}) and DNA-product outcomes "
-            f"({', '.join(dna_kit_outcomes_in_fit) or '(none)'}) are excluded from this total since a "
+            f"Total impact per channel across Family History GSA outcomes only ({', '.join(_display_outcome(item, outcome_labels) for item in fh_gsa_ids) or '(none)'}) - "
+            f"Family History sign-up outcomes ({', '.join(_display_outcome(item, outcome_labels) for item in fh_signup_ids) or '(none)'}) and DNA-product outcomes "
+            f"({', '.join(_display_outcome(item, outcome_labels) for item in dna_kit_outcomes_in_fit) or '(none)'}) are excluded from this total since a "
             "sign-up count, a kit-sale count and a GSA count aren't the same unit; see their own rows "
             "in the market x outcome x channel detail below."
         )
@@ -793,27 +968,40 @@ if model_type == "market_specific":
         outcome_ids=fh_gsa_ids,
         by_market=by_market_total,
     )
+    ms_total_display = _humanise_outcome_columns(ms_total_df, outcome_labels)
     st.dataframe(
-        ms_total_df, width="stretch", column_config=dataframe_column_config(ms_total_df)
+        ms_total_display,
+        width="stretch",
+        column_config=dataframe_column_config(ms_total_display),
     )
 
     st.markdown("---")
-    st.markdown("#### Market x segment x channel detail")
+    st.markdown("#### Market and outcome detail")
     ms_seg_df = outcome_channel_market_summary(
         frame, meta, params, ms_contributions, ltv
     )
+    ms_seg_display = _humanise_outcome_columns(ms_seg_df, outcome_labels)
     st.dataframe(
-        ms_seg_df, width="stretch", column_config=dataframe_column_config(ms_seg_df)
+        ms_seg_display,
+        width="stretch",
+        column_config=dataframe_column_config(ms_seg_display),
     )
 
     st.markdown("---")
     st.markdown("#### Contribution waterfall")
     c1, c2 = st.columns(2)
     waterfall_market = c1.selectbox("Market", meta.markets, key="ms_waterfall_market")
-    waterfall_scope = c2.selectbox(
-        "Scope", ["Total FH"] + meta.outcome_ids, key="ms_waterfall_scope"
+    waterfall_options = {"Total Family History": None}
+    waterfall_options.update(
+        {
+            _display_outcome(outcome_id, outcome_labels): outcome_id
+            for outcome_id in meta.outcome_ids
+        }
     )
-    outcome_id_arg = None if waterfall_scope == "Total FH" else waterfall_scope
+    waterfall_scope_label = c2.selectbox(
+        "Outcome view", list(waterfall_options), key="ms_waterfall_scope"
+    )
+    outcome_id_arg = waterfall_options[waterfall_scope_label]
     market_row_mask = ms_contributions["market_idx"] == meta.markets.index(
         waterfall_market
     )
@@ -838,23 +1026,23 @@ if model_type == "market_specific":
         create_waterfall_chart(
             waterfall_df["category"].tolist(),
             waterfall_df["value"].tolist(),
-            title=f"{waterfall_market} - {waterfall_scope} contribution waterfall",
+            title=f"{waterfall_market} · {waterfall_scope_label} contribution waterfall",
         ),
         width="stretch",
     )
 
     st.markdown("---")
-    st.markdown("### Response curve library")
+    st.markdown("### Exploratory response curves")
     st.caption(
         "Selected context: choose one market and channel below. This viewer is exploratory "
-        "evidence from the fitted model; it is not an official published curve artifact."
+        "evidence from the fitted model; it is not an official response curve for headline reporting."
     )
     st.markdown("#### Market-specific channel response curve")
     st.caption(
-        "Exploratory / legacy (point estimates): spend -> incremental response for one "
+        "Exploratory response curve (point estimates): spend -> incremental response for one "
         "market and channel, per segment and overall (overall = sum of segment responses). "
-        "These curves are not part of the governed official artifact store - use the "
-        "Official curve artifacts section for governed curves."
+        "These curves are for analysis; use the Official response curves section for "
+        "governed evidence."
     )
     c1, c2 = st.columns(2)
     viewer_market = c1.selectbox("Market", meta.markets)
@@ -937,7 +1125,9 @@ if model_type == "market_specific":
         "(core.pathways.resolve_pathway_masks) - generalises the old DNA-only halo pathway to any "
         "channel a pathway catalogue routes there."
     )
-    pathway_df = _pathway_strength_table(meta, params)
+    pathway_df = _humanise_pathway_table(
+        _pathway_strength_table(meta, params), outcome_labels
+    )
     st.dataframe(
         pathway_df, width="stretch", column_config=dataframe_column_config(pathway_df)
     )
@@ -949,15 +1139,15 @@ else:
             frame, meta, params, n_permutations=100
         )
 
-    st.markdown("#### Total-FH contribution by channel")
+    st.markdown("#### Family History contribution by channel")
     fh_gsa_ids = fh_gsa_outcome_ids(meta)
     fh_signup_ids = fh_signup_outcome_ids(meta)
     dna_kit_outcomes_in_fit = dna_kit_sale_outcome_ids(meta)
     if dna_kit_outcomes_in_fit or fh_signup_ids:
         st.caption(
-            f"Total impact per FH channel across FH GSA outcomes only ({', '.join(fh_gsa_ids) or '(none)'}) - "
-            f"FH sign-up outcomes ({', '.join(fh_signup_ids) or '(none)'}) and DNA-product outcomes "
-            f"({', '.join(dna_kit_outcomes_in_fit) or '(none)'}) are excluded from this total since a "
+            f"Total impact per Family History channel across GSA outcomes only ({', '.join(_display_outcome(item, outcome_labels) for item in fh_gsa_ids) or '(none)'}) - "
+            f"Family History sign-up outcomes ({', '.join(_display_outcome(item, outcome_labels) for item in fh_signup_ids) or '(none)'}) and DNA-product outcomes "
+            f"({', '.join(_display_outcome(item, outcome_labels) for item in dna_kit_outcomes_in_fit) or '(none)'}) are excluded from this total since a "
             "sign-up count, a kit-sale count and a GSA count aren't the same unit; see their own rows "
             "in the outcome x channel detail below."
         )
@@ -968,19 +1158,34 @@ else:
     total_df = total_fh_contribution(
         frame, meta, params, contributions, ltv, outcome_ids=fh_gsa_ids
     )
+    total_display = _humanise_outcome_columns(total_df, outcome_labels)
     st.dataframe(
-        total_df, width="stretch", column_config=dataframe_column_config(total_df)
+        total_display,
+        width="stretch",
+        column_config=dataframe_column_config(total_display),
     )
 
     st.markdown("---")
-    st.markdown("#### Outcome x channel detail")
+    st.markdown("#### Outcome and channel detail")
     seg_df = outcome_channel_summary(frame, meta, params, contributions, ltv)
-    st.dataframe(seg_df, width="stretch", column_config=dataframe_column_config(seg_df))
+    seg_display = _humanise_outcome_columns(seg_df, outcome_labels)
+    st.dataframe(
+        seg_display, width="stretch", column_config=dataframe_column_config(seg_display)
+    )
 
     st.markdown("---")
     st.markdown("#### Contribution waterfall")
-    waterfall_scope = st.selectbox("Scope", ["Total FH"] + meta.outcome_ids)
-    outcome_id_arg = None if waterfall_scope == "Total FH" else waterfall_scope
+    waterfall_options = {"Total Family History": None}
+    waterfall_options.update(
+        {
+            _display_outcome(outcome_id, outcome_labels): outcome_id
+            for outcome_id in meta.outcome_ids
+        }
+    )
+    waterfall_scope_label = st.selectbox(
+        "Outcome view", list(waterfall_options), key="shared_waterfall_scope"
+    )
+    outcome_id_arg = waterfall_options[waterfall_scope_label]
     waterfall_df = contribution_waterfall(
         frame, meta, params, outcome_id=outcome_id_arg, contributions=contributions
     )
@@ -988,25 +1193,25 @@ else:
         create_waterfall_chart(
             waterfall_df["category"].tolist(),
             waterfall_df["value"].tolist(),
-            title=f"{waterfall_scope} contribution waterfall",
+            title=f"{waterfall_scope_label} contribution waterfall",
         ),
         width="stretch",
     )
 
     st.markdown("---")
-    st.markdown("### Response curve library")
+    st.markdown("### Exploratory response curves")
     st.caption(
         "Selected context: choose a channel and reference market below. This viewer is "
-        "exploratory evidence from the fitted model; official published curve artifacts "
-        "are shown separately below."
+        "exploratory evidence from the fitted model; official response curves for "
+        "governed use are shown separately below."
     )
     st.markdown("#### Channel response curve")
     st.caption(
-        "Exploratory / legacy (point estimates): spend -> incremental response for one "
+        "Exploratory response curve (point estimates): spend -> incremental response for one "
         "channel, per segment and overall (overall = sum of segment responses) - the same "
         "curve every market uses, since it's shared across markets in this model structure. "
-        "These curves are not part of the governed official artifact store - use the "
-        "Official curve artifacts section for governed curves."
+        "These curves are for analysis; use the Official response curves section for "
+        "governed evidence."
     )
     viewer_channel = st.selectbox("Channel", meta.channels)
 
@@ -1078,7 +1283,9 @@ else:
 
     st.markdown("---")
     st.markdown("#### Cross-product pathway strength")
-    pathway_df = _pathway_strength_table(meta, params)
+    pathway_df = _humanise_pathway_table(
+        _pathway_strength_table(meta, params), outcome_labels
+    )
     st.dataframe(
         pathway_df, width="stretch", column_config=dataframe_column_config(pathway_df)
     )
@@ -1101,15 +1308,16 @@ else:
 # the viewer above still shows media-unit context for a chosen reference
 # market, it just isn't persisted to the curve bank for a shared curve.
 st.markdown("---")
-st.markdown("## Curve bank snapshots")
-st.caption(FIELD_HELP["curve_bank"])
+st.markdown("## Saved parameter snapshots")
 st.caption(
-    "Curve bank entries are **fitted parameter snapshots** (Hill/decay/beta "
+    "Review saved parameter snapshots for calibration tracking and evidence review. "
+    "Use Planning Curves when a governed response curve is required."
+)
+st.caption(
+    "These saved records are **fitted parameter snapshots** (Hill/decay/beta "
     "point estimates for one market/channel/segment), not evaluated curves. "
-    "They remain loadable and usable for calibration tracking and "
-    "evidence-tier display, but are never presented as current official "
-    "response curves - official curves are rendered only in the "
-    "'Official curve artifacts' section."
+    "They support calibration tracking and evidence review, but are not the "
+    "same thing as a current official response curve."
 )
 approval_dict = get_state("model_approval")
 model_run_id = get_state("model_run_id")
@@ -1229,7 +1437,7 @@ if not approval_dict:
     st.markdown("---")
     render_empty_state(
         "This model hasn't been approved yet. Results above are still visible for review, but "
-        "saving to the curve bank is blocked until the model is approved on Model Diagnostics.",
+        "saving a parameter snapshot is blocked until the model is approved on Model Diagnostics.",
         button_label="Go to Model Diagnostics",
         target_key="diagnostics",
     )
@@ -1240,14 +1448,14 @@ elif not approval_matches_current:
         "readiness evidence (the data, specification, posterior, or run have changed since "
         "it was approved, or the bound policy/readiness has drifted)"
         + (f": {approval_invalid_reason}" if approval_invalid_reason else "")
-        + ". Saving to the curve bank is blocked until it's reviewed and approved again.",
+        + ". Saving a parameter snapshot is blocked until it's reviewed and approved again.",
         button_label="Go to Model Diagnostics",
         target_key="diagnostics",
     )
 else:
     approval = ModelApproval.from_dict(approval_dict)
     st.caption(
-        f"Model approved by **{approval.approved_by}** - saving to the curve bank will record this approval on every curve entry (fitted parameter snapshot) saved."
+        f"Model approved by **{approval.approved_by}** - this approval will be recorded with each saved parameter snapshot."
     )
 
     c1, c2 = st.columns(2)
@@ -1256,7 +1464,7 @@ else:
     )
     notes = c2.text_input("Notes (optional)")
 
-    if st.button("Save current curves to curve bank", type="primary"):
+    if st.button("Save current response-curve parameters", type="primary"):
         data_window = (
             str(pd.Timestamp(frame["dates"].min()).date()),
             str(pd.Timestamp(frame["dates"].max()).date()),
@@ -1322,13 +1530,11 @@ else:
                     **current_identity,
                 )
         except (ApprovalMismatchError, ValidationPolicyBlockedError) as e:
-            st.error(f"Could not save to the curve bank: {e}")
+            st.error(f"Could not save the response-curve parameters: {e}")
         else:
             paths = cb.save_entries(curve_bank_dir(), entries)
             set_state("curve_bank_entry_id", entries[0].entry_id if entries else None)
-            st.success(
-                f"Saved {len(entries)} curve bank entries to {curve_bank_dir()}."
-            )
+            st.success(f"Saved {len(entries)} response-curve parameter snapshot(s).")
 
 # Official curve artifacts (REQ-CURVE-001 / PR 95E) - rendered after the
 # legacy curve bank save block so that current_identity / current_policy /
@@ -1348,7 +1554,7 @@ _render_official_artifact_section(
 
 entries = cb.load_all_entries(curve_bank_dir())
 if entries:
-    st.markdown("#### Curve bank history")
+    st.markdown("#### Saved parameter history")
     entries_df = cb.entries_to_dataframe(entries)
 
     f1, f2, f3, f4 = st.columns(4)
@@ -1362,7 +1568,7 @@ if entries:
         "Filter: segment", sorted(entries_df["segment_or_overall"].unique())
     )
     status_filter = f4.multiselect(
-        "Filter: curve status", sorted(entries_df["curve_status"].unique())
+        "Filter: evidence status", sorted(entries_df["curve_status"].unique())
     )
 
     filtered_df = entries_df
@@ -1377,33 +1583,67 @@ if entries:
     if status_filter:
         filtered_df = filtered_df[filtered_df["curve_status"].isin(status_filter)]
 
-    st.dataframe(
-        filtered_df, width="stretch", column_config=dataframe_column_config(filtered_df)
+    snapshot_display = filtered_df.rename(
+        columns={
+            "run_label": "Run",
+            "created_at": "Saved",
+            "data_window_start": "Data from",
+            "data_window_end": "Data to",
+            "market": "Market",
+            "channel": "Channel",
+            "segment_or_overall": "Segment / total",
+            "curve_status": "Evidence status",
+            "input_type": "Input basis",
+            "currency": "Currency",
+            "unit_type": "Media unit",
+            "cost_per_unit": "Cost per unit",
+            "decay_rate": "Carryover",
+            "hill_K": "Saturation scale",
+            "hill_S": "Saturation shape",
+            "beta": "Response coefficient",
+            "halo_strength": "Cross-product strength",
+            "approved_by": "Approved by",
+            "approved_at": "Approved at",
+        }
+    ).drop(
+        columns=[
+            "entry_id",
+            "model_type",
+            "model_run_id",
+            "legacy_approval",
+            "legacy_format",
+        ],
+        errors="ignore",
     )
-    if entries_df["legacy_approval"].any():
-        st.caption(
-            "Rows marked `legacy_approval = True` were saved before curve bank entries were "
-            "bound to a verified model run - their approval could not be checked against a "
-            "specific fitted model."
-        )
-    if entries_df["legacy_format"].any():
-        st.caption(
-            "Rows marked `legacy_format = True` were saved before curves were stored one-per-market/"
-            "channel/segment - each was one shared, run-level record, expanded into this "
-            "table's shape for display; their `curve_status` is always `Legacy`."
+    st.dataframe(
+        snapshot_display,
+        width="stretch",
+        column_config=dataframe_column_config(snapshot_display),
+    )
+    if entries_df["legacy_approval"].any() or entries_df["legacy_format"].any():
+        render_technical_details(
+            title="Technical details · saved parameter history",
+            body=(
+                "Some saved parameter snapshots use an older record format or predate "
+                "model-run approval binding. Their evidence status is retained for audit "
+                "and should be reviewed before relying on them."
+            ),
         )
 
-    st.markdown("#### Log a geo-test / in-platform calibration result")
+    st.markdown("#### Record a calibration result")
     entry_options = {
-        f"{e.run_label} - {e.market or '(shared)'} / {e.channel} / {e.segment_or_overall} / {e.input_type} "
-        f"({e.entry_id[:8]}, {format_date(pd.Timestamp.fromtimestamp(e.created_at))})": e.entry_id
-        for e in entries
+        f"Snapshot {index + 1} · {e.run_label} · {e.market or 'Shared'} · "
+        f"{e.channel} · {e.segment_or_overall} · {e.input_type} · "
+        f"{format_date(pd.Timestamp.fromtimestamp(e.created_at))}": e.entry_id
+        for index, e in enumerate(entries)
     }
-    chosen_label = st.selectbox("Curve bank entry", list(entry_options.keys()))
+    chosen_label = st.selectbox("Saved parameter snapshot", list(entry_options.keys()))
     chosen_entry = next(e for e in entries if e.entry_id == entry_options[chosen_label])
 
     c1, c2 = st.columns(2)
-    test_type = c1.selectbox("Test type", ["geo", "in_platform"])
+    test_type_labels = {"Geo test": "geo", "In-platform test": "in_platform"}
+    test_type_label = c1.selectbox("Test type", list(test_type_labels))
+    test_type = test_type_labels[test_type_label]
     model_estimate = c2.number_input(
         "Model estimate (e.g. ROAS)", value=float(chosen_entry.beta)
     )
@@ -1432,6 +1672,6 @@ if entries:
             cal_df, width="stretch", column_config=dataframe_column_config(cal_df)
         )
 else:
-    st.info("No curve bank entries saved yet.")
+    st.info("No saved parameter snapshots yet.")
 
 render_next_step("curve_bank")
