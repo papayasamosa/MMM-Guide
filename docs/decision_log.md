@@ -2805,3 +2805,32 @@ browser was unavailable.
 
 **Owner:** Platform engineering / Data Science.
 **Status:** Implemented in UX/UI coherence Phase 12.
+
+## Semantic highlight roles (UX/UI coherence Phase 13)
+
+**Date:** 2026-08-13
+**Decision:** Centralise shared highlight roles for selected interaction
+surfaces, informational surfaces, caution surfaces, and blocking surfaces.
+Use the interaction/selection tone only for selection and action cues; keep
+information, caution, and negative surfaces tied to their semantic status
+colours. Reuse the same maps for sidebar selection, shared panels, and native
+info alerts.
+
+**Reason:** The existing rendered colours were already appropriate, but their
+use was repeated across shared CSS and theme overrides. Central role maps make
+the reason for each highlight explicit and reduce the risk that an accent or
+context colour is used as an unexplained warning or decorative emphasis.
+
+**Impact:** Presentation-only token/CSS consolidation and tests. Rendered
+colours are unchanged. No analytical calculations, workflow states,
+governance rules, persistence, or page content changed. Business question:
+does each highlighted surface communicate interaction, information, caution,
+or a blocker—and does a blocker remain visually louder than context? Estimand:
+none introduced. Output scale/units: unchanged. Upstream modelling
+references: none consulted because this package changes presentation only and
+does not change PyMC or PyMC Marketing model APIs. Remaining limitation:
+interactive browser screenshot review uses the repository's synthetic-data
+browser journey because the local connected browser was unavailable.
+
+**Owner:** Platform engineering / Data Science.
+**Status:** Implemented in UX/UI coherence Phase 13.

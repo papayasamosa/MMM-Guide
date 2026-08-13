@@ -39,7 +39,16 @@ from .status import (
     render_status_badges,
     badge_html,
 )
-from .tokens import SPACING, RADIUS, SURFACE, TEXT, STATUS_COLOR, shell_css
+from .tokens import (
+    HIGHLIGHT_BORDER,
+    HIGHLIGHT_SURFACE,
+    SPACING,
+    RADIUS,
+    SURFACE,
+    TEXT,
+    STATUS_COLOR,
+    shell_css,
+)
 from .diagnostics_rail import (
     render_top_line,
     render_primary_concern,
@@ -85,6 +94,8 @@ __all__ = [
     "SURFACE",
     "TEXT",
     "STATUS_COLOR",
+    "HIGHLIGHT_SURFACE",
+    "HIGHLIGHT_BORDER",
     "shell_css",
     "render_top_line",
     "render_primary_concern",

@@ -39,6 +39,27 @@ class TestTokens:
         assert "mmm-brand-lockup" in css
         assert "#0E1512" not in css
 
+    def test_highlight_roles_keep_interaction_and_status_surfaces_distinct(self):
+        assert set(tokens_module.HIGHLIGHT_SURFACE) == {
+            "selected",
+            "info",
+            "caution",
+            "negative",
+        }
+        assert set(tokens_module.HIGHLIGHT_BORDER) == {"info", "caution", "negative"}
+        assert (
+            tokens_module.HIGHLIGHT_SURFACE["selected"]
+            != (tokens_module.HIGHLIGHT_SURFACE["caution"])
+        )
+        assert (
+            tokens_module.HIGHLIGHT_BORDER["caution"]
+            == (tokens_module.STATUS_COLOR["caution"])
+        )
+        assert (
+            tokens_module.HIGHLIGHT_BORDER["negative"]
+            == (tokens_module.STATUS_COLOR["negative"])
+        )
+
     def test_typography_scale_keeps_supporting_text_readable_and_wraps(self):
         css = tokens_module.shell_css()
         assert tokens_module.TYPE_SCALE["micro"] == "0.74rem"
@@ -54,6 +75,19 @@ class TestTokens:
         assert '[data-testid="stCaptionContainer"]' in css
         assert "white-space: normal" in css
         assert "@media (max-width: 1100px)" in css
+
+    def test_shell_css_uses_semantic_highlight_values(self):
+        css = tokens_module.shell_css()
+        for value in (
+            tokens_module.HIGHLIGHT_SURFACE["selected"],
+            tokens_module.HIGHLIGHT_SURFACE["info"],
+            tokens_module.HIGHLIGHT_SURFACE["caution"],
+            tokens_module.HIGHLIGHT_SURFACE["negative"],
+            tokens_module.HIGHLIGHT_BORDER["info"],
+            tokens_module.HIGHLIGHT_BORDER["caution"],
+            tokens_module.HIGHLIGHT_BORDER["negative"],
+        ):
+            assert value in css
 
     def test_status_color_covers_every_semantic_key_status_badges_uses(self):
         used_color_keys = {c for (_, _, c) in status_module.STATUS_BADGES.values()}

@@ -34,7 +34,11 @@ from ancestry_mmm.utils.workflow_state import (
     workflow_page_states,
     workflow_page_state,
 )
-from ancestry_mmm.components.tokens import shell_css
+from ancestry_mmm.components.tokens import (
+    HIGHLIGHT_BORDER,
+    HIGHLIGHT_SURFACE,
+    shell_css,
+)
 from ancestry_mmm.components.status import render_status_badges
 from ancestry_mmm.core.outcomes import BLOCKING_DRIFT_STATUSES, outcomes_drift_dataframe
 
@@ -48,8 +52,8 @@ def apply_theme() -> None:
         #MainMenu {{ visibility: hidden; }}
         footer {{ visibility: hidden; }}
         [data-testid="stAlertContainer"]:has([data-testid="stAlertContentInfo"]) {{
-            background-color: {THEME_COLORS["surface_info"]} !important;
-            border: 1px solid {THEME_COLORS["focus_ring"]} !important;
+            background-color: {HIGHLIGHT_SURFACE["info"]} !important;
+            border: 1px solid {HIGHLIGHT_BORDER["info"]} !important;
         }}
         [data-testid="stAlertContentInfo"] {{ color: {THEME_COLORS["text_primary"]} !important; }}
         div.stButton > button[kind="primary"] {{

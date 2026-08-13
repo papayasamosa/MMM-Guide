@@ -49,6 +49,22 @@ STATUS_COLOR = {
     "info": THEME_COLORS["info"],
 }
 
+# Highlight roles are intentionally explicit. Accent colours are reserved for
+# interaction/selection cues; status surfaces use their own semantic tones so
+# a warning or blocker remains louder than ordinary context (UX/UI coherence
+# Phase 13, Finding 20).
+HIGHLIGHT_SURFACE = {
+    "selected": THEME_COLORS["surface_selected"],
+    "info": THEME_COLORS["surface_info"],
+    "caution": THEME_COLORS["surface_warning"],
+    "negative": THEME_COLORS["surface_error"],
+}
+HIGHLIGHT_BORDER = {
+    "info": THEME_COLORS["focus_ring"],
+    "caution": STATUS_COLOR["caution"],
+    "negative": STATUS_COLOR["negative"],
+}
+
 # Shared type scale for shell chrome. Keep supporting labels readable at the
 # analytical workbench's target widths; important text should wrap before it
 # is reduced to a tiny micro-label (UX/UI coherence Phase 12, Finding 19).
@@ -135,10 +151,10 @@ def shell_css() -> str:
         transition: background 120ms ease, border-color 120ms ease;
     }}
     section[data-testid="stSidebar"] [data-testid="stPageLink-NavLink"]:hover {{
-        background: {THEME_COLORS["surface_selected"]};
+        background: {HIGHLIGHT_SURFACE["selected"]};
     }}
     section[data-testid="stSidebar"] [data-testid="stPageLink-NavLink"][aria-current="page"] {{
-        background: {THEME_COLORS["surface_selected"]};
+        background: {HIGHLIGHT_SURFACE["selected"]};
         border-left-color: {TEXT["accent"]};
         font-weight: 700;
     }}
@@ -339,16 +355,16 @@ def shell_css() -> str:
     }}
     /* Only semantic warning/blocking panels receive a bordered surface. */
     [data-testid="stVerticalBlockBorderWrapper"]:has(> div .mmm-panel-marker-info) {{
-        background: {THEME_COLORS["surface_info"]};
-        border-color: {THEME_COLORS["focus_ring"]} !important;
+        background: {HIGHLIGHT_SURFACE["info"]};
+        border-color: {HIGHLIGHT_BORDER["info"]} !important;
     }}
     [data-testid="stVerticalBlockBorderWrapper"]:has(> div .mmm-panel-marker-caution) {{
-        background: {THEME_COLORS["surface_warning"]};
-        border-color: {THEME_COLORS["warning"]} !important;
+        background: {HIGHLIGHT_SURFACE["caution"]};
+        border-color: {HIGHLIGHT_BORDER["caution"]} !important;
     }}
     [data-testid="stVerticalBlockBorderWrapper"]:has(> div .mmm-panel-marker-negative) {{
-        background: {THEME_COLORS["surface_error"]};
-        border-color: {THEME_COLORS["error"]} !important;
+        background: {HIGHLIGHT_SURFACE["negative"]};
+        border-color: {HIGHLIGHT_BORDER["negative"]} !important;
     }}
     </style>
     """
