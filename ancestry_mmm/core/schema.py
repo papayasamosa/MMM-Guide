@@ -28,6 +28,12 @@ class ModelSpec:
     # segment key -> outcome column name (weekly GSAs for that segment)
     segment_outcomes: Dict[str, str] = field(default_factory=dict)
 
+    # Engine-compatible legacy field.  Despite its historical name, values
+    # are physical model-input columns, never ActivityDefinition.channel
+    # reporting families.  New business-facing code should resolve governed
+    # activities first, then populate this adapter field at the engine
+    # boundary.  Keep the field for saved-project and model-engine
+    # compatibility; a wholesale rename is intentionally out of scope.
     channels: List[str] = field(default_factory=list)
     # subset of `channels` treated as DNA-targeted media for the halo pathway
     dna_channels: List[str] = field(default_factory=list)
@@ -79,6 +85,12 @@ class ModelSpec:
 
     def segments(self) -> List[str]:
         return list(self.segment_outcomes.keys())
+
+    @property
+    def model_input_columns(self) -> List[str]:
+        """Compatibility view of the engine's historical ``channels`` field."""
+
+        return list(self.channels)
 
     def pooled_markets(self) -> List[str]:
         return [m for m in self.markets if m not in self.unpooled_markets]

@@ -2185,3 +2185,35 @@ behaviour changed. Real UK end-to-end data validation: DEFERRED pending
 source-data availability.
 **Owner:** Platform engineering / Data Science.
 **Status:** Accepted; implementation in Work Package 1.
+
+## Governed activity identity before model structure (Work Package 2)
+
+**Date:** 2026-08-13
+**Decision:** Make Activity Mapping the workflow step before Model Structure.
+Model Structure selects governed `ActivityDefinition` rows and resolves each
+selected `market + activity_id` to its explicit `model_input_column`; the
+engine-compatible `ModelSpec.channels` field remains a physical model-input
+column adapter for existing model code and saved projects. The structure
+summary reports governed activities, physical model-input columns, and
+reporting channels separately.
+**Reason:** A raw numeric-column heuristic cannot distinguish media from KPI,
+control, outcome, or other numeric variables, and `ActivityDefinition.channel`
+is a reporting roll-up that may be shared by multiple activities. Activity
+identity must therefore be governed before model scope is selected, without a
+second registry or a risky rename of all model internals.
+**Alternatives considered:** Keeping the numeric-column media multiselect as
+the official workflow (rejected - it silently classified arbitrary numeric
+columns); renaming `ModelSpec.channels` throughout the engine (rejected -
+unnecessarily broad compatibility risk); automatically creating new activity
+rows from every numeric column (rejected - it would turn a suggestion into an
+authoritative business classification). Legacy projects instead receive an
+explicit review-required compatibility adapter from their saved
+`ModelSpec.channels` or legacy pathway metadata.
+**Impact:** `core.activities` now exposes reusable activity identity/model-input
+resolvers and the explicit legacy adapter; Activity Mapping can run after
+prepared data and before Model Structure; workflow state and navigation reflect
+the corrected order; Model Structure no longer uses naming heuristics to select
+media. No model equations or causal graph semantics changed. Real UK
+end-to-end data validation: DEFERRED pending source-data availability.
+**Owner:** Platform engineering / Data Science.
+**Status:** Accepted; implementation in Work Package 2.

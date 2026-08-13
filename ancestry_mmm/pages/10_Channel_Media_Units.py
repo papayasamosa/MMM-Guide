@@ -54,6 +54,7 @@ from ancestry_mmm.core.activities import (
     PLANNING_ELIGIBILITY,
     ActivityDefinition,
     activity_invalidation,
+    legacy_activity_definitions_from_model_spec,
 )
 from ancestry_mmm.core.search_objects import (
     SEARCH_OBJECT_STATES,
@@ -66,7 +67,7 @@ from ancestry_mmm.core.search_objects import (
 from ancestry_mmm.data import detect_column_types
 
 st.set_page_config(
-    page_title="Media Mapping | Ancestry Family History & DNA MMM",
+    page_title="Activity Mapping | Ancestry Family History & DNA MMM",
     layout="wide",
 )
 init_session_state()
@@ -85,16 +86,41 @@ render_workspace_note(
 
 spec_dict = get_state("model_spec")
 df = get_state("transformed_data")
-if not spec_dict or df is None:
+if df is None:
     st.markdown("---")
     render_empty_state(
-        "No model structure defined yet. Complete Model Structure first.",
-        button_label="Go to Model Structure",
-        target_key="structure",
+        "No prepared data yet. Complete Prepare Data first.",
+        button_label="Go to Prepare Data",
+        target_key="transform_pipeline",
     )
     st.stop()
 
-spec = ModelSpec.from_dict(spec_dict)
+spec = ModelSpec.from_dict(spec_dict) if spec_dict else None
+date_col = get_state("date_col")
+market_col = get_state("market_col")
+hints = detect_column_types(df)
+numeric_cols = hints["numeric"]
+if market_col and market_col in df.columns:
+    mapping_markets = sorted(df[market_col].dropna().astype(str).unique().tolist())
+else:
+    mapping_markets = ["default"]
+mapping_markets = mapping_markets or ["default"]
+existing_activity_items = get_state("activity_definitions") or []
+legacy_activity_rows = (
+    legacy_activity_definitions_from_model_spec(spec) if spec is not None else []
+)
+activity_seed_rows = existing_activity_items or [
+    definition.to_dict() for definition in legacy_activity_rows
+]
+available_model_inputs = list(numeric_cols)
+for item in activity_seed_rows:
+    input_column = str(item.get("model_input_column") or item.get("channel") or "")
+    if input_column and input_column not in available_model_inputs:
+        available_model_inputs.append(input_column)
+if spec is not None:
+    for input_column in spec.channels:
+        if input_column not in available_model_inputs:
+            available_model_inputs.append(input_column)
 render_definition_help(
     "a response curve",
     "A range of predicted incremental outcomes as a media input changes. It is interpreted on the outcome scale and carries its own observed-support and governance status.",
@@ -118,12 +144,8 @@ st.caption(
     "separate. These fields answer different causal, reporting, and planning questions."
 )
 
-hints = detect_column_types(df)
-numeric_cols = hints["numeric"]
-
 config_dict = get_state("market_spec_config")
 market_config = MarketSpecConfig.from_dict(config_dict)
-existing_activity_items = get_state("activity_definitions") or []
 saved_search_object_items = get_state("search_objects") or []
 saved_media_unit_count = sum(
     1
@@ -137,8 +159,10 @@ with st.container(border=True):
         "Saved mappings only. The editors below keep model input, monetary spend, physical delivery, Search roles, and planning eligibility distinct."
     )
     summary_cols = st.columns(4)
-    summary_cols[0].metric("Markets", len(spec.markets))
-    summary_cols[1].metric("Model-input channels", len(spec.channels))
+    summary_cols[0].metric(
+        "Markets", len(spec.markets) if spec is not None else len(mapping_markets)
+    )
+    summary_cols[1].metric("Governed activities", len(existing_activity_items))
     summary_cols[2].metric("Saved Search objects", len(saved_search_object_items))
     summary_cols[3].metric("Physical mappings", saved_media_unit_count)
 render_technical_details(
@@ -161,32 +185,17 @@ st.caption(
     "organic social, promotional/lifecycle/transactional CRM, PR campaigns, "
     "and named external events even when they share a reporting channel."
 )
-if existing_activity_items:
+if existing_activity_items or legacy_activity_rows:
     activity_rows = [
-        ActivityDefinition.from_dict(item).to_dict() for item in existing_activity_items
+        ActivityDefinition.from_dict(item).to_dict() for item in activity_seed_rows
     ]
 else:
-    activity_rows = [
-        ActivityDefinition(
-            activity_id=f"{market}:{channel}",
-            market=market,
-            channel=channel,
-            platform="",
-            campaign_type="",
-            product_advertised="",
-            message_type="",
-            marketing_objective="",
-            funnel_stage="unclassified",
-            model_input_column=channel,
-            activity_ownership="paid",
-            model_role="intervention",
-            economic_treatment="paid_media_cost",
-            planning_eligibility="optimisable",
-            source="activity governance UI",
-        ).to_dict()
-        for market in spec.markets
-        for channel in spec.channels
-    ]
+    activity_rows = []
+    st.info(
+        "No governed activities exist yet. Add an activity row below and choose "
+        "its model-input column explicitly; numeric columns are candidates only "
+        "and are never classified automatically."
+    )
 
 activity_columns = [
     "market",
@@ -228,6 +237,29 @@ _activity_editor_df = display_enum_frame(
     pd.DataFrame(activity_rows).reindex(columns=activity_columns),
     _activity_enum_values.keys(),
 )
+for _text_col in (
+    "market",
+    "activity_id",
+    "channel",
+    "platform",
+    "campaign_type",
+    "product_advertised",
+    "message_type",
+    "marketing_objective",
+    "pooling_group_id",
+    "model_input_column",
+    "pathway_ids",
+    "evidence_status",
+    "evidence_source",
+    "rationale",
+    "limitations",
+    "reviewed_by",
+    "reviewed_at",
+    "approved_by",
+    "approved_at",
+    "source",
+):
+    _activity_editor_df[_text_col] = _activity_editor_df[_text_col].astype("object")
 _activity_editor_df["pathway_ids"] = _activity_editor_df["pathway_ids"].map(
     lambda value: (
         ", ".join(value) if isinstance(value, (list, tuple, set)) else str(value or "")
@@ -240,7 +272,7 @@ activity_editor = st.data_editor(
     key="activity_governance_editor",
     column_config={
         "market": st.column_config.SelectboxColumn(
-            "Market", options=spec.markets, required=True
+            "Market", options=mapping_markets, required=True
         ),
         "activity_id": st.column_config.TextColumn(
             "Activity ID",
@@ -292,7 +324,7 @@ activity_editor = st.data_editor(
         ),
         "model_input_column": st.column_config.SelectboxColumn(
             "Media input column",
-            options=spec.channels,
+            options=available_model_inputs,
             required=True,
             help="The observed column used by the fitted model; it is not assumed to be monetary spend.",
         ),
@@ -399,6 +431,11 @@ for error in activity_errors:
 if st.button("Save required activity governance", type="primary"):
     if activity_errors:
         st.error("Nothing was saved. Resolve every governance error first.")
+    elif not activity_definitions:
+        st.error(
+            "Add at least one governed activity before saving. Numeric columns "
+            "are suggestions for the explicit mapping only."
+        )
     else:
         previous = [
             ActivityDefinition.from_dict(item) for item in existing_activity_items
@@ -528,7 +565,7 @@ search_object_editor = st.data_editor(
     key="search_object_governance_editor",
     column_config={
         "market": st.column_config.SelectboxColumn(
-            "Market", options=spec.markets, required=True
+            "Market", options=mapping_markets, required=True
         ),
         "search_role": st.column_config.SelectboxColumn(
             "Search object",
@@ -691,9 +728,24 @@ _media_unit_section = SectionCard(
 )
 _media_unit_section.__enter__()
 
-for market in spec.markets:
-    with st.expander(f"Market: {market}", expanded=len(spec.markets) == 1):
-        for channel in spec.channels:
+unit_markets = sorted(
+    {
+        definition.market
+        for definition in activity_definitions
+        if definition.market != "*"
+    }
+    or set(mapping_markets)
+)
+unit_channels = sorted({definition.channel for definition in activity_definitions})
+if not unit_channels:
+    st.info(
+        "Save at least one governed activity before configuring optional "
+        "physical delivery and cost mappings."
+    )
+
+for market in unit_markets:
+    with st.expander(f"Market: {market}", expanded=len(unit_markets) == 1):
+        for channel in unit_channels:
             existing = market_config.get_media_unit_config(market, channel)
             st.markdown(f"**{readable_label(channel)}**")
             c1, c2, c3 = st.columns(3)
@@ -753,7 +805,7 @@ if st.button("Save optional media-unit mapping"):
     )
     st.success(
         f"Saved. {mapped} of "
-        f"{len(spec.markets) * len(spec.channels)} channel/market "
+        f"{len(unit_markets) * len(unit_channels)} channel/market "
         "combinations have a media-unit mapping."
     )
 _media_unit_section.__exit__(None, None, None)

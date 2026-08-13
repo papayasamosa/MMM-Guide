@@ -35,6 +35,12 @@ from ancestry_mmm.components import (
     SectionCard,
 )
 from ancestry_mmm.core.schema import ModelSpec, DEFAULT_SEGMENTS
+from ancestry_mmm.core.activities import (
+    ActivityDefinition,
+    activity_by_model_input,
+    legacy_activity_definitions_from_model_spec,
+    resolve_activity_definition,
+)
 
 from ancestry_mmm.core.outcomes import (
     DNA_SEGMENT_NEW,
@@ -147,19 +153,69 @@ _saved_spec_dict = get_state("model_spec")
 _saved_spec = ModelSpec.from_dict(_saved_spec_dict) if _saved_spec_dict else None
 _saved_outcome_rows = get_state("outcome_definitions") or []
 _saved_pathway_rows = get_state("media_outcome_pathways") or []
+_saved_activity_rows = get_state("activity_definitions") or []
+_governed_activity_definitions = [
+    ActivityDefinition.from_dict(item) for item in _saved_activity_rows
+]
+_legacy_activity_compatibility = False
+if not _governed_activity_definitions and _saved_spec is not None:
+    _governed_activity_definitions = legacy_activity_definitions_from_model_spec(
+        _saved_spec
+    )
+    _legacy_activity_compatibility = bool(_governed_activity_definitions)
+_legacy_model_input_candidates = []
+if not _governed_activity_definitions:
+    _legacy_meta = get_state("model_meta")
+    _legacy_masks = getattr(_legacy_meta, "pathway_masks", None)
+    for _mapping_name in (
+        "primary_channels_by_outcome",
+        "active_channels_by_outcome",
+        "exploratory_channels_by_outcome",
+    ):
+        _mapping = getattr(_legacy_masks, _mapping_name, {}) or {}
+        for _legacy_channels in _mapping.values():
+            for _legacy_channel in _legacy_channels:
+                if _legacy_channel not in _legacy_model_input_candidates:
+                    _legacy_model_input_candidates.append(_legacy_channel)
+    for _pathway in _saved_pathway_rows:
+        _legacy_channel = str(_pathway.get("channel") or "")
+        if _legacy_channel and _legacy_channel not in _legacy_model_input_candidates:
+            _legacy_model_input_candidates.append(_legacy_channel)
+    if _legacy_model_input_candidates:
+        _legacy_activity_compatibility = True
 with st.container(border=True):
     st.markdown("### Saved structure summary")
     st.caption(
         "A compact read-only snapshot of the last saved structure. It does not imply that unsaved edits are complete."
     )
-    summary_cols = st.columns(4)
+    summary_cols = st.columns(6)
     summary_cols[0].metric("Markets", len(_saved_spec.markets) if _saved_spec else "—")
     summary_cols[1].metric("Outcomes", len(_saved_outcome_rows) if _saved_spec else "—")
     summary_cols[2].metric(
-        "Activities", len(_saved_spec.channels) if _saved_spec else "—"
+        "Governed activities",
+        len(_governed_activity_definitions) if _saved_spec else "—",
     )
-    summary_cols[3].metric("Pathways", len(_saved_pathway_rows) if _saved_spec else "—")
+    summary_cols[3].metric(
+        "Model-input columns",
+        len(_saved_spec.model_input_columns) if _saved_spec else "—",
+    )
+    summary_cols[4].metric(
+        "Reporting channels",
+        len({item.channel for item in _governed_activity_definitions})
+        if _saved_spec
+        else "—",
+    )
+    summary_cols[5].metric(
+        "Pathways",
+        len(_saved_pathway_rows) if _saved_spec else "—",
+    )
     st.caption(f"Saved state: {'Configured' if _saved_spec else 'Not saved'}")
+    if _legacy_activity_compatibility:
+        st.info(
+            "This saved project predates governed activity mapping. Its historical "
+            "ModelSpec inputs are shown through an explicit compatibility adapter; "
+            "review them in Activity Mapping before the next governed save."
+        )
 
 date_col = get_state("date_col")
 market_col = get_state("market_col")
@@ -199,36 +255,118 @@ _media_section = SectionCard(
     description="Which model-input columns and DNA-targeted activities are in scope.",
 )
 _media_section.__enter__()
-# Default to every numeric column that doesn't look like a promo flag, price,
-# index/confidence-style control, or a DNA kit purchase outcome - channel
-# names rarely contain the literal words "spend"/"cost"/"budget" (e.g.
-# "TV_Brand", "Search_NonBrand"), so a strict keyword match against
-# potential_media would under-select badly.
-_non_channel_hints = [
-    "promo",
-    "price",
-    "confidence",
-    "discount",
-    "offer",
-    "index",
-    "kit",
-]
-default_channels = [
-    c for c in numeric_cols if not any(h in c.lower() for h in _non_channel_hints)
-]
-channels = st.multiselect(
-    "Media input columns *",
-    numeric_cols,
-    default=default_channels or numeric_cols,
-    format_func=readable_label,
-)
-dna_channels = st.multiselect(
-    "DNA-targeted media",
-    channels,
-    default=[c for c in channels if "dna" in c.lower()],
-    format_func=readable_label,
-    help="Which of these channels drive the explicit DNA halo pathway to other segments.",
-)
+if _governed_activity_definitions:
+    _activity_choice_by_key = {
+        f"{definition.market}::{definition.activity_id}": definition
+        for definition in _governed_activity_definitions
+    }
+
+    def _activity_choice_label(key: str) -> str:
+        definition = _activity_choice_by_key[key]
+        return (
+            f"{readable_label(definition.activity_id)} / "
+            f"{readable_label(definition.channel)} / "
+            f"{readable_label(definition.resolved_model_input_column)}"
+        )
+
+    _activity_choice_keys = list(_activity_choice_by_key)
+    _saved_input_set = set(_saved_spec.model_input_columns if _saved_spec else ())
+    _default_activity_choices = [
+        key
+        for key, definition in _activity_choice_by_key.items()
+        if not _saved_input_set
+        or definition.resolved_model_input_column in _saved_input_set
+    ]
+    selected_activity_keys = st.multiselect(
+        "Governed activities in this model *",
+        _activity_choice_keys,
+        default=_default_activity_choices,
+        format_func=_activity_choice_label,
+        help=(
+            "Select governed activity identities. The engine-compatible model "
+            "input column is resolved from each selected ActivityDefinition; "
+            "the reporting channel is not used as the fitted predictor."
+        ),
+    )
+    _selected_activity_definitions = [
+        _activity_choice_by_key[key] for key in selected_activity_keys
+    ]
+    _saved_dna_input_set = set(_saved_spec.dna_channels if _saved_spec else ())
+    _dna_default_keys = [
+        key
+        for key in selected_activity_keys
+        if _activity_choice_by_key[key].resolved_model_input_column
+        in _saved_dna_input_set
+    ]
+    _selected_dna_activity_keys = st.multiselect(
+        "DNA-targeted activities",
+        selected_activity_keys,
+        default=_dna_default_keys,
+        format_func=_activity_choice_label,
+        help=(
+            "Explicitly select governed activities that drive the DNA halo. "
+            "This does not infer a DNA role from the activity or column name."
+        ),
+    )
+    _selected_dna_activity_key_set = set(_selected_dna_activity_keys)
+    for market in markets:
+        try:
+            activity_by_model_input(_governed_activity_definitions, market)
+        except ValueError as error:
+            st.error(str(error))
+    _resolved_activity_definitions = []
+    _resolution_errors = []
+    for key in selected_activity_keys:
+        definition = _activity_choice_by_key[key]
+        target_markets = (
+            markets
+            if definition.market == "*"
+            else [definition.market]
+            if definition.market in markets
+            else []
+        )
+        for market in target_markets:
+            try:
+                _resolved_activity_definitions.append(
+                    resolve_activity_definition(
+                        _governed_activity_definitions,
+                        market=market,
+                        activity_id=definition.activity_id,
+                    )
+                )
+            except (KeyError, ValueError) as error:
+                _resolution_errors.append(str(error))
+    for error in sorted(set(_resolution_errors)):
+        st.error(error)
+    channels = list(
+        dict.fromkeys(
+            definition.resolved_model_input_column
+            for definition in _resolved_activity_definitions
+        )
+    )
+    dna_channels = list(
+        dict.fromkeys(
+            definition.resolved_model_input_column
+            for definition in _resolved_activity_definitions
+            if f"{definition.market}::{definition.activity_id}"
+            in _selected_dna_activity_key_set
+            or f"*::{definition.activity_id}" in _selected_dna_activity_key_set
+        )
+    )
+else:
+    channels = list(_legacy_model_input_candidates)
+    dna_channels = []
+    if channels:
+        st.info(
+            "This legacy pathway configuration has no governed activity rows. "
+            "Its explicitly stored model-input identities are available through "
+            "a compatibility path; review them in Activity Mapping before a new save."
+        )
+    else:
+        st.warning(
+            "No governed activities are available. Complete Activity Mapping first; "
+            "Model Structure will not classify numeric columns as media."
+        )
 _media_section.__exit__(None, None, None)
 
 st.markdown("---")

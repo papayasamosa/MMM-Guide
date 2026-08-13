@@ -151,7 +151,6 @@ class TestPageReadiness:
         self._patch_state(monkeypatch, {})
         for key in (
             "causal_graph",
-            "channel_media_units",
             "market_descriptors",
             "compare_models",
         ):
@@ -226,8 +225,8 @@ class TestNextRecommendedStepKey:
     def test_skips_optional_pages(self, monkeypatch):
         # transformed data + a saved model_spec makes causal_graph
         # (optional) the next WORKFLOW_STEPS entry after structure, but it
-        # must never be recommended - channel_media_units/market_descriptors
-        # (also optional) come next, then model_config should be recommended.
+        # must never be recommended - activity mapping is already configured,
+        # and market_descriptors remains optional before model_config.
         self._patch_state(
             monkeypatch,
             {
@@ -235,6 +234,7 @@ class TestNextRecommendedStepKey:
                 "transformed_data": object(),
                 "variable_coverage_matrix": object(),
                 "model_spec": {"markets": ["UK"]},
+                "activity_definitions": [{"activity_id": "uk-tv"}],
             },
         )
         assert ui_module.next_recommended_step_key() == "model_config"
@@ -252,6 +252,7 @@ class TestNextRecommendedStepKey:
                 "transformed_data": object(),
                 "variable_coverage_matrix": object(),
                 "model_spec": {"markets": ["UK"]},
+                "activity_definitions": [{"activity_id": "uk-tv"}],
                 "frame": object(),
                 "model_trained": True,
                 "scorecard": {"ok": True},
