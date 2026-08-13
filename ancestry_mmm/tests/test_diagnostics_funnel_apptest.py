@@ -49,7 +49,7 @@ def test_no_funnel_links_shows_info_not_a_crash():
     assert any("No funnel links configured" in (i.value or "") for i in at.info)
 
 
-def test_funnel_link_with_a_violation_shows_warning_icon_and_metrics():
+def test_funnel_link_with_a_violation_shows_review_status_and_metrics():
     at = AppTest.from_file(str(PAGE), default_timeout=60)
     frame = _frame_with_one_violation()
     at.session_state["trace"] = object()
@@ -65,7 +65,7 @@ def test_funnel_link_with_a_violation_shows_warning_icon_and_metrics():
         m.value for m in at.markdown if "fh_new_signup -> fh_new_gsa" in (m.value or "")
     ]
     assert warning_markdown, "funnel link heading not rendered"
-    assert "⚠️" in warning_markdown[0]
+    assert "! Review" in warning_markdown[0]
 
     metrics = {m.label: m.value for m in at.metric}
     assert metrics["Coherence violations"] == "1 / 12"
