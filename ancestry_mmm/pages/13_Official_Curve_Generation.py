@@ -1,4 +1,4 @@
-"""Page 13: generate and persist a governed official curve artifact
+"""Page 13: generate and persist a governed Planning Curve
 (REQ-CURVE-001) - the CurveService.create_official_artifact application
 boundary, driven from the UI for the first time. Supports both model-input
 curves and monetary curves (governed cost mappings + currency/FX evidence).
@@ -130,6 +130,86 @@ _COST_MAPPING_GRID_COLUMNS = [
     "last_reviewed_at",
     "supersedes_mapping_id",
 ]
+_COST_MAPPING_PRIMARY_COLUMNS = [
+    "market",
+    "channel",
+    "method",
+    "currency",
+    "effective_period_start",
+    "effective_period_end",
+    "approval_status",
+]
+_COST_MAPPING_ADVANCED_COLUMNS = [
+    column
+    for column in _COST_MAPPING_GRID_COLUMNS
+    if column not in _COST_MAPPING_PRIMARY_COLUMNS
+]
+_REQUESTED_USE_LABELS = {
+    "curve_publication": "Planning Curve creation",
+    "headline_reporting": "Headline reporting",
+    "planning": "Planning",
+    "optimisation": "Optimisation",
+    "external_distribution": "External distribution",
+}
+_REQUESTED_USE_KEYS_BY_LABEL = {
+    label: key for key, label in _REQUESTED_USE_LABELS.items()
+}
+_AUTHORIZATION_STATUS_LABELS = {
+    "authorized": "Authorised",
+    "not_authorized": "Not authorised",
+    "eligible": "Eligible",
+    "ineligible": "Not eligible",
+}
+
+
+def _permission_label(permission_key: str) -> str:
+    """Return the analyst-facing label for a stored use/permission key."""
+    return _REQUESTED_USE_LABELS.get(permission_key, permission_key.replace("_", " ").title())
+
+
+def _humanise_permission_text(message: str) -> str:
+    """Keep stored permission keys out of routine Planning Curve messages."""
+    humanised = str(message)
+    for key, label in _REQUESTED_USE_LABELS.items():
+        humanised = humanised.replace(key, label)
+    return humanised
+
+
+def _status_label(status: str) -> str:
+    return _AUTHORIZATION_STATUS_LABELS.get(
+        status, str(status).replace("_", " ").title()
+    )
+
+
+def _merge_cost_mapping_rows(
+    original_rows: list[dict],
+    primary_rows: list[dict],
+    advanced_rows: Optional[list[dict]] = None,
+) -> list[dict]:
+    """Merge the compact and advanced editors without dropping stored fields.
+
+    The primary editor is intentionally small for the normal path. Advanced
+    fields remain editable in a secondary disclosure and are merged by row
+    position, preserving the durable mapping schema on every save.
+    """
+    merged: list[dict] = []
+    for index, primary in enumerate(primary_rows):
+        row = dict(original_rows[index]) if index < len(original_rows) else {}
+        row.update({column: primary.get(column, "") for column in _COST_MAPPING_PRIMARY_COLUMNS})
+        if advanced_rows is not None and index < len(advanced_rows):
+            row.update(
+                {
+                    column: advanced_rows[index].get(column, "")
+                    for column in _COST_MAPPING_ADVANCED_COLUMNS
+                }
+            )
+        if not str(row.get("mapping_id") or "").strip():
+            row["mapping_id"] = (
+                f"{row.get('market', 'market')}-{row.get('channel', 'channel')}"
+                f"-cost-{index + 1}"
+            )
+        merged.append(row)
+    return merged
 
 
 def _context_confirmation_fingerprint(
@@ -274,11 +354,11 @@ apply_theme()
 render_sidebar("official_curve_generation")
 render_page_header(
     "official_curve_generation",
-    task_prompt="Can this approved fit support a governed official curve artifact?",
+    task_prompt="Can this approved fit support a governed Planning Curve?",
 )
 render_workspace_note(
     "Planning Curve",
-    "This workflow publishes evaluated official curves only when fit identity, outcome approval, evidence, and cost mappings satisfy their gates.",
+    "This workflow creates an evaluated Planning Curve only when fit identity, outcome approval, evidence, and cost mappings satisfy their gates.",
     kind="governed",
 )
 st.caption(
@@ -294,21 +374,21 @@ render_definition_help(
 )
 render_decision_help(
     "How should I generate a Planning Curve?",
-    controls="The approved outcome, market/reference context, observed support, curve representation, and any monetary cost translation used by the generated artifact.",
+    controls="The approved outcome, market/reference context, observed support, curve representation, and any monetary cost translation used by the Planning Curve.",
     why="A Planning Curve is intended for governed planning use, so its outcome and conditions must be explicit and its support must be adequate.",
     options={
         "Model-input curve": "Use when the curve should remain in the fitted input units and no approved cost translation is required.",
         "Monetary curve": "Use only when every selected market/channel has an effective approved cost mapping and the currency/FX evidence is complete.",
         "Reference context": "Review and confirm the historical or explicitly hypothetical conditions that the curve represents.",
-        "Requested use": "Check whether the resulting artifact is authorised for planning, reporting, optimisation, or external distribution.",
+        "Downstream use": "Check whether the resulting Planning Curve is authorised for planning, reporting, optimisation, or external distribution.",
     },
-    normal_path="Confirm model approval, choose the outcome, select markets, choose the representation, review support and context, resolve blockers, then generate and review the saved artifact.",
-    downstream="The artifact records its outcome definition, market context, support, evidence, cost mapping, and authorization state; it is separate from exploratory curves in Results.",
-    invalidates="A changed fit, outcome approval, context, support, cost mapping, or policy invalidates the affected artifact or its use authorization and requires a fresh generation/review.",
+    normal_path="Confirm model approval, choose the outcome, select markets, choose the representation, review support and context, resolve blockers, then save and review the Planning Curve.",
+    downstream="The Planning Curve records its outcome definition, market context, support, evidence, cost mapping, and permission state; it is separate from exploratory curves in Results.",
+    invalidates="A changed fit, outcome approval, context, support, cost mapping, or policy invalidates the affected Planning Curve or its use permission and requires a fresh generation/review.",
 )
 render_technical_details(
     details={
-        "Artifact identity": "The saved artifact carries an explicit artifact ID, model identity, outcome definition, reference context, support evidence, and governance dependencies.",
+        "Planning Curve record": "The saved Planning Curve carries a durable record ID, model identity, outcome definition, reference context, support evidence, and governance dependencies.",
         "Generation boundary": "The UI delegates governed generation to the application curve-generation service; the technical entry point is available here for audit without being part of the routine workflow.",
         "Monetary restriction": "Currency/FX evidence and an effective approved cost mapping are required for monetary curves; model-input curves remain in their observed input units.",
     }
@@ -332,12 +412,12 @@ with st.container(border=True):
         "Model approval", "Current" if get_state("model_approval") else "Needs review"
     )
     _curve_status[3].metric(
-        "Artifact state", "Configure and review" if _dashboard_trained else "Blocked"
+        "Planning Curve state", "Configure and review" if _dashboard_trained else "Blocked"
     )
     st.caption(
-        "This page generates official, evaluated curve artifacts. Readiness blockers are "
-        "shown before Generate; the saved artifact carries its own outcome definition, "
-        "reference context, support, evidence, and authorization state."
+        "This page creates official, evaluated Planning Curves. Readiness blockers are "
+        "shown before saving; the saved curve carries its own outcome definition, "
+        "reference context, support, evidence, and permission state."
     )
 
 _CURVE_SERVICE = CurveService()
@@ -469,7 +549,7 @@ with SectionCard(
     "Outcome and use",
     description=(
         "Only outcomes with a current, approved outcome approval covering "
-        "curve_publication can become official curves."
+        "Planning Curve creation can be used here."
     ),
 ):
     eligible: list[tuple[OutcomeApproval, object]] = []
@@ -491,7 +571,7 @@ with SectionCard(
 
     if not eligible:
         render_empty_state(
-            "No outcome is currently approved for curve_publication. Review "
+            "No outcome is currently approved for Planning Curve creation. Review "
             "outcome approvals on Structure -> Outcome Governance first.",
             button_label="Go to Model Structure",
             target_key="structure",
@@ -504,19 +584,33 @@ with SectionCard(
         (oa, o) for oa, o in eligible if o.outcome_id == selected_label
     )
 
-    requested_use = st.selectbox(
-        "Requested use to check immediately after generation",
-        ["headline_reporting", "planning", "optimisation", "external_distribution"],
+    st.caption(
+        f"Selected outcome: {selected_outcome.metric} · {selected_outcome.segment} · "
+        f"definition {selected_outcome.definition_version}. "
+        "Its approval and maturity rules travel with the saved Planning Curve."
+    )
+    requested_use_label = st.selectbox(
+        "Use to check after saving",
+        [
+            _REQUESTED_USE_LABELS[key]
+            for key in (
+                "headline_reporting",
+                "planning",
+                "optimisation",
+                "external_distribution",
+            )
+        ],
         key="ocg_requested_use",
     )
+    requested_use = _REQUESTED_USE_KEYS_BY_LABEL[requested_use_label]
 
 # ---------------------------------------------------------------------------
 # 2. Markets to include
 # ---------------------------------------------------------------------------
 st.markdown("---")
-st.markdown("### Markets")
+st.markdown("### Markets in this Planning Curve")
 selected_markets = st.multiselect(
-    "Markets to generate a curve for",
+    "Markets to include",
     meta.markets,
     default=meta.markets,
     key="ocg_markets",
@@ -538,9 +632,9 @@ fourier_length = len(next(iter(params.gamma_fourier.values())))
 # 2b. Curve type, and, if monetary, governed cost mappings and currency/FX
 # ---------------------------------------------------------------------------
 st.markdown("---")
-st.markdown("### Curve representation")
+st.markdown("### Planning Curve representation")
 curve_type_label = st.radio(
-    "Curve type",
+    "How should the curve be expressed?",
     [
         "Model-input curve (no cost data)",
         "Monetary curve (requires an approved cost mapping)",
@@ -562,7 +656,12 @@ if curve_type == "monetary":
         "Monetary curves require an approved, effective cost mapping for "
         "every (market, channel) plus explicit currency/FX evidence."
     )
-    st.markdown("**Governed cost mappings**")
+    st.markdown("**Core cost-mapping details**")
+    st.caption(
+        "Review the market, activity, cost method, currency, effective dates, "
+        "and approval state here. Technical IDs, knot arrays, and audit fields "
+        "are available only when you need to inspect or amend them."
+    )
     existing_registry = CostMappingRegistry.from_dict(get_state("media_cost_mappings"))
     existing_rows = existing_registry.to_dict()["mappings"]
     if existing_rows:
@@ -590,30 +689,58 @@ if curve_type == "monetary":
             for market in selected_markets
             for channel in meta.channels
         ]
-    cost_editor = st.data_editor(
-        pd.DataFrame(grid_rows).reindex(columns=_COST_MAPPING_GRID_COLUMNS),
+    primary_editor = st.data_editor(
+        pd.DataFrame(grid_rows).reindex(columns=_COST_MAPPING_PRIMARY_COLUMNS),
         num_rows="dynamic",
         width="stretch",
-        key="ocg_cost_mapping_editor",
+        key="ocg_cost_mapping_primary_editor",
         column_config={
             "market": st.column_config.SelectboxColumn(
                 "Market", options=selected_markets, required=True
             ),
             "channel": st.column_config.SelectboxColumn(
-                "Channel", options=meta.channels, required=True
+                "Activity / channel", options=meta.channels, required=True
             ),
             "method": st.column_config.SelectboxColumn(
-                "Method", options=sorted(SUPPORTED_METHODS), required=True
+                "Cost method", options=sorted(SUPPORTED_METHODS), required=True
             ),
+            "currency": st.column_config.TextColumn(
+                "Currency (ISO)", required=True
+            ),
+            "effective_period_start": st.column_config.TextColumn("Effective from"),
+            "effective_period_end": st.column_config.TextColumn("Effective to"),
             "approval_status": st.column_config.SelectboxColumn(
-                "Approval", options=_COST_MAPPING_APPROVAL_STATUSES, required=True
-            ),
-            "allow_extrapolation": st.column_config.CheckboxColumn(
-                "Allow extrapolation", default=False
+                "Approval state", options=_COST_MAPPING_APPROVAL_STATUSES, required=True
             ),
         },
     )
-    cost_mapping_rows = cost_editor.fillna("").to_dict("records")
+    primary_rows = primary_editor.fillna("").to_dict("records")
+    advanced_rows: Optional[list[dict]] = None
+    with st.expander("Advanced cost-mapping details", expanded=False):
+        st.caption(
+            "Use these fields for mapping identity, piecewise knots, uploaded-plan "
+            "metadata, extrapolation rules, and audit history. They remain part "
+            "of the saved mapping even when this section stays closed."
+        )
+        advanced_editor = st.data_editor(
+            pd.DataFrame(grid_rows).reindex(columns=_COST_MAPPING_ADVANCED_COLUMNS),
+            num_rows="dynamic",
+            width="stretch",
+            key="ocg_cost_mapping_advanced_editor",
+            column_config={
+                "mapping_id": st.column_config.TextColumn(
+                    "Technical mapping ID", required=True
+                ),
+                "cost_context_id": st.column_config.TextColumn("Cost context ID"),
+                "allow_extrapolation": st.column_config.CheckboxColumn(
+                    "Allow extrapolation", default=False
+                ),
+            },
+        )
+        advanced_rows = advanced_editor.fillna("").to_dict("records")
+    cost_mapping_rows = _merge_cost_mapping_rows(
+        grid_rows, primary_rows, advanced_rows
+    )
     cost_registry_preview, cost_mapping_errors = _build_cost_mapping_registry(
         cost_mapping_rows
     )
@@ -626,7 +753,7 @@ if curve_type == "monetary":
             set_state("media_cost_mappings", cost_registry_preview.to_dict())
             st.success(
                 f"Saved {len(cost_registry_preview.to_dict()['mappings'])} cost "
-                "mapping(s)."
+                "mapping(s) for future monetary Planning Curves."
             )
     cost_mapping_registry = CostMappingRegistry.from_dict(
         get_state("media_cost_mappings")
@@ -889,7 +1016,7 @@ for market in selected_markets:
 #    planning-support-eligible).
 # ---------------------------------------------------------------------------
 st.markdown("---")
-st.markdown("### Support for planning")
+st.markdown("### Observed support for Planning Curve use")
 st.caption(
     "Model-input identity/unit metadata (column, unit, unit scale) is "
     "required for every channel below - generation itself needs it to know "
@@ -1085,16 +1212,16 @@ for market in selected_markets:
                     "page, then retry."
                 )
 
-st.markdown("**Diagnostic spend / model-input axis**")
+st.markdown("**Curve axis**")
 st.caption(
     "Leave blank to derive each channel's axis from its own observed/"
-    "planning support range instead (a unit-specific axis per channel). "
-    "A comma-separated list here overrides that and applies "
-    "the same axis, in the same units, to every channel; every cell without "
-    "a support range above then requires this override."
+    "planning support range (a unit-specific axis per channel). A comma-"
+    "separated list overrides that and applies the same axis, in the same "
+    "model-input or monetary units, to every channel; every cell without a "
+    "support range above then requires this override."
 )
 spend_points_text = st.text_input(
-    "Spend points (comma-separated, optional)",
+    "Curve-axis values (comma-separated, optional)",
     value="",
     key="ocg_spend_points",
 )
@@ -1112,22 +1239,22 @@ except ValueError:
 # 5. Posterior draw count
 # ---------------------------------------------------------------------------
 st.markdown("---")
-st.markdown("### Posterior draw plan")
+st.markdown("### Uncertainty plan")
 n_draws = st.slider(
-    "Posterior draws to sample", 20, 200, 50, step=10, key="ocg_n_draws"
+    "Posterior draws to include", 20, 200, 50, step=10, key="ocg_n_draws"
 )
 
 # ---------------------------------------------------------------------------
 # 6. Generate and persist
 # ---------------------------------------------------------------------------
 st.markdown("---")
-st.markdown("### Generate planning curve")
+st.markdown("### Save this Planning Curve")
 st.caption(
-    "Review the readiness state below, then generate a governed artifact. The action "
+    "Review the readiness state below, then save a governed Planning Curve. The action "
     "does not change the fitted model or invent a new response calculation."
 )
 artifact_id = st.text_input(
-    "Artifact ID",
+    "Planning Curve ID",
     value=f"{selected_outcome.outcome_id}-{date.today().isoformat()}",
     key="ocg_artifact_id",
 )
@@ -1161,15 +1288,15 @@ if _generation_blockers:
         for _blocker in _generation_blockers:
             st.markdown(f"- {_blocker.message}")
 else:
-    st.caption("All pre-flight checks pass - ready to generate.")
+    st.caption("All readiness checks pass - ready to save the Planning Curve.")
 
 if st.button(
-    "Generate and save official curve artifact",
+    "Save Planning Curve",
     type="primary",
     disabled=bool(_generation_blockers),
 ):
     if not artifact_id.strip():
-        st.error("Artifact ID must be non-blank.")
+        st.error("Planning Curve ID must be non-blank.")
         st.stop()
     unconfirmed_markets = sorted(
         m for m in selected_markets if not reference_context_confirmed.get(m)
@@ -1232,19 +1359,22 @@ if st.button(
             **monetary_kwargs,
         )
     except (CurveGovernanceError, CurveArtifactError, ValueError, TypeError) as exc:
-        st.error(f"Could not generate the official curve artifact: {exc}")
+        st.error(f"Could not save the Planning Curve: {_humanise_permission_text(exc)}")
     else:
-        st.success(f"Saved official curve artifact `{result.artifact_id}`.")
+        st.success(f"Saved Planning Curve `{result.artifact_id}`.")
 
-        st.markdown("#### Resulting artifact")
-        # Authorization and planning-support status
-        st.markdown("#### Authorization and planning-support status")
+        st.markdown("#### Planning Curve saved")
+        # Permission and planning-support status
+        st.markdown("#### Where this Planning Curve can be used")
         try:
             authorization = _CURVE_SERVICE.authorize_use(
                 result.artifact, requested_use, current_governance=governance
             )
         except CurveGovernanceError as exc:
-            st.warning(f"Not currently authorized for {requested_use}: {exc}")
+            st.warning(
+                f"Not currently approved for {requested_use_label}: "
+                f"{_humanise_permission_text(exc)}"
+            )
         else:
             planning_support = (
                 bool(result.artifact.draws["planning_support_eligible"].all())
@@ -1257,10 +1387,21 @@ if st.button(
             status_df = pd.DataFrame(
                 [
                     {
-                        "artifact_id": result.artifact_id,
-                        "current_authorization": authorization.current_authorization_status,
-                        "requested_use_eligibility": authorization.requested_use_eligibility,
-                        "planning_support_eligible": planning_support,
+                        "Planning Curve ID": result.artifact_id,
+                        "Current permission": _status_label(
+                            authorization.current_authorization_status
+                        ),
+                        "Checked use": requested_use_label,
+                        "Use permission": _status_label(
+                            authorization.requested_use_eligibility
+                        ),
+                        "Planning support": (
+                            "Eligible"
+                            if planning_support is True
+                            else "Not eligible"
+                            if planning_support is False
+                            else "Not assessed"
+                        ),
                     }
                 ]
             )
@@ -1271,7 +1412,7 @@ if st.button(
             )
 
         # 8. Posterior interval display + average/marginal economics
-        st.markdown("#### Posterior interval and economics")
+        st.markdown("#### Response evidence and economics")
         summaries = result.artifact.summaries
         draws = result.artifact.draws
         # Corrective PR E2a: the persisted summary grain's "spend_point" is
@@ -1291,7 +1432,7 @@ if st.button(
         x_col = resolve_curve_axis_column(draws)
         if draws.empty or x_col is None or not chart_required.issubset(draws.columns):
             st.caption(
-                "This artifact does not carry a plottable posterior response "
+                "This Planning Curve does not carry a plottable posterior response "
                 "curve (missing market/channel/axis/response/posterior_draw "
                 "columns)."
             )
@@ -1334,10 +1475,32 @@ if st.button(
                             )
                         )
                     ]
-                    if economics_cols:
+                    if economics_cols and curve_type == "monetary":
+                        display_economics = econ_group[
+                            ["spend_point", *economics_cols]
+                        ].rename(
+                            columns={
+                                "spend_point": "Curve point",
+                                "average_cpa": "Average CPA",
+                                "marginal_cpa": "Marginal CPA",
+                                "average_roi": "Average ROI",
+                                "marginal_roi": "Marginal ROI",
+                            }
+                        )
                         st.dataframe(
-                            econ_group[["spend_point", *economics_cols]],
+                            display_economics,
                             width="stretch",
+                        )
+                        st.caption(
+                            "Average and marginal economics are shown in the "
+                            f"reporting currency ({reporting_currency or 'as saved in the curve'}), "
+                            "at channel-total scope, with uncertainty carried by the posterior summaries."
+                        )
+                    elif curve_type == "model_input":
+                        st.caption(
+                            "Monetary CPA and ROI are not shown: this Planning Curve "
+                            "remains in model-input units until an approved cost mapping "
+                            "and currency evidence are supplied."
                         )
 
 render_next_step("official_curve_generation")
