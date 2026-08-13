@@ -220,9 +220,7 @@ def test_import_bundle_transactionally_replaces_the_destination_artifact_store(
     replaced_ids = {a.metadata.artifact_id for a in replaced.loaded}
     assert UNRELATED_ARTIFACT_ID not in replaced_ids
     assert replaced_ids == {"lifecycle-model-input", "lifecycle-monetary"}
-    assert any(
-        "Restored 2 official curve artifact(s)" in (s.value or "") for s in at.success
-    )
+    assert any("Restored 2 Planning Curve(s)" in (s.value or "") for s in at.success)
 
 
 def test_import_clears_stale_cached_optimiser_results(monkeypatch, tmp_path):
@@ -533,6 +531,12 @@ def test_session_state_not_durable_banner_and_empty_project_status(
         "No bundle has been imported yet this session" in (c.value or "")
         for c in at.caption
     )
+    visible_copy = " ".join(
+        (element.value or "") for element in [*at.caption, *at.markdown]
+    )
+    assert "Activity taxonomy entries saved" in visible_copy
+    assert "Legacy curve bank entries" not in visible_copy
+    assert "logical-domain" not in visible_copy
     # Header readiness badge matches the sidebar's own readiness vocabulary
     # for this page (ancestry_mmm.components.page_readiness("export")) - no
     # data loaded yet, so "not_started".
@@ -573,6 +577,11 @@ def test_build_bundle_updates_project_status_and_shows_included_checklist(
     assert any("What's included in this bundle" in e.label for e in at.expander), (
         "the manifest-driven checklist expander must be present after a real build"
     )
+    checklist_copy = " ".join(
+        (element.value or "") for element in [*at.caption, *at.markdown]
+    )
+    assert "Original source files and tables" in checklist_copy
+    assert "Coverage and frequency review history" in checklist_copy
 
     # A fresh rerun (e.g. the analyst's next interaction) reflects the
     # updated activity in the "Project status" panel rendered at the top of
@@ -665,4 +674,4 @@ def test_project_status_reflects_curve_bank_and_official_artifact_counts(
 
     at.run()
     assert not at.exception, f"rerun after writing artifact raised: {at.exception}"
-    assert any("Official curve artifacts: 1" in (c.value or "") for c in at.caption)
+    assert any("Saved Planning Curves: 1" in (c.value or "") for c in at.caption)

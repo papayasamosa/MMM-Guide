@@ -2714,3 +2714,37 @@ connected browser was unavailable.
 
 **Owner:** Platform engineering / Data Science.
 **Status:** Implemented in UX/UI coherence Phase 9.
+
+## Export & Recovery language and bundle contents (UX/UI coherence Phase 10)
+
+**Date:** 2026-08-13
+**Decision:** Keep the durable project bundle as the primary recovery object,
+with Excel and report outputs secondary and read-only. Humanise the routine
+labels for source files/tables, preparation steps, activity taxonomy, search
+definitions, coverage/frequency review history, exploratory curve snapshots,
+and governed Planning Curves. Keep the manifest-driven included/not-included
+checklist and collapsed Technical details disclosure as the places for bundle
+contents and storage/provenance detail.
+
+**Reason:** Export & Recovery was already structurally focused, but several
+routine captions still described storage implementation—legacy curve bank,
+logical-domain definitions, matrix versions, and official curve artifacts.
+The recovery page should tell an analyst what can be recovered and what the
+current project contains without turning into a second analytical dashboard.
+
+**Impact:** Updated presentation labels and restore/build confirmation copy,
+and surfaced the saved activity-taxonomy count in the existing project
+snapshot. The manifest keys, checkpoint values, export/import calls, source
+and coverage history, activity definitions, curve stores, resumability audit,
+official verification, and transactional restoration semantics are unchanged.
+Business question: what is the durable recovery object, what evidence and
+preparation state does it contain, and can it be restored safely? Estimand:
+none introduced. Output scale/units: unchanged project metadata, checkpoint,
+bundle contents, and resumability status. Upstream modelling references: none
+consulted because this package changes presentation only and does not change
+PyMC or PyMC Marketing model APIs. Remaining limitation: interactive browser
+screenshot review uses the repository's synthetic-data browser journey because
+the local connected browser was unavailable.
+
+**Owner:** Platform engineering / Data Science.
+**Status:** Implemented in UX/UI coherence Phase 10.
