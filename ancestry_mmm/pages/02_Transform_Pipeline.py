@@ -36,13 +36,15 @@ from ancestry_mmm.data import (
     pipeline_to_json,
     pipeline_from_json,
     UnsafeExpressionError,
+    inspect_source_layout,
+    source_table_name,
+    source_table_role,
 )
 
 JOIN_MODE_OPTIONS = ["inner", "outer", "left", "right"]
 JOIN_MODE_HELP = {
-    "inner": "Keep only rows whose date (and market) exists in every source - "
-    "any row unique to one source is dropped. Default, matches this app's "
-    "previous behaviour.",
+    "inner": "Keep only rows whose date (and market) exists in every source. "
+    "Any key unique to one source is dropped.",
     "outer": "Keep every row from every source, filling missing values with "
     "blanks where a source has no matching row. This keeps the full time "
     "window visible for review.",
@@ -51,6 +53,53 @@ JOIN_MODE_HELP = {
     "right": "Keep every row from the last-listed source, dropping rows from "
     "earlier sources that don't match it.",
 }
+
+FILL_STRATEGY_LABELS = {
+    "zero": "Fill with zero",
+    "mean": "Fill with mean",
+    "median": "Fill with median",
+    "ffill": "Forward fill",
+    "interpolate": "Interpolate",
+    "drop_rows": "Drop affected rows",
+}
+
+
+def _step_display(step: TransformStep) -> str:
+    """Summarise a saved step without exposing session-state or raw keys."""
+
+    params = step.params
+    if step.op == "rename_column":
+        return (
+            f"Rename {readable_label(params.get('old', 'column'))} to "
+            f"{readable_label(params.get('new', 'new column'))}"
+        )
+    if step.op == "cast_type":
+        return (
+            f"Change {readable_label(params.get('column', 'column'))} to "
+            f"{readable_label(params.get('dtype', 'selected type'))}"
+        )
+    if step.op == "calculated_column":
+        return f"Create {readable_label(params.get('new_column', 'calculated column'))}"
+    if step.op == "lag_variable":
+        return (
+            f"Create a delayed version of {readable_label(params.get('column', 'column'))} "
+            f"({params.get('periods', 1)} period(s))"
+        )
+    if step.op == "fill_missing":
+        strategy = FILL_STRATEGY_LABELS.get(
+            str(params.get("strategy")), "Selected treatment"
+        )
+        return (
+            f"{strategy} for missing values in "
+            f"{readable_label(params.get('column', 'column'))}"
+        )
+    if step.op == "drop_columns":
+        columns = params.get("columns") or ()
+        return "Remove " + ", ".join(readable_label(column) for column in columns)
+    if step.op == "event_flag":
+        return f"Create an event flag named {readable_label(params.get('new_column', 'event flag'))}"
+    return str(OPERATION_LABELS.get(step.op, "Saved transformation"))
+
 
 st.set_page_config(
     page_title="Prepare Data | Ancestry Family History & DNA MMM",
@@ -64,25 +113,41 @@ render_sidebar("transform_pipeline")
 # nothing loaded yet (blocked, checked below), joined but not yet
 # transformed (in progress), or a transformed dataset already exists.
 sources = get_state("raw_sources") or {}
+source_layout = inspect_source_layout(
+    sources,
+    source_versions=get_state("source_versions") or [],
+    active_upload_versions=get_state("active_source_upload_version") or {},
+    demo_source_pack=get_state("demo_source_pack"),
+)
 if get_state("transformed_data") is not None:
     _header_badges = ["ready"]
 elif get_state("joined_data") is not None:
     _header_badges = ["current"]
 elif sources:
-    _header_badges = ["not_started"]
+    _header_badges = ["blocked" if source_layout.is_source_native else "not_started"]
 else:
     _header_badges = ["awaiting_data"]
 
 render_page_header(
     "transform_pipeline",
-    task_prompt="Can these sources be joined without losing or inventing rows?",
+    task_prompt=(
+        "Review the source-native preparation boundary before modelling."
+        if source_layout.is_source_native
+        else "Can these sources be joined without losing or inventing rows?"
+    ),
+    description=source_layout.description,
     badges=_header_badges,
 )
 
 render_workspace_note(
-    "Edit here",
-    "Choose the join keys and add auditable transformations. The preview below is calculated from those choices.",
-    kind="editable",
+    "Review source inputs" if source_layout.is_source_native else "Edit here",
+    (
+        "The source pack has been ingested, but its dictionaries, irregular events, "
+        "and native-frequency tables are not one rectangular join input."
+        if source_layout.is_source_native
+        else "Choose the join keys and add auditable transformations. The preview below is calculated from those choices."
+    ),
+    kind="governed" if source_layout.is_source_native else "editable",
 )
 
 if not sources:
@@ -92,6 +157,53 @@ if not sources:
         button_label="Go to Data Sources",
         target_key="data_upload",
     )
+    st.stop()
+
+if source_layout.is_source_native:
+    with SectionCard(
+        "Source-native preparation boundary",
+        description=(
+            "Ingestion is complete. Tables that describe the source pack are "
+            "kept separate from time-series inputs."
+        ),
+    ):
+        table_rows = []
+        for source_id, frame in sources.items():
+            table_name = source_table_name(source_id)
+            role = source_table_role(source_id)
+            if role in {
+                "Activity metadata",
+                "Outcome metadata",
+                "Variable metadata",
+            }:
+                treatment = "Metadata; not a join input"
+            elif role == "Irregular events":
+                treatment = "Irregular event table; kept separate"
+            elif role == "Experiment evidence":
+                treatment = "Evidence table; kept separate"
+            else:
+                treatment = "Native table; no end-to-end join available"
+            table_rows.append(
+                {
+                    "Table": table_name,
+                    "Purpose": role,
+                    "Rows": len(frame),
+                    "Preparation treatment": treatment,
+                }
+            )
+        st.dataframe(pd.DataFrame(table_rows), width="stretch", hide_index=True)
+        st.warning(
+            "The current application does not have an approved end-to-end "
+            "preparation method for this source-native layout. No weekly/monthly "
+            "conversion, interpolation, allocation, or fill is applied here."
+        )
+        st.info(
+            "This demo validates the ingestion contract rather than a full model "
+            "run. Use Quick demo or upload compatible rectangular model inputs "
+            "when you need to continue through the current modelling workflow."
+        )
+        if st.button("Return to Data Sources", key="source_native_return"):
+            st.switch_page("pages/01_Data_Upload.py")
     st.stop()
 
 st.markdown("---")
@@ -176,6 +288,24 @@ if join_diagnostics:
             f"{join_diagnostics['output_rows']} row(s) in the joined result."
         )
         diagnostics_df = pd.DataFrame(join_diagnostics["per_source"])
+        diagnostics_df = diagnostics_df.rename(
+            columns={
+                "source_name": "Source",
+                "input_rows": "Rows supplied",
+                "input_keys": "Keys supplied",
+                "matched_keys": "Keys retained",
+                "dropped_keys": "Keys lost",
+                "unmatched_keys": "Keys without a match",
+            }
+        )
+        diagnostics_df["Needs attention"] = diagnostics_df.apply(
+            lambda row: (
+                "Review"
+                if row["Keys lost"] > 0 or row["Keys without a match"] > 0
+                else "No"
+            ),
+            axis=1,
+        )
         st.dataframe(diagnostics_df, width="stretch", hide_index=True)
         lossy_sources = [
             s for s in join_diagnostics["per_source"] if s["dropped_keys"] > 0
@@ -289,11 +419,16 @@ with st.popover("Add transformation"):
             "Column", list(joined.columns), format_func=readable_label
         )
         params["strategy"] = st.selectbox(
-            "Strategy", ["zero", "mean", "median", "ffill", "interpolate", "drop_rows"]
+            "Missing-value treatment",
+            list(FILL_STRATEGY_LABELS),
+            format_func=lambda strategy: FILL_STRATEGY_LABELS[strategy],
         )
         if market_col:
             params["group_col"] = market_col
-        description = f"Fill missing in {params['column']} with {params['strategy']}"
+        description = (
+            f"{FILL_STRATEGY_LABELS[params['strategy']]} for missing values in "
+            f"{readable_label(params['column'])}"
+        )
 
     elif op == "drop_columns":
         params["columns"] = st.multiselect(
@@ -337,10 +472,7 @@ if steps:
     ):
         for i, step in enumerate(steps):
             c1, c2 = st.columns([5, 1])
-            c1.markdown(
-                f"**{i + 1}.** `{OPERATION_LABELS.get(step.op, step.op)}` - "
-                f"{step.description or step.params}"
-            )
+            c1.markdown(f"**{i + 1}.** {_step_display(step)}")
             if c2.button("Remove", key=f"remove_step_{i}"):
                 steps.pop(i)
                 set_state("pipeline_steps", pipeline_to_json(steps))
@@ -369,10 +501,9 @@ try:
         description="This pipeline is saved automatically as you add or remove steps.",
     ):
         st.caption(
-            "Every step above is stored with the project (pipeline_steps) "
-            "and replayed in order whenever this page reruns or the "
-            "project is re-imported on Export & Recovery - it is "
-            "never a one-off, throwaway edit."
+            "Every step above is stored with the project and replayed in order "
+            "whenever this page reruns or the project is re-imported on Export & "
+            "Recovery. The sequence is auditable and reusable."
         )
 
     render_next_step("transform_pipeline")

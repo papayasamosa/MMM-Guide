@@ -66,7 +66,7 @@ def test_partial_domain_coverage_lists_missing_required_domains():
         data_loaded=True,
     )
     assert not at.exception, f"page raised: {at.exception}"
-    assert any("Sources by logical domain" in (m.value or "") for m in at.markdown)
+    assert any("Data by category" in (m.value or "") for m in at.markdown)
     assert any(
         "Missing required logical domain(s)" in (w.value or "") for w in at.warning
     )
@@ -94,8 +94,7 @@ def test_multiple_physical_files_group_under_one_logical_domain():
     )
     assert not at.exception, f"page raised: {at.exception}"
     assert any(
-        "2 physical source file(s) supplied under this domain" in (m.value or "")
-        for m in at.caption
+        "2 table(s) supplied under this category" in (m.value or "") for m in at.caption
     )
 
 

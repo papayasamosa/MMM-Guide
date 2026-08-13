@@ -46,7 +46,7 @@ from ancestry_mmm.components import (
     SectionCard,
     InfoPanel,
 )
-from ancestry_mmm.data import load_all_sample_sources
+from ancestry_mmm.data import load_all_sample_sources, summarise_source_inventory
 from ancestry_mmm.core.coverage import (
     SourceDefinition,
     DOMAIN_OUTCOMES,
@@ -94,6 +94,7 @@ def _load_synthetic_demo() -> None:
         return
     ltv_df = frames.pop("ltv")
     st.session_state["raw_sources"] = frames
+    st.session_state["demo_source_pack"] = "quick-rectangular-demo-v1"
     st.session_state["sample_ltv"] = {
         row.segment: row.ltv for row in ltv_df.itertuples()
     }
@@ -335,7 +336,27 @@ def _render_project_state() -> None:
                 if get_state("active_source_upload_version")
                 else "Demo data"
             )
-            st.caption(f"Data: {source_kind} · {len(raw_sources)} data sources")
+            inventory = summarise_source_inventory(
+                raw_sources,
+                get_state("source_definitions") or [],
+                get_state("source_versions") or [],
+                get_state("active_source_upload_version") or {},
+                get_state("demo_source_pack"),
+            )
+            category_label = (
+                "category" if inventory.data_category_count == 1 else "categories"
+            )
+            if source_kind == "Uploaded sources":
+                st.caption(
+                    f"Data: {source_kind} · {inventory.uploaded_file_count} "
+                    f"file/workbook(s) · {inventory.table_count} table(s) · "
+                    f"{inventory.data_category_count} data {category_label}"
+                )
+            else:
+                st.caption(
+                    f"Data: {source_kind} · {inventory.table_count} source table(s) · "
+                    f"{inventory.data_category_count} data {category_label}"
+                )
         else:
             st.caption("Data: no sources loaded")
         if get_state("model_approval"):

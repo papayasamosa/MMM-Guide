@@ -36,6 +36,15 @@ from .pipeline import (
     safe_eval_expression,
     UnsafeExpressionError,
 )
+from .source_inventory import (
+    SourceInventory,
+    SourceLayout,
+    inspect_source_layout,
+    source_lineage_id,
+    source_table_name,
+    source_table_role,
+    summarise_source_inventory,
+)
 
 __all__ = [
     "load_file",
@@ -68,4 +77,11 @@ __all__ = [
     "validate_modeling_frame",
     "safe_eval_expression",
     "UnsafeExpressionError",
+    "SourceInventory",
+    "SourceLayout",
+    "inspect_source_layout",
+    "source_lineage_id",
+    "source_table_name",
+    "source_table_role",
+    "summarise_source_inventory",
 ]

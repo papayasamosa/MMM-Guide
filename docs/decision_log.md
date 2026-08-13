@@ -2407,3 +2407,37 @@ definitions.
 
 **Owner:** Platform engineering / Data Science.
 **Status:** Implemented in Work Package 7.
+
+## Source-to-preparation workflow boundary (UX/UI coherence Phase 1)
+
+**Date:** 2026-08-13
+**Decision:** Keep the quick rectangular fixture and source-native packs as
+distinct analyst journeys. The Data Sources page now reports uploaded
+file/workbook, data-category, and table counts separately. Prepare Data only
+offers its rectangular join controls for rectangular inputs; recognised
+source-native layouts stop at an explicit preparation boundary.
+
+**Reason:** Dictionaries, irregular events, and native-frequency context are
+not generic join inputs. The current application has no approved end-to-end
+method for combining weekly activity/outcomes with monthly context for
+official modelling. Presenting the generic all-table join as the next step
+would teach an invalid data model and invite silent flattening or filling.
+
+**Impact:** Added a framework-independent source inventory/layout helper,
+source-aware Data Sources inventory, source-native Prepare Data boundary,
+human-readable join-health and transformation summaries, and updated workflow
+copy. Rectangular join behaviour, persistence keys, source table storage,
+canonicalisation, and mixed-frequency fail-closed governance are unchanged.
+No analytical or governance behaviour was changed; no values are converted,
+interpolated, allocated, or filled by this package. Business question: can a
+new analyst understand which loaded inputs are files, categories, and tables,
+and whether the current preparation route is safe? Estimand: none introduced.
+Output scale/units: presentation counts, source-table rows, and existing join
+diagnostics in their stored units. Upstream modelling references: none
+consulted because this is a presentation/workflow package and does not change
+PyMC or PyMC Marketing model APIs. Remaining limitation: full source-native
+mixed-frequency preparation and downloadable workbook template bytes remain
+separate future packages subject to their existing decision/tooling boundaries.
+
+**Owner:** Platform engineering / Data Science.
+**Status:** Implemented in UX/UI coherence Phase 1.
