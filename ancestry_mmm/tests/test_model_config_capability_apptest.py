@@ -179,3 +179,26 @@ def test_capability_warning_never_blocks_preparing_the_frame():
     prepare_button.click().run()
     assert not at.exception, f"prepare click raised: {at.exception}"
     assert at.session_state["frame"] is not None
+
+
+def test_official_preparation_has_explicit_decision_required_gate():
+    """WP6: exploratory preparation remains available, but the official
+    action cannot proceed without a coverage matrix and governed calendar."""
+    at = _run_at()
+    assert not at.exception, f"page raised: {at.exception}"
+    assert any(
+        "Official preparation blocked" in (w.value or "")
+        and "decision required" in (w.value or "")
+        for w in at.warning
+    )
+
+    official_button = next(
+        b for b in at.button if b.label == "Prepare official modelling frame"
+    )
+    official_button.click().run()
+
+    assert not at.exception, f"official prepare click raised: {at.exception}"
+    assert at.session_state["frame"] is None
+    assert any(
+        "Official modelling frame not created" in (e.value or "") for e in at.error
+    )

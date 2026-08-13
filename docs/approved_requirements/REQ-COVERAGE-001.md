@@ -67,6 +67,26 @@ policy-backed model approval (current results are informational only).
 missing-data likelihood, or per-market predictor-set restructuring is
 approved.
 
+### Status as of 2026-08-13 (after Work Package 6)
+
+The official-preparation governance boundary is now implemented through
+`core.frequency_alignment.assess_official_preparation` and the separate
+official action on Model Configuration. It resolves an explicit governed
+canonical calendar, checks the existing coverage contract, and evaluates
+mixed-frequency requests against the conversion registry without changing a
+DataFrame. The registry remains empty: no concrete method is approved or
+executed, so mixed-frequency official preparation returns
+`unsupported_no_approved_method` (or a more specific leakage/definition-break
+blocker), while missing governance returns `decision_required`. The
+exploratory Transform Pipeline remains available and is not an official
+frequency-alignment path.
+
+The following remain not implemented: execution of an approved
+frequency-conversion method, a full canonical-calendar data transformation
+service, and the broader official-use policy gate described above. See
+`docs/decision_required_frequency_methods.md` for the exact open choices by
+variable class.
+
 ### What already exists today (do not duplicate)
 
 - `data.pipeline.join_sources`: single-mode source join, currently

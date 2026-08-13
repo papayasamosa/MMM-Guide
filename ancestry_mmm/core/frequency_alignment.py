@@ -37,16 +37,13 @@ brief's own Work Package C/D boundary):
 
 - No conversion method (interpolation, allocation, forward-fill, ...) is
   implemented for any variable class.
-- No wiring into `data.pipeline.join_sources`/`join_sources_with_
-  diagnostics` or any Streamlit page - those keep working exactly as
-  before (explicit join mode + join-loss diagnostics, PR #157). A
-  dependent, separately-scoped package refactors official data
-  preparation to use `resolve_canonical_calendar`/`evaluate_alignment_
-  request` once at least one conversion method is approved; wiring an
-  always-"unsupported" service into the live UI now would only replace one
-  silent behaviour (implicit inner-join intersection) with an equally
-  unhelpful one (every mixed-frequency variable permanently blocked) with
-  no way forward until Work Package D lands.
+- No conversion is wired into `data.pipeline.join_sources`/
+  `join_sources_with_diagnostics` or the exploratory Transform Pipeline -
+  those keep working exactly as before (explicit join mode + join-loss
+  diagnostics, PR #157). The official-preparation boundary may call the
+  read-only `assess_official_preparation` service below: while the registry
+  is empty it returns an actionable decision-required result and never
+  changes the native source or exploratory frame.
 - No default project-calendar source (e.g. "whichever source has the
   longest/shortest history") is chosen - REQ-COVERAGE-001 S1's "never
   truncate to the narrowest common window" applies here too.
@@ -60,7 +57,14 @@ from typing import Dict, Optional, Tuple
 
 import pandas as pd
 
-from .coverage import VARIABLE_CLASSES, DefinitionBreak, _FREQUENCY_TO_PANDAS_ALIAS
+from .coverage import (
+    VARIABLE_CLASSES,
+    DefinitionBreak,
+    VariableCoverageMatrix,
+    VariableCoverageRecord,
+    _FREQUENCY_TO_PANDAS_ALIAS,
+    official_fit_blocking_issues,
+)
 
 # --- Conversion-method registry (starts empty - see module docstring) -----
 
@@ -110,6 +114,51 @@ class ConversionMethodSpec:
 # Work Package D registers a concrete method here only once a modelling
 # decision approves one; this module never does so itself.
 _METHOD_REGISTRY: Dict[Tuple[str, str], ConversionMethodSpec] = {}
+
+
+# Decision-support vocabulary for the official-preparation UI. This is not a
+# method registry and must not be read as selecting a default. It is
+# deliberately exhaustive over the closed variable-class vocabulary so an
+# analyst can see exactly what still needs approval.
+FREQUENCY_METHOD_DECISIONS_REQUIRED = {
+    "flow_count": (
+        "Select an approved flow/count conversion method (or explicitly keep "
+        "the variable at native cadence).",
+        "Define aggregation/reconciliation, publication-lag, support-boundary, "
+        "and parameter rules.",
+        "Define leakage, source-definition-break, and validation evidence for "
+        "the selected method.",
+    ),
+    "stock_level": (
+        "Select an approved stock/level conversion method (or explicitly keep "
+        "the variable at native cadence).",
+        "Define the level-preservation/reconciliation rule and boundary behaviour.",
+        "Define publication-lag, definition-break, leakage, and validation "
+        "evidence for the selected method.",
+    ),
+    "rate_index": (
+        "Select an approved rate/index conversion method (or explicitly keep "
+        "the variable at native cadence).",
+        "Define the weighting/aggregation rule and support boundary.",
+        "Define publication-lag, definition-break, leakage, and validation "
+        "evidence for the selected method.",
+    ),
+    "survey_measurement": (
+        "Select an approved survey/measurement treatment (native cadence, "
+        "step repetition, or another governed method).",
+        "Define release timing, uncertainty treatment, support boundary, and "
+        "methodology-break handling.",
+        "Define leakage and validation evidence for historical reconstruction "
+        "and any official scenario use.",
+    ),
+    "event_flag": (
+        "Select an approved event/flag treatment (full-period overlap, "
+        "exact-date sub-period, native cadence, or another governed method).",
+        "Define event-boundary and partial-period semantics.",
+        "Define publication timing, definition-break handling, and validation "
+        "evidence.",
+    ),
+}
 
 
 def register_conversion_method(
@@ -532,4 +581,280 @@ def resolve_canonical_calendar(
     assert governed_frequency is not None
     return CanonicalCalendar(
         start=governed_start, end=governed_end, frequency=governed_frequency
+    )
+
+
+# --- Official-preparation boundary (WP6) ----------------------------------
+
+
+OFFICIAL_PREPARATION_STATUSES = (
+    "ready",
+    "decision_required",
+    "unsupported_no_approved_method",
+    "unsupported_definition_break",
+    "unsupported_leakage",
+    "method_available",
+)
+
+
+@dataclass(frozen=True)
+class OfficialPreparationResult:
+    """A read-only official-preparation decision.
+
+    This service deliberately does not mutate a frame. ``ready`` is only
+    possible when a governed canonical calendar exists, coverage is not
+    unresolved, and no frequency conversion is required. A future package
+    may add a concrete, approved conversion executor; until then a
+    mixed-frequency request is explicitly unsupported rather than being
+    satisfied by an inner join or fill operation.
+    """
+
+    status: str
+    reason: str
+    canonical_calendar: Optional[CanonicalCalendar] = None
+    alignment_results: Tuple[AlignmentResult, ...] = ()
+    decisions_required: Tuple[str, ...] = ()
+    conversion_variable_classes: Tuple[str, ...] = ()
+    native_data_preserved: bool = True
+
+    def __post_init__(self) -> None:
+        if self.status not in OFFICIAL_PREPARATION_STATUSES:
+            raise ValueError(
+                f"invalid official-preparation status {self.status!r}; "
+                f"must be one of {OFFICIAL_PREPARATION_STATUSES}"
+            )
+
+    @property
+    def ready(self) -> bool:
+        return self.status == "ready"
+
+    def to_dict(self) -> dict:
+        return {
+            "status": self.status,
+            "reason": self.reason,
+            "canonical_calendar": (
+                self.canonical_calendar.to_dict()
+                if self.canonical_calendar is not None
+                else None
+            ),
+            "alignment_results": [r.to_dict() for r in self.alignment_results],
+            "decisions_required": list(self.decisions_required),
+            "conversion_variable_classes": list(self.conversion_variable_classes),
+            "native_data_preserved": self.native_data_preserved,
+            "ready": self.ready,
+        }
+
+
+def _alignment_spec_from_coverage_record(
+    record: VariableCoverageRecord,
+) -> AlignmentSpecification:
+    """Translate the persisted coverage contract into an alignment request."""
+
+    frequency = record.frequency
+    return AlignmentSpecification(
+        variable_id=record.variable_id,
+        source_id=record.source_id,
+        source_version=record.source_version,
+        market=record.market,
+        native_frequency=frequency.native_frequency,
+        target_frequency=frequency.target_frequency,
+        variable_class=frequency.variable_class,
+        publication_lag_periods=frequency.publication_lag_periods,
+        method_id=frequency.method or None,
+        reconciliation_rule=frequency.reconciliation_rule,
+        effective_start=record.effective_start,
+        effective_end=record.effective_end,
+        support_start=record.observed_start,
+        support_end=record.observed_end,
+        definition_breaks=record.definition_breaks,
+    )
+
+
+def assess_official_preparation(
+    matrix: Optional[VariableCoverageMatrix],
+    *,
+    governed_start: Optional[str] = None,
+    governed_end: Optional[str] = None,
+    governed_frequency: Optional[str] = None,
+    as_of: Optional[str] = None,
+) -> OfficialPreparationResult:
+    """Assess whether an official model frame may be prepared.
+
+    The result is intentionally a governance/readiness report, not a
+    transformation. Native-frequency rows and missingness are never changed.
+    A mixed-frequency record is sent through ``evaluate_alignment_request``;
+    with the currently empty registry this produces
+    ``unsupported_no_approved_method``. The generic Transform Pipeline is
+    therefore not an implicit fallback.
+
+    ``governed_*`` are optional only so the caller can receive an actionable
+    decision-required result. They are not inferred from source dates or an
+    inner-join intersection.
+    """
+
+    if matrix is None:
+        return OfficialPreparationResult(
+            status="decision_required",
+            reason=(
+                "Build and review a versioned variable coverage matrix before "
+                "official preparation; source rows and missingness remain "
+                "native until then."
+            ),
+            decisions_required=(
+                "Build a coverage matrix and explicitly review every variable "
+                "before official preparation.",
+                "Set the governed project calendar (start, end, and frequency); "
+                "it must not be inferred from a source intersection.",
+            ),
+        )
+
+    coverage_issues = tuple(official_fit_blocking_issues(matrix.records))
+    if coverage_issues:
+        return OfficialPreparationResult(
+            status="decision_required",
+            reason=(
+                "Official preparation is blocked by unresolved coverage. "
+                "Review and explicitly approve or exclude the affected "
+                "coverage states on Data Coverage."
+            ),
+            decisions_required=coverage_issues
+            + (
+                "Set the governed project calendar (start, end, and frequency); "
+                "it must not be inferred from a source intersection.",
+            ),
+        )
+
+    try:
+        calendar = resolve_canonical_calendar(
+            governed_start=governed_start,
+            governed_end=governed_end,
+            governed_frequency=governed_frequency,
+        )
+    except CalendarResolutionRequiredError as exc:
+        # Surface the more specific missing-method decision as soon as the
+        # reviewed matrix proves that conversion is required. The calendar is
+        # still a separate blocker, but hiding the variable-class method
+        # choice behind it would make the UI less actionable.
+        conversion_records = tuple(
+            record
+            for record in matrix.records
+            if record.frequency.native_frequency.strip().lower()
+            != record.frequency.target_frequency.strip().lower()
+        )
+        if conversion_records:
+            conversion_classes = tuple(
+                sorted(
+                    {record.frequency.variable_class for record in conversion_records}
+                )
+            )
+            preflight_results = tuple(
+                evaluate_alignment_request(_alignment_spec_from_coverage_record(record))
+                for record in conversion_records
+            )
+            if any(
+                result.status == "unsupported_no_approved_method"
+                for result in preflight_results
+            ):
+                decisions = tuple(
+                    item
+                    for variable_class in conversion_classes
+                    for item in FREQUENCY_METHOD_DECISIONS_REQUIRED[variable_class]
+                )
+                return OfficialPreparationResult(
+                    status="unsupported_no_approved_method",
+                    reason=(
+                        "Official preparation is blocked: "
+                        + "; ".join(result.reason for result in preflight_results)
+                        + f" Also: {exc}"
+                    ),
+                    alignment_results=preflight_results,
+                    decisions_required=decisions
+                    + (
+                        "Set the governed project calendar (start, end, and "
+                        "frequency); it must not be inferred from a source "
+                        "intersection.",
+                    ),
+                    conversion_variable_classes=conversion_classes,
+                )
+        return OfficialPreparationResult(
+            status="decision_required",
+            reason=str(exc),
+            decisions_required=(
+                "Set the governed project calendar (start, end, and frequency); "
+                "it must not be inferred from a source intersection.",
+            ),
+        )
+
+    conversion_records = tuple(
+        record
+        for record in matrix.records
+        if record.frequency.native_frequency.strip().lower()
+        != record.frequency.target_frequency.strip().lower()
+    )
+    conversion_classes = tuple(
+        sorted({record.frequency.variable_class for record in conversion_records})
+    )
+    if not conversion_records:
+        return OfficialPreparationResult(
+            status="ready",
+            reason=(
+                "Coverage is resolved and every reviewed variable is already "
+                "at the governed target frequency. No frequency conversion is "
+                "performed."
+            ),
+            canonical_calendar=calendar,
+        )
+
+    results = tuple(
+        evaluate_alignment_request(
+            _alignment_spec_from_coverage_record(record),
+            period_start=calendar.start,
+            period_end=calendar.end,
+            as_of=as_of,
+        )
+        for record in conversion_records
+    )
+    blocking = tuple(result for result in results if not result.supported)
+    if blocking:
+        status = blocking[0].status
+        if status not in {
+            "unsupported_no_approved_method",
+            "unsupported_definition_break",
+            "unsupported_leakage",
+        }:
+            status = "decision_required"
+        decisions = tuple(
+            item
+            for variable_class in conversion_classes
+            for item in FREQUENCY_METHOD_DECISIONS_REQUIRED[variable_class]
+        )
+        return OfficialPreparationResult(
+            status=status,
+            reason=(
+                "Official preparation is blocked: "
+                + "; ".join(result.reason for result in blocking)
+            ),
+            canonical_calendar=calendar,
+            alignment_results=results,
+            decisions_required=decisions,
+            conversion_variable_classes=conversion_classes,
+        )
+
+    # Feasibility is not execution. Until a separately-scoped executor is
+    # supplied, do not allow a method registry entry by itself to create a
+    # model frame from native-frequency inputs.
+    return OfficialPreparationResult(
+        status="method_available",
+        reason=(
+            "An approved conversion method is available, but this boundary "
+            "does not execute conversions. Use the separately governed "
+            "conversion executor before official preparation."
+        ),
+        canonical_calendar=calendar,
+        alignment_results=results,
+        decisions_required=(
+            "Wire and validate the approved conversion executor before this "
+            "request can produce an official model frame.",
+        ),
+        conversion_variable_classes=conversion_classes,
     )

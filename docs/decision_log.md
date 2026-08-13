@@ -2346,3 +2346,30 @@ validator are ready for that adapter.
 **Owner:** Platform engineering / Data Science.
 **Status:** Implemented in Work Package 5 ingestion scope; template-byte
 adapter remains environment-blocked.
+
+## Official mixed-frequency preparation remains fail-closed (Work Package 6)
+
+**Date:** 2026-08-13
+**Decision:** No concrete frequency-conversion method is approved for official
+use. Add a framework-independent official-preparation assessment that requires
+an explicit governed canonical calendar, preserves native-frequency source
+rows and missingness, and returns `decision_required` or
+`unsupported_no_approved_method` for unresolved mixed-frequency requests.
+
+**Reason:** `REQ-COVERAGE-001` approves the typed, variable-class-specific
+frequency contract but explicitly leaves the statistical method unresolved.
+The candidate survey is decision support only. An inner join, interpolation,
+allocation, forward-fill, or generic Transform Pipeline fill cannot become an
+implicit official method.
+
+**Impact:** `core.frequency_alignment.assess_official_preparation` now wires
+the existing calendar/alignment contract to the Model Configuration page's
+separate official-preparation action. Exploratory preparation remains
+available, and generic Transform Pipeline operations remain available with an
+explicit exploratory label. The exact open choices by variable class are
+recorded in `docs/decision_required_frequency_methods.md`. No data conversion,
+model equation, or statistical method was added.
+
+**Owner:** Data Science / Platform engineering.
+**Status:** Implemented at the governance boundary; concrete method decision
+and conversion executor remain open.

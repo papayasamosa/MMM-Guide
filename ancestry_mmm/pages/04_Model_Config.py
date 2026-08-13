@@ -48,6 +48,7 @@ from ancestry_mmm.core.brand_search import (
 )
 from ancestry_mmm.core.coverage import VariableCoverageMatrix
 from ancestry_mmm.core.fingerprint import fingerprint_dataframe
+from ancestry_mmm.core.frequency_alignment import assess_official_preparation
 from ancestry_mmm.core.market_data_capability import check_market_channel_capability
 from ancestry_mmm.data import prepare_fh_modeling_frame
 import pandas as pd
@@ -522,9 +523,8 @@ _coverage_section.__enter__()
 st.caption(
     "The current engine only validly fits a "
     "rectangular market x channel matrix - every requested channel "
-    "genuinely observed in every requested market. This never blocks "
-    "preparing or fitting a model (an exploratory fit is always "
-    "available, same as everywhere else in this app), it only reports "
+    "genuinely observed in every requested market. This capability report "
+    "does not block exploratory preparation or fitting; it only reports "
     "whether this configuration is within what the engine can validly "
     "support today, using the governed coverage matrix as the source of "
     "truth - never the prepared data's own zero/null values."
@@ -592,46 +592,114 @@ else:
 _coverage_section.__exit__(None, None, None)
 
 st.markdown("---")
+_frequency_section = SectionCard(
+    "Official preparation · mixed-frequency review",
+    description=(
+        "Official preparation must use an approved, variable-class-specific "
+        "frequency method. Native source data and the exploratory Transform "
+        "Pipeline remain unchanged while that decision is unresolved."
+    ),
+)
+_frequency_section.__enter__()
+_canonical_calendar = get_state("canonical_calendar") or {}
+_official_preparation = assess_official_preparation(
+    _coverage_matrix,
+    governed_start=_canonical_calendar.get("start"),
+    governed_end=_canonical_calendar.get("end"),
+    governed_frequency=_canonical_calendar.get("frequency"),
+    as_of=_canonical_calendar.get("as_of"),
+)
+set_state("official_preparation_result", _official_preparation.to_dict())
+
+if _official_preparation.ready:
+    st.success(
+        "Official preparation is ready. No frequency conversion is needed; "
+        "the reviewed variables are already at the governed target frequency."
+    )
+elif _official_preparation.status == "unsupported_no_approved_method":
+    st.error(
+        "Official preparation blocked · unsupported_no_approved_method. "
+        + _official_preparation.reason
+    )
+else:
+    st.warning(
+        "Official preparation blocked · decision required. "
+        + _official_preparation.reason
+    )
+
+if _official_preparation.decisions_required:
+    with st.expander("Frequency decisions still required"):
+        st.caption(
+            "These are governance decisions, not defaults. No interpolation, "
+            "allocation, forward-fill, or other frequency conversion is "
+            "performed by this page."
+        )
+        for _decision in _official_preparation.decisions_required:
+            st.markdown(f"- {_decision}")
+
+st.caption(
+    "Native-frequency source rows and missingness are preserved. The "
+    "Transform Pipeline remains available for explicitly exploratory work; "
+    "it does not approve an official frequency alignment."
+)
+_frequency_section.__exit__(None, None, None)
+
+st.markdown("---")
 _prepare_frame_section = SectionCard(
     "Prepared-frame readiness",
-    description="Prepare the modelling frame once structure, priors and coverage above are set.",
+    description=(
+        "Prepare an exploratory modelling frame once structure and priors are "
+        "set. Official preparation has its separate frequency gate above."
+    ),
 )
 _prepare_frame_section.__enter__()
 if brand_search_errors:
     st.caption(
         "Fix the Brand Search configuration errors above before preparing the modelling frame."
     )
-elif st.button("Prepare modelling frame", type="primary"):
-    try:
-        frame = prepare_fh_modeling_frame(
-            df,
-            spec,
-            outcomes=outcome_definitions,
-            media_outcome_pathways=get_state("media_outcome_pathways") or [],
-            activity_definitions=get_state("activity_definitions") or [],
-            net_billthrough_metadata=get_state("net_billthrough_metadata"),
-        )
-        set_state("frame", frame)
-        set_state("prior_config", prior_config)
-        set_state("dna_lag_weeks", int(dna_lag_weeks))
-        set_state("mcmc_draws", int(mcmc_draws))
-        set_state("mcmc_tune", int(mcmc_tune))
-        set_state("mcmc_chains", int(mcmc_chains))
-        set_state("mcmc_target_accept", float(mcmc_target_accept))
-        set_state("model_type", model_type)
-        set_state("direct_dna_outcome_ids", list(dna_kit_outcomes.keys()))
-        set_state("brand_search_configs", [c.to_dict() for c in brand_search_configs])
-        clear_model_state()
-        set_state("frame", frame)  # clear_model_state wipes frame too - reset after
-        st.success(
-            f"Frame prepared: {format_number(frame['X_media'].shape[0])} observations, "
-            f"{len(frame['channels'])} channels, {len(frame['outcome_ids'])} outcomes, "
-            f"{len(frame['markets'])} market(s). Model structure: {model_type_labels[model_type]}."
-        )
-    except ValueError as e:
+else:
+    _official_requested = st.button("Prepare official modelling frame")
+    _exploratory_requested = st.button("Prepare modelling frame", type="primary")
+    if _official_requested and not _official_preparation.ready:
         st.error(
-            f"Could not prepare the modelling frame: {e} Review the structure and try again."
+            "Official modelling frame not created. Resolve the "
+            f"{_official_preparation.status} status above first. Native data "
+            "and exploratory output were not changed."
         )
+    elif _official_requested or _exploratory_requested:
+        try:
+            frame = prepare_fh_modeling_frame(
+                df,
+                spec,
+                outcomes=outcome_definitions,
+                media_outcome_pathways=get_state("media_outcome_pathways") or [],
+                activity_definitions=get_state("activity_definitions") or [],
+                net_billthrough_metadata=get_state("net_billthrough_metadata"),
+            )
+            set_state("frame", frame)
+            set_state("prior_config", prior_config)
+            set_state("dna_lag_weeks", int(dna_lag_weeks))
+            set_state("mcmc_draws", int(mcmc_draws))
+            set_state("mcmc_tune", int(mcmc_tune))
+            set_state("mcmc_chains", int(mcmc_chains))
+            set_state("mcmc_target_accept", float(mcmc_target_accept))
+            set_state("model_type", model_type)
+            set_state("direct_dna_outcome_ids", list(dna_kit_outcomes.keys()))
+            set_state(
+                "brand_search_configs", [c.to_dict() for c in brand_search_configs]
+            )
+            clear_model_state()
+            set_state("official_preparation_result", _official_preparation.to_dict())
+            set_state("frame", frame)  # clear_model_state wipes frame too - reset after
+            st.success(
+                f"Frame prepared: {format_number(frame['X_media'].shape[0])} observations, "
+                f"{len(frame['channels'])} channels, {len(frame['outcome_ids'])} outcomes, "
+                f"{len(frame['markets'])} market(s). Model structure: {model_type_labels[model_type]}."
+            )
+        except ValueError as e:
+            st.error(
+                f"Could not prepare the modelling frame: {e} Review the structure and try again."
+            )
 _prepare_frame_section.__exit__(None, None, None)
 
 if get_state("frame") is not None:
