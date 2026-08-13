@@ -25,6 +25,9 @@ from ancestry_mmm.utils import (
     init_session_state,
     readable_label,
     set_state,
+    display_enum_frame,
+    display_enum_options,
+    restore_enum_frame,
 )
 from ancestry_mmm.components import (
     apply_theme,
@@ -101,8 +104,8 @@ render_workspace_note(
 if not _data_ready:
     st.markdown("---")
     render_empty_state(
-        "No joined data with a market column yet. Complete Transform "
-        "Pipeline first - the coverage matrix is built per market, so a "
+        "No joined data with a market column yet. Complete Prepare "
+        "Data first - the coverage matrix is built per market, so a "
         "market column is required.",
         button_label="Go to Prepare Data",
         target_key="transform_pipeline",
@@ -244,27 +247,50 @@ if variable_columns:
                 "source_version": default_source_version,
             }
         )
+    _metadata_enum_values = {
+        "native_frequency": FREQUENCY_OPTIONS,
+        "target_frequency": FREQUENCY_OPTIONS,
+        "variable_class": VARIABLE_CLASSES,
+    }
+    _metadata_editor_df = display_enum_frame(
+        pd.DataFrame(metadata_rows), _metadata_enum_values.keys()
+    )
     metadata_editor = st.data_editor(
-        pd.DataFrame(metadata_rows),
+        _metadata_editor_df,
         width="stretch",
         hide_index=True,
         key="coverage_variable_metadata_editor",
         column_config={
             "variable": st.column_config.TextColumn("Variable", disabled=True),
             "native_frequency": st.column_config.SelectboxColumn(
-                "Native frequency", options=FREQUENCY_OPTIONS, required=True
+                "Source frequency",
+                options=display_enum_options(FREQUENCY_OPTIONS),
+                required=True,
             ),
             "target_frequency": st.column_config.SelectboxColumn(
-                "Target frequency", options=FREQUENCY_OPTIONS, required=True
+                "Model frequency",
+                options=display_enum_options(FREQUENCY_OPTIONS),
+                required=True,
             ),
             "variable_class": st.column_config.SelectboxColumn(
-                "Variable class", options=sorted(VARIABLE_CLASSES), required=True
+                "Data type",
+                options=display_enum_options(sorted(VARIABLE_CLASSES)),
+                required=True,
             ),
-            "source_id": st.column_config.TextColumn("Source ID", required=True),
+            "source_id": st.column_config.TextColumn("Source", required=True),
             "source_version": st.column_config.NumberColumn(
-                "Source version", min_value=1, step=1, required=True
+                "Source version",
+                min_value=1,
+                step=1,
+                required=True,
+                help="Version of the governed source containing this variable.",
             ),
         },
+    )
+    metadata_editor = restore_enum_frame(
+        metadata_editor,
+        _metadata_enum_values.keys(),
+        _metadata_enum_values,
     )
 
     if st.button("Build coverage matrix", type="primary"):
@@ -542,8 +568,12 @@ for record_index, record in enumerate(matrix.records):
 if not segment_rows:
     st.caption("Every variable is fully covered - no gap segments to classify.")
 else:
+    _segment_enum_values = {"state": COVERAGE_STATES}
+    _segment_editor_df = display_enum_frame(
+        pd.DataFrame(segment_rows), _segment_enum_values.keys()
+    )
     segment_editor = st.data_editor(
-        pd.DataFrame(segment_rows),
+        _segment_editor_df,
         width="stretch",
         hide_index=True,
         disabled=[
@@ -557,9 +587,24 @@ else:
         key="coverage_segment_editor",
         column_config={
             "state": st.column_config.SelectboxColumn(
-                "State", options=sorted(COVERAGE_STATES), required=True
+                "Coverage state",
+                options=display_enum_options(COVERAGE_STATES),
+                required=True,
             ),
+            "variable": st.column_config.TextColumn("Variable", disabled=True),
+            "market": st.column_config.TextColumn("Market", disabled=True),
+            "product": st.column_config.TextColumn("Product", disabled=True),
+            "segment": st.column_config.TextColumn("Customer segment", disabled=True),
+            "period_start": st.column_config.TextColumn("Gap starts", disabled=True),
+            "period_end": st.column_config.TextColumn("Gap ends", disabled=True),
+            "structural_zero": st.column_config.CheckboxColumn(
+                "Genuine structural zero"
+            ),
+            "justification": st.column_config.TextColumn("Reason / justification"),
         },
+    )
+    segment_editor = restore_enum_frame(
+        segment_editor, _segment_enum_values.keys(), _segment_enum_values
     )
 
     if st.button("Save gap classifications", type="primary"):
@@ -646,20 +691,39 @@ treatment_rows = [
     }
     for record in matrix.records
 ]
+_treatment_enum_values = {"treatment_status": TREATMENT_STATUSES}
+_treatment_editor_df = display_enum_frame(
+    pd.DataFrame(treatment_rows), _treatment_enum_values.keys()
+)
 treatment_editor = st.data_editor(
-    pd.DataFrame(treatment_rows),
+    _treatment_editor_df,
     width="stretch",
     hide_index=True,
     disabled=["variable", "market", "product", "segment"],
     key="coverage_treatment_editor",
     column_config={
         "treatment_status": st.column_config.SelectboxColumn(
-            "Status", options=sorted(TREATMENT_STATUSES), required=True
+            "Treatment status",
+            options=display_enum_options(sorted(TREATMENT_STATUSES)),
+            required=True,
         ),
+        "variable": st.column_config.TextColumn("Variable", disabled=True),
+        "market": st.column_config.TextColumn("Market", disabled=True),
+        "product": st.column_config.TextColumn("Product", disabled=True),
+        "segment": st.column_config.TextColumn("Customer segment", disabled=True),
+        "proposed_treatment": st.column_config.TextColumn("Proposed treatment"),
+        "approved_treatment": st.column_config.TextColumn("Approved treatment"),
+        "treatment_approved_by": st.column_config.TextColumn("Approved by"),
         "treatment_approved_at": st.column_config.TextColumn(
             "Approved on (YYYY-MM-DD)"
         ),
+        "approved_for_official_use": st.column_config.CheckboxColumn(
+            "Approved for official use"
+        ),
     },
+)
+treatment_editor = restore_enum_frame(
+    treatment_editor, _treatment_enum_values.keys(), _treatment_enum_values
 )
 
 if st.button("Save treatment decisions", type="primary"):

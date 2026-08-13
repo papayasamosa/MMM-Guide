@@ -137,8 +137,8 @@ _model_structure_section.__enter__()
 n_markets = len(spec.markets)
 model_type_options = ["shared", "market_specific"]
 model_type_labels = {
-    "shared": "Shared curve across markets (Model A)",
-    "market_specific": "Market-specific, partially pooled (Model C)",
+    "shared": "Shared response across markets (Model A)",
+    "market_specific": "Market-specific response with partial pooling (Model C)",
 }
 current_model_type = get_state("model_type", "shared")
 if n_markets < 2 and current_model_type == "market_specific":
@@ -183,100 +183,115 @@ st.caption(
 
 prior_config = dict(get_state("prior_config") or DEFAULT_FH_PRIORS)
 
-c1, c2 = st.columns(2)
-with c1:
-    prior_config["decay_mu"] = st.slider(
-        "Adstock decay - prior mean",
-        0.05,
-        0.95,
-        float(prior_config["decay_mu"]),
-        0.05,
-        help=FIELD_HELP["adstock_decay"],
+with st.expander("Advanced model assumptions", expanded=False):
+    st.caption(
+        "These controls set the model's starting assumptions. Most analysts can keep the defaults; open this area when the data or an approved modelling decision calls for a change."
     )
-    prior_config["decay_sigma"] = st.slider(
-        "Adstock decay - prior sd", 0.05, 0.5, float(prior_config["decay_sigma"]), 0.05
-    )
-    prior_config["K_scale"] = st.slider(
-        "Saturation half-point (K) - prior mean, as a multiple of average spend",
-        0.3,
-        3.0,
-        float(prior_config["K_scale"]),
-        0.1,
-        help=FIELD_HELP["hill_saturation"],
-    )
-with c2:
-    prior_config["S_alpha"] = st.slider(
-        "Saturation shape (S) - Gamma alpha",
-        1.0,
-        10.0,
-        float(prior_config["S_alpha"]),
-        0.5,
-    )
-    prior_config["S_beta"] = st.slider(
-        "Saturation shape (S) - Gamma beta",
-        1.0,
-        10.0,
-        float(prior_config["S_beta"]),
-        0.5,
-    )
+    st.markdown("#### Media carryover and saturation")
+    c1, c2 = st.columns(2)
+    with c1:
+        prior_config["decay_mu"] = st.slider(
+            "Typical media carryover",
+            0.05,
+            0.95,
+            float(prior_config["decay_mu"]),
+            0.05,
+            help=FIELD_HELP["adstock_decay"]
+            + " Technical name: adstock decay prior mean.",
+        )
+        prior_config["decay_sigma"] = st.slider(
+            "How uncertain is carryover?",
+            0.05,
+            0.5,
+            float(prior_config["decay_sigma"]),
+            0.05,
+            help="Technical name: adstock decay prior standard deviation.",
+        )
+        prior_config["K_scale"] = st.slider(
+            "Spend level where saturation starts",
+            0.3,
+            3.0,
+            float(prior_config["K_scale"]),
+            0.1,
+            help=FIELD_HELP["hill_saturation"]
+            + " Technical name: saturation half-point K prior mean.",
+        )
+    with c2:
+        prior_config["S_alpha"] = st.slider(
+            "Saturation curve shape",
+            1.0,
+            10.0,
+            float(prior_config["S_alpha"]),
+            0.5,
+            help="Technical name: saturation-shape Gamma alpha.",
+        )
+        prior_config["S_beta"] = st.slider(
+            "Saturation curve uncertainty",
+            1.0,
+            10.0,
+            float(prior_config["S_beta"]),
+            0.5,
+            help="Technical name: saturation-shape Gamma beta.",
+        )
 
-st.markdown("#### Advanced priors")
-st.caption(
-    "These controls govern how much segments, markets, and cross-product pathways may diverge. They are intentionally separate from the routine model-strategy choice above."
-)
-c1, c2 = st.columns(2)
-with c1:
-    prior_config["pooling_sigma_prior"] = st.slider(
-        "Segment divergence prior (sigma_pool) - larger = segments allowed to diverge more freely",
-        0.05,
-        1.0,
-        float(prior_config["pooling_sigma_prior"]),
-        0.05,
-        help=FIELD_HELP["partial_pooling"],
+    st.markdown("#### How much markets and segments may differ")
+    st.caption(
+        "These settings control how strongly related markets, segments, and cross-product pathways share information."
     )
-    prior_config["market_pool_sigma_prior"] = st.slider(
-        "Market pooling prior (partially-pooled markets)",
-        0.05,
-        1.0,
-        float(prior_config["market_pool_sigma_prior"]),
-        0.05,
-        help=FIELD_HELP["partial_pooling"],
-    )
-with c2:
-    prior_config["active_cross_product_sigma"] = st.slider(
-        "Active cross-product strength prior - kept tight by default because cross-product effects should "
-        "be smaller unless the pathway catalogue explicitly marks them active.",
-        0.05,
-        1.0,
-        float(prior_config.get("active_cross_product_sigma", 0.25)),
-        0.05,
-    )
-    prior_config["exploratory_cross_product_sigma"] = st.slider(
-        "Exploratory cross-product strength prior - strongly shrunk toward zero by default; applies "
-        "only to pathway catalogue cells explicitly marked exploratory_cross_product, never trusted "
-        "for planning by default (see Structure page's pathway catalogue).",
-        0.02,
-        0.5,
-        float(prior_config.get("exploratory_cross_product_sigma", 0.08)),
-        0.02,
-    )
-    dna_lag_weeks = st.number_input(
-        "DNA halo lag (weeks) - decision-time lag beyond adstock carryover, shared by every "
-        "active or exploratory cross-product pathway cell",
-        min_value=0,
-        max_value=12,
-        value=int(get_state("dna_lag_weeks", 4)),
-        help=FIELD_HELP["dna_halo_lag"],
-    )
+    c1, c2 = st.columns(2)
+    with c1:
+        prior_config["pooling_sigma_prior"] = st.slider(
+            "How much segments may differ",
+            0.05,
+            1.0,
+            float(prior_config["pooling_sigma_prior"]),
+            0.05,
+            help=FIELD_HELP["partial_pooling"]
+            + " Technical name: pooling sigma prior.",
+        )
+        prior_config["market_pool_sigma_prior"] = st.slider(
+            "How much market responses may differ",
+            0.05,
+            1.0,
+            float(prior_config["market_pool_sigma_prior"]),
+            0.05,
+            help=FIELD_HELP["partial_pooling"]
+            + " Technical name: market pooling sigma prior.",
+        )
+    with c2:
+        prior_config["active_cross_product_sigma"] = st.slider(
+            "Strength allowed for active cross-product effects",
+            0.05,
+            1.0,
+            float(prior_config.get("active_cross_product_sigma", 0.25)),
+            0.05,
+            help="Kept tight by default because cross-product effects should be smaller unless the pathway catalogue marks them active.",
+        )
+        prior_config["exploratory_cross_product_sigma"] = st.slider(
+            "Strength allowed for exploratory cross-product effects",
+            0.02,
+            0.5,
+            float(prior_config.get("exploratory_cross_product_sigma", 0.08)),
+            0.02,
+            help="Strongly shrunk toward zero by default and not trusted for planning. Technical name: exploratory cross-product sigma.",
+        )
+        dna_lag_weeks = st.number_input(
+            "Extra DNA cross-product delay (weeks)",
+            min_value=0,
+            max_value=12,
+            value=int(get_state("dna_lag_weeks", 4)),
+            help=FIELD_HELP["dna_halo_lag"],
+        )
 
-st.markdown("#### Promotional sensitivity prior")
-prior_config["promo_sigma"] = st.slider(
-    "Promo sensitivity prior sd (per segment)",
-    0.05,
-    1.5,
-    float(prior_config["promo_sigma"]),
-    0.05,
-)
+    st.markdown("#### Promotion sensitivity")
+    prior_config["promo_sigma"] = st.slider(
+        "How much promotions may change response",
+        0.05,
+        1.5,
+        float(prior_config["promo_sigma"]),
+        0.05,
+        help="Technical name: promotion sensitivity prior standard deviation.",
+    )
 
 st.markdown("#### Search treatment")
 st.caption(
@@ -315,29 +330,28 @@ brand_search_df = st.data_editor(
     num_rows="dynamic",
     column_config={
         "channel": st.column_config.SelectboxColumn(
-            "channel", options=spec.channels, required=True
+            "Search channel", options=spec.channels, required=True
         ),
         "mode": st.column_config.SelectboxColumn(
             "Treatment", options=list(BRAND_SEARCH_MODE_LABELS.values()), required=True
         ),
         "mediator_of": st.column_config.TextColumn(
-            "mediator_of",
-            help="Comma-separated upstream channels this Brand Search channel mediates "
-            "(demand_capture_mediator only) - e.g. 'TV, YouTube'.",
+            "Upstream channels",
+            help="Comma-separated channels whose demand this Search treatment is intended to capture; only used for the demand-capture sensitivity view.",
         ),
         "mediation_share": st.column_config.NumberColumn(
-            "mediation_share",
+            "Demand-capture share",
             min_value=0.0,
             max_value=1.0,
-            help="demand_capture_mediator only.",
+            help="Only used for the demand-capture sensitivity view.",
         ),
         "calibration_factor": st.column_config.NumberColumn(
-            "calibration_factor",
+            "Experiment calibration factor",
             min_value=0.0,
             max_value=1.0,
-            help="experiment_calibrated_incremental only.",
+            help="Only used when an experiment-calibrated incrementality view is selected.",
         ),
-        "notes": st.column_config.TextColumn("notes"),
+        "notes": st.column_config.TextColumn("Analyst notes"),
     },
     key="brand_search_config_editor",
     width="stretch",

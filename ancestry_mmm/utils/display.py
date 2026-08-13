@@ -22,15 +22,94 @@ DATE_COLUMN_FORMAT = "D MMM YY"
 # unchanged for persistence, joins, and validation; this map only controls
 # what an analyst reads in the dashboard.
 DISPLAY_LABELS = {
+    # Domain values shown in editors. These labels are presentation-only;
+    # validators and persistence continue to use the keys on the left.
+    "family_history": "Family History",
+    "dna": "DNA",
+    "primary": "Primary outcome",
+    "secondary": "Secondary outcome",
+    "funnel_intermediate": "Funnel intermediate",
+    "diagnostic": "Diagnostic only",
+    "primary_direct": "Primary direct effect",
+    "active_cross_product": "Active cross-product effect",
+    "exploratory_cross_product": "Exploratory cross-product effect",
+    "excluded": "Excluded",
+    "direct": "Direct effect",
+    "cross_product": "Cross-product effect",
+    "mediated": "Mediated diagnostic",
+    "none": "No additional delay",
+    "fixed_weeks": "Fixed delay",
+    "adstock_only": "Media carryover only",
+    "delayed_adstock": "Delayed media carryover",
+    "business_assumption": "Business assumption",
+    "experiment_supported": "Supported by experiment",
+    "model_supported": "Supported by model evidence",
+    "weak_evidence": "Weak evidence",
+    "contradicted": "Contradicted by evidence",
+    "unreviewed": "Not yet reviewed",
+    "untested": "Not tested",
+    "supported": "Supported",
+    "inconclusive": "Inconclusive",
+    "not_reviewed": "Not yet reviewed",
+    "not_applicable": "Not applicable",
+    "observed_zero": "Observed zero",
+    "missing_expected": "Expected data missing",
+    "unavailable_source": "Source unavailable",
+    "suppressed": "Suppressed",
+    "estimated": "Estimated",
+    "modelled": "Modelled",
+    "unknown": "Unknown",
+    "proposed": "Proposed",
+    "rejected": "Rejected",
+    "approved": "Approved",
+    "draft": "Draft",
+    "reviewed": "Reviewed",
+    "superseded": "Superseded",
+    "paid": "Paid",
+    "owned": "Owned",
+    "earned": "Earned",
+    "external_event": "External event",
+    "intervention": "Planned intervention",
+    "mediator": "Funnel mediator",
+    "demand_capture": "Demand capture",
+    "control": "Control variable",
+    "event": "Event indicator",
+    "paid_media_cost": "Paid media cost",
+    "fully_loaded_cost": "Fully loaded cost",
+    "campaign_cost": "Campaign cost",
+    "response_only": "Response only",
+    "optimisable": "Eligible for optimisation",
+    "scenario_only": "Scenario use only",
+    "fixed": "Fixed",
+    "search_demand": "Branded-search demand",
+    "paid_search_spend": "Paid Search spend",
+    "paid_search_delivery": "Paid Search delivery",
+    "paid_search_cap": "Paid Search cap",
+    "organic_search_capture": "Organic search",
+    "direct_navigation_capture": "Direct navigation",
+    "monetary": "Money",
+    "exposure_count": "Impressions / delivery count",
+    "response_count": "Outcome / response count",
+    "index": "Index",
+    "observed": "Observed",
+    "assumed": "Assumed",
+    "daily": "Daily",
+    "weekly": "Weekly",
+    "monthly": "Monthly",
+    "quarterly": "Quarterly",
+    "irregular": "Irregular",
+    "flow_count": "Flow or count",
+    "stock_level": "Stock or level",
+    "rate_index": "Rate or index",
+    "survey_measurement": "Survey measurement",
+    "event_flag": "Event flag",
     "market_specific": "Market-specific, partially pooled",
     "direct_channel": "Direct channel",
     "demand_capture_mediator": "Demand capture mediator",
     "experiment_calibrated_incremental": "Experiment-calibrated incrementality",
     "drop_rows": "Drop rows",
     "ffill": "Forward fill",
-    "flow_count": "Flow / count",
     "model_input": "Model-input curve",
-    "monetary": "Monetary curve",
     "specific_scenario": "Specific scenario",
     "historical_diagnostic_only": "Historical diagnostic only",
     "planned_decision": "Planned decision",
@@ -106,6 +185,38 @@ def readable_label(name: Any) -> str:
 def readable_labels(names: Iterable[str]) -> Dict[str, str]:
     """Map each technical name to its readable label."""
     return {name: readable_label(name) for name in names}
+
+
+def display_enum_options(values: Iterable[Any]) -> list[Any]:
+    """Return editor options with human labels while retaining no domain state.
+
+    Streamlit's selectbox columns do not provide a value/label pair API. Pages
+    therefore render these labels in a presentation dataframe and restore the
+    original keys immediately after the editor returns.
+    """
+    return [readable_label(value) for value in values]
+
+
+def display_enum_frame(df: pd.DataFrame, columns: Iterable[str]) -> pd.DataFrame:
+    """Copy ``df`` and humanise selected enum columns for a data editor."""
+    displayed = df.copy()
+    for column in columns:
+        if column in displayed.columns:
+            displayed[column] = displayed[column].map(readable_label)
+    return displayed
+
+
+def restore_enum_frame(
+    df: pd.DataFrame, columns: Iterable[str], values_by_column: Dict[str, Iterable[Any]]
+) -> pd.DataFrame:
+    """Copy an edited display frame and restore its persisted enum keys."""
+    restored = df.copy()
+    for column in columns:
+        if column not in restored.columns:
+            continue
+        reverse = {readable_label(value): value for value in values_by_column[column]}
+        restored[column] = restored[column].map(lambda value: reverse.get(value, value))
+    return restored
 
 
 def dataframe_column_config(

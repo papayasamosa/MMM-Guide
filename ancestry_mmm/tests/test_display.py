@@ -13,6 +13,9 @@ from ancestry_mmm.utils.display import (
     format_number,
     readable_label,
     readable_labels,
+    display_enum_options,
+    display_enum_frame,
+    restore_enum_frame,
     dataframe_column_config,
     OPERATION_LABELS,
     OPERATION_DESCRIPTIONS,
@@ -98,6 +101,27 @@ class TestReadableLabel:
     def test_readable_labels_maps_each_name(self):
         mapping = readable_labels(["TV_Brand", "Search_NonBrand"])
         assert mapping == {"TV_Brand": "TV Brand", "Search_NonBrand": "Search NonBrand"}
+
+    def test_common_enum_values_have_analyst_labels(self):
+        assert readable_label("paid_search_cap") == "Paid Search cap"
+        assert readable_label("missing_expected") == "Expected data missing"
+        assert readable_label("partially_pooled") != "partially_pooled"
+
+    def test_enum_editor_round_trip_preserves_raw_values(self):
+        original = pd.DataFrame({"role": ["paid_search_cap", "organic_search_capture"]})
+        values = {"role": ("paid_search_cap", "organic_search_capture")}
+        displayed = display_enum_frame(original, values)
+        assert displayed["role"].tolist() == [
+            "Paid Search cap",
+            "Organic search",
+        ]
+        assert display_enum_options(values["role"]) == displayed["role"].tolist()
+        edited = restore_enum_frame(displayed, values.keys(), values)
+        assert edited.equals(original)
+        assert original["role"].tolist() == [
+            "paid_search_cap",
+            "organic_search_capture",
+        ]
 
 
 class TestDataframeColumnConfig:
