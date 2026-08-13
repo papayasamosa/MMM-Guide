@@ -58,6 +58,77 @@ def test_configured_structure_skips_optional_pages():
     assert next_workflow_step_key(getter=getter) == "model_config"
 
 
+def test_coverage_is_optional_for_exploratory_work_but_explains_official_need():
+    state = workflow_page_state(
+        "data_coverage",
+        getter=_getter({"transformed_data": object()}),
+    )
+
+    assert state.display_status == "exploratory"
+    assert state.optional
+    assert state.satisfied
+    assert "required before official preparation" in state.reason
+
+
+def test_model_setup_distinguishes_exploratory_frame_from_official_readiness():
+    state = workflow_page_state(
+        "model_config",
+        getter=_getter(
+            {
+                "model_spec": {"markets": ["UK"]},
+                "frame": object(),
+                "official_preparation_result": {
+                    "status": "unsupported_no_approved_method",
+                    "ready": False,
+                },
+            }
+        ),
+    )
+
+    assert state.display_status == "exploratory"
+    assert state.satisfied
+    assert "does not satisfy official preparation" in state.reason
+    assert "no approved method" in state.reason
+
+
+def test_model_setup_is_complete_only_when_official_preparation_is_ready():
+    state = workflow_page_state(
+        "model_config",
+        getter=_getter(
+            {
+                "model_spec": {"markets": ["UK"]},
+                "frame": object(),
+                "official_preparation_result": {
+                    "status": "ready",
+                    "ready": True,
+                },
+            }
+        ),
+    )
+
+    assert state.display_status == "complete"
+    assert state.satisfied
+
+
+def test_model_setup_surfaces_official_blocker_before_a_frame_exists():
+    state = workflow_page_state(
+        "model_config",
+        getter=_getter(
+            {
+                "model_spec": {"markets": ["UK"]},
+                "official_preparation_result": {
+                    "status": "decision_required",
+                    "ready": False,
+                },
+            }
+        ),
+    )
+
+    assert state.display_status == "blocked"
+    assert not state.satisfied
+    assert "Official preparation remains blocked" in state.reason
+
+
 def test_graph_draft_and_structural_staleness_are_not_ready():
     graph = CausalGraph(graph_id="graph-1")
     getter = _getter({"causal_graph": graph.to_dict()})

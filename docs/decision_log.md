@@ -2507,3 +2507,40 @@ journey because an interactive browser was unavailable in the local session.
 
 **Owner:** Platform engineering / Data Science.
 **Status:** Implemented in UX/UI coherence Phase 3.
+
+## Official-versus-exploratory Model Setup readiness (UX/UI coherence Phase 4)
+
+**Date:** 2026-08-13
+**Decision:** Keep the existing fail-closed official frequency-preparation
+boundary unchanged, but present its result as a readable readiness panel.
+Official preparation is the dominant action and shows its status, conversion
+need, reason, decisions required, and safe next action. Exploratory frame
+preparation remains available as a secondary investigation route and is
+explicitly labelled as not satisfying official preparation.
+
+**Reason:** The raw assessor status `unsupported_no_approved_method` was
+accurate but not suitable as routine analyst-facing copy. The previous primary
+exploratory button also made an exploratory frame look like the official
+workflow had completed. A model frame can be useful for investigation while
+the official frequency decision remains unresolved, so those states must be
+visible without inventing a conversion method or changing the analytical gate.
+
+**Impact:** Added human-readable official-preparation status and conversion
+summary, kept the raw assessor key in collapsed Technical details, made the
+official action primary, renamed and de-emphasised exploratory preparation,
+and marked Model Setup as exploratory rather than complete when only an
+exploratory frame exists. Data Coverage and Home now explain when a page is
+optional for exploratory continuation but still required for official
+preparation, and Home surfaces an existing official blocker. No analytical,
+frequency-alignment, governance, persistence, or model-fitting behaviour was
+changed. Business question: can an analyst safely tell whether the current
+frame is official-ready or exploratory-only, and what must be resolved next?
+Estimand: none introduced. Output scale/units: presentation labels and
+workflow readiness states over existing source-native data and model-frame
+units. Upstream modelling references: none consulted because this package
+changes presentation/workflow state only and does not change PyMC or PyMC
+Marketing model APIs. Remaining limitation: the conversion executor remains a
+separate governed capability and is not invented by this phase.
+
+**Owner:** Platform engineering / Data Science.
+**Status:** Implemented in UX/UI coherence Phase 4.

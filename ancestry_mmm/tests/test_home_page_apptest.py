@@ -112,6 +112,20 @@ class TestIssuesRequiringAttention:
         rendered = " ".join((m.value or "") for m in at.markdown)
         assert "not yet approved for" in rendered
 
+    def test_official_preparation_blocker_is_visible_on_home(self):
+        at = _run_at(
+            data_loaded=True,
+            model_spec={"markets": ["UK"]},
+            official_preparation_result={
+                "status": "unsupported_no_approved_method",
+                "ready": False,
+            },
+        )
+        assert not at.exception, f"page raised: {at.exception}"
+        rendered = " ".join((m.value or "") for m in at.markdown)
+        assert "Official preparation is unavailable" in rendered
+        assert "no approved method currently exists" in rendered
+
     def test_blocking_validation_gates_are_named(self):
         at = _run_at(
             model_trained=True,

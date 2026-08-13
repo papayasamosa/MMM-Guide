@@ -101,6 +101,54 @@ def _state(
     )
 
 
+def _official_preparation_summary(getter: StateGetter) -> tuple[Optional[str], str]:
+    """Return presentation-only official-preparation state for workflow UI.
+
+    The frequency assessor remains the authority for the raw decision.  This
+    helper only turns its persisted result into the small vocabulary consumed
+    by page readiness and Home/sidebar copy; it never changes whether a frame
+    may be prepared.
+    """
+
+    result = _get(getter, "official_preparation_result")
+    if not isinstance(result, dict) or not result:
+        return None, ""
+    if result.get("ready") is True or result.get("status") == "ready":
+        return "ready", "Official preparation is ready."
+
+    status = result.get("status")
+    if status == "unsupported_no_approved_method":
+        return (
+            "blocked",
+            "Official preparation is unavailable because no approved method "
+            "currently exists for converting one or more source frequencies "
+            "for official modelling.",
+        )
+    if status == "method_available":
+        return (
+            "blocked",
+            "Official preparation remains blocked until the governed frequency "
+            "conversion executor is validated.",
+        )
+    if status == "unsupported_definition_break":
+        return (
+            "blocked",
+            "Official preparation remains blocked by a frequency definition "
+            "break that needs an explicit resolution.",
+        )
+    if status == "unsupported_leakage":
+        return (
+            "blocked",
+            "Official preparation remains blocked by a frequency treatment "
+            "that is outside the approved preparation boundary.",
+        )
+    return (
+        "blocked",
+        "Official preparation remains blocked until the required coverage, "
+        "calendar, or frequency decisions are resolved.",
+    )
+
+
 def _data_coverage_status(getter: StateGetter, key: str) -> WorkflowPageState:
     matrix = _get(getter, "variable_coverage_matrix")
     transformed = _get(getter, "transformed_data")
@@ -116,11 +164,14 @@ def _data_coverage_status(getter: StateGetter, key: str) -> WorkflowPageState:
             )
         return _state(
             key,
-            "optional",
+            "exploratory",
             satisfied=True,
             access_status="optional",
             optional=True,
-            reason="No coverage matrix has been created; the page remains optional.",
+            reason=(
+                "Coverage review remains optional for exploratory continuation, "
+                "but a reviewed matrix is required before official preparation."
+            ),
         )
 
     built_against = _get(getter, "variable_coverage_matrix_built_against_fingerprint")
@@ -482,9 +533,39 @@ def workflow_page_state(
             else "Optional context page.",
         )
     if key == "model_config":
+        official_status, official_reason = _official_preparation_summary(getter)
+        if frame and official_status == "blocked":
+            return _state(
+                key,
+                "exploratory",
+                satisfied=True,
+                access_status="available" if spec else "blocked",
+                reason=(
+                    "An exploratory modelling frame exists, but it does not "
+                    "satisfy official preparation. " + official_reason
+                ),
+            )
+        if frame:
+            return _state(
+                key,
+                "complete",
+                satisfied=True,
+                access_status="available" if spec else "blocked",
+                reason="Official preparation is ready for this model frame."
+                if official_status == "ready"
+                else "A prepared model frame exists.",
+            )
+        if spec and official_status == "blocked":
+            return _state(
+                key,
+                "blocked",
+                satisfied=False,
+                access_status="available",
+                reason=official_reason,
+            )
         return _state(
             key,
-            "complete" if frame else "not_started" if spec else "blocked",
+            "not_started" if spec else "blocked",
             satisfied=frame,
             access_status="available" if spec else "blocked",
             reason="Define model structure before preparing the model."
