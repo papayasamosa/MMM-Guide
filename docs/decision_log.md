@@ -2644,3 +2644,38 @@ provide the available visual regression evidence.
 
 **Owner:** Platform engineering / Data Science.
 **Status:** Implemented in UX/UI coherence Phase 7.
+
+## Planning Curve language and progressive disclosure (UX/UI coherence Phase 8)
+
+**Date:** 2026-08-13
+**Decision:** Centre the official-curve workflow on the analyst-facing
+Planning Curve. Use readable labels for downstream permissions, keep the
+stored permission keys and governance checks unchanged, and make the normal
+cost-mapping view show only market, activity/channel, method, currency,
+effective dates, and approval state. Keep mapping IDs, knot arrays,
+extrapolation, source, and audit fields in a secondary advanced disclosure.
+
+**Reason:** The page exposed implementation nouns such as artifact,
+curve_publication, authorization state, and requested-use enum keys before
+answering whether the Planning Curve was ready and where it could be used.
+The full cost-mapping schema was also visually dense for the normal path.
+
+**Impact:** Updated Planning Curves headings, guidance, readiness language,
+permission labels, success/error copy, curve-axis labels, and status tables.
+The compact and advanced cost-mapping editors merge back into the same durable
+mapping schema, so no mapping field is discarded. Monetary curves still require
+approved effective mappings, currency/FX evidence, and governed support; model-
+input curves still suppress monetary CPA/ROI. No analytical, mathematical,
+approval, authorization, persistence, or stored-key behaviour changed.
+Business question: is the approved fit ready to become a Planning Curve, what
+does it represent, and which downstream uses are currently permitted?
+Estimand: none introduced. Output scale/units: unchanged model-input or
+monetary curve axes, outcome-scale response, posterior intervals, and monetary
+economics where valid. Upstream modelling references: none consulted because
+this package changes presentation only and does not change PyMC or PyMC
+Marketing model APIs. Remaining limitation: interactive browser screenshot
+review uses the repository's synthetic-data browser journey because the local
+connected browser was unavailable.
+
+**Owner:** Platform engineering / Data Science.
+**Status:** Implemented in UX/UI coherence Phase 8.

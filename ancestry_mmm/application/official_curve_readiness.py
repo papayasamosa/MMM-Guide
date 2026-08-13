@@ -58,7 +58,7 @@ def resolve_generation_blockers(
         blockers.append(
             GenerationBlocker(
                 "no_eligible_outcome",
-                "No outcome is currently approved for curve_publication.",
+                "No outcome is currently approved for Planning Curve creation.",
             )
         )
 
@@ -116,7 +116,9 @@ def resolve_generation_blockers(
 
     if not artifact_id.strip():
         blockers.append(
-            GenerationBlocker("blank_artifact_id", "Artifact ID must be non-blank.")
+            GenerationBlocker(
+                "blank_artifact_id", "Planning Curve ID must be non-blank."
+            )
         )
 
     return blockers
