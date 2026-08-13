@@ -91,7 +91,9 @@ def _remove_source_lineage(source_name: str) -> None:
     st.session_state["source_definitions"] = definitions
 
 
-def _store_standard_workbook(source_name: str, workbook, source_version, logical_domain: str) -> list[str]:
+def _store_standard_workbook(
+    source_name: str, workbook, source_version, logical_domain: str
+) -> list[str]:
     """Store standard tables separately while retaining one workbook version."""
     _remove_source_lineage(source_name)
     recognised_sheets = {item.sheet_name for item in workbook.table_metadata}
@@ -116,6 +118,7 @@ def _store_standard_workbook(source_name: str, workbook, source_version, logical
     st.session_state["source_definitions"] = definitions
     st.session_state["active_source_upload_version"] = active
     return stored
+
 
 st.set_page_config(
     page_title="Data Sources | Ancestry Family History & DNA MMM",
@@ -326,18 +329,25 @@ with tab_upload:
                 for v in st.session_state.get("source_versions") or []
             ]
             if _is_excel_filename(uploaded.name):
-                workbook, source_version, err = load_standard_workbook_with_source_version(
-                    uploaded,
-                    source_name,
-                    logical_domain_choice,
-                    existing_versions,
+                workbook, source_version, err = (
+                    load_standard_workbook_with_source_version(
+                        uploaded,
+                        source_name,
+                        logical_domain_choice,
+                        existing_versions,
+                    )
                 )
                 if err:
                     st.error(err)
                 elif workbook is None or source_version is None:
                     st.error("The workbook could not be loaded.")
-                elif add_standard_source and not workbook.manifest.valid_standard_template:
-                    st.error("Standard workbook validation failed; source not accepted.")
+                elif (
+                    add_standard_source
+                    and not workbook.manifest.valid_standard_template
+                ):
+                    st.error(
+                        "Standard workbook validation failed; source not accepted."
+                    )
                     for message in workbook.manifest.errors:
                         st.error(message)
                     for message in workbook.manifest.warnings:
@@ -347,7 +357,10 @@ with tab_upload:
                         "Excel source' to use the explicit legacy path."
                     )
                 else:
-                    if add_generic_excel or not workbook.manifest.valid_standard_template:
+                    if (
+                        add_generic_excel
+                        or not workbook.manifest.valid_standard_template
+                    ):
                         if not workbook.tables:
                             st.error("The workbook contains no readable sheets.")
                         else:
@@ -368,7 +381,8 @@ with tab_upload:
                             )
                             st.session_state["source_definitions"] = definitions
                             active = dict(
-                                st.session_state.get("active_source_upload_version") or {}
+                                st.session_state.get("active_source_upload_version")
+                                or {}
                             )
                             active[source_name] = source_version.version
                             st.session_state["active_source_upload_version"] = active
@@ -431,10 +445,7 @@ with tab_upload:
                     active[source_name] = source_version.version
                     st.session_state["active_source_upload_version"] = active
                     st.session_state["source_definitions"] = [
-                        *(
-                            st.session_state.get("source_definitions")
-                            or []
-                        ),
+                        *(st.session_state.get("source_definitions") or []),
                         SourceDefinition(
                             source_id=source_name,
                             name=source_name,

@@ -184,7 +184,9 @@ def standard_sheet_specs(logical_domain: str) -> tuple[SheetSpec, ...]:
     try:
         return STANDARD_SHEET_SPECS[logical_domain]
     except KeyError as exc:
-        raise ValueError(f"unsupported standard logical domain {logical_domain!r}") from exc
+        raise ValueError(
+            f"unsupported standard logical domain {logical_domain!r}"
+        ) from exc
 
 
 def standard_template_columns(logical_domain: str, sheet_name: str) -> tuple[str, ...]:
@@ -276,9 +278,7 @@ def parse_standard_workbook(
     try:
         excel = pd.ExcelFile(BytesIO(raw_bytes))
         sheet_names = tuple(str(name) for name in excel.sheet_names)
-        tables = {
-            name: pd.read_excel(excel, sheet_name=name) for name in sheet_names
-        }
+        tables = {name: pd.read_excel(excel, sheet_name=name) for name in sheet_names}
     except Exception as exc:
         manifest = WorkbookManifest(
             source_id=source_id,
@@ -334,7 +334,9 @@ def parse_standard_workbook(
         original_filename=filename,
         checksum=compute_checksum(raw_bytes),
         size_bytes=len(raw_bytes),
-        template_schema_version=(STANDARD_TEMPLATE_SCHEMA_VERSION if standard else None),
+        template_schema_version=(
+            STANDARD_TEMPLATE_SCHEMA_VERSION if standard else None
+        ),
         logical_domain=selected_domain,
         standard_template=standard,
         table_ids=tuple(item.table_id for item in parsed),
@@ -349,16 +351,17 @@ def activity_definitions_from_dictionary(
     activity_dictionary: pd.DataFrame,
 ) -> tuple[ActivityDefinition, ...]:
     """Build governed activity rows from explicit dictionary columns."""
-    required = set(standard_template_columns(DOMAIN_ACTIVITY_AND_MEDIA, "activity_dictionary"))
+    required = set(
+        standard_template_columns(DOMAIN_ACTIVITY_AND_MEDIA, "activity_dictionary")
+    )
     missing = sorted(required - set(activity_dictionary.columns))
     if missing:
         raise ValueError(f"activity dictionary is missing required columns: {missing}")
+
     def required_text(row: Mapping[str, Any], column: str) -> str:
         value = row.get(column)
         if value is None or pd.isna(value) or not str(value).strip():
-            raise ValueError(
-                f"activity dictionary column {column!r} must be populated"
-            )
+            raise ValueError(f"activity dictionary column {column!r} must be populated")
         return str(value).strip()
 
     definitions: list[ActivityDefinition] = []
@@ -380,13 +383,17 @@ def activity_definitions_from_dictionary(
             "message_type": required_text(row, "message_type"),
             "model_input_column": required_text(row, "model_input_column"),
             "pooling_group_id": (
-                None if pd.isna(row.get("pooling_group_id")) else str(row["pooling_group_id"])
+                None
+                if pd.isna(row.get("pooling_group_id"))
+                else str(row["pooling_group_id"])
             ),
         }
         definitions.append(ActivityDefinition(**payload))
     identities = [(item.market, item.activity_id) for item in definitions]
     if len(identities) != len(set(identities)):
-        raise ValueError("activity dictionary contains duplicate market/activity_id rows")
+        raise ValueError(
+            "activity dictionary contains duplicate market/activity_id rows"
+        )
     return tuple(definitions)
 
 
@@ -400,7 +407,9 @@ def canonicalize_activity_data(
     ``model_input_measure`` and ``model_input_column``. Missing activity rows
     remain missing after the pivot; no zero or frequency fill is invented.
     """
-    required = set(standard_template_columns(DOMAIN_ACTIVITY_AND_MEDIA, "activity_data"))
+    required = set(
+        standard_template_columns(DOMAIN_ACTIVITY_AND_MEDIA, "activity_data")
+    )
     missing = sorted(required - set(activity_data.columns))
     if missing:
         raise ValueError(f"activity data is missing required columns: {missing}")
@@ -435,9 +444,9 @@ def canonicalize_activity_data(
     ):
         market_text = str(market)
         activity_text = str(activity_id)
-        definition = definition_by_key.get((market_text, activity_text)) or wildcard_by_id.get(
-            activity_text
-        )
+        definition = definition_by_key.get(
+            (market_text, activity_text)
+        ) or wildcard_by_id.get(activity_text)
         if definition is None:
             raise ValueError(
                 f"activity data row has no dictionary mapping for {market_text}/{activity_text}"
@@ -464,14 +473,11 @@ def canonicalize_activity_data(
             "activity data has duplicate period/market/model-input rows; "
             "resolve source grain before canonicalisation"
         )
-    wide = (
-        long.pivot(
-            index=[PERIOD_COLUMN, MARKET_COLUMN],
-            columns="model_input_column",
-            values="model_input_value",
-        )
-        .reset_index()
-    )
+    wide = long.pivot(
+        index=[PERIOD_COLUMN, MARKET_COLUMN],
+        columns="model_input_column",
+        values="model_input_value",
+    ).reset_index()
     wide.columns.name = None
     for model_column in mapping.values():
         if model_column not in wide.columns:

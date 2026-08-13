@@ -1799,7 +1799,9 @@ def test_standard_workbook_table_source_ids_survive_raw_source_round_trip(
     imported = import_project(bundle_path)
 
     assert list(imported["raw_sources"]) == [table_id]
-    pd.testing.assert_frame_equal(imported["raw_sources"][table_id], project["raw_sources"][table_id])
+    pd.testing.assert_frame_equal(
+        imported["raw_sources"][table_id], project["raw_sources"][table_id]
+    )
 
 
 def test_import_project_source_versions_absent_for_legacy_bundle(

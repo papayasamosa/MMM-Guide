@@ -127,9 +127,13 @@ def load_standard_workbook_with_source_version(
         return None, None, "; ".join(workbook.manifest.errors)
 
     current_for_source = [
-        version for version in (existing_versions or ()) if version.source_id == source_id
+        version
+        for version in (existing_versions or ())
+        if version.source_id == source_id
     ]
-    next_version = max((version.version for version in current_for_source), default=0) + 1
+    next_version = (
+        max((version.version for version in current_for_source), default=0) + 1
+    )
     source_version = SourceVersion(
         source_id=source_id,
         version=next_version,

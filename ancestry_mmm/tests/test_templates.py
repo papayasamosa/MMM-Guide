@@ -34,15 +34,78 @@ def _write_workbook(tables: dict[str, pd.DataFrame]) -> bytes:
 def _activity_dictionary() -> pd.DataFrame:
     rows = []
     activities = [
-        ("meta_brand", "paid_social", "Meta", "Brand", "brand_upper", "paid", "spend", "paid_media_cost"),
-        ("meta_mid", "paid_social", "Meta", "Mid", "mid_funnel", "paid", "spend", "paid_media_cost"),
-        ("meta_performance", "paid_social", "Meta", "Performance", "performance_lower", "paid", "spend", "paid_media_cost"),
-        ("crm_brand", "CRM", "Braze", "Brand", "cross_funnel", "owned", "sends", "not_applicable"),
-        ("crm_editorial", "CRM", "Braze", "Editorial", "cross_funnel", "owned", "sends", "not_applicable"),
-        ("crm_promotional", "CRM", "Braze", "Promotional", "cross_funnel", "earned", "earned_mentions", "not_applicable"),
+        (
+            "meta_brand",
+            "paid_social",
+            "Meta",
+            "Brand",
+            "brand_upper",
+            "paid",
+            "spend",
+            "paid_media_cost",
+        ),
+        (
+            "meta_mid",
+            "paid_social",
+            "Meta",
+            "Mid",
+            "mid_funnel",
+            "paid",
+            "spend",
+            "paid_media_cost",
+        ),
+        (
+            "meta_performance",
+            "paid_social",
+            "Meta",
+            "Performance",
+            "performance_lower",
+            "paid",
+            "spend",
+            "paid_media_cost",
+        ),
+        (
+            "crm_brand",
+            "CRM",
+            "Braze",
+            "Brand",
+            "cross_funnel",
+            "owned",
+            "sends",
+            "not_applicable",
+        ),
+        (
+            "crm_editorial",
+            "CRM",
+            "Braze",
+            "Editorial",
+            "cross_funnel",
+            "owned",
+            "sends",
+            "not_applicable",
+        ),
+        (
+            "crm_promotional",
+            "CRM",
+            "Braze",
+            "Promotional",
+            "cross_funnel",
+            "earned",
+            "earned_mentions",
+            "not_applicable",
+        ),
     ]
     for market in ("UK", "AU"):
-        for activity_id, channel, platform, campaign_type, funnel_stage, ownership, measure, economic in activities:
+        for (
+            activity_id,
+            channel,
+            platform,
+            campaign_type,
+            funnel_stage,
+            ownership,
+            measure,
+            economic,
+        ) in activities:
             # The AU history deliberately omits CRM activities in the data
             # fixture below, but their governed identities remain explicit.
             rows.append(
@@ -62,7 +125,9 @@ def _activity_dictionary() -> pd.DataFrame:
                     "model_input_column": f"{market.lower()}_{activity_id}",
                     "model_input_measure": measure,
                     "economic_treatment": economic,
-                    "planning_eligibility": "optimisable" if ownership == "paid" else "fixed",
+                    "planning_eligibility": "optimisable"
+                    if ownership == "paid"
+                    else "fixed",
                     "source": "synthetic-uk-au-fixture",
                 }
             )
@@ -151,9 +216,15 @@ def test_parser_requires_an_explicit_domain_when_sheets_match_multiple_domains()
     workbook = parse_standard_workbook(
         _write_workbook(
             {
-                "outcomes": pd.DataFrame({"period_start": ["2025-01-01"], "market": ["UK"]}),
+                "outcomes": pd.DataFrame(
+                    {"period_start": ["2025-01-01"], "market": ["UK"]}
+                ),
                 "activity_data": pd.DataFrame(
-                    {"period_start": ["2025-01-01"], "market": ["UK"], "activity_id": ["meta_brand"]}
+                    {
+                        "period_start": ["2025-01-01"],
+                        "market": ["UK"],
+                        "activity_id": ["meta_brand"],
+                    }
                 ),
             }
         ),
@@ -162,7 +233,9 @@ def test_parser_requires_an_explicit_domain_when_sheets_match_multiple_domains()
     )
 
     assert not workbook.manifest.valid_standard_template
-    assert any("multiple standard domains" in error for error in workbook.manifest.errors)
+    assert any(
+        "multiple standard domains" in error for error in workbook.manifest.errors
+    )
 
 
 def test_invalid_standard_workbook_reports_missing_sheet_and_column():
@@ -181,7 +254,10 @@ def test_invalid_standard_workbook_reports_missing_sheet_and_column():
 
     assert not workbook.manifest.valid_standard_template
     assert any("activity_dictionary" in error for error in workbook.manifest.errors)
-    assert any("activity_data" in error and "activity_id" in error for error in workbook.manifest.errors)
+    assert any(
+        "activity_data" in error and "activity_id" in error
+        for error in workbook.manifest.errors
+    )
     with pytest.raises(ValueError, match="invalid standard workbook"):
         canonicalize_standard_workbook(workbook)
 
@@ -225,7 +301,10 @@ def test_context_and_outcomes_remain_native_tables_without_frequency_conversion(
                     }
                 ),
                 "outcome_dictionary": pd.DataFrame(
-                    {"outcome_id": ["fh_new_signups"], "source_column": ["fh_new_signups"]}
+                    {
+                        "outcome_id": ["fh_new_signups"],
+                        "source_column": ["fh_new_signups"],
+                    }
                 ),
             }
         ),
@@ -250,7 +329,10 @@ def test_context_and_outcomes_remain_native_tables_without_frequency_conversion(
                         "variable_id": ["cpi", "brand_health"],
                         "variable_class": ["rate_index", "survey_measurement"],
                         "native_frequency": ["monthly", "monthly"],
-                        "role": ["exogenous_forecastable_control", "historical_diagnostic_only"],
+                        "role": [
+                            "exogenous_forecastable_control",
+                            "historical_diagnostic_only",
+                        ],
                     }
                 ),
                 "events": pd.DataFrame(
@@ -308,7 +390,11 @@ def test_workbook_loader_records_workbook_identity_in_source_version():
     assert version.standard_template is True
     assert version.template_schema_version == STANDARD_TEMPLATE_SCHEMA_VERSION
     assert version.parsed_table_ids == workbook.manifest.table_ids
-    assert version.workbook_sheet_names == ("activity_data", "activity_dictionary", "notes")
+    assert version.workbook_sheet_names == (
+        "activity_data",
+        "activity_dictionary",
+        "notes",
+    )
     assert version.template_warnings
 
     restored = SourceVersion.from_dict(version.to_dict())
