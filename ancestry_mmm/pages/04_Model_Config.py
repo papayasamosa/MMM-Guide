@@ -728,9 +728,7 @@ if brand_search_errors:
         "Fix the Brand Search configuration errors above before preparing the modelling frame."
     )
 else:
-    _official_requested = st.button(
-        "Prepare official modelling frame", type="primary"
-    )
+    _official_requested = st.button("Prepare official modelling frame", type="primary")
     _exploratory_requested = st.button("Prepare exploratory modelling frame")
     if _official_requested and not _official_preparation.ready:
         st.error(

@@ -542,8 +542,7 @@ def workflow_page_state(
                 access_status="available" if spec else "blocked",
                 reason=(
                     "An exploratory modelling frame exists, but it does not "
-                    "satisfy official preparation. "
-                    + official_reason
+                    "satisfy official preparation. " + official_reason
                 ),
             )
         if frame:

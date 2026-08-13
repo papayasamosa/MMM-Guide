@@ -203,9 +203,7 @@ def render_sidebar(active_key: str) -> None:
         if exploratory:
             progress += f" · {exploratory} exploratory"
         st.markdown(
-            f'<div class="mmm-sidebar-footnote">'
-            f"{progress} · iterative workflow"
-            "</div>",
+            f'<div class="mmm-sidebar-footnote">{progress} · iterative workflow</div>',
             unsafe_allow_html=True,
         )
     _ = active_key  # reserved for future explicit-highlight use

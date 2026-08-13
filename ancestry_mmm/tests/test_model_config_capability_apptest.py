@@ -181,7 +181,9 @@ def test_capability_warning_never_blocks_preparing_the_frame():
     prepare_button.click().run()
     assert not at.exception, f"prepare click raised: {at.exception}"
     assert at.session_state["frame"] is not None
-    assert any("Exploratory modelling frame prepared" in (s.value or "") for s in at.success)
+    assert any(
+        "Exploratory modelling frame prepared" in (s.value or "") for s in at.success
+    )
 
 
 def test_official_preparation_has_explicit_decision_required_gate():
