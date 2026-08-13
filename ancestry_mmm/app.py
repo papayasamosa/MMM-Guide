@@ -34,6 +34,7 @@ from ancestry_mmm.utils.workflow import (
     nav_groups,
     workflow_label,
 )
+from ancestry_mmm.utils.workflow_state import workflow_page_states
 from ancestry_mmm.components import (
     apply_theme,
     render_sidebar,
@@ -345,6 +346,10 @@ def _render_project_state() -> None:
             st.caption("Model: data prepared, not fitted")
         else:
             st.caption("Model: not started")
+        states = workflow_page_states(getter=get_state)
+        required = [state for state in states if not state.optional]
+        complete = sum(1 for state in required if state.satisfied)
+        st.caption(f"Workflow: {complete} of {len(required)} stages complete")
 
 
 def _render_issues(*, compact: bool = False) -> None:

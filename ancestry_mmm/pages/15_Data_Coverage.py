@@ -37,6 +37,7 @@ from ancestry_mmm.components import (
     render_empty_state,
     render_workspace_note,
     render_status_badges,
+    render_technical_details,
     SectionCard,
     InfoPanel,
     create_coverage_fabric_chart,
@@ -120,13 +121,11 @@ if not _data_ready:
 
 st.markdown("---")
 st.caption(
-    "Every candidate model must expose a variable "
-    "coverage matrix before fitting. This page builds that matrix from the "
-    "joined data and lets you review, and propose/approve treatments for, "
-    "each variable's coverage before model preparation. It never classifies "
-    "*why* a gap exists for you - every gap starts as 'unknown' until you "
-    "reclassify it; a state is never inferred merely because a value is "
-    "absent."
+    "Review data coverage before fitting. This page builds a coverage matrix "
+    "from the joined data and lets you review and propose treatments for each "
+    "variable before model preparation. It never decides *why* a gap exists - "
+    "every gap starts as unknown until you reclassify it, and a state is never "
+    "inferred merely because a value is absent."
 )
 
 all_columns = [c for c in df.columns if c not in (date_col, market_col)]
@@ -397,11 +396,9 @@ with st.container(border=True):
 
 st.markdown("### Coverage fabric")
 st.caption(
-    "A time x variable x market visual surface built from the coverage "
-    "matrix above (the canonical missingness-state "
-    "vocabulary). Selecting or filtering here never changes governance "
-    "state - state classification and treatment approval remain the "
-    "explicit controls in section 4 below."
+    "A time-by-variable-by-market view built from the coverage matrix above. "
+    "Selecting or filtering here never changes the review state; classification "
+    "and treatment approval remain explicit controls below."
 )
 
 _fabric_cells = build_fabric_cells(matrix)
@@ -464,13 +461,15 @@ else:
                 "Observed window",
                 f"{_r.observed_start or 'n/a'} to {_r.observed_end or 'n/a'}",
             )
-            ic3.metric("Treatment status", _r.treatment_status)
+            ic3.metric("Treatment status", readable_label(_r.treatment_status))
             ic3.metric(
                 "Approved for official use",
                 "Yes" if _r.approved_for_official_use else "No",
             )
             if _r.approved_treatment:
-                st.caption(f"Approved treatment: {_r.approved_treatment}")
+                st.caption(
+                    f"Approved treatment: {readable_label(_r.approved_treatment)}"
+                )
     else:
         st.caption(
             "Click or box-select a segment above to inspect its full detail here."
@@ -478,9 +477,14 @@ else:
 
 st.markdown("---")
 st.markdown("### 3. Review coverage")
-st.caption(
-    f"Matrix `{matrix.matrix_id}` v{matrix.matrix_version} - generated "
-    f"{matrix.generated_at} - {len(matrix.records)} record(s)."
+st.caption(f"Reviewing {len(matrix.records)} variable-by-market records.")
+render_technical_details(
+    details={
+        "Matrix ID": matrix.matrix_id,
+        "Version": str(matrix.matrix_version),
+        "Generated": matrix.generated_at,
+        "Records": str(len(matrix.records)),
+    }
 )
 
 # Review finding (PR #156): a matrix built against an earlier Transform

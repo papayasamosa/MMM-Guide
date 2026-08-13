@@ -65,6 +65,12 @@ class TestNextRecommendedAction:
 
 
 class TestWorkflowReadinessStrip:
+    def test_project_state_shows_overall_progress_in_the_opening_dashboard(self):
+        at = _run_at()
+        assert not at.exception, f"page raised: {at.exception}"
+        rendered = " ".join((c.value or "") for c in at.caption)
+        assert "Workflow: 0 of 10 stages complete" in rendered
+
     def test_shows_five_workflow_areas_not_the_overview_group(self):
         at = _run_at()
         assert not at.exception, f"page raised: {at.exception}"
