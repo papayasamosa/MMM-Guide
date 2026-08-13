@@ -202,6 +202,12 @@ class TestNextStepMapping:
     def test_data_upload_leads_to_transform_pipeline(self):
         assert next_step_key("data_upload") == "transform_pipeline"
 
+    def test_next_messages_follow_the_registered_workflow_order(self):
+        for index, step in enumerate(WORKFLOW_STEPS[:-1]):
+            next_step = WORKFLOW_STEPS[index + 1]
+            assert next_step_key(step["key"]) == next_step["key"]
+            assert next_step["label"] in step["next"]
+
     def test_chain_covers_the_whole_workflow_in_order(self):
         keys = [step["key"] for step in WORKFLOW_STEPS]
         chained = [keys[0]]

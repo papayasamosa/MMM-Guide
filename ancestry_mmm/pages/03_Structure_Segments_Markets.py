@@ -190,24 +190,26 @@ with st.container(border=True):
     st.caption(
         "A compact read-only snapshot of the last saved structure. It does not imply that unsaved edits are complete."
     )
-    summary_cols = st.columns(6)
+    st.markdown("#### Scope at a glance")
+    summary_cols = st.columns(3)
     summary_cols[0].metric("Markets", len(_saved_spec.markets) if _saved_spec else "—")
     summary_cols[1].metric("Outcomes", len(_saved_outcome_rows) if _saved_spec else "—")
     summary_cols[2].metric(
         "Governed activities",
         len(_governed_activity_definitions) if _saved_spec else "—",
     )
-    summary_cols[3].metric(
+    secondary_summary_cols = st.columns(3)
+    secondary_summary_cols[0].metric(
         "Model-input columns",
         len(_saved_spec.model_input_columns) if _saved_spec else "—",
     )
-    summary_cols[4].metric(
+    secondary_summary_cols[1].metric(
         "Reporting channels",
         len({item.channel for item in _governed_activity_definitions})
         if _saved_spec
         else "—",
     )
-    summary_cols[5].metric(
+    secondary_summary_cols[2].metric(
         "Pathways",
         len(_saved_pathway_rows) if _saved_spec else "—",
     )
@@ -215,8 +217,8 @@ with st.container(border=True):
     if _legacy_activity_compatibility:
         st.info(
             "This saved project predates governed activity mapping. Its historical "
-            "ModelSpec inputs are shown through an explicit compatibility adapter; "
-            "review them in Activity Mapping before the next governed save."
+            "activity inputs are available for review; check them in Activity Mapping "
+            "before the next governed save."
         )
 
 date_col = get_state("date_col")
@@ -266,9 +268,9 @@ if _governed_activity_definitions:
     def _activity_choice_label(key: str) -> str:
         definition = _activity_choice_by_key[key]
         return (
-            f"{readable_label(definition.activity_id)} / "
-            f"{readable_label(definition.channel)} / "
-            f"{readable_label(definition.resolved_model_input_column)}"
+            f"{readable_label(definition.activity_id)} · "
+            f"{readable_label(definition.market)} · "
+            f"{readable_label(definition.channel)}"
         )
 
     _activity_choice_keys = list(_activity_choice_by_key)
@@ -285,9 +287,9 @@ if _governed_activity_definitions:
         default=_default_activity_choices,
         format_func=_activity_choice_label,
         help=(
-            "Select governed activity identities. The engine-compatible model "
-            "input column is resolved from each selected ActivityDefinition; "
-            "the reporting channel is not used as the fitted predictor."
+            "Select governed activity identities. Each selected activity uses the "
+            "media input mapped on Activity Mapping; reporting channel remains a "
+            "separate reporting label."
         ),
     )
     _selected_activity_definitions = [
@@ -336,10 +338,10 @@ if _governed_activity_definitions:
                         activity_id=definition.activity_id,
                     )
                 )
-            except (KeyError, ValueError) as error:
-                _resolution_errors.append(str(error))
-    for error in sorted(set(_resolution_errors)):
-        st.error(error)
+            except (KeyError, ValueError) as exc:
+                _resolution_errors.append(str(exc))
+    for resolution_error in sorted(set(_resolution_errors)):
+        st.error(resolution_error)
     channels = list(
         dict.fromkeys(
             definition.resolved_model_input_column
@@ -786,7 +788,11 @@ if _legacy_governance_review:
     )
     _legacy_review_draft = legacy_governance_review_catalogue(_current_model_meta)
     with st.expander("Review migrated pathways", expanded=True):
-        for _migration_message in _current_pathway_masks.migration_report:
+        for _migration_message in (
+            _current_pathway_masks.migration_report
+            if _current_pathway_masks is not None
+            else ()
+        ):
             st.write(f"- {_migration_message}")
         st.caption(
             "Load the reconstructed rows into the normal catalogue, then correct "
@@ -1105,7 +1111,7 @@ if not pathway_catalogue_df.empty:
 
 # Resolve the engine predictor from the selected governed activity before
 # constructing pathway records. The reporting channel is never used here.
-_editor_identity_errors = []
+_editor_identity_errors: list[str] = []
 
 
 def _pathway_from_editor_row(row: dict) -> MediaOutcomePathway:
@@ -1125,8 +1131,8 @@ def _pathway_from_editor_row(row: dict) -> MediaOutcomePathway:
                 market=payload["activity_market"],
                 activity_id=payload["activity_id"],
             )
-        except (KeyError, ValueError) as error:
-            _editor_identity_errors.append(str(error))
+        except (KeyError, ValueError) as exc:
+            _editor_identity_errors.append(str(exc))
     return MediaOutcomePathway.from_dict(payload)
 
 
@@ -1172,8 +1178,8 @@ with st.expander("Resolved model-equation component preview", expanded=False):
         "headline reporting, and planning. Evidence and headline approval are separate."
     )
     if _preview_errors:
-        for error in _preview_errors:
-            st.warning(error)
+        for preview_error in _preview_errors:
+            st.warning(preview_error)
     else:
         _preview_outcomes = [
             row["outcome_id"]
@@ -1438,8 +1444,8 @@ dna_segment_names = [
     for s in _catalogue_segments
     if s in (DNA_SEGMENT_NEW, DNA_SEGMENT_EXISTING_FH, DNA_SEGMENT_COMBINED)
 ]
-dna_promo_cols = {}
-dna_segment_control_cols = {}
+dna_promo_cols: dict[str, str] = {}
+dna_segment_control_cols: dict[str, dict] = {}
 if dna_segment_names:
     st.markdown("#### DNA promotion calendar (optional, structured)")
     st.caption(

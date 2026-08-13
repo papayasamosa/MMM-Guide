@@ -2474,3 +2474,36 @@ single master-detail inspector.
 
 **Owner:** Platform engineering / Data Science.
 **Status:** Implemented in UX/UI coherence Phase 2.
+
+## Model Structure and Causal Graph workflow hierarchy (UX/UI coherence Phase 3)
+
+**Date:** 2026-08-13
+**Decision:** Keep the Model Structure scope summary readable as two compact
+three-metric rows, show activity choices as activity · market · reporting
+channel, and keep implementation names out of routine activity guidance.
+Present Causal Graph node roles, edge roles, and lag choices through shared
+human-readable labels, a compact text role legend, and a status badge. Route
+the Causal Graph next step to Market Context before Model Setup.
+
+**Reason:** Recent governed activity and graph capabilities made both pages
+technically precise but harder to scan. Six equal metrics were cramped at
+narrow supported widths, activity selectors prioritised source syntax, graph
+canvas labels exposed enum values, and the next-step copy skipped a registered
+workflow page.
+
+**Impact:** Presentation labels, responsive grouping, status rendering, graph
+role/lag display, and workflow guidance changed. Stored role keys, graph
+validation, graph compilation, structure persistence, and the registered page
+order remain unchanged. No analytical or governance behaviour changed.
+Business question: can an analyst understand model scope and causal structure,
+then follow the registered workflow without learning repository terminology?
+Estimand: none introduced. Output scale/units: presentation-only scope counts,
+activity identities, graph roles, edge relationships, and lag descriptions;
+underlying model-input units and graph semantics are unchanged. Upstream
+modelling references: none consulted because this is a presentation/workflow
+package and does not change PyMC or PyMC Marketing model APIs. Remaining
+limitation: final responsive and browser verification depends on the CI browser
+journey because an interactive browser was unavailable in the local session.
+
+**Owner:** Platform engineering / Data Science.
+**Status:** Implemented in UX/UI coherence Phase 3.
