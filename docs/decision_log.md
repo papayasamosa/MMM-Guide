@@ -3211,3 +3211,31 @@ fields remain available in the Technical details disclosure.
 
 **Owner:** Platform engineering / Data Science.
 **Status:** Implemented in UX/UI coherence Phase 26.
+
+## Carry human outcome labels into fit scope (UX/UI coherence Phase 27)
+
+**Date:** 2026-08-14
+**Decision:** Use the governed product, segment, and metric description in
+Model Setup's included/excluded outcome summaries and Fit Model's direct-DNA
+response summary. Keep stored outcome IDs unchanged for selection, persistence,
+model fingerprints, and fitting.
+
+**Reason:** Model Structure now lets analysts choose outcomes by their business
+meaning, but the next two workflow pages still repeated internal outcome IDs.
+That made the same outcome appear to change identity as the analyst moved from
+model design into fit preparation.
+
+**Impact:** Presentation-only changes to Model Setup and Fit Model summaries.
+Model Setup also fills missing fields in a restored partial prior configuration
+from the existing current defaults before rendering its controls; saved values
+remain authoritative and no prior meaning changes. No model inputs, outcome
+inclusion rules, direct-DNA response mapping, or saved state changed. Business
+question: which governed outcomes will this fit include, and which DNA outcomes
+receive direct response? Estimand: none introduced. Output scale/units: unchanged.
+Upstream modelling references: none consulted; no modelling API or dependency
+changed.
+Remaining limitation: technical source columns and stable IDs remain available
+through the governed configuration and technical persistence details.
+
+**Owner:** Platform engineering / Data Science.
+**Status:** Implemented in UX/UI coherence Phase 27.

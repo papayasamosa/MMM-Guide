@@ -15,6 +15,7 @@ from ancestry_mmm.utils import (
     DEFAULT_FH_PRIORS,
     format_number,
     FIELD_HELP,
+    readable_label,
 )
 from ancestry_mmm.components import (
     apply_theme,
@@ -99,6 +100,23 @@ spec = ModelSpec.from_dict(spec_dict)
 outcome_definitions = resolve_outcome_definitions(
     get_state("outcome_definitions"), spec.segment_outcomes, spec.segment_ltv
 )
+
+
+def _outcome_display_label(outcome) -> str:
+    label = " · ".join(
+        str(part).strip()
+        for part in (outcome.product, outcome.segment, outcome.metric)
+        if str(part).strip()
+    )
+    if outcome.definition_version:
+        label += f" (definition {outcome.definition_version})"
+    return label or readable_label(outcome.outcome_id)
+
+
+outcome_display_labels = {
+    outcome.outcome_id: _outcome_display_label(outcome)
+    for outcome in outcome_definitions
+}
 
 with st.container(border=True):
     st.markdown("### Model setup summary")
@@ -203,7 +221,10 @@ st.caption(
     + " Stage 1 core: geometric adstock + Hill saturation, shared across segments and markets per channel."
 )
 
-prior_config = dict(get_state("prior_config") or DEFAULT_FH_PRIORS)
+prior_config = {
+    **DEFAULT_FH_PRIORS,
+    **(get_state("prior_config") or {}),
+}
 
 with st.expander("Advanced model assumptions", expanded=False):
     st.caption(
@@ -494,11 +515,23 @@ _included_outcomes_section = SectionCard(
 _included_outcomes_section.__enter__()
 if excluded_dna_outcomes:
     st.caption(
-        f"Excluded from this fit (see Structure): {', '.join(o.outcome_id for o in excluded_dna_outcomes)}."
+        "Excluded from this fit (see Structure): "
+        + ", ".join(
+            outcome_display_labels.get(
+                outcome.outcome_id, readable_label(outcome.outcome_id)
+            )
+            for outcome in excluded_dna_outcomes
+        )
+        + "."
     )
 if dna_kit_outcomes:
     st.info(
-        f"DNA outcomes mapped on Structure will be included in this fit: {', '.join(dna_kit_outcomes)}. "
+        "DNA outcomes mapped on Structure will be included in this fit: "
+        + ", ".join(
+            outcome_display_labels.get(outcome_id, readable_label(outcome_id))
+            for outcome_id in dna_kit_outcomes
+        )
+        + ". "
         "DNA-targeted media gets full direct response on these outcomes, same as the FH DNA-cross-sell "
         "outcome, separate from the cross-product halo pathway used for other outcomes."
     )

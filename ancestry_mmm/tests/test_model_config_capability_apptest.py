@@ -17,7 +17,13 @@ from ancestry_mmm.core.coverage import (
     VariableCoverageRecord,
 )
 from ancestry_mmm.core.fingerprint import fingerprint_dataframe
-from ancestry_mmm.core.outcomes import FAMILY_HISTORY, METRIC_GSA, OutcomeDefinition
+from ancestry_mmm.core.outcomes import (
+    DNA,
+    FAMILY_HISTORY,
+    METRIC_GSA,
+    METRIC_KIT_SALE,
+    OutcomeDefinition,
+)
 from ancestry_mmm.core.schema import ModelSpec
 
 st.page_link = lambda *a, **k: None
@@ -223,3 +229,51 @@ def test_official_action_remains_primary_when_exploratory_is_available():
     )
     assert official_button.proto.type == "primary"
     assert exploratory_button.proto.type != "primary"
+
+
+def test_fit_scope_messages_use_business_outcome_labels_not_stored_ids():
+    df, spec, outcome_defs = _base_state()
+    df["DNA_New"] = np.arange(len(df), dtype=float) + 2
+    outcome_defs = [
+        OutcomeDefinition(
+            outcome_id="fh_new_gsa_internal",
+            product=FAMILY_HISTORY,
+            segment="New",
+            metric=METRIC_GSA,
+            source_column="New",
+            included_in_fit=False,
+        ).to_dict(),
+        OutcomeDefinition(
+            outcome_id="dna_new_kit_internal",
+            product=DNA,
+            segment="New Customer",
+            metric=METRIC_KIT_SALE,
+            source_column="DNA_New",
+        ).to_dict(),
+    ]
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.session_state["transformed_data"] = df
+    at.session_state["model_spec"] = spec.to_dict()
+    at.session_state["outcome_definitions"] = outcome_defs
+    at.run()
+
+    assert not at.exception, f"page raised: {at.exception}"
+    messages = " ".join(
+        (element.value or "")
+        for elements in (at.info, at.warning, at.error, at.success, at.caption)
+        for element in elements
+    )
+    assert "Family History · New · GSA" in messages
+    assert "DNA · New Customer · Kit sale" in messages
+    assert "fh_new_gsa_internal" not in messages
+    assert "dna_new_kit_internal" not in messages
+
+
+def test_partial_saved_prior_configuration_reuses_current_defaults():
+    at = _run_at(prior_config={"decay_mu": 0.5})
+
+    assert not at.exception, f"page raised: {at.exception}"
+    decay_uncertainty = next(
+        slider for slider in at.slider if slider.label == "How uncertain is carryover?"
+    )
+    assert decay_uncertainty.value == 0.2
