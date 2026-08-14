@@ -236,6 +236,14 @@ from .outcomes import (
     resolve_outcome_definitions,
     outcomes_to_dataframe,
 )
+from .outcome_import import (
+    OutcomeCatalogueAdoption,
+    OutcomeCatalogueComparison,
+    OutcomeSourceImport,
+    adopt_outcome_source_draft,
+    compare_outcome_catalogues,
+    interpret_outcome_source,
+)
 from .promotions import (
     PromotionEvent,
     validate_promotion_events,
@@ -450,6 +458,12 @@ __all__ = [
     "dna_kit_outcome_columns",
     "resolve_outcome_definitions",
     "outcomes_to_dataframe",
+    "OutcomeCatalogueAdoption",
+    "OutcomeCatalogueComparison",
+    "OutcomeSourceImport",
+    "adopt_outcome_source_draft",
+    "compare_outcome_catalogues",
+    "interpret_outcome_source",
     "PromotionEvent",
     "validate_promotion_events",
     "promotion_weekly_series",

@@ -11,6 +11,7 @@ from ancestry_mmm.utils import (
     init_session_state,
     clear_model_state,
     dataframe_column_config,
+    set_state,
 )
 from ancestry_mmm.components import (
     apply_theme,
@@ -33,7 +34,10 @@ from ancestry_mmm.data import (
     source_lineage_id,
     source_table_name,
 )
-from ancestry_mmm.data.templates import STANDARD_TEMPLATE_SCHEMA_VERSION
+from ancestry_mmm.data.templates import (
+    STANDARD_TEMPLATE_SCHEMA_VERSION,
+    canonicalize_standard_workbook,
+)
 from ancestry_mmm.core.coverage import (
     SourceVersion,
     SourceDefinition,
@@ -44,6 +48,15 @@ from ancestry_mmm.core.coverage import (
     DOMAIN_CONTEXT_AND_EXTERNAL_FACTORS,
     DOMAIN_EXPERIMENT_EVIDENCE,
     resolve_source_logical_domain,
+)
+from ancestry_mmm.core.outcomes import OutcomeDefinition, OutcomeGroupDefinition
+from ancestry_mmm.core.outcome_import import (
+    OUTCOME_SOURCE_STATUS_BLOCKED,
+    OUTCOME_SOURCE_STATUS_V1_INCOMPLETE,
+    OUTCOME_SOURCE_STATUS_V2_DRAFT,
+    OutcomeCatalogueAdoption,
+    adopt_outcome_source_draft,
+    interpret_outcome_source,
 )
 
 # REQ-DATAIN-001: human-readable labels for the four governed logical
@@ -122,6 +135,169 @@ def _store_standard_workbook(
     st.session_state["source_definitions"] = definitions
     st.session_state["active_source_upload_version"] = active
     return stored
+
+
+def _record_outcome_source_import(workbook, canonical_bundle) -> None:
+    """Store source semantics separately, adopting only when no catalogue exists."""
+    current_definitions = [
+        OutcomeDefinition.from_dict(value)
+        for value in (st.session_state.get("outcome_definitions") or [])
+    ]
+    current_groups = [
+        OutcomeGroupDefinition.from_dict(value)
+        for value in (st.session_state.get("outcome_groups") or [])
+    ]
+    source_import = interpret_outcome_source(
+        schema_version=workbook.manifest.template_schema_version,
+        outcome_definitions=canonical_bundle.outcome_definitions,
+        outcome_groups=canonical_bundle.outcome_groups,
+        outcome_reconciliation_groups=canonical_bundle.outcome_reconciliation_groups,
+        outcome_completeness_metadata=canonical_bundle.outcome_completeness_metadata,
+        source_warnings=workbook.manifest.warnings,
+        current_outcomes=current_definitions,
+        current_groups=current_groups,
+    )
+    set_state("outcome_source_import_status", source_import.to_dict())
+    set_state(
+        "outcome_source_draft",
+        [item.to_dict() for item in source_import.outcome_definitions]
+        if source_import.is_seedable_draft
+        else None,
+    )
+    set_state(
+        "outcome_source_draft_groups",
+        [item.to_dict() for item in source_import.outcome_groups]
+        if source_import.is_seedable_draft
+        else [],
+    )
+    set_state(
+        "outcome_source_draft_reconciliation_groups",
+        [
+            item.to_dict() if hasattr(item, "to_dict") else item
+            for item in source_import.outcome_reconciliation_groups
+        ]
+        if source_import.is_seedable_draft
+        else [],
+    )
+
+    # A v2 source is allowed to seed an empty catalogue as an unapproved
+    # draft.  Existing catalogue records are never replaced by upload.
+    if source_import.is_seedable_draft and not current_definitions:
+        adoption = adopt_outcome_source_draft(source_import)
+        adopted = adoption.to_state()
+        for key, value in adopted.items():
+            if key != "outcome_approvals":
+                set_state(key, value)
+        status = dict(source_import.to_dict())
+        status["draft_seeded"] = True
+        set_state("outcome_source_import_status", status)
+
+
+def _render_outcome_source_review() -> None:
+    """Render source-dictionary status and an explicit adoption action."""
+    status = st.session_state.get("outcome_source_import_status")
+    if not status:
+        return
+    with SectionCard(
+        "Outcome dictionary review",
+        description="Imported meaning is a draft until an analyst reviews and approves it.",
+    ):
+        source_version = status.get("schema_version") or "unknown"
+        source_status = status.get("status")
+        st.caption(f"Source contract: `{source_version}`")
+        if source_status == OUTCOME_SOURCE_STATUS_V1_INCOMPLETE:
+            st.warning(
+                "This is a legacy/incomplete v1 mapping. Product, Metric, Breakdown, "
+                "Segment, and Outcome group were not inferred, so no source draft was "
+                "seeded. Add a v2 dictionary or review the catalogue manually."
+            )
+            for warning in status.get("warnings") or ():
+                st.caption(warning)
+            return
+        if source_status == OUTCOME_SOURCE_STATUS_BLOCKED:
+            st.error("The v2 dictionary could not be used to seed a draft catalogue.")
+            for error in status.get("errors") or ():
+                st.caption(error)
+            return
+        if source_status != OUTCOME_SOURCE_STATUS_V2_DRAFT:
+            st.error("The Outcomes source contract is unsupported and was not adopted.")
+            return
+
+        draft_count = len(st.session_state.get("outcome_source_draft") or [])
+        draft_group_count = len(
+            st.session_state.get("outcome_source_draft_groups") or []
+        )
+        if status.get("draft_seeded"):
+            st.success(
+                f"Seeded {draft_count} v2 outcome definition(s) and "
+                f"{draft_group_count} outcome group(s) as an unapproved draft."
+            )
+
+        comparison = status.get("comparison") or {}
+        current_exists = bool(st.session_state.get("outcome_definitions") or [])
+        if current_exists and not status.get("draft_seeded"):
+            st.info(
+                "An existing outcome catalogue was kept unchanged. Review the source "
+                "comparison below before explicitly adopting it as a new draft."
+            )
+            rows = []
+            for outcome_id in comparison.get("source_only_outcome_ids") or ():
+                rows.append(
+                    {"kind": "Outcome", "change": "source only", "id": outcome_id}
+                )
+            for outcome_id in comparison.get("current_only_outcome_ids") or ():
+                rows.append(
+                    {"kind": "Outcome", "change": "current only", "id": outcome_id}
+                )
+            for outcome_id in comparison.get("changed_outcome_ids") or ():
+                rows.append({"kind": "Outcome", "change": "changed", "id": outcome_id})
+            for group_id in comparison.get("source_only_group_ids") or ():
+                rows.append({"kind": "Group", "change": "source only", "id": group_id})
+            for group_id in comparison.get("current_only_group_ids") or ():
+                rows.append({"kind": "Group", "change": "current only", "id": group_id})
+            for group_id in comparison.get("changed_group_ids") or ():
+                rows.append({"kind": "Group", "change": "changed", "id": group_id})
+            if rows:
+                st.dataframe(rows, hide_index=True, width="stretch")
+            else:
+                st.success("The imported v2 source matches the current catalogue.")
+            if st.button(
+                "Adopt imported catalogue as draft",
+                key="adopt_outcome_source_draft",
+                disabled=not bool(st.session_state.get("outcome_source_draft")),
+            ):
+                adoption = OutcomeCatalogueAdoption(
+                    outcome_definitions=tuple(
+                        OutcomeDefinition.from_dict(value)
+                        for value in (
+                            st.session_state.get("outcome_source_draft") or []
+                        )
+                    ),
+                    outcome_groups=tuple(
+                        OutcomeGroupDefinition.from_dict(value)
+                        for value in (
+                            st.session_state.get("outcome_source_draft_groups") or []
+                        )
+                    ),
+                    outcome_reconciliation_groups=tuple(
+                        st.session_state.get(
+                            "outcome_source_draft_reconciliation_groups"
+                        )
+                        or []
+                    ),
+                )
+                for key, value in adoption.to_state().items():
+                    if key != "outcome_approvals":
+                        set_state(key, value)
+                updated_status = dict(status)
+                updated_status["draft_seeded"] = True
+                set_state("outcome_source_import_status", updated_status)
+                clear_model_state()
+                st.success(
+                    "Imported outcome definitions and groups adopted as a draft. "
+                    "No outcome approval was created."
+                )
+                st.rerun()
 
 
 st.set_page_config(
@@ -442,6 +618,51 @@ with tab_upload:
                         "Correct the standard workbook, or choose 'Add as generic "
                         "Excel fallback' to import only its first sheet."
                     )
+                elif add_standard_source and logical_domain_choice == DOMAIN_OUTCOMES:
+                    try:
+                        canonical_outcome_bundle = canonicalize_standard_workbook(
+                            workbook
+                        )
+                    except ValueError as exc:
+                        set_state("outcome_source_draft", None)
+                        set_state("outcome_source_draft_groups", [])
+                        set_state("outcome_source_draft_reconciliation_groups", [])
+                        set_state(
+                            "outcome_source_import_status",
+                            {
+                                "schema_version": workbook.manifest.template_schema_version,
+                                "status": OUTCOME_SOURCE_STATUS_BLOCKED,
+                                "errors": [str(exc)],
+                                "warnings": list(workbook.manifest.warnings),
+                            },
+                        )
+                        st.error(
+                            "The Outcomes workbook passed sheet checks but its "
+                            f"dictionary could not be interpreted: {exc}"
+                        )
+                    else:
+                        stored = _store_standard_workbook(
+                            source_name,
+                            workbook,
+                            source_version,
+                            logical_domain_choice,
+                        )
+                        st.session_state["source_versions"] = [
+                            v.to_dict() for v in existing_versions
+                        ] + [source_version.to_dict()]
+                        st.session_state["data_loaded"] = True
+                        st.session_state["demo_source_pack"] = None
+                        _record_outcome_source_import(
+                            workbook, canonical_outcome_bundle
+                        )
+                        clear_model_state()
+                        for message in workbook.manifest.warnings:
+                            st.warning(message)
+                        st.success(
+                            f"Loaded standard workbook {uploaded.name} as {len(stored)} "
+                            f"separate table(s) under '{_DOMAIN_LABELS[logical_domain_choice]}' "
+                            f"(v{source_version.version})."
+                        )
                 else:
                     if (
                         add_generic_excel
@@ -547,6 +768,9 @@ with tab_upload:
                         f"Loaded {df.shape[0]} rows from {uploaded.name} as source "
                         f"'{source_name}' (version {source_version.version})."
                     )
+
+
+_render_outcome_source_review()
 
 
 def _render_source_detail(name: str, df) -> None:

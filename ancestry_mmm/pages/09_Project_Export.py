@@ -51,6 +51,9 @@ from ancestry_mmm.core.persistence import (
     resolve_imported_source_versions,
     resolve_imported_source_definitions,
     resolve_imported_variable_coverage_matrices,
+    resolve_imported_outcome_groups,
+    resolve_imported_outcome_group_treatments,
+    resolve_imported_outcome_reconciliation_groups,
     verify_imported_approval,
     UnsafeZipEntryError,
     audit_project_resumability,
@@ -107,6 +110,7 @@ from ancestry_mmm.core.coverage import (
 from ancestry_mmm.core.media_units import market_specific_cpa_table
 from ancestry_mmm.core.outcome_approval import OutcomeApproval
 from ancestry_mmm.core.outcomes import (
+    OutcomeGroupDefinition,
     fh_gsa_outcome_ids,
     outcome_catalogue_fingerprint_payload,
     resolve_outcome_definitions,
@@ -601,6 +605,9 @@ if st.button("Build export bundle", type="primary"):
             market_spec_config=get_state("market_spec_config"),
             model_type=get_state("model_type", "shared"),
             outcome_definitions=get_state("outcome_definitions"),
+            outcome_groups=get_state("outcome_groups"),
+            outcome_group_treatments=get_state("outcome_group_treatments"),
+            outcome_reconciliation_groups=get_state("outcome_reconciliation_groups"),
             funnel_links=get_state("funnel_links"),
             media_outcome_pathways=get_state("media_outcome_pathways"),
             net_billthrough_metadata=get_state("net_billthrough_metadata"),
@@ -796,6 +803,45 @@ if uploaded_zip is not None and st.button("Import bundle"):
         )
         set_state("model_type", imported["model_type"])
         set_state("outcome_definitions", imported["outcome_definitions"])
+        _resolved_outcome_groups, _outcome_group_warnings = (
+            resolve_imported_outcome_groups(imported)
+        )
+        set_state("outcome_groups", _resolved_outcome_groups)
+        _group_objects = [
+            OutcomeGroupDefinition.from_dict(value)
+            for value in _resolved_outcome_groups
+        ]
+        _resolved_group_treatments, _group_treatment_warnings = (
+            resolve_imported_outcome_group_treatments(
+                imported,
+                groups=_group_objects,
+            )
+        )
+        set_state("outcome_group_treatments", _resolved_group_treatments)
+        _resolved_reconciliation_groups, _reconciliation_warnings = (
+            resolve_imported_outcome_reconciliation_groups(
+                imported,
+                outcome_ids=[
+                    value.get("outcome_id")
+                    for value in (imported.get("outcome_definitions") or [])
+                    if isinstance(value, dict)
+                ]
+                or None,
+            )
+        )
+        set_state("outcome_reconciliation_groups", _resolved_reconciliation_groups)
+        for _outcome_group_warning in (
+            _outcome_group_warnings
+            + _group_treatment_warnings
+            + _reconciliation_warnings
+        ):
+            st.warning(_outcome_group_warning)
+        # Draft import review is session-local.  The durable catalogue above
+        # is the source of truth after a bundle restore.
+        set_state("outcome_source_draft", None)
+        set_state("outcome_source_draft_groups", [])
+        set_state("outcome_source_draft_reconciliation_groups", [])
+        set_state("outcome_source_import_status", None)
         # G2A.7a.1 (REQ-OUT-002 section 12.1, 12.3): migration now lives in
         # core (resolve_imported_outcome_approvals) - a programmatic import
         # gets the same legacy_unapproved migration a UI-driven import does,

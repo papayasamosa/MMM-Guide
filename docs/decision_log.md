@@ -3460,3 +3460,46 @@ totals remain in WP6. Reconciliation is persisted as labelled diagnostic
 evidence, not as a fitted likelihood or causal edge.
 **Owner:** Data Science / Platform engineering.
 **Status:** Implemented in persistence and staleness WP3.
+
+## Outcomes source import and draft catalogue adoption (Work Package 4)
+
+**Date:** 2026-08-14
+**Decision:** Interpret a valid `standard-source-pack-v2` Outcomes workbook
+through the canonical source bundle and retain its definitions, semantic groups,
+diagnostic reconciliation records, and completeness metadata as a separate
+source draft. When no outcome catalogue exists, seed those canonical records as
+an unapproved draft so analysts do not retype dictionary meaning. When a
+catalogue already exists, retain it unchanged and show a calculation-relevant
+source/current comparison; adoption requires an explicit analyst action. A v1
+workbook remains loadable but is marked legacy/incomplete and contributes no
+seeded semantic definitions. Import and adoption never create an
+`OutcomeApproval` or choose a group treatment.
+**Reason:** Source metadata and the governed catalogue are related but are not
+the same authority at upload time. Automatic overwrite could silently change
+the meaning of an existing fit, while automatic approval would bypass the
+existing outcome-governance contract. The v1 compatibility path must remain
+visible rather than inferring business meaning from IDs.
+**Alternatives considered:** overwrite the live catalogue on every upload
+(rejected - it destroys reviewable current state); silently merge source rows
+(rejected - additions and calculation-relevant changes need explicit review);
+infer v1 dimensions/groups from names (rejected - the approved contract
+forbids ID-based semantic inference); create approvals during import (rejected
+- approval is a separate governed action).
+**Impact:** `core.outcome_import` provides a portable source interpretation,
+catalogue comparison, and explicit draft-adoption payload. Data Sources now
+canonicalises Outcomes uploads, seeds an empty catalogue as a draft, exposes a
+human-readable comparison for an existing catalogue, and clearly reports v1
+incompleteness. Project export/import now carries the WP3 group, treatment, and
+reconciliation state through the UI. No model equations, fit treatment, or
+posterior aggregation changed. Business question: can a supplied Outcomes
+dictionary be reviewed and adopted without re-entry or silent catalogue
+replacement? Estimand: none introduced; imported values remain supplied source
+observations. Output scale/units: unchanged and governed by each canonical
+definition; no approval or causal edge is created.
+**Upstream modelling references:** none consulted; this package changes source
+interpretation and workflow state only, not modelling APIs.
+**Remaining limitation:** group fit-treatment controls, draw-level grouped
+totals, DNA alternative protection, downloadable templates, realistic source
+pack refresh, and full end-to-end UX remain in WP5-WP8.
+**Owner:** Data Science / Platform engineering.
+**Status:** Implemented in source import and draft catalogue WP4.
