@@ -240,6 +240,17 @@ def test_media_outcome_pathway_catalogue_saves_and_validates():
     assert not at.exception, (
         f"initial load with a pre-populated pathway raised: {at.exception}"
     )
+    component_row = next(
+        select
+        for select in at.selectbox
+        if select.label == "Component-specific pathway fields"
+    )
+    assert any(
+        "tv spend" in str(option)
+        and "dna new kit" in str(option)
+        and "Direct effect" in str(option)
+        for option in component_row.options
+    )
 
     save_button = [b for b in at.button if b.label == "Save structure and validate"][0]
     save_button.click().run()

@@ -926,10 +926,10 @@ pathway_catalogue_editor = st.data_editor(
             help="Explicit market scope for the governed activity identity.",
         ),
         "channel": st.column_config.SelectboxColumn(
-            "Physical model input",
+            "Mapped model input",
             options=channels,
             required=True,
-            help="Engine predictor resolved from the governed activity; it is not the reporting channel.",
+            help="Each selected activity uses the media input mapped on Activity Mapping; reporting channel remains separate.",
         ),
         "source_product": st.column_config.SelectboxColumn(
             "Source product",
@@ -1020,11 +1020,13 @@ if not pathway_catalogue_df.empty:
 
     def _pathway_row_label(index: int) -> str:
         row = pathway_catalogue_df.iloc[index]
-        activity = row.get("activity_id") or row.get("channel") or "(activity not set)"
-        market = row.get("activity_market") or "*"
-        outcome = row.get("target_outcome_id") or "(outcome not set)"
-        component = row.get("component_type") or "direct"
-        return f"Row {index + 1}: {activity} ({market}) -> {outcome} [{component}]"
+        activity = readable_label(
+            row.get("activity_id") or row.get("channel") or "(activity not set)"
+        )
+        market = readable_label(row.get("activity_market") or "All markets")
+        outcome = readable_label(row.get("target_outcome_id") or "(outcome not set)")
+        component = readable_label(row.get("component_type") or "direct")
+        return f"Row {index + 1}: {activity} ({market}) → {outcome} [{component}]"
 
     _selected_pathway_row = st.selectbox(
         "Component-specific pathway fields",

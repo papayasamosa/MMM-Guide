@@ -3045,3 +3045,37 @@ browser journey because the local connected browser was unavailable.
 
 **Owner:** Platform engineering / Data Science.
 **Status:** Implemented in UX/UI coherence Phase 20.
+
+## Human pathway and graph detail labels (UX/UI coherence Phase 21)
+
+**Date:** 2026-08-14
+**Decision:** Keep stored activity, model-input, outcome, pathway, node, and
+edge identifiers unchanged while presenting routine Model Structure pathway
+choices and Causal Graph edge context with readable labels. Rename the pathway
+editor's `Physical model input` display to `Mapped model input`, explain that
+the media input comes from Activity Mapping, and describe the model-plan
+preview as a structural support check rather than an engine-capability
+message.
+
+**Reason:** The workflow already separated reporting channels, mapped model
+inputs, and causal objects correctly, but a few routine displays still exposed
+source-style identifiers or implementation language. Analysts should be able
+to choose and inspect a pathway or graph edge without learning repository keys;
+the exact keys remain available to the persistence and validation contracts.
+
+**Impact:** Presentation-only pathway row labels, one column label/help text,
+one graph inspector caption, model-plan preview copy, and focused AppTest
+expectations. No pathway role, graph role, model-input mapping, validation,
+compilation, persistence, approval, or governance behaviour changed. Business
+question: can an analyst identify the activity, market, outcome, pathway type,
+and graph relationship from the routine controls without interpreting raw
+storage keys? Estimand: none introduced. Output scale/units: unchanged;
+existing model-input units and outcome definitions remain authoritative.
+Upstream modelling references: none consulted because this package changes
+presentation only and does not change PyMC or PyMC Marketing model APIs.
+Remaining limitation: interactive browser screenshot review uses the
+repository's deterministic synthetic-data browser journey because the local
+connected browser was unavailable.
+
+**Owner:** Platform engineering / Data Science.
+**Status:** Implemented in UX/UI coherence Phase 21.

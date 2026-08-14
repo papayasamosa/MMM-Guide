@@ -106,6 +106,9 @@ def test_add_edge_via_form_creates_an_edge_and_passes_validation():
     edge_select = next(select for select in at.selectbox if select.label == "Edge")
     assert any("Direct" in option for option in edge_select.options)
     edge_select.set_value(stored["edges"][0]["edge_id"]).run()
+    captions = " ".join(caption.value or "" for caption in at.caption)
+    assert "TV → fh new" in captions
+    assert "TV -> fh_new" not in captions
     lag_select = next(select for select in at.selectbox if select.label == "Lag type")
     assert "Fixed delay" in lag_select.options
 
