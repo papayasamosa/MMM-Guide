@@ -49,7 +49,7 @@ from __future__ import annotations
 import hashlib
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field, replace
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence, cast
 
 import pandas as pd
 
@@ -1484,7 +1484,7 @@ def validate_legacy_governance_review(
             "the migration review."
         )
     review_draft = legacy_governance_review_catalogue(model_meta)
-    reviewed_by_pair = {}
+    reviewed_by_pair: Dict[tuple[str, str], List[MediaOutcomePathway]] = {}
     for pathway in pathways:
         reviewed_by_pair.setdefault(
             (pathway.target_outcome_id, pathway.channel), []
@@ -1562,7 +1562,7 @@ def legacy_governance_change_summary(
 ) -> dict:
     """Machine-readable before/after audit for a completed legacy review."""
     draft = legacy_governance_review_catalogue(model_meta)
-    reviewed_by_pair = {}
+    reviewed_by_pair: Dict[tuple[str, str], List[MediaOutcomePathway]] = {}
     for pathway in pathways:
         reviewed_by_pair.setdefault(
             (pathway.target_outcome_id, pathway.channel), []
@@ -1963,7 +1963,9 @@ def pathways_drift_dataframe(
         current = current_by_id.get(pid)
         fit_time = fit_by_id.get(pid)
         status = pathway_drift_status(current, fit_time)
-        row = (current or fit_time).to_dict()
+        row_source = current if current is not None else fit_time
+        assert row_source is not None
+        row = row_source.to_dict()
         row["pathway_id"] = _deterministic_pathway_id(
             row["channel"], row["target_outcome_id"], row["component_type"]
         )
@@ -2106,11 +2108,16 @@ def reconciliation_group_diagnostics(
     outcome_ids are treated as `None` (not zero) - the diagnostic reports
     `None` values it couldn't evaluate rather than guessing.
     """
-    component_values = [
-        values_by_outcome_id.get(oid) for oid in group.component_outcome_ids
+    component_values: List[float | None] = [
+        cast(float | None, values_by_outcome_id.get(oid))
+        for oid in group.component_outcome_ids
     ]
     has_all_components = all(v is not None for v in component_values)
-    component_sum = sum(component_values) if has_all_components else None
+    component_sum = (
+        sum(value for value in component_values if value is not None)
+        if has_all_components
+        else None
+    )
 
     result: Dict[str, Any] = {
         "group_id": group.group_id,
