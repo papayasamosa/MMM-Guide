@@ -784,7 +784,10 @@ elif selected_kind == "Edge" and len(edge_options) > 1:
     if selected_edge_id != "(none)":
         edge = next(e for e in graph.edges if e.edge_id == selected_edge_id)
         with st.form("cg_edge_form"):
-            st.caption(f"{edge.source_node_id} -> {edge.target_node_id}")
+            st.caption(
+                f"{node_option_labels.get(edge.source_node_id, edge.source_node_id)} → "
+                f"{node_option_labels.get(edge.target_node_id, edge.target_node_id)}"
+            )
             role = st.selectbox(
                 "Role",
                 EDGE_ROLES,
@@ -876,8 +879,8 @@ _workbench_inspector_col.__exit__(None, None, None)
 st.markdown("---")
 st.markdown("### Model-plan preview")
 st.caption(
-    "A pure preview of what this graph would compile to - no engine "
-    "capability check yet (see Compilation readiness above for that)."
+    "A structural preview of the plan this graph would create. Use "
+    "Compilation readiness above to see whether the current fit supports it."
 )
 if validation.is_valid:
     plan = build_compilation_plan_preview(
