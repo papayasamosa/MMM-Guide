@@ -1,4 +1,4 @@
-"""Contract tests for the source-native realistic synthetic demo (WP7)."""
+"""Contract tests for the source-native realistic synthetic demo (WP8)."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from ancestry_mmm.core.coverage import (
 )
 from ancestry_mmm.data.loader import load_realistic_sample_sources
 from ancestry_mmm.data.templates import (
+    OUTCOMES_TEMPLATE_SCHEMA_VERSION,
     canonicalize_standard_workbook,
     parse_standard_workbook,
 )
@@ -100,6 +101,69 @@ def test_realistic_pack_keeps_native_frequency_and_irregular_events():
     assert durations.nunique() == 2
 
 
+def test_realistic_pack_demonstrates_canonical_outcome_breakdowns():
+    frames, error = load_realistic_sample_sources()
+    assert error is None
+
+    outcomes = frames["outcomes"]
+    dictionary = frames["outcome_dictionary"]
+    assert {
+        "fh_gsa_new",
+        "fh_gsa_dna_cross_sell",
+        "fh_gsa_winback",
+        "fh_signup_new",
+        "fh_signup_dna_cross_sell",
+        "fh_signup_winback",
+        "dna_kit_new_customer",
+        "dna_kit_existing_fh_customer",
+        "dna_kit_self",
+        "dna_kit_someone_else",
+    }.issubset(outcomes.columns)
+    assert {
+        "product",
+        "metric",
+        "segment_dimension",
+        "segment",
+        "outcome_group_id",
+        "outcome_group_label",
+        "outcome_family_key",
+        "source_column",
+    }.issubset(dictionary.columns)
+    assert "cohort_basis" not in dictionary.columns
+    assert "maturity_rule" not in dictionary.columns
+    assert "owner" not in dictionary.columns
+    assert "version" not in dictionary.columns
+    assert set(dictionary.loc[dictionary["product"] == "DNA", "segment_dimension"]) == {
+        "dna_customer_relationship",
+        "dna_purchase_recipient",
+    }
+    assert set(dictionary.loc[dictionary["metric"] == "GSA", "segment"]) == {
+        "New",
+        "DNA cross-sell",
+        "Winback",
+    }
+
+    workbook = parse_standard_workbook(
+        _write_workbook(
+            {
+                "outcomes": outcomes,
+                "outcome_dictionary": dictionary,
+            }
+        ),
+        source_id="realistic-outcomes-v2",
+        filename="realistic-outcomes-v2.xlsx",
+        logical_domain=DOMAIN_OUTCOMES,
+    )
+    assert workbook.manifest.template_schema_version == OUTCOMES_TEMPLATE_SCHEMA_VERSION
+    bundle = canonicalize_standard_workbook(workbook)
+    assert {group.group_id for group in bundle.outcome_groups} == {
+        "fh_gsa_by_customer_segment",
+        "fh_signup_by_customer_segment",
+        "dna_kit_by_customer_relationship",
+        "dna_kit_by_purchase_recipient",
+    }
+
+
 def test_realistic_pack_canonicalises_each_domain_without_frequency_conversion():
     frames, error = load_realistic_sample_sources()
     assert error is None
@@ -136,6 +200,10 @@ def test_realistic_pack_canonicalises_each_domain_without_frequency_conversion()
     outcome_bundle = canonicalize_standard_workbook(outcome_workbook)
     assert outcome_bundle.outcomes is not None
     assert len(outcome_bundle.outcomes) == len(frames["outcomes"])
+    assert (
+        outcome_workbook.manifest.template_schema_version
+        == OUTCOMES_TEMPLATE_SCHEMA_VERSION
+    )
 
     context_workbook = parse_standard_workbook(
         _write_workbook(

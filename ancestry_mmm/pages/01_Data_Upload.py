@@ -25,6 +25,8 @@ from ancestry_mmm.components import (
     WarningPanel,
 )
 from ancestry_mmm.data import (
+    TEMPLATE_MIME_TYPE,
+    build_standard_template,
     load_file_with_source_version,
     load_standard_workbook_with_source_version,
     load_all_sample_sources,
@@ -33,9 +35,10 @@ from ancestry_mmm.data import (
     summarise_source_inventory,
     source_lineage_id,
     source_table_name,
+    standard_template_filename,
 )
 from ancestry_mmm.data.templates import (
-    STANDARD_TEMPLATE_SCHEMA_VERSION,
+    OUTCOMES_TEMPLATE_SCHEMA_VERSION,
     canonicalize_standard_workbook,
 )
 from ancestry_mmm.core.coverage import (
@@ -415,6 +418,43 @@ with st.container(border=True):
                 )
             )
 
+with st.container(border=True):
+    st.markdown("### Download standard templates")
+    st.caption(
+        "Use one workbook for one data category. These files contain synthetic "
+        "example rows to show the shape of the source contract; replace them with "
+        "your approved source data before upload."
+    )
+    st.info(
+        f"The Outcomes template uses `{OUTCOMES_TEMPLATE_SCHEMA_VERSION}` and "
+        "keeps Product, Metric, Breakdown, Segment, Outcome group, and Source "
+        "column explicit. Optional `outcome_completeness` is not included; if "
+        "you add it, provide real completeness rows or remove the sheet rather "
+        "than leaving it empty."
+    )
+    _template_downloads = (
+        (DOMAIN_OUTCOMES, "Outcomes (v2)"),
+        (DOMAIN_ACTIVITY_AND_MEDIA, "Activity and Media"),
+        (DOMAIN_CONTEXT_AND_EXTERNAL_FACTORS, "Context and External Factors"),
+        (DOMAIN_EXPERIMENT_EVIDENCE, "Experiment Evidence"),
+    )
+    _template_columns = st.columns(len(_template_downloads))
+    for _template_column, (_domain, _label) in zip(
+        _template_columns, _template_downloads
+    ):
+        with _template_column:
+            st.download_button(
+                f"Download {_label} template",
+                data=build_standard_template(_domain),
+                file_name=standard_template_filename(_domain),
+                mime=TEMPLATE_MIME_TYPE,
+                key=f"download_standard_template_{_domain}",
+                help=(
+                    "Synthetic example workbook. Keep the logical domain separate "
+                    "when you upload it."
+                ),
+            )
+
 st.markdown("### Add or update sources")
 st.session_state.setdefault("project_name", "ancestry-fh-uk")
 st.session_state["project_name"] = st.text_input(
@@ -508,7 +548,7 @@ with tab_demo:
                 for name, domain in realistic_domains.items()
             ]
             st.session_state["data_loaded"] = True
-            st.session_state["demo_source_pack"] = "realistic-source-pack-v1"
+            st.session_state["demo_source_pack"] = "realistic-source-pack-v2"
             clear_model_state()
             st.success(
                 "Loaded realistic synthetic source pack: "
@@ -525,7 +565,8 @@ with tab_upload:
     )
     with st.expander("Preferred standard workbook pack", expanded=True):
         st.caption(
-            f"Schema version: `{STANDARD_TEMPLATE_SCHEMA_VERSION}`. Standard "
+            f"Schema version: `{OUTCOMES_TEMPLATE_SCHEMA_VERSION}` for Outcomes; "
+            "other domains keep their own standard contract. Standard "
             "Excel packs are read sheet-by-sheet; physical tables remain separate "
             "under one logical domain."
         )
