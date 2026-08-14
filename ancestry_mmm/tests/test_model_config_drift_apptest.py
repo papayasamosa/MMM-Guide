@@ -88,10 +88,10 @@ def test_changed_catalogue_shows_human_warning_and_technical_details():
 
     assert len(at.warning) == 1
     assert (
-        "Outcome definitions have changed since this model was fitted"
+        "The fitted model no longer matches 1 outcome definition(s)."
         in at.warning[0].value
     )
-    assert "Refit the model" in at.warning[0].value
+    assert "Refit the model or restore the fitted definitions" in at.warning[0].value
     assert any(
         expander.label == "Technical details · outcome definition changes"
         for expander in at.expander
