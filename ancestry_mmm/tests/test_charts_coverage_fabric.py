@@ -46,13 +46,29 @@ def _cells():
 
 
 class TestStateVisuals:
+    def test_uses_recognisable_marks_instead_of_single_letter_codes(self):
+        expected_marks = {
+            FABRIC_LABEL_COVERED: "✓",
+            "observed_zero": "0",
+            "estimated": "≈",
+            "modelled": "ƒ",
+            "not_applicable": "—",
+            "suppressed": "⊘",
+            "unavailable_source": "∅",
+            "missing_expected": "!",
+            "unknown": "?",
+        }
+        assert {
+            state: glyph for state, (_, glyph, _) in STATE_VISUALS.items()
+        } == expected_marks
+
     def test_covers_every_governed_state_plus_the_covered_sentinel(self):
         assert set(STATE_VISUALS) == set(COVERAGE_STATES) | {FABRIC_LABEL_COVERED}
 
-    def test_every_entry_has_a_non_empty_label_glyph_and_colour(self):
+    def test_every_entry_has_a_non_empty_label_mark_and_colour(self):
         for state, (label, glyph, color) in STATE_VISUALS.items():
             assert label, f"{state} has no label"
-            assert glyph, f"{state} has no glyph - states must never be colour-only"
+            assert glyph, f"{state} has no mark - states must never be colour-only"
             assert color, f"{state} has no colour"
 
     def test_every_colour_is_distinct(self):
