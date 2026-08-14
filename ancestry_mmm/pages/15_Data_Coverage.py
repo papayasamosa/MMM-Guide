@@ -74,7 +74,12 @@ init_session_state()
 apply_theme()
 render_sidebar("data_coverage")
 
-df = get_state("transformed_data")
+_official_prepared_data = get_state("official_prepared_data")
+df = (
+    _official_prepared_data
+    if _official_prepared_data is not None
+    else get_state("transformed_data")
+)
 date_col = get_state("date_col")
 market_col = get_state("market_col")
 _data_ready = df is not None and bool(date_col) and bool(market_col)
@@ -127,6 +132,13 @@ st.caption(
     "every gap starts as unknown until you reclassify it, and a state is never "
     "inferred merely because a value is absent."
 )
+if _official_prepared_data is not None:
+    st.info(
+        "The current matrix review is based on the official canonical frame: "
+        "an explicit weekly preparation over the union of governed source "
+        "periods. Missing values remain missing; the exploratory joined frame "
+        "is not used as an official coverage substitute."
+    )
 
 all_columns = [c for c in df.columns if c not in (date_col, market_col)]
 numeric_cols = [c for c in detect_column_types(df)["numeric"] if c in all_columns]

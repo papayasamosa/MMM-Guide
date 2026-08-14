@@ -51,6 +51,13 @@ def init_session_state():
         # Transformation pipeline
         "pipeline_steps": [],  # list of TransformStep dicts
         "transformed_data": None,
+        # WP2: the official native-frequency frame is kept separate from the
+        # exploratory Transform Pipeline output.  It is rebuilt from the
+        # source union under an explicit governed calendar and never silently
+        # aliases an inner-joined exploratory frame.
+        "official_prepared_data": None,
+        "official_join_diagnostics": None,
+        "official_prepared_data_fingerprint": None,
         "validation_issues": [],
         # Structural model spec (core.schema.ModelSpec as a dict)
         "model_spec": None,
@@ -132,6 +139,7 @@ def init_session_state():
         # derived review result, never a source-data or conversion artefact;
         # it is cleared whenever model/data state is invalidated.
         "official_preparation_result": None,
+        "official_capability_report": None,
         # Optional explicit project-calendar configuration. It is intentionally
         # empty by default: official preparation must not infer a calendar
         # from source intersection or observed dates.
@@ -241,6 +249,9 @@ def clear_model_state() -> None:
     """Clear all model-related state (useful when data or spec changes)."""
     model_keys = [
         "frame",
+        "official_prepared_data",
+        "official_join_diagnostics",
+        "official_prepared_data_fingerprint",
         "model",
         "model_meta",
         "trace",
@@ -265,6 +276,7 @@ def clear_model_state() -> None:
         "approval_readiness",
         "validation_service_result",
         "official_preparation_result",
+        "official_capability_report",
     ]
     for key in model_keys:
         st.session_state[key] = None

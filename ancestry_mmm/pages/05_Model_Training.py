@@ -273,6 +273,7 @@ def _proposed_model_fingerprint(fingerprint_model_type: str) -> str:
             if coverage_matrix_dict
             else None
         ),
+        official_preparation_evidence=get_state("official_preparation_result"),
     )
     return f"{fingerprint_dataframe(frame['df'])}:{model_spec_fingerprint}"
 
@@ -414,7 +415,20 @@ st.markdown("### Fit action")
 st.caption(
     "Build the proposed model and start sampling. A new fit creates a new run identity and clears any previous approval."
 )
-if st.button("Build & fit model", type="primary"):
+_official_result = get_state("official_preparation_result")
+_frame_mode = frame.get("preparation_mode")
+_official_fit_gate_blocked = (
+    isinstance(_official_result, dict)
+    and bool(_official_result)
+    and _frame_mode != "official"
+)
+if _official_fit_gate_blocked:
+    st.error(
+        "Fitting is blocked for this frame because it is exploratory while "
+        "official preparation is unresolved. Return to Model Setup and "
+        "prepare the official canonical frame before fitting an official run."
+    )
+if (not _official_fit_gate_blocked) and st.button("Build & fit model", type="primary"):
     try:
         with st.spinner("Building model..."):
             model, meta = _build_proposed_model(model_type)

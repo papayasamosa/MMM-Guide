@@ -52,6 +52,11 @@ from ancestry_mmm.core.coverage import VariableCoverageMatrix
 from ancestry_mmm.core.fingerprint import fingerprint_dataframe
 from ancestry_mmm.core.frequency_alignment import assess_official_preparation
 from ancestry_mmm.core.market_data_capability import check_market_channel_capability
+from ancestry_mmm.core.official_preparation import (
+    build_official_capability_report,
+    prepare_canonical_native_frame,
+    OfficialPreparationDataError,
+)
 from ancestry_mmm.data import prepare_fh_modeling_frame
 import pandas as pd
 
@@ -637,12 +642,70 @@ _frequency_section = SectionCard(
 )
 _frequency_section.__enter__()
 _canonical_calendar = get_state("canonical_calendar") or {}
+st.caption(
+    "Set the project calendar explicitly before official preparation. The "
+    "calendar is not inferred from the shortest source, the current inner "
+    "join, or observed dates."
+)
+_calendar_start_col, _calendar_end_col, _calendar_frequency_col = st.columns(3)
+_calendar_start = _calendar_start_col.text_input(
+    "Governed start (YYYY-MM-DD)", value=str(_canonical_calendar.get("start") or "")
+)
+_calendar_end = _calendar_end_col.text_input(
+    "Governed end (YYYY-MM-DD)", value=str(_canonical_calendar.get("end") or "")
+)
+_calendar_frequency_options = ["weekly"]
+_calendar_frequency = _calendar_frequency_col.selectbox(
+    "Governed frequency (current official path)",
+    _calendar_frequency_options,
+    index=(
+        _calendar_frequency_options.index(
+            str(_canonical_calendar.get("frequency") or "weekly").lower()
+        )
+        if str(_canonical_calendar.get("frequency") or "weekly").lower()
+        in _calendar_frequency_options
+        else 0
+    ),
+)
+if st.button("Save governed calendar"):
+    try:
+        from ancestry_mmm.core.frequency_alignment import resolve_canonical_calendar
+
+        _saved_calendar = resolve_canonical_calendar(
+            governed_start=_calendar_start.strip(),
+            governed_end=_calendar_end.strip(),
+            governed_frequency=_calendar_frequency,
+        ).to_dict()
+        if _canonical_calendar.get("as_of"):
+            _saved_calendar["as_of"] = _canonical_calendar["as_of"]
+        set_state("canonical_calendar", _saved_calendar)
+        clear_model_state()
+        st.success(
+            "Governed project calendar saved. Re-run official preparation review."
+        )
+        _canonical_calendar = _saved_calendar
+    except (TypeError, ValueError) as exc:
+        st.error(f"Governed calendar was not saved: {exc}")
+
+_official_capability_report = build_official_capability_report(
+    spec,
+    outcome_definitions,
+    _coverage_matrix,
+    activity_definitions=get_state("activity_definitions") or [],
+    search_objects=get_state("search_objects") or [],
+    pipeline_steps=get_state("pipeline_steps") or [],
+)
+set_state("official_capability_report", _official_capability_report.to_dict())
 _official_preparation = assess_official_preparation(
     _coverage_matrix,
     governed_start=_canonical_calendar.get("start"),
     governed_end=_canonical_calendar.get("end"),
     governed_frequency=_canonical_calendar.get("frequency"),
     as_of=_canonical_calendar.get("as_of"),
+    consumed_variable_ids=tuple(
+        item.variable_id for item in _official_capability_report.consumed_variables
+    ),
+    capability_evidence=_official_capability_report.to_dict(),
 )
 set_state("official_preparation_result", _official_preparation.to_dict())
 
@@ -731,6 +794,27 @@ if _official_preparation.decisions_required:
         for _decision in _official_preparation.decisions_required:
             st.markdown(f"- {_decision}")
 
+with st.expander("Consumed-variable capability evidence"):
+    st.caption(
+        "Only source-backed variables used by the compiled proposal can block "
+        "official preparation. Gaps on unconsumed variables remain visible in "
+        "Data Coverage but do not block this fit. Fourier and trend terms are "
+        "reported as deterministic generated terms, not source coverage."
+    )
+    _capability_rows = [
+        {
+            "Variable": item.variable_id,
+            "Role(s)": ", ".join(item.roles),
+            "Status": item.status,
+            "Issues": "; ".join(item.issues),
+        }
+        for item in _official_capability_report.consumed_variables
+    ]
+    if _capability_rows:
+        st.dataframe(pd.DataFrame(_capability_rows), width="stretch", hide_index=True)
+    else:
+        st.caption("No source-backed variables are resolved from the current proposal.")
+
 st.caption(
     "Native-frequency source rows and missingness are preserved. The "
     "Transform Pipeline remains available for explicitly exploratory work "
@@ -770,14 +854,47 @@ else:
         )
     elif _official_requested or _exploratory_requested:
         try:
+            if _official_requested:
+                if not get_state("raw_sources"):
+                    raise OfficialPreparationDataError(
+                        "Official preparation requires the durable raw source "
+                        "tables; the exploratory joined frame is not an official fallback."
+                    )
+                _canonical_frame = prepare_canonical_native_frame(
+                    get_state("raw_sources") or {},
+                    date_col=spec.date_col,
+                    market_col=spec.market_col,
+                    governed_start=str(_canonical_calendar["start"]),
+                    governed_end=str(_canonical_calendar["end"]),
+                    governed_frequency=str(_canonical_calendar["frequency"]),
+                    pipeline_steps=get_state("pipeline_steps") or [],
+                )
+                _frame_input = _canonical_frame.frame
+            else:
+                _canonical_frame = None
+                _frame_input = df
             frame = prepare_fh_modeling_frame(
-                df,
+                _frame_input,
                 spec,
                 outcomes=outcome_definitions,
                 media_outcome_pathways=get_state("media_outcome_pathways") or [],
                 activity_definitions=get_state("activity_definitions") or [],
                 net_billthrough_metadata=get_state("net_billthrough_metadata"),
             )
+            frame["preparation_mode"] = (
+                "official" if _official_requested else "exploratory"
+            )
+            if _canonical_frame is not None:
+                frame["official_union_periods"] = list(_canonical_frame.union_periods)
+                frame["official_join_diagnostics"] = _canonical_frame.join_diagnostics
+                set_state("official_prepared_data", _canonical_frame.frame)
+                set_state(
+                    "official_join_diagnostics", _canonical_frame.join_diagnostics
+                )
+                set_state(
+                    "official_prepared_data_fingerprint",
+                    fingerprint_dataframe(_canonical_frame.frame),
+                )
             set_state("frame", frame)
             set_state("prior_config", prior_config)
             set_state("dna_lag_weeks", int(dna_lag_weeks))
@@ -792,6 +909,18 @@ else:
             )
             clear_model_state()
             set_state("official_preparation_result", _official_preparation.to_dict())
+            set_state(
+                "official_capability_report", _official_capability_report.to_dict()
+            )
+            if _canonical_frame is not None:
+                set_state("official_prepared_data", _canonical_frame.frame)
+                set_state(
+                    "official_join_diagnostics", _canonical_frame.join_diagnostics
+                )
+                set_state(
+                    "official_prepared_data_fingerprint",
+                    fingerprint_dataframe(_canonical_frame.frame),
+                )
             set_state("frame", frame)  # clear_model_state wipes frame too - reset after
             _frame_mode = "official" if _official_requested else "exploratory"
             st.success(
@@ -800,7 +929,7 @@ else:
                 f"{len(frame['channels'])} channels, {len(frame['outcome_ids'])} outcomes, "
                 f"{len(frame['markets'])} market(s). Model structure: {model_type_labels[model_type]}."
             )
-        except ValueError as e:
+        except (OfficialPreparationDataError, ValueError) as e:
             st.error(
                 f"Could not prepare the modelling frame: {e} Review the structure and try again."
             )

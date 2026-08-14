@@ -265,6 +265,7 @@ if model_run_id and posterior_params is not None and model_spec_dict is not None
                 if coverage_matrix_dict
                 else None
             ),
+            official_preparation_evidence=get_state("official_preparation_result"),
         ),
         posterior_fingerprint=fingerprint_posterior(posterior_params),
     )

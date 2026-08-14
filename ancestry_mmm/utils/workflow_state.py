@@ -151,7 +151,9 @@ def _official_preparation_summary(getter: StateGetter) -> tuple[Optional[str], s
 
 def _data_coverage_status(getter: StateGetter, key: str) -> WorkflowPageState:
     matrix = _get(getter, "variable_coverage_matrix")
-    transformed = _get(getter, "transformed_data")
+    transformed = _get(getter, "official_prepared_data")
+    if transformed is None:
+        transformed = _get(getter, "transformed_data")
     if matrix is None:
         if transformed is None:
             return _state(

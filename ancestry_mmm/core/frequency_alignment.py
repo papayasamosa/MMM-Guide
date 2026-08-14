@@ -616,6 +616,8 @@ class OfficialPreparationResult:
     decisions_required: Tuple[str, ...] = ()
     conversion_variable_classes: Tuple[str, ...] = ()
     native_data_preserved: bool = True
+    capability_evidence: Optional[dict] = None
+    consumed_variable_ids: Tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.status not in OFFICIAL_PREPARATION_STATUSES:
@@ -641,12 +643,16 @@ class OfficialPreparationResult:
             "decisions_required": list(self.decisions_required),
             "conversion_variable_classes": list(self.conversion_variable_classes),
             "native_data_preserved": self.native_data_preserved,
+            "capability_evidence": self.capability_evidence,
+            "consumed_variable_ids": list(self.consumed_variable_ids),
             "ready": self.ready,
         }
 
 
 def _alignment_spec_from_coverage_record(
     record: VariableCoverageRecord,
+    *,
+    target_frequency: Optional[str] = None,
 ) -> AlignmentSpecification:
     """Translate the persisted coverage contract into an alignment request."""
 
@@ -657,7 +663,7 @@ def _alignment_spec_from_coverage_record(
         source_version=record.source_version,
         market=record.market,
         native_frequency=frequency.native_frequency,
-        target_frequency=frequency.target_frequency,
+        target_frequency=target_frequency or frequency.target_frequency,
         variable_class=frequency.variable_class,
         publication_lag_periods=frequency.publication_lag_periods,
         method_id=frequency.method or None,
@@ -677,6 +683,8 @@ def assess_official_preparation(
     governed_end: Optional[str] = None,
     governed_frequency: Optional[str] = None,
     as_of: Optional[str] = None,
+    consumed_variable_ids: Optional[Tuple[str, ...]] = None,
+    capability_evidence: Optional[dict] = None,
 ) -> OfficialPreparationResult:
     """Assess whether an official model frame may be prepared.
 
@@ -708,7 +716,13 @@ def assess_official_preparation(
             ),
         )
 
-    coverage_issues = tuple(official_fit_blocking_issues(matrix.records))
+    consumed_ids = set(consumed_variable_ids or ())
+    records = tuple(
+        record
+        for record in matrix.records
+        if not consumed_variable_ids or record.variable_id in consumed_ids
+    )
+    coverage_issues = tuple(official_fit_blocking_issues(records))
     if coverage_issues:
         return OfficialPreparationResult(
             status="decision_required",
@@ -722,6 +736,8 @@ def assess_official_preparation(
                 "Set the governed project calendar (start, end, and frequency); "
                 "it must not be inferred from a source intersection.",
             ),
+            capability_evidence=capability_evidence,
+            consumed_variable_ids=tuple(consumed_variable_ids or ()),
         )
 
     try:
@@ -737,7 +753,7 @@ def assess_official_preparation(
         # choice behind it would make the UI less actionable.
         conversion_records = tuple(
             record
-            for record in matrix.records
+            for record in records
             if record.frequency.native_frequency.strip().lower()
             != record.frequency.target_frequency.strip().lower()
         )
@@ -775,6 +791,8 @@ def assess_official_preparation(
                         "intersection.",
                     ),
                     conversion_variable_classes=conversion_classes,
+                    capability_evidence=capability_evidence,
+                    consumed_variable_ids=tuple(consumed_variable_ids or ()),
                 )
         return OfficialPreparationResult(
             status="decision_required",
@@ -783,13 +801,32 @@ def assess_official_preparation(
                 "Set the governed project calendar (start, end, and frequency); "
                 "it must not be inferred from a source intersection.",
             ),
+            capability_evidence=capability_evidence,
+            consumed_variable_ids=tuple(consumed_variable_ids or ()),
+        )
+
+    if capability_evidence and not capability_evidence.get("supported", False):
+        capability_issues = tuple(capability_evidence.get("blocking_issues") or ())
+        return OfficialPreparationResult(
+            status="decision_required",
+            reason=(
+                "Official preparation is blocked because one or more variables "
+                "consumed by the compiled model do not have resolved governed "
+                "coverage or engine support: " + "; ".join(capability_issues)
+            ),
+            canonical_calendar=calendar,
+            decisions_required=capability_issues,
+            capability_evidence=capability_evidence,
+            consumed_variable_ids=tuple(consumed_variable_ids or ()),
         )
 
     conversion_records = tuple(
         record
-        for record in matrix.records
+        for record in records
         if record.frequency.native_frequency.strip().lower()
         != record.frequency.target_frequency.strip().lower()
+        or record.frequency.target_frequency.strip().lower()
+        != calendar.frequency.strip().lower()
     )
     conversion_classes = tuple(
         sorted({record.frequency.variable_class for record in conversion_records})
@@ -807,7 +844,9 @@ def assess_official_preparation(
 
     results = tuple(
         evaluate_alignment_request(
-            _alignment_spec_from_coverage_record(record),
+            _alignment_spec_from_coverage_record(
+                record, target_frequency=calendar.frequency
+            ),
             period_start=calendar.start,
             period_end=calendar.end,
             as_of=as_of,
@@ -838,6 +877,8 @@ def assess_official_preparation(
             alignment_results=results,
             decisions_required=decisions,
             conversion_variable_classes=conversion_classes,
+            capability_evidence=capability_evidence,
+            consumed_variable_ids=tuple(consumed_variable_ids or ()),
         )
 
     # Feasibility is not execution. Until a separately-scoped executor is
@@ -857,4 +898,6 @@ def assess_official_preparation(
             "request can produce an official model frame.",
         ),
         conversion_variable_classes=conversion_classes,
+        capability_evidence=capability_evidence,
+        consumed_variable_ids=tuple(consumed_variable_ids or ()),
     )

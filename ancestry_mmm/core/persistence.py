@@ -295,6 +295,11 @@ def export_project(
     outcome_groups: Optional[List[dict]] = None,
     outcome_group_treatments: Optional[List[dict]] = None,
     outcome_reconciliation_groups: Optional[List[dict]] = None,
+    canonical_calendar: Optional[dict] = None,
+    official_preparation_result: Optional[dict] = None,
+    official_capability_report: Optional[dict] = None,
+    official_prepared_data: Optional[pd.DataFrame] = None,
+    official_join_diagnostics: Optional[dict] = None,
 ) -> Path:
     output_path = Path(output_path)
     with tempfile.TemporaryDirectory() as tmp_str:
@@ -309,6 +314,10 @@ def export_project(
         if transformed_data is not None:
             transformed_data.to_parquet(
                 tmp / "data" / "transformed.parquet", index=False
+            )
+        if official_prepared_data is not None:
+            official_prepared_data.to_parquet(
+                tmp / "data" / "official_prepared.parquet", index=False
             )
 
         (tmp / "config" / "pipeline_steps.json").write_text(
@@ -517,6 +526,22 @@ def export_project(
             (tmp / "config" / "join_config.json").write_text(
                 json.dumps(join_config, indent=2, default=str)
             )
+        if canonical_calendar is not None:
+            (tmp / "config" / "canonical_calendar.json").write_text(
+                json.dumps(canonical_calendar, indent=2, default=str)
+            )
+        if official_preparation_result is not None:
+            (tmp / "config" / "official_preparation_result.json").write_text(
+                json.dumps(official_preparation_result, indent=2, default=str)
+            )
+        if official_capability_report is not None:
+            (tmp / "config" / "official_capability_report.json").write_text(
+                json.dumps(official_capability_report, indent=2, default=str)
+            )
+        if official_join_diagnostics is not None:
+            (tmp / "config" / "official_join_diagnostics.json").write_text(
+                json.dumps(official_join_diagnostics, indent=2, default=str)
+            )
         if diagnostics is not None:
             for name, value in diagnostics.items():
                 if value is None:
@@ -599,6 +624,12 @@ def export_project(
                 "variable_coverage_matrices": variable_coverage_matrices is not None
                 and bool(variable_coverage_matrices),
                 "join_config": join_config is not None and bool(join_config),
+                "canonical_calendar": canonical_calendar is not None
+                and bool(canonical_calendar),
+                "official_preparation_result": official_preparation_result is not None,
+                "official_capability_report": official_capability_report is not None,
+                "official_prepared_data": official_prepared_data is not None,
+                "official_join_diagnostics": official_join_diagnostics is not None,
             },
         }
         (tmp / "manifest.json").write_text(json.dumps(manifest, indent=2, default=str))
@@ -723,6 +754,14 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         # no sources joined yet - "not joined yet" is a valid, not-an-error
         # reading, same convention as the other config keys above.
         "join_config": None,
+        # WP2: official preparation evidence is optional for legacy bundles.
+        # Absence restores a blocked/unreviewed state, never a fabricated
+        # official frame or calendar.
+        "canonical_calendar": None,
+        "official_preparation_result": None,
+        "official_capability_report": None,
+        "official_prepared_data": None,
+        "official_join_diagnostics": None,
     }
     with tempfile.TemporaryDirectory() as tmp_str:
         tmp = Path(tmp_str)
@@ -740,6 +779,11 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
             transformed_path = data_dir / "transformed.parquet"
             if transformed_path.exists():
                 result["transformed_data"] = pd.read_parquet(transformed_path)
+            official_prepared_path = data_dir / "official_prepared.parquet"
+            if official_prepared_path.exists():
+                result["official_prepared_data"] = pd.read_parquet(
+                    official_prepared_path
+                )
 
         config_dir = tmp / "config"
         if (config_dir / "pipeline_steps.json").exists():
@@ -894,6 +938,22 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         if (config_dir / "join_config.json").exists():
             result["join_config"] = json.loads(
                 (config_dir / "join_config.json").read_text()
+            )
+        if (config_dir / "canonical_calendar.json").exists():
+            result["canonical_calendar"] = json.loads(
+                (config_dir / "canonical_calendar.json").read_text()
+            )
+        if (config_dir / "official_preparation_result.json").exists():
+            result["official_preparation_result"] = json.loads(
+                (config_dir / "official_preparation_result.json").read_text()
+            )
+        if (config_dir / "official_capability_report.json").exists():
+            result["official_capability_report"] = json.loads(
+                (config_dir / "official_capability_report.json").read_text()
+            )
+        if (config_dir / "official_join_diagnostics.json").exists():
+            result["official_join_diagnostics"] = json.loads(
+                (config_dir / "official_join_diagnostics.json").read_text()
             )
         # G2A.7 (REQ-OUT-002): outcome approvals persisted alongside outcome
         # definitions. Absent in legacy bundles — treated as no approvals on
@@ -2434,7 +2494,8 @@ def reconstruct_model_state(imported: Dict[str, Any]) -> Dict[str, Any]:
     """
     Given the dict returned by import_project(), re-derive the model
     artefacts that aren't directly serialised in the bundle - the modelling
-    frame and posterior parameters - from what is: transformed_data +
+    frame and posterior parameters - from what is: official_prepared_data (when
+    present) or transformed_data +
     model_spec + outcome_definitions (frame; no MCMC involved, just the
     same pandas/numpy prep fit uses) and trace + model_meta (posterior
     params; posterior summarisation, not re-sampling). Doesn't require or
@@ -2505,10 +2566,12 @@ def reconstruct_model_state(imported: Dict[str, Any]) -> Dict[str, Any]:
         except TypeError:
             result["model_meta"] = None
 
-    if (
-        imported.get("transformed_data") is not None
-        and imported.get("model_spec") is not None
-    ):
+    fit_input = (
+        imported.get("official_prepared_data")
+        if imported.get("official_prepared_data") is not None
+        else imported.get("transformed_data")
+    )
+    if fit_input is not None and imported.get("model_spec") is not None:
         try:
             # Local import: `ancestry_mmm.data.preprocessor` imports `ancestry_mmm.core.schema`
             # at module level, so importing it at module level here would close a
@@ -2519,7 +2582,7 @@ def reconstruct_model_state(imported: Dict[str, Any]) -> Dict[str, Any]:
             from .outcomes import resolve_outcome_definitions
 
             spec = ModelSpec.from_dict(imported["model_spec"])
-            transformed_data = imported["transformed_data"]
+            transformed_data = fit_input
             outcome_definitions = resolve_outcome_definitions(
                 imported.get("outcome_definitions"),
                 spec.segment_outcomes,
@@ -2534,6 +2597,11 @@ def reconstruct_model_state(imported: Dict[str, Any]) -> Dict[str, Any]:
                 spec,
                 outcomes=usable_outcomes,
                 activity_definitions=imported.get("activity_definitions") or [],
+            )
+            result["frame"]["preparation_mode"] = (
+                "official"
+                if imported.get("official_prepared_data") is not None
+                else "exploratory"
             )
         except (ValueError, KeyError):
             result["frame"] = None
@@ -2666,6 +2734,7 @@ def current_model_identity_fingerprints(
             if current_coverage_matrix_dict
             else None
         ),
+        official_preparation_evidence=imported.get("official_preparation_result"),
     )
     posterior_fp = fingerprint_posterior(posterior_params)
     return data_fp, spec_fp, posterior_fp
