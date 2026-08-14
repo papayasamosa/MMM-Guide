@@ -90,7 +90,7 @@ render_page_header(
     "data_coverage",
     task_prompt="Which variables are complete enough, and what treatment is approved for gaps?",
     description=(
-        "Review each governed variable's coverage and missingness by "
+        "Review each variable's coverage and missingness by "
         "market, then propose and approve a treatment before this data is "
         "eligible for official use."
     ),
@@ -111,7 +111,7 @@ if not _data_ready:
         button_label="Go to Prepare Data",
         target_key="transform_pipeline",
         what_for=(
-            "Reviewing each governed variable's coverage and missingness "
+            "Reviewing each variable's coverage and missingness "
             "by market before defining model structure."
         ),
         dependency="Prepared data with a market column (Prepare Data).",
@@ -212,12 +212,11 @@ product_col = None if product_col_choice == "(none)" else product_col_choice
 segment_col = None if segment_col_choice == "(none)" else segment_col_choice
 
 if variable_columns:
-    st.markdown("#### Per-variable frequency, class and source")
+    st.markdown("#### Per-variable frequency, type and source")
     st.caption(
-        "Variable class gates which frequency-"
-        "conversion methods are eligible - never one default applied "
-        "across classes. Source ID/version identify which governed upload "
-        "(Data Sources page) this variable's values came from."
+        "Variable type gates which frequency-alignment methods are eligible - "
+        "never one default applied across types. Source and version identify "
+        "which upload (Data Sources page) this variable's values came from."
     )
     metadata_rows = []
     for column in variable_columns:
@@ -408,7 +407,7 @@ if _fabric_summary:
 
 if not _fabric_cells:
     st.caption(
-        "No coverage-fabric cells to render yet - every governed variable's "
+        "No coverage-fabric cells to render yet - every variable's "
         "expected window (or, absent one, every recorded gap segment) is "
         "empty for this matrix."
     )
@@ -539,7 +538,27 @@ summary_rows = [
     }
     for record in matrix.records
 ]
-st.dataframe(pd.DataFrame(summary_rows), width="stretch", hide_index=True)
+summary_df = pd.DataFrame(summary_rows).rename(
+    columns={
+        "variable": "Variable",
+        "market": "Market",
+        "product": "Product",
+        "segment": "Customer segment",
+        "native_frequency": "Source frequency",
+        "target_frequency": "Model frequency",
+        "observed_start": "Observed start",
+        "observed_end": "Observed end",
+        "expected_start": "Expected start",
+        "expected_end": "Expected end",
+        "gap_segments": "Gap segments",
+        "gap_states": "Gap states",
+        "officially_unresolved": "Official use",
+    }
+)
+summary_df["Official use"] = summary_df["Official use"].map(
+    lambda unresolved: "Review" if unresolved else "Ready"
+)
+st.dataframe(summary_df, width="stretch", hide_index=True)
 
 st.markdown("#### Gap segment classification")
 st.caption(

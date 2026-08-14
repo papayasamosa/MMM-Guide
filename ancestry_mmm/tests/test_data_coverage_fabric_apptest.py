@@ -98,9 +98,18 @@ def test_fabric_section_renders_with_a_built_matrix():
     summary_tables = [
         table.value
         for table in at.dataframe
-        if "gap_states" in getattr(table.value, "columns", [])
+        if "Gap states" in getattr(table.value, "columns", [])
     ]
-    assert summary_tables and "Unknown" in summary_tables[0]["gap_states"].tolist()
+    assert summary_tables and "Unknown" in summary_tables[0]["Gap states"].tolist()
+    assert not any(
+        column in summary_tables[0].columns
+        for column in (
+            "native_frequency",
+            "target_frequency",
+            "gap_segments",
+            "officially_unresolved",
+        )
+    )
 
 
 def test_summary_sentences_render_and_mention_the_actual_market():
