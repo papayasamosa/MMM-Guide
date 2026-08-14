@@ -47,7 +47,10 @@ from ancestry_mmm.core.market_specific_diagnostics import (
 )
 from ancestry_mmm.core.diagnostics import compute_scorecard, prior_predictive_summary
 from ancestry_mmm.core.fingerprint import fingerprint_dataframe, fingerprint_model_spec
-from ancestry_mmm.core.outcomes import outcome_catalogue_fingerprint_payload
+from ancestry_mmm.core.outcomes import (
+    outcome_catalogue_fingerprint_payload,
+    resolve_outcome_definitions,
+)
 from ancestry_mmm.core.pathways import pathway_catalogue_fingerprint_payload
 from ancestry_mmm.core.activities import activity_fit_fingerprint
 from ancestry_mmm.core.search_objects import search_object_fit_fingerprint
@@ -57,6 +60,14 @@ MODEL_TYPE_LABELS = {
     "shared": "Shared response across markets (Model A)",
     "market_specific": "Market-specific response with partial pooling (Model C)",
 }
+
+
+def _outcome_display_label(outcome) -> str:
+    label = f"{outcome.product} · {outcome.segment} · {outcome.metric}"
+    if outcome.definition_version:
+        label += f" (definition {outcome.definition_version})"
+    return label
+
 
 st.set_page_config(
     page_title="Fit Model | Ancestry Family History & DNA MMM",
@@ -86,6 +97,14 @@ if frame is None or not spec_dict:
     st.stop()
 
 spec = ModelSpec.from_dict(spec_dict)
+outcome_definitions = resolve_outcome_definitions(
+    get_state("outcome_definitions"), spec.segment_outcomes, spec.segment_ltv
+)
+outcome_display_labels = {
+    alias: _outcome_display_label(outcome)
+    for outcome in outcome_definitions
+    for alias in (outcome.outcome_id, outcome.source_column)
+}
 if get_state("model_meta") is not None:
     render_drift_status(frame.get("outcomes") or [], get_state("model_meta"))
 model_type = get_state("model_type", "shared")
@@ -118,7 +137,13 @@ with SectionCard(
     description="The model identity and scope that will be used if you start fitting.",
 ):
     st.caption(f"Markets: {', '.join(frame['markets'])}")
-    st.caption(f"Outcomes: {', '.join(frame['outcome_ids'])}")
+    st.caption(
+        "Outcomes: "
+        + ", ".join(
+            outcome_display_labels.get(outcome_id, outcome_id)
+            for outcome_id in frame["outcome_ids"]
+        )
+    )
     st.caption(f"Model-input channels: {', '.join(frame['channels'])}")
     if dna_kit_outcome_ids:
         st.caption(

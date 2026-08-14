@@ -987,6 +987,7 @@ def test_planning_curves_dashboard_surfaces_readiness_and_artifact_state():
     captions = [c.value or "" for c in at.caption]
     assert any("Planning Curves dashboard" in text for text in markdown)
     assert any("Outcome and use" in text for text in markdown)
+    assert any("Family History · New · GSA" in text for text in captions)
     assert any("Save this Planning Curve" in text for text in markdown)
     assert any(
         "Readiness blockers are shown before saving" in text for text in captions
