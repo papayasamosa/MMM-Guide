@@ -149,6 +149,41 @@ def test_fully_resolved_coverage_shows_supported_success():
     assert not any("may be stale" in (w.value or "") for w in at.warning)
 
 
+def test_model_setup_uses_descriptive_labels_and_human_capability_statuses():
+    df, _, _ = _base_state()
+    at = _run_at(
+        variable_coverage_matrix=_resolved_matrix().to_dict(),
+        variable_coverage_matrix_built_against_fingerprint=fingerprint_dataframe(df),
+    )
+    assert not at.exception, f"page raised: {at.exception}"
+
+    page_copy = " ".join(
+        (element.value or "")
+        for elements in (at.markdown, at.caption, at.info, at.warning, at.success)
+        for element in elements
+    )
+    assert "Which modelling assumptions should this fit use?" in page_copy
+    assert any(metric.label == "Model inputs" for metric in at.metric)
+    assert "Model-input channels" not in page_copy
+
+    strategy_options = set(at.radio[0].options)
+    assert strategy_options == {
+        "Shared response across markets",
+        "Market-specific response with partial pooling",
+    }
+    strategy_labels = " ".join(strategy_options)
+    assert "(Model A)" not in strategy_labels
+    assert "(Model C)" not in strategy_labels
+
+    capability_tables = [
+        table.value
+        for table in at.dataframe
+        if "Status" in getattr(table.value, "columns", [])
+    ]
+    assert capability_tables
+    assert set(capability_tables[0]["Status"]) <= {"Ready", "Needs review"}
+
+
 def test_resolved_coverage_with_stale_fingerprint_shows_stale_warning_not_success():
     """Review finding (PR #158): a matrix built against an earlier joined
     frame (or restored from an imported project bundle) must not be

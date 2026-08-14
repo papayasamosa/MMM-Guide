@@ -67,6 +67,26 @@ def test_page_renders_the_build_section_with_data_and_market_col():
     )
 
 
+def test_adopted_standard_inputs_render_without_a_generic_join_empty_state():
+    base = _base_df().rename(columns={"date": "period_start"})
+    at = _run_at(
+        date_col="period_start",
+        market_col="market",
+        standard_outcome_data=base[["period_start", "market", "fh_new_gsa"]],
+        standard_activity_model_input=base[["period_start", "market", "tv_spend"]],
+        standard_context_data=base[["period_start", "market"]],
+    )
+    assert not at.exception, f"adopted inputs raised: {at.exception}"
+    assert any(
+        "Build or refresh the coverage matrix" in (h.value or "") for h in at.markdown
+    )
+    assert any(
+        "Reviewing adopted model inputs before official preparation" in (i.value or "")
+        for i in at.info
+    )
+    assert not any("No prepared model inputs" in (i.value or "") for i in at.info)
+
+
 def test_build_button_creates_a_matrix_with_one_record_per_variable_and_market():
     df = _base_df()
     at = _run_at(

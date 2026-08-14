@@ -76,6 +76,11 @@ BRAND_SEARCH_MODE_BY_LABEL = {
     label: mode for mode, label in BRAND_SEARCH_MODE_LABELS.items()
 }
 
+CAPABILITY_STATUS_LABELS = {
+    "supported": "Ready",
+    "unsupported": "Needs review",
+}
+
 st.set_page_config(
     page_title="Model Setup | Ancestry Family History & DNA MMM",
     layout="wide",
@@ -85,7 +90,7 @@ apply_theme()
 render_sidebar("model_config")
 render_page_header(
     "model_config",
-    task_prompt="Which pooling and transformation assumptions should be fit?",
+    task_prompt="Which modelling assumptions should this fit use?",
     badges=[page_readiness("model_config")],
 )
 render_workspace_note(
@@ -144,7 +149,7 @@ with st.container(border=True):
         "Outcomes in scope",
         sum(1 for outcome in outcome_definitions if outcome.included_in_fit),
     )
-    summary_cols[2].metric("Model-input channels", len(spec.channels))
+    summary_cols[2].metric("Model inputs", len(spec.channels))
     summary_cols[3].metric(
         "Prepared frame", "Ready" if get_state("frame") is not None else "Not prepared"
     )
@@ -192,8 +197,8 @@ render_decision_help(
 n_markets = len(spec.markets)
 model_type_options = ["shared", "market_specific"]
 model_type_labels = {
-    "shared": "Shared response across markets (Model A)",
-    "market_specific": "Market-specific response with partial pooling (Model C)",
+    "shared": "Shared response across markets",
+    "market_specific": "Market-specific response with partial pooling",
 }
 current_model_type = get_state("model_type", "shared")
 if n_markets < 2 and current_model_type == "market_specific":
@@ -231,10 +236,7 @@ _priors_section = SectionCard(
 )
 _priors_section.__enter__()
 st.markdown("#### Response curve assumptions")
-st.caption(
-    FIELD_HELP["priors"]
-    + " Stage 1 core: geometric adstock + Hill saturation, shared across segments and markets per channel."
-)
+st.caption(FIELD_HELP["priors"])
 
 prior_config = {
     **DEFAULT_FH_PRIORS,
@@ -353,6 +355,7 @@ with st.expander("Advanced model assumptions", expanded=False):
 
 render_technical_details(
     details={
+        "Response model": "Stage 1 uses geometric adstock followed by Hill saturation for the fitted response terms, shared across segments and markets per channel.",
         "Media transformation": "The current model uses the configured adstock carryover and Hill saturation assumptions for fitted response terms.",
         "Pooling controls": "The advanced controls set prior scales for segment differences, market differences, active cross-product effects, and exploratory cross-product effects.",
         "Exact values": "The saved prior configuration, DNA lag, Search treatment, and model strategy are retained in the model specification and fingerprint.",
@@ -613,8 +616,8 @@ elif _capability.supported:
     )
     if _built_against_fingerprint != fingerprint_dataframe(df):
         st.warning(
-            "This configuration's coverage matrix may be stale: the joined "
-            "data has changed (or this matrix was restored from an "
+            "This configuration's coverage matrix may be stale: the prepared "
+            "inputs have changed (or this matrix was restored from an "
             "imported project) since it was last built. Rebuild it on the "
             "Data Coverage page to confirm this configuration is still "
             "within today's supported fit scope."
@@ -783,9 +786,7 @@ with _conversion_col:
             )
         )
 
-st.markdown("**Why this status**")
-st.write(_official_status_reason)
-st.markdown("**Safe next action**")
+st.markdown("**Next action**")
 if _official_preparation.ready:
     st.caption("Prepare the official modelling frame below.")
 else:
@@ -815,7 +816,9 @@ with st.expander("Consumed-variable capability evidence"):
         {
             "Variable": item.variable_id,
             "Role(s)": ", ".join(item.roles),
-            "Status": item.status,
+            "Status": CAPABILITY_STATUS_LABELS.get(
+                item.status, readable_label(item.status)
+            ),
             "Issues": "; ".join(item.issues),
         }
         for item in _official_capability_report.consumed_variables
