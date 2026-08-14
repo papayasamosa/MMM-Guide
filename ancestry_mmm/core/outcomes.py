@@ -555,8 +555,22 @@ def validate_outcome_group_treatments(
     treatments: Sequence[OutcomeGroupTreatment],
     *,
     groups: Optional[Sequence[OutcomeGroupDefinition]] = None,
+    outcomes: Optional[Sequence[OutcomeDefinition]] = None,
 ) -> List[str]:
-    """Validate model treatment records without selecting a treatment."""
+    """Validate model treatment records and their safe fit semantics.
+
+    The source dictionary owns semantic membership; this function validates
+    the separate analyst-selected treatment.  The optional ``outcomes``
+    argument enables the configuration rules that need fit-scope metadata:
+    an additive component treatment cannot also fit an exact supplied total,
+    and ``total_only`` must have (and fit) that supplied total.  DNA groups
+    with the same explicit product/family but different breakdowns are
+    alternative partitions; two additive treatments for those partitions are
+    rejected so they cannot be counted together accidentally.
+
+    Keeping these checks here makes the contract usable by Streamlit,
+    persistence, and future API callers without importing the UI layer.
+    """
 
     errors: List[str] = []
     seen_ids = set()
@@ -579,6 +593,110 @@ def validate_outcome_group_treatments(
             errors.append(
                 f"Outcome group treatment '{label}' references an unknown group."
             )
+
+    if groups is None or outcomes is None:
+        return errors
+
+    treatments_by_id = {item.group_id: item.treatment for item in treatments}
+    outcomes_by_id = {outcome.outcome_id: outcome for outcome in outcomes}
+    additive_treatments = {
+        OUTCOME_GROUP_TREATMENT_COMPONENTS_JOINT,
+        OUTCOME_GROUP_TREATMENT_TOTAL_ONLY,
+    }
+
+    for group in groups:
+        selected_treatment = treatments_by_id.get(
+            group.group_id, OUTCOME_GROUP_TREATMENT_UNCONFIGURED
+        )
+        label = group.group_label or group.group_id or "(unnamed group)"
+        members = [
+            outcomes_by_id[outcome_id]
+            for outcome_id in group.member_outcome_ids
+            if outcome_id in outcomes_by_id
+        ]
+
+        if selected_treatment == OUTCOME_GROUP_TREATMENT_COMPONENTS_JOINT:
+            excluded_members = [
+                outcome.outcome_id for outcome in members if not outcome.included_in_fit
+            ]
+            if excluded_members:
+                errors.append(
+                    f"Outcome group '{label}' uses components_joint, but these "
+                    "member outcomes are excluded from the next fit: "
+                    f"{', '.join(excluded_members)}. Include every component or "
+                    "choose another treatment."
+                )
+            if group.supplied_total_outcome_id:
+                supplied_total = outcomes_by_id.get(group.supplied_total_outcome_id)
+                if supplied_total is not None and supplied_total.included_in_fit:
+                    errors.append(
+                        f"Outcome group '{label}' uses components_joint, but its "
+                        f"exact supplied total '{supplied_total.outcome_id}' is also "
+                        "included in the next fit. Keep the supplied total as "
+                        "reconciliation evidence or choose total_only; do not fit "
+                        "the exact total and components as unrelated outcomes."
+                    )
+
+        elif selected_treatment == OUTCOME_GROUP_TREATMENT_TOTAL_ONLY:
+            if not group.supplied_total_outcome_id:
+                errors.append(
+                    f"Outcome group '{label}' uses total_only but has no supplied "
+                    "total outcome. Choose components_joint or provide the "
+                    "governed supplied total."
+                )
+            else:
+                supplied_total = outcomes_by_id.get(group.supplied_total_outcome_id)
+                if supplied_total is None:
+                    # The structural group validator reports the unknown ID;
+                    # avoid adding a misleading fit-scope error here.
+                    pass
+                elif not supplied_total.included_in_fit:
+                    errors.append(
+                        f"Outcome group '{label}' uses total_only, but supplied "
+                        f"total '{supplied_total.outcome_id}' is excluded from the "
+                        "next fit. Include the supplied total or choose another "
+                        "treatment."
+                    )
+            included_members = [
+                outcome.outcome_id for outcome in members if outcome.included_in_fit
+            ]
+            if included_members:
+                errors.append(
+                    f"Outcome group '{label}' uses total_only, but component "
+                    "outcomes are also included in the next fit: "
+                    f"{', '.join(included_members)}. Exclude the components so the "
+                    "supplied total is not fitted alongside its parts."
+                )
+
+    # A DNA metric family can have several explicitly named partitions (for
+    # example customer relationship and purchase recipient).  They remain
+    # separate semantic groups, but additive treatments for two such groups
+    # would make the same broad kit-sale population enter an objective twice.
+    additive_dna_groups = [
+        group
+        for group in groups
+        if group.product == DNA
+        and group.group_id in treatments_by_id
+        and treatments_by_id[group.group_id] in additive_treatments
+    ]
+    for index, left in enumerate(additive_dna_groups):
+        for right in additive_dna_groups[index + 1 :]:
+            same_family = left.outcome_family_key == right.outcome_family_key
+            different_breakdown = left.segment_dimension != right.segment_dimension
+            shared_members = set(left.member_outcome_ids).intersection(
+                right.member_outcome_ids
+            )
+            if same_family and (different_breakdown or shared_members):
+                left_label = left.group_label or left.group_id
+                right_label = right.group_label or right.group_id
+                errors.append(
+                    "DNA alternative outcome groups "
+                    f"'{left_label}' and '{right_label}' have additive treatments "
+                    "for overlapping partitions. Keep one partition descriptive-only "
+                    "or use an explicitly approved joint structure; alternative DNA "
+                    "breakdowns must not be added together."
+                )
+
     return errors
 
 
