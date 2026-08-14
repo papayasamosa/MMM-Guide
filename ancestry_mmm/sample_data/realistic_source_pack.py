@@ -9,6 +9,11 @@ It keeps activities tidy, contexts at their native frequency, and irregular
 events in separate tables.  Missing rows and values are deliberate synthetic
 source conditions; callers must not turn them into zeros or frequency-filled
 observations implicitly.
+
+The Outcomes tables use the governed v2 dictionary contract: Family History GSA
+and sign-up are split into New, DNA cross-sell, and Winback, while DNA kit sales
+show customer relationship and purchase-recipient partitions as separate
+dimensions.  These are synthetic examples, not customer-level classifications.
 """
 
 from __future__ import annotations
@@ -16,6 +21,17 @@ from __future__ import annotations
 from typing import Dict
 
 import pandas as pd
+
+from ancestry_mmm.core.outcomes import (
+    DNA,
+    FAMILY_HISTORY,
+    METRIC_KEY_DNA_KIT_SALE,
+    METRIC_KEY_FH_GSA,
+    METRIC_KEY_FH_SIGNUP,
+    SEGMENT_DIMENSION_DNA_CUSTOMER_RELATIONSHIP,
+    SEGMENT_DIMENSION_DNA_PURCHASE_RECIPIENT,
+    SEGMENT_DIMENSION_FH_CUSTOMER,
+)
 
 
 MARKETS = ("UK", "AU")
@@ -237,52 +253,176 @@ def _outcomes(periods: pd.DatetimeIndex) -> tuple[pd.DataFrame, pd.DataFrame]:
                 {
                     "period_start": period,
                     "market": market,
-                    "fh_new_signups": int(scale * (420 + index * 7)),
-                    "fh_dna_cross_sell": int(scale * (135 + index * 3)),
-                    "fh_winback": int(scale * (95 + index * 2)),
+                    "fh_gsa_new": int(scale * (420 + index * 7)),
+                    "fh_gsa_dna_cross_sell": int(scale * (135 + index * 3)),
+                    "fh_gsa_winback": int(scale * (95 + index * 2)),
+                    "fh_signup_new": int(scale * (510 + index * 8)),
+                    "fh_signup_dna_cross_sell": int(scale * (152 + index * 4)),
+                    "fh_signup_winback": int(scale * (108 + index * 2)),
                     "dna_kit_new_customer": int(scale * (72 + index)),
                     "dna_kit_existing_fh_customer": int(scale * (31 + index)),
+                    "dna_kit_self": int(scale * (55 + index)),
+                    "dna_kit_someone_else": int(scale * (48 + index)),
                 }
             )
+    specifications = (
+        (
+            "fh_gsa_new",
+            FAMILY_HISTORY,
+            METRIC_KEY_FH_GSA,
+            "GSA",
+            SEGMENT_DIMENSION_FH_CUSTOMER,
+            "New",
+            "fh_gsa_by_customer_segment",
+            "Family History GSA",
+            "Family History GSA by customer segment",
+            "GSA",
+        ),
+        (
+            "fh_gsa_dna_cross_sell",
+            FAMILY_HISTORY,
+            METRIC_KEY_FH_GSA,
+            "GSA",
+            SEGMENT_DIMENSION_FH_CUSTOMER,
+            "DNA cross-sell",
+            "fh_gsa_by_customer_segment",
+            "Family History GSA",
+            "Family History GSA by customer segment",
+            "GSA",
+        ),
+        (
+            "fh_gsa_winback",
+            FAMILY_HISTORY,
+            METRIC_KEY_FH_GSA,
+            "GSA",
+            SEGMENT_DIMENSION_FH_CUSTOMER,
+            "Winback",
+            "fh_gsa_by_customer_segment",
+            "Family History GSA",
+            "Family History GSA by customer segment",
+            "GSA",
+        ),
+        (
+            "fh_signup_new",
+            FAMILY_HISTORY,
+            METRIC_KEY_FH_SIGNUP,
+            "Sign-up",
+            SEGMENT_DIMENSION_FH_CUSTOMER,
+            "New",
+            "fh_signup_by_customer_segment",
+            "Family History sign-up",
+            "Family History sign-up by customer segment",
+            "sign-up",
+        ),
+        (
+            "fh_signup_dna_cross_sell",
+            FAMILY_HISTORY,
+            METRIC_KEY_FH_SIGNUP,
+            "Sign-up",
+            SEGMENT_DIMENSION_FH_CUSTOMER,
+            "DNA cross-sell",
+            "fh_signup_by_customer_segment",
+            "Family History sign-up",
+            "Family History sign-up by customer segment",
+            "sign-up",
+        ),
+        (
+            "fh_signup_winback",
+            FAMILY_HISTORY,
+            METRIC_KEY_FH_SIGNUP,
+            "Sign-up",
+            SEGMENT_DIMENSION_FH_CUSTOMER,
+            "Winback",
+            "fh_signup_by_customer_segment",
+            "Family History sign-up",
+            "Family History sign-up by customer segment",
+            "sign-up",
+        ),
+        (
+            "dna_kit_new_customer",
+            DNA,
+            METRIC_KEY_DNA_KIT_SALE,
+            "Kit sale",
+            SEGMENT_DIMENSION_DNA_CUSTOMER_RELATIONSHIP,
+            "New Customer",
+            "dna_kit_by_customer_relationship",
+            "DNA kit sale by customer relationship",
+            "DNA kit sale by customer relationship",
+            "kits",
+        ),
+        (
+            "dna_kit_existing_fh_customer",
+            DNA,
+            METRIC_KEY_DNA_KIT_SALE,
+            "Kit sale",
+            SEGMENT_DIMENSION_DNA_CUSTOMER_RELATIONSHIP,
+            "Existing Family History Customer",
+            "dna_kit_by_customer_relationship",
+            "DNA kit sale by customer relationship",
+            "DNA kit sale by customer relationship",
+            "kits",
+        ),
+        (
+            "dna_kit_self",
+            DNA,
+            METRIC_KEY_DNA_KIT_SALE,
+            "Kit sale",
+            SEGMENT_DIMENSION_DNA_PURCHASE_RECIPIENT,
+            "Self",
+            "dna_kit_by_purchase_recipient",
+            "DNA kit sale by purchase recipient",
+            "DNA kit sale by purchase recipient",
+            "kits",
+        ),
+        (
+            "dna_kit_someone_else",
+            DNA,
+            METRIC_KEY_DNA_KIT_SALE,
+            "Kit sale",
+            SEGMENT_DIMENSION_DNA_PURCHASE_RECIPIENT,
+            "Someone Else",
+            "dna_kit_by_purchase_recipient",
+            "DNA kit sale by purchase recipient",
+            "DNA kit sale by purchase recipient",
+            "kits",
+        ),
+    )
     dictionary = pd.DataFrame(
-        [
-            {
-                "outcome_id": outcome_id,
-                "source_column": source_column,
-                "event_definition": definition,
-                "date_basis": "period_start",
-                "cohort_basis": "market-period",
-                "maturity_rule": "synthetic fixture: observed",
-                "exclusions": "none in fixture",
-                "reconciliation_source": "synthetic-realistic-source-pack",
-                "owner": "demo only",
-                "version": "demo-v1",
-                "approval_status": "demo-only",
-            }
-            for outcome_id, source_column, definition in (
-                (
-                    "fh_new_signups",
-                    "fh_new_signups",
-                    "Family History new sign-ups",
-                ),
-                (
-                    "fh_dna_cross_sell",
-                    "fh_dna_cross_sell",
-                    "Family History DNA cross-sell sign-ups",
-                ),
-                ("fh_winback", "fh_winback", "Family History winback sign-ups"),
-                (
-                    "dna_kit_new_customer",
-                    "dna_kit_new_customer",
-                    "DNA kit purchase by new customer",
-                ),
-                (
-                    "dna_kit_existing_fh_customer",
-                    "dna_kit_existing_fh_customer",
-                    "DNA kit purchase by existing Family History customer",
-                ),
-            )
-        ]
+        {
+            "outcome_id": outcome_id,
+            "source_column": outcome_id,
+            "product": product,
+            "metric_key": metric_key,
+            "metric": metric,
+            "segment_dimension": segment_dimension,
+            "segment": segment,
+            "outcome_group_id": group_id,
+            "outcome_group_label": group_label,
+            "outcome_family_key": metric_key,
+            "group_aggregation": "sum",
+            "unit": unit,
+            "aggregation_type": "count",
+            "event_definition": definition,
+            "date_basis": "event_date",
+            "cohort_or_attribution_basis": "market-period",
+            "completeness_or_maturity_policy": "Synthetic fixture: observed and complete.",
+            "exclusions": "Synthetic fixture only; no production exclusions.",
+            "reconciliation_source": "synthetic-realistic-source-pack",
+            "business_owner": "Demo only - replace before official use",
+            "definition_version": "1.0",
+        }
+        for (
+            outcome_id,
+            product,
+            metric_key,
+            metric,
+            segment_dimension,
+            segment,
+            group_id,
+            group_label,
+            definition,
+            unit,
+        ) in specifications
     )
     return pd.DataFrame(rows), dictionary
 

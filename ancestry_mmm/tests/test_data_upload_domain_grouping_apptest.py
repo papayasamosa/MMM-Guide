@@ -53,6 +53,21 @@ def test_no_sources_loaded_shows_awaiting_data_badge_and_empty_state():
     assert any("No sources loaded yet" in (i.value or "") for i in at.info)
 
 
+def test_standard_template_downloads_are_exposed_with_plain_language_help():
+    at = _run_at()
+    assert not at.exception, f"page raised: {at.exception}"
+    labels = {button.label for button in at.download_button}
+    assert labels == {
+        "Download Outcomes (v2) template",
+        "Download Activity and Media template",
+        "Download Context and External Factors template",
+        "Download Experiment Evidence template",
+    }
+    assert any(
+        "Product, Metric, Breakdown, Segment" in (i.value or "") for i in at.info
+    )
+
+
 def test_partial_domain_coverage_lists_missing_required_domains():
     at = _run_at(
         raw_sources={"media": _frame()},
@@ -137,6 +152,6 @@ def test_realistic_source_pack_demo_loads_as_separate_governed_sources():
     frames.pop("segment_ltv")
     assert error is None
     assert set(at.session_state["raw_sources"]) == set(frames)
-    assert at.session_state["demo_source_pack"] == "realistic-source-pack-v1"
+    assert at.session_state["demo_source_pack"] == "realistic-source-pack-v2"
     assert len(at.session_state["source_definitions"]) == len(frames)
     assert at.session_state["active_source_upload_version"] == {}

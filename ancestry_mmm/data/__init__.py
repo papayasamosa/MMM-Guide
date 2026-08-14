@@ -45,6 +45,11 @@ from .source_inventory import (
     source_table_role,
     summarise_source_inventory,
 )
+from .template_downloads import (
+    TEMPLATE_MIME_TYPE,
+    build_standard_template,
+    standard_template_filename,
+)
 
 __all__ = [
     "load_file",
@@ -84,4 +89,7 @@ __all__ = [
     "source_table_name",
     "source_table_role",
     "summarise_source_inventory",
+    "TEMPLATE_MIME_TYPE",
+    "build_standard_template",
+    "standard_template_filename",
 ]

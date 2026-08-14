@@ -3647,3 +3647,49 @@ release gate.
 
 **Owner:** Data Science / Platform engineering.
 **Status:** Implemented in DNA alternatives and multi-target halo regression WP7.
+
+## Downloadable templates and realistic source-pack UX (Work Package 8)
+
+**Date:** 2026-08-14
+**Requirement:** `REQ-DATAIN-001`, `REQ-DATAIN-002`; `Ancestry_MMM_Outcome_Source_Grouping_Coding_LLM_Instructions_FRESH_2026-08-14_0712.md`, WP8.
+
+**Business question:** Can a source provider download understandable,
+domain-specific workbooks and see a realistic synthetic pack that demonstrates
+the governed Outcomes contract without needing to understand analyst or model
+internals?
+
+**Decision:** Generate four separate standard workbooks from the existing
+domain contracts. The Outcomes download is explicitly
+`standard-source-pack-v2` and contains non-production examples for Family
+History GSA and sign-up by New, DNA cross-sell, and Winback, plus DNA kit-sale
+partitions by customer relationship and purchase recipient. Activity and Media,
+Context and External Factors, and Experiment Evidence remain separate logical
+workbooks. The optional `outcome_completeness` sheet is omitted from the
+template; help tells users to remove optional sheets rather than leave a
+parser-invalid empty sheet. The realistic source pack uses canonical field
+names and preserves the two DNA dimensions as distinct groups.
+
+**Estimand:** None introduced. Template rows are synthetic examples only and
+must not be treated as observed business outcomes or model estimates.
+
+**Output scale and units:** Downloaded files are Excel workbooks. Outcome
+examples carry explicit count units, metric keys, segment dimensions, group
+identities, and canonical definition metadata; example values are placeholders,
+not production Ancestry values.
+
+**Upstream references:** None consulted. WP8 composes the repository's existing
+standard workbook parser and canonicalisation contracts; it does not alter
+PyMC/PyMC-Marketing model equations, transformations, priors, or sampling APIs.
+
+**Tests:** Added valid-workbook and v2 semantic template tests, canonical
+realistic-pack tests, Data Sources download AppTests, upload/lifecycle/export
+regressions, and a real-browser assertion for the Outcomes template download.
+Focused validation passed: 25 source/template tests, 6 Data Sources AppTests,
+21 upload/lifecycle/export tests, and 1 browser lifecycle test.
+
+**Remaining limitations:** Template values are synthetic examples and require
+replacement and governance before official use. No customer-level classification
+or NBT completeness example is invented by this work package.
+
+**Owner:** Data Science / Platform engineering.
+**Status:** Implemented in downloadable templates and realistic source-pack UX WP8.

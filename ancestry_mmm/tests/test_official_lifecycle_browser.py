@@ -211,6 +211,20 @@ def test_official_lifecycle_journey_in_browser(
         )
     ).to_be_visible(timeout=60_000)
 
+    # --- Data Sources: download the governed v2 Outcomes template ---------
+    page.get_by_role("link", name="Data Sources").click()
+    expect(page.get_by_text("Download standard templates", exact=True)).to_be_visible(
+        timeout=30_000
+    )
+    with page.expect_download(timeout=30_000) as download_info:
+        page.get_by_role(
+            "button", name="Download Outcomes (v2) template", exact=True
+        ).click()
+    assert (
+        download_info.value.suggested_filename
+        == "ancestry-mmm-outcomes-v2-template.xlsx"
+    )
+
     # --- Project Export/Import page: upload the deterministic bundle -----
     # `exact=True` throughout this test: Streamlit renders a visually-hidden
     # anchor-link duplicate of every heading's text (`#some-heading`), and
