@@ -23,6 +23,7 @@ from ancestry_mmm.utils import (
     set_state,
     curve_artifact_store_dir,
     dataframe_column_config,
+    readable_label,
 )
 from ancestry_mmm.components import (
     apply_theme,
@@ -107,6 +108,61 @@ def _outcome_display_label(outcome) -> str:
     if outcome.definition_version:
         label += f" (definition {outcome.definition_version})"
     return label
+
+
+_CONTEXT_MODE_LABELS = {
+    "recent_average": "Recent average",
+    "period_average": "Selected period average",
+    "specific_week": "Specific week",
+    "specific_scenario": "Specific scenario",
+    "steady_state_reference": "Steady-state reference",
+}
+_CURRENT_SPEND_METHOD_LABELS = {
+    "latest_complete_week": "Latest complete week",
+    "last_4_week_average": "Last 4-week average",
+    "last_13_week_average": "Last 13-week average",
+    "selected_period_average": "Selected period average",
+}
+
+
+def _planning_curve_reference(outcome, as_of: date) -> str:
+    """Create a readable default reference without exposing a stable outcome ID."""
+    parts = [outcome.product, outcome.segment, outcome.metric]
+    if outcome.definition_version:
+        parts.append(f"definition-{outcome.definition_version}")
+    readable_parts = [
+        str(part).strip().lower().replace(" ", "-")
+        for part in parts
+        if str(part).strip()
+    ]
+    return "-".join([*readable_parts, as_of.isoformat()])
+
+
+def _humanise_reference_context_preview(context, outcome_display_labels):
+    """Prepare a display-only context preview while preserving stored keys."""
+    return {
+        "trend": context.trend,
+        "fourier": context.fourier,
+        "promo": {
+            outcome_display_labels.get(outcome_id, readable_label(outcome_id)): value
+            for outcome_id, value in context.promo.items()
+        },
+        "controls": {
+            readable_label(name): value for name, value in context.controls.items()
+        },
+        "outcome_controls": {
+            outcome_display_labels.get(outcome_id, readable_label(outcome_id)): {
+                readable_label(name): value for name, value in values.items()
+            }
+            for outcome_id, values in context.outcome_controls.items()
+        },
+        "other_channel_model_input": {
+            readable_label(channel): value
+            for channel, value in context.other_channel_media_input.items()
+        },
+        "reference_period_start": context.reference_period_start,
+        "reference_period_end": context.reference_period_end,
+    }
 
 
 _COST_MAPPING_APPROVAL_STATUSES = [
@@ -545,6 +601,10 @@ current_diagnostics_artefact = get_state("diagnostics_artefact")
 outcome_definitions = resolve_outcome_definitions(
     get_state("outcome_definitions"), spec.segment_outcomes, spec.segment_ltv
 )
+outcome_display_labels = {
+    outcome.outcome_id: _outcome_display_label(outcome)
+    for outcome in outcome_definitions
+}
 outcome_approvals = [
     OutcomeApproval.from_dict(d) for d in (get_state("outcome_approvals") or [])
 ]
@@ -596,9 +656,6 @@ with SectionCard(
         st.stop()
 
     outcome_ids = [outcome.outcome_id for _, outcome in eligible]
-    outcome_display_labels = {
-        outcome.outcome_id: _outcome_display_label(outcome) for _, outcome in eligible
-    }
     selected_outcome_id = st.selectbox(
         "Outcome",
         outcome_ids,
@@ -826,9 +883,9 @@ if curve_type == "monetary":
 st.markdown("---")
 st.markdown("### Reference context")
 st.caption(
-    "Every mode except 'specific_scenario' is derived directly from the "
+    "Every reference-context method except Specific scenario is derived directly from the "
     "prepared model frame's actual history for that market - never an "
-    "implicit zero or unstated default. 'specific_scenario' "
+    "implicit zero or unstated default. Specific scenario "
     "remains fully explicit by design. Either way, an analyst must review "
     "and explicitly confirm each market's context below before it can be "
     "used to generate - an unreviewed context, derived or not, can never be "
@@ -839,10 +896,17 @@ reference_context_confirmed: dict[str, bool] = {}
 confirmed_context_fingerprints: dict[str, str] = {}
 for market in selected_markets:
     with st.expander(f"Reference context - {market}", expanded=False):
-        mode = st.selectbox("Mode", sorted(CONTEXT_MODES), key=f"ocg_mode_{market}")
+        mode = st.selectbox(
+            "Reference context method",
+            sorted(CONTEXT_MODES),
+            format_func=lambda value: _CONTEXT_MODE_LABELS.get(
+                value, readable_label(value)
+            ),
+            key=f"ocg_mode_{market}",
+        )
         reference_context_id = st.text_input(
-            "Reference context ID",
-            value=f"{market}-{mode}",
+            "Reference context name",
+            value=f"{market}-{_CONTEXT_MODE_LABELS.get(mode, readable_label(mode))}",
             key=f"ocg_ctx_id_{market}",
         )
         counterfactual_value = st.number_input(
@@ -873,14 +937,18 @@ for market in selected_markets:
             st.markdown("**Promotion reference value per outcome**")
             promo = {
                 outcome_id: st.number_input(
-                    outcome_id, value=0.0, key=f"ocg_promo_{market}_{outcome_id}"
+                    outcome_display_labels.get(outcome_id, readable_label(outcome_id)),
+                    value=0.0,
+                    key=f"ocg_promo_{market}_{outcome_id}",
                 )
                 for outcome_id in meta.outcome_ids
             }
             st.markdown("**Common controls**")
             controls = {
                 name: st.number_input(
-                    name, value=0.0, key=f"ocg_control_{market}_{name}"
+                    readable_label(name),
+                    value=0.0,
+                    key=f"ocg_control_{market}_{name}",
                 )
                 for name in params.control_coef
             }
@@ -897,7 +965,7 @@ for market in selected_markets:
                     continue
                 outcome_controls[outcome_id] = {
                     name: st.number_input(
-                        f"{outcome_id} / {name}",
+                        f"{outcome_display_labels.get(outcome_id, readable_label(outcome_id))} · {readable_label(name)}",
                         value=0.0,
                         key=f"ocg_outcome_control_{market}_{outcome_id}_{name}",
                     )
@@ -906,7 +974,9 @@ for market in selected_markets:
             st.markdown("**Other-channel model input** (every fitted channel)")
             other_channel_media_input = {
                 channel: st.number_input(
-                    channel, value=0.0, key=f"ocg_other_channel_{market}_{channel}"
+                    readable_label(channel),
+                    value=0.0,
+                    key=f"ocg_other_channel_{market}_{channel}",
                 )
                 for channel in meta.channels
             }
@@ -982,16 +1052,7 @@ for market in selected_markets:
                     "**Derived from the model frame** (review before confirming)"
                 )
                 st.write(
-                    {
-                        "trend": context.trend,
-                        "fourier": context.fourier,
-                        "promo": context.promo,
-                        "controls": context.controls,
-                        "outcome_controls": context.outcome_controls,
-                        "other_channel_media_input": context.other_channel_media_input,
-                        "reference_period_start": context.reference_period_start,
-                        "reference_period_end": context.reference_period_end,
-                    }
+                    _humanise_reference_context_preview(context, outcome_display_labels)
                 )
 
         # Corrective PR E2.2: the checkbox's own widget key embeds a
@@ -1051,14 +1112,12 @@ st.caption(
     "generates a curve but blocks it from planning/optimisation use."
 )
 derivation_method = st.selectbox(
-    "Current-spend derivation method (applies to every cell below that "
+    "Current-spend method (applies to every cell below that "
     "opts in to a support range)",
-    [
-        "latest_complete_week",
-        "last_4_week_average",
-        "last_13_week_average",
-        "selected_period_average",
-    ],
+    list(_CURRENT_SPEND_METHOD_LABELS),
+    format_func=lambda value: _CURRENT_SPEND_METHOD_LABELS.get(
+        value, readable_label(value)
+    ),
     key="ocg_support_method",
 )
 support_period_start = support_period_end = None
@@ -1082,12 +1141,12 @@ for market in meta.markets:
         if market in selected_markets:
             key_prefix = f"ocg_support_{market}_{channel}"
             unit = st.text_input(
-                f"Unit - {market}/{channel}",
+                f"Unit - {market}/{readable_label(channel)}",
                 value="impressions",
                 key=f"{key_prefix}_unit",
             )
             unit_scale = st.number_input(
-                f"Unit scale - {market}/{channel}",
+                f"Unit scale - {market}/{readable_label(channel)}",
                 value=1.0,
                 min_value=1e-9,
                 key=f"{key_prefix}_scale",
@@ -1138,7 +1197,9 @@ invalid_support_cells: list[str] = []
 for market in selected_markets:
     for channel in meta.channels:
         key_prefix = f"ocg_support_{market}_{channel}"
-        with st.expander(f"Model input - {market} / {channel}", expanded=False):
+        with st.expander(
+            f"Model input - {market} / {readable_label(channel)}", expanded=False
+        ):
             include_support = st.checkbox(
                 "Also record observed/planning support for this cell "
                 "(enables planning eligibility)",
@@ -1196,7 +1257,8 @@ for market in selected_markets:
             )
             if cost_mapping is None:
                 st.error(
-                    f"No approved, effective cost mapping for {market}/{channel} "
+                    f"No approved, effective cost mapping for {market} / "
+                    f"{readable_label(channel)} "
                     "as of the cost as-of date above; cannot build monetary support."
                 )
                 continue
@@ -1209,8 +1271,8 @@ for market in selected_markets:
             )
             if not rate:
                 st.error(
-                    f"No valid FX rate {local_currency}->{reporting} for "
-                    f"{market}; cannot build monetary support."
+                    f"No valid FX rate {local_currency}->{reporting} for {market} / "
+                    f"{readable_label(channel)}; cannot build monetary support."
                 )
                 continue
             try:
@@ -1228,7 +1290,8 @@ for market in selected_markets:
                 # silently extrapolated to make the error disappear.
                 invalid_support_cells.append(f"{market}/{channel}")
                 st.error(
-                    f"Cannot derive monetary support for {market}/{channel}: "
+                    f"Cannot derive monetary support for {market} / "
+                    f"{readable_label(channel)}: "
                     f"{exc}. Adjust the planning min/max above, or the cost "
                     "mapping's knots/allow_extrapolation on the Media Costs "
                     "page, then retry."
@@ -1276,8 +1339,8 @@ st.caption(
     "does not change the fitted model or invent a new response calculation."
 )
 artifact_id = st.text_input(
-    "Planning Curve ID",
-    value=f"{selected_outcome.outcome_id}-{date.today().isoformat()}",
+    "Planning Curve name or reference",
+    value=_planning_curve_reference(selected_outcome, date.today()),
     key="ocg_artifact_id",
 )
 
@@ -1318,7 +1381,7 @@ if st.button(
     disabled=bool(_generation_blockers),
 ):
     if not artifact_id.strip():
-        st.error("Planning Curve ID must be non-blank.")
+        st.error("Planning Curve name or reference must be non-blank.")
         st.stop()
     unconfirmed_markets = sorted(
         m for m in selected_markets if not reference_context_confirmed.get(m)
@@ -1383,7 +1446,9 @@ if st.button(
     except (CurveGovernanceError, CurveArtifactError, ValueError, TypeError) as exc:
         st.error(f"Could not save the Planning Curve: {_humanise_permission_text(exc)}")
     else:
-        st.success(f"Saved Planning Curve `{result.artifact_id}`.")
+        st.success(
+            "Saved Planning Curve. Review its response evidence and permitted uses below."
+        )
 
         st.markdown("#### Planning Curve saved")
         # Permission and planning-support status
@@ -1409,7 +1474,6 @@ if st.button(
             status_df = pd.DataFrame(
                 [
                     {
-                        "Planning Curve ID": result.artifact_id,
                         "Current permission": _status_label(
                             authorization.current_authorization_status
                         ),
@@ -1431,6 +1495,15 @@ if st.button(
                 status_df,
                 width="stretch",
                 column_config=dataframe_column_config(status_df),
+            )
+            render_technical_details(
+                title="Technical details · saved Planning Curve",
+                details={
+                    "Saved curve ID": result.artifact_id,
+                    "Stored requested-use key": requested_use,
+                    "Stored authorization status": authorization.current_authorization_status,
+                    "Stored requested-use eligibility": authorization.requested_use_eligibility,
+                },
             )
 
         # 8. Posterior interval display + average/marginal economics
@@ -1471,7 +1544,7 @@ if st.button(
                         stats["posterior_mean"].to_numpy(dtype=float),
                         stats["lower_interval"].to_numpy(dtype=float),
                         stats["upper_interval"].to_numpy(dtype=float),
-                        f"{curve_market} - {curve_channel}",
+                        f"{curve_market} · {readable_label(curve_channel)}",
                         x_axis_label=resolve_curve_axis_label(x_col, draws_group),
                     ),
                     width="stretch",

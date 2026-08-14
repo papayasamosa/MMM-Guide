@@ -396,6 +396,15 @@ def test_full_governance_generates_and_saves_an_artifact(monkeypatch, tmp_path):
     generate_button.click().run()
     assert not at.exception, f"generate click raised: {at.exception}"
     assert any("Saved Planning Curve" in (s.value or "") for s in at.success)
+    status_tables = [
+        dataframe.value
+        for dataframe in at.dataframe
+        if "Current permission" in getattr(dataframe.value, "columns", [])
+    ]
+    assert status_tables
+    assert all(
+        "Planning Curve ID" not in dataframe.columns for dataframe in status_tables
+    )
 
     store_dir = tmp_path / "ocg-test-project"
     result = load_curve_artifact_store(store_dir, raise_on_malformed=False)
@@ -501,6 +510,9 @@ def test_monetary_curve_with_approved_cost_mapping_generates_and_saves_an_artifa
     )
     assert "headline_reporting" not in visible_copy
     assert "external_distribution" not in visible_copy
+    assert "specific_scenario" not in visible_copy
+    assert "recent_average" not in visible_copy
+    assert "latest_complete_week" not in visible_copy
     _confirm_market_context(at, "UK")
 
     at.session_state["ocg_artifact_id"] = "art-monetary-1"
@@ -600,7 +612,7 @@ def test_monetary_support_out_of_domain_blocks_generation_without_crashing_the_p
         f"page raised instead of rendering a blocking error: {at.exception}"
     )
     assert any(
-        "Cannot derive monetary support for UK/TV_Brand" in (e.value or "")
+        "Cannot derive monetary support for UK / TV Brand" in (e.value or "")
         for e in at.error
     ), [e.value for e in at.error]
 
@@ -643,7 +655,7 @@ def test_monetary_support_out_of_domain_is_resolved_after_widening_the_mapping(
     at.session_state["ocg_support_UK_TV_Brand_include"] = True
     at.run()
     assert any(
-        "Cannot derive monetary support for UK/TV_Brand" in (e.value or "")
+        "Cannot derive monetary support for UK / TV Brand" in (e.value or "")
         for e in at.error
     )
 
@@ -655,7 +667,7 @@ def test_monetary_support_out_of_domain_is_resolved_after_widening_the_mapping(
     at.run()
     assert not at.exception, f"page raised after correcting the mapping: {at.exception}"
     assert not any(
-        "Cannot derive monetary support for UK/TV_Brand" in (e.value or "")
+        "Cannot derive monetary support for UK / TV Brand" in (e.value or "")
         for e in at.error
     )
 
@@ -924,7 +936,7 @@ def test_official_curve_generation_preview_plots_actual_model_input_axis_values(
     assert any("Saved Planning Curve" in (s.value or "") for s in at.success)
 
     charts = _rendered_response_curves(at)
-    chart = next(c for c in charts if "UK - TV_Brand" in c["title"])
+    chart = next(c for c in charts if "UK · TV Brand" in c["title"])
     assert chart["x"] == [0.0, 30.0, 120.0, 275.0, 900.0]
     assert chart["x"] != [0.0, 1.0, 2.0, 3.0, 4.0]
     assert "Model input" in chart["x_axis_title"]
@@ -965,7 +977,7 @@ def test_official_curve_generation_preview_plots_local_spend_not_reporting_curre
     assert any("Saved Planning Curve" in (s.value or "") for s in at.success)
 
     charts = _rendered_response_curves(at)
-    chart = next(c for c in charts if "UK - TV_Brand" in c["title"])
+    chart = next(c for c in charts if "UK · TV Brand" in c["title"])
     # IdentitySpendMapping: local_spend == the entered spend points exactly.
     assert chart["x"] == [0.0, 30.0, 120.0, 275.0, 900.0]
     # reporting_currency_spend (local_spend * 1.25) must NOT be plotted.
@@ -989,6 +1001,7 @@ def test_planning_curves_dashboard_surfaces_readiness_and_artifact_state():
     assert any("Outcome and use" in text for text in markdown)
     assert any("Family History · New · GSA" in text for text in captions)
     assert any("Save this Planning Curve" in text for text in markdown)
+    assert any("definition 1.0" in text for text in captions)
     assert any(
         "Readiness blockers are shown before saving" in text for text in captions
     )
@@ -1001,3 +1014,17 @@ def test_planning_curves_dashboard_surfaces_readiness_and_artifact_state():
     } <= metric_labels
     selectbox_labels = {selectbox.label for selectbox in at.selectbox}
     assert "Use to check after saving" in selectbox_labels
+    context_selector = next(
+        selectbox
+        for selectbox in at.selectbox
+        if selectbox.label == "Reference context method"
+    )
+    assert "Recent average" in context_selector.options
+    assert "recent_average" not in context_selector.options
+    support_selector = next(
+        selectbox
+        for selectbox in at.selectbox
+        if selectbox.label.startswith("Current-spend method")
+    )
+    assert "Latest complete week" in support_selector.options
+    assert "latest_complete_week" not in support_selector.options
