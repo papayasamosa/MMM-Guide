@@ -787,8 +787,8 @@ render_definition_help(
 # rail's "Coverage capability" row - never a second, divergent computation.
 if _capability_result is not None and not _capability_result.supported:
     st.info(
-        "This fit's market/channel combination goes beyond what the "
-        "engine can validly support today per the governed coverage "
+        "This fit's market/channel combination goes beyond today's "
+        "supported market/channel coverage per the governed coverage "
         "matrix. Exploratory review remains "
         "available; whether this blocks policy-backed approval depends "
         "on whether the active validation policy includes the "

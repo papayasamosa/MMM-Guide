@@ -984,7 +984,7 @@ def test_unsupported_capability_shows_informational_message_and_does_not_block_a
     compute_button.click().run()
     assert not at.exception, f"page raised: {at.exception}"
     assert any(
-        "goes beyond what the engine can validly support" in (i.value or "")
+        "goes beyond today's supported market/channel coverage" in (i.value or "")
         for i in at.info
     )
 
@@ -1023,7 +1023,7 @@ def test_supported_capability_shows_no_informational_message():
     at.run()
     assert not at.exception, f"page raised: {at.exception}"
     assert not any(
-        "goes beyond what the engine can validly support" in (i.value or "")
+        "goes beyond today's supported market/channel coverage" in (i.value or "")
         for i in at.info
     )
 

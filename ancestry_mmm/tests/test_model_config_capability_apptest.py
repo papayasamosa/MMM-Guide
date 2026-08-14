@@ -121,7 +121,7 @@ def test_no_coverage_matrix_shows_a_calm_nudge_not_a_warning():
         for i in at.info
     )
     assert not any(
-        "goes beyond what the engine can validly support" in (w.value or "")
+        "goes beyond today's supported market/channel coverage" in (w.value or "")
         for w in at.warning
     )
 
@@ -134,11 +134,10 @@ def test_fully_resolved_coverage_shows_supported_success():
     )
     assert not at.exception, f"page raised: {at.exception}"
     assert any(
-        "within the engine's current rectangular capability" in (s.value or "")
-        for s in at.success
+        "within today's supported fit scope" in (s.value or "") for s in at.success
     )
     assert not any(
-        "goes beyond what the engine can validly support" in (w.value or "")
+        "goes beyond today's supported market/channel coverage" in (w.value or "")
         for w in at.warning
     )
     assert not any("may be stale" in (w.value or "") for w in at.warning)
@@ -156,8 +155,7 @@ def test_resolved_coverage_with_stale_fingerprint_shows_stale_warning_not_succes
     assert not at.exception, f"page raised: {at.exception}"
     assert any("may be stale" in (w.value or "") for w in at.warning)
     assert not any(
-        "within the engine's current rectangular capability" in (s.value or "")
-        for s in at.success
+        "within today's supported fit scope" in (s.value or "") for s in at.success
     )
 
 
@@ -165,7 +163,7 @@ def test_unresolved_coverage_shows_unsupported_warning_with_decision_report():
     at = _run_at(variable_coverage_matrix=_unresolved_matrix().to_dict())
     assert not at.exception, f"page raised: {at.exception}"
     assert any(
-        "goes beyond what the engine can validly support" in (w.value or "")
+        "goes beyond today's supported market/channel coverage" in (w.value or "")
         for w in at.warning
     )
     assert any("FR-MOD-015" in (c.value or "") for c in at.caption)
