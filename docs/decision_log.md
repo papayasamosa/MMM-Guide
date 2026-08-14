@@ -2893,3 +2893,32 @@ connected browser was unavailable.
 
 **Owner:** Platform engineering / Data Science.
 **Status:** Implemented in UX/UI coherence Phase 15.
+
+## Recognisable coverage-fabric marks (UX/UI coherence Phase 16)
+
+**Date:** 2026-08-14
+**Decision:** Replace the Coverage fabric's cryptic single-letter marks for
+covered, modelled, suppressed, and unavailable-source states with familiar
+status notation: check, approximate, function, dash, suppression, and empty
+set marks as applicable. Retain the existing state labels, hover details,
+legend, colours, and one mark per segment so colour is never the sole state
+signal.
+
+**Reason:** The previous `M`, `S`, and `U` marks made the fabric a code that
+analysts had to memorise. The brief's coverage-glyph review calls for symbols
+that improve recognition without changing the governed missingness vocabulary
+or implying a new state.
+
+**Impact:** Presentation-only chart marks and coverage-chart test updates.
+No coverage classification, treatment approval, readiness, analytical
+calculation, governance rule, or persistence behaviour changed. Business
+question: can an analyst scan the coverage fabric and recognise the status of
+a segment without relying on colour or memorised single-letter codes?
+Estimand: none introduced. Output scale/units: unchanged. Upstream modelling
+references: none consulted because this package changes presentation only and
+does not change PyMC or PyMC Marketing model APIs. Remaining limitation:
+interactive browser screenshot review uses the repository's synthetic-data
+browser journey because the local connected browser was unavailable.
+
+**Owner:** Platform engineering / Data Science.
+**Status:** Implemented in UX/UI coherence Phase 16.

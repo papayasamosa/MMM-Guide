@@ -498,29 +498,32 @@ def create_waterfall_chart(
 # docs/decision_log.md and ancestry_mmm.core.coverage_fabric). A "categorical
 # heatmap made unusually good" rather than a Components v2 build: Plotly's
 # own grouped-bar/legend/hover machinery already gives every state its own
-# toggleable legend entry, and each bar additionally carries a short glyph
-# label - so no missingness state is ever colour-only (root AGENTS.md /
+# toggleable legend entry, and each bar additionally carries a recognisable
+# mark - so no missingness state is ever colour-only (root AGENTS.md /
 # pages/AGENTS.md accessibility rule: "distinguish states by more than
 # colour alone"). Never a purple/blue hue (tokens.py's existing "no
 # purple/blue AI-gradient accent" convention, extended here): "unknown" -
 # the one state that has not even been triaged yet - gets a warm review
 # surface without borrowing the confirmed-problem colour used by
 # "missing_expected". Every state uses a light surface in the light
-# workbench; the in-cell glyph and legend label preserve non-colour meaning.
+# workbench; the in-cell mark and legend label preserve non-colour meaning.
 # ---------------------------------------------------------------------------
 
-# state -> (display label, short in-cell glyph, hex colour). Every entry in
+# state -> (display label, recognisable in-cell mark, hex colour). The marks
+# use familiar status notation where one exists (check, zero, approximate,
+# dash, suppression, unavailable, warning, and unknown) rather than a set of
+# single-letter codes that an analyst must memorise. Every entry in
 # core.coverage.COVERAGE_STATES plus the FABRIC_LABEL_COVERED sentinel must
 # appear here (enforced by test_charts_coverage_fabric.py) - a chart must
-# never silently drop a governed state for lack of a colour/glyph.
+# never silently drop a governed state for lack of a colour/mark.
 STATE_VISUALS: Dict[str, Tuple[str, str, str]] = {
-    FABRIC_LABEL_COVERED: ("Covered (no recorded gap)", "·", "#E5F0E5"),
+    FABRIC_LABEL_COVERED: ("Covered (no recorded gap)", "✓", "#E5F0E5"),
     "observed_zero": ("Observed zero", "0", "#D8EBD9"),
-    "estimated": ("Estimated", "~", "#EDF3D6"),
-    "modelled": ("Modelled", "M", "#E5EEE9"),
-    "not_applicable": ("Not applicable", "–", "#EAE8E3"),
-    "suppressed": ("Suppressed", "S", "#F1E5D4"),
-    "unavailable_source": ("Unavailable source", "U", "#F8EBCF"),
+    "estimated": ("Estimated", "≈", "#EDF3D6"),
+    "modelled": ("Modelled", "ƒ", "#E5EEE9"),
+    "not_applicable": ("Not applicable", "—", "#EAE8E3"),
+    "suppressed": ("Suppressed", "⊘", "#F1E5D4"),
+    "unavailable_source": ("Unavailable source", "∅", "#F8EBCF"),
     "missing_expected": ("Missing (expected)", "!", "#F9DCD8"),
     "unknown": ("Unknown - not yet triaged", "?", "#FFF4D8"),
 }
