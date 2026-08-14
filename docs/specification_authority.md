@@ -8,7 +8,7 @@
 | Version | Cross-Document Coherent v1.5 |
 | v1.4 baseline effective date | 28 July 2026 |
 | Operating model | Direct internal build by Ancestry Marketing Data Science |
-| Repository | `papayasamosa/MMM-Guide` |
+| Repository | `papayasamosa/Media-Mix-Lab` |
 
 ## Version history: v1.4 to v1.5
 

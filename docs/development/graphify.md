@@ -5,7 +5,7 @@ exposes it to MCP-capable coding clients, so any supported model switched to
 inside the same VS Code client can navigate architecture, dependencies, and
 call paths without re-scanning the whole tree on every request.
 
-**It is not part of MMM-Guide.** Like the other MCP tooling documented in
+**It is not part of Media-Mix-Lab.** Like the other MCP tooling documented in
 [`mcp_development_tooling.md`](mcp_development_tooling.md), it is a
 development-time tool only: not a Python dependency, never imported by
 `ancestry_mmm/`, not deployed with the app. See
@@ -268,15 +268,15 @@ already there):
 [mcp_servers.graphify-project]
 command = "powershell"
 args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/run_graphify_mcp.ps1"]
-cwd = "D:\\Ancestry-MMM\\repos\\MMM-Guide"
+cwd = "D:\\Ancestry-MMM\\repos\\Media-Mix-Lab"
 ```
 
 `cwd` is required here (unlike `.mcp.json`) because Codex's config isn't
 scoped to one project - without it, `scripts/run_graphify_mcp.ps1` and
 `graphify-out/graph.json` wouldn't resolve relative to this repo. Use the
 repository's canonical D-drive checkout path
-(`D:\Ancestry-MMM\repos\MMM-Guide`), not a machine-specific location such
-as the original `D:\App Projects\MMM-Guide` this repo was previously
+(`D:\Ancestry-MMM\repos\Media-Mix-Lab`), not a machine-specific location such
+as the original `D:\App Projects\Media-Mix-Lab` this repo was previously
 checked out to - adjust to your actual checkout path if it differs.
 Restart the Codex extension/session after
 editing.

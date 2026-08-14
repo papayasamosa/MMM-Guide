@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Canonical MCP development-tooling path contract for MMM-Guide.
+    Canonical MCP development-tooling path contract for Media-Mix-Lab.
 
 .DESCRIPTION
     Single source of truth for all development-tooling paths under

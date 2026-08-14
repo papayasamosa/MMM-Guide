@@ -48,42 +48,43 @@ The summarised proposal this record approves:
 
 ## Capability status
 
-Partially implemented as of 2026-08-14. Work Packages E1–E3 have delivered
-the logical-source-domain field and migration behaviour (PR #165), the
-governed activity source-column mapping (PR #166), and the cross-market
-`pooling_group_id` identity (PR #167). The remaining outcome
-workbook/template-pack and end-to-end source-contract work is not
-implemented. This record continues to establish the authority/vocabulary
-contract for that work; it approves *what may be built* but does not itself
-change runtime behaviour.
-Dependent, separately-scoped implementation packages (this brief's Work
-Package E1–E6) implement the domain objects, schema changes, template
-pack, and UI against this record — not against the external document's
-example schema literally (this record's approval is of the *decisions
-above*, not a license to copy the external document's field names,
-file formats, or example structures verbatim where they conflict with
-this repository's existing conventions).
+Partially implemented as of 2026-08-14. Work Packages E1–E3 delivered the
+logical-source-domain field and migration behaviour (PR #165), the governed
+activity source-column mapping (PR #166), and the cross-market
+`pooling_group_id` identity (PR #167). The subsequent source-pack sequence
+(PRs #229–#237) delivered the versioned Outcomes v2 import/adoption path,
+draw-level outcome-group handling, standard workbook downloads for all four
+logical domains, and a realistic synthetic source pack.
+
+The contract's standing invariants are implemented across the current
+source-pack boundary, but the non-Outcomes domains still require the semantic
+parity audit and end-to-end adoption checks described in the current task's
+Work Package 3. This record continues to establish the authority/vocabulary
+contract; it does not itself change runtime behaviour. Dependent
+implementation packages must implement against this record — not against the
+external document's example schema literally (this record's approval is of
+the decisions above, not a license to copy example field names or formats
+where they conflict with this repository's existing conventions).
 
 ### What already exists today (do not duplicate)
 
 - `core.coverage.SourceDefinition`/`SourceVersion`: a named, stable source
   identity plus immutable per-upload version capture (checksum, filename,
-  size). Has no logical-domain field. A dependent requirement adds one
-  rather than replacing this contract.
-- `core.activities.ActivityDefinition`: already has `activity_ownership`
-  (`paid`/`owned`/`earned`/`external_event`, item 6 above), `source`,
-  `model_input_column` (item 5's model-input half). It has no
-  `pooling_group_id` field, and no dedicated response-unit-mapping field
-  distinct from `model_input_column` — `core.media_units`/
-  `core.media_costs` already own cost/unit-mapping semantics separately;
-  a dependent requirement must map onto those, not duplicate them
-  (mirrors `REQ-COVERAGE-001`'s own "do not duplicate" precedent).
-- `data.loader.load_file_with_source_version`/`pages/01_Data_Upload.py`:
-  free-text `source_name` input (placeholder examples "media, outcomes,
-  controls") with no logical-domain grouping, validation against the
-  three required domains, or template download. A dependent requirement
-  adds domain selection and templates on top; it does not replace the
-  existing checksum/version-capture contract.
+  size), with a governed logical-domain field and explicit legacy
+  "unclassified" handling.
+- `core.activities.ActivityDefinition`: carries `activity_ownership`
+  (`paid`/`owned`/`earned`/`external_event`), `source`,
+  `model_input_column`, and the identity-only `pooling_group_id`. Existing
+  `core.media_units`/`core.media_costs` contracts remain the source of truth
+  for distinct spend, model-input, and response-unit mappings.
+- `data.loader`/`pages/01_Data_Upload.py`: source uploads are grouped by
+  logical domain, retain immutable source versions, and expose standard
+  workbook downloads. Multiple physical files remain valid within a domain;
+  market remains a row-level dimension.
+- `core.outcome_import` and the Outcomes v2 template/parser contracts:
+  source definitions can be reviewed and explicitly adopted into the
+  canonical outcome catalogue without silently overwriting an existing
+  catalogue or creating approval/treatment records.
 - `core.coverage.build_coverage_matrix_from_frame`: already computes an
   expected calendar from the joined frame's own observed dates, not from
   a per-source native-frequency declaration honoured at upload time (item

@@ -2,7 +2,7 @@
 
 ## Scope
 
-These instructions apply to the whole `papayasamosa/MMM-Guide` repository.
+These instructions apply to the whole `papayasamosa/Media-Mix-Lab` repository.
 
 More specific `AGENTS.md` files under `ancestry_mmm/core`, `ancestry_mmm/pages`, and `ancestry_mmm/tests` add rules for those areas. The most specific applicable file takes precedence, but no nested instruction may weaken the business definitions, mathematical-correctness requirements, or governance rules in this root file.
 
