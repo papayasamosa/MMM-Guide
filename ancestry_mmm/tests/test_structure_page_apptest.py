@@ -407,7 +407,7 @@ def test_legacy_pathway_review_loads_catalogue_and_requires_refit():
     at.session_state["model_trained"] = True
     at.run()
     assert not at.exception
-    assert any("mask-only" in warning.value for warning in at.warning)
+    assert any("earlier pathway record" in warning.value for warning in at.warning)
     cross_sell = [
         selectbox
         for selectbox in at.selectbox
@@ -424,6 +424,8 @@ def test_legacy_pathway_review_loads_catalogue_and_requires_refit():
     load_review.click().run()
     assert not at.exception
     assert len(at.session_state["media_outcome_pathways"]) == 1
+    assert any("Some source products were inferred" in info.value for info in at.info)
+    assert not any("source_product_inferred" in info.value for info in at.info)
     assert (
         at.session_state["media_outcome_pathways"][0]["target_outcome_id"]
         == "fh_new_gsa"
@@ -493,7 +495,7 @@ def test_legacy_pathway_review_loads_catalogue_and_requires_refit():
         == "cross_product"
     )
     assert any(
-        "old fit and approval were invalidated" in success.value
+        "earlier fit and approval were invalidated" in success.value
         for success in at.success
     )
 
