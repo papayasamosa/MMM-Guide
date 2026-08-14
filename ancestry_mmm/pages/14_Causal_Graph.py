@@ -886,15 +886,26 @@ if validation.is_valid:
     plan = build_compilation_plan_preview(
         graph, activity_definitions=_graph_activity_definitions()
     )
-    preview_cols = st.columns(2)
-    preview_cols[0].markdown("**Outcome ordering**")
-    preview_cols[0].write(list(plan.outcome_ids))
-    preview_cols[1].markdown("**Modelling columns**")
-    preview_cols[1].write(list(plan.modelling_columns))
-    st.markdown("**Pathway mask preview**")
-    st.dataframe(plan.to_dict()["pathway_mask_preview"], use_container_width=True)
-    st.markdown("**Lag structure**")
-    st.dataframe(plan.to_dict()["lag_structure"], use_container_width=True)
+    preview_cols = st.columns(3)
+    preview_cols[0].metric("Outcome nodes", len(plan.outcome_ids))
+    preview_cols[1].metric("Model inputs", len(plan.modelling_columns))
+    preview_cols[2].metric("Structural links", len(plan.pathway_mask_preview))
+    st.caption(
+        "The graph currently describes the structure below. Exact identifiers, "
+        "pathway masks, and lag settings are available in Technical details."
+    )
+    with st.expander("Technical details · compilation plan", expanded=False):
+        preview_cols = st.columns(2)
+        preview_cols[0].markdown("**Outcome ordering**")
+        preview_cols[0].write(list(plan.outcome_ids))
+        preview_cols[1].markdown("**Modelling columns**")
+        preview_cols[1].write(list(plan.modelling_columns))
+        st.markdown("**Pathway mask preview**")
+        st.dataframe(
+            plan.to_dict()["pathway_mask_preview"], width="stretch", hide_index=True
+        )
+        st.markdown("**Lag structure**")
+        st.dataframe(plan.to_dict()["lag_structure"], width="stretch", hide_index=True)
 else:
     st.info("Fix validation errors above to see the model-plan preview.")
 

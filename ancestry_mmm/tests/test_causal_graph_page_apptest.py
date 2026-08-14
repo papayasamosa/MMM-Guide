@@ -111,6 +111,12 @@ def test_add_edge_via_form_creates_an_edge_and_passes_validation():
     assert "TV -> fh_new" not in captions
     lag_select = next(select for select in at.selectbox if select.label == "Lag type")
     assert "Fixed delay" in lag_select.options
+    metric_labels = {metric.label for metric in at.metric}
+    assert {"Outcome nodes", "Model inputs", "Structural links"} <= metric_labels
+    assert any(
+        expander.label == "Technical details · compilation plan"
+        for expander in at.expander
+    )
 
 
 def test_approve_is_disabled_until_valid_then_enabled():

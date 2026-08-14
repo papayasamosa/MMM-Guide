@@ -3129,3 +3129,29 @@ the persistence and validation contracts.
 
 **Owner:** Platform engineering / Data Science.
 **Status:** Implemented in UX/UI coherence Phase 23.
+
+## Keep causal-plan identifiers in Technical details (UX/UI coherence Phase 24)
+
+**Date:** 2026-08-14
+**Decision:** Make the Causal Graph model-plan preview lead with a compact
+summary of outcome nodes, model inputs, and structural links. Keep exact
+identifier lists, pathway-mask rows, and lag structure in a collapsed
+`Technical details · compilation plan` section.
+
+**Reason:** The model plan is useful for understanding whether the graph is
+structurally complete, but raw compilation identifiers are implementation
+detail for routine workflow use. Progressive disclosure preserves auditability
+without making the main graph page require repository-key knowledge.
+
+**Impact:** Presentation-only change. The same `GraphCompilationPlan` values
+are generated and remain available unchanged in the technical section; graph
+validation, readiness, approval, compilation, persistence, and governance
+semantics are unchanged. Business question: does the current graph contain the
+expected outcomes, inputs, and structural relationships? Estimand: none
+introduced. Output scale/units: unchanged. Upstream modelling references: none
+consulted; no modelling API or dependency changed.
+Remaining limitation: the compact counts do not replace the exact technical
+preview, which remains available on demand.
+
+**Owner:** Platform engineering / Data Science.
+**Status:** Implemented in UX/UI coherence Phase 24.
