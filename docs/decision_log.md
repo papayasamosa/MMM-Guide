@@ -3239,3 +3239,31 @@ through the governed configuration and technical persistence details.
 
 **Owner:** Platform engineering / Data Science.
 **Status:** Implemented in UX/UI coherence Phase 27.
+
+## Humanise remaining Results outcome and pathway labels (UX/UI coherence Phase 28)
+
+**Date:** 2026-08-14
+**Decision:** Show the governed product, segment, metric, and definition version
+when Results presents an outcome in a waterfall, reporting summary, or official
+response-curve title. Replace visible pathway captions that exposed repository
+function names or internal role keys with analyst-facing descriptions.
+
+**Reason:** Results had already moved most tables and official curve headings to
+business labels, but its shared helper omitted the outcome definition version,
+and pathway-strength explanations still read like implementation notes. Those
+leaks made routine reporting less trustworthy and could make two versions of an
+outcome indistinguishable.
+
+**Impact:** Presentation-only changes to Results labels and pathway-strength
+copy, plus AppTest coverage for versioned waterfall options and the absence of
+repository identifiers in routine captions. Stable outcome IDs, definition
+resolution, calculations, reporting roll-ups, curve governance, persistence,
+and approval semantics are unchanged. Business question: which governed
+outcome and pathway evidence is being viewed? Estimand: none introduced.
+Output scale/units: unchanged. Upstream modelling references: none consulted;
+no modelling API or dependency changed.
+Remaining limitation: exact IDs and storage/audit fields remain available in
+Technical details and persisted artefacts for traceability.
+
+**Owner:** Platform engineering / Data Science.
+**Status:** Implemented in UX/UI coherence Phase 28.

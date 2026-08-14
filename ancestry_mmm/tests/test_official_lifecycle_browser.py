@@ -345,6 +345,15 @@ def test_official_lifecycle_journey_in_browser(
     expect(
         page.get_by_role("heading", name=re.compile(r"Official response curve")).first
     ).to_be_visible(timeout=30_000)
+    expect(
+        page.get_by_role(
+            "heading",
+            name=re.compile(
+                r"Official response curve.*Family History.*New.*GSA.*definition 1\.0"
+            ),
+        ).first
+    ).to_be_visible(timeout=30_000)
+    expect(page.get_by_text("core.pathways", exact=False)).not_to_be_visible()
 
     # --- Scenario Planner: the imported saved scenario is visible --------
     # The comparison table itself is a canvas-rendered `st.dataframe` grid

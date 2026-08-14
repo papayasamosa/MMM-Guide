@@ -962,6 +962,16 @@ def test_results_dashboard_separates_summary_and_exploratory_curve_context():
         "exploratory evidence" in text and "official response curves" in text
         for text in captions
     )
+    assert not any("core.pathways" in text for text in captions)
+    scope_selectors = [box for box in at.selectbox if box.label == "Outcome view"]
+    assert scope_selectors, "expected contribution waterfall outcome selectors"
+    assert all(
+        any(
+            "Family History · New · GSA (definition 1.0)" in str(option)
+            for option in box.options
+        )
+        for box in scope_selectors
+    )
     metric_labels = {metric.label for metric in at.metric}
     assert {
         "Fit state",
