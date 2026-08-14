@@ -616,6 +616,21 @@ def validate_outcome_group_treatments(
         ]
 
         if selected_treatment == OUTCOME_GROUP_TREATMENT_COMPONENTS_JOINT:
+            if group.product == DNA:
+                unresolved_members = [
+                    outcome.outcome_id
+                    for outcome in members
+                    if outcome.segment_dimension == SEGMENT_DIMENSION_UNSPECIFIED
+                    or outcome.role == "diagnostic"
+                ]
+                if unresolved_members:
+                    errors.append(
+                        f"Outcome group '{label}' uses components_joint, but these "
+                        "DNA members are unresolved or diagnostic: "
+                        f"{', '.join(unresolved_members)}. Review the breakdown "
+                        "and exclude diagnostic states before selecting an additive "
+                        "treatment."
+                    )
             excluded_members = [
                 outcome.outcome_id for outcome in members if not outcome.included_in_fit
             ]
@@ -656,6 +671,16 @@ def validate_outcome_group_treatments(
                         f"total '{supplied_total.outcome_id}' is excluded from the "
                         "next fit. Include the supplied total or choose another "
                         "treatment."
+                    )
+                elif group.product == DNA and (
+                    supplied_total.segment_dimension == SEGMENT_DIMENSION_UNSPECIFIED
+                    or supplied_total.role == "diagnostic"
+                ):
+                    errors.append(
+                        f"Outcome group '{label}' uses total_only, but supplied "
+                        f"total '{supplied_total.outcome_id}' is unresolved or "
+                        "diagnostic. Review its DNA breakdown before selecting an "
+                        "additive treatment."
                     )
             included_members = [
                 outcome.outcome_id for outcome in members if outcome.included_in_fit

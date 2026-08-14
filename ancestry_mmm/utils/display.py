@@ -5,7 +5,7 @@ must keep using the raw dataframe/values for joins, filters, transforms,
 modelling and exports.
 """
 
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Iterable, Mapping, Optional
 
 import pandas as pd
 import streamlit as st
@@ -189,6 +189,40 @@ def readable_label(name: Any) -> str:
 def readable_labels(names: Iterable[str]) -> Dict[str, str]:
     """Map each technical name to its readable label."""
     return {name: readable_label(name) for name in names}
+
+
+def outcome_display_label(outcome: Any, *, include_breakdown: bool = False) -> str:
+    """Return a concise human label for a governed outcome.
+
+    The stable ``outcome_id`` remains the value used by selectors, graph
+    edges, persistence, and joins.  This helper only formats an
+    ``OutcomeDefinition`` or its JSON-safe mapping for presentation, so
+    imported draft candidates and fitted catalogue records use the same
+    vocabulary without exposing raw IDs in routine UI.
+    """
+
+    def value(field: str) -> str:
+        if isinstance(outcome, Mapping):
+            raw = outcome.get(field, "")
+        else:
+            raw = getattr(outcome, field, "")
+        return str(raw or "").strip()
+
+    outcome_id = value("outcome_id")
+    parts = [
+        readable_label(value(field))
+        for field in ("product", "segment", "metric")
+        if value(field)
+    ]
+    label = " · ".join(parts) or readable_label(outcome_id)
+    if include_breakdown:
+        dimension = value("segment_dimension")
+        if dimension and dimension != "unspecified":
+            label += f" · Breakdown: {readable_label(dimension)}"
+    definition_version = value("definition_version")
+    if definition_version:
+        label += f" (definition {definition_version})"
+    return label
 
 
 def display_enum_options(values: Iterable[Any]) -> list[Any]:

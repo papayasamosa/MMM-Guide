@@ -202,3 +202,57 @@ def test_seed_button_adds_nodes_from_governed_search_objects():
     assert nodes_by_id["uk_paid_search_spend"]["role"] == "intervention"
     assert nodes_by_id["uk_paid_search_cap"]["role"] == "capacity_or_cap"
     assert "uk_paid_search_delivery" not in nodes_by_id
+
+
+def test_seed_button_exposes_catalogue_and_imported_draft_outcomes_as_human_targets():
+    """WP7: source meaning supplies candidate identities, never edges."""
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.session_state["outcome_definitions"] = [
+        {
+            "outcome_id": "fh_gsa_dna_cross_sell",
+            "product": "Family History",
+            "segment": "DNA cross-sell",
+            "metric": "GSA",
+            "source_column": "fh_gsa_dna_cross_sell",
+            "segment_dimension": "fh_customer_segment",
+        }
+    ]
+    at.session_state["outcome_source_draft"] = [
+        {
+            "outcome_id": "fh_nbt_dna_cross_sell",
+            "product": "Family History",
+            "segment": "DNA cross-sell",
+            "metric": "Net bill-through count",
+            "source_column": "fh_nbt_dna_cross_sell",
+            "segment_dimension": "fh_customer_segment",
+            "definition_version": "v1",
+        }
+    ]
+    at.run()
+    assert not at.exception, f"initial load raised: {at.exception}"
+
+    next(b for b in at.button if b.label == "Add these as nodes").click().run()
+
+    assert not at.exception, f"seed click raised: {at.exception}"
+    stored = at.session_state["causal_graph"]
+    nodes_by_id = {node["node_id"]: node for node in stored["nodes"]}
+    assert set(nodes_by_id) == {
+        "fh_gsa_dna_cross_sell",
+        "fh_nbt_dna_cross_sell",
+    }
+    assert (
+        "Family History · DNA cross-sell · GSA"
+        in nodes_by_id["fh_gsa_dna_cross_sell"]["label"]
+    )
+    assert "Draft source candidate" in nodes_by_id["fh_nbt_dna_cross_sell"]["label"]
+    assert stored["edges"] == []
+
+    target_select = next(
+        select for select in at.selectbox if select.label == "Target node"
+    )
+    assert any(
+        "Family History · DNA cross-sell · GSA" in option
+        for option in target_select.options
+    )
+    assert any("Net bill-through count" in option for option in target_select.options)

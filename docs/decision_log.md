@@ -3598,3 +3598,52 @@ total is still subject to the same outcome approval, value-weight, currency,
 and reporting/optimisation eligibility gates as its source components.
 **Owner:** Data Science / Platform engineering.
 **Status:** Implemented in draw-level grouped totals WP6.
+
+## DNA alternatives and multi-target halo regression (Work Package 7)
+
+**Date:** 2026-08-14
+**Requirement:** `REQ-DATAIN-002`; `Ancestry_MMM_Outcome_Source_Grouping_Coding_LLM_Instructions_FRESH_2026-08-14_0712.md`, WP7.
+
+**Business question:** Can DNA outcomes be partitioned by customer relationship,
+purchase recipient, and optional activation status without conflating those
+dimensions, while allowing one DNA media pathway to target multiple explicitly
+approved Family History outcomes?
+
+**Decision:** DNA alternatives remain governed outcome-group definitions. The
+three dimensions are represented independently and cannot be relabelled across
+dimensions. Alternative partitions cannot both be selected as additive members,
+and unresolved or diagnostic DNA states cannot silently enter additive
+treatment. The approved causal graph remains authoritative for halo targets:
+each explicit target outcome ID is retained independently, with no edge inferred
+from the outcome dictionary. Imported draft outcomes may seed labelled graph
+candidate nodes, but remain draft candidates until adopted and included in the
+fitted outcome catalogue. Approved graph targets absent from that catalogue fail
+closed at model compilation. When no equivalent approved graph exists, the
+legacy single-target pathway remains compatible.
+
+**Estimand:** No new model equation is introduced. For an approved graph, each
+DNA-media-to-outcome halo edge maps to its own outcome-scale pathway mask and
+target outcome ID; no post-hoc target collapse or inferred mediation is used.
+
+**Output scale and units:** Existing approved outcome counts/value units are
+unchanged. Stable outcome IDs are persisted internally; human-readable product,
+segment, metric, breakdown, version, and draft-candidate labels are presentation
+metadata only.
+
+**Upstream references:** None consulted. WP7 does not change PyMC/PyMC-Marketing
+model equations, transformations, priors, or sampling APIs; it extends the
+existing governed graph compiler, outcome-group validation, and graph-page
+candidate workflow.
+
+**Tests:** Added DNA dimension/overlap/diagnostic safeguards, distinct
+multi-target halo regression, graph fit-scope guard, legacy no-graph compatibility,
+and causal-graph AppTest coverage. Focused validation passed: 257 core/graph
+tests and the dedicated 16-test WP7/page run, with Ruff format/check clean.
+
+**Remaining limitations:** This work intentionally does not classify customers
+or infer customer-level DNA identity from aggregate sources. Draft candidates
+remain non-fitting until governed adoption and fitting. Full CI remains the
+release gate.
+
+**Owner:** Data Science / Platform engineering.
+**Status:** Implemented in DNA alternatives and multi-target halo regression WP7.
