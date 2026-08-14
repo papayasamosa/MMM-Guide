@@ -16,6 +16,7 @@ from ancestry_mmm.utils import (
     curve_artifact_store_dir,
     dataframe_column_config,
     format_date,
+    readable_label,
 )
 from ancestry_mmm.components import (
     apply_theme,
@@ -141,21 +142,26 @@ _REPORTING_VIEW_TABS = (
 
 
 def _outcome_display_labels(outcome_definitions):
-    """Return analyst-readable outcome labels without changing stable IDs."""
-    return {
-        outcome.outcome_id: " · ".join(
-            part
+    """Return analyst-readable, versioned outcome labels without changing IDs."""
+
+    def _label(outcome):
+        label = " · ".join(
+            str(part).strip()
             for part in (outcome.product, outcome.segment, outcome.metric)
             if str(part).strip()
-        )
-        for outcome in outcome_definitions
-    }
+        ) or readable_label(outcome.outcome_id)
+        definition_version = str(outcome.definition_version or "").strip()
+        if definition_version:
+            label += f" (definition {definition_version})"
+        return label
+
+    return {outcome.outcome_id: _label(outcome) for outcome in outcome_definitions}
 
 
 def _display_outcome(value, outcome_labels):
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return value
-    return outcome_labels.get(str(value), value)
+    return outcome_labels.get(str(value), readable_label(str(value)))
 
 
 def _humanise_outcome_columns(dataframe, outcome_labels):
@@ -1127,9 +1133,9 @@ if model_type == "market_specific":
     st.markdown("#### Cross-product pathway strength")
     st.caption(
         "Shared across markets in this model structure (only K and beta are market-specific). "
-        "Estimated multiplier for each active/exploratory cross-product (outcome, channel) cell "
-        "(core.pathways.resolve_pathway_masks) - generalises the old DNA-only halo pathway to any "
-        "channel a pathway catalogue routes there."
+        "Estimated cross-product effect strength for each outcome and channel. It is shrunk "
+        "toward zero by default and only pulled away from zero where the data supports it. "
+        "The pathway catalogue can route this effect to any eligible channel."
     )
     pathway_df = _humanise_pathway_table(
         _pathway_strength_table(meta, params), outcome_labels
@@ -1296,11 +1302,11 @@ else:
         pathway_df, width="stretch", column_config=dataframe_column_config(pathway_df)
     )
     st.caption(
-        "Estimated multiplier for each active/exploratory cross-product (outcome, channel) cell "
-        "(core.pathways.resolve_pathway_masks) - shrunk toward zero by prior default (tighter for "
-        "exploratory cells) and only pulled away from zero where the data supports it. A "
-        "primary_direct cell (e.g. the DNA cross-sell outcome's own direct pathway from DNA media) "
-        "isn't shown here - it's fixed at full weight (beta itself), not a separate strength "
+        "Estimated cross-product effect strength for each outcome and channel. It is shrunk "
+        "toward zero by default (more tightly for exploratory cells) and only pulled away from "
+        "zero where the data supports it. An outcome's own direct media pathway, such as the "
+        "DNA cross-sell outcome's direct DNA-media response, is not shown here because its "
+        "weight is represented by the response coefficient rather than a separate strength "
         "multiplier."
     )
 
