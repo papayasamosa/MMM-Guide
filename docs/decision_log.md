@@ -3079,3 +3079,26 @@ connected browser was unavailable.
 
 **Owner:** Platform engineering / Data Science.
 **Status:** Implemented in UX/UI coherence Phase 21.
+
+## Shorter Model Structure activity choices (UX/UI coherence Phase 22)
+
+**Date:** 2026-08-14
+**Decision:** Show governed activity selectors as `Activity (Market)` and keep
+the reporting channel out of the primary choice label.
+
+**Reason:** The selector is an identity-and-scope choice, while reporting
+channel is a separate roll-up. The shorter label is easier to scan without
+changing the stored activity key or mapped model input.
+
+**Impact:** Both the governed-activity and DNA-targeted selectors retain the
+same stable `market::activity_id` values and downstream resolution. The
+reporting channel remains available in Activity Mapping and reports. Business
+question: which governed activities, in which markets, should this model
+include? Estimand: none introduced. Output scale/units: unchanged.
+Upstream modelling references: none consulted because this package changes
+presentation only and does not change PyMC or PyMC Marketing model APIs.
+Remaining limitation: Activity Mapping remains the source of fuller reporting,
+planning, evidence, and provenance detail.
+
+**Owner:** Platform engineering / Data Science.
+**Status:** Implemented in UX/UI coherence Phase 22.
