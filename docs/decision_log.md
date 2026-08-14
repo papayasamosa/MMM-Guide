@@ -2953,3 +2953,33 @@ connected browser was unavailable.
 
 **Owner:** Platform engineering / Data Science.
 **Status:** Implemented in UX/UI coherence Phase 17.
+
+## Human outcome labels in routine fit and curve controls (UX/UI coherence Phase 18)
+
+**Date:** 2026-08-14
+**Decision:** Show approved outcome product, segment, metric, and definition
+version in the Fit Model proposal and Planning Curve outcome selector. Keep
+stable outcome IDs as the internal selector values and governance keys; do
+not change outcome resolution, approval filtering, model identity, or saved
+curve metadata.
+
+**Reason:** The page-to-page terminology sweep found raw outcome IDs in two
+routine controls even though the outcome registry already supplied the human
+definition. Analysts should recognise the selected measure consistently
+across fitting and Planning Curve creation without learning repository keys.
+
+**Impact:** Presentation-only outcome labels, selector formatting, and focused
+AppTest expectations. No outcome definition, maturity rule, approval use,
+model calculation, curve calculation, persistence, or governance behaviour
+changed. Business question: which approved outcome definition is being fitted
+or used to create a Planning Curve? Estimand: unchanged; the selected
+registry outcome and its existing definition remain the estimand. Output
+scale/units: unchanged and still determined by the selected outcome and
+model-input/cost mapping. Upstream modelling references: none consulted
+because this package changes presentation only and does not change PyMC or
+PyMC Marketing model APIs. Remaining limitation: interactive browser
+screenshot review uses the repository's synthetic-data browser journey
+because the local connected browser was unavailable.
+
+**Owner:** Platform engineering / Data Science.
+**Status:** Implemented in UX/UI coherence Phase 18.

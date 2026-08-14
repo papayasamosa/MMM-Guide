@@ -100,6 +100,15 @@ _COST_MAPPING_TYPES = {
     "piecewise_linear": PiecewiseLinearCostMapping,
     "uploaded_plan": UploadedPlanCostMapping,
 }
+
+
+def _outcome_display_label(outcome) -> str:
+    label = f"{outcome.product} · {outcome.segment} · {outcome.metric}"
+    if outcome.definition_version:
+        label += f" (definition {outcome.definition_version})"
+    return label
+
+
 _COST_MAPPING_APPROVAL_STATUSES = [
     "draft",
     "approved",
@@ -586,15 +595,24 @@ with SectionCard(
         )
         st.stop()
 
-    outcome_labels = [outcome.outcome_id for _, outcome in eligible]
-    selected_label = st.selectbox("Outcome", outcome_labels, key="ocg_outcome")
+    outcome_ids = [outcome.outcome_id for _, outcome in eligible]
+    outcome_display_labels = {
+        outcome.outcome_id: _outcome_display_label(outcome) for _, outcome in eligible
+    }
+    selected_outcome_id = st.selectbox(
+        "Outcome",
+        outcome_ids,
+        format_func=lambda outcome_id: outcome_display_labels.get(
+            outcome_id, outcome_id
+        ),
+        key="ocg_outcome",
+    )
     selected_outcome_approval, selected_outcome = next(
-        (oa, o) for oa, o in eligible if o.outcome_id == selected_label
+        (oa, o) for oa, o in eligible if o.outcome_id == selected_outcome_id
     )
 
     st.caption(
-        f"Selected outcome: {selected_outcome.metric} · {selected_outcome.segment} · "
-        f"definition {selected_outcome.definition_version}. "
+        f"Selected outcome: {_outcome_display_label(selected_outcome)}. "
         "Its approval and maturity rules travel with the saved Planning Curve."
     )
     requested_use_label = st.selectbox(

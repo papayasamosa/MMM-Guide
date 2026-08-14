@@ -94,6 +94,10 @@ def test_preview_badge_shows_not_yet_run_before_previewing():
     assert "Fit dashboard" in text
     assert "Fit proposal" in text
     assert "Preview: not yet run" in text
+    assert any(
+        "Outcomes: Family History · New · GSA" in (caption.value or "")
+        for caption in at.caption
+    )
 
 
 def test_preview_badge_shows_current_after_previewing():
