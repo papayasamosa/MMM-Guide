@@ -57,6 +57,8 @@ from .predict import extract_posterior_params, generate_channel_curve
 from .activities import ActivityDefinition
 from .media_costs import CostMappingRegistry
 from .scenario_governance import CounterfactualPolicy, ScenarioPlan
+from .outcome_group_totals import aggregate_outcome_groups
+from .outcomes import OutcomeGroupDefinition, OutcomeGroupTreatment
 
 DEFAULT_N_DRAWS = 100
 DEFAULT_CRED_MASS = 0.9
@@ -336,6 +338,8 @@ def evaluate_scenario_with_uncertainty(
     value_mapping: Optional[OutcomeValueMapping] = None,
     approval_readiness: Optional["ApprovalReadiness"] = None,
     current_policy: Optional["ThresholdPolicy"] = None,
+    outcome_groups: Optional[List[OutcomeGroupDefinition]] = None,
+    outcome_group_treatments: Optional[List[OutcomeGroupTreatment]] = None,
 ) -> Dict[str, object]:
     """
     Per-draw scenario evaluation: `core.optimization.evaluate_scenario` run
@@ -476,7 +480,24 @@ def evaluate_scenario_with_uncertainty(
                 )
             )
 
-    summary = _summarize_scenario_draws(proposed_draws, cred_mass)
+    # The numerical scenario remains outcome-id based because the fitted
+    # prediction is still calculated for each modelled outcome.  The result
+    # table may additionally expose governed group totals, formed separately
+    # inside each month/draw before the interval summary.  Keep the raw draw
+    # frames for paired-baseline probability calculations below; their
+    # objective-level columns are already calculated once per month and would
+    # be duplicated if summed across grouped member rows.
+    summary_draws = [
+        aggregate_outcome_groups(
+            frame,
+            outcome_groups,
+            outcome_group_treatments,
+            by=["month"],
+            value_columns=("predicted_outcome", "incremental_outcome", "value"),
+        )
+        for frame in proposed_draws
+    ]
+    summary = _summarize_scenario_draws(summary_draws, cred_mass)
 
     prob_outperforms_baseline = None
     comparison_column = None

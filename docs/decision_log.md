@@ -3548,3 +3548,53 @@ alternative and multi-target halo regression; templates/demo refresh remains
 in WP8.
 **Owner:** Data Science / Platform engineering.
 **Status:** Implemented in Model Structure group treatment WP5.
+
+## Draw-level grouped outcome totals (Work Package 6)
+
+**Date:** 2026-08-14
+**Decision:** Add one framework-independent draw-table service for semantic
+outcome groups. For `components_joint`, member outcome rows are summed at the
+full reporting grain within each posterior draw and only then summarised. For
+`total_only`, the supplied total is the official group row and the member rows
+are excluded from that view. An exact supplied total under
+`components_joint` remains reconciliation evidence rather than an unrelated
+official component. Group rows carry stable group identity, human label,
+treatment, source, and member identities; cost-bearing fields use one
+deduplicated channel/plan value rather than multiplying spend by the number
+of members. Projects without groups, or groups that cannot be materialised in
+an outcome-scoped artifact, retain the prior row-level behaviour.
+**Reason:** Posterior medians and interval endpoints are not additive
+quantities. Summing them after independent component summaries can produce a
+different business total and can double count exact supplied totals,
+alternative partitions, or channel spend. The same service must support GSA,
+sign-up, NBT-count, DNA-kit, and future compatible count groups without
+embedding FH-specific logic in the model equations.
+**Alternatives considered:** Sum already summarised component means and
+interval endpoints (rejected - violates posterior-draw aggregation); add
+group rows alongside all member rows in official views (rejected - double
+counts objectives and reporting totals); use the live source dictionary to
+reconstruct a historical fit (rejected - fit-time group metadata is already
+persisted and authoritative); change the PyMC equations (rejected - no
+verified modelling defect requires it in this package).
+**Impact:** `core.outcome_group_totals` now provides draw aggregation,
+post-aggregation summaries, member-share reconciliation, safe selectors, and
+legacy fallback. Canonical curve governance views, reporting rollups,
+shared/market-specific attribution summaries, Results selectors, and
+posterior scenario summaries consume fit-time group/treatment metadata. Raw
+scenario draws remain available for paired baseline probabilities. Business
+question: what is the posterior distribution of one approved grouped measure
+after its fitted component outcomes are combined? Estimand: the
+outcome-scale additive group response/value at a fixed market/channel/period
+and posterior draw, or the supplied total under `total_only`; no log-scale
+eta total is exposed as a business response. Output scale/units: the group's
+declared outcome unit and, where governed, its additive value currency;
+channel/plan spend is counted once. Upstream modelling references: none
+consulted; WP6 changes downstream table aggregation and does not change
+PyMC/PyMC-Marketing model equations, transformations, or priors.
+**Remaining limitation:** alternative DNA partition governance and explicit
+multi-target halo regression remain in WP7; downloadable v2 templates,
+realistic source fixtures, and full end-to-end UX remain in WP8. A grouped
+total is still subject to the same outcome approval, value-weight, currency,
+and reporting/optimisation eligibility gates as its source components.
+**Owner:** Data Science / Platform engineering.
+**Status:** Implemented in draw-level grouped totals WP6.

@@ -22,6 +22,7 @@ from .activities import (
     FUNNEL_STAGES,
     activity_reporting_fingerprint,
 )
+from .outcome_group_totals import aggregate_outcome_group_draws
 
 FUNNEL_STAGE_LABELS = {
     "brand_upper": "Brand / upper funnel",
@@ -485,10 +486,43 @@ def build_reporting_views(
     activity_definitions: Iterable[ActivityDefinition | Mapping[str, object]],
     *,
     strict: bool = False,
+    outcome_groups: Iterable[object] | None = None,
+    outcome_group_treatments: Iterable[object] | None = None,
 ) -> dict[str, pd.DataFrame]:
-    """Build standard funnel, channel/platform, and activity views."""
+    """Build standard funnel, channel/platform, and activity views.
+
+    When fit-time semantic groups are supplied, their member rows are first
+    combined at ``posterior_draw`` grain.  This keeps the reporting taxonomy
+    a presentation layer while ensuring a grouped outcome is not counted once
+    per component or once per causal pathway.
+    """
     definitions = _definition_rows(activity_definitions)
-    enriched = enrich_reporting_rows(rows, definitions, strict=strict)
+    grouped_rows = rows
+    if outcome_groups:
+        grouping_columns = [
+            column
+            for column in (
+                "model_run_id",
+                "reference_context_id",
+                "market",
+                "channel",
+                "model_input_column",
+                "media_input_column",
+                "activity_id",
+                "spend_point",
+                "curve_type",
+                "counterfactual_axis_type",
+                "posterior_draw",
+            )
+            if column in rows.columns
+        ]
+        grouped_rows = aggregate_outcome_group_draws(
+            rows,
+            list(outcome_groups),
+            list(outcome_group_treatments or ()),
+            by=grouping_columns,
+        )
+    enriched = enrich_reporting_rows(grouped_rows, definitions, strict=strict)
     common = [
         column
         for column in ("market", "outcome_id", "segment", "spend_point")

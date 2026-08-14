@@ -46,6 +46,8 @@ from .market_specific_predict import (
 from .predict import extract_posterior_params, steady_state_outcome_response
 from .transformations import hill_function
 from .uncertainty import DEFAULT_CRED_MASS, DEFAULT_N_DRAWS, sample_draw_indices
+from .outcome_group_totals import aggregate_outcome_group_draws
+from .outcomes import OutcomeGroupDefinition, OutcomeGroupTreatment
 
 ECONOMICS_OK = "ok"
 ECONOMICS_ZERO_SPEND = "zero_spend"
@@ -2283,6 +2285,8 @@ def canonical_governance_views(
     draws: pd.DataFrame,
     *,
     value_per_response: Optional[Mapping[str, float]] = None,
+    outcome_groups: Optional[Sequence[OutcomeGroupDefinition]] = None,
+    outcome_group_treatments: Optional[Sequence[OutcomeGroupTreatment]] = None,
 ) -> Dict[str, pd.DataFrame]:
     """Channel-safe draw-level views; each reports its governance purpose."""
     common = [
@@ -2292,20 +2296,29 @@ def canonical_governance_views(
         "channel",
         "spend_point",
     ]
-    nbt = draws[draws["metric_key"] == "fh_net_billthrough_count"]
+    # Group members are combined before channel-level economics and before
+    # posterior summaries.  With no fit-time groups this is an exact copy of
+    # the legacy path, including its existing view names and row grain.
+    grouped_draws = aggregate_outcome_group_draws(
+        draws,
+        outcome_groups,
+        outcome_group_treatments,
+        by=common,
+    )
+    nbt = grouped_draws[grouped_draws["metric_key"] == "fh_net_billthrough_count"]
     views = {
         "segment": aggregate_curve_draws(
-            draws,
+            grouped_draws,
             by=common + ["product", "segment", "outcome_id", "metric_key"],
             value_per_response=value_per_response,
         ),
         "product": aggregate_curve_draws(
-            draws,
+            grouped_draws,
             by=common + ["product", "metric_key"],
             value_per_response=value_per_response,
         ),
         "market_channel_metric": aggregate_curve_draws(
-            draws,
+            grouped_draws,
             by=common + ["metric_key"],
             value_per_response=value_per_response,
         ),
@@ -2315,25 +2328,25 @@ def canonical_governance_views(
             value_per_response=value_per_response,
         ),
         "direct": aggregate_curve_draws(
-            draws[draws["component_type"] == "direct"],
+            grouped_draws[grouped_draws["component_type"] == "direct"],
             by=common + ["product", "metric_key"],
             value_per_response=value_per_response,
             economics_allowed=False,
         ),
         "halo": aggregate_curve_draws(
-            draws[draws["component_type"] == "cross_product"],
+            grouped_draws[grouped_draws["component_type"] == "cross_product"],
             by=common + ["product", "metric_key"],
             value_per_response=value_per_response,
             economics_allowed=False,
         ),
         "headline": aggregate_curve_draws(
-            draws,
+            grouped_draws,
             by=common + ["product", "metric_key"],
             governance="headline",
             value_per_response=value_per_response,
         ),
         "planning": aggregate_curve_draws(
-            draws,
+            grouped_draws,
             by=common + ["product", "metric_key"],
             governance="planning",
             value_per_response=value_per_response,

@@ -56,6 +56,7 @@ from ancestry_mmm.core.reporting_rollups import (
     build_reporting_views,
     summarize_reporting_draws,
 )
+from ancestry_mmm.core.outcome_group_totals import reporting_group_options
 from ancestry_mmm.core.curve_artifact import (
     CurveArtifactError,
     governed_context_fields,
@@ -934,6 +935,13 @@ outcome_definitions = resolve_outcome_definitions(
     get_state("outcome_definitions"), spec.segment_outcomes, spec.segment_ltv
 )
 outcome_labels = _outcome_display_labels(outcome_definitions)
+outcome_groups_at_fit = getattr(meta, "outcome_groups_at_fit", None) or []
+outcome_group_treatments_at_fit = (
+    getattr(meta, "outcome_group_treatments_at_fit", None) or []
+)
+for _outcome_group in outcome_groups_at_fit:
+    if getattr(_outcome_group, "group_id", None):
+        outcome_labels[_outcome_group.group_id] = _outcome_group.group_label
 render_drift_status(
     outcome_definitions,
     meta,
@@ -979,6 +987,8 @@ if model_type == "market_specific":
         ltv,
         outcome_ids=fh_gsa_ids,
         by_market=by_market_total,
+        outcome_groups=outcome_groups_at_fit,
+        outcome_group_treatments=outcome_group_treatments_at_fit,
     )
     ms_total_display = _humanise_outcome_columns(ms_total_df, outcome_labels)
     st.dataframe(
@@ -990,7 +1000,13 @@ if model_type == "market_specific":
     st.markdown("---")
     st.markdown("#### Market and outcome detail")
     ms_seg_df = outcome_channel_market_summary(
-        frame, meta, params, ms_contributions, ltv
+        frame,
+        meta,
+        params,
+        ms_contributions,
+        ltv,
+        outcome_groups=outcome_groups_at_fit,
+        outcome_group_treatments=outcome_group_treatments_at_fit,
     )
     ms_seg_display = _humanise_outcome_columns(ms_seg_df, outcome_labels)
     st.dataframe(
@@ -1004,6 +1020,16 @@ if model_type == "market_specific":
     c1, c2 = st.columns(2)
     waterfall_market = c1.selectbox("Market", meta.markets, key="ms_waterfall_market")
     waterfall_options = {"Total Family History": None}
+    waterfall_options.update(
+        {
+            label: group_id
+            for group_id, label in reporting_group_options(
+                meta.outcome_ids,
+                outcome_groups_at_fit,
+                outcome_group_treatments_at_fit,
+            )
+        }
+    )
     waterfall_options.update(
         {
             _display_outcome(outcome_id, outcome_labels): outcome_id
@@ -1033,6 +1059,8 @@ if model_type == "market_specific":
         params,
         outcome_id=outcome_id_arg,
         contributions=market_contributions,
+        outcome_groups=outcome_groups_at_fit,
+        outcome_group_treatments=outcome_group_treatments_at_fit,
     )
     st.plotly_chart(
         create_waterfall_chart(
@@ -1168,7 +1196,14 @@ else:
             "Total impact per channel across all outcomes, plus which outcome that impact falls into and LTV-weighted value."
         )
     total_df = total_fh_contribution(
-        frame, meta, params, contributions, ltv, outcome_ids=fh_gsa_ids
+        frame,
+        meta,
+        params,
+        contributions,
+        ltv,
+        outcome_ids=fh_gsa_ids,
+        outcome_groups=outcome_groups_at_fit,
+        outcome_group_treatments=outcome_group_treatments_at_fit,
     )
     total_display = _humanise_outcome_columns(total_df, outcome_labels)
     st.dataframe(
@@ -1179,7 +1214,15 @@ else:
 
     st.markdown("---")
     st.markdown("#### Outcome and channel detail")
-    seg_df = outcome_channel_summary(frame, meta, params, contributions, ltv)
+    seg_df = outcome_channel_summary(
+        frame,
+        meta,
+        params,
+        contributions,
+        ltv,
+        outcome_groups=outcome_groups_at_fit,
+        outcome_group_treatments=outcome_group_treatments_at_fit,
+    )
     seg_display = _humanise_outcome_columns(seg_df, outcome_labels)
     st.dataframe(
         seg_display, width="stretch", column_config=dataframe_column_config(seg_display)
@@ -1188,6 +1231,16 @@ else:
     st.markdown("---")
     st.markdown("#### Contribution waterfall")
     waterfall_options = {"Total Family History": None}
+    waterfall_options.update(
+        {
+            label: group_id
+            for group_id, label in reporting_group_options(
+                meta.outcome_ids,
+                outcome_groups_at_fit,
+                outcome_group_treatments_at_fit,
+            )
+        }
+    )
     waterfall_options.update(
         {
             _display_outcome(outcome_id, outcome_labels): outcome_id
@@ -1199,7 +1252,13 @@ else:
     )
     outcome_id_arg = waterfall_options[waterfall_scope_label]
     waterfall_df = contribution_waterfall(
-        frame, meta, params, outcome_id=outcome_id_arg, contributions=contributions
+        frame,
+        meta,
+        params,
+        outcome_id=outcome_id_arg,
+        contributions=contributions,
+        outcome_groups=outcome_groups_at_fit,
+        outcome_group_treatments=outcome_group_treatments_at_fit,
     )
     st.plotly_chart(
         create_waterfall_chart(

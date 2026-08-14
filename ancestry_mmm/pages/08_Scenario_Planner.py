@@ -85,6 +85,7 @@ from ancestry_mmm.core.optimization import (
     whole_plan_scope_compatible,
 )
 from ancestry_mmm.core.uncertainty import evaluate_scenario_with_uncertainty
+from ancestry_mmm.core.outcome_group_totals import aggregate_outcome_groups
 from ancestry_mmm.core.evidence_tiers import classify_market_evidence
 from ancestry_mmm.core.market_config import MarketSpecConfig
 from ancestry_mmm.core.media_units import (
@@ -185,6 +186,10 @@ outcome_approvals = [
     OutcomeApproval.from_dict(item) for item in (get_state("outcome_approvals") or [])
 ]
 outcome_definitions = [outcome for outcome in (get_state("outcome_definitions") or [])]
+outcome_groups_at_fit = getattr(meta, "outcome_groups_at_fit", None) or []
+outcome_group_treatments_at_fit = (
+    getattr(meta, "outcome_group_treatments_at_fit", None) or []
+)
 nbt_completeness_metadata = get_state("net_billthrough_metadata")
 if frame is None or meta is None or params is None:
     st.markdown("---")
@@ -1237,12 +1242,24 @@ with tab_manual:
     st.dataframe(
         predicted, width="stretch", column_config=dataframe_column_config(predicted)
     )
+    totals_source = aggregate_outcome_groups(
+        predicted,
+        outcome_groups_at_fit,
+        outcome_group_treatments_at_fit,
+        by=["month"],
+        value_columns=("predicted_outcome", "value"),
+    )
     totals = (
-        predicted.groupby("outcome_id")[["predicted_outcome", "value"]]
+        totals_source.groupby("outcome_id")[["predicted_outcome", "value"]]
         .sum()
         .reset_index()
     )
     st.markdown("**Totals by outcome**")
+    if outcome_groups_at_fit:
+        st.caption(
+            "Configured additive outcome groups are shown as draw-safe/reporting totals; "
+            "their member rows are not counted again in this table."
+        )
     st.dataframe(totals, width="stretch", column_config=dataframe_column_config(totals))
     if (
         "total_value_is_complete" in predicted.columns
@@ -1383,6 +1400,8 @@ with tab_manual:
                         cost_context_id="default",
                         cost_as_of_by_month=cost_as_of_by_month,
                         value_mapping=value_mapping,
+                        outcome_groups=outcome_groups_at_fit,
+                        outcome_group_treatments=outcome_group_treatments_at_fit,
                         **identity_kwargs,
                         **scenario_governance_kwargs,
                     )
