@@ -2983,3 +2983,33 @@ because the local connected browser was unavailable.
 
 **Owner:** Platform engineering / Data Science.
 **Status:** Implemented in UX/UI coherence Phase 18.
+
+## Human coverage-state explanations (UX/UI coherence Phase 19)
+
+**Date:** 2026-08-14
+**Decision:** Replace raw coverage state keys in routine Coverage & Gaps
+explanations with human labels: expected data missing, source unavailable,
+not applicable, suppressed, estimated, modelled, observed zero, and unknown.
+Rename the variable selector to `Variables to review` and humanise the
+summary table's displayed gap-state values. Keep the stored enum keys, editor
+round-trip, state filtering, classification validation, and treatment gates
+unchanged.
+
+**Reason:** The Coverage & Gaps page still exposed implementation values such
+as `missing_expected` and `unavailable_source` in help text. These keys are
+useful to the persistence and validation contract but create an unnecessary
+code to learn in routine analyst guidance.
+
+**Impact:** Presentation-only coverage copy and display-value changes, plus
+focused AppTest coverage. No coverage classification, treatment approval,
+official-readiness rule, persistence schema, analytical calculation, or
+filter semantics changed. Business question: can an analyst understand what
+each coverage gap means and what needs review without learning internal state
+keys? Estimand: none introduced. Output scale/units: unchanged. Upstream
+references: none consulted because this package changes presentation only and
+does not change PyMC or PyMC Marketing model APIs. Remaining limitation:
+interactive browser screenshot review uses the repository's synthetic-data
+browser journey because the local connected browser was unavailable.
+
+**Owner:** Platform engineering / Data Science.
+**Status:** Implemented in UX/UI coherence Phase 19.

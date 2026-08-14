@@ -187,13 +187,12 @@ setup_expander = st.expander(
 setup_expander.__enter__()
 st.markdown("### Build or refresh the coverage matrix")
 variable_columns = st.multiselect(
-    "Governed variables",
+    "Variables to review",
     all_columns,
     default=numeric_cols,
     format_func=readable_label,
-    help="Columns to include in the coverage matrix - typically media, "
-    "outcome and control columns, never the date/market columns "
-    "themselves.",
+    help="Choose media, outcome, and control columns to review. Date and "
+    "market columns are handled separately.",
 )
 
 c1, c2 = st.columns(2)
@@ -421,7 +420,7 @@ else:
         _fabric_states_present,
         format_func=lambda s: _fabric_state_labels[s],
         help="Filter the fabric below to only the selected state(s) - e.g. "
-        "unresolved (unknown/missing_expected), unavailable_source, or "
+        "unknown or expected data missing, source unavailable, or "
         "estimated evidence. This never changes governance state, only "
         "what's shown.",
         key="coverage_fabric_state_filter",
@@ -532,7 +531,10 @@ summary_rows = [
         "expected_start": record.expected_start or "",
         "expected_end": record.expected_end or "",
         "gap_segments": len(record.coverage_segments),
-        "gap_states": ", ".join(sorted({s.state for s in record.coverage_segments})),
+        "gap_states": ", ".join(
+            readable_label(state)
+            for state in sorted({segment.state for segment in record.coverage_segments})
+        ),
         "officially_unresolved": record.is_officially_unresolved,
     }
     for record in matrix.records
@@ -543,10 +545,10 @@ st.markdown("#### Gap segment classification")
 st.caption(
     "A gap is never inferred as anything beyond 'unknown' - reclassify each "
     "one here to the state that actually applies "
-    "(missing_expected, not_applicable, unavailable_source, suppressed, "
-    "estimated, modelled, or a genuine structural observed_zero) before "
-    "approving a treatment for it below. A structural-zero segment requires "
-    "state='observed_zero' and a non-empty justification - pre-launch may "
+    "(expected data missing, not applicable, source unavailable, suppressed, "
+    "estimated, modelled, or a genuine structural zero) before approving a "
+    "treatment for it below. A structural-zero segment requires selecting "
+    "Observed zero and providing a non-empty justification - pre-launch may "
     "be structural zero only when the activity genuinely did not exist, "
     "never merely because a source lacks history."
 )
@@ -666,8 +668,8 @@ st.markdown("---")
 _treatment_section = SectionCard(
     "4. Propose and approve treatments",
     description=(
-        "Unresolved unknown/missing_expected coverage never becomes official "
-        "fit input silently - a variable stays "
+        "Unresolved unknown or expected-data-missing coverage never becomes "
+        "official fit input silently - a variable stays "
         "exploratory until you approve a treatment for it here. "
         "'Approved for official use' requires an approved treatment, an "
         "approver and an approval date."
