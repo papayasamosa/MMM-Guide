@@ -9,6 +9,10 @@ from ancestry_mmm.core.outcomes import (
     DNA_SEGMENT_EXISTING_FH,
     DNA_SEGMENT_NEW,
     FAMILY_HISTORY,
+    SEGMENT_DIMENSION_COMBINED,
+    SEGMENT_DIMENSION_DNA_CUSTOMER_RELATIONSHIP,
+    SEGMENT_DIMENSION_FH_CUSTOMER,
+    SEGMENT_DIMENSION_UNSPECIFIED,
     METRIC_GSA,
     METRIC_KIT_SALE,
     METRIC_SIGNUP,
@@ -32,6 +36,7 @@ from ancestry_mmm.core.outcomes import (
     ELIGIBILITY_FLAGS,
     MetricDefinition,
     OutcomeDefinition,
+    OutcomeGroupDefinition,
     dna_kit_outcome_columns,
     dna_outcomes_from_columns,
     dna_kit_sale_outcome_ids,
@@ -45,9 +50,11 @@ from ancestry_mmm.core.outcomes import (
     official_total_outcome_ids,
     outcome_catalogue_at_fit_by_id,
     outcome_catalogue_fingerprint_payload,
+    outcome_group_fingerprint_payload,
     outcome_drift_status,
     outcome_eligibility,
     outcome_requires_opt_in,
+    outcome_requires_semantic_review,
     outcome_status,
     outcome_was_modelled,
     outcomes_drift_dataframe,
@@ -55,6 +62,7 @@ from ancestry_mmm.core.outcomes import (
     resolve_outcome_definitions,
     select_outcome_ids,
     validate_fh_dna_cross_sell_outcome_id,
+    validate_outcome_group_definitions,
     validate_outcome_definitions,
 )
 
@@ -74,6 +82,11 @@ def _meta(outcome_ids, id_to_product, id_to_metric, id_to_role=None, kit_only=No
 
 
 class TestOutcomeDefinitionRoundTrip:
+    def test_legacy_positional_constructor_still_treats_sixth_value_as_unit(self):
+        outcome = OutcomeDefinition("id", FAMILY_HISTORY, "New", "GSA", "col", "GSA")
+        assert outcome.unit == "GSA"
+        assert outcome.segment_dimension == SEGMENT_DIMENSION_UNSPECIFIED
+
     def test_to_dict_from_dict_round_trips(self):
         outcome = OutcomeDefinition(
             outcome_id="fh_new",
@@ -877,6 +890,33 @@ class TestValidateOutcomeDefinitions:
         ]
         errors = validate_outcome_definitions(outcomes)
         assert any("unknown product" in e for e in errors)
+
+    def test_known_metric_key_for_another_product_is_an_error(self):
+        outcomes = [
+            OutcomeDefinition(
+                outcome_id="dna_gsa_mismatch",
+                product=DNA,
+                segment="New Customer",
+                metric="GSA",
+                source_column="c",
+            )
+        ]
+        errors = validate_outcome_definitions(outcomes)
+        assert any("governed for product" in e for e in errors)
+
+    def test_unknown_segment_dimension_is_an_error(self):
+        outcomes = [
+            OutcomeDefinition(
+                outcome_id="fh_new_gsa",
+                product=FAMILY_HISTORY,
+                segment="New",
+                metric="GSA",
+                source_column="c",
+                segment_dimension="not_a_governed_dimension",
+            )
+        ]
+        errors = validate_outcome_definitions(outcomes)
+        assert any("unknown segment_dimension" in e for e in errors)
 
     def test_unknown_role_is_an_error(self):
         outcomes = [
@@ -1713,6 +1753,7 @@ class TestOutcomeCatalogueFingerprintPayload:
             "outcome_id",
             "product",
             "segment",
+            "segment_dimension",
             "metric",
             "metric_key",
             "unit",
@@ -1738,3 +1779,187 @@ class TestOutcomeCatalogueFingerprintPayload:
             "effective_from",
             "effective_to",
         }
+
+
+class TestOutcomeSemanticDimensionsAndGroups:
+    """REQ-DATAIN-002 WP1 canonical semantics and grouping contracts."""
+
+    @staticmethod
+    def _fh_outcome(
+        outcome_id: str,
+        segment: str,
+        *,
+        metric: str = METRIC_GSA,
+        segment_dimension: str = SEGMENT_DIMENSION_FH_CUSTOMER,
+        source_column: str | None = None,
+    ) -> OutcomeDefinition:
+        return OutcomeDefinition(
+            outcome_id=outcome_id,
+            product=FAMILY_HISTORY,
+            segment=segment,
+            segment_dimension=segment_dimension,
+            metric=metric,
+            source_column=source_column or outcome_id,
+        )
+
+    def test_legacy_outcome_defaults_to_unspecified_and_requires_review(self):
+        outcome = OutcomeDefinition.from_dict(
+            {
+                "outcome_id": "legacy_fh_new",
+                "product": FAMILY_HISTORY,
+                "segment": "New",
+                "metric": METRIC_GSA,
+                "column": "GSA_New",
+            }
+        )
+        assert outcome.segment_dimension == SEGMENT_DIMENSION_UNSPECIFIED
+        assert outcome_requires_semantic_review(outcome) is True
+
+    def test_legacy_helpers_populate_governed_dimensions(self):
+        fh = fh_outcomes_from_spec({"New": "GSA_New"})[0]
+        dna_split = dna_outcomes_from_columns(
+            new_customer_column="DNA_New",
+            existing_fh_column="DNA_Existing",
+        )
+        dna_combined = dna_outcomes_from_columns(combined_column="DNA_Total")[0]
+
+        assert fh.segment_dimension == SEGMENT_DIMENSION_FH_CUSTOMER
+        assert {outcome.segment_dimension for outcome in dna_split} == {
+            SEGMENT_DIMENSION_DNA_CUSTOMER_RELATIONSHIP
+        }
+        assert dna_combined.segment_dimension == SEGMENT_DIMENSION_COMBINED
+
+    def test_outcome_group_round_trip_is_json_safe_and_immutable(self):
+        group = OutcomeGroupDefinition(
+            group_id="fh_gsa_by_customer_segment",
+            group_label="Family History GSA",
+            product=FAMILY_HISTORY,
+            outcome_family_key=METRIC_KEY_FH_GSA,
+            segment_dimension=SEGMENT_DIMENSION_FH_CUSTOMER,
+            member_outcome_ids=["fh_new", "fh_dna_cross_sell", "fh_winback"],
+        )
+        payload = group.to_dict()
+        restored = OutcomeGroupDefinition.from_dict(payload)
+
+        assert isinstance(group.member_outcome_ids, tuple)
+        assert isinstance(payload["member_outcome_ids"], list)
+        assert restored == group
+
+    def test_family_history_gsa_components_form_one_valid_group(self):
+        outcomes = [
+            self._fh_outcome("fh_new", "New"),
+            self._fh_outcome("fh_dna_cross_sell", "DNA cross-sell"),
+            self._fh_outcome("fh_winback", "Winback"),
+        ]
+        group = OutcomeGroupDefinition(
+            group_id="fh_gsa_by_customer_segment",
+            group_label="Family History GSA",
+            product=FAMILY_HISTORY,
+            outcome_family_key=METRIC_KEY_FH_GSA,
+            segment_dimension=SEGMENT_DIMENSION_FH_CUSTOMER,
+            member_outcome_ids=tuple(outcome.outcome_id for outcome in outcomes),
+        )
+
+        assert validate_outcome_group_definitions([group], outcomes=outcomes) == []
+
+    def test_group_validation_rejects_mixed_metric_members(self):
+        outcomes = [
+            self._fh_outcome("fh_new", "New"),
+            self._fh_outcome("fh_signup_new", "New", metric=METRIC_SIGNUP),
+        ]
+        group = OutcomeGroupDefinition(
+            group_id="mixed",
+            group_label="Mixed measure",
+            product=FAMILY_HISTORY,
+            outcome_family_key=METRIC_KEY_FH_GSA,
+            segment_dimension=SEGMENT_DIMENSION_FH_CUSTOMER,
+            member_outcome_ids=("fh_new", "fh_signup_new"),
+        )
+
+        errors = validate_outcome_group_definitions([group], outcomes=outcomes)
+        assert any("outcome_family_key" in error for error in errors)
+
+    def test_group_validation_rejects_rate_or_incompatible_units_for_sum(self):
+        count = self._fh_outcome("count", "New")
+        rate = OutcomeDefinition(
+            outcome_id="rate",
+            product=FAMILY_HISTORY,
+            segment="Winback",
+            segment_dimension=SEGMENT_DIMENSION_FH_CUSTOMER,
+            metric="Net Bill Through rate",
+            metric_key=METRIC_KEY_FH_NET_BILLTHROUGH_RATE,
+            source_column="rate",
+            unit="proportion",
+            aggregation_type="rate",
+        )
+        group = OutcomeGroupDefinition(
+            group_id="bad_sum",
+            group_label="Bad sum",
+            product=FAMILY_HISTORY,
+            outcome_family_key=METRIC_KEY_FH_GSA,
+            segment_dimension=SEGMENT_DIMENSION_FH_CUSTOMER,
+            member_outcome_ids=("count", "rate"),
+        )
+
+        errors = validate_outcome_group_definitions([group], outcomes=[count, rate])
+        assert any("incompatible member units" in error for error in errors)
+        assert any("cannot sum rate or index" in error for error in errors)
+
+    def test_group_validation_rejects_unknown_members_and_duplicate_ids(self):
+        group = OutcomeGroupDefinition(
+            group_id="bad",
+            group_label="Bad group",
+            product=FAMILY_HISTORY,
+            outcome_family_key=METRIC_KEY_FH_GSA,
+            segment_dimension=SEGMENT_DIMENSION_FH_CUSTOMER,
+            member_outcome_ids=("missing", "missing"),
+        )
+        errors = validate_outcome_group_definitions([group], outcomes=[])
+        assert any("duplicate member" in error for error in errors)
+        assert any("unknown member" in error for error in errors)
+
+    def test_group_fingerprint_changes_for_membership_but_not_label(self):
+        base = OutcomeGroupDefinition(
+            group_id="fh_gsa_by_customer_segment",
+            group_label="Family History GSA",
+            product=FAMILY_HISTORY,
+            outcome_family_key=METRIC_KEY_FH_GSA,
+            segment_dimension=SEGMENT_DIMENSION_FH_CUSTOMER,
+            member_outcome_ids=("fh_new", "fh_winback"),
+        )
+        relabelled = OutcomeGroupDefinition(
+            group_id=base.group_id,
+            group_label="FH GSA renamed",
+            product=base.product,
+            outcome_family_key=base.outcome_family_key,
+            segment_dimension=base.segment_dimension,
+            member_outcome_ids=base.member_outcome_ids,
+        )
+        expanded = OutcomeGroupDefinition(
+            group_id=base.group_id,
+            group_label=base.group_label,
+            product=base.product,
+            outcome_family_key=base.outcome_family_key,
+            segment_dimension=base.segment_dimension,
+            member_outcome_ids=("fh_new", "fh_dna_cross_sell", "fh_winback"),
+        )
+
+        assert outcome_group_fingerprint_payload(
+            [base]
+        ) == outcome_group_fingerprint_payload([relabelled])
+        assert outcome_group_fingerprint_payload(
+            [base]
+        ) != outcome_group_fingerprint_payload([expanded])
+
+    def test_segment_dimension_changes_outcome_fingerprint_and_drift(self):
+        fit_time = self._fh_outcome("fh_new", "New")
+        current = self._fh_outcome(
+            "fh_new",
+            "New",
+            segment_dimension="custom",
+        )
+
+        assert outcome_catalogue_fingerprint_payload(
+            [fit_time]
+        ) != outcome_catalogue_fingerprint_payload([current])
+        assert outcome_drift_status(current, fit_time) == "Changed since fit"

@@ -119,6 +119,7 @@ def fingerprint_model_spec(
     market_spec_config: Optional[Dict[str, Any]] = None,
     direct_dna_outcome_ids: Optional[List[str]] = None,
     outcome_catalogue: Optional[List[Dict[str, Any]]] = None,
+    outcome_groups: Optional[List[Dict[str, Any]]] = None,
     funnel_links: Optional[List[Dict[str, Any]]] = None,
     media_outcome_pathways: Optional[List[Dict[str, Any]]] = None,
     activity_fit_fingerprint: Optional[str] = None,
@@ -162,18 +163,29 @@ def fingerprint_model_spec(
     vice versa) could previously leave an approval "matching" a
     structurally different fit.
 
+    `outcome_groups` (REQ-DATAIN-002 WP1 - pass
+    `core.outcomes.outcome_group_fingerprint_payload(groups)`) captures the
+    calculation-relevant semantic grouping contract. It is sorted by
+    `group_id` and excludes presentation-only group labels, so changing which
+    outcomes belong to a group, its aggregation rule, or its supplied total
+    invalidates the fit identity while a wording edit does not. The grouping
+    contract is distinct from diagnostic reconciliation groups and from causal
+    graph/pathway edges.
+
     `model_type` defaults to `"shared"` (core.hierarchical_model's model,
     "Model A") so existing call sites that don't pass it keep fingerprinting
     that model type explicitly, not omitting model identity from the hash.
-    `pipeline_steps`, `market_spec_config`, `direct_dna_outcome_ids` and
-    `outcome_catalogue` default to `None` (treated as empty) for the same
+    `pipeline_steps`, `market_spec_config`, `direct_dna_outcome_ids`,
+    `outcome_catalogue`, and `outcome_groups` default to `None` (treated as
+    empty) for the same
     reason - a caller with nothing to pass still gets a deterministic,
     explicit fingerprint rather than an error. `direct_dna_outcome_ids` is
     sorted before hashing - it names an unordered set of outcome_ids, so two
     calls listing the same outcome_ids in a different order must fingerprint
     identically; `outcome_catalogue` is likewise re-sorted by its own
     `outcome_id` key here (defensively - callers are expected to already
-    pass it pre-sorted) for the same reason.
+    pass it pre-sorted) for the same reason. `outcome_groups` is likewise
+    re-sorted by its `group_id` key here defensively.
 
     `funnel_links` (PR E.2 - `core.funnel.FunnelLink`s, pass
     `core.funnel.funnel_links_fingerprint_payload(links)`) is diagnostic
@@ -258,7 +270,8 @@ def fingerprint_model_spec(
     yet for this project).
 
     Note: adding `pipeline_steps`, `market_spec_config`,
-    `direct_dna_outcome_ids`, `outcome_catalogue`, `funnel_links`,
+    `direct_dna_outcome_ids`, `outcome_catalogue`, `outcome_groups`,
+    `funnel_links`,
     `media_outcome_pathways`, `activity_fit_fingerprint`,
     `causal_graph_structural_fingerprint`, `search_object_fit_fingerprint`
     and `variable_coverage_fingerprint` to this payload is an intentional
@@ -266,6 +279,7 @@ def fingerprint_model_spec(
     for callers who pass none of them (the payload always carries
     `"pipeline_steps": []`, `"market_relevant_config": {}`,
     `"direct_dna_outcome_ids": []`, `"outcome_catalogue": []`,
+    `"outcome_groups": []`,
     `"funnel_links": []`, `"media_outcome_pathways": []`,
     `"activity_fit_fingerprint": ""`,
     `"causal_graph_structural_fingerprint": ""`,
@@ -283,8 +297,8 @@ def fingerprint_model_spec(
     Canonical JSON with sorted dict keys, so insertion order never matters;
     list order is preserved (json.dumps does not reorder lists), since list
     order is meaningful (e.g. `channels`, `pipeline_steps`) - except
-    `direct_dna_outcome_ids`/`outcome_catalogue`, sorted explicitly above for
-    exactly that reason.
+    `direct_dna_outcome_ids`/`outcome_catalogue`/`outcome_groups`, sorted
+    explicitly above for exactly that reason.
     """
     payload = {
         "model_spec": model_spec,
@@ -299,6 +313,11 @@ def fingerprint_model_spec(
         "outcome_catalogue": (
             sorted(outcome_catalogue, key=lambda o: o.get("outcome_id", ""))
             if outcome_catalogue
+            else []
+        ),
+        "outcome_groups": (
+            sorted(outcome_groups, key=lambda group: group.get("group_id", ""))
+            if outcome_groups
             else []
         ),
         "funnel_links": (
