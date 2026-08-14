@@ -54,10 +54,20 @@ from ancestry_mmm.core.outcomes import (
     METRIC_GSA,
     METRIC_SIGNUP,
     METRIC_KIT_SALE,
+    SEGMENT_DIMENSIONS,
     OutcomeDefinition,
+    OutcomeGroupDefinition,
+    OutcomeGroupTreatment,
+    OUTCOME_GROUP_TREATMENTS,
+    OUTCOME_GROUP_TREATMENT_COMPONENTS_JOINT,
+    OUTCOME_GROUP_TREATMENT_TOTAL_ONLY,
+    OUTCOME_GROUP_TREATMENT_DESCRIPTIVE_ONLY,
+    OUTCOME_GROUP_TREATMENT_UNCONFIGURED,
     fh_outcomes_from_spec,
     dna_outcomes_from_columns,
     validate_outcome_definitions,
+    validate_outcome_group_definitions,
+    validate_outcome_group_treatments,
     outcomes_to_dataframe,
     validate_fh_dna_cross_sell_outcome_id,
     infer_legacy_fh_dna_cross_sell_outcome_id,
@@ -543,6 +553,7 @@ _default_outcome_df = (
             "outcome_id",
             "product",
             "segment",
+            "segment_dimension",
             "metric",
             "source_column",
             "unit",
@@ -554,6 +565,10 @@ _default_outcome_df = (
         ]
     )
 )
+if "segment_dimension" not in _default_outcome_df.columns:
+    # Legacy catalogues remain loadable, but the missing governed breakdown
+    # must be visible for review rather than guessed from an outcome ID.
+    _default_outcome_df["segment_dimension"] = "unspecified"
 if st.button(
     "Clear outcome catalogue",
     help="Removes every row below - the optional shortcuts above can add standard rows again.",
@@ -564,6 +579,7 @@ if st.button(
 _outcome_enum_values = {
     "product": KNOWN_PRODUCTS,
     "role": OUTCOME_ROLES,
+    "segment_dimension": SEGMENT_DIMENSIONS,
 }
 _outcome_editor_df = display_enum_frame(
     _default_outcome_df, _outcome_enum_values.keys()
@@ -582,6 +598,12 @@ outcome_catalogue_editor = st.data_editor(
             "Customer segment",
             required=True,
             help="Descriptive customer-segment grouping - not unique.",
+        ),
+        "segment_dimension": st.column_config.SelectboxColumn(
+            "Breakdown",
+            options=display_enum_options(SEGMENT_DIMENSIONS),
+            required=True,
+            help="The explicit dimension represented by the segment. Customer relationship, purchase recipient, and activation status are distinct DNA breakdowns.",
         ),
         "metric": st.column_config.TextColumn(
             "Outcome measure",
@@ -663,6 +685,161 @@ def _display_outcome_id(value) -> str:
     """Use the governed outcome description in routine selectors and summaries."""
     outcome_id = _outcome_text(value)
     return _outcome_display_labels.get(outcome_id, readable_label(outcome_id))
+
+
+_segment_dimension_labels = {
+    "fh_customer_segment": "Family History customer segment",
+    "dna_customer_relationship": "Customer relationship",
+    "dna_purchase_recipient": "Purchase recipient",
+    "dna_activation_status": "Activation status",
+    "combined": "Combined view",
+    "custom": "Custom breakdown",
+    "unspecified": "Breakdown not yet specified",
+}
+_group_treatment_labels = {
+    OUTCOME_GROUP_TREATMENT_COMPONENTS_JOINT: "Components jointly",
+    OUTCOME_GROUP_TREATMENT_TOTAL_ONLY: "Supplied total only",
+    OUTCOME_GROUP_TREATMENT_DESCRIPTIVE_ONLY: "Descriptive only",
+    OUTCOME_GROUP_TREATMENT_UNCONFIGURED: "Not configured yet",
+}
+
+
+def _segment_dimension_display(value: str) -> str:
+    return _segment_dimension_labels.get(value, readable_label(value))
+
+
+def _group_treatment_display(value: str) -> str:
+    return _group_treatment_labels.get(value, readable_label(value))
+
+
+def _load_group_definitions() -> tuple[list[OutcomeGroupDefinition], list[str]]:
+    definitions: list[OutcomeGroupDefinition] = []
+    errors: list[str] = []
+    for index, value in enumerate(get_state("outcome_groups") or []):
+        try:
+            definitions.append(OutcomeGroupDefinition.from_dict(value))
+        except (TypeError, ValueError) as exc:
+            errors.append(
+                f"Outcome group record {index + 1} could not be loaded: {exc}"
+            )
+    return definitions, errors
+
+
+_outcome_group_definitions, _outcome_group_load_errors = _load_group_definitions()
+_saved_group_treatments: dict[str, str] = {}
+for _raw_treatment in get_state("outcome_group_treatments") or []:
+    try:
+        _treatment = OutcomeGroupTreatment.from_dict(_raw_treatment)
+    except (TypeError, ValueError):
+        continue
+    if _treatment.group_id in {group.group_id for group in _outcome_group_definitions}:
+        _saved_group_treatments[_treatment.group_id] = _treatment.treatment
+
+_selected_group_treatments: dict[str, str] = {}
+if _outcome_group_load_errors:
+    for _error in _outcome_group_load_errors:
+        st.error(_error)
+
+with st.container(border=True):
+    st.markdown("### Outcome groups and model treatment")
+    st.caption(
+        "Groups describe compatible rows for one business measure. Model treatment is a separate analyst decision: it does not come from the source dictionary and it never creates an approval or a causal pathway."
+    )
+    if not _outcome_group_definitions:
+        st.info(
+            "No semantic outcome groups are configured. Existing legacy catalogues remain valid; the app will not infer groups from outcome IDs."
+        )
+    else:
+        _group_preview_outcomes: list[OutcomeDefinition] = []
+        for _row in outcome_catalogue_df.to_dict("records"):
+            if not (
+                _row.get("outcome_id")
+                and _row.get("product")
+                and _row.get("segment")
+                and _row.get("metric")
+                and _row.get("source_column")
+            ):
+                continue
+            _group_preview_outcomes.append(OutcomeDefinition.from_dict(_row))
+        _group_preview_errors = validate_outcome_group_definitions(
+            _outcome_group_definitions, outcomes=_group_preview_outcomes
+        )
+        for _error in _group_preview_errors:
+            st.warning(_error)
+
+        _outcome_rows_by_id = {
+            _outcome_text(_row.get("outcome_id")): _row
+            for _row in outcome_catalogue_df.to_dict("records")
+            if _outcome_text(_row.get("outcome_id"))
+        }
+        for _group in _outcome_group_definitions:
+            _members = [
+                _outcome_rows_by_id[outcome_id]
+                for outcome_id in _group.member_outcome_ids
+                if outcome_id in _outcome_rows_by_id
+            ]
+            _member_labels = [
+                _outcome_text(_member.get("segment")) or "Unnamed segment"
+                for _member in _members
+            ]
+            _metric_label = next(
+                (
+                    _outcome_text(_member.get("metric"))
+                    for _member in _members
+                    if _outcome_text(_member.get("metric"))
+                ),
+                readable_label(_group.outcome_family_key),
+            )
+            _default_treatment = _saved_group_treatments.get(
+                _group.group_id, OUTCOME_GROUP_TREATMENT_UNCONFIGURED
+            )
+            if _default_treatment not in OUTCOME_GROUP_TREATMENTS:
+                _default_treatment = OUTCOME_GROUP_TREATMENT_UNCONFIGURED
+            _treatment = st.selectbox(
+                f"Model treatment · {_group.group_label or _group.group_id}",
+                options=list(OUTCOME_GROUP_TREATMENTS),
+                index=list(OUTCOME_GROUP_TREATMENTS).index(_default_treatment),
+                format_func=_group_treatment_display,
+                key=f"outcome_group_treatment_{_group.group_id}",
+                help="This is a model-structure choice. The selected treatment is stored by stable group ID; it does not change the source dictionary.",
+            )
+            _selected_group_treatments[_group.group_id] = _treatment
+            _summary_cols = st.columns(4)
+            _summary_cols[0].metric("Product", _group.product or "Not set")
+            _summary_cols[1].metric("Metric", _metric_label or "Not set")
+            _summary_cols[2].metric(
+                "Breakdown", _segment_dimension_display(_group.segment_dimension)
+            )
+            _summary_cols[3].metric("Treatment", _group_treatment_display(_treatment))
+            st.markdown(
+                f"**Members:** {', '.join(_member_labels) if _member_labels else 'No members resolved'}"
+            )
+            if _group.supplied_total_outcome_id:
+                _total_row = _outcome_rows_by_id.get(_group.supplied_total_outcome_id)
+                _total_label = (
+                    _outcome_display_label(_total_row)
+                    if _total_row is not None
+                    else "supplied total not found in the catalogue"
+                )
+                st.caption(
+                    f"Supplied total retained for reconciliation: {_total_label}."
+                )
+            if _treatment == OUTCOME_GROUP_TREATMENT_COMPONENTS_JOINT:
+                st.caption(
+                    "Aggregate result: derived from the member posterior draws after fitting; summaries must be calculated after draw-level aggregation."
+                )
+            elif _treatment == OUTCOME_GROUP_TREATMENT_DESCRIPTIVE_ONLY:
+                st.caption(
+                    "This group remains available for source interpretation and reporting review, but is not an additive fitted partition."
+                )
+            elif _treatment == OUTCOME_GROUP_TREATMENT_UNCONFIGURED:
+                st.warning(
+                    "Choose a treatment before relying on this group for a fit or official downstream result."
+                )
+            with st.expander("Technical details · outcome group identity"):
+                st.caption(
+                    f"group_id: {_group.group_id} · member outcome IDs: {', '.join(_group.member_outcome_ids)}"
+                )
 
 
 if get_state("model_meta") is not None:
@@ -1664,6 +1841,24 @@ if st.button("Save structure and validate", type="primary"):
     errors += validate_outcome_definitions(
         outcome_definitions, available_columns=set(df.columns)
     )
+    errors += list(_outcome_group_load_errors)
+    errors += validate_outcome_group_definitions(
+        _outcome_group_definitions, outcomes=outcome_definitions
+    )
+    outcome_group_treatments = [
+        OutcomeGroupTreatment(
+            group_id=group.group_id,
+            treatment=_selected_group_treatments.get(
+                group.group_id, OUTCOME_GROUP_TREATMENT_UNCONFIGURED
+            ),
+        )
+        for group in _outcome_group_definitions
+    ]
+    errors += validate_outcome_group_treatments(
+        outcome_group_treatments,
+        groups=_outcome_group_definitions,
+        outcomes=outcome_definitions,
+    )
     errors += validate_fh_dna_cross_sell_outcome_id(
         fh_dna_cross_sell_outcome_id, outcome_definitions
     )
@@ -1742,6 +1937,14 @@ if st.button("Save structure and validate", type="primary"):
             set_state("transformed_data", updated_df)
         set_state("model_spec", spec.to_dict())
         set_state("outcome_definitions", [o.to_dict() for o in outcome_definitions])
+        set_state(
+            "outcome_groups",
+            [group.to_dict() for group in _outcome_group_definitions],
+        )
+        set_state(
+            "outcome_group_treatments",
+            [treatment.to_dict() for treatment in outcome_group_treatments],
+        )
         set_state("dna_promotion_events", [e.to_dict() for e in dna_promotion_events])
         set_state("pipeline_steps", pipeline_to_json(updated_pipeline_steps))
         set_state("funnel_links", [fl.to_dict() for fl in funnel_links])

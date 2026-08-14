@@ -3503,3 +3503,48 @@ totals, DNA alternative protection, downloadable templates, realistic source
 pack refresh, and full end-to-end UX remain in WP5-WP8.
 **Owner:** Data Science / Platform engineering.
 **Status:** Implemented in source import and draft catalogue WP4.
+
+## Model Structure outcome-group treatment (Work Package 5)
+
+**Date:** 2026-08-14
+**Decision:** Keep `OutcomeGroupDefinition` as source-semantic membership and
+expose `OutcomeGroupTreatment` as a separate Model Structure choice. The
+Structure page presents Product, Metric, Breakdown, Segment, source context,
+readable group members, and the four governed treatments: `components_joint`,
+`total_only`, `descriptive_only`, and `unconfigured`. `components_joint`
+requires every member to remain in the next fit and excludes an exact supplied
+total from that fit; the supplied total may remain reconciliation evidence.
+`total_only` requires a supplied total in the next fit and excludes its
+components. Two explicitly distinct DNA breakdowns with the same product and
+metric family cannot both receive additive treatments; one must remain
+descriptive-only or an explicitly approved joint structure must be introduced.
+**Reason:** The source dictionary must not silently select a statistical
+treatment, and exact totals/components or alternative DNA partitions must not
+enter downstream objectives as unrelated additive outcomes. The unconfigured
+state remains a safe, visible import state rather than an inferred choice.
+**Alternatives considered:** Infer `components_joint` from group membership
+(rejected - source meaning and analyst model treatment have different owners);
+fit supplied totals and components together (rejected - exact duplicate
+quantity); add all DNA breakdowns (rejected - alternative partitions can
+overlap); infer overlap from outcome IDs (rejected - explicit product, metric
+family, breakdown, and treatment are the governed signals).
+**Impact:** `validate_outcome_group_treatments` now provides framework-
+independent total/component and alternative-DNA protection. Structure persists
+groups and treatments separately and retains the existing human-readable
+outcome UX; legacy projects without groups continue without inferred grouping.
+No model equations or posterior aggregation were changed. Business question:
+which compatible outcome rows should the next model structure treat as a joint
+partition, supplied total, descriptive view, or not-yet-configured group?
+Estimand: none introduced in WP5; treatment controls model-structure intent,
+while draw-level grouped estimation/reporting remains WP6. Output scale/units:
+unchanged supplied outcome counts/values; no medians or intervals are summed
+in this package.
+**Upstream modelling references:** none consulted; this package changes
+framework-independent configuration validation and presentation only, not
+PyMC/PyMC-Marketing model APIs.
+**Remaining limitation:** WP6 still owns draw-level grouped totals and
+downstream Results/attribution/scenario integration; WP7 owns broader DNA
+alternative and multi-target halo regression; templates/demo refresh remains
+in WP8.
+**Owner:** Data Science / Platform engineering.
+**Status:** Implemented in Model Structure group treatment WP5.
