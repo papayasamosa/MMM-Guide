@@ -90,6 +90,17 @@ def test_fabric_section_renders_with_a_built_matrix():
     assert not at.exception, f"page raised: {at.exception}"
     assert any("Coverage fabric" in (m.value or "") for m in at.markdown)
     assert any("Isolate state(s)" == ms.label for ms in at.multiselect)
+    visible_help = "\n".join(
+        (element.help or "") for element in at.multiselect if hasattr(element, "help")
+    )
+    assert "missing_expected" not in visible_help
+    assert "unavailable_source" not in visible_help
+    summary_tables = [
+        table.value
+        for table in at.dataframe
+        if "gap_states" in getattr(table.value, "columns", [])
+    ]
+    assert summary_tables and "Unknown" in summary_tables[0]["gap_states"].tolist()
 
 
 def test_summary_sentences_render_and_mention_the_actual_market():
