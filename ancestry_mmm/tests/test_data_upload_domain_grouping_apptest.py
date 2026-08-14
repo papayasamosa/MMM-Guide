@@ -113,6 +113,41 @@ def test_multiple_physical_files_group_under_one_logical_domain():
     )
 
 
+def test_source_semantic_adoption_status_is_visible():
+    at = _run_at(
+        raw_sources={"media": _frame()},
+        source_definitions=[
+            SourceDefinition(
+                source_id="media",
+                name="media",
+                logical_domain=DOMAIN_ACTIVITY_AND_MEDIA,
+            ).to_dict()
+        ],
+        source_domain_semantics=[
+            {
+                "source_id": "media-pack",
+                "logical_domain": DOMAIN_ACTIVITY_AND_MEDIA,
+                "schema_version": "standard-source-pack-v2",
+                "status": "adopted_with_physical_mapping_review",
+                "table_ids": ["activity_data", "activity_dictionary"],
+                "adopted_objects": ["ActivityDefinition", "model_input_frame"],
+                "unsupported_mappings": [
+                    "currency: review the existing cost mapping contract"
+                ],
+                "next_action": "Review Activity Mapping.",
+            }
+        ],
+        data_loaded=True,
+    )
+    assert not at.exception, f"page raised: {at.exception}"
+    assert any("Source semantic adoption" in (m.value or "") for m in at.markdown)
+    assert any(
+        "adopted_with_physical_mapping_review" in str(cell)
+        for table in at.dataframe
+        for cell in table.value.values.flatten()
+    )
+
+
 def test_all_three_required_domains_supplied_shows_ready_badge():
     at = _run_at(
         raw_sources={"media": _frame(), "outcomes": _frame(), "controls": _frame()},

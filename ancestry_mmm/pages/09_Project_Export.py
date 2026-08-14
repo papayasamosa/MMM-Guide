@@ -123,7 +123,11 @@ from ancestry_mmm.core.pathways import (
 from ancestry_mmm.core.optimization import compare_scenarios
 from ancestry_mmm.core.report import build_report_sections, render_markdown, render_html
 from ancestry_mmm.core.promotions import PROMOTION_EVENT_OP
-from ancestry_mmm.data import apply_pipeline, pipeline_from_json
+from ancestry_mmm.data import (
+    adopted_model_input_frame,
+    apply_pipeline,
+    pipeline_from_json,
+)
 
 _CURVE_SERVICE = CurveService()
 
@@ -157,6 +161,11 @@ _CONTAINS_LABELS = {
     "source_definitions": "Source categories and roles",
     "variable_coverage_matrices": "Coverage and frequency review history",
     "join_config": "Source join settings",
+    "standard_activity_model_input": "Adopted Activity model input",
+    "standard_outcome_data": "Adopted Outcomes model input",
+    "standard_context_data": "Adopted Context model input",
+    "context_variable_metadata": "Context variable metadata",
+    "source_domain_semantics": "Source semantic adoption statuses",
 }
 
 _CHECKPOINT_LABELS = {
@@ -716,6 +725,11 @@ if st.button("Build export bundle", type="primary"):
             official_capability_report=get_state("official_capability_report"),
             official_prepared_data=get_state("official_prepared_data"),
             official_join_diagnostics=get_state("official_join_diagnostics"),
+            standard_activity_model_input=get_state("standard_activity_model_input"),
+            standard_outcome_data=get_state("standard_outcome_data"),
+            standard_context_data=get_state("standard_context_data"),
+            context_variable_metadata=get_state("context_variable_metadata") or [],
+            source_domain_semantics=get_state("source_domain_semantics") or [],
         )
     st.success("Durable project bundle built and ready to download.")
     # Read back this bundle's own manifest.json (written by
@@ -786,6 +800,32 @@ if uploaded_zip is not None and st.button("Import bundle"):
                 columns=[c for c in promo_columns if c in transformed.columns]
             )
             transformed = apply_pipeline(transformed, promo_steps)
+        set_state(
+            "standard_activity_model_input",
+            imported.get("standard_activity_model_input"),
+        )
+        set_state("standard_outcome_data", imported.get("standard_outcome_data"))
+        set_state("standard_context_data", imported.get("standard_context_data"))
+        set_state(
+            "context_variable_metadata",
+            imported.get("context_variable_metadata") or [],
+        )
+        set_state(
+            "source_domain_semantics",
+            imported.get("source_domain_semantics") or [],
+        )
+        _standard_joined = adopted_model_input_frame(
+            outcome_data=imported.get("standard_outcome_data"),
+            activity_model_input=imported.get("standard_activity_model_input"),
+            context_model_input=imported.get("standard_context_data"),
+        )
+        set_state("standard_joined_data", _standard_joined)
+        if _standard_joined is not None:
+            if transformed is None:
+                transformed = _standard_joined
+            set_state("transformed_data_origin", "standard_source_pack")
+        else:
+            set_state("transformed_data_origin", None)
         set_state("transformed_data", transformed)
         set_state("official_prepared_data", imported.get("official_prepared_data"))
         set_state(

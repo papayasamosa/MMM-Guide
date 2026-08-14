@@ -50,6 +50,13 @@ from .template_downloads import (
     build_standard_template,
     standard_template_filename,
 )
+from .source_pack_adoption import (
+    SourceDomainSemanticStatus,
+    SourcePackAdoption,
+    adopt_standard_source_bundle,
+    adopted_model_input_frame,
+    adopted_model_input_sources,
+)
 
 __all__ = [
     "load_file",
@@ -92,4 +99,9 @@ __all__ = [
     "TEMPLATE_MIME_TYPE",
     "build_standard_template",
     "standard_template_filename",
+    "SourceDomainSemanticStatus",
+    "SourcePackAdoption",
+    "adopt_standard_source_bundle",
+    "adopted_model_input_frame",
+    "adopted_model_input_sources",
 ]

@@ -57,7 +57,11 @@ from ancestry_mmm.core.official_preparation import (
     prepare_canonical_native_frame,
     OfficialPreparationDataError,
 )
-from ancestry_mmm.data import prepare_fh_modeling_frame
+from ancestry_mmm.data import (
+    adopted_model_input_frame,
+    adopted_model_input_sources,
+    prepare_fh_modeling_frame,
+)
 import pandas as pd
 
 BRAND_SEARCH_MODE_LABELS = {
@@ -92,6 +96,12 @@ render_workspace_note(
 
 spec_dict = get_state("model_spec")
 df = get_state("transformed_data")
+if df is None:
+    df = adopted_model_input_frame(
+        outcome_data=get_state("standard_outcome_data"),
+        activity_model_input=get_state("standard_activity_model_input"),
+        context_model_input=get_state("standard_context_data"),
+    )
 if not spec_dict or df is None:
     st.markdown("---")
     render_empty_state(
@@ -855,13 +865,24 @@ else:
     elif _official_requested or _exploratory_requested:
         try:
             if _official_requested:
-                if not get_state("raw_sources"):
+                try:
+                    _adopted_sources = adopted_model_input_sources(
+                        outcome_data=get_state("standard_outcome_data"),
+                        activity_model_input=get_state("standard_activity_model_input"),
+                        context_model_input=get_state("standard_context_data"),
+                        context_variable_metadata=get_state("context_variable_metadata")
+                        or [],
+                    )
+                except ValueError as exc:
+                    raise OfficialPreparationDataError(str(exc)) from exc
+                _official_sources = _adopted_sources or (get_state("raw_sources") or {})
+                if not _official_sources:
                     raise OfficialPreparationDataError(
                         "Official preparation requires the durable raw source "
                         "tables; the exploratory joined frame is not an official fallback."
                     )
                 _canonical_frame = prepare_canonical_native_frame(
-                    get_state("raw_sources") or {},
+                    _official_sources,
                     date_col=spec.date_col,
                     market_col=spec.market_col,
                     governed_start=str(_canonical_calendar["start"]),

@@ -76,6 +76,11 @@ class ProjectExportInput:
     official_capability_report: Optional[dict] = None
     official_prepared_data: Optional[pd.DataFrame] = None
     official_join_diagnostics: Optional[dict] = None
+    standard_activity_model_input: Optional[pd.DataFrame] = None
+    standard_outcome_data: Optional[pd.DataFrame] = None
+    standard_context_data: Optional[pd.DataFrame] = None
+    context_variable_metadata: Optional[List[dict]] = None
+    source_domain_semantics: Optional[List[dict]] = None
     include_excel: bool = False
     excel_sheets: Optional[Dict[str, Optional[pd.DataFrame]]] = None
     excel_output_path: Optional[str] = None
@@ -195,6 +200,11 @@ class ProjectService:
                 official_capability_report=exp_input.official_capability_report,
                 official_prepared_data=exp_input.official_prepared_data,
                 official_join_diagnostics=exp_input.official_join_diagnostics,
+                standard_activity_model_input=exp_input.standard_activity_model_input,
+                standard_outcome_data=exp_input.standard_outcome_data,
+                standard_context_data=exp_input.standard_context_data,
+                context_variable_metadata=exp_input.context_variable_metadata,
+                source_domain_semantics=exp_input.source_domain_semantics,
             )
         except Exception as exc:
             errors.append(f"Project export failed: {exc}")

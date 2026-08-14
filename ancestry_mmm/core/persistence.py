@@ -114,6 +114,11 @@ Bundle layout (a single zip):
                                           any current project with no sources
                                           joined yet - "not joined yet" is a
                                           valid, not-an-error reading.
+    data/standard_activity_model_input.parquet - WP3 adopted Activity frame
+    data/standard_outcome_data.parquet    - WP3 adopted Outcomes frame
+    data/standard_context_data.parquet    - WP3 adopted Context frame
+    config/context_variable_metadata.json - WP3 native Context metadata
+    config/source_domain_semantics.json   - WP3 adoption/review statuses
     scenarios/scenario_<i>_predicted.csv
     model/trace.nc                     - fitted posterior (ArviZ InferenceData, NetCDF)
     curve_bank/*.json                  - curve bank + calibration records, if any
@@ -193,8 +198,9 @@ from .optimization import SpendConstraint
 # 13 -> 14 for the project-level variable_coverage_matrices bundle file, and
 # 14 -> 15 for the project-level join_config bundle file (Work Package 4).
 # 15 -> 16 for semantic outcome groups, model treatments, and durable
-# reconciliation evidence (Work Package 3).
-PROJECT_BUNDLE_SCHEMA_VERSION = 16
+# reconciliation evidence (Work Package 3). 16 -> 17 for canonical standard
+# source-pack adoption state and its explicit semantic review statuses (WP3).
+PROJECT_BUNDLE_SCHEMA_VERSION = 17
 PROJECT_APP_VERSION = "0.1.0"
 
 
@@ -300,6 +306,11 @@ def export_project(
     official_capability_report: Optional[dict] = None,
     official_prepared_data: Optional[pd.DataFrame] = None,
     official_join_diagnostics: Optional[dict] = None,
+    standard_activity_model_input: Optional[pd.DataFrame] = None,
+    standard_outcome_data: Optional[pd.DataFrame] = None,
+    standard_context_data: Optional[pd.DataFrame] = None,
+    context_variable_metadata: Optional[List[dict]] = None,
+    source_domain_semantics: Optional[List[dict]] = None,
 ) -> Path:
     output_path = Path(output_path)
     with tempfile.TemporaryDirectory() as tmp_str:
@@ -318,6 +329,18 @@ def export_project(
         if official_prepared_data is not None:
             official_prepared_data.to_parquet(
                 tmp / "data" / "official_prepared.parquet", index=False
+            )
+        if standard_activity_model_input is not None:
+            standard_activity_model_input.to_parquet(
+                tmp / "data" / "standard_activity_model_input.parquet", index=False
+            )
+        if standard_outcome_data is not None:
+            standard_outcome_data.to_parquet(
+                tmp / "data" / "standard_outcome_data.parquet", index=False
+            )
+        if standard_context_data is not None:
+            standard_context_data.to_parquet(
+                tmp / "data" / "standard_context_data.parquet", index=False
             )
 
         (tmp / "config" / "pipeline_steps.json").write_text(
@@ -542,6 +565,14 @@ def export_project(
             (tmp / "config" / "official_join_diagnostics.json").write_text(
                 json.dumps(official_join_diagnostics, indent=2, default=str)
             )
+        if context_variable_metadata is not None:
+            (tmp / "config" / "context_variable_metadata.json").write_text(
+                json.dumps(context_variable_metadata, indent=2, default=str)
+            )
+        if source_domain_semantics is not None:
+            (tmp / "config" / "source_domain_semantics.json").write_text(
+                json.dumps(source_domain_semantics, indent=2, default=str)
+            )
         if diagnostics is not None:
             for name, value in diagnostics.items():
                 if value is None:
@@ -630,6 +661,14 @@ def export_project(
                 "official_capability_report": official_capability_report is not None,
                 "official_prepared_data": official_prepared_data is not None,
                 "official_join_diagnostics": official_join_diagnostics is not None,
+                "standard_activity_model_input": standard_activity_model_input
+                is not None,
+                "standard_outcome_data": standard_outcome_data is not None,
+                "standard_context_data": standard_context_data is not None,
+                "context_variable_metadata": context_variable_metadata is not None
+                and bool(context_variable_metadata),
+                "source_domain_semantics": source_domain_semantics is not None
+                and bool(source_domain_semantics),
             },
         }
         (tmp / "manifest.json").write_text(json.dumps(manifest, indent=2, default=str))
@@ -762,6 +801,14 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         "official_capability_report": None,
         "official_prepared_data": None,
         "official_join_diagnostics": None,
+        # WP3: canonical standard source-pack frames are optional. Missing
+        # files mean this is a legacy/non-standard bundle; no frame or
+        # semantic status is inferred on import.
+        "standard_activity_model_input": None,
+        "standard_outcome_data": None,
+        "standard_context_data": None,
+        "context_variable_metadata": [],
+        "source_domain_semantics": [],
     }
     with tempfile.TemporaryDirectory() as tmp_str:
         tmp = Path(tmp_str)
@@ -784,6 +831,17 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
                 result["official_prepared_data"] = pd.read_parquet(
                     official_prepared_path
                 )
+            for key, filename in (
+                (
+                    "standard_activity_model_input",
+                    "standard_activity_model_input.parquet",
+                ),
+                ("standard_outcome_data", "standard_outcome_data.parquet"),
+                ("standard_context_data", "standard_context_data.parquet"),
+            ):
+                path = data_dir / filename
+                if path.exists():
+                    result[key] = pd.read_parquet(path)
 
         config_dir = tmp / "config"
         if (config_dir / "pipeline_steps.json").exists():
@@ -954,6 +1012,14 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         if (config_dir / "official_join_diagnostics.json").exists():
             result["official_join_diagnostics"] = json.loads(
                 (config_dir / "official_join_diagnostics.json").read_text()
+            )
+        if (config_dir / "context_variable_metadata.json").exists():
+            result["context_variable_metadata"] = json.loads(
+                (config_dir / "context_variable_metadata.json").read_text()
+            )
+        if (config_dir / "source_domain_semantics.json").exists():
+            result["source_domain_semantics"] = json.loads(
+                (config_dir / "source_domain_semantics.json").read_text()
             )
         # G2A.7 (REQ-OUT-002): outcome approvals persisted alongside outcome
         # definitions. Absent in legacy bundles — treated as no approvals on

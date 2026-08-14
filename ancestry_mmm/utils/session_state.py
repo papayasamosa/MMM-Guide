@@ -51,6 +51,8 @@ def init_session_state():
         # Transformation pipeline
         "pipeline_steps": [],  # list of TransformStep dicts
         "transformed_data": None,
+        "transformed_data_origin": None,
+        "standard_joined_data": None,
         # WP2: the official native-frequency frame is kept separate from the
         # exploratory Transform Pipeline output.  It is rebuilt from the
         # source union under an explicit governed calendar and never silently
@@ -72,6 +74,15 @@ def init_session_state():
         "media_input_support": [],
         "monetary_spend_support": [],
         "activity_definitions": [],
+        # Canonical standard source-pack adoption remains separate from the
+        # exploratory transformed frame. Activity model inputs are wide only
+        # at their explicit model-input boundary; context remains native tidy
+        # data plus portable variable metadata.
+        "standard_activity_model_input": None,
+        "standard_outcome_data": None,
+        "standard_context_data": None,
+        "context_variable_metadata": [],
+        "source_domain_semantics": [],
         # Canonical outcome catalogue plus semantic groups.  Source import
         # drafts live separately so an existing catalogue is never silently
         # overwritten by a newly uploaded workbook.
