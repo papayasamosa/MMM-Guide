@@ -210,7 +210,7 @@ with st.container(border=True):
     )
     secondary_summary_cols = st.columns(3)
     secondary_summary_cols[0].metric(
-        "Model-input columns",
+        "Model inputs",
         len(_saved_spec.model_input_columns) if _saved_spec else "—",
     )
     secondary_summary_cols[1].metric(
@@ -236,9 +236,28 @@ market_col = get_state("market_col")
 hints = detect_column_types(df)
 numeric_cols = hints["numeric"]
 
+with st.container(border=True):
+    st.markdown("#### Configuration stages")
+    _stage_columns = st.columns(5)
+    for _stage_column, _stage_label in zip(
+        _stage_columns,
+        (
+            "1. Scope",
+            "2. Outcomes",
+            "3. Outcome groups",
+            "4. Advanced relationships",
+            "5. Review and save",
+        ),
+    ):
+        _stage_column.markdown(f"**{_stage_label}**")
+    st.caption(
+        "Work from left to right. The final save checks the complete structure, including outcome definitions, group treatment, and relationship rules."
+    )
+
 st.markdown("---")
+st.markdown("### 1. Scope")
 _markets_section = SectionCard(
-    "Project scope · markets",
+    "Markets",
     description="Which markets this project fits, and where market-specific estimation is appropriate.",
 )
 _markets_section.__enter__()
@@ -265,7 +284,7 @@ _markets_section.__exit__(None, None, None)
 
 st.markdown("---")
 _media_section = SectionCard(
-    "Project scope · activities",
+    "Activities",
     description="Which model-input columns and DNA-targeted activities are in scope.",
 )
 _media_section.__enter__()
@@ -383,8 +402,9 @@ else:
 _media_section.__exit__(None, None, None)
 
 st.markdown("---")
+st.markdown("### 2. Outcomes")
 _outcome_section = SectionCard(
-    "Outcomes & segment mapping",
+    "Outcome definitions",
     description="The primary outcome catalogue, with segment and product scope kept explicit.",
 )
 _outcome_section.__enter__()
@@ -569,6 +589,76 @@ if "segment_dimension" not in _default_outcome_df.columns:
     # Legacy catalogues remain loadable, but the missing governed breakdown
     # must be visible for review rather than guessed from an outcome ID.
     _default_outcome_df["segment_dimension"] = "unspecified"
+
+
+def _outcome_text(value) -> str:
+    """Return a safe, display-ready string for a catalogue value."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return ""
+    return str(value).strip()
+
+
+def _outcome_display_label(row: dict) -> str:
+    """Describe an outcome for analysts while retaining its stable ID."""
+    outcome_id = _outcome_text(row.get("outcome_id"))
+    parts = [
+        readable_label(_outcome_text(row.get(field)))
+        for field in ("product", "segment", "metric")
+        if _outcome_text(row.get(field))
+    ]
+    label = " · ".join(parts) or readable_label(outcome_id)
+    source_column = _outcome_text(row.get("source_column"))
+    definition_version = _outcome_text(row.get("definition_version"))
+    if not parts and source_column:
+        label = readable_label(source_column)
+    if definition_version:
+        label += f" (definition {definition_version})"
+    return label
+
+
+_outcome_overview_rows = []
+for _overview_row in _default_outcome_df.to_dict("records"):
+    if not any(
+        _outcome_text(_overview_row.get(_field))
+        for _field in ("outcome_id", "product", "segment", "metric", "source_column")
+    ):
+        continue
+    _outcome_overview_rows.append(
+        {
+            "Outcome": _outcome_display_label(_overview_row),
+            "Product": readable_label(_outcome_text(_overview_row.get("product")))
+            or "Not set",
+            "Customer segment": _outcome_text(_overview_row.get("segment"))
+            or "Not set",
+            "Measure": readable_label(_outcome_text(_overview_row.get("metric")))
+            or "Not set",
+            "Source field": readable_label(
+                _outcome_text(_overview_row.get("source_column"))
+            )
+            or "Not set",
+            "Use in next fit": (
+                "Included"
+                if bool(_overview_row.get("included_in_fit", True))
+                else "Excluded"
+            ),
+        }
+    )
+
+st.markdown("#### Outcome overview")
+if _outcome_overview_rows:
+    st.caption(
+        "A business-facing summary of the configured outcomes. Stable IDs, breakdowns, value fields, roles, and exclusion reasons remain available in the editor below."
+    )
+    st.dataframe(pd.DataFrame(_outcome_overview_rows), width="stretch", hide_index=True)
+else:
+    st.info(
+        "No outcome definitions yet. Use a shortcut above or open the editor to add the first outcome."
+    )
+
+_outcome_editor_section = st.expander(
+    "Edit outcome definitions", expanded=not bool(_outcome_overview_rows)
+)
+_outcome_editor_section.__enter__()
 if st.button(
     "Clear outcome catalogue",
     help="Removes every row below - the optional shortcuts above can add standard rows again.",
@@ -613,7 +703,7 @@ outcome_catalogue_editor = st.data_editor(
             "uses the stable metric_key derived from this automatically.",
         ),
         "source_column": st.column_config.SelectboxColumn(
-            "Source column", options=numeric_cols, required=True
+            "Source field", options=numeric_cols, required=True
         ),
         "unit": st.column_config.TextColumn(
             "Counting unit",
@@ -629,7 +719,7 @@ outcome_catalogue_editor = st.data_editor(
             help="e.g. USD - the currency value_weight is denominated in.",
         ),
         "role": st.column_config.SelectboxColumn(
-            "Modelling role",
+            "Outcome role",
             options=display_enum_options(OUTCOME_ROLES),
             required=True,
         ),
@@ -647,30 +737,7 @@ outcome_catalogue_df = restore_enum_frame(
     _outcome_enum_values,
 )
 
-
-def _outcome_text(value) -> str:
-    """Return a safe, display-ready string for a catalogue value."""
-    if value is None or (isinstance(value, float) and pd.isna(value)):
-        return ""
-    return str(value).strip()
-
-
-def _outcome_display_label(row: dict) -> str:
-    """Describe an outcome for analysts while retaining its stable ID."""
-    outcome_id = _outcome_text(row.get("outcome_id"))
-    parts = [
-        readable_label(_outcome_text(row.get(field)))
-        for field in ("product", "segment", "metric")
-        if _outcome_text(row.get(field))
-    ]
-    label = " · ".join(parts) or readable_label(outcome_id)
-    source_column = _outcome_text(row.get("source_column"))
-    definition_version = _outcome_text(row.get("definition_version"))
-    if not parts and source_column:
-        label = readable_label(source_column)
-    if definition_version:
-        label += f" (definition {definition_version})"
-    return label
+_outcome_editor_section.__exit__(None, None, None)
 
 
 _outcome_rows = outcome_catalogue_df.to_dict("records")
@@ -740,10 +807,11 @@ if _outcome_group_load_errors:
     for _error in _outcome_group_load_errors:
         st.error(_error)
 
+st.markdown("### 3. Outcome groups")
 with st.container(border=True):
-    st.markdown("### Outcome groups and model treatment")
+    st.markdown("#### Group treatment")
     st.caption(
-        "Groups describe compatible rows for one business measure. Model treatment is a separate analyst decision: it does not come from the source dictionary and it never creates an approval or a causal pathway."
+        "Group compatible outcome rows for one business measure, then choose how the group is used in the model. This choice does not change the source dictionary, create an approval, or create a causal pathway."
     )
     if not _outcome_group_definitions:
         st.info(
@@ -773,6 +841,8 @@ with st.container(border=True):
             if _outcome_text(_row.get("outcome_id"))
         }
         for _group in _outcome_group_definitions:
+            _group_card = st.container(border=True)
+            _group_card.__enter__()
             _members = [
                 _outcome_rows_by_id[outcome_id]
                 for outcome_id in _group.member_outcome_ids
@@ -796,21 +866,24 @@ with st.container(border=True):
             if _default_treatment not in OUTCOME_GROUP_TREATMENTS:
                 _default_treatment = OUTCOME_GROUP_TREATMENT_UNCONFIGURED
             _treatment = st.selectbox(
-                f"Model treatment · {_group.group_label or _group.group_id}",
+                f"How should this group be used? · {_group.group_label or 'Unnamed group'}",
                 options=list(OUTCOME_GROUP_TREATMENTS),
                 index=list(OUTCOME_GROUP_TREATMENTS).index(_default_treatment),
                 format_func=_group_treatment_display,
                 key=f"outcome_group_treatment_{_group.group_id}",
-                help="This is a model-structure choice. The selected treatment is stored by stable group ID; it does not change the source dictionary.",
+                help="Choose how this group contributes to the fitted model or remains available for descriptive review. The choice is stored by stable group ID and does not change the source dictionary.",
             )
             _selected_group_treatments[_group.group_id] = _treatment
             _summary_cols = st.columns(4)
             _summary_cols[0].metric("Product", _group.product or "Not set")
-            _summary_cols[1].metric("Metric", _metric_label or "Not set")
+            _summary_cols[1].metric("Measure", _metric_label or "Not set")
             _summary_cols[2].metric(
-                "Breakdown", _segment_dimension_display(_group.segment_dimension)
+                "Customer breakdown",
+                _segment_dimension_display(_group.segment_dimension),
             )
-            _summary_cols[3].metric("Treatment", _group_treatment_display(_treatment))
+            _summary_cols[3].metric(
+                "Use in model", _group_treatment_display(_treatment)
+            )
             st.markdown(
                 f"**Members:** {', '.join(_member_labels) if _member_labels else 'No members resolved'}"
             )
@@ -840,6 +913,7 @@ with st.container(border=True):
                 st.caption(
                     f"group_id: {_group.group_id} · member outcome IDs: {', '.join(_group.member_outcome_ids)}"
                 )
+            _group_card.__exit__(None, None, None)
 
 
 if get_state("model_meta") is not None:
@@ -879,14 +953,14 @@ _cross_sell_default = (
     _legacy_candidate if _legacy_candidate in _fh_candidate_ids else "(none)"
 )
 fh_dna_cross_sell_outcome_id = st.selectbox(
-    "FH DNA cross-sell outcome",
+    "Family History outcome receiving the DNA halo",
     _cross_sell_options,
     index=_cross_sell_options.index(_cross_sell_default)
     if _cross_sell_default in _cross_sell_options
     else 0,
-    help="Which Family History outcome is the DNA halo pathway's target - required explicitly whenever "
-    "DNA-targeted media is configured above. Automatic name-based inference is not used for a live fit "
-    "(only offered here as a one-time migration suggestion for a legacy project).",
+    help="Which Family History outcome receives the DNA-targeted media halo? This must be an explicit "
+    "Family History outcome; it is not a DNA kit outcome. Automatic name-based inference is not used "
+    "for a live fit (only offered here as a one-time migration suggestion for a legacy project).",
     format_func=_display_outcome_id,
 )
 fh_dna_cross_sell_outcome_id = (
@@ -895,8 +969,9 @@ fh_dna_cross_sell_outcome_id = (
 _outcome_section.__exit__(None, None, None)
 
 st.markdown("---")
+st.markdown("### 4. Advanced relationships")
 _funnel_section = SectionCard(
-    "Advanced causal links (optional)",
+    "Causal links (optional)",
     description="For review and warnings only - not a constrained funnel model.",
 )
 _funnel_section.__enter__()
@@ -1745,9 +1820,10 @@ else:
 _promo_controls_section.__exit__(None, None, None)
 
 st.markdown("---")
+st.markdown("### 5. Review and save")
 _validation_section = SectionCard(
-    "Save & validate structure",
-    description="Saves this structure and shows validation flags plus the current outcome catalogue status.",
+    "Review and save",
+    description="Validate the complete structure, then save it as the durable source of truth for the next fit.",
 )
 _validation_section.__enter__()
 if st.button("Save structure and validate", type="primary"):
@@ -1864,7 +1940,7 @@ if st.button("Save structure and validate", type="primary"):
     )
     if dna_channels and not fh_dna_cross_sell_outcome_id:
         errors.append(
-            "DNA-targeted media is configured but no FH DNA cross-sell outcome is selected above - "
+            "DNA-targeted media is configured but no Family History outcome is selected as the DNA halo target - "
             "required so the halo pathway has an explicit target (automatic name-based inference is "
             "no longer used for a live fit)."
         )
@@ -1990,15 +2066,9 @@ if st.button("Save structure and validate", type="primary"):
         else:
             st.info("No validation issues flagged.")
 
-        st.markdown("#### Outcome catalogue")
+        st.markdown("#### Outcome status")
         st.caption(
-            "Every outcome captured for this project, with its current status. `Configured` means captured "
-            "here only; `Excluded` means captured "
-            "but held back from the next fit; `Missing source column` means its mapped column isn't "
-            "in the current data; `Included in prepared frame` / `Included in fitted run` reflect "
-            "this session's actual Model Setup / Fit Model state, if any; `Stale after "
-            "configuration changes` means it used to be prepared or fit but its column has since "
-            "disappeared from the data."
+            "The saved outcome definitions and their current data-readiness status. The full field set and stable IDs are available in the technical details."
         )
         outcomes_df = outcomes_to_dataframe(
             outcome_definitions,
@@ -2008,11 +2078,29 @@ if st.button("Save structure and validate", type="primary"):
                 get_state("model_meta"), "outcome_ids", None
             ),
         )
-        st.dataframe(
-            outcomes_df,
-            width="stretch",
-            column_config=dataframe_column_config(outcomes_df),
-        )
+        _outcome_status_rows = [
+            {
+                "Outcome": _outcome_display_label(_outcome.to_dict()),
+                "Product": readable_label(_outcome.product),
+                "Customer segment": _outcome.segment,
+                "Measure": readable_label(_outcome.metric),
+                "Source field": readable_label(_outcome.source_column),
+                "Current status": _status,
+            }
+            for _outcome, _status in zip(
+                outcome_definitions, outcomes_df["status"].tolist()
+            )
+        ]
+        if _outcome_status_rows:
+            st.dataframe(
+                pd.DataFrame(_outcome_status_rows), width="stretch", hide_index=True
+            )
+        with st.expander("Technical details · saved outcome fields"):
+            st.dataframe(
+                outcomes_df,
+                width="stretch",
+                column_config=dataframe_column_config(outcomes_df),
+            )
 _validation_section.__exit__(None, None, None)
 
 if get_state("model_spec"):
