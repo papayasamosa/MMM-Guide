@@ -3267,3 +3267,34 @@ Technical details and persisted artefacts for traceability.
 
 **Owner:** Platform engineering / Data Science.
 **Status:** Implemented in UX/UI coherence Phase 28.
+
+## Humanise Planning Curve setup and saved-use status (UX/UI coherence Phase 29)
+
+**Date:** 2026-08-14
+**Decision:** Present Planning Curve reference-context methods, support-method
+choices, model-context previews, and channel/outcome labels in analyst language.
+Keep stored mode keys, outcome IDs, control keys, and governance permission
+keys unchanged. Show the saved curve's use status in the routine summary and
+move its durable curve ID and stored authorization keys to Technical details.
+
+**Reason:** The Planning Curves page had human permission labels, but routine
+controls still exposed values such as `recent_average`,
+`specific_scenario`, and `latest_complete_week`, while derived previews and
+saved status repeated implementation identifiers. The page should centre the
+Planning Curve decision without weakening the governed save and authorization
+chain.
+
+**Impact:** Presentation-only changes to option labels, reference-context
+preview labels, support/control labels, chart titles, saved-status disclosure,
+and the readable default curve reference. The underlying context mode,
+support method, artifact ID, outcome ID, cost mapping, curve generation,
+approval, authorization, persistence, and monetary validation semantics are
+unchanged. Business question: is this Planning Curve configured for the right
+outcome, context, units, support, and permitted use? Estimand: none
+introduced. Output scale/units: unchanged. Upstream modelling references: none
+consulted; no modelling API or dependency changed.
+Remaining limitation: exact identifiers and advanced cost-mapping fields
+remain available in Technical details and the advanced editor.
+
+**Owner:** Platform engineering / Data Science.
+**Status:** Implemented in UX/UI coherence Phase 29.

@@ -271,8 +271,8 @@ def test_official_lifecycle_journey_in_browser(
     # broken, since it would never have been exercised in a real browser.
     page.get_by_role("link", name="Planning Curves").click()
     page.get_by_text("Reference context - UK", exact=False).click()
-    mode_select = page.get_by_role("combobox", name="Mode")
-    mode_option = page.get_by_role("option", name="recent_average", exact=True)
+    mode_select = page.get_by_role("combobox", name="Reference context method")
+    mode_option = page.get_by_role("option", name="Recent average", exact=True)
     _click_until_visible(mode_select, mode_option)
     # Selecting through the open combobox avoids racing the transient option
     # node that Streamlit's BaseWeb select replaces while it commits the
