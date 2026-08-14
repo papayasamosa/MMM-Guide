@@ -268,9 +268,8 @@ if _governed_activity_definitions:
     def _activity_choice_label(key: str) -> str:
         definition = _activity_choice_by_key[key]
         return (
-            f"{readable_label(definition.activity_id)} · "
-            f"{readable_label(definition.market)} · "
-            f"{readable_label(definition.channel)}"
+            f"{readable_label(definition.activity_id)} "
+            f"({readable_label(definition.market)})"
         )
 
     _activity_choice_keys = list(_activity_choice_by_key)
@@ -287,9 +286,9 @@ if _governed_activity_definitions:
         default=_default_activity_choices,
         format_func=_activity_choice_label,
         help=(
-            "Select governed activity identities. Each selected activity uses the "
-            "media input mapped on Activity Mapping; reporting channel remains a "
-            "separate reporting label."
+            "Select governed activity identities by activity and market. Each "
+            "selected activity uses the media input mapped on Activity Mapping; "
+            "reporting channel remains a separate reporting label."
         ),
     )
     _selected_activity_definitions = [
