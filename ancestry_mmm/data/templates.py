@@ -9,7 +9,7 @@ activity table at the explicit model-input boundary.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from io import BytesIO
 from typing import Any
 
@@ -23,10 +23,77 @@ from ancestry_mmm.core.coverage import (
     DOMAIN_OUTCOMES,
     compute_checksum,
 )
+from ancestry_mmm.core.net_billthrough import (
+    NBT_METRIC_KEY,
+    NetBillthroughCompletenessMetadata,
+    validate_nbt_completeness_metadata_for_outcome,
+)
+from ancestry_mmm.core.outcome_approval import fingerprint_outcome_definition
+from ancestry_mmm.core.outcomes import (
+    KNOWN_PRODUCTS,
+    METRIC_REGISTRY,
+    METRIC_KEY_CUSTOM,
+    OutcomeDefinition,
+    OutcomeGroupDefinition,
+    SEGMENT_DIMENSIONS,
+    validate_outcome_definitions,
+    validate_outcome_group_definitions,
+)
+from ancestry_mmm.core.pathways import OutcomeReconciliationGroup
 
 STANDARD_TEMPLATE_SCHEMA_VERSION = "standard-source-pack-v1"
+STANDARD_TEMPLATE_SCHEMA_VERSION_V1 = STANDARD_TEMPLATE_SCHEMA_VERSION
+OUTCOMES_TEMPLATE_SCHEMA_VERSION = "standard-source-pack-v2"
+STANDARD_TEMPLATE_SCHEMA_VERSION_V2 = OUTCOMES_TEMPLATE_SCHEMA_VERSION
 PERIOD_COLUMN = "period_start"
 MARKET_COLUMN = "market"
+
+OUTCOME_DICTIONARY_V1_COLUMNS = ("outcome_id", "source_column")
+OUTCOME_DICTIONARY_V2_COLUMNS = (
+    "outcome_id",
+    "source_column",
+    "product",
+    "metric_key",
+    "metric",
+    "segment_dimension",
+    "segment",
+    "outcome_group_id",
+    "outcome_group_label",
+    "outcome_family_key",
+    "group_aggregation",
+)
+OUTCOME_COMPLETENESS_COLUMNS = (
+    "outcome_id",
+    "data_as_of_date",
+    "model_start_week",
+    "model_end_week",
+    "latest_complete_net_billthrough_week",
+    "maturity_rule_description",
+    "source_owner",
+)
+_OUTCOME_DEFINITION_OPTIONAL_COLUMNS = (
+    "unit",
+    "aggregation_type",
+    "date_basis",
+    "maturity_required",
+    "role",
+    "included_in_fit",
+    "include_in_default_reporting",
+    "include_in_official_total",
+    "include_in_value",
+    "include_in_optimisation",
+    "definition_version",
+    "event_definition",
+    "cohort_or_attribution_basis",
+    "completeness_or_maturity_policy",
+    "exclusions",
+    "reconciliation_source",
+    "business_owner",
+    "effective_from",
+    "effective_to",
+    "value_weight",
+    "value_currency",
+)
 
 
 @dataclass(frozen=True)
@@ -106,6 +173,12 @@ class CanonicalSourceBundle:
     native_context_data: pd.DataFrame | None = None
     outcomes: pd.DataFrame | None = None
     experiment_evidence: pd.DataFrame | None = None
+    outcome_definitions: tuple[OutcomeDefinition, ...] = ()
+    outcome_groups: tuple[OutcomeGroupDefinition, ...] = ()
+    outcome_reconciliation_groups: tuple[object, ...] = ()
+    outcome_completeness_metadata: Mapping[str, NetBillthroughCompletenessMetadata] = (
+        field(default_factory=dict)
+    )
 
 
 STANDARD_SHEET_SPECS: dict[str, tuple[SheetSpec, ...]] = {
@@ -117,8 +190,13 @@ STANDARD_SHEET_SPECS: dict[str, tuple[SheetSpec, ...]] = {
         ),
         SheetSpec(
             "outcome_dictionary",
-            ("outcome_id", "source_column"),
-            "Optional governed outcome metadata for source measures.",
+            OUTCOME_DICTIONARY_V2_COLUMNS,
+            "Required governed outcome metadata for source measures.",
+        ),
+        SheetSpec(
+            "outcome_completeness",
+            OUTCOME_COMPLETENESS_COLUMNS,
+            "Optional source completeness metadata for supplied outcomes such as NBT.",
             required=False,
         ),
     ),
@@ -180,7 +258,32 @@ STANDARD_SHEET_SPECS: dict[str, tuple[SheetSpec, ...]] = {
 }
 
 
-def standard_sheet_specs(logical_domain: str) -> tuple[SheetSpec, ...]:
+def _outcome_v1_sheet_specs() -> tuple[SheetSpec, ...]:
+    return (
+        SheetSpec(
+            "outcomes",
+            (PERIOD_COLUMN, MARKET_COLUMN),
+            "One row per observed period and market; measures remain separate columns.",
+        ),
+        SheetSpec(
+            "outcome_dictionary",
+            OUTCOME_DICTIONARY_V1_COLUMNS,
+            "Legacy optional outcome-to-source-column mapping.",
+            required=False,
+        ),
+    )
+
+
+def standard_sheet_specs(
+    logical_domain: str,
+    *,
+    schema_version: str | None = None,
+) -> tuple[SheetSpec, ...]:
+    if (
+        logical_domain == DOMAIN_OUTCOMES
+        and schema_version == STANDARD_TEMPLATE_SCHEMA_VERSION
+    ):
+        return _outcome_v1_sheet_specs()
     try:
         return STANDARD_SHEET_SPECS[logical_domain]
     except KeyError as exc:
@@ -211,13 +314,55 @@ def _candidate_domains(sheet_names: Sequence[str]) -> list[str]:
     ]
 
 
+def _table_named(
+    tables: Mapping[str, pd.DataFrame], sheet_name: str
+) -> pd.DataFrame | None:
+    target = _normalise_sheet_name(sheet_name)
+    for name, table in tables.items():
+        if _normalise_sheet_name(name) == target:
+            return table
+    return None
+
+
+def _detect_outcomes_schema_version(
+    tables: Mapping[str, pd.DataFrame],
+) -> tuple[str, str | None]:
+    """Detect the Outcomes contract without interpreting outcome IDs.
+
+    A missing dictionary, or a dictionary containing only the historical
+    ``outcome_id``/``source_column`` mapping, remains v1.  Any v2-specific
+    structural field opts the workbook into v2 validation so a partially
+    populated richer dictionary fails clearly instead of being downgraded to
+    an incomplete legacy mapping.
+    """
+    dictionary = _table_named(tables, "outcome_dictionary")
+    if dictionary is None:
+        return STANDARD_TEMPLATE_SCHEMA_VERSION, (
+            "Outcomes workbook has no outcome_dictionary; it is loadable as a "
+            "legacy/incomplete v1 mapping and needs semantic review."
+        )
+    columns = {str(column).strip() for column in dictionary.columns}
+    v2_specific = set(OUTCOME_DICTIONARY_V2_COLUMNS) - set(
+        OUTCOME_DICTIONARY_V1_COLUMNS
+    )
+    if columns.intersection(v2_specific):
+        return OUTCOMES_TEMPLATE_SCHEMA_VERSION, None
+    if set(OUTCOME_DICTIONARY_V1_COLUMNS).issubset(columns):
+        return STANDARD_TEMPLATE_SCHEMA_VERSION, (
+            "Outcomes workbook uses the legacy v1 outcome_dictionary; product, "
+            "metric, breakdown, segment, and group semantics require analyst review."
+        )
+    return OUTCOMES_TEMPLATE_SCHEMA_VERSION, None
+
+
 def _validate_tables(
     *,
     logical_domain: str,
+    schema_version: str | None = None,
     sheet_names: Sequence[str],
     tables: Mapping[str, pd.DataFrame],
 ) -> tuple[list[ParsedTable], list[str], list[str], bool]:
-    specs = standard_sheet_specs(logical_domain)
+    specs = standard_sheet_specs(logical_domain, schema_version=schema_version)
     by_normalised = {_normalise_sheet_name(name): name for name in sheet_names}
     parsed: list[ParsedTable] = []
     warnings: list[str] = []
@@ -297,6 +442,7 @@ def parse_standard_workbook(
     warnings: list[str] = []
     errors: list[str] = []
     selected_domain = logical_domain
+    selected_schema_version: str | None = None
     if selected_domain is None:
         candidates = _candidate_domains(sheet_names)
         if len(candidates) == 1:
@@ -311,11 +457,20 @@ def parse_standard_workbook(
                 "no standard template sheet set was recognised; generic source "
                 "handling remains available"
             )
+    if selected_domain == DOMAIN_OUTCOMES and not errors:
+        selected_schema_version, schema_warning = _detect_outcomes_schema_version(
+            tables
+        )
+        if schema_warning:
+            warnings.append(schema_warning)
+    elif selected_domain in STANDARD_SHEET_SPECS:
+        selected_schema_version = STANDARD_TEMPLATE_SCHEMA_VERSION
     parsed: list[ParsedTable] = []
     standard = False
     if selected_domain in STANDARD_SHEET_SPECS and not errors:
         parsed, domain_warnings, domain_errors, standard = _validate_tables(
             logical_domain=selected_domain,
+            schema_version=selected_schema_version,
             sheet_names=sheet_names,
             tables=tables,
         )
@@ -334,9 +489,7 @@ def parse_standard_workbook(
         original_filename=filename,
         checksum=compute_checksum(raw_bytes),
         size_bytes=len(raw_bytes),
-        template_schema_version=(
-            STANDARD_TEMPLATE_SCHEMA_VERSION if standard else None
-        ),
+        template_schema_version=(selected_schema_version if standard else None),
         logical_domain=selected_domain,
         standard_template=standard,
         table_ids=tuple(item.table_id for item in parsed),
@@ -395,6 +548,368 @@ def activity_definitions_from_dictionary(
             "activity dictionary contains duplicate market/activity_id rows"
         )
     return tuple(definitions)
+
+
+def _normalised_dictionary_frame(dictionary: pd.DataFrame) -> pd.DataFrame:
+    frame = dictionary.copy()
+    columns = [str(column).strip() for column in frame.columns]
+    if len(columns) != len(set(columns)):
+        raise ValueError("outcome dictionary contains duplicate column names")
+    frame.columns = columns
+    return frame
+
+
+def _required_dictionary_text(
+    row: Mapping[str, Any], column: str, *, row_number: int
+) -> str:
+    value = row.get(column)
+    if value is None or pd.isna(value) or not str(value).strip():
+        raise ValueError(
+            f"outcome dictionary row {row_number} column {column!r} must be populated"
+        )
+    return str(value).strip()
+
+
+def _optional_dictionary_text(row: Mapping[str, Any], column: str) -> str | None:
+    value = row.get(column)
+    if value is None or pd.isna(value) or not str(value).strip():
+        return None
+    return str(value).strip()
+
+
+def _dictionary_bool(value: Any, *, column: str, row_number: int) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in {"true", "yes", "y", "1"}:
+        return True
+    if text in {"false", "no", "n", "0"}:
+        return False
+    raise ValueError(
+        f"outcome dictionary row {row_number} column {column!r} must be boolean"
+    )
+
+
+def _dictionary_schema_version(
+    dictionary: pd.DataFrame, schema_version: str | None
+) -> str:
+    if schema_version is not None:
+        return schema_version
+    columns = {str(column).strip() for column in dictionary.columns}
+    v2_specific_columns = set(OUTCOME_DICTIONARY_V2_COLUMNS) - set(
+        OUTCOME_DICTIONARY_V1_COLUMNS
+    )
+    if columns.intersection(v2_specific_columns):
+        return OUTCOMES_TEMPLATE_SCHEMA_VERSION
+    return STANDARD_TEMPLATE_SCHEMA_VERSION
+
+
+def _validate_dictionary_columns(
+    dictionary: pd.DataFrame, *, schema_version: str
+) -> None:
+    required = (
+        OUTCOME_DICTIONARY_V2_COLUMNS
+        if schema_version == OUTCOMES_TEMPLATE_SCHEMA_VERSION
+        else OUTCOME_DICTIONARY_V1_COLUMNS
+    )
+    missing = sorted(set(required) - set(dictionary.columns))
+    if missing:
+        raise ValueError(
+            f"outcome dictionary for {schema_version} is missing required columns: {missing}"
+        )
+
+
+def outcome_definitions_from_dictionary(
+    outcome_dictionary: pd.DataFrame,
+    *,
+    outcomes: pd.DataFrame | None = None,
+    schema_version: str | None = None,
+) -> tuple[OutcomeDefinition, ...]:
+    """Build canonical outcome definitions without inferring business meaning.
+
+    v2 requires explicit product, metric, breakdown, segment, and grouping
+    columns. v1 remains loadable as a fail-closed, incomplete mapping: only
+    ``outcome_id`` and ``source_column`` are retained, while all business
+    dimensions stay blank/``unspecified`` and the definition is excluded from
+    a new fit until an analyst supplies governed semantics.
+    """
+    dictionary = _normalised_dictionary_frame(outcome_dictionary)
+    version = _dictionary_schema_version(dictionary, schema_version)
+    _validate_dictionary_columns(dictionary, schema_version=version)
+    available_columns = set(outcomes.columns) if outcomes is not None else None
+    definitions: list[OutcomeDefinition] = []
+    seen_ids: set[str] = set()
+    source_semantics: dict[str, set[tuple[object, ...]]] = {}
+
+    for row_index, raw_row in enumerate(dictionary.to_dict(orient="records"), start=2):
+        outcome_id = _required_dictionary_text(
+            raw_row, "outcome_id", row_number=row_index
+        )
+        source_column = _required_dictionary_text(
+            raw_row, "source_column", row_number=row_index
+        )
+        if outcome_id in seen_ids:
+            raise ValueError(
+                f"duplicate outcome_id {outcome_id!r} in outcome dictionary"
+            )
+        seen_ids.add(outcome_id)
+        if available_columns is not None and source_column not in available_columns:
+            raise ValueError(
+                f"outcome {outcome_id!r} maps to source column {source_column!r}, "
+                "which is missing from the outcomes sheet"
+            )
+
+        if version != OUTCOMES_TEMPLATE_SCHEMA_VERSION:
+            definitions.append(
+                OutcomeDefinition(
+                    outcome_id=outcome_id,
+                    product="",
+                    segment="",
+                    metric="",
+                    source_column=source_column,
+                    included_in_fit=False,
+                )
+            )
+            continue
+
+        product = _required_dictionary_text(raw_row, "product", row_number=row_index)
+        metric_key = _required_dictionary_text(
+            raw_row, "metric_key", row_number=row_index
+        )
+        metric = _required_dictionary_text(raw_row, "metric", row_number=row_index)
+        segment_dimension = _required_dictionary_text(
+            raw_row, "segment_dimension", row_number=row_index
+        )
+        segment = _required_dictionary_text(raw_row, "segment", row_number=row_index)
+        if product not in KNOWN_PRODUCTS:
+            raise ValueError(f"outcome {outcome_id!r} has unknown product {product!r}")
+        if metric_key != METRIC_KEY_CUSTOM and metric_key not in METRIC_REGISTRY:
+            raise ValueError(
+                f"outcome {outcome_id!r} has unknown metric_key {metric_key!r}; "
+                "metric keys must match the governed registry exactly"
+            )
+        if segment_dimension not in SEGMENT_DIMENSIONS:
+            raise ValueError(
+                f"outcome {outcome_id!r} has unknown segment_dimension "
+                f"{segment_dimension!r}"
+            )
+
+        payload: dict[str, Any] = {
+            "outcome_id": outcome_id,
+            "product": product,
+            "segment": segment,
+            "metric": metric,
+            "source_column": source_column,
+            "metric_key": metric_key,
+            "segment_dimension": segment_dimension,
+        }
+        for column in _OUTCOME_DEFINITION_OPTIONAL_COLUMNS:
+            if column not in dictionary.columns:
+                continue
+            value = raw_row.get(column)
+            if (
+                value is None
+                or pd.isna(value)
+                or (isinstance(value, str) and not value.strip())
+            ):
+                continue
+            if column in {
+                "included_in_fit",
+                "include_in_default_reporting",
+                "include_in_official_total",
+                "include_in_value",
+                "include_in_optimisation",
+            }:
+                payload[column] = _dictionary_bool(
+                    value, column=column, row_number=row_index
+                )
+            elif column == "maturity_required":
+                payload[column] = _dictionary_bool(
+                    value, column=column, row_number=row_index
+                )
+            elif column == "value_weight":
+                try:
+                    payload[column] = float(value)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f"outcome dictionary row {row_index} column 'value_weight' "
+                        "must be numeric"
+                    ) from exc
+            else:
+                payload[column] = value.strip() if isinstance(value, str) else value
+        definitions.append(OutcomeDefinition(**payload))
+        source_semantics.setdefault(source_column, set()).add(
+            (
+                product,
+                metric_key,
+                segment_dimension,
+                segment,
+                definitions[-1].unit,
+                definitions[-1].aggregation_type,
+            )
+        )
+
+    if version == OUTCOMES_TEMPLATE_SCHEMA_VERSION:
+        errors = validate_outcome_definitions(
+            definitions, available_columns=available_columns
+        )
+        for source_column, semantics in source_semantics.items():
+            if len(semantics) > 1:
+                errors.append(
+                    f"Source column {source_column!r} is mapped to incompatible "
+                    "outcome definitions; provide one explicit business meaning per column."
+                )
+        if errors:
+            raise ValueError("; ".join(errors))
+    return tuple(definitions)
+
+
+def outcome_groups_from_dictionary(
+    outcome_dictionary: pd.DataFrame,
+    *,
+    outcomes: Sequence[OutcomeDefinition] | None = None,
+    schema_version: str | None = None,
+) -> tuple[OutcomeGroupDefinition, ...]:
+    """Build semantic groups from explicit v2 dictionary rows.
+
+    Blank group IDs are a supported explicit not-applicable state. No group
+    is inferred from a metric, segment, or outcome ID.
+    """
+    dictionary = _normalised_dictionary_frame(outcome_dictionary)
+    version = _dictionary_schema_version(dictionary, schema_version)
+    _validate_dictionary_columns(dictionary, schema_version=version)
+    if version != OUTCOMES_TEMPLATE_SCHEMA_VERSION:
+        return ()
+    definitions = (
+        tuple(outcomes)
+        if outcomes is not None
+        else outcome_definitions_from_dictionary(dictionary, schema_version=version)
+    )
+    by_group: dict[str, dict[str, Any]] = {}
+    errors: list[str] = []
+    for row_index, raw_row in enumerate(dictionary.to_dict(orient="records"), start=2):
+        outcome_id = _required_dictionary_text(
+            raw_row, "outcome_id", row_number=row_index
+        )
+        group_id = _optional_dictionary_text(raw_row, "outcome_group_id")
+        group_label = _optional_dictionary_text(raw_row, "outcome_group_label")
+        family_key = _optional_dictionary_text(raw_row, "outcome_family_key")
+        aggregation = _optional_dictionary_text(raw_row, "group_aggregation")
+        group_values = (group_label, family_key, aggregation)
+        if group_id is None:
+            if any(value is not None for value in group_values):
+                errors.append(
+                    f"outcome dictionary row {row_index} has group metadata without "
+                    "an outcome_group_id; use an explicit blank/not-applicable group"
+                )
+            continue
+        if not all(value is not None for value in group_values):
+            errors.append(
+                f"outcome dictionary row {row_index} group {group_id!r} must populate "
+                "outcome_group_label, outcome_family_key, and group_aggregation"
+            )
+            continue
+        product = _required_dictionary_text(raw_row, "product", row_number=row_index)
+        segment_dimension = _required_dictionary_text(
+            raw_row, "segment_dimension", row_number=row_index
+        )
+        candidate = {
+            "group_id": group_id,
+            "group_label": group_label,
+            "product": product,
+            "outcome_family_key": family_key,
+            "segment_dimension": segment_dimension,
+            "member_outcome_ids": [outcome_id],
+            "aggregation_rule": aggregation,
+            "supplied_total_outcome_id": _optional_dictionary_text(
+                raw_row, "supplied_total_outcome_id"
+            ),
+        }
+        existing = by_group.get(group_id)
+        if existing is None:
+            by_group[group_id] = candidate
+        else:
+            for field_name in (
+                "group_label",
+                "product",
+                "outcome_family_key",
+                "segment_dimension",
+                "aggregation_rule",
+                "supplied_total_outcome_id",
+            ):
+                if existing[field_name] != candidate[field_name]:
+                    errors.append(
+                        f"outcome group {group_id!r} has inconsistent {field_name} "
+                        f"between dictionary rows"
+                    )
+            existing["member_outcome_ids"].append(outcome_id)
+    if errors:
+        raise ValueError("; ".join(errors))
+    groups = tuple(OutcomeGroupDefinition(**payload) for payload in by_group.values())
+    group_errors = validate_outcome_group_definitions(groups, outcomes=definitions)
+    if group_errors:
+        raise ValueError("; ".join(group_errors))
+    return groups
+
+
+def outcome_completeness_metadata_from_table(
+    completeness_table: pd.DataFrame,
+    outcomes: Sequence[OutcomeDefinition],
+) -> dict[str, NetBillthroughCompletenessMetadata]:
+    """Bind supplied completeness rows to current NBT definitions.
+
+    The source supplies dates and the maturity description only. The parser
+    computes the current definition fingerprint and never reconstructs NBT
+    from billing events or manufactures an approval record.
+    """
+    table = _normalised_dictionary_frame(completeness_table)
+    missing = sorted(set(OUTCOME_COMPLETENESS_COLUMNS) - set(table.columns))
+    if missing:
+        raise ValueError(f"outcome_completeness is missing required columns: {missing}")
+    by_id = {outcome.outcome_id: outcome for outcome in outcomes}
+    result: dict[str, NetBillthroughCompletenessMetadata] = {}
+    errors: list[str] = []
+    for row_index, raw_row in enumerate(table.to_dict(orient="records"), start=2):
+        outcome_id = _required_dictionary_text(
+            raw_row, "outcome_id", row_number=row_index
+        )
+        if outcome_id in result:
+            errors.append(
+                f"duplicate outcome_id {outcome_id!r} in outcome_completeness"
+            )
+            continue
+        outcome = by_id.get(outcome_id)
+        if outcome is None:
+            errors.append(
+                f"outcome_completeness references unknown outcome_id {outcome_id!r}"
+            )
+            continue
+        if outcome.metric_key != NBT_METRIC_KEY:
+            errors.append(
+                f"outcome_completeness row {row_index} targets {outcome_id!r}, "
+                "which is not a Net Bill Through count outcome"
+            )
+            continue
+        payload = {
+            column: _required_dictionary_text(raw_row, column, row_number=row_index)
+            for column in OUTCOME_COMPLETENESS_COLUMNS
+            if column != "outcome_id"
+        }
+        metadata = NetBillthroughCompletenessMetadata(
+            outcome_id=outcome_id,
+            definition_version=outcome.definition_version,
+            definition_fingerprint=fingerprint_outcome_definition(outcome),
+            **payload,
+        )
+        issues = validate_nbt_completeness_metadata_for_outcome(outcome, metadata)
+        if issues:
+            errors.extend(f"outcome {outcome_id!r}: {issue}" for issue in issues)
+        result[outcome_id] = metadata
+    if errors:
+        raise ValueError("; ".join(errors))
+    return result
 
 
 def canonicalize_activity_data(
@@ -517,6 +1032,44 @@ def canonicalize_standard_workbook(
             native_context_data=workbook.tables["context_data"].copy(),
         )
     if domain == DOMAIN_OUTCOMES:
+        dictionary = _table_named(workbook.tables, "outcome_dictionary")
+        outcome_definitions = (
+            outcome_definitions_from_dictionary(
+                dictionary,
+                outcomes=workbook.tables["outcomes"],
+                schema_version=workbook.manifest.template_schema_version,
+            )
+            if dictionary is not None
+            else ()
+        )
+        groups = (
+            outcome_groups_from_dictionary(
+                dictionary,
+                outcomes=outcome_definitions,
+                schema_version=workbook.manifest.template_schema_version,
+            )
+            if dictionary is not None
+            else ()
+        )
+        reconciliation_groups = tuple(
+            OutcomeReconciliationGroup(
+                group_id=group.group_id,
+                component_outcome_ids=list(group.member_outcome_ids),
+                relation="sum",
+                total_outcome_id=group.supplied_total_outcome_id,
+            )
+            for group in groups
+            if group.aggregation_rule == "sum"
+            and group.supplied_total_outcome_id is not None
+        )
+        completeness_table = _table_named(workbook.tables, "outcome_completeness")
+        completeness = (
+            outcome_completeness_metadata_from_table(
+                completeness_table, outcome_definitions
+            )
+            if completeness_table is not None
+            else {}
+        )
         return CanonicalSourceBundle(
             manifest=workbook.manifest,
             raw_tables=workbook.tables,
@@ -524,6 +1077,10 @@ def canonicalize_standard_workbook(
             model_input_media=pd.DataFrame(),
             activity_column_map={},
             outcomes=workbook.tables["outcomes"].copy(),
+            outcome_definitions=outcome_definitions,
+            outcome_groups=groups,
+            outcome_reconciliation_groups=reconciliation_groups,
+            outcome_completeness_metadata=completeness,
         )
     return CanonicalSourceBundle(
         manifest=workbook.manifest,
