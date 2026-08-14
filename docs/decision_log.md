@@ -2863,3 +2863,33 @@ browser was unavailable.
 
 **Owner:** Platform engineering / Data Science.
 **Status:** Implemented in UX/UI coherence Phase 14.
+
+## Consequence-first drift copy (UX/UI coherence Phase 15)
+
+**Date:** 2026-08-13
+**Decision:** Make the shared drift message lead with the consequence: the
+fitted model no longer matches the affected outcome definition(s). For
+calculation-relevant drift, state the safe action directly—refit the model or
+restore the fitted definitions before using dependent results. For
+non-blocking drift, ask the analyst to review the changes before interpreting
+current evidence. Keep the existing severity, drift classification, detail
+table, and collapsed technical status keys unchanged.
+
+**Reason:** The former message described a historical change first and used
+"calculation-dependent results" as an abstract consequence. Analysts need to
+know whether the current fit can still be used and what action restores a
+safe state.
+
+**Impact:** Presentation-only shared copy and focused component-test updates.
+No drift detection, status classification, blocking gate, model identity,
+approval, persistence, or analytical behavior changed. Business question:
+does the current fitted model still match the outcome definitions, and what
+must the analyst do if it does not? Estimand: none introduced. Output
+scale/units: unchanged. Upstream modelling references: none consulted because
+this package changes presentation only and does not change PyMC or PyMC
+Marketing model APIs. Remaining limitation: interactive browser screenshot
+review uses the repository's synthetic-data browser journey because the local
+connected browser was unavailable.
+
+**Owner:** Platform engineering / Data Science.
+**Status:** Implemented in UX/UI coherence Phase 15.
