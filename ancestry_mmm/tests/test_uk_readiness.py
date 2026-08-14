@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import ntpath
 from pathlib import Path
 
 import pytest
@@ -27,12 +28,10 @@ def _stage(report, name: str):
 
 
 def test_d_drive_guard_rejects_relative_and_non_d_paths() -> None:
-    assert (
-        ensure_d_drive_path(
-            r"D:\Ancestry-MMM\test artifacts\uk-readiness", label="output"
-        ).drive.upper()
-        == "D:"
+    accepted = ensure_d_drive_path(
+        r"D:\Ancestry-MMM\test artifacts\uk-readiness", label="output"
     )
+    assert ntpath.splitdrive(str(accepted))[0].upper() == "D:"
 
     with pytest.raises(ReadinessInputError, match="absolute D-drive"):
         ensure_d_drive_path(r"C:\Ancestry-MMM\test-artifacts", label="output")
