@@ -48,8 +48,14 @@ The summarised proposal this record approves:
 
 ## Capability status
 
-Not implemented. This record establishes the authority/vocabulary
-contract only. It approves *what may be built*; it builds no code.
+Partially implemented as of 2026-08-14. Work Packages E1–E3 have delivered
+the logical-source-domain field and migration behaviour (PR #165), the
+governed activity source-column mapping (PR #166), and the cross-market
+`pooling_group_id` identity (PR #167). The remaining outcome
+workbook/template-pack and end-to-end source-contract work is not
+implemented. This record continues to establish the authority/vocabulary
+contract for that work; it approves *what may be built* but does not itself
+change runtime behaviour.
 Dependent, separately-scoped implementation packages (this brief's Work
 Package E1–E6) implement the domain objects, schema changes, template
 pack, and UI against this record — not against the external document's

@@ -3298,3 +3298,34 @@ remain available in Technical details and the advanced editor.
 
 **Owner:** Platform engineering / Data Science.
 **Status:** Implemented in UX/UI coherence Phase 29.
+
+## Governed Outcomes workbook semantics and grouping (Work Package 0)
+
+**Date:** 2026-08-14
+**Decision:** Register `REQ-DATAIN-002` as the approved authority for the
+richer Outcomes source contract: wide `outcomes` data; required v2
+`outcome_dictionary`; optional `outcome_completeness`; explicit Product,
+Metric, Breakdown, Segment, Source column and semantic group fields; a
+distinct `OutcomeGroupDefinition`; separate reconciliation and model
+treatment; non-conflated DNA dimensions; and v1 compatibility as an
+incomplete semantic mapping. Import may seed drafts but never approval, and
+causal halo remains graph/pathway configuration.
+**Reason:** The fresh implementation brief identified the source-contract
+gap as unresolved while the repository already has a canonical
+`OutcomeDefinition`, distinct metric registry, approval gates, logical source
+domains, and graph-authoritative pathways. Recording the bridge before code
+changes preserves the requirements hierarchy and prevents WP1-WP8 from
+inventing a parallel outcome schema or silently inferring business meaning.
+**Alternatives considered:** Treating the existing two-column v1 dictionary
+as sufficient (rejected - it cannot represent Product, Metric, Breakdown,
+Segment, or semantic grouping); overloading `OutcomeReconciliationGroup`
+(rejected - it is diagnostic arithmetic, not semantic grouping); inferring
+DNA dimensions or groups from identifiers (rejected - the brief explicitly
+separates customer relationship, purchase recipient, and activation status);
+changing runtime behaviour in the authority package (rejected - WP0 is
+documentation and registry only).
+**Impact:** New `REQ-DATAIN-002`, its requirements-index entry, and a
+corrected partial-capability status for `REQ-DATAIN-001`. No `ancestry_mmm/`
+runtime, schema, or persisted artefact behaviour changes.
+**Owner:** Data Science / Platform engineering.
+**Status:** Accepted; WP0 authority registration.
