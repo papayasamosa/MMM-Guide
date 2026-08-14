@@ -137,3 +137,16 @@ def test_activity_mapping_uses_compact_overview_and_detail_form():
     assert any(
         "Technical and provenance" in (expander.label or "") for expander in at.expander
     )
+    assert any(
+        set(table.value.columns)
+        == {
+            "Market",
+            "Reporting channel",
+            "Delivery measure",
+            "Unit",
+            "Cost basis",
+            "Currency",
+            "Mapping status",
+        }
+        for table in at.dataframe
+    )

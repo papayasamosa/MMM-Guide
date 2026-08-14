@@ -166,6 +166,18 @@ with st.container(border=True):
     summary_cols[1].metric("Governed activities", len(existing_activity_items))
     summary_cols[2].metric("Saved Search objects", len(saved_search_object_items))
     summary_cols[3].metric("Physical mappings", saved_media_unit_count)
+
+with st.container(border=True):
+    st.markdown("#### Mapping stages")
+    _mapping_stage_columns = st.columns(3)
+    for _stage_column, _stage_label in zip(
+        _mapping_stage_columns,
+        ("1. Activities", "2. Search setup", "3. Delivery & cost"),
+    ):
+        _stage_column.markdown(f"**{_stage_label}**")
+    st.caption(
+        "Start with the governed activity, then register Search objects and delivery or cost mappings only where the source supports them."
+    )
 render_technical_details(
     details={
         "Persisted values": "Editor labels are display-only. Raw activity roles, Search roles, units, approval states, and planning states are restored before validation and saving.",
@@ -174,6 +186,7 @@ render_technical_details(
     }
 )
 
+st.markdown("### 1. Activities")
 with SectionCard(
     "Activity mapping",
     description=(
@@ -600,25 +613,24 @@ with SectionCard(
             st.error(f"Nothing was saved. Resolve this activity first: {exc}")
 
 st.markdown("---")
+st.markdown("### 2. Search setup")
 _search_section = SectionCard(
-    "Search object governance",
+    "Search setup",
     description=(
         "Branded-search demand, Paid Search spend/delivery/cap, organic-search and "
         "direct-navigation capture - distinct governed objects, never inferred by name."
     ),
 )
 _search_section.__enter__()
+st.markdown("#### Search object governance")
 render_definition_help(
     "a Search cap",
     "A budget, delivery, or operational limit on Paid Search. It is a constraint, not a promise that the same amount will be spent or delivered.",
 )
 st.caption(
-    "Branded-search demand, Paid Search spend/delivery/cap, organic-search "
-    "capture, and direct-navigation capture are separate governed objects - "
-    "never inferred by name-matching a column. A source column already assigned "
-    "one Search role cannot also be registered under another role. A Paid Search "
-    "cap must be linked to the matching Paid Search spend or delivery object in "
-    "the same market; a cap without a matching object is rejected."
+    "Keep demand, spend, delivery, caps, organic search, and direct navigation as "
+    "separate Search objects. A cap is a constraint, not realised spend, and every "
+    "cap must match its market's Paid Search spend or delivery object."
 )
 existing_search_object_items = saved_search_object_items
 if existing_search_object_items:
@@ -628,6 +640,48 @@ if existing_search_object_items:
     ]
 else:
     search_object_rows = []
+
+
+def _search_overview_label(row: dict) -> str:
+    """Return a routine Search label without exposing the technical ID."""
+    role = readable_label(str(row.get("search_role") or ""))
+    channel = readable_label(str(row.get("channel") or ""))
+    return role or channel or "Unnamed Search object"
+
+
+_search_overview_rows = [
+    {
+        "Search object": _search_overview_label(row),
+        "Market": str(row.get("market") or "All markets"),
+        "Source field": readable_label(str(row.get("source_column") or ""))
+        or "Not set",
+        "Measurement": readable_label(str(row.get("unit") or "")) or "Not set",
+        "Planning use": readable_label(
+            str(row.get("planning_eligibility") or "excluded")
+        ),
+        "Review status": readable_label(str(row.get("approval_status") or "draft")),
+    }
+    for row in search_object_rows
+]
+st.markdown("#### Search object overview")
+if _search_overview_rows:
+    st.caption(
+        "Compare the governed Search roles at a glance. Stable references and the complete field set remain in the detailed editor."
+    )
+    st.dataframe(pd.DataFrame(_search_overview_rows), width="stretch", hide_index=True)
+else:
+    st.info(
+        "No Search objects are registered yet. Add the first demand, spend, delivery, cap, organic, or direct-navigation object in the detailed setup below."
+    )
+
+_search_editor_section = st.expander(
+    "Edit Search object details", expanded=not bool(_search_overview_rows)
+)
+_search_editor_section.__enter__()
+st.markdown("#### Search object details")
+st.caption(
+    "Group identity, source, measurement, planning, review, and effective-period fields here. Save creates a new version when a saved row changes."
+)
 
 search_object_columns = [
     "market",
@@ -685,15 +739,17 @@ search_object_editor = st.data_editor(
             "Market", options=mapping_markets, required=True
         ),
         "search_role": st.column_config.SelectboxColumn(
-            "Search object",
+            "Search role",
             options=display_enum_options(SEARCH_ROLES),
             required=True,
         ),
         "search_object_id": st.column_config.TextColumn(
-            "Search object ID", required=True
+            "Search object reference",
+            required=True,
+            help="Stable technical reference for this Search object; it is not the routine display label.",
         ),
         "channel": st.column_config.TextColumn("Channel"),
-        "source_column": st.column_config.TextColumn("Source column", required=True),
+        "source_column": st.column_config.TextColumn("Source field", required=True),
         "unit": st.column_config.SelectboxColumn(
             "Measurement unit",
             options=display_enum_options(SEARCH_UNITS),
@@ -799,23 +855,7 @@ for issue in validate_search_object_catalogue(search_object_definitions):
 for search_error in search_object_errors:
     st.error(search_error)
 
-if st.button("Save Search object governance"):
-    if search_object_errors:
-        st.error("Nothing was saved. Resolve every Search object error first.")
-    else:
-        set_state(
-            "search_objects",
-            [definition.to_dict() for definition in search_object_definitions],
-        )
-        if search_object_versions_to_record:
-            set_state(
-                "search_object_versions",
-                (get_state("search_object_versions") or [])
-                + [defn.to_dict() for defn in search_object_versions_to_record],
-            )
-        st.success("Search object governance saved.")
-
-with st.expander("Search object version history"):
+with st.expander("Technical details · Search version history"):
     _search_object_version_history = get_state("search_object_versions") or []
     if not _search_object_version_history:
         st.caption("No saved Search object versions yet.")
@@ -832,11 +872,28 @@ with st.expander("Search object version history"):
             f"v{_version.get('search_object_version')} - "
             f"{_version.get('approval_status')}"
         )
+_search_editor_section.__exit__(None, None, None)
+if st.button("Save Search setup"):
+    if search_object_errors:
+        st.error("Nothing was saved. Resolve every Search object error first.")
+    else:
+        set_state(
+            "search_objects",
+            [definition.to_dict() for definition in search_object_definitions],
+        )
+        if search_object_versions_to_record:
+            set_state(
+                "search_object_versions",
+                (get_state("search_object_versions") or [])
+                + [defn.to_dict() for defn in search_object_versions_to_record],
+            )
+        st.success("Search setup saved.")
 _search_section.__exit__(None, None, None)
 
 st.markdown("---")
+st.markdown("### 3. Delivery & cost")
 _media_unit_section = SectionCard(
-    "Physical delivery & cost mapping",
+    "Delivery & cost",
     description=(
         "Physical delivery (impressions, GRPs, clicks) and cost basis/currency, kept separate "
         "from monetary spend and from the fitted model-input column above. Response-only "
@@ -860,60 +917,132 @@ if not unit_channels:
         "physical delivery and cost mappings."
     )
 
-for market in unit_markets:
-    with st.expander(f"Market: {market}", expanded=len(unit_markets) == 1):
-        for channel in unit_channels:
-            existing = market_config.get_media_unit_config(market, channel)
-            st.markdown(f"**{readable_label(channel)}**")
-            c1, c2, c3 = st.columns(3)
-            response_col = c1.selectbox(
-                "Response-unit column",
-                ["(none)"] + numeric_cols,
-                index=(["(none)"] + numeric_cols).index(existing.response_unit_column)
-                if existing and existing.response_unit_column in numeric_cols
-                else 0,
-                format_func=lambda c: c if c == "(none)" else readable_label(c),
-                key=f"unit_col_{market}_{channel}",
-                help="The column that measures physical delivery for this channel, e.g. impressions or GRPs.",
-            )
-            unit_type = c2.selectbox(
-                "Unit type",
-                ["(none)"] + UNIT_TYPE_SUGGESTIONS,
-                index=(["(none)"] + UNIT_TYPE_SUGGESTIONS).index(existing.unit_type)
-                if existing and existing.unit_type in UNIT_TYPE_SUGGESTIONS
-                else 0,
-                key=f"unit_type_{market}_{channel}",
-            )
-            cost_basis = c3.selectbox(
-                "Cost basis",
-                ["(none)"] + COST_BASIS_SUGGESTIONS,
-                index=(["(none)"] + COST_BASIS_SUGGESTIONS).index(existing.cost_basis)
-                if existing and existing.cost_basis in COST_BASIS_SUGGESTIONS
-                else 0,
-                key=f"cost_basis_{market}_{channel}",
-            )
-            currency = st.text_input(
-                "Currency (ISO code, e.g. GBP)",
-                value=(existing.currency if existing else "") or "",
-                key=f"currency_{market}_{channel}",
-            )
-
+for _market in unit_markets:
+    for _channel in unit_channels:
+        _response_key = f"unit_col_{_market}_{_channel}"
+        _unit_type_key = f"unit_type_{_market}_{_channel}"
+        _cost_basis_key = f"cost_basis_{_market}_{_channel}"
+        _currency_key = f"currency_{_market}_{_channel}"
+        if any(
+            _key in st.session_state
+            for _key in (_response_key, _unit_type_key, _cost_basis_key, _currency_key)
+        ):
             market_config.set_media_unit_config(
                 ChannelMediaUnitConfig(
-                    market=market,
-                    channel=channel,
-                    spend_column=channel,
-                    response_unit_column=None
-                    if response_col == "(none)"
-                    else response_col,
-                    unit_type=None if unit_type == "(none)" else unit_type,
-                    cost_basis=None if cost_basis == "(none)" else cost_basis,
-                    currency=currency or None,
+                    market=_market,
+                    channel=_channel,
+                    spend_column=_channel,
+                    response_unit_column=(
+                        None
+                        if st.session_state.get(_response_key) in (None, "(none)")
+                        else st.session_state.get(_response_key)
+                    ),
+                    unit_type=(
+                        None
+                        if st.session_state.get(_unit_type_key) in (None, "(none)")
+                        else st.session_state.get(_unit_type_key)
+                    ),
+                    cost_basis=(
+                        None
+                        if st.session_state.get(_cost_basis_key) in (None, "(none)")
+                        else st.session_state.get(_cost_basis_key)
+                    ),
+                    currency=st.session_state.get(_currency_key) or None,
                 )
             )
-            st.markdown("---")
 
-if st.button("Save optional media-unit mapping"):
+_delivery_overview_rows = []
+for _market in unit_markets:
+    for _channel in unit_channels:
+        _config = market_config.get_media_unit_config(_market, _channel)
+        _delivery_overview_rows.append(
+            {
+                "Market": _market,
+                "Reporting channel": readable_label(_channel),
+                "Delivery measure": readable_label(
+                    _config.response_unit_column if _config else ""
+                )
+                or "Not mapped",
+                "Unit": readable_label(_config.unit_type if _config else "")
+                or "Not set",
+                "Cost basis": readable_label(_config.cost_basis if _config else "")
+                or "Not set",
+                "Currency": (_config.currency if _config else None) or "Not set",
+                "Mapping status": "Mapped"
+                if _config and _config.has_media_unit()
+                else "Not mapped",
+            }
+        )
+st.markdown("#### Delivery & cost overview")
+if _delivery_overview_rows:
+    st.caption(
+        "Review delivery and cost coverage by market and reporting channel, then select one mapping below to edit."
+    )
+    st.dataframe(
+        pd.DataFrame(_delivery_overview_rows), width="stretch", hide_index=True
+    )
+
+if unit_channels:
+    st.markdown("#### Edit selected mapping")
+    selected_market = st.selectbox(
+        "Selected market", unit_markets, key="media_unit_selected_market"
+    )
+    selected_channel = st.selectbox(
+        "Selected reporting channel",
+        unit_channels,
+        format_func=readable_label,
+        key="media_unit_selected_channel",
+    )
+    existing = market_config.get_media_unit_config(selected_market, selected_channel)
+    st.caption(
+        f"Editing {selected_market} · {readable_label(selected_channel)}. These fields describe observed delivery and cost translation; they do not change the fitted model input."
+    )
+    c1, c2, c3 = st.columns(3)
+    response_col = c1.selectbox(
+        "Response-unit column",
+        ["(none)"] + numeric_cols,
+        index=(["(none)"] + numeric_cols).index(existing.response_unit_column)
+        if existing and existing.response_unit_column in numeric_cols
+        else 0,
+        format_func=lambda c: c if c == "(none)" else readable_label(c),
+        key=f"unit_col_{selected_market}_{selected_channel}",
+        help="The column that measures physical delivery for this channel, e.g. impressions or GRPs.",
+    )
+    unit_type = c2.selectbox(
+        "Unit type",
+        ["(none)"] + UNIT_TYPE_SUGGESTIONS,
+        index=(["(none)"] + UNIT_TYPE_SUGGESTIONS).index(existing.unit_type)
+        if existing and existing.unit_type in UNIT_TYPE_SUGGESTIONS
+        else 0,
+        key=f"unit_type_{selected_market}_{selected_channel}",
+    )
+    cost_basis = c3.selectbox(
+        "Cost basis",
+        ["(none)"] + COST_BASIS_SUGGESTIONS,
+        index=(["(none)"] + COST_BASIS_SUGGESTIONS).index(existing.cost_basis)
+        if existing and existing.cost_basis in COST_BASIS_SUGGESTIONS
+        else 0,
+        key=f"cost_basis_{selected_market}_{selected_channel}",
+    )
+    currency = st.text_input(
+        "Currency (ISO code, e.g. GBP)",
+        value=(existing.currency if existing else "") or "",
+        key=f"currency_{selected_market}_{selected_channel}",
+    )
+
+    market_config.set_media_unit_config(
+        ChannelMediaUnitConfig(
+            market=selected_market,
+            channel=selected_channel,
+            spend_column=selected_channel,
+            response_unit_column=None if response_col == "(none)" else response_col,
+            unit_type=None if unit_type == "(none)" else unit_type,
+            cost_basis=None if cost_basis == "(none)" else cost_basis,
+            currency=currency or None,
+        )
+    )
+
+if st.button("Save delivery & cost mapping"):
     set_state("market_spec_config", market_config.to_dict())
     mapped = sum(
         1
@@ -921,7 +1050,7 @@ if st.button("Save optional media-unit mapping"):
         if config.has_media_unit()
     )
     st.success(
-        f"Saved. {mapped} of "
+        f"Saved delivery & cost mapping. {mapped} of "
         f"{len(unit_markets) * len(unit_channels)} channel/market "
         "combinations have a media-unit mapping."
     )

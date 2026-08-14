@@ -53,6 +53,9 @@ def test_page_renders_with_no_search_objects_configured():
     at = _run_at(df, spec)
     assert not at.exception, f"page raised: {at.exception}"
     assert any("Search object governance" in (h.value or "") for h in at.markdown)
+    assert any("1. Activities" in (h.value or "") for h in at.markdown)
+    assert any("2. Search setup" in (h.value or "") for h in at.markdown)
+    assert any("3. Delivery & cost" in (h.value or "") for h in at.markdown)
 
 
 def test_existing_search_object_loads_without_error():
@@ -74,6 +77,21 @@ def test_existing_search_object_loads_without_error():
     )
     assert not at.exception, f"page raised: {at.exception}"
     assert len(at.error) == 0
+    search_overview = next(
+        table.value
+        for table in at.dataframe
+        if set(table.value.columns)
+        == {
+            "Search object",
+            "Market",
+            "Source field",
+            "Measurement",
+            "Planning use",
+            "Review status",
+        }
+    )
+    assert "uk_paid_search_spend" not in search_overview["Search object"].tolist()
+    assert "Paid Search spend" in search_overview["Search object"].tolist()
 
 
 def test_save_button_persists_valid_search_object_rows():
@@ -95,12 +113,10 @@ def test_save_button_persists_valid_search_object_rows():
     )
     assert not at.exception
 
-    save_button = next(
-        b for b in at.button if b.label == "Save Search object governance"
-    )
+    save_button = next(b for b in at.button if b.label == "Save Search setup")
     save_button.click().run()
     assert not at.exception, f"save click raised: {at.exception}"
-    assert any(s.value == "Search object governance saved." for s in at.success)
+    assert any(s.value == "Search setup saved." for s in at.success)
     saved = at.session_state["search_objects"]
     assert len(saved) == 1
     assert saved[0]["search_object_id"] == "uk_paid_search_spend"
@@ -134,9 +150,7 @@ def test_incompatible_column_alias_blocks_save():
     assert not at.exception
     assert any("claimed by conflicting search roles" in e.value for e in at.error)
 
-    save_button = next(
-        b for b in at.button if b.label == "Save Search object governance"
-    )
+    save_button = next(b for b in at.button if b.label == "Save Search setup")
     save_button.click().run()
     assert not at.exception, f"save click raised: {at.exception}"
     assert any("Nothing was saved" in (s.value or "") for s in at.error)
@@ -165,9 +179,7 @@ def test_cap_without_channel_counterpart_blocks_save():
     assert not at.exception
     assert any("for it to constrain" in e.value for e in at.error)
 
-    save_button = next(
-        b for b in at.button if b.label == "Save Search object governance"
-    )
+    save_button = next(b for b in at.button if b.label == "Save Search setup")
     save_button.click().run()
     assert not at.exception, f"save click raised: {at.exception}"
     assert any("Nothing was saved" in (s.value or "") for s in at.error)
@@ -203,11 +215,9 @@ def test_cap_with_matching_channel_spend_saves():
     assert not at.exception
     assert len(at.error) == 0
 
-    save_button = next(
-        b for b in at.button if b.label == "Save Search object governance"
-    )
+    save_button = next(b for b in at.button if b.label == "Save Search setup")
     save_button.click().run()
     assert not at.exception, f"save click raised: {at.exception}"
-    assert any(s.value == "Search object governance saved." for s in at.success)
+    assert any(s.value == "Search setup saved." for s in at.success)
     saved = at.session_state["search_objects"]
     assert len(saved) == 2
