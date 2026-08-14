@@ -870,9 +870,7 @@ else:
                         outcome_data=get_state("standard_outcome_data"),
                         activity_model_input=get_state("standard_activity_model_input"),
                         context_model_input=get_state("standard_context_data"),
-                        context_variable_metadata=get_state(
-                            "context_variable_metadata"
-                        )
+                        context_variable_metadata=get_state("context_variable_metadata")
                         or [],
                     )
                 except ValueError as exc:

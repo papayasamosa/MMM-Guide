@@ -987,7 +987,10 @@ def _render_source_detail(name: str, df) -> None:
             preview, width="stretch", column_config=dataframe_column_config(preview)
         )
         if st.button(f"Remove '{name}'", key=f"remove_{name}"):
-            if st.session_state.get("transformed_data_origin") == "standard_source_pack":
+            if (
+                st.session_state.get("transformed_data_origin")
+                == "standard_source_pack"
+            ):
                 _clear_standard_adoption_state()
             remaining = dict(st.session_state.get("raw_sources") or {})
             remaining.pop(name, None)
@@ -1020,8 +1023,7 @@ if sources:
                         item.get("logical_domain"), item.get("logical_domain")
                     ),
                     "Status": item.get("status"),
-                    "Adopted": ", ".join(item.get("adopted_objects") or ())
-                    or "None",
+                    "Adopted": ", ".join(item.get("adopted_objects") or ()) or "None",
                     "Review / unsupported state": "; ".join(
                         item.get("unsupported_mappings") or ()
                     )
@@ -1032,9 +1034,7 @@ if sources:
             st.dataframe(pd.DataFrame(semantic_rows), hide_index=True, width="stretch")
             for item in semantic_statuses:
                 if item.get("next_action"):
-                    st.caption(
-                        f"{item.get('source_id')}: {item.get('next_action')}"
-                    )
+                    st.caption(f"{item.get('source_id')}: {item.get('next_action')}")
 
     st.markdown("## Data by category")
     st.caption(

@@ -306,7 +306,10 @@ def standard_sheet_specs(
     *,
     schema_version: str | None = None,
 ) -> tuple[SheetSpec, ...]:
-    if logical_domain == DOMAIN_OUTCOMES and schema_version == STANDARD_TEMPLATE_SCHEMA_VERSION:
+    if (
+        logical_domain == DOMAIN_OUTCOMES
+        and schema_version == STANDARD_TEMPLATE_SCHEMA_VERSION
+    ):
         return _outcome_v1_sheet_specs()
     try:
         specs = STANDARD_SHEET_SPECS[logical_domain]
@@ -315,18 +318,20 @@ def standard_sheet_specs(
             f"unsupported standard logical domain {logical_domain!r}"
         ) from exc
     if schema_version == STANDARD_TEMPLATE_SCHEMA_VERSION_V2:
-        extras = {
-            DOMAIN_ACTIVITY_AND_MEDIA: {"activity_dictionary": _ACTIVITY_V2_EXTRA_COLUMNS},
+        extras_by_domain: dict[str, dict[str, tuple[str, ...]]] = {
+            DOMAIN_ACTIVITY_AND_MEDIA: {
+                "activity_dictionary": _ACTIVITY_V2_EXTRA_COLUMNS
+            },
             DOMAIN_CONTEXT_AND_EXTERNAL_FACTORS: {
                 "variable_dictionary": _CONTEXT_V2_EXTRA_COLUMNS
             },
-        }.get(logical_domain, {})
+        }
+        extras = extras_by_domain.get(logical_domain, {})
         if extras:
             return tuple(
                 SheetSpec(
                     item.sheet_name,
-                    item.required_columns
-                    + tuple(extras.get(item.sheet_name, ())),
+                    item.required_columns + tuple(extras.get(item.sheet_name, ())),
                     item.description,
                     item.required,
                 )
@@ -507,22 +512,23 @@ def parse_standard_workbook(
         if schema_warning:
             warnings.append(schema_warning)
     elif selected_domain in STANDARD_SHEET_SPECS:
+        activity_dictionary = _table_named(tables, "activity_dictionary")
+        context_dictionary = _table_named(tables, "variable_dictionary")
+        activity_v2 = (
+            selected_domain == DOMAIN_ACTIVITY_AND_MEDIA
+            and activity_dictionary is not None
+            and set(_ACTIVITY_V2_EXTRA_COLUMNS).intersection(
+                activity_dictionary.columns
+            )
+        )
+        context_v2 = (
+            selected_domain == DOMAIN_CONTEXT_AND_EXTERNAL_FACTORS
+            and context_dictionary is not None
+            and set(_CONTEXT_V2_SCHEMA_MARKERS).intersection(context_dictionary.columns)
+        )
         selected_schema_version = (
             STANDARD_TEMPLATE_SCHEMA_VERSION_V2
-            if (
-                selected_domain == DOMAIN_ACTIVITY_AND_MEDIA
-                and _table_named(tables, "activity_dictionary") is not None
-                and set(_ACTIVITY_V2_EXTRA_COLUMNS).intersection(
-                    _table_named(tables, "activity_dictionary").columns
-                )
-            )
-            or (
-                selected_domain == DOMAIN_CONTEXT_AND_EXTERNAL_FACTORS
-                and _table_named(tables, "variable_dictionary") is not None
-                and set(_CONTEXT_V2_SCHEMA_MARKERS).intersection(
-                    _table_named(tables, "variable_dictionary").columns
-                )
-            )
+            if activity_v2 or context_v2
             else STANDARD_TEMPLATE_SCHEMA_VERSION
         )
     parsed: list[ParsedTable] = []
@@ -640,7 +646,12 @@ def activity_semantic_mappings_from_dictionary(
     for row in activity_dictionary.to_dict(orient="records"):
         item: dict[str, object] = {
             key: row.get(key)
-            for key in ("activity_id", "market", "model_input_column", "model_input_measure")
+            for key in (
+                "activity_id",
+                "market",
+                "model_input_column",
+                "model_input_measure",
+            )
         }
         for key in optional:
             value = row.get(key)
@@ -1112,7 +1123,13 @@ def canonicalize_context_data(
     semantic records for coverage/frequency review.
     """
 
-    required_data = {PERIOD_COLUMN, MARKET_COLUMN, "variable_id", "value", "native_frequency"}
+    required_data = {
+        PERIOD_COLUMN,
+        MARKET_COLUMN,
+        "variable_id",
+        "value",
+        "native_frequency",
+    }
     missing_data = sorted(required_data - set(context_data.columns))
     if missing_data:
         raise ValueError(f"context data is missing required columns: {missing_data}")
@@ -1123,9 +1140,7 @@ def canonicalize_context_data(
             f"variable dictionary is missing required columns: {missing_dictionary}"
         )
     dictionary_ids = set(variable_dictionary["variable_id"].astype(str))
-    unknown_ids = sorted(
-        set(context_data["variable_id"].astype(str)) - dictionary_ids
-    )
+    unknown_ids = sorted(set(context_data["variable_id"].astype(str)) - dictionary_ids)
     if unknown_ids:
         raise ValueError(
             "context data contains variable_id values without dictionary metadata: "
@@ -1140,14 +1155,11 @@ def canonicalize_context_data(
             "context data has duplicate period/market/variable rows; no implicit "
             "aggregation is approved for source-pack adoption"
         )
-    wide = (
-        tidy.pivot(
-            index=[PERIOD_COLUMN, MARKET_COLUMN],
-            columns="variable_id",
-            values="value",
-        )
-        .reset_index()
-    )
+    wide = tidy.pivot(
+        index=[PERIOD_COLUMN, MARKET_COLUMN],
+        columns="variable_id",
+        values="value",
+    ).reset_index()
     wide.columns.name = None
     metadata_columns = (
         "variable_id",

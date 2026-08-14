@@ -13,7 +13,7 @@ separate governed registries with their own review and identity rules.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 import pandas as pd
 
@@ -52,7 +52,7 @@ class SourceDomainSemanticStatus:
 
     @classmethod
     def from_dict(cls, value: Mapping[str, object]) -> "SourceDomainSemanticStatus":
-        payload = dict(value)
+        payload: dict[str, Any] = dict(value)
         for key in ("table_ids", "adopted_objects", "unsupported_mappings"):
             payload[key] = tuple(payload.get(key) or ())
         payload["details"] = tuple(
@@ -237,8 +237,11 @@ def _status_for_bundle(bundle: CanonicalSourceBundle) -> SourceDomainSemanticSta
             ),
             details=tuple(
                 dict(row)
-                for row in (bundle.experiment_evidence.to_dict(orient="records")
-                            if bundle.experiment_evidence is not None else ())
+                for row in (
+                    bundle.experiment_evidence.to_dict(orient="records")
+                    if bundle.experiment_evidence is not None
+                    else ()
+                )
             ),
         )
     return SourceDomainSemanticStatus(

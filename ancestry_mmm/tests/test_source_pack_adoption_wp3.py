@@ -70,7 +70,9 @@ def test_legacy_context_pack_remains_v1_and_is_not_upgraded_by_unit_column():
         logical_domain=DOMAIN_CONTEXT_AND_EXTERNAL_FACTORS,
     )
     assert workbook.manifest.valid_standard_template
-    assert workbook.manifest.template_schema_version != STANDARD_TEMPLATE_SCHEMA_VERSION_V2
+    assert (
+        workbook.manifest.template_schema_version != STANDARD_TEMPLATE_SCHEMA_VERSION_V2
+    )
     bundle = canonicalize_standard_workbook(workbook)
     assert {item["native_frequency"] for item in bundle.context_variable_metadata} == {
         "weekly",
@@ -109,7 +111,9 @@ def test_adoption_merges_markets_and_preserves_explicit_activity_semantics():
                         "monetary_spend" if measure == "spend" else "observed_delivery"
                     ),
                     "spend_column": "spend" if measure == "spend" else None,
-                    "response_unit_column": "impressions" if measure == "spend" else "delivery",
+                    "response_unit_column": "impressions"
+                    if measure == "spend"
+                    else "delivery",
                     "response_unit": "impressions",
                     "currency": "GBP" if measure == "spend" else None,
                     "effective_from": "2026-01-01",
@@ -131,8 +135,12 @@ def test_adoption_merges_markets_and_preserves_explicit_activity_semantics():
             )
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        pd.DataFrame(observations).to_excel(writer, sheet_name="activity_data", index=False)
-        pd.DataFrame(rows).to_excel(writer, sheet_name="activity_dictionary", index=False)
+        pd.DataFrame(observations).to_excel(
+            writer, sheet_name="activity_data", index=False
+        )
+        pd.DataFrame(rows).to_excel(
+            writer, sheet_name="activity_dictionary", index=False
+        )
     workbook = parse_standard_workbook(
         output.getvalue(),
         source_id="activity-multi-market",
@@ -151,7 +159,9 @@ def test_adoption_merges_markets_and_preserves_explicit_activity_semantics():
         "uk_paid",
         "au_owned",
     }
-    assert adoption.semantic_statuses[0].status == "adopted_with_physical_mapping_review"
+    assert (
+        adoption.semantic_statuses[0].status == "adopted_with_physical_mapping_review"
+    )
     assert "ChannelMediaUnitConfig" not in adoption.semantic_statuses[0].adopted_objects
 
 
@@ -214,7 +224,9 @@ def test_all_four_domain_packs_accumulate_into_the_official_source_boundary():
             activity_model_input=adoption.activity_model_input if adoption else None,
             outcome_data=adoption.outcome_data if adoption else None,
             context_data=adoption.context_data if adoption else None,
-            context_variable_metadata=(adoption.context_variable_metadata if adoption else ()),
+            context_variable_metadata=(
+                adoption.context_variable_metadata if adoption else ()
+            ),
             semantic_statuses=adoption.semantic_statuses if adoption else (),
         )
 
@@ -269,7 +281,11 @@ def test_adopted_frames_outer_join_multiple_domains_without_filling_missingness(
     )
     assert joined is not None
     assert len(joined) == 2
-    assert joined.loc[joined["period_start"] == pd.Timestamp("2026-01-05"), "tv"].isna().all()
+    assert (
+        joined.loc[joined["period_start"] == pd.Timestamp("2026-01-05"), "tv"]
+        .isna()
+        .all()
+    )
 
 
 def test_standard_adoption_frames_and_semantics_round_trip(tmp_path):
@@ -287,7 +303,15 @@ def test_standard_adoption_frames_and_semantics_round_trip(tmp_path):
             "cpi": [100.0],
         }
     )
-    statuses = [{"source_id": "context", "logical_domain": "context_and_external_factors", "schema_version": "standard-source-pack-v2", "status": "adopted", "table_ids": ["context_data"]}]
+    statuses = [
+        {
+            "source_id": "context",
+            "logical_domain": "context_and_external_factors",
+            "schema_version": "standard-source-pack-v2",
+            "status": "adopted",
+            "table_ids": ["context_data"],
+        }
+    ]
     path = export_project(
         tmp_path / "standard-pack.zip",
         raw_sources={},
@@ -300,7 +324,9 @@ def test_standard_adoption_frames_and_semantics_round_trip(tmp_path):
         scenarios=[],
         standard_activity_model_input=activity,
         standard_context_data=context,
-        context_variable_metadata=[{"variable_id": "cpi", "native_frequency": "weekly"}],
+        context_variable_metadata=[
+            {"variable_id": "cpi", "native_frequency": "weekly"}
+        ],
         source_domain_semantics=statuses,
     )
     imported = import_project(path)
