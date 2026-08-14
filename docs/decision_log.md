@@ -3180,3 +3180,34 @@ the table values and Technical details where needed.
 
 **Owner:** Platform engineering / Data Science.
 **Status:** Implemented in UX/UI coherence Phase 25.
+
+## Humanise Model Structure outcome choices (UX/UI coherence Phase 26)
+
+**Date:** 2026-08-14
+**Decision:** Show product, segment, and metric descriptions in routine Model
+Structure outcome selectors, funnel-link choices, pathway summaries, and the
+pathway editor. Keep stable outcome IDs as the stored values used by validation,
+persistence, joins, and model fingerprints. Label the exact resolved component
+table as Technical details so its implementation-level fields remain available
+without dominating the routine workflow.
+
+**Reason:** Stable outcome IDs are necessary for governed identity, but labels
+such as `fh_dna_crosssell` and `dna_new_kit` make ordinary model-structure
+choices read like a schema-management task. Analysts need to choose the business
+outcome, not decode repository keys.
+
+**Impact:** Presentation-only changes to outcome choice labels, pathway-row
+summaries, and technical disclosure wording. Empty funnel-link state is also
+normalised before the existing editor reads it, so an absent optional value
+renders as an empty state rather than a page exception. Stored outcome IDs,
+pathway validation, graph resolution, fit scope, persistence, and governance
+semantics are unchanged. Business question: which business outcome should this
+pathway or funnel relationship target? Estimand: none introduced. Output
+scale/units: unchanged. Upstream modelling references: none consulted; no
+modelling API or dependency changed.
+Remaining limitation: the governed outcome catalogue still exposes its stable
+identity column for deliberate catalogue maintenance; exact resolved component
+fields remain available in the Technical details disclosure.
+
+**Owner:** Platform engineering / Data Science.
+**Status:** Implemented in UX/UI coherence Phase 26.

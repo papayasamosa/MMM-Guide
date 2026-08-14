@@ -625,6 +625,46 @@ outcome_catalogue_df = restore_enum_frame(
     _outcome_enum_values,
 )
 
+
+def _outcome_text(value) -> str:
+    """Return a safe, display-ready string for a catalogue value."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return ""
+    return str(value).strip()
+
+
+def _outcome_display_label(row: dict) -> str:
+    """Describe an outcome for analysts while retaining its stable ID."""
+    outcome_id = _outcome_text(row.get("outcome_id"))
+    parts = [
+        readable_label(_outcome_text(row.get(field)))
+        for field in ("product", "segment", "metric")
+        if _outcome_text(row.get(field))
+    ]
+    label = " · ".join(parts) or readable_label(outcome_id)
+    source_column = _outcome_text(row.get("source_column"))
+    definition_version = _outcome_text(row.get("definition_version"))
+    if not parts and source_column:
+        label = readable_label(source_column)
+    if definition_version:
+        label += f" (definition {definition_version})"
+    return label
+
+
+_outcome_rows = outcome_catalogue_df.to_dict("records")
+_outcome_display_labels = {
+    _outcome_text(row.get("outcome_id")): _outcome_display_label(row)
+    for row in _outcome_rows
+    if _outcome_text(row.get("outcome_id"))
+}
+
+
+def _display_outcome_id(value) -> str:
+    """Use the governed outcome description in routine selectors and summaries."""
+    outcome_id = _outcome_text(value)
+    return _outcome_display_labels.get(outcome_id, readable_label(outcome_id))
+
+
 if get_state("model_meta") is not None:
     _preview_outcomes = [
         OutcomeDefinition.from_dict(r)
@@ -670,6 +710,7 @@ fh_dna_cross_sell_outcome_id = st.selectbox(
     help="Which Family History outcome is the DNA halo pathway's target - required explicitly whenever "
     "DNA-targeted media is configured above. Automatic name-based inference is not used for a live fit "
     "(only offered here as a one-time migration suggestion for a legacy project).",
+    format_func=_display_outcome_id,
 )
 fh_dna_cross_sell_outcome_id = (
     None if fh_dna_cross_sell_outcome_id == "(none)" else fh_dna_cross_sell_outcome_id
@@ -688,7 +729,7 @@ st.caption(
     "outcome equations - this is for review and warnings only (Model Diagnostics), not a constrained "
     "funnel model."
 )
-if "funnel_links" not in st.session_state:
+if not st.session_state.get("funnel_links"):
     st.session_state["funnel_links"] = get_state("funnel_links") or []
 _all_outcome_ids = [
     r["outcome_id"]
@@ -700,10 +741,16 @@ if len(_all_outcome_ids) < 2:
 else:
     c1, c2, c3 = st.columns([2, 2, 1])
     new_upstream = c1.selectbox(
-        "Upstream outcome (e.g. sign-up)", _all_outcome_ids, key="new_funnel_upstream"
+        "Upstream outcome (e.g. sign-up)",
+        _all_outcome_ids,
+        key="new_funnel_upstream",
+        format_func=_display_outcome_id,
     )
     new_downstream = c2.selectbox(
-        "Downstream outcome (e.g. GSA)", _all_outcome_ids, key="new_funnel_downstream"
+        "Downstream outcome (e.g. GSA)",
+        _all_outcome_ids,
+        key="new_funnel_downstream",
+        format_func=_display_outcome_id,
     )
     if c3.button("Add funnel link"):
         if new_upstream == new_downstream:
@@ -902,6 +949,12 @@ _activity_markets = sorted(
 _pathway_editor_df = display_enum_frame(
     _pathway_default_df, _pathway_enum_values.keys()
 )
+if "target_outcome_id" in _pathway_editor_df:
+    _pathway_editor_df["target_outcome_id"] = (
+        _pathway_editor_df["target_outcome_id"]
+        .map(_outcome_display_labels)
+        .fillna(_pathway_editor_df["target_outcome_id"])
+    )
 pathway_catalogue_editor = st.data_editor(
     _pathway_editor_df,
     num_rows="dynamic",
@@ -938,11 +991,7 @@ pathway_catalogue_editor = st.data_editor(
         ),
         "target_outcome_id": st.column_config.SelectboxColumn(
             "Target outcome",
-            options=[
-                r["outcome_id"]
-                for r in outcome_catalogue_df.to_dict("records")
-                if r.get("outcome_id")
-            ],
+            options=list(_outcome_display_labels.values()),
             required=True,
         ),
         "component_type": st.column_config.SelectboxColumn(
@@ -1009,6 +1058,15 @@ pathway_catalogue_df = restore_enum_frame(
     _pathway_enum_values.keys(),
     _pathway_enum_values,
 )
+if "target_outcome_id" in pathway_catalogue_df:
+    _outcome_id_by_display_label = {
+        label: outcome_id for outcome_id, label in _outcome_display_labels.items()
+    }
+    pathway_catalogue_df["target_outcome_id"] = (
+        pathway_catalogue_df["target_outcome_id"]
+        .map(_outcome_id_by_display_label)
+        .fillna(pathway_catalogue_df["target_outcome_id"])
+    )
 st.caption(
     "Component-specific fields are read-only in the grid. Select a row below to edit them. "
     "Cross-product strength is available only for cross-product rows; other pathway types use "
@@ -1024,7 +1082,9 @@ if not pathway_catalogue_df.empty:
             row.get("activity_id") or row.get("channel") or "(activity not set)"
         )
         market = readable_label(row.get("activity_market") or "All markets")
-        outcome = readable_label(row.get("target_outcome_id") or "(outcome not set)")
+        outcome = _display_outcome_id(
+            row.get("target_outcome_id") or "(outcome not set)"
+        )
         component = readable_label(row.get("component_type") or "direct")
         return f"Row {index + 1}: {activity} ({market}) → {outcome} [{component}]"
 
@@ -1174,7 +1234,7 @@ _preview_errors = validate_media_outcome_pathways(
 )
 _preview_errors += list(_edited_identity_migration.errors)
 _preview_errors += sorted(set(_editor_identity_errors))
-with st.expander("Resolved model-equation component preview", expanded=False):
+with st.expander("Technical details · resolved model plan", expanded=False):
     st.caption(
         "This is the authoritative component view used by fitting, replay, attribution, "
         "headline reporting, and planning. Evidence and headline approval are separate."

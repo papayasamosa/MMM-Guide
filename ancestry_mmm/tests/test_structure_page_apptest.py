@@ -247,7 +247,8 @@ def test_media_outcome_pathway_catalogue_saves_and_validates():
     )
     assert any(
         "tv spend" in str(option)
-        and "dna new kit" in str(option)
+        and "DNA" in str(option)
+        and "New Customer" in str(option)
         and "Direct effect" in str(option)
         for option in component_row.options
     )
@@ -413,6 +414,7 @@ def test_legacy_pathway_review_loads_catalogue_and_requires_refit():
         for selectbox in at.selectbox
         if selectbox.label == "FH DNA cross-sell outcome"
     ][0]
+    assert "Family History · DNA cross-sell · GSA" in cross_sell.options
     cross_sell.select("fh_dna_crosssell").run()
     assert not at.exception
 
