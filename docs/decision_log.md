@@ -3768,3 +3768,45 @@ method, and experiment calibration must use a separately governed registry.
 
 **Owner:** Data Science / Platform engineering.
 **Status:** Implemented in canonical standard source-pack adoption WP3.
+
+## Official UK lifecycle readiness harness (Work Package 5)
+
+**Date:** 2026-08-14
+**Requirement:** Task-specific official UK lifecycle readiness brief, WP5.
+
+**Decision:** Add one framework-independent, local-only readiness command that
+composes the existing source-pack parser/adoption boundary, native weekly
+official-preparation gate, coverage/engine capability evidence, and the
+existing deterministic fitted lifecycle bundle. Synthetic CI mode exercises
+the full deterministic lifecycle without live sampling. Real source and
+bundle modes report safe metadata, fingerprints, counts, timings, and
+governance status, then stop at unresolved decisions; they never infer a
+frequency method, coverage treatment, model approval, or causal/Search method.
+All generated readiness outputs are directed to an explicit D-drive path.
+
+**Estimand:** None introduced. The harness is an orchestration and evidence
+boundary; it does not estimate outcomes or causal effects.
+
+**Output scale and units:** Metadata only: source/schema identity, SHA-256
+fingerprints, row/column/missing-cell counts, date bounds, market counts,
+stage statuses, and elapsed seconds. No source-row values are written to the
+report.
+
+**Upstream references:** None. WP5 composes repository-controlled source,
+official-preparation, persistence, and lifecycle contracts; it does not alter
+PyMC or PyMC-Marketing model equations or dependency versions.
+
+**Tests:** Added D-drive/path guard, synthetic pass, mixed-frequency
+fail-closed, coverage-gap decision-required, local-source identity, and
+metadata-only report tests. Added the synthetic command to the Windows CI
+tooling job.
+
+**Remaining limitations:** The real UK run still requires approved decisions
+for mixed-frequency treatment by variable class, ragged-window mathematics and
+engine support, production Search mediation/capacity mathematics, and any
+graph roles not supported by the selected engine. This work package records
+those as blockers; it does not recommend a statistical option.
+
+**Owner:** Data Science / Platform engineering.
+**Status:** Implemented as a local readiness harness; real UK execution remains
+analyst-authorised and decision-gated.
