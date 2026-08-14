@@ -104,6 +104,21 @@ jobs:
             $full = Join-Path $ciRoot $d
             if (Test-Path $full) { Write-Host "[OK] $full" } else { Write-Host "[FAIL] $full"; exit 1 }
           }
+      - name: Run synthetic UK readiness harness
+        run: |
+          $readinessRoot = "D:\Ancestry-MMM UK Readiness CI"
+          New-Item -ItemType Directory -Force -Path $readinessRoot | Out-Null
+          uv run python scripts\run_uk_readiness.py `
+            --synthetic `
+            --synthetic-case pass `
+            --output-dir $readinessRoot
+          if ($LASTEXITCODE -ne 0) { throw "Synthetic UK readiness harness failed with exit code $LASTEXITCODE" }
+          $reportPath = Join-Path $readinessRoot "uk-readiness-report.json"
+          if (-not (Test-Path $reportPath)) { throw "Synthetic UK readiness report was not written to D:"
+          }
+          $report = Get-Content -Raw $reportPath | ConvertFrom-Json
+          if ($report.status -ne "pass") { throw "Synthetic UK readiness status was $($report.status), expected pass" }
+          Write-Host "Synthetic UK readiness passed: $reportPath"
       - name: Install Chromium for CI
         run: |
           $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $env:MMM_DEV_ROOT "cache\ms-playwright"

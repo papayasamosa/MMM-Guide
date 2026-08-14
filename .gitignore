@@ -102,6 +102,8 @@ test-artifacts/playwright-mcp/
 # to this repo-relative path so CI's "Upload failure artefacts" step
 # (.github/workflows/tests.yml, job `browser`) can find it, never committed.
 test-artifacts/playwright/
+# Local UK readiness reports and synthetic bundles stay outside Git.
+test-artifacts/uk-readiness/
 logs/mcp/
 playwright/.auth/
 storage-state.json
