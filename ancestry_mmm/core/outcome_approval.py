@@ -315,6 +315,7 @@ _FINGERPRINT_FIELDS = (
     "definition_version",
     "product",
     "segment",
+    "segment_dimension",
     "metric_key",
     "unit",
     "aggregation_type",

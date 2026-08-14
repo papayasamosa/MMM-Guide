@@ -3368,3 +3368,50 @@ Legacy definitions are loadable but require semantic review until their
 dimension is explicitly supplied.
 **Owner:** Data Science / Platform engineering.
 **Status:** Implemented in outcome semantics WP1.
+
+## Outcomes source-pack v2 and legacy compatibility (Work Package 2)
+
+**Date:** 2026-08-14
+**Decision:** Add a distinct `standard-source-pack-v2` Outcomes contract with
+required wide `outcomes` and governed `outcome_dictionary` sheets plus an
+optional `outcome_completeness` sheet. Parse v2 dictionary rows into canonical
+`OutcomeDefinition` and `OutcomeGroupDefinition` objects, validate source
+columns, exact metric keys, product compatibility, group consistency, and
+compatible additive units, and retain the raw dictionary in
+`CanonicalSourceBundle`. Preserve v1 workbooks as loadable but incomplete
+legacy mappings with no inferred product, metric, segment dimension, or group.
+When a supplied total is explicitly present, derive a separate diagnostic
+`OutcomeReconciliationGroup`; do not create causal edges or fit treatment.
+Completeness rows bind to the current NBT definition fingerprint and version;
+the parser never reconstructs NBT or creates approval.
+**Reason:** The approved source contract needs a machine-readable bridge from
+the provider's wide values to the canonical outcome registry while keeping
+source meaning, arithmetic reconciliation, causal structure, model treatment,
+and approval as separate concerns. The old v1 shape must remain loadable for
+existing projects without silently turning IDs into business definitions.
+**Alternatives considered:** silently upgrading v1 to v2 (rejected - missing
+semantics must remain visible for review); inferring definitions from outcome
+IDs (rejected - the authority brief forbids it); making `outcome_completeness`
+or source fingerprints provider responsibilities (rejected - the platform
+binds completeness to the current canonical definition); storing only parsed
+objects and discarding the dictionary (rejected - raw source meaning and
+provenance must remain inspectable).
+**Impact:** `data.templates` now detects v1/v2 Outcomes workbooks, parses
+canonical definitions/groups, carries completeness metadata and diagnostic
+reconciliation in `CanonicalSourceBundle`, and keeps warnings separate from
+structural parse errors. The outcome-definition approval fingerprint now also
+includes `segment_dimension`, so completeness and approvals stale when that
+business dimension changes. No Streamlit import UI, persistence migration,
+model treatment, posterior aggregation, or causal-graph behaviour is added in
+this package. Business question: what does each supplied Outcomes column mean,
+and which explicitly declared rows form one measure? Estimand: none
+introduced; source values remain supplied observations. Output scale/units:
+preserved from the canonical definitions; no NBT reconstruction or rate/index
+sum is performed. Upstream modelling references: none consulted; no modelling
+API or dependency changed.
+**Remaining limitation:** draft seeding/adoption, durable group persistence,
+fit treatment, draw-level totals, DNA alternative protection, templates/demo
+refresh, and end-to-end UX remain in WP3-WP8. v1 definitions remain excluded
+from newly governed fits until reviewed.
+**Owner:** Data Science / Platform engineering.
+**Status:** Implemented in source-pack semantics WP2.
