@@ -62,7 +62,7 @@ from ancestry_mmm.core.coverage_fabric import (
     filter_cells_by_states,
 )
 from ancestry_mmm.core.fingerprint import fingerprint_dataframe
-from ancestry_mmm.data import detect_column_types
+from ancestry_mmm.data import adopted_model_input_frame, detect_column_types
 
 FREQUENCY_OPTIONS = ["daily", "weekly", "monthly", "quarterly", "irregular"]
 
@@ -75,11 +75,28 @@ apply_theme()
 render_sidebar("data_coverage")
 
 _official_prepared_data = get_state("official_prepared_data")
-df = (
-    _official_prepared_data
-    if _official_prepared_data is not None
-    else get_state("transformed_data")
-)
+_exploratory_data = get_state("transformed_data")
+if _official_prepared_data is not None:
+    df = _official_prepared_data
+    _coverage_source = "official"
+elif _exploratory_data is not None:
+    df = _exploratory_data
+    _coverage_source = (
+        "adopted"
+        if get_state("transformed_data_origin") == "standard_source_pack"
+        else "exploratory"
+    )
+else:
+    # Standard source-pack adoption keeps model inputs separate from the raw
+    # workbook tables.  This outer-joined convenience view is useful for
+    # coverage review, but remains exploratory until Model Setup creates the
+    # official prepared frame.
+    df = adopted_model_input_frame(
+        outcome_data=get_state("standard_outcome_data"),
+        activity_model_input=get_state("standard_activity_model_input"),
+        context_model_input=get_state("standard_context_data"),
+    )
+    _coverage_source = "adopted" if df is not None else "none"
 date_col = get_state("date_col")
 market_col = get_state("market_col")
 _data_ready = df is not None and bool(date_col) and bool(market_col)
@@ -95,7 +112,7 @@ render_page_header(
     "data_coverage",
     task_prompt="Which variables are complete enough, and what treatment is approved for gaps?",
     description=(
-        "Review each variable's coverage and missingness by "
+        "Review each model input's coverage and missingness by "
         "market, then propose and approve a treatment before this data is "
         "eligible for official use."
     ),
@@ -110,9 +127,9 @@ render_workspace_note(
 if not _data_ready:
     st.markdown("---")
     render_empty_state(
-        "No joined data with a market column yet. Complete Prepare "
-        "Data first - the coverage matrix is built per market, so a "
-        "market column is required.",
+        "No prepared model inputs with a market column yet. Complete "
+        "Prepare Data first - the coverage matrix is built per market, "
+        "so a market column is required.",
         button_label="Go to Prepare Data",
         target_key="transform_pipeline",
         what_for=(
@@ -120,24 +137,32 @@ if not _data_ready:
             "by market before defining model structure."
         ),
         dependency="Prepared data with a market column (Prepare Data).",
-        next_action="Go to Prepare Data to join your sources and select a market column.",
+        next_action=(
+            "Go to Prepare Data to review or prepare model inputs and select "
+            "a market column."
+        ),
     )
     st.stop()
 
 st.markdown("---")
 st.caption(
-    "Review data coverage before fitting. This page builds a coverage matrix "
-    "from the joined data and lets you review and propose treatments for each "
+    "Review model-input coverage before fitting. This page builds a coverage "
+    "matrix from the prepared inputs and lets you review and propose treatments for each "
     "variable before model preparation. It never decides *why* a gap exists - "
     "every gap starts as unknown until you reclassify it, and a state is never "
     "inferred merely because a value is absent."
 )
-if _official_prepared_data is not None:
+if _coverage_source == "official":
+    st.info("Reviewing official prepared data. Missing values remain missing.")
+elif _coverage_source == "adopted":
     st.info(
-        "The current matrix review is based on the official canonical frame: "
-        "an explicit weekly preparation over the union of governed source "
-        "periods. Missing values remain missing; the exploratory joined frame "
-        "is not used as an official coverage substitute."
+        "Reviewing adopted model inputs before official preparation. "
+        "This view does not certify official readiness."
+    )
+elif _coverage_source == "exploratory":
+    st.warning(
+        "Reviewing exploratory joined data. It can guide investigation but "
+        "does not certify official readiness."
     )
 
 all_columns = [c for c in df.columns if c not in (date_col, market_col)]
@@ -510,7 +535,7 @@ built_against_fingerprint = get_state(
 )
 if built_against_fingerprint != fingerprint_dataframe(df):
     st.warning(
-        "This matrix may be stale: the joined data has changed (or this "
+        "This matrix may be stale: the prepared inputs have changed (or this "
         "matrix was restored from an imported project) since it was last "
         "built. Rebuild above to confirm the coverage below still matches "
         "the current data."

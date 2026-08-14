@@ -7,7 +7,10 @@ optional pages without changing analytical or governance authority.
 
 from types import SimpleNamespace
 
+import pandas as pd
+
 from ancestry_mmm.core.causal_graph import CausalGraph
+from ancestry_mmm.core.fingerprint import fingerprint_dataframe
 from ancestry_mmm.utils.workflow_state import (
     is_registered_step_complete,
     next_workflow_step_key,
@@ -68,6 +71,32 @@ def test_coverage_is_optional_for_exploratory_work_but_explains_official_need():
     assert state.optional
     assert state.satisfied
     assert "required before official preparation" in state.reason
+
+
+def test_coverage_without_any_prepared_data_is_optional():
+    state = workflow_page_state("data_coverage", getter=_getter({}))
+
+    assert state.display_status == "optional"
+    assert state.optional
+    assert state.satisfied
+
+
+def test_coverage_matrix_built_against_older_inputs_is_stale():
+    frame = pd.DataFrame({"value": [1, 2]})
+    state = workflow_page_state(
+        "data_coverage",
+        getter=_getter(
+            {
+                "transformed_data": frame,
+                "variable_coverage_matrix": {"matrix_id": "m1"},
+                "variable_coverage_matrix_built_against_fingerprint": "old",
+            }
+        ),
+    )
+
+    assert state.display_status == "stale"
+    assert state.optional
+    assert fingerprint_dataframe(frame) != "old"
 
 
 def test_model_setup_distinguishes_exploratory_frame_from_official_readiness():

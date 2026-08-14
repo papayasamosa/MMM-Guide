@@ -51,9 +51,9 @@ WORKFLOW_STEPS: List[Dict[str, Any]] = [
         "label": "Coverage & Gaps",
         "path": "pages/15_Data_Coverage.py",
         "title": "Coverage & Gaps",
-        "purpose": "Review each variable's coverage and missingness by market before defining model structure.",
+        "purpose": "Review each model input's coverage and missingness by market before defining model structure.",
         "steps": [
-            "Choose which joined columns to treat as governed variables, and declare each one's frequency, variable class and source.",
+            "Choose which prepared model inputs to treat as governed variables, and declare each one's frequency, variable class and source.",
             "Build the coverage matrix and review the states it finds - missing, unavailable, not applicable, estimated, unknown, and so on.",
             "Propose and approve a treatment for any variable you want eligible for official use.",
             "Save the reviewed matrix as a new version.",
