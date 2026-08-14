@@ -264,6 +264,15 @@ from .market_specific_attribution import (
     outcome_channel_market_summary,
     total_contribution_market_specific,
 )
+from .outcome_group_totals import (
+    aggregate_attribution_group_rows,
+    aggregate_outcome_group_draws,
+    aggregate_outcome_groups,
+    outcome_group_member_shares,
+    reporting_group_options,
+    selected_reporting_ids,
+    summarize_outcome_group_draws,
+)
 
 __all__ = [
     "ModelApproval",
@@ -478,4 +487,11 @@ __all__ = [
     "segment_channel_market_summary",
     "outcome_channel_market_summary",
     "total_contribution_market_specific",
+    "aggregate_attribution_group_rows",
+    "aggregate_outcome_group_draws",
+    "aggregate_outcome_groups",
+    "outcome_group_member_shares",
+    "reporting_group_options",
+    "selected_reporting_ids",
+    "summarize_outcome_group_draws",
 ]

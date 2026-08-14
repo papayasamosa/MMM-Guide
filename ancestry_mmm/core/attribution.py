@@ -16,7 +16,7 @@ are kept from the original single-KPI implementation for reuse.
 from __future__ import annotations
 
 from itertools import combinations
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple, cast
 
 import numpy as np
 import pandas as pd
@@ -28,6 +28,11 @@ from .predict import (
     adstock_saturate_frame,
     lag_frame,
 )
+from .outcome_group_totals import (
+    aggregate_attribution_group_rows,
+    selected_reporting_ids,
+)
+from .outcomes import OutcomeGroupDefinition, OutcomeGroupTreatment
 
 
 # ---------------------------------------------------------------------------
@@ -216,6 +221,8 @@ def outcome_channel_summary(
     contributions: Optional[Dict] = None,
     ltv: Optional[Dict[str, float]] = None,
     n_permutations: int = 200,
+    outcome_groups: Optional[Sequence[OutcomeGroupDefinition]] = None,
+    outcome_group_treatments: Optional[Sequence[OutcomeGroupTreatment]] = None,
 ) -> pd.DataFrame:
     """
     Channel x outcome_id summary: total volume contribution, spend, ROAS/CPA,
@@ -254,7 +261,25 @@ def outcome_channel_summary(
                     "value_roas": value / total_spend if total_spend > 0 else np.nan,
                 }
             )
-    return pd.DataFrame(rows)
+    result = pd.DataFrame(rows)
+    fit_groups: Optional[Sequence[OutcomeGroupDefinition]] = (
+        getattr(meta, "outcome_groups_at_fit", None)
+        if outcome_groups is None
+        else outcome_groups
+    )
+    fit_treatments: Optional[Sequence[OutcomeGroupTreatment]] = (
+        getattr(meta, "outcome_group_treatments_at_fit", None)
+        if outcome_group_treatments is None
+        else outcome_group_treatments
+    )
+    if fit_groups:
+        result = aggregate_attribution_group_rows(
+            result,
+            fit_groups,
+            fit_treatments,
+            by=["channel"],
+        )
+    return result
 
 
 # Deprecated alias (PR E.1 segment-era rename) - see core.predict's identical
@@ -270,6 +295,8 @@ def total_fh_contribution(
     ltv: Optional[Dict[str, float]] = None,
     n_permutations: int = 200,
     outcome_ids: Optional[List[str]] = None,
+    outcome_groups: Optional[Sequence[OutcomeGroupDefinition]] = None,
+    outcome_group_treatments: Optional[Sequence[OutcomeGroupTreatment]] = None,
 ) -> pd.DataFrame:
     """
     Total-FH (all Family History outcome_ids summed) view per channel, plus
@@ -284,10 +311,33 @@ def total_fh_contribution(
     already means "every FH outcome_id").
     """
     summary = outcome_channel_summary(
-        frame, meta, params, contributions, ltv, n_permutations
+        frame,
+        meta,
+        params,
+        contributions,
+        ltv,
+        n_permutations,
+        outcome_groups=outcome_groups,
+        outcome_group_treatments=outcome_group_treatments,
     )
     if outcome_ids is not None:
-        summary = summary[summary["outcome_id"].isin(outcome_ids)]
+        fit_groups = cast(
+            Optional[Sequence[OutcomeGroupDefinition]],
+            getattr(meta, "outcome_groups_at_fit", None)
+            if outcome_groups is None
+            else outcome_groups,
+        )
+        fit_treatments = cast(
+            Optional[Sequence[OutcomeGroupTreatment]],
+            getattr(meta, "outcome_group_treatments_at_fit", None)
+            if outcome_group_treatments is None
+            else outcome_group_treatments,
+        )
+        summary = summary[
+            summary["outcome_id"].isin(
+                selected_reporting_ids(outcome_ids, fit_groups, fit_treatments)
+            )
+        ]
     total = (
         summary.groupby("channel")
         .agg(
@@ -316,6 +366,8 @@ def contribution_waterfall(
     outcome_id: Optional[str] = None,
     contributions: Optional[Dict] = None,
     n_permutations: int = 200,
+    outcome_groups: Optional[List[object]] = None,
+    outcome_group_treatments: Optional[List[object]] = None,
 ) -> pd.DataFrame:
     """
     Waterfall rows: baseline, then each channel's contribution, then total.
@@ -325,10 +377,44 @@ def contribution_waterfall(
     contributions = contributions or compute_shapley_contributions(
         frame, meta, params, n_permutations
     )
-    out_idx = meta.outcome_ids.index(outcome_id) if outcome_id else None
+    fit_groups: Optional[Sequence[OutcomeGroupDefinition]] = (
+        getattr(meta, "outcome_groups_at_fit", None)
+        if outcome_groups is None
+        else outcome_groups
+    )
+    treatment_records: Sequence[OutcomeGroupTreatment] = (
+        outcome_group_treatments
+        if outcome_group_treatments is not None
+        else getattr(meta, "outcome_group_treatments_at_fit", None) or []
+    )
+    group_members: Dict[str, tuple[str, ...]] = {
+        group.group_id: tuple(group.member_outcome_ids) for group in (fit_groups or [])
+    }
+    treatment_by_group = {
+        treatment.group_id: treatment.treatment for treatment in treatment_records
+    }
+    for group in fit_groups or []:
+        if (
+            group.group_id == outcome_id
+            and treatment_by_group.get(group.group_id) == "total_only"
+            and group.supplied_total_outcome_id
+        ):
+            group_members[group.group_id] = (group.supplied_total_outcome_id,)
+    selected_ids = group_members.get(outcome_id, ()) if outcome_id else ()
+    selected_indices = (
+        [
+            meta.outcome_ids.index(item)
+            for item in selected_ids
+            if item in meta.outcome_ids
+        ]
+        if selected_ids
+        else ([meta.outcome_ids.index(outcome_id)] if outcome_id else None)
+    )
 
     def total(arr: np.ndarray) -> float:
-        return float(arr[:, out_idx].sum()) if out_idx is not None else float(arr.sum())
+        if selected_indices is not None:
+            return float(arr[:, selected_indices].sum())
+        return float(arr.sum())
 
     rows = [{"category": "Baseline", "value": total(contributions["baseline"])}]
     for ch in meta.channels:

@@ -1085,7 +1085,12 @@ class CurveService:
         # economics have been calculated (never parameters summarized
         # before response calculation).
         channel_view = canonical_governance_views(
-            draws, value_per_response=value_per_response
+            draws,
+            value_per_response=value_per_response,
+            outcome_groups=getattr(meta, "outcome_groups_at_fit", None),
+            outcome_group_treatments=getattr(
+                meta, "outcome_group_treatments_at_fit", None
+            ),
         )["segment"]
         summaries = summarize_curve_draws(channel_view)
 

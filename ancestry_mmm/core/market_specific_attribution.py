@@ -42,7 +42,7 @@ version (docs/decision_log.md).
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence, cast
 
 import numpy as np
 import pandas as pd
@@ -54,6 +54,11 @@ from .market_specific_predict import (
     adstock_saturate_frame_market_specific,
 )
 from .predict import _cross_product_strength_matrix, lag_frame
+from .outcome_group_totals import (
+    aggregate_attribution_group_rows,
+    selected_reporting_ids,
+)
+from .outcomes import OutcomeGroupDefinition, OutcomeGroupTreatment
 
 
 def _channel_log_terms_market_specific(
@@ -208,6 +213,8 @@ def outcome_channel_market_summary(
     contributions: Optional[Dict] = None,
     ltv: Optional[Dict[str, float]] = None,
     n_permutations: int = 200,
+    outcome_groups: Optional[Sequence[OutcomeGroupDefinition]] = None,
+    outcome_group_treatments: Optional[Sequence[OutcomeGroupTreatment]] = None,
 ) -> pd.DataFrame:
     """
     Market x channel x outcome_id summary: total volume contribution, spend,
@@ -254,7 +261,25 @@ def outcome_channel_market_summary(
                         else np.nan,
                     }
                 )
-    return pd.DataFrame(rows)
+    result = pd.DataFrame(rows)
+    fit_groups: Optional[Sequence[OutcomeGroupDefinition]] = (
+        getattr(meta, "outcome_groups_at_fit", None)
+        if outcome_groups is None
+        else outcome_groups
+    )
+    fit_treatments: Optional[Sequence[OutcomeGroupTreatment]] = (
+        getattr(meta, "outcome_group_treatments_at_fit", None)
+        if outcome_group_treatments is None
+        else outcome_group_treatments
+    )
+    if fit_groups:
+        result = aggregate_attribution_group_rows(
+            result,
+            fit_groups,
+            fit_treatments,
+            by=["market", "channel"],
+        )
+    return result
 
 
 # Deprecated alias (PR E.1 segment-era rename) - see core.predict's identical
@@ -271,6 +296,8 @@ def total_contribution_market_specific(
     n_permutations: int = 200,
     outcome_ids: Optional[List[str]] = None,
     by_market: bool = False,
+    outcome_groups: Optional[Sequence[OutcomeGroupDefinition]] = None,
+    outcome_group_treatments: Optional[Sequence[OutcomeGroupTreatment]] = None,
 ) -> pd.DataFrame:
     """
     Total contribution by channel - the Model C equivalent of
@@ -291,10 +318,33 @@ def total_contribution_market_specific(
     cross-market summation.
     """
     summary = outcome_channel_market_summary(
-        frame, meta, params, contributions, ltv, n_permutations
+        frame,
+        meta,
+        params,
+        contributions,
+        ltv,
+        n_permutations,
+        outcome_groups=outcome_groups,
+        outcome_group_treatments=outcome_group_treatments,
     )
     if outcome_ids is not None:
-        summary = summary[summary["outcome_id"].isin(outcome_ids)]
+        fit_groups = cast(
+            Optional[Sequence[OutcomeGroupDefinition]],
+            getattr(meta, "outcome_groups_at_fit", None)
+            if outcome_groups is None
+            else outcome_groups,
+        )
+        fit_treatments = cast(
+            Optional[Sequence[OutcomeGroupTreatment]],
+            getattr(meta, "outcome_group_treatments_at_fit", None)
+            if outcome_group_treatments is None
+            else outcome_group_treatments,
+        )
+        summary = summary[
+            summary["outcome_id"].isin(
+                selected_reporting_ids(outcome_ids, fit_groups, fit_treatments)
+            )
+        ]
 
     market_channel = (
         summary.groupby(["market", "channel"], sort=False)
