@@ -3102,3 +3102,30 @@ planning, evidence, and provenance detail.
 
 **Owner:** Platform engineering / Data Science.
 **Status:** Implemented in UX/UI coherence Phase 22.
+
+## Humanise compatibility-pathway copy (UX/UI coherence Phase 23)
+
+**Date:** 2026-08-14
+**Decision:** Describe pre-Activity-Mapping and reconstructed pathway states in
+plain analyst language in Model Structure. Keep migration controls and saved
+compatibility values unchanged, but remove routine `legacy` labels and raw
+stored-field names from visible explanatory copy.
+
+**Reason:** Compatibility support is necessary for resumability, but routine
+implementation-history wording makes the normal workflow feel like an internal
+migration tool. The page should explain what is available, what requires review,
+and why refitting is required.
+
+**Impact:** Presentation-only changes to compatibility notices, review warnings,
+the inferred-source-product note, and the post-save confirmation. No migration,
+pathway reconstruction, invalidation, approval, persistence, or governance
+semantics changed. Business question: what should an analyst review before
+using a saved older pathway configuration again? Estimand: none introduced.
+Output scale/units: unchanged. Upstream modelling references: none consulted;
+no modelling API or dependency changed.
+Remaining limitation: the compatibility review remains required before headline
+reporting or planning, and the exact stored migration fields remain available to
+the persistence and validation contracts.
+
+**Owner:** Platform engineering / Data Science.
+**Status:** Implemented in UX/UI coherence Phase 23.

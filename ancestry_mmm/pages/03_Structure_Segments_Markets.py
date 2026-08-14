@@ -216,9 +216,9 @@ with st.container(border=True):
     st.caption(f"Saved state: {'Configured' if _saved_spec else 'Not saved'}")
     if _legacy_activity_compatibility:
         st.info(
-            "This saved project predates governed activity mapping. Its historical "
-            "activity inputs are available for review; check them in Activity Mapping "
-            "before the next governed save."
+            "This saved project uses activity inputs from before Activity Mapping "
+            "was introduced. They remain available for review; check them in "
+            "Activity Mapping before saving again."
         )
 
 date_col = get_state("date_col")
@@ -361,9 +361,9 @@ else:
     dna_channels = []
     if channels:
         st.info(
-            "This legacy pathway configuration has no governed activity rows. "
-            "Its explicitly stored model-input identities are available through "
-            "a compatibility path; review them in Activity Mapping before a new save."
+            "This older pathway setup has no governed activity rows. Its saved "
+            "model-input identities remain available for review; check them in "
+            "Activity Mapping before saving again."
         )
     else:
         st.warning(
@@ -781,9 +781,9 @@ _legacy_reviewed_by = ""
 _legacy_review_note = ""
 if _legacy_governance_review:
     st.warning(
-        "This fit was restored from mask-only pathway metadata. Analyst attribution "
+        "This fit was restored from an earlier pathway record. Analyst attribution "
         "is available, but headline reporting and planning are blocked until every "
-        "migrated component is reviewed here and the model is refit."
+        "reconstructed component is reviewed here and the model is refit."
     )
     _legacy_review_draft = legacy_governance_review_catalogue(_current_model_meta)
     with st.expander("Review migrated pathways", expanded=True):
@@ -814,8 +814,9 @@ if _legacy_governance_review:
             st.rerun()
         if st.session_state["media_outcome_pathways"]:
             st.info(
-                "Rows marked `source_product_inferred = true` were reconstructed "
-                "from legacy DNA-channel membership. Confirm or correct each value."
+                "Some source products were inferred while these rows were "
+                "reconstructed from earlier DNA-channel membership. Confirm or "
+                "correct each value."
             )
             _legacy_reviewed_by = st.text_input(
                 "Migration reviewed by",
@@ -1712,7 +1713,7 @@ if st.button("Save structure and validate", type="primary"):
         set_state("validation_issues", issues)
         if _completed_legacy_review:
             st.success(
-                "Legacy pathway review saved. The old fit and approval were invalidated; "
+                "Previous pathway review saved. The earlier fit and approval were invalidated; "
                 "prepare the modelling frame and refit before headline reporting or planning."
             )
         else:
