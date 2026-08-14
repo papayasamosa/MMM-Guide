@@ -32,7 +32,13 @@ from streamlit_flow.elements import StreamlitFlowEdge, StreamlitFlowNode
 from streamlit_flow.layouts import ManualLayout
 from streamlit_flow.state import StreamlitFlowState
 
-from ancestry_mmm.utils import get_state, init_session_state, readable_label, set_state
+from ancestry_mmm.utils import (
+    get_state,
+    init_session_state,
+    outcome_display_label,
+    readable_label,
+    set_state,
+)
 from ancestry_mmm.components import (
     apply_theme,
     render_next_step,
@@ -180,6 +186,31 @@ def _graph_activity_definitions() -> list[ActivityDefinition]:
             legacy_activity_definitions_from_model_spec(ModelSpec.from_dict(spec_dict)),
         )
     return []
+
+
+def _graph_outcome_records() -> list[dict]:
+    """Return live outcomes plus imported draft candidates.
+
+    The live catalogue wins when an outcome ID appears in both places.
+    Draft-only records are candidate graph identities; this helper never
+    creates edges or approval.
+    """
+
+    records_by_id: dict[str, dict] = {}
+    for source_name in ("outcome_definitions", "outcome_source_draft"):
+        for raw in get_state(source_name) or []:
+            record = raw.to_dict() if hasattr(raw, "to_dict") else dict(raw)
+            outcome_id = str(record.get("outcome_id") or "").strip()
+            if not outcome_id:
+                continue
+            if outcome_id not in records_by_id or source_name == "outcome_definitions":
+                record["_graph_candidate_source"] = (
+                    "catalogue"
+                    if source_name == "outcome_definitions"
+                    else "source draft"
+                )
+                records_by_id[outcome_id] = record
+    return list(records_by_id.values())
 
 
 def _node_label(node: CausalNode) -> str:
@@ -469,7 +500,7 @@ _lib_section.__enter__()
 
 with st.expander("Seed nodes from current Structure (optional)"):
     spec_dict = get_state("model_spec")
-    outcome_defs = get_state("outcome_definitions") or []
+    outcome_records = _graph_outcome_records()
     seed_spec = ModelSpec.from_dict(spec_dict) if spec_dict else None
     seed_activity_definitions = _graph_activity_definitions()
     seed_scoped_activities = (
@@ -482,7 +513,7 @@ with st.expander("Seed nodes from current Structure (optional)"):
         else []
     )
     seed_outcome_ids = [
-        item.get("outcome_id") for item in outcome_defs if item.get("outcome_id")
+        item["outcome_id"] for item in outcome_records if item.get("outcome_id")
     ]
     seed_search_objects = [
         SearchObjectDefinition.from_dict(item)
@@ -496,9 +527,10 @@ with st.expander("Seed nodes from current Structure (optional)"):
     ]
     st.caption(
         f"Detected {len(seed_scoped_activities)} governed activity node(s), {len(seed_outcome_ids)} "
-        f"outcome(s), and {len(seedable_search_objects)} governed Search "
+        f"outcome candidate(s), and {len(seedable_search_objects)} governed Search "
         "object(s) from Model Structure / Media Mapping. Adds one node per "
-        "item using its governed Search role - no edges are inferred or invented."
+        "item using its governed Search role - imported source-draft outcomes "
+        "are candidates only, and no edges are inferred or invented."
     )
     if st.button(
         "Add these as nodes",
@@ -537,10 +569,35 @@ with st.expander("Seed nodes from current Structure (optional)"):
                 )
             )
             positions[node_id] = NodePosition(x=0.0, y=float(index) * 90.0)
-        for index, outcome_id in enumerate(seed_outcome_ids):
+        for index, outcome in enumerate(outcome_records):
+            outcome_id = outcome.get("outcome_id")
+            if not outcome_id:
+                continue
             if outcome_id in existing_ids:
                 continue
-            added_nodes.append(CausalNode(node_id=outcome_id, role="outcome"))
+            candidate_source = outcome.get("_graph_candidate_source", "catalogue")
+            label = outcome_display_label(outcome, include_breakdown=True)
+            if candidate_source == "source draft":
+                label += " · Draft source candidate"
+            added_nodes.append(
+                CausalNode(
+                    node_id=outcome_id,
+                    label=label,
+                    role="outcome",
+                    product=str(outcome.get("product") or ""),
+                    segment=str(outcome.get("segment") or ""),
+                    metadata={
+                        "outcome_id": outcome_id,
+                        "candidate_source": candidate_source,
+                        "definition_version": str(
+                            outcome.get("definition_version") or ""
+                        ),
+                        "segment_dimension": str(
+                            outcome.get("segment_dimension") or "unspecified"
+                        ),
+                    },
+                )
+            )
             positions[outcome_id] = NodePosition(x=400.0, y=float(index) * 90.0)
         for index, search_defn in enumerate(seedable_search_objects):
             if search_defn.search_object_id in existing_ids:

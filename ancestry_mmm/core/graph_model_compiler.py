@@ -346,6 +346,23 @@ def resolve_pathway_masks_preferring_graph(
     every existing caller already gets.
     """
     if causal_graph is not None:
+        graph_nodes = {node.node_id: node for node in causal_graph.nodes}
+        unknown_targets = sorted(
+            {
+                edge.target_node_id
+                for edge in causal_graph.edges
+                if edge.role != EDGE_ROLE_EXCLUDED_DIAGNOSTIC_ONLY
+                and graph_nodes.get(edge.target_node_id) is not None
+                and graph_nodes[edge.target_node_id].role == NODE_ROLE_OUTCOME
+                and edge.target_node_id not in set(outcome_ids)
+            }
+        )
+        if unknown_targets:
+            raise UnsupportedGraphStructureError(
+                "Approved graph targets outcome ID(s) that are not in the "
+                f"fitted outcome catalogue: {unknown_targets}. Adopt and "
+                "govern the outcome definition before fitting."
+            )
         return (
             GraphModelCompiler(activity_definitions=activity_definitions)
             .compile(causal_graph)

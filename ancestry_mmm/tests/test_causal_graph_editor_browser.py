@@ -48,6 +48,7 @@ from ancestry_mmm.tests.support.lifecycle_fixture import build_lifecycle_project
 REPO_ROOT = Path(__file__).resolve().parents[2]
 STARTUP_TIMEOUT_SECONDS = 60
 TV_BRAND_ACTIVITY_NODE_ID = "activity:UK:tv-brand-paid"
+NEW_OUTCOME_NODE_LABEL = "Family History · New · GSA (definition 1.0)"
 # CI's "Upload failure artefacts" step (.github/workflows/tests.yml, job
 # `browser`) uploads test-artifacts/playwright/** only `if: failure()` - a
 # repo-relative, not a pytest tmp_path, location so it survives test
@@ -332,7 +333,7 @@ def test_causal_graph_editor_journey_in_browser(
     # --- attempt a prohibited reverse edge (outcome -> intervention) -------
     _add_node(page, "branded_demand", "Funnel mediator")
     _add_edge(page, "TV Brand", "branded demand", "Mediated")
-    _add_edge(page, "New", "TV Brand", "Direct")
+    _add_edge(page, NEW_OUTCOME_NODE_LABEL, "TV Brand", "Direct")
 
     # --- deterministic rejection: the graph is reported invalid, and
     # Approve is disabled - it is categorically impossible to approve an
@@ -351,7 +352,10 @@ def test_causal_graph_editor_journey_in_browser(
     # engine capability being checked per-edge, not per-node) ---------------
     page.get_by_role("radio", name="Edge").click(force=True)
     for pattern, label in (
-        (re.compile(r"^New -> TV Brand"), "New -> TV Brand (Direct)"),
+        (
+            re.compile(rf"^{re.escape(NEW_OUTCOME_NODE_LABEL)} -> TV Brand"),
+            f"{NEW_OUTCOME_NODE_LABEL} -> TV Brand (Direct)",
+        ),
         (
             re.compile(r"^TV Brand -> branded demand"),
             "TV Brand -> branded demand (Mediated)",
@@ -371,7 +375,7 @@ def test_causal_graph_editor_journey_in_browser(
         )
 
     # --- add the real, engine-supported edge -------------------------------
-    _add_edge(page, "TV Brand", "New", "Direct")
+    _add_edge(page, "TV Brand", NEW_OUTCOME_NODE_LABEL, "Direct")
 
     # --- inspect the model-plan preview -------------------------------------
     expect(page.get_by_text("Outcome nodes", exact=True).first).to_be_visible(
@@ -456,8 +460,8 @@ def test_causal_graph_editor_journey_in_browser(
     _select_option(
         page,
         "Edge",
-        re.compile(r"^TV Brand -> New"),
-        verify_text="TV Brand -> New (Direct)",
+        re.compile(rf"^TV Brand -> {re.escape(NEW_OUTCOME_NODE_LABEL)}"),
+        verify_text=f"TV Brand -> {NEW_OUTCOME_NODE_LABEL} (Direct)",
     )
     _select_option(page, "Lag type", "Media carryover")
     _click_until_condition(
