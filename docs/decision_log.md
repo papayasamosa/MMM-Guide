@@ -3155,3 +3155,28 @@ preview, which remains available on demand.
 
 **Owner:** Platform engineering / Data Science.
 **Status:** Implemented in UX/UI coherence Phase 24.
+
+## Humanise Coverage review language and summary headers (UX/UI coherence Phase 25)
+
+**Date:** 2026-08-14
+**Decision:** Use `variable`/`variable type` language in the routine Coverage
+& Gaps review and replace raw summary-table field names with analyst-facing
+headers. Present the unresolved boolean as `Official use: Review/Ready` in
+the display table only.
+
+**Reason:** Coverage is a decision surface about missingness, frequency, and
+treatment. Internal field names such as `native_frequency`, `gap_segments`,
+and `officially_unresolved` make the review table read like a schema dump.
+
+**Impact:** Display-only labels and table values changed; the stored
+`VariableCoverageRecord`, enum keys, source/version provenance, treatment
+workflow, official-use gate, and matrix persistence are unchanged. Business
+question: which variables need review before official use, and what coverage
+information supports that decision? Estimand: none introduced. Output
+scale/units: unchanged. Upstream modelling references: none consulted; no
+modelling API or dependency changed.
+Remaining limitation: stable variable IDs and provenance remain available in
+the table values and Technical details where needed.
+
+**Owner:** Platform engineering / Data Science.
+**Status:** Implemented in UX/UI coherence Phase 25.
