@@ -517,17 +517,16 @@ _included_outcomes_section.__exit__(None, None, None)
 
 st.markdown("---")
 _coverage_section = SectionCard(
-    "Data coverage & engine capability",
-    description="Whether this market x channel configuration is within the engine's current rectangular capability.",
+    "Data coverage & fit support",
+    description="Whether this market × channel configuration is supported by the current fit path.",
 )
 _coverage_section.__enter__()
 st.caption(
-    "The current engine only validly fits a "
-    "rectangular market x channel matrix - every requested channel "
-    "genuinely observed in every requested market. This capability report "
-    "does not block exploratory preparation or fitting; it only reports "
-    "whether this configuration is within what the engine can validly "
-    "support today, using the governed coverage matrix as the source of "
+    "The current fit supports a complete market × channel matrix: every "
+    "requested channel must be genuinely observed in every requested "
+    "market. This support check does not block exploratory preparation or "
+    "fitting; it reports whether the configuration is within today's "
+    "supported fit scope. The governed coverage matrix is the source of "
     "truth - never the prepared data's own zero/null values."
 )
 _coverage_matrix_dict = get_state("variable_coverage_matrix")
@@ -550,8 +549,8 @@ if _coverage_matrix is None:
         "No coverage matrix built yet for this project - every requested "
         "market/channel combination is therefore exploratory/unsupported "
         "today. Build one on the Coverage & Gaps page "
-        "to see whether this configuration is within the engine's current "
-        "rectangular capability before fitting."
+        "to see whether this configuration is within today's supported fit "
+        "scope before fitting."
     )
 elif _capability.supported:
     # Review finding (PR #158): a matrix built against an earlier Transform
@@ -570,18 +569,18 @@ elif _capability.supported:
             "data has changed (or this matrix was restored from an "
             "imported project) since it was last built. Rebuild it on the "
             "Data Coverage page to confirm this configuration is still "
-            "within the engine's current rectangular capability."
+            "within today's supported fit scope."
         )
     else:
         st.success(
             "Every requested market/channel combination has governed, "
             "officially-resolved coverage - this configuration is within "
-            "the engine's current rectangular capability."
+            "today's supported fit scope."
         )
 else:
     st.warning(
-        "This configuration goes beyond what the engine can validly "
-        "support today - treat any resulting fit as exploratory, not "
+        "This configuration goes beyond today's supported market/channel "
+        "coverage - treat any resulting fit as exploratory, not "
         "official, until every cell below is resolved (Data Coverage "
         "page) or approved for official use:\n\n"
         + "\n".join(

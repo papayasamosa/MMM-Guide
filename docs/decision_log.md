@@ -3013,3 +3013,35 @@ browser journey because the local connected browser was unavailable.
 
 **Owner:** Platform engineering / Data Science.
 **Status:** Implemented in UX/UI coherence Phase 19.
+
+## Human fit-support language in Model Config (UX/UI coherence Phase 20)
+
+**Date:** 2026-08-14
+**Decision:** Rename the routine Model Config coverage section to `Data
+coverage & fit support`, describe the complete market × channel requirement as
+today's supported fit scope, and use the same wording in the Diagnostics
+approval-context message. Keep the governed coverage matrix, capability check,
+exploratory availability, stale-fingerprint handling, issue report, and
+official-readiness semantics unchanged.
+
+**Reason:** The previous copy exposed implementation-oriented terms such as
+`engine capability` and `rectangular capability` in a routine configuration
+review. Analysts need to understand the actionable question—whether the
+selected market/channel configuration is supported by the current fit path—
+without losing the requirement that every requested cell be genuinely
+observed.
+
+**Impact:** Presentation-only section labels, explanatory copy, and focused
+AppTest expectations. No coverage classification, capability calculation,
+exploratory or official preparation gate, approval policy evaluation,
+persistence, model calculation, or governance rule changed. Business question:
+is the selected market/channel configuration supported for the current fit
+path, and if not, which governed coverage cells still need resolution?
+Estimand: none introduced. Output scale/units: unchanged. Upstream modelling
+references: none consulted because this package changes presentation only and
+does not change PyMC or PyMC Marketing model APIs. Remaining limitation:
+interactive browser screenshot review uses the repository's synthetic-data
+browser journey because the local connected browser was unavailable.
+
+**Owner:** Platform engineering / Data Science.
+**Status:** Implemented in UX/UI coherence Phase 20.
