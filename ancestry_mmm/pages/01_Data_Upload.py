@@ -6,6 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import streamlit as st
+import pandas as pd
 
 from ancestry_mmm.utils import (
     init_session_state,
@@ -41,6 +42,10 @@ from ancestry_mmm.data.templates import (
     OUTCOMES_TEMPLATE_SCHEMA_VERSION,
     canonicalize_standard_workbook,
 )
+from ancestry_mmm.data.source_pack_adoption import (
+    adopt_standard_source_bundle,
+    adopted_model_input_frame,
+)
 from ancestry_mmm.core.coverage import (
     SourceVersion,
     SourceDefinition,
@@ -53,6 +58,7 @@ from ancestry_mmm.core.coverage import (
     resolve_source_logical_domain,
 )
 from ancestry_mmm.core.outcomes import OutcomeDefinition, OutcomeGroupDefinition
+from ancestry_mmm.core.activities import ActivityDefinition
 from ancestry_mmm.core.outcome_import import (
     OUTCOME_SOURCE_STATUS_BLOCKED,
     OUTCOME_SOURCE_STATUS_V1_INCOMPLETE,
@@ -109,6 +115,23 @@ def _remove_source_lineage(source_name: str) -> None:
         )
     ]
     st.session_state["source_definitions"] = definitions
+
+
+def _clear_standard_adoption_state() -> None:
+    """Drop source-pack-derived state when another input route becomes active."""
+
+    for key, value in (
+        ("standard_activity_model_input", None),
+        ("standard_outcome_data", None),
+        ("standard_context_data", None),
+        ("standard_joined_data", None),
+        ("context_variable_metadata", []),
+        ("source_domain_semantics", []),
+    ):
+        set_state(key, value)
+    if st.session_state.get("transformed_data_origin") == "standard_source_pack":
+        set_state("transformed_data", None)
+        set_state("transformed_data_origin", None)
 
 
 def _store_standard_workbook(
@@ -194,6 +217,52 @@ def _record_outcome_source_import(workbook, canonical_bundle) -> None:
         status = dict(source_import.to_dict())
         status["draft_seeded"] = True
         set_state("outcome_source_import_status", status)
+
+
+def _adopt_standard_source_bundle(canonical_bundle) -> None:
+    """Persist canonical non-Outcomes semantics without changing approvals."""
+
+    adoption = adopt_standard_source_bundle(
+        canonical_bundle,
+        activity_definitions=[
+            ActivityDefinition.from_dict(value)
+            for value in (st.session_state.get("activity_definitions") or [])
+        ],
+        activity_model_input=st.session_state.get("standard_activity_model_input"),
+        outcome_data=st.session_state.get("standard_outcome_data"),
+        context_data=st.session_state.get("standard_context_data"),
+        context_variable_metadata=st.session_state.get("context_variable_metadata")
+        or [],
+        semantic_statuses=st.session_state.get("source_domain_semantics") or [],
+    )
+    set_state(
+        "activity_definitions",
+        [item.to_dict() for item in adoption.activity_definitions],
+    )
+    set_state("standard_activity_model_input", adoption.activity_model_input)
+    set_state("standard_outcome_data", adoption.outcome_data)
+    set_state("standard_context_data", adoption.context_data)
+    set_state(
+        "context_variable_metadata",
+        [dict(item) for item in adoption.context_variable_metadata],
+    )
+    set_state(
+        "source_domain_semantics",
+        [item.to_dict() for item in adoption.semantic_statuses],
+    )
+    combined_frame = adopted_model_input_frame(
+        outcome_data=adoption.outcome_data,
+        activity_model_input=adoption.activity_model_input,
+        context_model_input=adoption.context_data,
+    )
+    set_state("standard_joined_data", combined_frame)
+    if combined_frame is not None:
+        set_state("date_col", "period_start")
+        set_state("market_col", "market")
+        set_state("join_mode", "outer")
+        set_state("join_diagnostics", None)
+    set_state("transformed_data", combined_frame)
+    set_state("transformed_data_origin", "standard_source_pack")
 
 
 def _render_outcome_source_review() -> None:
@@ -476,6 +545,7 @@ with tab_demo:
         if err:
             st.error(err)
         else:
+            _clear_standard_adoption_state()
             ltv_df = frames.pop("ltv")
             st.session_state["raw_sources"] = frames
             st.session_state["demo_source_pack"] = "quick-rectangular-demo-v1"
@@ -524,6 +594,7 @@ with tab_demo:
         if err:
             st.error(err)
         else:
+            _clear_standard_adoption_state()
             ltv_df = frames.pop("segment_ltv")
             st.session_state["raw_sources"] = frames
             st.session_state["sample_ltv"] = {
@@ -696,6 +767,7 @@ with tab_upload:
                         _record_outcome_source_import(
                             workbook, canonical_outcome_bundle
                         )
+                        _adopt_standard_source_bundle(canonical_outcome_bundle)
                         clear_model_state()
                         for message in workbook.manifest.warnings:
                             st.warning(message)
@@ -703,6 +775,36 @@ with tab_upload:
                             f"Loaded standard workbook {uploaded.name} as {len(stored)} "
                             f"separate table(s) under '{_DOMAIN_LABELS[logical_domain_choice]}' "
                             f"(v{source_version.version})."
+                        )
+                elif add_standard_source:
+                    try:
+                        canonical_bundle = canonicalize_standard_workbook(workbook)
+                        stored = _store_standard_workbook(
+                            source_name,
+                            workbook,
+                            source_version,
+                            logical_domain_choice,
+                        )
+                        _adopt_standard_source_bundle(canonical_bundle)
+                    except ValueError as exc:
+                        st.error(
+                            "The standard workbook could not be adopted into the "
+                            f"governed source state: {exc}"
+                        )
+                    else:
+                        st.session_state["source_versions"] = [
+                            v.to_dict() for v in existing_versions
+                        ] + [source_version.to_dict()]
+                        st.session_state["data_loaded"] = True
+                        st.session_state["demo_source_pack"] = None
+                        clear_model_state()
+                        for message in workbook.manifest.warnings:
+                            st.warning(message)
+                        st.success(
+                            f"Loaded standard workbook {uploaded.name} as {len(stored)} "
+                            f"separate table(s) under '{_DOMAIN_LABELS[logical_domain_choice]}' "
+                            f"(v{source_version.version}) and adopted its governed "
+                            "source semantics."
                         )
                 else:
                     if (
@@ -712,6 +814,7 @@ with tab_upload:
                         if not workbook.tables:
                             st.error("The workbook contains no readable sheets.")
                         else:
+                            _clear_standard_adoption_state()
                             first_sheet = next(iter(workbook.tables))
                             _remove_source_lineage(source_name)
                             sources = dict(st.session_state.get("raw_sources") or {})
@@ -776,6 +879,7 @@ with tab_upload:
                             f"(v{source_version.version})."
                         )
             else:
+                _clear_standard_adoption_state()
                 df, source_version, err = load_file_with_source_version(
                     uploaded, source_name, existing_versions
                 )
@@ -883,6 +987,8 @@ def _render_source_detail(name: str, df) -> None:
             preview, width="stretch", column_config=dataframe_column_config(preview)
         )
         if st.button(f"Remove '{name}'", key=f"remove_{name}"):
+            if st.session_state.get("transformed_data_origin") == "standard_source_pack":
+                _clear_standard_adoption_state()
             remaining = dict(st.session_state.get("raw_sources") or {})
             remaining.pop(name, None)
             st.session_state["raw_sources"] = remaining
@@ -898,6 +1004,38 @@ def _render_source_detail(name: str, df) -> None:
 
 
 if sources:
+    semantic_statuses = st.session_state.get("source_domain_semantics") or []
+    if semantic_statuses:
+        with SectionCard(
+            "Source semantic adoption",
+            description=(
+                "This records what each standard workbook adopted into governed "
+                "state and what still needs analyst review."
+            ),
+        ):
+            semantic_rows = [
+                {
+                    "Source": item.get("source_id"),
+                    "Domain": _DOMAIN_LABELS.get(
+                        item.get("logical_domain"), item.get("logical_domain")
+                    ),
+                    "Status": item.get("status"),
+                    "Adopted": ", ".join(item.get("adopted_objects") or ())
+                    or "None",
+                    "Review / unsupported state": "; ".join(
+                        item.get("unsupported_mappings") or ()
+                    )
+                    or "None",
+                }
+                for item in semantic_statuses
+            ]
+            st.dataframe(pd.DataFrame(semantic_rows), hide_index=True, width="stretch")
+            for item in semantic_statuses:
+                if item.get("next_action"):
+                    st.caption(
+                        f"{item.get('source_id')}: {item.get('next_action')}"
+                    )
+
     st.markdown("## Data by category")
     st.caption(
         "A data category is not a physical file. Any number of uploaded files or "

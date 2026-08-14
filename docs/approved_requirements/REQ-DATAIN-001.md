@@ -48,6 +48,14 @@ The summarised proposal this record approves:
 
 ## Capability status
 
+WP3 status (2026-08-14): the approved standard source-pack path now has a
+cross-domain canonical adoption boundary, multi-workbook merge/conflict
+checks, user-visible semantic status, native-frequency preservation,
+official-preparation source selection, and project-bundle round-trip state.
+The parity limits are recorded in `docs/source_pack_parity_matrix.md`.
+Existing media-unit/cost mapping and experiment calibration registries are not
+silently populated.
+
 Partially implemented as of 2026-08-14. Work Packages E1–E3 delivered the
 logical-source-domain field and migration behaviour (PR #165), the governed
 activity source-column mapping (PR #166), and the cross-market
@@ -55,6 +63,10 @@ activity source-column mapping (PR #166), and the cross-market
 (PRs #229–#237) delivered the versioned Outcomes v2 import/adoption path,
 draw-level outcome-group handling, standard workbook downloads for all four
 logical domains, and a realistic synthetic source pack.
+
+The historical status above predates WP3 and is superseded by the WP3 status
+note: the approved standard source-pack path is now implemented, with the
+remaining conversion and calibration limits explicitly fail-closed.
 
 The contract's standing invariants are implemented across the current
 source-pack boundary, but the non-Outcomes domains still require the semantic

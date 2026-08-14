@@ -3724,3 +3724,47 @@ or NBT completeness example is invented by this work package.
 
 **Owner:** Data Science / Platform engineering.
 **Status:** Implemented in downloadable templates and realistic source-pack UX WP8.
+
+## Standard source-pack semantic parity (Work Package 3)
+
+**Date:** 2026-08-14
+**Requirement:** `REQ-DATAIN-001`; task-specific source-pack parity brief, WP3.
+
+**Decision:** Keep the four logical domains on one source-pack workflow and
+adopt each domain at its existing governed boundary. Activity workbooks adopt
+`ActivityDefinition` and explicit model-input semantics while leaving the
+existing market/channel media-unit and cost registries authoritative. Context
+workbooks retain native tidy evidence and metadata, with a lossless wide frame
+only at the model-input boundary. Experiment workbooks remain
+`source_evidence_only` until an approved evidence registry exists. Outcomes
+continue to use the existing Outcomes v2 contract.
+
+Multiple physical workbooks merge only when period × market keys and
+overlapping values are compatible; conflicts fail closed. Market remains a row
+dimension, `pooling_group_id` remains identity-only, and no calibration,
+frequency conversion, fill, or planning mapping is inferred.
+
+**Estimand:** None introduced. The adopted frames preserve source-scale
+observations and missingness. Official preparation remains the WP2 native
+frequency and consumed-variable gate.
+
+**Output scale and units:** Source-native units, explicit model-input kind/unit,
+spend/response-unit columns, currency, and effective-period metadata are
+retained as source evidence. Model economics still requires the existing
+governed media-unit/cost mapping.
+
+**Upstream references:** None consulted. WP3 composes existing repository
+contracts and does not change PyMC/PyMC-Marketing equations, transformations,
+priors, or sampling APIs.
+
+**Tests:** Added source-pack parser/adoption, multi-market and multi-domain
+merge, mixed-frequency fail-closed, experiment evidence, and persistence
+round-trip coverage. Focused source/template validation passed; full CI remains
+the release gate.
+
+**Remaining limitations:** The current official executor supports the adopted
+weekly native path only. Non-weekly context needs an approved conversion
+method, and experiment calibration must use a separately governed registry.
+
+**Owner:** Data Science / Platform engineering.
+**Status:** Implemented in canonical standard source-pack adoption WP3.

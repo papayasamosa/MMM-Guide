@@ -171,6 +171,9 @@ class CanonicalSourceBundle:
     model_input_media: pd.DataFrame
     activity_column_map: Mapping[tuple[str, str], str]
     native_context_data: pd.DataFrame | None = None
+    model_input_context: pd.DataFrame | None = None
+    context_variable_metadata: tuple[dict[str, object], ...] = ()
+    activity_semantic_mappings: tuple[dict[str, object], ...] = ()
     outcomes: pd.DataFrame | None = None
     experiment_evidence: pd.DataFrame | None = None
     outcome_definitions: tuple[OutcomeDefinition, ...] = ()
@@ -257,6 +260,30 @@ STANDARD_SHEET_SPECS: dict[str, tuple[SheetSpec, ...]] = {
     ),
 }
 
+_ACTIVITY_V2_EXTRA_COLUMNS = (
+    "model_input_unit",
+    "model_input_kind",
+    "spend_column",
+    "response_unit_column",
+    "response_unit",
+    "currency",
+    "effective_from",
+    "effective_to",
+)
+_CONTEXT_V2_EXTRA_COLUMNS = (
+    "source",
+    "scope",
+    "effective_from",
+    "effective_to",
+    "unit",
+)
+_CONTEXT_V2_SCHEMA_MARKERS = (
+    "source",
+    "scope",
+    "effective_from",
+    "effective_to",
+)
+
 
 def _outcome_v1_sheet_specs() -> tuple[SheetSpec, ...]:
     return (
@@ -279,17 +306,33 @@ def standard_sheet_specs(
     *,
     schema_version: str | None = None,
 ) -> tuple[SheetSpec, ...]:
-    if (
-        logical_domain == DOMAIN_OUTCOMES
-        and schema_version == STANDARD_TEMPLATE_SCHEMA_VERSION
-    ):
+    if logical_domain == DOMAIN_OUTCOMES and schema_version == STANDARD_TEMPLATE_SCHEMA_VERSION:
         return _outcome_v1_sheet_specs()
     try:
-        return STANDARD_SHEET_SPECS[logical_domain]
+        specs = STANDARD_SHEET_SPECS[logical_domain]
     except KeyError as exc:
         raise ValueError(
             f"unsupported standard logical domain {logical_domain!r}"
         ) from exc
+    if schema_version == STANDARD_TEMPLATE_SCHEMA_VERSION_V2:
+        extras = {
+            DOMAIN_ACTIVITY_AND_MEDIA: {"activity_dictionary": _ACTIVITY_V2_EXTRA_COLUMNS},
+            DOMAIN_CONTEXT_AND_EXTERNAL_FACTORS: {
+                "variable_dictionary": _CONTEXT_V2_EXTRA_COLUMNS
+            },
+        }.get(logical_domain, {})
+        if extras:
+            return tuple(
+                SheetSpec(
+                    item.sheet_name,
+                    item.required_columns
+                    + tuple(extras.get(item.sheet_name, ())),
+                    item.description,
+                    item.required,
+                )
+                for item in specs
+            )
+    return specs
 
 
 def standard_template_columns(logical_domain: str, sheet_name: str) -> tuple[str, ...]:
@@ -464,7 +507,24 @@ def parse_standard_workbook(
         if schema_warning:
             warnings.append(schema_warning)
     elif selected_domain in STANDARD_SHEET_SPECS:
-        selected_schema_version = STANDARD_TEMPLATE_SCHEMA_VERSION
+        selected_schema_version = (
+            STANDARD_TEMPLATE_SCHEMA_VERSION_V2
+            if (
+                selected_domain == DOMAIN_ACTIVITY_AND_MEDIA
+                and _table_named(tables, "activity_dictionary") is not None
+                and set(_ACTIVITY_V2_EXTRA_COLUMNS).intersection(
+                    _table_named(tables, "activity_dictionary").columns
+                )
+            )
+            or (
+                selected_domain == DOMAIN_CONTEXT_AND_EXTERNAL_FACTORS
+                and _table_named(tables, "variable_dictionary") is not None
+                and set(_CONTEXT_V2_SCHEMA_MARKERS).intersection(
+                    _table_named(tables, "variable_dictionary").columns
+                )
+            )
+            else STANDARD_TEMPLATE_SCHEMA_VERSION
+        )
     parsed: list[ParsedTable] = []
     standard = False
     if selected_domain in STANDARD_SHEET_SPECS and not errors:
@@ -548,6 +608,45 @@ def activity_definitions_from_dictionary(
             "activity dictionary contains duplicate market/activity_id rows"
         )
     return tuple(definitions)
+
+
+def activity_semantic_mappings_from_dictionary(
+    activity_dictionary: pd.DataFrame,
+) -> tuple[dict[str, object], ...]:
+    """Return explicit source mappings without creating a competing registry.
+
+    The existing ``ActivityDefinition`` is authoritative for activity identity
+    and fitted model-input columns.  The optional fields below are retained as
+    source evidence for the existing media-unit/cost mapping workflow; they
+    are never applied automatically because that workflow is governed at
+    market x channel grain and may be ambiguous for multiple activities.
+    """
+
+    required = {"activity_id", "market", "model_input_column", "model_input_measure"}
+    missing = sorted(required - set(activity_dictionary.columns))
+    if missing:
+        raise ValueError(f"activity dictionary is missing required columns: {missing}")
+    optional = (
+        "model_input_unit",
+        "model_input_kind",
+        "spend_column",
+        "response_unit_column",
+        "response_unit",
+        "currency",
+        "effective_from",
+        "effective_to",
+    )
+    rows: list[dict[str, object]] = []
+    for row in activity_dictionary.to_dict(orient="records"):
+        item: dict[str, object] = {
+            key: row.get(key)
+            for key in ("activity_id", "market", "model_input_column", "model_input_measure")
+        }
+        for key in optional:
+            value = row.get(key)
+            item[key] = None if value is None or pd.isna(value) else value
+        rows.append(item)
+    return tuple(rows)
 
 
 def _normalised_dictionary_frame(dictionary: pd.DataFrame) -> pd.DataFrame:
@@ -1001,6 +1100,81 @@ def canonicalize_activity_data(
     return wide[ordered], definitions, mapping
 
 
+def canonicalize_context_data(
+    context_data: pd.DataFrame,
+    variable_dictionary: pd.DataFrame,
+) -> tuple[pd.DataFrame, tuple[dict[str, object], ...]]:
+    """Pivot tidy context observations at the explicit model-input boundary.
+
+    This is a lossless reshape only. It does not aggregate duplicate rows,
+    repeat native-frequency observations, or infer a future control role.
+    Native frequency and all dictionary metadata remain in the returned
+    semantic records for coverage/frequency review.
+    """
+
+    required_data = {PERIOD_COLUMN, MARKET_COLUMN, "variable_id", "value", "native_frequency"}
+    missing_data = sorted(required_data - set(context_data.columns))
+    if missing_data:
+        raise ValueError(f"context data is missing required columns: {missing_data}")
+    required_dictionary = {"variable_id", "variable_class", "native_frequency", "role"}
+    missing_dictionary = sorted(required_dictionary - set(variable_dictionary.columns))
+    if missing_dictionary:
+        raise ValueError(
+            f"variable dictionary is missing required columns: {missing_dictionary}"
+        )
+    dictionary_ids = set(variable_dictionary["variable_id"].astype(str))
+    unknown_ids = sorted(
+        set(context_data["variable_id"].astype(str)) - dictionary_ids
+    )
+    if unknown_ids:
+        raise ValueError(
+            "context data contains variable_id values without dictionary metadata: "
+            + ", ".join(unknown_ids)
+        )
+    tidy = context_data.copy()
+    tidy[PERIOD_COLUMN] = pd.to_datetime(tidy[PERIOD_COLUMN])
+    tidy["variable_id"] = tidy["variable_id"].astype(str)
+    key_columns = [PERIOD_COLUMN, MARKET_COLUMN, "variable_id"]
+    if tidy.duplicated(key_columns, keep=False).any():
+        raise ValueError(
+            "context data has duplicate period/market/variable rows; no implicit "
+            "aggregation is approved for source-pack adoption"
+        )
+    wide = (
+        tidy.pivot(
+            index=[PERIOD_COLUMN, MARKET_COLUMN],
+            columns="variable_id",
+            values="value",
+        )
+        .reset_index()
+    )
+    wide.columns.name = None
+    metadata_columns = (
+        "variable_id",
+        "variable_class",
+        "native_frequency",
+        "role",
+        "source",
+        "scope",
+        "effective_from",
+        "effective_to",
+        "unit",
+    )
+    metadata = []
+    for row in variable_dictionary.to_dict(orient="records"):
+        metadata.append(
+            {
+                column: (
+                    None
+                    if row.get(column) is None or pd.isna(row.get(column))
+                    else row.get(column)
+                )
+                for column in metadata_columns
+            }
+        )
+    return wide, tuple(metadata)
+
+
 def canonicalize_standard_workbook(
     workbook: StandardWorkbook,
 ) -> CanonicalSourceBundle:
@@ -1021,8 +1195,14 @@ def canonicalize_standard_workbook(
             activity_definitions=definitions,
             model_input_media=media,
             activity_column_map=mapping,
+            activity_semantic_mappings=activity_semantic_mappings_from_dictionary(
+                workbook.tables["activity_dictionary"]
+            ),
         )
     if domain == DOMAIN_CONTEXT_AND_EXTERNAL_FACTORS:
+        context_model_input, context_metadata = canonicalize_context_data(
+            workbook.tables["context_data"], workbook.tables["variable_dictionary"]
+        )
         return CanonicalSourceBundle(
             manifest=workbook.manifest,
             raw_tables=workbook.tables,
@@ -1030,6 +1210,8 @@ def canonicalize_standard_workbook(
             model_input_media=pd.DataFrame(),
             activity_column_map={},
             native_context_data=workbook.tables["context_data"].copy(),
+            model_input_context=context_model_input,
+            context_variable_metadata=context_metadata,
         )
     if domain == DOMAIN_OUTCOMES:
         dictionary = _table_named(workbook.tables, "outcome_dictionary")
