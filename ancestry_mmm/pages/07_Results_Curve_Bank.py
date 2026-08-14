@@ -133,6 +133,12 @@ _EFFECT_TYPE_LABELS = {
     "total": "Total effect",
 }
 
+_REPORTING_VIEW_TABS = (
+    "Where in the funnel?",
+    "Which channel or supplier?",
+    "Which activity?",
+)
+
 
 def _outcome_display_labels(outcome_definitions):
     """Return analyst-readable outcome labels without changing stable IDs."""
@@ -690,7 +696,7 @@ def _render_official_reporting_views(artifact, activity_definitions, outcome_lab
         )
         return
 
-    tabs = st.tabs(["By funnel group", "By channel and platform", "By activity"])
+    tabs = st.tabs(_REPORTING_VIEW_TABS)
     for tab, (_view_name, view) in zip(tabs, views.items()):
         with tab:
             summary = summarize_reporting_draws(view)
