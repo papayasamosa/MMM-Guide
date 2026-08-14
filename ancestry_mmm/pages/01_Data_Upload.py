@@ -34,6 +34,7 @@ from ancestry_mmm.data import (
     load_realistic_sample_sources,
     get_data_summary,
     summarise_source_inventory,
+    source_adoption_status_label,
     source_lineage_id,
     source_table_name,
     standard_template_filename,
@@ -266,51 +267,49 @@ def _adopt_standard_source_bundle(canonical_bundle) -> None:
 
 
 def _render_outcome_source_review() -> None:
-    """Render source-dictionary status and an explicit adoption action."""
+    """Render imported outcome definitions without changing adoption semantics."""
     status = st.session_state.get("outcome_source_import_status")
     if not status:
         return
     with SectionCard(
-        "Outcome dictionary review",
-        description="Imported meaning is a draft until an analyst reviews and approves it.",
+        "Review imported outcome definitions",
+        description=(
+            "Imported definitions can be used as a draft for review. This does not "
+            "approve the outcomes or choose how the model fits them."
+        ),
     ):
         source_version = status.get("schema_version") or "unknown"
         source_status = status.get("status")
-        st.caption(f"Source contract: `{source_version}`")
         if source_status == OUTCOME_SOURCE_STATUS_V1_INCOMPLETE:
             st.warning(
-                "This is a legacy/incomplete v1 mapping. Product, Metric, Breakdown, "
-                "Segment, and Outcome group were not inferred, so no source draft was "
-                "seeded. Add a v2 dictionary or review the catalogue manually."
+                "This older file is missing information required by the current "
+                "template. No draft was created. Add a current Outcomes template "
+                "or review the catalogue manually."
             )
-            for warning in status.get("warnings") or ():
-                st.caption(warning)
-            return
-        if source_status == OUTCOME_SOURCE_STATUS_BLOCKED:
-            st.error("The v2 dictionary could not be used to seed a draft catalogue.")
-            for error in status.get("errors") or ():
-                st.caption(error)
-            return
-        if source_status != OUTCOME_SOURCE_STATUS_V2_DRAFT:
-            st.error("The Outcomes source contract is unsupported and was not adopted.")
-            return
+        elif source_status == OUTCOME_SOURCE_STATUS_BLOCKED:
+            st.error("Imported definitions need review before a draft can be created.")
+        elif source_status != OUTCOME_SOURCE_STATUS_V2_DRAFT:
+            st.error("This Outcomes file could not be used to create a draft.")
 
         draft_count = len(st.session_state.get("outcome_source_draft") or [])
         draft_group_count = len(
             st.session_state.get("outcome_source_draft_groups") or []
         )
-        if status.get("draft_seeded"):
+        if (
+            status.get("draft_seeded")
+            and source_status == OUTCOME_SOURCE_STATUS_V2_DRAFT
+        ):
             st.success(
-                f"Seeded {draft_count} v2 outcome definition(s) and "
-                f"{draft_group_count} outcome group(s) as an unapproved draft."
+                f"New definitions available: {draft_count} outcome definition(s) and "
+                f"{draft_group_count} outcome group(s) are ready to review as a draft."
             )
 
         comparison = status.get("comparison") or {}
         current_exists = bool(st.session_state.get("outcome_definitions") or [])
         if current_exists and not status.get("draft_seeded"):
             st.info(
-                "An existing outcome catalogue was kept unchanged. Review the source "
-                "comparison below before explicitly adopting it as a new draft."
+                "Existing definitions were kept unchanged. Review the imported "
+                "differences before using them as a new draft."
             )
             rows = []
             for outcome_id in comparison.get("source_only_outcome_ids") or ():
@@ -329,12 +328,18 @@ def _render_outcome_source_review() -> None:
                 rows.append({"kind": "Group", "change": "current only", "id": group_id})
             for group_id in comparison.get("changed_group_ids") or ():
                 rows.append({"kind": "Group", "change": "changed", "id": group_id})
-            if rows:
-                st.dataframe(rows, hide_index=True, width="stretch")
-            else:
-                st.success("The imported v2 source matches the current catalogue.")
+            with st.expander("Technical details", expanded=False):
+                st.caption(f"Source template version: `{source_version}`")
+                for warning in status.get("warnings") or ():
+                    st.caption(warning)
+                for error in status.get("errors") or ():
+                    st.caption(error)
+                if rows:
+                    st.dataframe(rows, hide_index=True, width="stretch")
+                else:
+                    st.success("No differences found in the imported definitions.")
             if st.button(
-                "Adopt imported catalogue as draft",
+                "Use imported definitions as a draft",
                 key="adopt_outcome_source_draft",
                 disabled=not bool(st.session_state.get("outcome_source_draft")),
             ):
@@ -370,6 +375,13 @@ def _render_outcome_source_review() -> None:
                     "No outcome approval was created."
                 )
                 st.rerun()
+        elif source_status != OUTCOME_SOURCE_STATUS_V2_DRAFT:
+            with st.expander("Technical details", expanded=False):
+                st.caption(f"Source template version: `{source_version}`")
+                for warning in status.get("warnings") or ():
+                    st.caption(warning)
+                for error in status.get("errors") or ():
+                    st.caption(error)
 
 
 st.set_page_config(
@@ -380,8 +392,8 @@ init_session_state()
 apply_theme()
 render_sidebar("data_upload")
 
-# REQ-DATAIN-001: header badge reflects whether every required logical
-# domain (Outcomes, Activity and Media, Context and External Factors) has
+# REQ-DATAIN-001: header badge reflects whether every required data category
+# (Outcomes, Activity and Media, Context and External Factors) has
 # at least one supplied source yet - never a guess, computed the same way
 # the "Sources by logical domain" section below computes it.
 _sources_at_load = st.session_state.get("raw_sources") or {}
@@ -437,21 +449,23 @@ if sources:
             "A workbook can contain several recognised tables. The counts below "
             "keep uploaded files, data categories, and tables separate."
         )
-        inventory_cols = st.columns(5)
+        inventory_cols = st.columns(3)
         inventory_cols[0].metric(
-            "Uploaded files/workbooks", source_inventory.uploaded_file_count
+            "Files/workbooks", source_inventory.uploaded_file_count
         )
         inventory_cols[1].metric(
             "Data categories", source_inventory.data_category_count
         )
         inventory_cols[2].metric("Tables/sheets", source_inventory.table_count)
-        inventory_cols[3].metric(
-            "Recognised standard tables",
-            source_inventory.recognised_standard_table_count,
-        )
-        inventory_cols[4].metric(
-            "Active source versions", source_inventory.active_source_version_count
-        )
+        with st.expander("Source details", expanded=False):
+            detail_cols = st.columns(2)
+            detail_cols[0].metric(
+                "Recognised standard tables",
+                source_inventory.recognised_standard_table_count,
+            )
+            detail_cols[1].metric(
+                "Active source versions", source_inventory.active_source_version_count
+            )
 
 with st.container(border=True):
     st.markdown("### Source readiness")
@@ -478,7 +492,7 @@ with st.container(border=True):
                 ]
             )
             st.caption(
-                f"{len(supplied)} source(s)"
+                f"{len(supplied)} table(s)"
                 if supplied
                 else (
                     "Optional"
@@ -495,11 +509,9 @@ with st.container(border=True):
         "your approved source data before upload."
     )
     st.info(
-        f"The Outcomes template uses `{OUTCOMES_TEMPLATE_SCHEMA_VERSION}` and "
-        "keeps Product, Metric, Breakdown, Segment, Outcome group, and Source "
-        "column explicit. Optional `outcome_completeness` is not included; if "
-        "you add it, provide real completeness rows or remove the sheet rather "
-        "than leaving it empty."
+        "Download the workbook for the data category you need. Required sheets "
+        "are listed below; optional sheets can be removed when the data is not "
+        "available. Replace the example rows with approved source data before upload."
     )
     _template_downloads = (
         (DOMAIN_OUTCOMES, "Outcomes (v2)"),
@@ -507,10 +519,9 @@ with st.container(border=True):
         (DOMAIN_CONTEXT_AND_EXTERNAL_FACTORS, "Context and External Factors"),
         (DOMAIN_EXPERIMENT_EVIDENCE, "Experiment Evidence"),
     )
-    _template_columns = st.columns(len(_template_downloads))
-    for _template_column, (_domain, _label) in zip(
-        _template_columns, _template_downloads
-    ):
+    _template_columns = st.columns(2)
+    for _template_index, (_domain, _label) in enumerate(_template_downloads):
+        _template_column = _template_columns[_template_index % 2]
         with _template_column:
             st.download_button(
                 f"Download {_label} template",
@@ -519,8 +530,8 @@ with st.container(border=True):
                 mime=TEMPLATE_MIME_TYPE,
                 key=f"download_standard_template_{_domain}",
                 help=(
-                    "Synthetic example workbook. Keep the logical domain separate "
-                    "when you upload it."
+                    "Workbook for this data category. Required sheets and optional "
+                    "sheets are described in the help above."
                 ),
             )
 
@@ -634,24 +645,26 @@ with tab_upload:
         "Preferred route: add a standard workbook pack. You can add more than one "
         "workbook under a data category; each recognised table remains separate."
     )
-    with st.expander("Preferred standard workbook pack", expanded=True):
+    with st.expander("Preferred standard workbook pack", expanded=False):
         st.caption(
-            f"Schema version: `{OUTCOMES_TEMPLATE_SCHEMA_VERSION}` for Outcomes; "
-            "other domains keep their own standard contract. Standard "
-            "Excel packs are read sheet-by-sheet; physical tables remain separate "
-            "under one logical domain."
+            "Use one workbook for each data category. The app reads each sheet "
+            "separately, so optional sheets can be removed when they are not available."
         )
         st.markdown(
-            "- Outcomes: `outcomes` plus optional `outcome_dictionary`\n"
-            "- Activity and Media: `activity_data` plus `activity_dictionary`\n"
-            "- Context and External Factors: `context_data`, `variable_dictionary`, "
-            "and optional `events`\n"
-            "- Experiment Evidence: `experiment_evidence`"
+            "- Outcomes: `outcomes` and `outcome_dictionary`; `outcome_completeness` is optional.\n"
+            "- Activity and Media: `activity_data` and `activity_dictionary`.\n"
+            "- Context and External Factors: `context_data` and `variable_dictionary`; `events` is optional.\n"
+            "- Experiment Evidence: `experiment_evidence` is kept as supporting evidence."
         )
         st.info(
-            "Use this route when the workbook matches the standard schema. Generic "
-            "Excel import is a fallback for a workbook that needs separate review."
+            "Use the generic Excel route only when the workbook does not match one "
+            "of these standard layouts and needs separate review."
         )
+        with st.expander("Technical details", expanded=False):
+            st.caption(
+                f"Current Outcomes template contract: `{OUTCOMES_TEMPLATE_SCHEMA_VERSION}`. "
+                "Exact schema fields and source identifiers are retained in the uploaded workbook details."
+            )
     source_name = st.text_input(
         "Source name *", value="media", help="e.g. media, outcomes, controls"
     )
@@ -663,13 +676,13 @@ with tab_upload:
     # "media" source-name default, defaulting to "Outcomes" would be
     # actively wrong). An explicit, non-domain placeholder is the default
     # instead, and "Add source" blocks until a real domain is chosen.
-    _DOMAIN_PLACEHOLDER = "— Select a logical domain —"
+    _DOMAIN_PLACEHOLDER = "— Select a data category —"
     logical_domain_choice = st.selectbox(
         "Data category *",
         [_DOMAIN_PLACEHOLDER, *LOGICAL_SOURCE_DOMAINS],
         format_func=lambda d: _DOMAIN_LABELS.get(d, d),
         help=(
-            "Choose the logical domain for this source. Outcomes, Activity and "
+            "Choose the data category for this source. Outcomes, Activity and "
             "Media, and Context and "
             "External Factors are required for a complete project; "
             "Experiment Evidence is optional."
@@ -1010,31 +1023,55 @@ if sources:
     semantic_statuses = st.session_state.get("source_domain_semantics") or []
     if semantic_statuses:
         with SectionCard(
-            "Source semantic adoption",
+            "What was recognised from your files?",
             description=(
-                "This records what each standard workbook adopted into governed "
-                "state and what still needs analyst review."
+                "Each data category shows what is ready and the next useful action."
             ),
         ):
             semantic_rows = [
                 {
-                    "Source": item.get("source_id"),
-                    "Domain": _DOMAIN_LABELS.get(
+                    "Data category": _DOMAIN_LABELS.get(
                         item.get("logical_domain"), item.get("logical_domain")
                     ),
-                    "Status": item.get("status"),
-                    "Adopted": ", ".join(item.get("adopted_objects") or ()) or "None",
-                    "Review / unsupported state": "; ".join(
-                        item.get("unsupported_mappings") or ()
-                    )
-                    or "None",
+                    "Status": source_adoption_status_label(item.get("status")),
+                    "What is ready": (
+                        "Outcome data and definitions imported"
+                        if item.get("logical_domain") == DOMAIN_OUTCOMES
+                        else "Activity data and mappings recognised"
+                        if item.get("logical_domain") == DOMAIN_ACTIVITY_AND_MEDIA
+                        else "Context retained at native frequency"
+                        if item.get("logical_domain")
+                        == DOMAIN_CONTEXT_AND_EXTERNAL_FACTORS
+                        else "Evidence retained"
+                    ),
+                    "Next action": item.get("next_action") or "No action required",
                 }
                 for item in semantic_statuses
             ]
             st.dataframe(pd.DataFrame(semantic_rows), hide_index=True, width="stretch")
-            for item in semantic_statuses:
-                if item.get("next_action"):
-                    st.caption(f"{item.get('source_id')}: {item.get('next_action')}")
+            with st.expander("Technical details", expanded=False):
+                st.dataframe(
+                    pd.DataFrame(
+                        [
+                            {
+                                "Source": item.get("source_id"),
+                                "Template version": item.get("schema_version"),
+                                "Tables": ", ".join(item.get("table_ids") or ()),
+                                "Recognised objects": ", ".join(
+                                    item.get("adopted_objects") or ()
+                                )
+                                or "None",
+                                "Review detail": "; ".join(
+                                    item.get("unsupported_mappings") or ()
+                                )
+                                or "None",
+                            }
+                            for item in semantic_statuses
+                        ]
+                    ),
+                    hide_index=True,
+                    width="stretch",
+                )
 
     st.markdown("## Data by category")
     st.caption(
@@ -1054,7 +1091,7 @@ if sources:
             render_status_badges(["ready" if supplied else "blocked"])
             if not supplied:
                 missing_required_labels.append(_DOMAIN_LABELS[domain])
-                st.caption("No source supplied yet for this required domain.")
+                st.caption("No table supplied yet for this required data category.")
             else:
                 st.caption(
                     f"{len(supplied)} table(s) supplied under this category. "
@@ -1090,10 +1127,10 @@ if sources:
 
     if missing_required_labels:
         st.warning(
-            "Missing required logical domain(s): "
+            "Missing required data categories: "
             + ", ".join(missing_required_labels)
             + ". **Next action:** upload at least one source under each "
-            "missing domain above before continuing."
+            "missing data category above before continuing."
         )
 
     render_next_step("data_upload")
@@ -1101,9 +1138,9 @@ else:
     render_empty_state(
         "No sources loaded yet. Load the demo data or upload a file above to get started.",
         what_for=(
-            "Loading source data under the three required logical domains "
+            "Loading source data under the three required data categories "
             "(Outcomes; Activity and Media; Context and External Factors) "
             "plus the optional Experiment Evidence domain."
         ),
-        next_action="Load the demo data, or upload a file and choose its logical domain above.",
+        next_action="Load the demo data, or upload a file and choose its data category above.",
     )

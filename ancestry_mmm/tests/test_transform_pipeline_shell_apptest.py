@@ -59,14 +59,72 @@ def test_realistic_source_pack_stops_before_generic_join():
     at = _run_at(
         raw_sources=frames,
         data_loaded=True,
-        demo_source_pack="realistic-source-pack-v1",
+        demo_source_pack="realistic-source-pack-v2",
     )
     assert not at.exception, f"source-native page raised: {at.exception}"
+    assert any("Recognised source tables" in (m.value or "") for m in at.markdown)
+    assert any("needs a frequency decision" in (m.value or "") for m in at.markdown)
+    assert not any(button.label == "Join sources" for button in at.button)
+
+
+def test_adopted_weekly_standard_inputs_continue_without_generic_join():
+    period = pd.to_datetime(["2026-01-05"])
+    model_input = pd.DataFrame(
+        {"period_start": period, "market": ["UK"], "tv": [100.0]}
+    )
+    at = _run_at(
+        raw_sources={
+            "activity_data": model_input,
+            "activity_dictionary": pd.DataFrame({"activity_id": ["tv"]}),
+        },
+        data_loaded=True,
+        standard_activity_model_input=model_input,
+        standard_outcome_data=pd.DataFrame(
+            {"period_start": period, "market": ["UK"], "outcome": [10.0]}
+        ),
+        standard_context_data=pd.DataFrame(
+            {"period_start": period, "market": ["UK"], "cpi": [100.0]}
+        ),
+        context_variable_metadata=[
+            {"variable_id": "cpi", "native_frequency": "weekly"}
+        ],
+    )
+
+    assert not at.exception, f"adopted standard page raised: {at.exception}"
     assert any(
-        "Source-native preparation boundary" in (m.value or "") for m in at.markdown
+        "Standard model inputs recognised" in (m.value or "") for m in at.markdown
+    )
+    assert any("Recognised and adopted" in (s.value or "") for s in at.success)
+    assert not any(button.label == "Join sources" for button in at.button)
+
+
+def test_adopted_mixed_frequency_inputs_show_the_frequency_blocker():
+    period = pd.to_datetime(["2026-01-05"])
+    model_input = pd.DataFrame(
+        {"period_start": period, "market": ["UK"], "tv": [100.0]}
+    )
+    at = _run_at(
+        raw_sources={
+            "activity_data": model_input,
+            "activity_dictionary": pd.DataFrame({"activity_id": ["tv"]}),
+        },
+        data_loaded=True,
+        standard_activity_model_input=model_input,
+        standard_outcome_data=model_input.rename(columns={"tv": "outcome"}),
+        standard_context_data=model_input.rename(columns={"tv": "cpi"}),
+        context_variable_metadata=[
+            {"variable_id": "cpi", "native_frequency": "monthly"}
+        ],
+    )
+
+    assert not at.exception, f"mixed-frequency page raised: {at.exception}"
+    assert any(
+        "Official preparation needs a frequency decision" in (m.value or "")
+        for m in at.markdown
     )
     assert any(
-        "does not have an approved end-to-end" in (w.value or "") for w in at.warning
+        "does not currently have an approved conversion method" in (w.value or "")
+        for w in at.warning
     )
     assert not any(button.label == "Join sources" for button in at.button)
 

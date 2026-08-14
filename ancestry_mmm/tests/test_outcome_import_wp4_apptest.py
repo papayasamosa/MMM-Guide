@@ -47,7 +47,8 @@ def test_v1_source_review_is_explicitly_incomplete_and_has_no_draft():
 
     assert not at.exception, f"page raised: {at.exception}"
     assert any(
-        "legacy/incomplete v1" in (warning.value or "") for warning in at.warning
+        "older file is missing information" in (warning.value or "")
+        for warning in at.warning
     )
     assert at.session_state["outcome_source_draft"] is None
 
@@ -69,14 +70,14 @@ def test_existing_catalogue_requires_explicit_draft_adoption():
 
     assert not at.exception, f"page raised: {at.exception}"
     assert any(
-        button.label == "Adopt imported catalogue as draft" for button in at.button
+        button.label == "Use imported definitions as a draft" for button in at.button
     )
     assert at.session_state["outcome_definitions"] == [current.to_dict()]
 
     next(
         button
         for button in at.button
-        if button.label == "Adopt imported catalogue as draft"
+        if button.label == "Use imported definitions as a draft"
     ).click().run()
 
     assert not at.exception, f"adoption raised: {at.exception}"
