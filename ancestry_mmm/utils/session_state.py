@@ -65,6 +65,18 @@ def init_session_state():
         "media_input_support": [],
         "monetary_spend_support": [],
         "activity_definitions": [],
+        # Canonical outcome catalogue plus semantic groups.  Source import
+        # drafts live separately so an existing catalogue is never silently
+        # overwritten by a newly uploaded workbook.
+        "outcome_definitions": [],
+        "outcome_approvals": [],
+        "outcome_groups": [],
+        "outcome_group_treatments": [],
+        "outcome_reconciliation_groups": [],
+        "outcome_source_draft": None,
+        "outcome_source_draft_groups": [],
+        "outcome_source_draft_reconciliation_groups": [],
+        "outcome_source_import_status": None,
         # REQ-SEARCH-001: governed SearchObjectDefinition records (branded-
         # search demand, Paid Search spend/delivery/cap, organic-search
         # capture, direct-navigation capture) - core.search_objects. This is
