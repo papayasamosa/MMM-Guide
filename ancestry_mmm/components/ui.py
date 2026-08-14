@@ -588,14 +588,13 @@ def render_drift_status(
         return False
     has_blocking = bool(drifted["drift_status"].isin(BLOCKING_DRIFT_STATUSES).any())
     message = (
-        "Outcome definitions have changed since this model was fitted. "
-        f"Review the {len(drifted)} affected outcome definition(s) below."
+        f"The fitted model no longer matches {len(drifted)} outcome definition(s)."
     )
     consequence = (
-        "Refit the model or restore the definitions used for the fit before "
-        "using calculation-dependent results."
+        "Refit the model or restore the fitted definitions before using "
+        "results that depend on this fit."
         if has_blocking
-        else "Review the changes before interpreting the current evidence."
+        else "Review the changes before interpreting current evidence."
     )
     if has_blocking and blocking:
         st.error(message + " " + consequence)

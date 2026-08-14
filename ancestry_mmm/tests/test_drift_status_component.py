@@ -71,10 +71,13 @@ def test_calculation_relevant_drift_shows_warning_by_default(monkeypatch):
     assert had_drift is True
     assert len(calls["warning"]) == 1
     assert (
-        "Outcome definitions have changed since this model was fitted"
+        "The fitted model no longer matches 1 outcome definition(s)."
         in calls["warning"][0]
     )
-    assert "Refit the model" in calls["warning"][0]
+    assert (
+        "Refit the model or restore the fitted definitions before using results"
+        in calls["warning"][0]
+    )
     assert calls["error"] == []
 
 
