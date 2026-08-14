@@ -58,6 +58,11 @@ class TestMarketProfile:
         assert back.currency.local_currency == "GBP"
         assert back.descriptors.population == 1000
 
+    def test_missing_nested_payloads_use_empty_defaults(self):
+        profile = MarketProfile.from_dict({"market": "UK"})
+        assert profile.currency == MarketCurrency()
+        assert profile.descriptors == MarketDescriptors()
+
 
 class TestChannelMediaUnitConfig:
     def test_has_media_unit_true_when_response_unit_column_set(self):

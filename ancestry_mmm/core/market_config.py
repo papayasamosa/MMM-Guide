@@ -14,7 +14,7 @@ this information before the hierarchical model needs it.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, cast
 
 # Suggested unit types for a channel's response-unit column - advisory only,
 # any string is accepted (see docs/media_units_and_inflation.md).
@@ -76,7 +76,7 @@ class MarketDescriptors:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, d: dict) -> "MarketDescriptors":
+    def from_dict(cls, d: dict | None) -> "MarketDescriptors":
         known = set(cls.__dataclass_fields__)
         return cls(**{k: v for k, v in (d or {}).items() if k in known})
 
@@ -99,7 +99,7 @@ class MarketCurrency:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, d: dict) -> "MarketCurrency":
+    def from_dict(cls, d: dict | None) -> "MarketCurrency":
         known = set(cls.__dataclass_fields__)
         return cls(**{k: v for k, v in (d or {}).items() if k in known})
 
@@ -122,10 +122,12 @@ class MarketProfile:
 
     @classmethod
     def from_dict(cls, d: dict) -> "MarketProfile":
+        currency = cast(dict | None, d.get("currency"))
+        descriptors = cast(dict | None, d.get("descriptors"))
         return cls(
             market=d["market"],
-            currency=MarketCurrency.from_dict(d.get("currency")),
-            descriptors=MarketDescriptors.from_dict(d.get("descriptors")),
+            currency=MarketCurrency.from_dict(currency),
+            descriptors=MarketDescriptors.from_dict(descriptors),
         )
 
 
