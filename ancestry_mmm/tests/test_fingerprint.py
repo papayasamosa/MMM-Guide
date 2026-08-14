@@ -7,6 +7,10 @@ from ancestry_mmm.core.fingerprint import (
     fingerprint_model_spec,
     fingerprint_posterior,
 )
+from ancestry_mmm.core.outcomes import (
+    OutcomeGroupDefinition,
+    outcome_group_fingerprint_payload,
+)
 from ancestry_mmm.core.market_config import (
     ChannelMediaUnitConfig,
     MarketCurrency,
@@ -372,6 +376,61 @@ class TestFingerprintModelSpecOutcomeCatalogue:
         fp_1 = fingerprint_model_spec(spec, {}, 4, outcome_catalogue=self._catalogue())
         fp_2 = fingerprint_model_spec(spec, {}, 4, outcome_catalogue=self._catalogue())
         assert fp_1 == fp_2
+
+
+class TestFingerprintModelSpecOutcomeGroups:
+    def _groups(self, **overrides):
+        group = {
+            "group_id": "fh_gsa_all",
+            "group_label": "Family History GSA total",
+            "product": "Family History",
+            "outcome_family_key": "GSA",
+            "segment_dimension": "fh_customer_segment",
+            "member_outcome_ids": ["fh_new_gsa", "fh_cross_sell_gsa"],
+            "aggregation_rule": "sum",
+            "supplied_total_outcome_id": "fh_gsa_total",
+        }
+        group.update(overrides)
+        return outcome_group_fingerprint_payload([OutcomeGroupDefinition(**group)])
+
+    def test_omitting_outcome_groups_is_backward_compatible(self):
+        spec = {"markets": ["UK"]}
+        assert fingerprint_model_spec(spec, {}, 4) == fingerprint_model_spec(
+            spec, {}, 4, outcome_groups=None
+        )
+        assert fingerprint_model_spec(spec, {}, 4) == fingerprint_model_spec(
+            spec, {}, 4, outcome_groups=[]
+        )
+
+    def test_group_membership_changes_the_fingerprint(self):
+        spec = {"markets": ["UK"]}
+        fp_a = fingerprint_model_spec(spec, {}, 4, outcome_groups=self._groups())
+        fp_b = fingerprint_model_spec(
+            spec,
+            {},
+            4,
+            outcome_groups=self._groups(member_outcome_ids=["fh_new_gsa"]),
+        )
+        assert fp_a != fp_b
+
+    def test_group_label_does_not_change_the_fingerprint(self):
+        spec = {"markets": ["UK"]}
+        fp_a = fingerprint_model_spec(spec, {}, 4, outcome_groups=self._groups())
+        fp_b = fingerprint_model_spec(
+            spec,
+            {},
+            4,
+            outcome_groups=self._groups(group_label="All GSA outcomes"),
+        )
+        assert fp_a == fp_b
+
+    def test_group_order_does_not_matter(self):
+        spec = {"markets": ["UK"]}
+        first = self._groups(group_id="a_group")[0]
+        second = self._groups(group_id="b_group")[0]
+        fp_ab = fingerprint_model_spec(spec, {}, 4, outcome_groups=[first, second])
+        fp_ba = fingerprint_model_spec(spec, {}, 4, outcome_groups=[second, first])
+        assert fp_ab == fp_ba
 
 
 class TestFingerprintModelSpecFunnelLinks:

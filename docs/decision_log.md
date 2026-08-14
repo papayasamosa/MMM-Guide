@@ -3329,3 +3329,42 @@ corrected partial-capability status for `REQ-DATAIN-001`. No `ancestry_mmm/`
 runtime, schema, or persisted artefact behaviour changes.
 **Owner:** Data Science / Platform engineering.
 **Status:** Accepted; WP0 authority registration.
+
+## Canonical outcome dimensions and semantic groups (Work Package 1)
+
+**Date:** 2026-08-14
+**Decision:** Extend the canonical `OutcomeDefinition` with an explicit
+`segment_dimension`, defaulting legacy definitions to `unspecified` and
+requiring semantic review. Add a distinct immutable `OutcomeGroupDefinition`
+with explicit members, product, outcome family, segment dimension, aggregation
+rule, and optional supplied total. Validate both outcome dimensions and group
+membership without inferring meaning from identifiers. Include the
+calculation-relevant group contract and segment dimension in fit identity and
+drift metadata; exclude group labels from the fingerprint.
+**Reason:** WP0 established the approved source and semantic contract. The
+runtime needs one canonical representation before import, persistence, model
+treatment, and reporting work can consume grouped outcomes. DNA customer
+relationship, purchase recipient, and activation status remain separate
+dimensions, and semantic grouping must not be conflated with diagnostic
+reconciliation or causal halo edges.
+**Alternatives considered:** Continue using a blank/implicit segment field
+(rejected - it permits unresolved legacy semantics to look approved); infer
+dimensions or groups from outcome IDs (rejected - the approved brief forbids
+that); reuse `OutcomeReconciliationGroup` (rejected - it represents diagnostic
+arithmetic rather than semantic model/reporting grouping); fingerprint group
+labels (rejected - wording is presentation-only).
+**Impact:** `core.outcomes` now provides the canonical dimension/group types,
+validators, JSON-safe round trips, fingerprints, and legacy helper mappings.
+`fingerprint_model_spec` accepts the group payload. No Streamlit, source-pack,
+persistence, import, model-equation, or reporting behaviour is changed in this
+work package. Business question: which explicitly supplied outcome members
+form a governed semantic total? Estimand: none introduced; aggregation remains
+an explicit sum contract over supplied outcome units. Output scale/units:
+unchanged and validated for compatible sum groups. Upstream modelling
+references: none consulted; no modelling API or dependency changed.
+**Remaining limitation:** v2 source parsing, persistence, import seeding,
+model treatment, draw-level totals, and end-to-end validation remain in WP2-WP8.
+Legacy definitions are loadable but require semantic review until their
+dimension is explicitly supplied.
+**Owner:** Data Science / Platform engineering.
+**Status:** Implemented in outcome semantics WP1.

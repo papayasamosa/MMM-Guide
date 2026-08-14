@@ -27,7 +27,7 @@ input, not `spec.segment_outcomes` directly.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, cast
 
 import pandas as pd
 
@@ -59,6 +59,34 @@ METRIC_KIT_SALE = "Kit sale"
 # counted toward totals/objectives before this field existed, so it's the
 # correct default for both new outcomes and migrated legacy ones.
 OUTCOME_ROLES = ("primary", "secondary", "funnel_intermediate", "diagnostic")
+
+# A segment name alone is not enough to explain what business dimension it
+# represents.  Keep this vocabulary deliberately small and explicit so a
+# source dictionary cannot silently turn customer relationship, purchase
+# recipient, and activation status into synonyms.  ``unspecified`` is the
+# backwards-compatible value for legacy outcomes; it is valid for loading
+# but requires review before newly governed official use.
+SEGMENT_DIMENSION_FH_CUSTOMER = "fh_customer_segment"
+SEGMENT_DIMENSION_DNA_CUSTOMER_RELATIONSHIP = "dna_customer_relationship"
+SEGMENT_DIMENSION_DNA_PURCHASE_RECIPIENT = "dna_purchase_recipient"
+SEGMENT_DIMENSION_DNA_ACTIVATION_STATUS = "dna_activation_status"
+SEGMENT_DIMENSION_COMBINED = "combined"
+SEGMENT_DIMENSION_CUSTOM = "custom"
+SEGMENT_DIMENSION_UNSPECIFIED = "unspecified"
+
+SEGMENT_DIMENSIONS = (
+    SEGMENT_DIMENSION_FH_CUSTOMER,
+    SEGMENT_DIMENSION_DNA_CUSTOMER_RELATIONSHIP,
+    SEGMENT_DIMENSION_DNA_PURCHASE_RECIPIENT,
+    SEGMENT_DIMENSION_DNA_ACTIVATION_STATUS,
+    SEGMENT_DIMENSION_COMBINED,
+    SEGMENT_DIMENSION_CUSTOM,
+    SEGMENT_DIMENSION_UNSPECIFIED,
+)
+
+# Semantic groups describe compatible outcome components.  They intentionally
+# do not carry model fit treatment, approval, or causal-pathway meaning.
+OUTCOME_GROUP_AGGREGATIONS = ("sum", "none")
 
 
 # ---------------------------------------------------------------------------
@@ -402,6 +430,7 @@ class OutcomeDefinition:
     business_owner: str = ""
     effective_from: Optional[str] = None
     effective_to: Optional[str] = None
+    segment_dimension: str = SEGMENT_DIMENSION_UNSPECIFIED
 
     def __post_init__(self) -> None:
         # metric_key first: unit's default (below) is looked up by
@@ -439,7 +468,51 @@ class OutcomeDefinition:
         if "column" in d and "source_column" not in d:
             d["source_column"] = d.pop("column")
         known = set(cls.__dataclass_fields__)
-        return cls(**{k: v for k, v in d.items() if k in known})
+        return cls(**cast(Any, {k: v for k, v in d.items() if k in known}))
+
+
+@dataclass(frozen=True)
+class OutcomeGroupDefinition:
+    """One semantic business-measure group of compatible outcomes.
+
+    This is deliberately separate from ``OutcomeReconciliationGroup``:
+    semantic membership explains which rows describe one measure, while a
+    reconciliation group checks supplied arithmetic and model configuration
+    decides whether components or a supplied total are fitted.  Group labels
+    are presentation metadata; stable identity is carried by ``group_id``
+    and its calculation-relevant fields.
+    """
+
+    group_id: str
+    group_label: str
+    product: str
+    outcome_family_key: str
+    segment_dimension: str
+    member_outcome_ids: Tuple[str, ...]
+    aggregation_rule: str = "sum"
+    supplied_total_outcome_id: Optional[str] = None
+    schema_version: int = 1
+
+    def __post_init__(self) -> None:
+        # Accept lists from source/bundle deserialisation while keeping the
+        # in-memory semantic record immutable and hashable.
+        object.__setattr__(self, "member_outcome_ids", tuple(self.member_outcome_ids))
+
+    def to_dict(self) -> dict:
+        payload = asdict(self)
+        payload["member_outcome_ids"] = list(self.member_outcome_ids)
+        return payload
+
+    @classmethod
+    def from_dict(cls, d: Mapping[str, object]) -> "OutcomeGroupDefinition":
+        d = dict(d)
+        member_ids = d.get("member_outcome_ids")
+        if isinstance(member_ids, (list, tuple)):
+            d["member_outcome_ids"] = tuple(str(member_id) for member_id in member_ids)
+        elif member_ids is None:
+            d["member_outcome_ids"] = ()
+        known = set(cls.__dataclass_fields__)
+        return cls(**cast(Any, {k: v for k, v in d.items() if k in known}))
 
 
 # ---------------------------------------------------------------------------
@@ -845,6 +918,7 @@ def validate_outcome_definitions(
     - duplicate outcome_ids
     - missing outcome_id / source_column / segment
     - unknown product / unknown role
+    - unknown segment dimension
     - blank metric or unit
     - duplicate (product, segment, metric) definitions mapped to
       conflicting source columns
@@ -876,7 +950,7 @@ def validate_outcome_definitions(
             "At least one outcome must be configured and included in the fit - the outcome catalogue "
             "is empty, or every outcome in it is excluded."
         )
-    seen_ids = set()
+    seen_ids: set[str] = set()
     for o in outcomes:
         if not o.outcome_id:
             errors.append("Every outcome must have an outcome_id.")
@@ -897,10 +971,25 @@ def validate_outcome_definitions(
                 f"Outcome '{o.outcome_id}' has unknown product '{o.product}' "
                 f"(expected one of {', '.join(KNOWN_PRODUCTS)})."
             )
+        if o.segment_dimension not in SEGMENT_DIMENSIONS:
+            errors.append(
+                f"Outcome '{o.outcome_id}' has unknown segment_dimension "
+                f"'{o.segment_dimension}' (expected one of {', '.join(SEGMENT_DIMENSIONS)})."
+            )
         if o.role not in OUTCOME_ROLES:
             errors.append(
                 f"Outcome '{o.outcome_id}' has unknown role '{o.role}' "
                 f"(expected one of {', '.join(OUTCOME_ROLES)})."
+            )
+        metric_definition = METRIC_REGISTRY.get(o.metric_key)
+        if (
+            metric_definition is not None
+            and metric_definition.product is not None
+            and o.product != metric_definition.product
+        ):
+            errors.append(
+                f"Outcome '{o.outcome_id}' has product '{o.product}' but metric_key "
+                f"'{o.metric_key}' is governed for product '{metric_definition.product}'."
             )
         if (
             available_columns is not None
@@ -969,6 +1058,152 @@ def validate_outcome_definitions(
             "Customer DNA outcomes - choose one or the other."
         )
     return errors
+
+
+def validate_outcome_group_definitions(
+    groups: Sequence[OutcomeGroupDefinition],
+    *,
+    outcomes: Optional[Sequence[OutcomeDefinition]] = None,
+) -> List[str]:
+    """Validate semantic outcome groups without granting approval.
+
+    Validation is intentionally structural and semantic: group members must
+    describe the same product, metric family, and breakdown, and additive
+    groups must have compatible units and non-rate aggregation.  It does not
+    choose a fit treatment, reject alternative DNA partitions, or create a
+    causal edge; those are separately governed concerns.
+    """
+    errors: List[str] = []
+    seen_ids = set()
+    known_outcomes = {o.outcome_id: o for o in outcomes} if outcomes is not None else {}
+
+    for group in groups:
+        label = group.group_id or "(no group_id)"
+        if not group.group_id:
+            errors.append("Every outcome group must have a group_id.")
+        elif group.group_id in seen_ids:
+            errors.append(f"Duplicate outcome group_id '{group.group_id}'.")
+        seen_ids.add(group.group_id)
+
+        if not group.group_label:
+            errors.append(f"Outcome group '{label}' has no group_label.")
+        if group.product not in KNOWN_PRODUCTS:
+            errors.append(
+                f"Outcome group '{label}' has unknown product '{group.product}' "
+                f"(expected one of {', '.join(KNOWN_PRODUCTS)})."
+            )
+        if not group.outcome_family_key:
+            errors.append(f"Outcome group '{label}' has no outcome_family_key.")
+        if group.segment_dimension not in SEGMENT_DIMENSIONS:
+            errors.append(
+                f"Outcome group '{label}' has unknown segment_dimension "
+                f"'{group.segment_dimension}' (expected one of {', '.join(SEGMENT_DIMENSIONS)})."
+            )
+        if group.aggregation_rule not in OUTCOME_GROUP_AGGREGATIONS:
+            errors.append(
+                f"Outcome group '{label}' has unknown aggregation_rule "
+                f"'{group.aggregation_rule}' (expected one of {', '.join(OUTCOME_GROUP_AGGREGATIONS)})."
+            )
+        if not group.member_outcome_ids:
+            errors.append(
+                f"Outcome group '{label}' must have at least one member outcome_id."
+            )
+        if len(set(group.member_outcome_ids)) != len(group.member_outcome_ids):
+            errors.append(
+                f"Outcome group '{label}' contains duplicate member outcome_ids."
+            )
+        if (
+            group.supplied_total_outcome_id is not None
+            and group.supplied_total_outcome_id in group.member_outcome_ids
+        ):
+            errors.append(
+                f"Outcome group '{label}' has supplied_total_outcome_id "
+                f"'{group.supplied_total_outcome_id}' listed as a member."
+            )
+
+        if outcomes is None:
+            continue
+
+        members: List[OutcomeDefinition] = []
+        for outcome_id in group.member_outcome_ids:
+            outcome = known_outcomes.get(outcome_id)
+            if outcome is None:
+                errors.append(
+                    f"Outcome group '{label}' references unknown member outcome_id "
+                    f"'{outcome_id}'."
+                )
+            else:
+                members.append(outcome)
+
+        if not members:
+            continue
+
+        for outcome in members:
+            if outcome.product != group.product:
+                errors.append(
+                    f"Outcome group '{label}' member '{outcome.outcome_id}' has product "
+                    f"'{outcome.product}', expected '{group.product}'."
+                )
+            if outcome.metric_key != group.outcome_family_key:
+                errors.append(
+                    f"Outcome group '{label}' member '{outcome.outcome_id}' has metric_key "
+                    f"'{outcome.metric_key}', expected the group's outcome_family_key "
+                    f"'{group.outcome_family_key}'."
+                )
+            if outcome.segment_dimension != group.segment_dimension:
+                errors.append(
+                    f"Outcome group '{label}' member '{outcome.outcome_id}' has segment_dimension "
+                    f"'{outcome.segment_dimension}', expected '{group.segment_dimension}'."
+                )
+
+        if group.aggregation_rule == "sum":
+            units = {outcome.unit for outcome in members}
+            aggregation_types = {outcome.aggregation_type for outcome in members}
+            if len(units) > 1:
+                errors.append(
+                    f"Outcome group '{label}' has incompatible member units: "
+                    f"{', '.join(sorted(units))}."
+                )
+            if len(aggregation_types) > 1:
+                errors.append(
+                    f"Outcome group '{label}' has incompatible member aggregation types: "
+                    f"{', '.join(sorted(aggregation_types))}."
+                )
+            if aggregation_types.intersection({"rate", "index"}):
+                errors.append(
+                    f"Outcome group '{label}' cannot sum rate or index outcomes into a total."
+                )
+
+        if group.supplied_total_outcome_id is not None:
+            supplied_total = known_outcomes.get(group.supplied_total_outcome_id)
+            if supplied_total is None:
+                errors.append(
+                    f"Outcome group '{label}' references unknown supplied_total_outcome_id "
+                    f"'{group.supplied_total_outcome_id}'."
+                )
+            else:
+                if supplied_total.product != group.product:
+                    errors.append(
+                        f"Outcome group '{label}' supplied total '{supplied_total.outcome_id}' "
+                        f"has product '{supplied_total.product}', expected '{group.product}'."
+                    )
+                if supplied_total.metric_key != group.outcome_family_key:
+                    errors.append(
+                        f"Outcome group '{label}' supplied total '{supplied_total.outcome_id}' "
+                        f"has metric_key '{supplied_total.metric_key}', expected "
+                        f"'{group.outcome_family_key}'."
+                    )
+
+    return errors
+
+
+def validate_outcome_groups(
+    groups: Sequence[OutcomeGroupDefinition],
+    *,
+    outcomes: Optional[Sequence[OutcomeDefinition]] = None,
+) -> List[str]:
+    """Compatibility alias for the semantic-group validator."""
+    return validate_outcome_group_definitions(groups, outcomes=outcomes)
 
 
 # ---------------------------------------------------------------------------
@@ -1071,6 +1306,7 @@ _FINGERPRINT_FIELDS = (
     "outcome_id",
     "product",
     "segment",
+    "segment_dimension",
     "metric",
     "metric_key",
     "unit",
@@ -1098,6 +1334,16 @@ _FINGERPRINT_FIELDS = (
     "effective_to",
 )
 
+_OUTCOME_GROUP_FINGERPRINT_FIELDS = (
+    "group_id",
+    "product",
+    "outcome_family_key",
+    "segment_dimension",
+    "member_outcome_ids",
+    "aggregation_rule",
+    "supplied_total_outcome_id",
+)
+
 
 def outcome_catalogue_fingerprint_payload(
     outcomes: List[OutcomeDefinition],
@@ -1118,6 +1364,35 @@ def outcome_catalogue_fingerprint_payload(
         {f: getattr(o, f) for f in _FINGERPRINT_FIELDS}
         for o in sorted(outcomes, key=lambda o: o.outcome_id)
     ]
+
+
+def outcome_group_fingerprint_payload(
+    groups: Sequence[OutcomeGroupDefinition],
+) -> List[dict]:
+    """Return deterministic calculation identity for semantic groups.
+
+    ``group_label`` and ``schema_version`` are intentionally excluded:
+    changing routine wording or the serialisation version alone must not
+    stale statistical evidence.  Member ordering is canonicalised because
+    membership, not display order, defines the business measure.
+    """
+    payload = []
+    for group in sorted(groups, key=lambda group: group.group_id):
+        row = {
+            field: getattr(group, field)
+            for field in _OUTCOME_GROUP_FINGERPRINT_FIELDS
+            if field != "member_outcome_ids"
+        }
+        row["member_outcome_ids"] = sorted(group.member_outcome_ids)
+        payload.append(row)
+    return payload
+
+
+def outcome_groups_fingerprint_payload(
+    groups: Sequence[OutcomeGroupDefinition],
+) -> List[dict]:
+    """Plural compatibility alias for ``outcome_group_fingerprint_payload``."""
+    return outcome_group_fingerprint_payload(groups)
 
 
 # ---------------------------------------------------------------------------
@@ -1143,6 +1418,7 @@ _DRIFT_TRACKED_FIELDS = (
     "source_column",
     "product",
     "segment",
+    "segment_dimension",
     "metric",
     "metric_key",
     "unit",
@@ -1232,7 +1508,10 @@ def outcomes_drift_dataframe(
         status = outcome_drift_status(
             current, fit_time, available_columns=available_columns
         )
-        row = (current or fit_time).to_dict()
+        fit_outcome = current or fit_time
+        if fit_outcome is None:  # the union above guarantees this is unreachable
+            continue
+        row = fit_outcome.to_dict()
         row["outcome_id"] = oid
         row["drift_status"] = status
         rows.append(row)
@@ -1284,6 +1563,22 @@ def has_blocking_drift(
     return bool(drift_df["drift_status"].isin(BLOCKING_DRIFT_STATUSES).any())
 
 
+def outcome_requires_semantic_review(outcome: OutcomeDefinition) -> bool:
+    """Whether an outcome still lacks a governed breakdown dimension.
+
+    Legacy outcomes deliberately retain ``unspecified`` rather than getting
+    a guessed dimension.  This helper gives import and UI layers a shared,
+    framework-independent review signal without making the signal itself an
+    approval decision.
+    """
+    return outcome.segment_dimension == SEGMENT_DIMENSION_UNSPECIFIED
+
+
+# Wording used by some callers is more direct; keep both names pointing at
+# the same non-governance helper.
+outcome_needs_semantic_review = outcome_requires_semantic_review
+
+
 def fh_outcomes_from_spec(
     segment_outcomes: Dict[str, str],
     segment_ltv: Optional[Dict[str, float]] = None,
@@ -1301,6 +1596,7 @@ def fh_outcomes_from_spec(
             outcome_id=f"fh_{seg.lower()}",
             product=FAMILY_HISTORY,
             segment=seg,
+            segment_dimension=SEGMENT_DIMENSION_FH_CUSTOMER,
             metric=METRIC_GSA,
             source_column=col,
             value_weight=segment_ltv.get(seg),
@@ -1338,6 +1634,7 @@ def dna_outcomes_from_columns(
                 outcome_id="dna_combined_kit",
                 product=DNA,
                 segment=DNA_SEGMENT_COMBINED,
+                segment_dimension=SEGMENT_DIMENSION_COMBINED,
                 metric=METRIC_KIT_SALE,
                 source_column=combined_column,
                 value_weight=value_weight_combined,
@@ -1351,6 +1648,7 @@ def dna_outcomes_from_columns(
                 outcome_id="dna_new_kit",
                 product=DNA,
                 segment=DNA_SEGMENT_NEW,
+                segment_dimension=SEGMENT_DIMENSION_DNA_CUSTOMER_RELATIONSHIP,
                 metric=METRIC_KIT_SALE,
                 source_column=new_customer_column,
                 value_weight=value_weight_new,
@@ -1362,6 +1660,7 @@ def dna_outcomes_from_columns(
                 outcome_id="dna_existing_fh_kit",
                 product=DNA,
                 segment=DNA_SEGMENT_EXISTING_FH,
+                segment_dimension=SEGMENT_DIMENSION_DNA_CUSTOMER_RELATIONSHIP,
                 metric=METRIC_KIT_SALE,
                 source_column=existing_fh_column,
                 value_weight=value_weight_existing,
@@ -1431,6 +1730,7 @@ def outcomes_to_dataframe(
                 "outcome_id",
                 "product",
                 "segment",
+                "segment_dimension",
                 "metric",
                 "source_column",
                 "unit",
