@@ -17,6 +17,7 @@ from ancestry_mmm.utils import (
     set_state,
     format_number,
     dataframe_column_config,
+    readable_label,
 )
 from ancestry_mmm.components import (
     apply_theme,
@@ -148,7 +149,10 @@ with SectionCard(
     if dna_kit_outcome_ids:
         st.caption(
             "DNA-product outcomes with direct media response: "
-            + ", ".join(dna_kit_outcome_ids)
+            + ", ".join(
+                outcome_display_labels.get(outcome_id, readable_label(outcome_id))
+                for outcome_id in dna_kit_outcome_ids
+            )
         )
     st.caption(
         "DNA-targeted channels: "
