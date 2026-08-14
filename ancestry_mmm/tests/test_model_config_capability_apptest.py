@@ -134,8 +134,7 @@ def test_fully_resolved_coverage_shows_supported_success():
     )
     assert not at.exception, f"page raised: {at.exception}"
     assert any(
-        "within today's supported fit scope" in (s.value or "")
-        for s in at.success
+        "within today's supported fit scope" in (s.value or "") for s in at.success
     )
     assert not any(
         "goes beyond today's supported market/channel coverage" in (w.value or "")
@@ -156,8 +155,7 @@ def test_resolved_coverage_with_stale_fingerprint_shows_stale_warning_not_succes
     assert not at.exception, f"page raised: {at.exception}"
     assert any("may be stale" in (w.value or "") for w in at.warning)
     assert not any(
-        "within today's supported fit scope" in (s.value or "")
-        for s in at.success
+        "within today's supported fit scope" in (s.value or "") for s in at.success
     )
 
 
