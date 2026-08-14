@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+import re
 from typing import Any
 
 from ancestry_mmm.core.coverage import (
@@ -35,14 +36,25 @@ _STANDARD_TABLE_NAMES = frozenset(
 )
 
 _SOURCE_NATIVE_TABLE_ROLES = {
-    "activity_data": "Time-series activity",
-    "activity_dictionary": "Activity metadata",
-    "outcomes": "Time-series outcomes",
-    "outcome_dictionary": "Outcome metadata",
-    "context_data": "Native-frequency context",
-    "variable_dictionary": "Variable metadata",
-    "events": "Irregular events",
-    "experiment_evidence": "Experiment evidence",
+    "activity_data": "Activity data: Used as model-input source",
+    "activity_dictionary": "Activity dictionary: Describes activity mappings",
+    "outcomes": "Outcomes: Used as outcome source",
+    "outcome_dictionary": "Outcome dictionary: Describes outcome definitions",
+    "context_data": "Context data: Retained at native frequency",
+    "variable_dictionary": "Variable dictionary: Describes context variables",
+    "events": "Events: Retained as irregular events",
+    "experiment_evidence": "Experiment evidence: Retained as supporting evidence",
+}
+
+_REALISTIC_SOURCE_PACK_PATTERN = re.compile(r"^realistic-source-pack-v[0-9]+$")
+
+_SOURCE_ADOPTION_STATUS_LABELS = {
+    "adopted": "Ready",
+    "adopted_ready_for_mapping_review": "Ready",
+    "adopted_with_physical_mapping_review": "Ready for mapping review",
+    "adopted_with_metadata_review": "Review needed",
+    "outcome_catalogue_reviewed_separately": "Ready for review",
+    "source_evidence_only": "Optional",
 }
 
 
@@ -68,6 +80,27 @@ def source_table_role(source_id: str) -> str:
     return _SOURCE_NATIVE_TABLE_ROLES.get(
         source_table_name(source_id), "Uploaded table"
     )
+
+
+def is_realistic_source_pack_demo(value: object) -> bool:
+    """Return whether ``value`` is an explicit built-in realistic-pack ID.
+
+    This helper only interprets the controlled demo state.  It is deliberately
+    not used to classify uploaded filenames or arbitrary source IDs.
+    """
+
+    return bool(_REALISTIC_SOURCE_PACK_PATTERN.fullmatch(str(value or "")))
+
+
+def source_adoption_status_label(status: object) -> str:
+    """Map durable adoption state to a short analyst-facing status label."""
+
+    raw = str(status or "").strip()
+    if raw in _SOURCE_ADOPTION_STATUS_LABELS:
+        return _SOURCE_ADOPTION_STATUS_LABELS[raw]
+    if not raw:
+        return "Review needed"
+    return raw.replace("_", " ").capitalize()
 
 
 @dataclass(frozen=True)
@@ -163,7 +196,7 @@ def summarise_source_inventory(
         if version.standard_template
         for table_id in version.parsed_table_ids
     }
-    if demo_source_pack == "realistic-source-pack-v1":
+    if is_realistic_source_pack_demo(demo_source_pack):
         recognised_ids.update(
             f"source-native:{source_table_name(source_id)}"
             for source_id in sources
@@ -205,7 +238,7 @@ def inspect_source_layout(
     has_standard_version = any(
         version.standard_template for version in active_versions.values()
     )
-    has_realistic_demo = demo_source_pack == "realistic-source-pack-v1"
+    has_realistic_demo = is_realistic_source_pack_demo(demo_source_pack)
     has_standard_names = len(set(table_names).intersection(_STANDARD_TABLE_NAMES)) >= 2
     is_source_native = has_realistic_demo or has_standard_version or has_standard_names
     kind = (
@@ -227,7 +260,9 @@ __all__ = [
     "SourceInventory",
     "SourceLayout",
     "inspect_source_layout",
+    "is_realistic_source_pack_demo",
     "source_lineage_id",
+    "source_adoption_status_label",
     "source_table_name",
     "source_table_role",
     "summarise_source_inventory",

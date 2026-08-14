@@ -63,9 +63,7 @@ def test_standard_template_downloads_are_exposed_with_plain_language_help():
         "Download Context and External Factors template",
         "Download Experiment Evidence template",
     }
-    assert any(
-        "Product, Metric, Breakdown, Segment" in (i.value or "") for i in at.info
-    )
+    assert any("Required sheets are listed below" in (i.value or "") for i in at.info)
 
 
 def test_partial_domain_coverage_lists_missing_required_domains():
@@ -83,7 +81,7 @@ def test_partial_domain_coverage_lists_missing_required_domains():
     assert not at.exception, f"page raised: {at.exception}"
     assert any("Data by category" in (m.value or "") for m in at.markdown)
     assert any(
-        "Missing required logical domain(s)" in (w.value or "") for w in at.warning
+        "Missing required data categories" in (w.value or "") for w in at.warning
     )
     assert any("Outcomes" in (w.value or "") for w in at.warning)
 
@@ -140,9 +138,11 @@ def test_source_semantic_adoption_status_is_visible():
         data_loaded=True,
     )
     assert not at.exception, f"page raised: {at.exception}"
-    assert any("Source semantic adoption" in (m.value or "") for m in at.markdown)
     assert any(
-        "adopted_with_physical_mapping_review" in str(cell)
+        "What was recognised from your files?" in (m.value or "") for m in at.markdown
+    )
+    assert any(
+        "Ready for mapping review" in str(cell)
         for table in at.dataframe
         for cell in table.value.values.flatten()
     )
@@ -170,7 +170,7 @@ def test_all_three_required_domains_supplied_shows_ready_badge():
     )
     assert not at.exception, f"page raised: {at.exception}"
     assert not any(
-        "Missing required logical domain(s)" in (w.value or "") for w in at.warning
+        "Missing required data categories" in (w.value or "") for w in at.warning
     )
     assert any("Ready" in (m.value or "") for m in at.markdown)
 

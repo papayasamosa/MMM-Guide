@@ -109,6 +109,26 @@ init_session_state()
 apply_theme()
 render_sidebar("transform_pipeline")
 
+# Standard source-pack adoption keeps model-input frames separate from the raw
+# workbook tables. Those frames are the existing hand-off to Coverage and
+# Model Setup; they must never be replaced by a generic all-table join.
+_adopted_frames = {
+    name: frame
+    for name, frame in (
+        ("Outcomes", get_state("standard_outcome_data")),
+        ("Activity and Media", get_state("standard_activity_model_input")),
+        ("Context and External Factors", get_state("standard_context_data")),
+    )
+    if frame is not None
+}
+_native_frequencies = {
+    str(item.get("native_frequency") or "").strip().lower()
+    for item in (get_state("context_variable_metadata") or [])
+    if item.get("native_frequency")
+}
+_unsupported_frequencies = sorted(_native_frequencies - {"weekly"})
+_has_adopted_standard_inputs = bool(_adopted_frames)
+
 # Header badge reflects where this page's own workflow actually is:
 # nothing loaded yet (blocked, checked below), joined but not yet
 # transformed (in progress), or a transformed dataset already exists.
@@ -119,7 +139,19 @@ source_layout = inspect_source_layout(
     active_upload_versions=get_state("active_source_upload_version") or {},
     demo_source_pack=get_state("demo_source_pack"),
 )
-if get_state("transformed_data") is not None:
+if not _native_frequencies and source_layout.kind == "realistic_source_pack":
+    _demo_context = sources.get("context_data")
+    if _demo_context is not None and "native_frequency" in _demo_context.columns:
+        _native_frequencies = {
+            str(value).strip().lower()
+            for value in _demo_context["native_frequency"].dropna().unique()
+        }
+        _unsupported_frequencies = sorted(_native_frequencies - {"weekly"})
+if _has_adopted_standard_inputs and not _unsupported_frequencies:
+    _header_badges = ["ready"]
+elif _has_adopted_standard_inputs and _unsupported_frequencies:
+    _header_badges = ["blocked"]
+elif get_state("transformed_data") is not None:
     _header_badges = ["ready"]
 elif get_state("joined_data") is not None:
     _header_badges = ["current"]
@@ -131,23 +163,46 @@ else:
 render_page_header(
     "transform_pipeline",
     task_prompt=(
-        "Review the source-native preparation boundary before modelling."
+        "Review recognised model inputs before continuing."
+        if _has_adopted_standard_inputs and not _unsupported_frequencies
+        else "Review the official preparation blocker for these inputs."
         if source_layout.is_source_native
         else "Can these sources be joined without losing or inventing rows?"
     ),
-    description=source_layout.description,
+    description=(
+        "Standard data has been recognised and adopted as separate model-input "
+        "tables. Continue to Coverage and Model Setup; no generic join is needed."
+        if _has_adopted_standard_inputs and not _unsupported_frequencies
+        else "One or more model inputs are not weekly, so official preparation "
+        "needs a frequency decision."
+        if _unsupported_frequencies
+        else source_layout.description
+    ),
     badges=_header_badges,
 )
 
 render_workspace_note(
-    "Review source inputs" if source_layout.is_source_native else "Edit here",
+    "Continue with adopted data"
+    if _has_adopted_standard_inputs and not _unsupported_frequencies
+    else "Review source inputs"
+    if source_layout.is_source_native
+    else "Edit here",
     (
-        "The source pack has been ingested, but its dictionaries, irregular events, "
+        "The recognised model-input tables are ready for Coverage and Model Setup. "
+        "Dictionaries and evidence remain separate from the model-input path."
+        if _has_adopted_standard_inputs and not _unsupported_frequencies
+        else "The source pack has been ingested. Its dictionaries, irregular events, "
         "and native-frequency tables are not one rectangular join input."
         if source_layout.is_source_native
         else "Choose the join keys and add auditable transformations. The preview below is calculated from those choices."
     ),
-    kind="governed" if source_layout.is_source_native else "editable",
+    kind=(
+        "ready"
+        if _has_adopted_standard_inputs and not _unsupported_frequencies
+        else "governed"
+        if source_layout.is_source_native
+        else "editable"
+    ),
 )
 
 if not sources:
@@ -161,28 +216,30 @@ if not sources:
 
 if source_layout.is_source_native:
     with SectionCard(
-        "Source-native preparation boundary",
+        "Recognised source tables",
         description=(
-            "Ingestion is complete. Tables that describe the source pack are "
-            "kept separate from time-series inputs."
+            "Table purpose is shown here. Official preparation capability is "
+            "reviewed separately below."
         ),
     ):
         table_rows = []
         for source_id, frame in sources.items():
             table_name = source_table_name(source_id)
             role = source_table_role(source_id)
-            if role in {
-                "Activity metadata",
-                "Outcome metadata",
-                "Variable metadata",
+            if table_name in {
+                "activity_dictionary",
+                "outcome_dictionary",
+                "variable_dictionary",
             }:
-                treatment = "Metadata; not a join input"
-            elif role == "Irregular events":
-                treatment = "Irregular event table; kept separate"
-            elif role == "Experiment evidence":
-                treatment = "Evidence table; kept separate"
+                treatment = "Description table; kept separate"
+            elif table_name == "events":
+                treatment = "Irregular events; kept separate"
+            elif table_name == "experiment_evidence":
+                treatment = "Supporting evidence; kept separate"
             else:
-                treatment = "Native table; no end-to-end join available"
+                treatment = (
+                    "Model-input source; official preparation checked separately"
+                )
             table_rows.append(
                 {
                     "Table": table_name,
@@ -192,16 +249,62 @@ if source_layout.is_source_native:
                 }
             )
         st.dataframe(pd.DataFrame(table_rows), width="stretch", hide_index=True)
-        st.warning(
-            "The current application does not have an approved end-to-end "
-            "preparation method for this source-native layout. No weekly/monthly "
-            "conversion, interpolation, allocation, or fill is applied here."
-        )
-        st.info(
-            "This demo validates the ingestion contract rather than a full model "
-            "run. Use Quick demo or upload compatible rectangular model inputs "
-            "when you need to continue through the current modelling workflow."
-        )
+        if _has_adopted_standard_inputs and not _unsupported_frequencies:
+            with SectionCard(
+                "Standard model inputs recognised",
+                description=(
+                    "The adopted model-input tables are ready for the existing "
+                    "Coverage and Model Setup workflow."
+                ),
+            ):
+                st.success(
+                    "Recognised and adopted. No generic join is needed for these "
+                    "standard model inputs."
+                )
+                st.caption(
+                    "The source dictionaries, irregular events, and supporting "
+                    "evidence remain separate and are not sent through the model-input join."
+                )
+                if st.button(
+                    "Continue to Coverage & Gaps",
+                    type="primary",
+                    key="adopted_source_continue",
+                ):
+                    st.switch_page("pages/15_Data_Coverage.py")
+        elif _unsupported_frequencies:
+            with SectionCard(
+                "Official preparation needs a frequency decision",
+                description=(
+                    "The source pack was recognised, but its native frequencies "
+                    "cannot yet be aligned for official modelling."
+                ),
+            ):
+                st.warning(
+                    "One or more model inputs are not weekly, and the application "
+                    "does not currently have an approved conversion method for them."
+                )
+                st.caption(
+                    "Affected native frequencies: "
+                    + ", ".join(_unsupported_frequencies)
+                    + ". No interpolation, allocation, or fill is applied."
+                )
+                st.info(
+                    "Review the source pack or continue with the existing exploratory "
+                    "workflow. This state does not approve a frequency conversion."
+                )
+        else:
+            with SectionCard(
+                "Standard source pack recognised",
+                description=(
+                    "The tables are kept separate until their adopted model-input "
+                    "state is available."
+                ),
+            ):
+                st.info(
+                    "Review the source adoption details in Data Sources before "
+                    "continuing. The app will not send dictionaries or evidence "
+                    "through a generic join."
+                )
         if st.button("Return to Data Sources", key="source_native_return"):
             st.switch_page("pages/01_Data_Upload.py")
     st.stop()
