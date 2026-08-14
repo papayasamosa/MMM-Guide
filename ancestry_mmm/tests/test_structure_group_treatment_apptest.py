@@ -92,12 +92,12 @@ def test_structure_renders_human_group_summary_and_persists_selected_treatment()
     treatment = next(
         item
         for item in at.selectbox
-        if item.label == "Model treatment · Family History GSA"
+        if item.label == "How should this group be used? · Family History GSA"
     )
     assert "Components jointly" in treatment.options
     assert "Supplied total only" in treatment.options
     assert "Descriptive only" in treatment.options
-    assert any(item.label == "Breakdown" for item in at.metric)
+    assert any(item.label == "Customer breakdown" for item in at.metric)
 
     treatment.select(OUTCOME_GROUP_TREATMENT_COMPONENTS_JOINT).run()
     save = next(

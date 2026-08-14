@@ -60,9 +60,18 @@ def test_page_loads_with_two_kpis_already_configured_on_one_segment():
 
     # The FH DNA cross-sell selectbox must render with real candidates -
     # proof the page parsed a multi-row FH catalogue without raising.
-    cross_sell = [sb for sb in at.selectbox if sb.label == "FH DNA cross-sell outcome"]
-    assert cross_sell, "FH DNA cross-sell outcome selectbox not found"
+    cross_sell = [
+        sb
+        for sb in at.selectbox
+        if sb.label == "Family History outcome receiving the DNA halo"
+    ]
+    assert cross_sell, "DNA halo target selectbox not found"
     assert "(none)" in cross_sell[0].options
+    assert any("1. Scope" in item.value for item in at.markdown)
+    assert any("2. Outcomes" in item.value for item in at.markdown)
+    assert any("3. Outcome groups" in item.value for item in at.markdown)
+    assert any("4. Advanced relationships" in item.value for item in at.markdown)
+    assert any("5. Review and save" in item.value for item in at.markdown)
 
 
 def test_model_structure_lists_governed_activities_and_resolves_inputs():
@@ -162,6 +171,22 @@ def test_bulk_apply_segment_mapping_to_every_outcome_in_it():
     ]
     at.run()
     assert not at.exception
+
+    overview = next(
+        table.value
+        for table in at.dataframe
+        if set(table.value.columns)
+        == {
+            "Outcome",
+            "Product",
+            "Customer segment",
+            "Measure",
+            "Source field",
+            "Use in next fit",
+        }
+    )
+    assert "fh_new_gsa" not in overview["Outcome"].tolist()
+    assert "New" in overview["Customer segment"].tolist()
 
     override_expander = [
         e for e in at.expander if "Outcome overrides for segment 'New'" in e.label
@@ -412,7 +437,7 @@ def test_legacy_pathway_review_loads_catalogue_and_requires_refit():
     cross_sell = [
         selectbox
         for selectbox in at.selectbox
-        if selectbox.label == "FH DNA cross-sell outcome"
+        if selectbox.label == "Family History outcome receiving the DNA halo"
     ][0]
     assert "Family History · DNA cross-sell · GSA" in cross_sell.options
     cross_sell.select("fh_dna_crosssell").run()
