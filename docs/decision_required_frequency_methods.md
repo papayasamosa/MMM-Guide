@@ -33,16 +33,19 @@ behaviour, validation evidence, and official-use owner/approval.
   forward-fill, or other method is registered or defaulted for official use.
 - `core.frequency_alignment.assess_official_preparation` evaluates the
   versioned coverage and canonical-calendar contracts without modifying a
-  DataFrame. Mixed-frequency records return
+  DataFrame. Already-weekly native sources may use the explicit canonical
+  weekly preparation path; mixed-frequency records return
   `unsupported_no_approved_method` (or a more specific leakage or
-  definition-break blocker); missing governance returns `decision_required`.
+  definition-break blocker), and missing governance returns
+  `decision_required`.
 - Native source frequency and canonical missingness are preserved.
 - The Transform Pipeline's generic fill operations remain available as
   explicitly exploratory operations. They are not an official alignment
   mechanism.
-- A future approval must add the corresponding registry entry, an executor,
-  reconciliation/leakage/support/definition-break tests, and explicit analyst
-  review before the official button can produce a converted frame.
+- A future mixed-frequency approval must add the corresponding registry entry,
+  an executor, reconciliation/leakage/support/definition-break tests, and
+  explicit analyst review before the official button can produce a converted
+  frame. It does not change the native-weekly path or authorize imputation.
 
 ## Owner and status
 

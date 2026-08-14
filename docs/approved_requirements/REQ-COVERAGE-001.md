@@ -82,18 +82,38 @@ exploratory Transform Pipeline remains available and is not an official
 frequency-alignment path.
 
 The following remain not implemented: execution of an approved
-frequency-conversion method, a full canonical-calendar data transformation
-service, and the broader official-use policy gate described above. See
+frequency-conversion method and the broader policy-backed approval gate
+described above. The current WP2 native weekly path is intentionally limited
+to already-canonical inputs and does not resolve mixed-frequency conversion.
+See
 `docs/decision_required_frequency_methods.md` for the exact open choices by
 variable class.
 
+### Status as of 2026-08-14 (after WP2 official preparation)
+
+The official path now has a framework-independent canonical native-frequency
+service in `core.official_preparation`. It uses an explicit governed weekly
+calendar and an outer join over the union of governed source periods; it
+preserves missingness and rejects exploratory fill/drop operations. The
+exploratory Transform Pipeline still retains its explicit join modes and
+missing-value operations, but it is not an official fallback.
+
+The official capability report now covers every source-backed variable
+consumed by the compiled proposal: included outcomes, media/model inputs,
+global/product/segment/outcome controls, promotions, and Search predictors.
+Fourier, trend, and deterministic pipeline terms are reported separately from
+source coverage. Unresolved or missing coverage for a consumed variable, an
+unsupported engine shape, or an unresolved frequency decision blocks the
+official frame and fit; gaps on unconsumed variables do not. Calendar,
+alignment, capability, and official-frame evidence are persisted and included
+in model identity.
+
 ### What already exists today (do not duplicate)
 
-- `data.pipeline.join_sources`: single-mode source join, currently
-  defaulting to `how="inner"` in its Streamlit caller (Transform Pipeline
-  page) with no join-loss diagnostics. A dependent requirement must add
-  explicit join semantics and diagnostics on top of this function, not
-  replace it wholesale.
+- `data.pipeline.join_sources`: the exploratory source join remains
+  available, including its explicit join modes and diagnostics. Official
+  native preparation uses `core.official_preparation` and does not call the
+  exploratory inner-join path.
 - The generic Transform Pipeline missing-value operations
   (`zero`/`mean`/`median`/`ffill`/`interpolate`/`drop_rows`): free-form,
   column-agnostic, with no variable-class, coverage-state, or leakage

@@ -71,6 +71,11 @@ class ProjectExportInput:
     source_definitions: Optional[List[dict]] = None
     variable_coverage_matrices: Optional[List[dict]] = None
     join_config: Optional[dict] = None
+    canonical_calendar: Optional[dict] = None
+    official_preparation_result: Optional[dict] = None
+    official_capability_report: Optional[dict] = None
+    official_prepared_data: Optional[pd.DataFrame] = None
+    official_join_diagnostics: Optional[dict] = None
     include_excel: bool = False
     excel_sheets: Optional[Dict[str, Optional[pd.DataFrame]]] = None
     excel_output_path: Optional[str] = None
@@ -185,6 +190,11 @@ class ProjectService:
                 source_definitions=exp_input.source_definitions,
                 variable_coverage_matrices=exp_input.variable_coverage_matrices,
                 join_config=exp_input.join_config,
+                canonical_calendar=exp_input.canonical_calendar,
+                official_preparation_result=exp_input.official_preparation_result,
+                official_capability_report=exp_input.official_capability_report,
+                official_prepared_data=exp_input.official_prepared_data,
+                official_join_diagnostics=exp_input.official_join_diagnostics,
             )
         except Exception as exc:
             errors.append(f"Project export failed: {exc}")

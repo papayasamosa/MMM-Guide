@@ -5,8 +5,8 @@ Export & Recovery dashboard to this page. Presentation only:
 every value shown is read from existing session-state getters or from the
 bundle's own manifest.json ("contains" dict, written by
 core.persistence.export_project - never recomputed here), never invented or
-duplicated. No change to core.persistence or application.project_service
-logic.
+duplicated. WP2 also persists the official canonical preparation evidence
+and its durable native frame through the existing persistence boundary.
 """
 
 import json
@@ -313,6 +313,7 @@ def _resolve_official_curve_artifact_rows() -> list[dict]:
                     if coverage_matrix_dict
                     else None
                 ),
+                official_preparation_evidence=get_state("official_preparation_result"),
             ),
             "posterior_fingerprint": fingerprint_posterior(params),
         }
@@ -710,6 +711,11 @@ if st.button("Build export bundle", type="primary"):
                 if get_state("date_col")
                 else None
             ),
+            canonical_calendar=get_state("canonical_calendar"),
+            official_preparation_result=get_state("official_preparation_result"),
+            official_capability_report=get_state("official_capability_report"),
+            official_prepared_data=get_state("official_prepared_data"),
+            official_join_diagnostics=get_state("official_join_diagnostics"),
         )
     st.success("Durable project bundle built and ready to download.")
     # Read back this bundle's own manifest.json (written by
@@ -781,6 +787,18 @@ if uploaded_zip is not None and st.button("Import bundle"):
             )
             transformed = apply_pipeline(transformed, promo_steps)
         set_state("transformed_data", transformed)
+        set_state("official_prepared_data", imported.get("official_prepared_data"))
+        set_state(
+            "official_join_diagnostics", imported.get("official_join_diagnostics")
+        )
+        set_state(
+            "official_prepared_data_fingerprint",
+            (
+                fingerprint_dataframe(imported["official_prepared_data"])
+                if imported.get("official_prepared_data") is not None
+                else None
+            ),
+        )
         set_state("pipeline_steps", imported["pipeline_steps"])
         set_state("model_spec", imported["model_spec"])
         set_state("prior_config", imported["prior_config"])
@@ -967,6 +985,15 @@ if uploaded_zip is not None and st.button("Import bundle"):
         set_state("market_col", _join_config.get("market_col"))
         set_state("join_mode", _join_config.get("join_mode"))
         set_state("join_diagnostics", _join_config.get("join_diagnostics"))
+        set_state("canonical_calendar", imported.get("canonical_calendar"))
+        set_state(
+            "official_preparation_result",
+            imported.get("official_preparation_result"),
+        )
+        set_state(
+            "official_capability_report",
+            imported.get("official_capability_report"),
+        )
         set_state("migration_review", imported.get("migration_review"))
         # PR 125A: restore the project-level planning dependencies so a
         # resumed session's Scenario Planner selection (and any newly

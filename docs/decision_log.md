@@ -2374,6 +2374,37 @@ model equation, or statistical method was added.
 **Status:** Implemented at the governance boundary; concrete method decision
 and conversion executor remain open.
 
+## Canonical native weekly official preparation (Work Package 2)
+
+**Date:** 2026-08-14
+**Decision:** Keep the existing Transform Pipeline as an exploratory utility,
+and add a separate framework-independent official preparation path for inputs
+already at an explicitly governed weekly cadence. The official path joins the
+union of governed source keys with an outer join, preserves nulls and source
+periods, rejects exploratory fill/drop operations, and requires a governed
+calendar. It does not execute mixed-frequency conversion.
+
+**Reason:** The previous official action could consume the current transformed
+frame even when that frame had been created by an inner intersection. That
+could silently discard a source period before coverage review. No approved
+mixed-frequency method exists, so the safe implementation boundary is a
+canonical native weekly path plus an explicit fail-closed gate.
+
+**Impact:** Added `core.official_preparation` for canonical native framing and
+fit-consumed capability evidence. The capability report covers included
+outcomes, media/model inputs, controls, promotions, and governed Search
+predictors, while Fourier/trend/deterministic pipeline terms remain separate
+from source coverage. Missing or unresolved coverage blocks only when the
+variable is consumed by the compiled proposal; unrelated coverage gaps remain
+reviewable without blocking this fit. Official preparation and model identity
+now persist calendar, alignment, capability, and canonical-frame evidence.
+No interpolation, allocation, fill, missing-data likelihood, FR-MOD-015
+handling, or mixed-frequency statistical method was introduced.
+
+**Owner:** Platform engineering / Data Science.
+**Status:** Implemented in WP2; concrete mixed-frequency methods and the
+broader policy-backed approval gate remain open.
+
 ## Realistic source-native synthetic demo pack (Work Package 7)
 
 **Date:** 2026-08-13

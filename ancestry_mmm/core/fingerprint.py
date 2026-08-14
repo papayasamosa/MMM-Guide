@@ -127,6 +127,7 @@ def fingerprint_model_spec(
     search_object_fit_fingerprint: Optional[str] = None,
     variable_coverage_fingerprint: Optional[str] = None,
     outcome_group_treatments: Optional[List[Dict[str, Any]]] = None,
+    official_preparation_evidence: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
     Fingerprint the full set of inputs that determine how the model is
@@ -356,6 +357,7 @@ def fingerprint_model_spec(
         or "",
         "search_object_fit_fingerprint": search_object_fit_fingerprint or "",
         "variable_coverage_fingerprint": variable_coverage_fingerprint or "",
+        "official_preparation_evidence": official_preparation_evidence or {},
     }
     blob = _canonical_json(payload)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
