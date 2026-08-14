@@ -21,6 +21,13 @@ Bundle layout (a single zip):
                                           core.hierarchical_model - the default/legacy value
                                           when this file is absent) or "market_specific"
                                           (Model C, core.market_specific_model)
+    config/outcome_groups.json         - semantic outcome-group definitions, separate
+                                          from model treatment and reconciliation evidence
+    config/outcome_group_treatments.json - analyst-selected group treatment records
+                                          (components_joint/total_only/descriptive_only/
+                                          unconfigured)
+    config/outcome_reconciliation_groups.json - explicit diagnostic arithmetic
+                                          relationships, when persisted by the workflow
     config/scenarios.json              - scenario definitions (spend plan, constraints)
     config/counterfactual_policy.json  - PR 125A: project-level CounterfactualPolicy
                                           (core.scenario_governance), if one was in
@@ -160,8 +167,20 @@ from .curve_artifact import (
     validate_portable_path_component,
 )
 from .hierarchical_model import FHModelMeta
-from .outcomes import outcome_catalogue_fingerprint_payload
+from .outcomes import (
+    OutcomeGroupDefinition,
+    OutcomeGroupTreatment,
+    outcome_catalogue_fingerprint_payload,
+    outcome_group_fingerprint_payload,
+    outcome_group_treatment_fingerprint_payload,
+    validate_outcome_group_definitions,
+    validate_outcome_group_treatments,
+)
 from .pathways import MediaOutcomePathway, pathway_catalogue_fingerprint_payload
+from .pathways import (
+    OutcomeReconciliationGroup,
+    validate_reconciliation_groups,
+)
 from .planning.value import CurrencyContext, OutcomeValueMapping
 from .predict import extract_posterior_params
 from .scenario_governance import CounterfactualPolicy
@@ -173,7 +192,9 @@ from .optimization import SpendConstraint
 # for the project-level search_objects bundle file. REQ-COVERAGE-001: bumped
 # 13 -> 14 for the project-level variable_coverage_matrices bundle file, and
 # 14 -> 15 for the project-level join_config bundle file (Work Package 4).
-PROJECT_BUNDLE_SCHEMA_VERSION = 15
+# 15 -> 16 for semantic outcome groups, model treatments, and durable
+# reconciliation evidence (Work Package 3).
+PROJECT_BUNDLE_SCHEMA_VERSION = 16
 PROJECT_APP_VERSION = "0.1.0"
 
 
@@ -271,6 +292,9 @@ def export_project(
     source_definitions: Optional[List[dict]] = None,
     variable_coverage_matrices: Optional[List[dict]] = None,
     join_config: Optional[dict] = None,
+    outcome_groups: Optional[List[dict]] = None,
+    outcome_group_treatments: Optional[List[dict]] = None,
+    outcome_reconciliation_groups: Optional[List[dict]] = None,
 ) -> Path:
     output_path = Path(output_path)
     with tempfile.TemporaryDirectory() as tmp_str:
@@ -343,6 +367,45 @@ def export_project(
         if outcome_definitions is not None:
             (tmp / "config" / "outcome_definitions.json").write_text(
                 json.dumps(outcome_definitions, indent=2, default=str)
+            )
+        if outcome_groups is not None:
+            (tmp / "config" / "outcome_groups.json").write_text(
+                json.dumps(
+                    [
+                        group.to_dict()
+                        if isinstance(group, OutcomeGroupDefinition)
+                        else group
+                        for group in outcome_groups
+                    ],
+                    indent=2,
+                    default=str,
+                )
+            )
+        if outcome_group_treatments is not None:
+            (tmp / "config" / "outcome_group_treatments.json").write_text(
+                json.dumps(
+                    [
+                        treatment.to_dict()
+                        if isinstance(treatment, OutcomeGroupTreatment)
+                        else treatment
+                        for treatment in outcome_group_treatments
+                    ],
+                    indent=2,
+                    default=str,
+                )
+            )
+        if outcome_reconciliation_groups is not None:
+            (tmp / "config" / "outcome_reconciliation_groups.json").write_text(
+                json.dumps(
+                    [
+                        group.to_dict()
+                        if isinstance(group, OutcomeReconciliationGroup)
+                        else group
+                        for group in outcome_reconciliation_groups
+                    ],
+                    indent=2,
+                    default=str,
+                )
             )
         if funnel_links is not None:
             (tmp / "config" / "funnel_links.json").write_text(
@@ -505,6 +568,12 @@ def export_project(
                 "raw_data": bool(raw_sources),
                 "transformed_data": transformed_data is not None,
                 "model_spec": model_spec is not None,
+                "outcome_groups": outcome_groups is not None and bool(outcome_groups),
+                "outcome_group_treatments": outcome_group_treatments is not None
+                and bool(outcome_group_treatments),
+                "outcome_reconciliation_groups": outcome_reconciliation_groups
+                is not None
+                and bool(outcome_reconciliation_groups),
                 "posterior": trace is not None,
                 "diagnostics": bool(diagnostics),
                 "curves": (tmp / "curve_bank").exists(),
@@ -578,6 +647,11 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         # core.outcomes.resolve_outcome_definitions(None, ...) derives an
         # equivalent FH-only outcome set from the imported model_spec.
         "outcome_definitions": None,
+        # Absent in bundles exported before WP3 - None means no semantic
+        # grouping was persisted, not that groups should be inferred.
+        "outcome_groups": None,
+        "outcome_group_treatments": None,
+        "outcome_reconciliation_groups": None,
         # Absent in bundles exported before PR E.2 - None (not an error);
         # "no funnel links configured" is the correct legacy/default reading,
         # not "funnel diagnostics are unavailable" (they still work with an
@@ -728,6 +802,18 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
             result["outcome_definitions"] = json.loads(
                 (config_dir / "outcome_definitions.json").read_text()
             )
+        if (config_dir / "outcome_groups.json").exists():
+            result["outcome_groups"] = json.loads(
+                (config_dir / "outcome_groups.json").read_text()
+            )
+        if (config_dir / "outcome_group_treatments.json").exists():
+            result["outcome_group_treatments"] = json.loads(
+                (config_dir / "outcome_group_treatments.json").read_text()
+            )
+        if (config_dir / "outcome_reconciliation_groups.json").exists():
+            result["outcome_reconciliation_groups"] = json.loads(
+                (config_dir / "outcome_reconciliation_groups.json").read_text()
+            )
         if (config_dir / "funnel_links.json").exists():
             result["funnel_links"] = json.loads(
                 (config_dir / "funnel_links.json").read_text()
@@ -874,6 +960,120 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
             result["notes"] = notes_path.read_text()
 
     return result
+
+
+def resolve_imported_outcome_groups(
+    imported: Dict[str, Any],
+) -> Tuple[List[dict], List[str]]:
+    """Load persisted semantic groups with explicit quarantine warnings.
+
+    Missing group files are the legacy/no-groups state.  A malformed group
+    is dropped with a warning; no group is inferred from outcome IDs, labels,
+    or the current source dictionary.
+    """
+
+    raw_groups = imported.get("outcome_groups")
+    if raw_groups is None:
+        return [], []
+    groups: List[OutcomeGroupDefinition] = []
+    warnings: List[str] = []
+    for index, item in enumerate(raw_groups):
+        if not isinstance(item, Mapping):
+            warnings.append(
+                f"Outcome group record {index} is not a mapping and was quarantined."
+            )
+            continue
+        try:
+            groups.append(OutcomeGroupDefinition.from_dict(item))
+        except (TypeError, ValueError) as exc:
+            warnings.append(f"Outcome group record {index} was quarantined: {exc}")
+    errors = validate_outcome_group_definitions(groups)
+    if errors:
+        warnings.extend(
+            f"Outcome groups were quarantined because the persisted catalogue is invalid: {error}"
+            for error in errors
+        )
+        return [], warnings
+    return [group.to_dict() for group in groups], warnings
+
+
+def resolve_imported_outcome_group_treatments(
+    imported: Dict[str, Any],
+    *,
+    groups: Optional[Sequence[OutcomeGroupDefinition]] = None,
+) -> Tuple[List[dict], List[str]]:
+    """Load persisted analyst group treatments, quarantining bad records."""
+
+    raw_treatments = imported.get("outcome_group_treatments")
+    if raw_treatments is None:
+        if groups is None:
+            return [], []
+        return [
+            OutcomeGroupTreatment(group_id=group.group_id).to_dict() for group in groups
+        ], []
+    treatments: List[OutcomeGroupTreatment] = []
+    warnings: List[str] = []
+    for index, item in enumerate(raw_treatments):
+        if not isinstance(item, Mapping):
+            warnings.append(
+                f"Outcome group treatment record {index} is not a mapping and was quarantined."
+            )
+            continue
+        try:
+            treatments.append(OutcomeGroupTreatment.from_dict(item))
+        except (TypeError, ValueError) as exc:
+            warnings.append(
+                f"Outcome group treatment record {index} was quarantined: {exc}"
+            )
+    errors = validate_outcome_group_treatments(treatments, groups=groups)
+    if errors:
+        warnings.extend(
+            f"Outcome group treatments were quarantined because the persisted configuration is invalid: {error}"
+            for error in errors
+        )
+        return [], warnings
+    if groups is not None:
+        existing_ids = {treatment.group_id for treatment in treatments}
+        treatments.extend(
+            OutcomeGroupTreatment(group_id=group.group_id)
+            for group in groups
+            if group.group_id not in existing_ids
+        )
+    return [treatment.to_dict() for treatment in treatments], warnings
+
+
+def resolve_imported_outcome_reconciliation_groups(
+    imported: Dict[str, Any],
+    *,
+    outcome_ids: Optional[Sequence[str]] = None,
+) -> Tuple[List[dict], List[str]]:
+    """Load diagnostic reconciliation records with explicit quarantine."""
+
+    raw_groups = imported.get("outcome_reconciliation_groups")
+    if raw_groups is None:
+        return [], []
+    groups: List[OutcomeReconciliationGroup] = []
+    warnings: List[str] = []
+    for index, item in enumerate(raw_groups):
+        if not isinstance(item, Mapping):
+            warnings.append(
+                f"Outcome reconciliation record {index} is not a mapping and was quarantined."
+            )
+            continue
+        try:
+            groups.append(OutcomeReconciliationGroup.from_dict(dict(item)))
+        except (TypeError, ValueError) as exc:
+            warnings.append(
+                f"Outcome reconciliation record {index} was quarantined: {exc}"
+            )
+    errors = validate_reconciliation_groups(groups, outcome_ids=outcome_ids)
+    if errors:
+        warnings.extend(
+            f"Outcome reconciliation records were quarantined because the persisted catalogue is invalid: {error}"
+            for error in errors
+        )
+        return [], warnings
+    return [group.to_dict() for group in groups], warnings
 
 
 def resolve_imported_media_outcome_pathways(
@@ -2280,6 +2480,20 @@ def reconstruct_model_state(imported: Dict[str, Any]) -> Dict[str, Any]:
                     OutcomeDefinition.from_dict(o)
                     for o in meta_dict["outcome_catalogue_at_fit"]
                 ]
+            if meta_dict.get("outcome_groups_at_fit"):
+                meta_dict["outcome_groups_at_fit"] = [
+                    OutcomeGroupDefinition.from_dict(group)
+                    if isinstance(group, Mapping)
+                    else group
+                    for group in meta_dict["outcome_groups_at_fit"]
+                ]
+            if meta_dict.get("outcome_group_treatments_at_fit"):
+                meta_dict["outcome_group_treatments_at_fit"] = [
+                    OutcomeGroupTreatment.from_dict(treatment)
+                    if isinstance(treatment, Mapping)
+                    else treatment
+                    for treatment in meta_dict["outcome_group_treatments_at_fit"]
+                ]
             if meta_dict.get("pathway_catalogue_at_fit"):
                 from .pathways import MediaOutcomePathway
 
@@ -2382,6 +2596,10 @@ def current_model_identity_fingerprints(
     outcome_catalogue_at_fit = (
         getattr(model_meta, "outcome_catalogue_at_fit", None) or []
     )
+    outcome_groups_at_fit = getattr(model_meta, "outcome_groups_at_fit", None) or []
+    outcome_group_treatments_at_fit = (
+        getattr(model_meta, "outcome_group_treatments_at_fit", None) or []
+    )
     # funnel_links/media_outcome_pathways: fingerprint the fit-time pathway
     # catalogue the same way outcome_catalogue is fingerprinted above (the
     # exact catalogue this fit's metadata was captured from, not the
@@ -2418,6 +2636,10 @@ def current_model_identity_fingerprints(
         else None,
         outcome_catalogue=outcome_catalogue_fingerprint_payload(
             outcome_catalogue_at_fit
+        ),
+        outcome_groups=outcome_group_fingerprint_payload(outcome_groups_at_fit),
+        outcome_group_treatments=outcome_group_treatment_fingerprint_payload(
+            outcome_group_treatments_at_fit
         ),
         funnel_links=imported.get("funnel_links"),
         media_outcome_pathways=pathway_catalogue_fingerprint_payload(

@@ -515,6 +515,73 @@ class OutcomeGroupDefinition:
         return cls(**cast(Any, {k: v for k, v in d.items() if k in known}))
 
 
+OUTCOME_GROUP_TREATMENT_COMPONENTS_JOINT = "components_joint"
+OUTCOME_GROUP_TREATMENT_TOTAL_ONLY = "total_only"
+OUTCOME_GROUP_TREATMENT_DESCRIPTIVE_ONLY = "descriptive_only"
+OUTCOME_GROUP_TREATMENT_UNCONFIGURED = "unconfigured"
+
+OUTCOME_GROUP_TREATMENTS = (
+    OUTCOME_GROUP_TREATMENT_COMPONENTS_JOINT,
+    OUTCOME_GROUP_TREATMENT_TOTAL_ONLY,
+    OUTCOME_GROUP_TREATMENT_DESCRIPTIVE_ONLY,
+    OUTCOME_GROUP_TREATMENT_UNCONFIGURED,
+)
+
+
+@dataclass(frozen=True)
+class OutcomeGroupTreatment:
+    """The separately governed model treatment selected for one group.
+
+    Source dictionaries define semantic membership; they do not select how
+    an analyst fits or reports that group.  ``unconfigured`` is the safe
+    migration/import state when no analyst decision has been recorded.
+    """
+
+    group_id: str
+    treatment: str = OUTCOME_GROUP_TREATMENT_UNCONFIGURED
+    schema_version: int = 1
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: Mapping[str, object]) -> "OutcomeGroupTreatment":
+        d = dict(d)
+        known = set(cls.__dataclass_fields__)
+        return cls(**cast(Any, {k: v for k, v in d.items() if k in known}))
+
+
+def validate_outcome_group_treatments(
+    treatments: Sequence[OutcomeGroupTreatment],
+    *,
+    groups: Optional[Sequence[OutcomeGroupDefinition]] = None,
+) -> List[str]:
+    """Validate model treatment records without selecting a treatment."""
+
+    errors: List[str] = []
+    seen_ids = set()
+    known_group_ids = (
+        {group.group_id for group in groups} if groups is not None else None
+    )
+    for treatment in treatments:
+        label = treatment.group_id or "(no group_id)"
+        if not treatment.group_id:
+            errors.append("Every outcome group treatment must have a group_id.")
+        elif treatment.group_id in seen_ids:
+            errors.append(f"Duplicate outcome group treatment group_id '{label}'.")
+        seen_ids.add(treatment.group_id)
+        if treatment.treatment not in OUTCOME_GROUP_TREATMENTS:
+            errors.append(
+                f"Outcome group '{label}' has unknown treatment '{treatment.treatment}' "
+                f"(expected one of {', '.join(OUTCOME_GROUP_TREATMENTS)})."
+            )
+        if known_group_ids is not None and treatment.group_id not in known_group_ids:
+            errors.append(
+                f"Outcome group treatment '{label}' references an unknown group."
+            )
+    return errors
+
+
 # ---------------------------------------------------------------------------
 # Four-axis eligibility model (PR E.2)
 #
@@ -1395,6 +1462,30 @@ def outcome_groups_fingerprint_payload(
     return outcome_group_fingerprint_payload(groups)
 
 
+def outcome_group_treatment_fingerprint_payload(
+    treatments: Sequence[OutcomeGroupTreatment],
+) -> List[dict]:
+    """Return calculation identity for analyst-selected group treatments.
+
+    Treatment records intentionally contain only the stable group ID and
+    treatment value.  Labels and the record schema version are portable audit
+    metadata, not model identity.
+    """
+
+    return [
+        {"group_id": treatment.group_id, "treatment": treatment.treatment}
+        for treatment in sorted(treatments, key=lambda item: item.group_id)
+    ]
+
+
+def outcome_group_treatments_fingerprint_payload(
+    treatments: Sequence[OutcomeGroupTreatment],
+) -> List[dict]:
+    """Plural compatibility alias for the treatment fingerprint payload."""
+
+    return outcome_group_treatment_fingerprint_payload(treatments)
+
+
 # ---------------------------------------------------------------------------
 # Exact fit-time drift detection (PR E.1)
 #
@@ -1518,6 +1609,130 @@ def outcomes_drift_dataframe(
     return pd.DataFrame(rows)
 
 
+OUTCOME_GROUP_DRIFT_STATUSES = (
+    "Fitted and current",
+    "Changed since fit",
+    "New since fit",
+    "Removed since fit",
+)
+
+
+def outcome_groups_at_fit_by_id(
+    model_meta: Optional[object],
+) -> Dict[str, OutcomeGroupDefinition]:
+    """Return fit-time semantic groups keyed by stable ``group_id``."""
+
+    if model_meta is None:
+        return {}
+    groups = getattr(model_meta, "outcome_groups_at_fit", None) or []
+    return {
+        group.group_id: group
+        for group in groups
+        if isinstance(group, OutcomeGroupDefinition)
+    }
+
+
+def outcome_group_drift_status(
+    group: Optional[OutcomeGroupDefinition],
+    fit_time_group: Optional[OutcomeGroupDefinition],
+) -> str:
+    """Compare calculation-relevant group structure across a fit boundary."""
+
+    if group is None and fit_time_group is None:
+        raise ValueError("At least one of group/fit_time_group must be given.")
+    if group is None:
+        return "Removed since fit"
+    if fit_time_group is None:
+        return "New since fit"
+    changed = any(
+        getattr(group, field) != getattr(fit_time_group, field)
+        for field in _OUTCOME_GROUP_FINGERPRINT_FIELDS
+    )
+    return "Changed since fit" if changed else "Fitted and current"
+
+
+def outcome_groups_drift_dataframe(
+    groups: Sequence[OutcomeGroupDefinition],
+    model_meta: Optional[object],
+) -> pd.DataFrame:
+    """Return one drift row per current-or-fit-time semantic group."""
+
+    if model_meta is None:
+        return pd.DataFrame(columns=["group_id", "drift_status"])
+    fit_by_id = outcome_groups_at_fit_by_id(model_meta)
+    current_by_id = {group.group_id: group for group in groups}
+    all_ids = list(dict.fromkeys([*current_by_id, *fit_by_id]))
+    rows = []
+    for group_id in all_ids:
+        current = current_by_id.get(group_id)
+        fit_time = fit_by_id.get(group_id)
+        selected = current or fit_time
+        if selected is None:
+            continue
+        row = selected.to_dict()
+        row["drift_status"] = outcome_group_drift_status(current, fit_time)
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def outcome_group_treatments_at_fit_by_id(
+    model_meta: Optional[object],
+) -> Dict[str, OutcomeGroupTreatment]:
+    """Return fit-time group treatments keyed by stable ``group_id``."""
+
+    if model_meta is None:
+        return {}
+    treatments = getattr(model_meta, "outcome_group_treatments_at_fit", None) or []
+    return {
+        treatment.group_id: treatment
+        for treatment in treatments
+        if isinstance(treatment, OutcomeGroupTreatment)
+    }
+
+
+def outcome_group_treatment_drift_status(
+    treatment: Optional[OutcomeGroupTreatment],
+    fit_time_treatment: Optional[OutcomeGroupTreatment],
+) -> str:
+    """Compare the calculation-relevant analyst treatment for one group."""
+
+    if treatment is None and fit_time_treatment is None:
+        raise ValueError("At least one of treatment/fit_time_treatment must be given.")
+    if treatment is None:
+        return "Removed since fit"
+    if fit_time_treatment is None:
+        return "New since fit"
+    return (
+        "Fitted and current"
+        if treatment.treatment == fit_time_treatment.treatment
+        else "Changed since fit"
+    )
+
+
+def outcome_group_treatments_drift_dataframe(
+    treatments: Sequence[OutcomeGroupTreatment],
+    model_meta: Optional[object],
+) -> pd.DataFrame:
+    """Return one drift row per current-or-fit-time group treatment."""
+
+    if model_meta is None:
+        return pd.DataFrame(columns=["group_id", "treatment", "drift_status"])
+    fit_by_id = outcome_group_treatments_at_fit_by_id(model_meta)
+    current_by_id = {treatment.group_id: treatment for treatment in treatments}
+    all_ids = list(dict.fromkeys([*current_by_id, *fit_by_id]))
+    rows = []
+    for group_id in all_ids:
+        current = current_by_id.get(group_id)
+        fit_time = fit_by_id.get(group_id)
+        selected = current or fit_time
+        if selected is None:
+            continue
+        row = selected.to_dict()
+        row["drift_status"] = outcome_group_treatment_drift_status(current, fit_time)
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
 # ---------------------------------------------------------------------------
 # Drift status as a first-class, blocking check (PR E.2 requirement #10)
 #
@@ -1539,6 +1754,8 @@ def has_blocking_drift(
     model_meta: Optional[object],
     *,
     available_columns: Optional[set] = None,
+    outcome_groups: Optional[Sequence[OutcomeGroupDefinition]] = None,
+    outcome_group_treatments: Optional[Sequence[OutcomeGroupTreatment]] = None,
 ) -> bool:
     """
     True if any outcome_id's catalogue entry has drifted from what
@@ -1558,9 +1775,25 @@ def has_blocking_drift(
     drift_df = outcomes_drift_dataframe(
         outcomes, model_meta, available_columns=available_columns
     )
-    if drift_df.empty:
-        return False
-    return bool(drift_df["drift_status"].isin(BLOCKING_DRIFT_STATUSES).any())
+    if not drift_df.empty and bool(
+        drift_df["drift_status"].isin(BLOCKING_DRIFT_STATUSES).any()
+    ):
+        return True
+    if outcome_groups is not None:
+        group_drift = outcome_groups_drift_dataframe(outcome_groups, model_meta)
+        if not group_drift.empty and bool(
+            group_drift["drift_status"].isin(BLOCKING_DRIFT_STATUSES).any()
+        ):
+            return True
+    if outcome_group_treatments is not None:
+        treatment_drift = outcome_group_treatments_drift_dataframe(
+            outcome_group_treatments, model_meta
+        )
+        if not treatment_drift.empty and bool(
+            treatment_drift["drift_status"].isin(BLOCKING_DRIFT_STATUSES).any()
+        ):
+            return True
+    return False
 
 
 def outcome_requires_semantic_review(outcome: OutcomeDefinition) -> bool:

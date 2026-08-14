@@ -548,6 +548,8 @@ def build_fh_market_specific_model(
         outcome_catalogue_at_fit=outcome_catalogue,
         outcome_control_names=frame.get("outcome_control_names") or {},
         direct_dna_outcome_ids=direct_dna_outcome_ids,
+        outcome_groups_at_fit=frame.get("outcome_groups") or [],
+        outcome_group_treatments_at_fit=frame.get("outcome_group_treatments") or [],
         pathway_catalogue_at_fit=pathway_catalogue,
         pathway_masks=pathway_masks,
         net_billthrough_metadata=frame.get("net_billthrough_metadata"),

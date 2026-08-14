@@ -3415,3 +3415,48 @@ refresh, and end-to-end UX remain in WP3-WP8. v1 definitions remain excluded
 from newly governed fits until reviewed.
 **Owner:** Data Science / Platform engineering.
 **Status:** Implemented in source-pack semantics WP2.
+
+## Outcome-group persistence and fit-time staleness (Work Package 3)
+
+**Date:** 2026-08-14
+**Decision:** Extend the versioned project bundle with separate JSON records
+for semantic `OutcomeGroupDefinition` objects, analyst-selected
+`OutcomeGroupTreatment` values, and explicitly durable diagnostic
+`OutcomeReconciliationGroup` relationships. Missing records in legacy bundles
+mean that no groups or treatments were persisted; they do not trigger
+inference. Missing group treatment remains the safe `unconfigured` state.
+Persist group and treatment snapshots in `FHModelMeta` so a fitted model
+retains the historical outcome structure and analyst treatment used at fit.
+Include calculation-relevant group membership and treatment values in model
+identity; exclude group labels and record schema versions. Reuse the existing
+fingerprint and drift architecture, and quarantine malformed imported records
+with explicit warnings.
+**Reason:** A current source dictionary must never be used to reconstruct the
+structure of a historical fit. Semantic grouping, analyst fit treatment, and
+diagnostic reconciliation have different ownership and must remain separately
+auditable through export/import and stale-state checks. Legacy bundles must
+remain loadable with visible absence rather than guessed meaning.
+**Alternatives considered:** Store groups only in page/session state (rejected
+- the project bundle is the system of record); put fit treatment in the source
+dictionary (rejected - it is an analyst model decision); reuse one generic
+group record for treatment and reconciliation (rejected - that conflates
+business semantics, model structure, and arithmetic diagnostics); silently
+repair malformed imported records (rejected - records are quarantined with a
+warning).
+**Impact:** Bundle schema version 16 persists the three distinct records and
+fit metadata round-trips them. Group membership/treatment drift can block
+dependent calculations through the existing outcome drift predicate, while a
+group-label edit does not stale identity. No model equation or Streamlit
+workflow is changed in this package. Business question: can a project resume
+with the exact semantic groups, fit treatment, and diagnostic relationships
+that existed when its evidence was created? Estimand: none introduced;
+persistence and identity metadata only. Output scale/units: unchanged; group
+records carry supplied outcome identities and no numerical aggregation is
+performed here. Upstream modelling references: none consulted; no modelling
+API or dependency changed.
+**Remaining limitation:** model-structure UI adoption and actual
+`components_joint`/`total_only` fitting remain in WP5; draw-level grouped
+totals remain in WP6. Reconciliation is persisted as labelled diagnostic
+evidence, not as a fitted likelihood or causal edge.
+**Owner:** Data Science / Platform engineering.
+**Status:** Implemented in persistence and staleness WP3.

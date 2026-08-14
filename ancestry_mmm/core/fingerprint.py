@@ -126,6 +126,7 @@ def fingerprint_model_spec(
     causal_graph_structural_fingerprint: Optional[str] = None,
     search_object_fit_fingerprint: Optional[str] = None,
     variable_coverage_fingerprint: Optional[str] = None,
+    outcome_group_treatments: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     """
     Fingerprint the full set of inputs that determine how the model is
@@ -176,7 +177,7 @@ def fingerprint_model_spec(
     "Model A") so existing call sites that don't pass it keep fingerprinting
     that model type explicitly, not omitting model identity from the hash.
     `pipeline_steps`, `market_spec_config`, `direct_dna_outcome_ids`,
-    `outcome_catalogue`, and `outcome_groups` default to `None` (treated as
+    `outcome_catalogue`, `outcome_groups`, and `outcome_group_treatments` default to `None` (treated as
     empty) for the same
     reason - a caller with nothing to pass still gets a deterministic,
     explicit fingerprint rather than an error. `direct_dna_outcome_ids` is
@@ -184,8 +185,10 @@ def fingerprint_model_spec(
     calls listing the same outcome_ids in a different order must fingerprint
     identically; `outcome_catalogue` is likewise re-sorted by its own
     `outcome_id` key here (defensively - callers are expected to already
-    pass it pre-sorted) for the same reason. `outcome_groups` is likewise
-    re-sorted by its `group_id` key here defensively.
+    pass it pre-sorted) for the same reason. `outcome_groups` and
+    `outcome_group_treatments` are likewise re-sorted by their `group_id`
+    keys here defensively. A treatment change such as `components_joint` to
+    `total_only` therefore invalidates dependent evidence.
 
     `funnel_links` (PR E.2 - `core.funnel.FunnelLink`s, pass
     `core.funnel.funnel_links_fingerprint_payload(links)`) is diagnostic
@@ -271,6 +274,7 @@ def fingerprint_model_spec(
 
     Note: adding `pipeline_steps`, `market_spec_config`,
     `direct_dna_outcome_ids`, `outcome_catalogue`, `outcome_groups`,
+    `outcome_group_treatments`,
     `funnel_links`,
     `media_outcome_pathways`, `activity_fit_fingerprint`,
     `causal_graph_structural_fingerprint`, `search_object_fit_fingerprint`
@@ -279,7 +283,7 @@ def fingerprint_model_spec(
     for callers who pass none of them (the payload always carries
     `"pipeline_steps": []`, `"market_relevant_config": {}`,
     `"direct_dna_outcome_ids": []`, `"outcome_catalogue": []`,
-    `"outcome_groups": []`,
+    `"outcome_groups": []`, `"outcome_group_treatments": []`,
     `"funnel_links": []`, `"media_outcome_pathways": []`,
     `"activity_fit_fingerprint": ""`,
     `"causal_graph_structural_fingerprint": ""`,
@@ -318,6 +322,14 @@ def fingerprint_model_spec(
         "outcome_groups": (
             sorted(outcome_groups, key=lambda group: group.get("group_id", ""))
             if outcome_groups
+            else []
+        ),
+        "outcome_group_treatments": (
+            sorted(
+                outcome_group_treatments,
+                key=lambda treatment: treatment.get("group_id", ""),
+            )
+            if outcome_group_treatments
             else []
         ),
         "funnel_links": (

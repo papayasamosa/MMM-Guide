@@ -29,7 +29,11 @@ import pytensor.tensor as pt
 
 from .transformations import pt_geometric_adstock_matrix, pt_hill_function
 from .schema import ModelSpec
-from .outcomes import outcome_eligibility
+from .outcomes import (
+    OutcomeGroupDefinition,
+    OutcomeGroupTreatment,
+    outcome_eligibility,
+)
 from .causal_graph import CausalGraph
 from .graph_model_compiler import (
     GRAPH_ENGINE_PYMC_HIERARCHICAL,
@@ -139,6 +143,8 @@ class FHModelMeta:
     outcome_catalogue_at_fit: List[Any] = field(default_factory=list)
     outcome_control_names: Dict[str, List[str]] = field(default_factory=dict)
     direct_dna_outcome_ids: List[str] = field(default_factory=list)
+    outcome_groups_at_fit: List[Any] = field(default_factory=list)
+    outcome_group_treatments_at_fit: List[Any] = field(default_factory=list)
     pathway_catalogue_at_fit: List[Any] = field(default_factory=list)
     # None (the default) means "not supplied - resolve the legacy default for
     # me" (see __post_init__); it is never left as None after construction.
@@ -177,6 +183,30 @@ class FHModelMeta:
         # than requiring every caller to know about this field.
         if isinstance(self.pathway_masks, dict):
             self.pathway_masks = ResolvedPathwayMasks.from_dict(self.pathway_masks)
+        self.outcome_groups_at_fit = [
+            OutcomeGroupDefinition.from_dict(group)
+            if isinstance(group, dict)
+            else group
+            for group in self.outcome_groups_at_fit
+        ]
+        self.outcome_group_treatments_at_fit = [
+            OutcomeGroupTreatment.from_dict(treatment)
+            if isinstance(treatment, dict)
+            else treatment
+            for treatment in self.outcome_group_treatments_at_fit
+        ]
+        treatments_by_group = {
+            treatment.group_id: treatment
+            for treatment in self.outcome_group_treatments_at_fit
+            if isinstance(treatment, OutcomeGroupTreatment)
+        }
+        self.outcome_group_treatments_at_fit = [
+            treatments_by_group.get(
+                group.group_id,
+                OutcomeGroupTreatment(group_id=group.group_id),
+            )
+            for group in self.outcome_groups_at_fit
+        ]
         # A caller that never mentions pathway_masks at all (a bundle saved
         # before PR G1 with no such key at all, or a FHModelMeta built by
         # hand rather than through build_fh_hierarchical_model/
@@ -799,6 +829,8 @@ def build_fh_hierarchical_model(
         outcome_catalogue_at_fit=outcome_catalogue,
         outcome_control_names=frame.get("outcome_control_names") or {},
         direct_dna_outcome_ids=direct_dna_outcome_ids,
+        outcome_groups_at_fit=frame.get("outcome_groups") or [],
+        outcome_group_treatments_at_fit=frame.get("outcome_group_treatments") or [],
         pathway_catalogue_at_fit=pathway_catalogue,
         pathway_masks=pathway_masks,
         net_billthrough_metadata=frame.get("net_billthrough_metadata"),
