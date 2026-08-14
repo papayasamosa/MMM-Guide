@@ -2922,3 +2922,34 @@ browser journey because the local connected browser was unavailable.
 
 **Owner:** Platform engineering / Data Science.
 **Status:** Implemented in UX/UI coherence Phase 16.
+
+## Question-led reporting roll-up tabs (UX/UI coherence Phase 17)
+
+**Date:** 2026-08-14
+**Decision:** Name the official reporting roll-up tabs by the analyst's
+question: `Where in the funnel?`, `Which channel or supplier?`, and `Which
+activity?`. Keep the existing reporting dimensions, table columns, posterior
+aggregation, Unclassified explanation, and separate direct, mediated, halo,
+and total effect components unchanged.
+
+**Reason:** The reporting views added in PR #196 were already structurally
+sound and explicitly distinguished reporting groupings from causal pathways,
+but their tab labels still described schema dimensions first. Question-led
+labels make the intended decision context visible before the table is read.
+
+**Impact:** Presentation-only tab labels and AppTest expectations. No
+reporting aggregation, effect taxonomy, outcome definition, governance rule,
+analytical calculation, or persistence behaviour changed. Business question:
+which reporting view should an analyst use to understand where response is,
+which channel or supplier carries it, or which activity explains it?
+Estimand: unchanged; the existing posterior-draw-aggregated reporting
+summaries remain the estimand. Output scale/units: unchanged from the
+governed artifact, including outcome counts, model-input units, and reporting
+currency where present. Upstream modelling references: none consulted because
+this package changes presentation only and does not change PyMC or PyMC
+Marketing model APIs. Remaining limitation: interactive browser screenshot
+review uses the repository's synthetic-data browser journey because the local
+connected browser was unavailable.
+
+**Owner:** Platform engineering / Data Science.
+**Status:** Implemented in UX/UI coherence Phase 17.

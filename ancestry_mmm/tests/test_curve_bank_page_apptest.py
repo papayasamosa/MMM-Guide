@@ -626,11 +626,15 @@ def test_official_curve_artifact_renders_when_authorized(monkeypatch, tmp_path):
         for tab in at.tabs
         if tab.label
         in {
-            "By funnel group",
-            "By channel and platform",
-            "By activity",
+            "Where in the funnel?",
+            "Which channel or supplier?",
+            "Which activity?",
         }
-    ] == ["By funnel group", "By channel and platform", "By activity"]
+    ] == [
+        "Where in the funnel?",
+        "Which channel or supplier?",
+        "Which activity?",
+    ]
     reporting_tables = [
         dataframe.value
         for dataframe in at.dataframe
