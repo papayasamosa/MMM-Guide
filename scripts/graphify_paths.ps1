@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Canonical Graphify tool-install path contract for MMM-Guide.
+    Canonical Graphify tool-install path contract for Media-Mix-Lab.
 
 .DESCRIPTION
     Single source of truth for the D-drive paths used to install and run

@@ -7,7 +7,7 @@ repository/PR state, version-accurate library documentation, a real browser
 against the running Streamlit app, and Hugging Face search - during
 development only.
 
-**They are not part of MMM-Guide.** They are not Python dependencies, are
+**They are not part of Media-Mix-Lab.** They are not Python dependencies, are
 never imported by `ancestry_mmm/`, and are not deployed with the app. See
 [Product boundary](#product-boundary) below.
 

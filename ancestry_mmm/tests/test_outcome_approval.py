@@ -688,6 +688,38 @@ class TestAuthorityConsistency:
         assert isinstance(data["requirements"], list)
         assert len(data["requirements"]) >= 7  # 7 REQ-* records minimum
 
+    def test_index_metadata_and_datain_status_match_current_main(self):
+        """WP1: machine-readable requirement metadata must describe the
+        current post-WP8 repository state rather than the pre-template-pack
+        baseline."""
+        index_path = (
+            Path(__file__).parent.parent.parent
+            / "docs"
+            / "approved_requirements"
+            / "index.json"
+        )
+        data = json.loads(index_path.read_text())
+        assert data["generated_at"] == "2026-08-14"
+
+        datain = next(
+            req
+            for req in data["requirements"]
+            if req["requirement_id"] == "REQ-DATAIN-001"
+        )
+        assert datain["status"] == "approved_for_implementation"
+
+        record = (
+            Path(__file__).parent.parent.parent
+            / "docs"
+            / "approved_requirements"
+            / "REQ-DATAIN-001.md"
+        ).read_text()
+        assert "PRs #229" in record and "#237" in record
+        assert (
+            "remaining outcome\nworkbook/template-pack and end-to-end source-contract work is not\nimplemented"
+            not in record
+        )
+
     def test_indexed_records_exist(self):
         """REQ-AUTH-001: every indexed record path exists."""
         index_path = (

@@ -295,8 +295,8 @@ class TestGraphifyDocDDriveCompliance:
 
     def test_doc_does_not_use_app_projects_path_as_canonical_example(self):
         content = _read(GRAPHIFY_DOC)
-        assert 'cwd = "D:\\\\Ancestry-MMM\\\\repos\\\\MMM-Guide"' in content, (
-            "graphify.md Codex example does not use the canonical D:\\Ancestry-MMM\\repos\\MMM-Guide path"
+        assert 'cwd = "D:\\\\Ancestry-MMM\\\\repos\\\\Media-Mix-Lab"' in content, (
+            "graphify.md Codex example does not use the canonical D:\\Ancestry-MMM\\repos\\Media-Mix-Lab path"
         )
 
     def test_doc_executable_location_is_d_drive(self):
