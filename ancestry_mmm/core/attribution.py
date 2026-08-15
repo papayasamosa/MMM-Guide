@@ -33,6 +33,27 @@ from .outcome_group_totals import (
     selected_reporting_ids,
 )
 from .outcomes import OutcomeGroupDefinition, OutcomeGroupTreatment
+from .search_capacity import SEARCH_CANDIDATE_A_ENGINE
+
+
+class CandidateAAttributionNotSupportedError(ValueError):
+    """Raised by `compute_shapley_contributions` for a Candidate A fit.
+
+    WP3 (`Media-Mix-Lab: Coding LLM Next Steps After PR #253`): the ordinary
+    Shapley decomposition reconstructs `mu` from `_baseline_eta` plus each
+    channel's `_channel_log_terms` only - neither reads
+    `search_eta_contribution` (the Candidate A demand/capture/cap chain's
+    outcome contribution, see `core.search_capacity.
+    attach_candidate_a_demand_capture_chain`). Before this guard existed,
+    calling this on a Candidate A fit silently produced a `mu_total` missing
+    the entire search-mediated pathway's share of outcome volume - no
+    exception, no warning. AGENTS.md: "model correctness takes priority
+    over interface breadth" - an explicit failure here is safer than a
+    plausible-looking but wrong decomposition. A Candidate A-specific
+    decomposition contract (direct vs realised-mediated vs total, using
+    `core.search_capacity.counterfactual_search_effects`) is future work,
+    not yet implemented.
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -178,7 +199,19 @@ def compute_shapley_contributions(
     baseline and per-channel contributions (outcome units), averaged over
     `n_permutations` random channel removal orders. Contributions sum
     exactly to (mu_total - mu_baseline) for every row/outcome_id.
+
+    Raises `CandidateAAttributionNotSupportedError` for a Candidate A fit
+    (`meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE`) - see that
+    exception's docstring.
     """
+    if meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE:
+        raise CandidateAAttributionNotSupportedError(
+            "compute_shapley_contributions does not yet represent Candidate "
+            "A's search-mediated pathway (search_eta_contribution) - calling "
+            "it on a Candidate A fit would silently omit that pathway's "
+            "share of outcome volume from mu_total. A Candidate A-specific "
+            "decomposition is not yet implemented."
+        )
     rng = np.random.default_rng(seed)
     channels = meta.channels
     n_obs = frame["X_media"].shape[0]

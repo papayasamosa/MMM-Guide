@@ -340,8 +340,8 @@ class TestDiagnosticsVersionAuthority:
     able to silently disagree with each other."""
 
     def test_current_version_constants_are_consistent(self):
-        assert CURRENT_DIAGNOSTICS_VERSION == "6.0.0"
-        assert CURRENT_DIAGNOSTICS_SCHEMA_VERSION == 6
+        assert CURRENT_DIAGNOSTICS_VERSION == "7.0.0"
+        assert CURRENT_DIAGNOSTICS_SCHEMA_VERSION == 7
 
     def test_default_diagnostics_result_uses_current_version(self):
         result = DiagnosticsResult(
@@ -931,8 +931,13 @@ class TestSchemaV5ToV6Compatibility:
 
 class TestSchemaV6FreshArtefact:
     def test_current_defaults_are_schema_v6(self):
-        assert CURRENT_DIAGNOSTICS_SCHEMA_VERSION == 6
-        assert CURRENT_DIAGNOSTICS_VERSION.startswith("6.")
+        # WP3 (Media-Mix-Lab: Coding LLM Next Steps After PR #253) bumped
+        # the schema to v7 (search_capacity section) - this test's name is
+        # kept as historical continuity with the v6 introduction, but its
+        # assertion must track the live constants, same as every other
+        # version-authority test in this file.
+        assert CURRENT_DIAGNOSTICS_SCHEMA_VERSION == 7
+        assert CURRENT_DIAGNOSTICS_VERSION.startswith("7.")
 
     def test_freshly_constructed_artefact_has_not_computed_market_channel_capability(
         self,
@@ -1702,3 +1707,181 @@ class TestRunBacktestUpdatesArtefactImmutably:
         assert "fold fit exploded" in updated.backtest.error
         # Unrelated sections still carried over unchanged even on failure.
         assert updated.convergence == base.convergence
+
+
+# =========================================================================
+# search_capacity section (schema v7, WP3 - Media-Mix-Lab: Coding LLM Next
+# Steps After PR #253)
+# =========================================================================
+
+
+def _minimal_candidate_a_trace_frame_meta():
+    """Extends `_minimal_trace_frame_meta`'s ordinary variables with the
+    full Candidate A search_* variable set, and marks `meta` as a
+    Candidate A fit - enough to exercise `DiagnosticsService.evaluate()`'s
+    section 9 end to end without mocking arviz/numpy internals."""
+    import dataclasses
+
+    from ancestry_mmm.core.search_capacity import (
+        CANDIDATE_A_CAPTURE_SHARE_COMPONENTS,
+        SEARCH_CANDIDATE_A_ENGINE,
+    )
+
+    trace, frame, meta = _minimal_trace_frame_meta()
+    n_chain = trace.posterior.sizes["chain"]
+    n_draw = trace.posterior.sizes["draw"]
+    n_obs = trace.posterior.sizes["obs"]
+    n_outcome = len(meta.outcome_ids)
+    rng = np.random.default_rng(3)
+
+    demand = np.abs(rng.normal(50, 5, size=(n_chain, n_draw, n_obs)))
+    paid_opportunity = demand * 0.4
+    organic = demand * 0.3
+    direct = demand * 0.2
+    cap = np.full((n_chain, n_draw, n_obs), 1000.0)
+    realised_paid = np.minimum(paid_opportunity, cap)
+    captured = organic + direct + realised_paid
+    unmet = demand - captured
+
+    search_posterior = {
+        "search_demand_market_pool_sigma": np.abs(
+            rng.normal(0.3, 0.05, (n_chain, n_draw))
+        ),
+        "search_demand_market_raw": rng.normal(0, 1, (n_chain, n_draw, 1)),
+        "search_demand_market_offset": rng.normal(0, 0.1, (n_chain, n_draw, 1)),
+        "search_demand_intercept": rng.normal(2.0, 0.1, (n_chain, n_draw)),
+        "search_demand_media_beta": np.abs(rng.normal(0.4, 0.05, (n_chain, n_draw, 1))),
+        "search_latent_branded_demand": demand,
+        "search_capture_shares": np.abs(rng.normal(0.25, 0.02, (n_chain, n_draw, 4))),
+        "search_unconstrained_paid_opportunity": paid_opportunity,
+        "search_realised_paid_delivery": realised_paid,
+        "search_organic_capture_expected": organic,
+        "search_direct_navigation_capture_expected": direct,
+        "search_total_captured_demand": captured,
+        "search_unmet_demand": unmet,
+        "search_cap_binding_probability": np.zeros((n_chain, n_draw, n_obs)),
+        "search_unused_capacity": cap - realised_paid,
+        "search_paid_delivery_observation_sigma": np.abs(
+            rng.normal(2, 0.5, (n_chain, n_draw))
+        ),
+        "search_capture_observation_sigma": np.abs(
+            rng.normal(2, 0.5, (n_chain, n_draw))
+        ),
+        "search_paid_capture_outcome_beta": np.abs(
+            rng.normal(0.4, 0.05, (n_chain, n_draw, n_outcome))
+        ),
+        "search_organic_capture_outcome_beta": np.abs(
+            rng.normal(0.3, 0.05, (n_chain, n_draw, n_outcome))
+        ),
+        "search_direct_navigation_capture_outcome_beta": np.abs(
+            rng.normal(0.3, 0.05, (n_chain, n_draw, n_outcome))
+        ),
+        "search_eta_contribution": rng.normal(
+            0, 0.1, (n_chain, n_draw, n_obs, n_outcome)
+        ),
+    }
+    search_dims = {
+        "search_demand_market_raw": ["market"],
+        "search_demand_market_offset": ["market"],
+        "search_demand_media_beta": ["search_demand_channel"],
+        "search_latent_branded_demand": ["obs"],
+        "search_capture_shares": ["search_capture_share_component"],
+        "search_unconstrained_paid_opportunity": ["obs"],
+        "search_realised_paid_delivery": ["obs"],
+        "search_organic_capture_expected": ["obs"],
+        "search_direct_navigation_capture_expected": ["obs"],
+        "search_total_captured_demand": ["obs"],
+        "search_unmet_demand": ["obs"],
+        "search_cap_binding_probability": ["obs"],
+        "search_unused_capacity": ["obs"],
+        "search_paid_capture_outcome_beta": ["outcome"],
+        "search_organic_capture_outcome_beta": ["outcome"],
+        "search_direct_navigation_capture_outcome_beta": ["outcome"],
+        "search_eta_contribution": ["obs", "outcome"],
+    }
+    merged_posterior = {
+        **{k: v.values for k, v in trace.posterior.data_vars.items()},
+        **search_posterior,
+    }
+    merged_coords = {
+        **{k: v.values for k, v in trace.posterior.coords.items()},
+        "search_demand_channel": ["SearchBrand"],
+        "search_capture_share_component": list(CANDIDATE_A_CAPTURE_SHARE_COMPONENTS),
+    }
+    ordinary_dims = {
+        "mu": ["obs", "outcome"],
+        "alpha": ["outcome"],
+        "decay_rate": ["channel"],
+        "hill_K": ["channel"],
+        "hill_S": ["channel"],
+        "beta": ["outcome", "channel"],
+        "intercept": ["outcome"],
+        "trend_coef": ["outcome"],
+        "promo_coef": ["outcome"],
+        "market_offset": ["market", "outcome"],
+        "gamma_fourier": ["fourier", "outcome"],
+    }
+    candidate_a_trace = az.from_dict(
+        posterior=merged_posterior,
+        coords=merged_coords,
+        dims={**ordinary_dims, **search_dims},
+        sample_stats={"diverging": np.zeros((n_chain, n_draw), dtype=bool)},
+    )
+    candidate_a_meta = dataclasses.replace(
+        meta, causal_graph_engine=SEARCH_CANDIDATE_A_ENGINE
+    )
+    return candidate_a_trace, frame, candidate_a_meta
+
+
+class TestSearchCapacitySection:
+    def test_ordinary_fit_reports_not_applicable(self):
+        trace, frame, meta = _minimal_trace_frame_meta()
+        diag_input = DiagnosticsInput(trace=trace, frame=frame, meta=meta)
+        result = DiagnosticsService().evaluate(diag_input)
+        assert result.diagnostics_artefact.search_capacity.status == "not_applicable"
+
+    def test_candidate_a_fit_computes_posterior_summary(self):
+        trace, frame, meta = _minimal_candidate_a_trace_frame_meta()
+        diag_input = DiagnosticsInput(trace=trace, frame=frame, meta=meta)
+        result = DiagnosticsService().evaluate(diag_input)
+
+        section = result.diagnostics_artefact.search_capacity
+        assert section.status == "computed", section.error
+        assert section.payload["engine"] == "pymc_search_candidate_a"
+        assert "posterior_summary" in section.payload
+        assert section.payload["spec_issues"] is None
+        assert any("No Candidate A SearchCandidateASpec" in w for w in section.warnings)
+
+    def test_search_capacity_section_round_trips_and_is_fingerprinted(self):
+        trace, frame, meta = _minimal_candidate_a_trace_frame_meta()
+        diag_input = DiagnosticsInput(trace=trace, frame=frame, meta=meta)
+        artefact = DiagnosticsService().evaluate(diag_input).diagnostics_artefact
+
+        restored = DiagnosticsArtefact.from_dict(artefact.to_dict())
+        assert restored.search_capacity.status == "computed"
+        assert restored.fingerprint() == artefact.fingerprint()
+
+        # Changing only search_capacity's payload must change the overall
+        # fingerprint - proves it is actually included in fingerprint(),
+        # not merely serialised.
+        import dataclasses as dc
+
+        mutated = dc.replace(
+            artefact,
+            search_capacity=DiagnosticSection(
+                status="computed", payload={"engine": "different"}
+            ),
+        )
+        assert mutated.fingerprint() != artefact.fingerprint()
+
+    def test_schema_v6_artefact_upgrades_search_capacity_to_not_computed(self):
+        trace, frame, meta = _minimal_trace_frame_meta()
+        diag_input = DiagnosticsInput(trace=trace, frame=frame, meta=meta)
+        artefact = DiagnosticsService().evaluate(diag_input).diagnostics_artefact
+        v6_dict = {**artefact.to_dict(), "schema_version": 6}
+        del v6_dict["search_capacity"]
+
+        restored = DiagnosticsArtefact.from_dict(v6_dict)
+        assert restored.schema_version == 6
+        assert restored.search_capacity.status == "not_computed"
+        assert "schema v7" in restored.search_capacity.error

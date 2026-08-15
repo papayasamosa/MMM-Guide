@@ -4035,3 +4035,103 @@ remains gated by explicit human/process review of this evidence plus the
 remaining `candidate_a_use_gate` requirements (prior/posterior predictive,
 counterfactual-contract, explicit model approval) - this package does not
 self-approve any of them.
+
+## Candidate A application fit, diagnostics, and reporting workflow (Work Package 3)
+
+**Date:** 2026-08-15.
+
+**Decision:** Fix two silent-correctness gaps discovered while integrating
+Candidate A into the application layer, extend posterior extraction and the
+canonical Diagnostics artefact with real Candidate A evidence, and formally
+defer full Results/Curves/Attribution/Scenario-Planner replay integration
+rather than build a rushed, partial version of it.
+
+**Silent-correctness fixes (not new capability - defect closure):**
+
+1. `pages/06_Diagnostics.py::_rebuild_fit_time_model` rebuilt the *ordinary*
+   model (dropping the entire Candidate A Search chain) for any fit whose
+   approved graph required the Candidate A engine, because it branched on
+   `model_type` inline instead of using the engine-selection adapter WP1
+   introduced. Now routes through `application.model_fit_service.
+   build_model_for_spec`, which fails closed with a specific
+   `ModelFitServiceError` instead (no UI yet supplies the Candidate A
+   Search observations a correct rebuild would need).
+2. `core.attribution.compute_shapley_contributions` and `core.predict.
+   predict_mu` (and therefore every downstream caller: canonical curves,
+   the Scenario Planner, the optimiser, backtest) reconstruct `mu` from the
+   ordinary model's own terms only - neither reads Candidate A's
+   `search_eta_contribution`. Before this package, calling either on a
+   Candidate A fit produced a `mu`/`mu_total` silently missing the entire
+   search-mediated pathway's contribution - no exception, no warning. Both
+   now raise a specific, documented exception
+   (`CandidateAAttributionNotSupportedError`/
+   `CandidateAReplayNotSupportedError`) for a Candidate A fit. This is the
+   single mechanism that keeps Results, official curves, the Scenario
+   Planner, and optimisation correctly disabled for Candidate A (REQ-
+   SEARCH-002: "Search planning and cap optimisation remain disabled") -
+   one guard in `predict_mu` protects every downstream consumer at once,
+   rather than requiring a separate gate in each.
+
+**New evidence surfaces:**
+
+- `core.search_capacity.extract_candidate_a_search_posterior_summary`:
+  posterior-evidence extraction from a fitted Candidate A trace (demand/
+  capture-share/outcome-beta means, reconciliation error, cap-binding
+  probability, r-hat/ESS for the Search-specific parameters), following the
+  established "separate typed extractor for a second model shape" pattern
+  (`core.market_specific_predict.extract_market_specific_posterior_params`).
+- `DiagnosticsArtefact` schema v6 -> v7 adds a `search_capacity` section,
+  `not_applicable` for every ordinary fit, computed inline in
+  `DiagnosticsService.evaluate()` for a Candidate A fit from the trace
+  alone. Spec-validation/identification/official-use-gate evidence is
+  additionally included when a `SearchCandidateASpec` is supplied via the
+  new optional `DiagnosticsInput.candidate_a_spec`/
+  `candidate_a_search_objects`/`candidate_a_paid_search_cap`/
+  `candidate_a_paid_search_delivery` fields - none of which any page
+  populates yet (no UI collects a Candidate A spec into session state), so
+  today the section reports posterior-summary evidence only, with an
+  explicit warning that spec-level evidence is unavailable. A new
+  "Candidate A Search" tab on the Diagnostics page renders this section.
+
+**Deferred, with reasons (brief's own permission: "If the existing
+attribution algebra cannot represent Candidate A cleanly, add a
+Candidate A-specific decomposition contract... If curve governance requires
+a new approved artefact contract, create a decision-support record rather
+than inventing one"):**
+
+- **Full replay integration** (extending `predict_mu`/
+  `steady_state_outcome_response` with the Search chain) - the prerequisite
+  for Results, official curves, the Scenario Planner, and optimisation to
+  work for Candidate A at all. Not attempted here: it requires deciding how
+  a *hypothetical* scenario/curve spend point maps to a *counterfactual*
+  Search demand/capture/cap state (the model's `search_*` deterministics
+  are fit-time quantities over historical `sat_media`, not a function
+  `predict_mu` can currently re-evaluate at an arbitrary candidate spend
+  level) - a genuine modelling design question, not a mechanical
+  extension, and out of scope for an application-layer work package.
+- **Candidate A-specific Shapley/attribution decomposition** - blocked by
+  the same replay-integration prerequisite above (direct/mediated/total
+  effects need the same counterfactual re-evaluation machinery).
+- **Official curve artefact contract for Candidate A** - REQ-CURVE-001's
+  `generate_canonical_curve_draws` reads `meta.pathway_masks.components`,
+  which `GraphModelCompiler(engine=SEARCH_CANDIDATE_A_ENGINE)` deliberately
+  excludes the search-mediated pathway from (REQ-SEARCH-002's approved
+  graph contract) - Candidate A's demand/capture/cap chain has no
+  representation in the canonical curve contract's data model at all, not
+  merely an extraction gap. A Candidate A curve (per the brief's own
+  requirement) would need to identify what's varied, what cap is held
+  fixed, and whether the cap is binding - a new artefact shape, not an
+  extension of the existing one.
+- **Convergence section's Candidate A parameters** -
+  `DiagnosticsService._check_convergence` uses an explicit `var_names`
+  allowlist (`mu`, `beta`, `hill_K`, `alpha`) that excludes every Candidate
+  A variable; not extended here because the new `search_capacity` section's
+  own `rhat_max`/`ess_bulk_min` already surfaces Candidate A-specific
+  convergence evidence separately - judged sufficient for this package
+  rather than duplicating it in two sections.
+
+**Owner:** Data Science / Platform engineering.
+**Status:** Silent-correctness defects closed; new evidence surfaces
+delivered. Search planning, cap optimisation, Results, official curves,
+and attribution remain disabled/unavailable for Candidate A - not a partial
+or approximate implementation of any of them.
