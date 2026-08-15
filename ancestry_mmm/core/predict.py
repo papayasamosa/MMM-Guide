@@ -36,6 +36,26 @@ from .outcomes import (
     fh_net_billthrough_outcome_ids,
     fh_signup_outcome_ids,
 )
+from .search_capacity import SEARCH_CANDIDATE_A_ENGINE
+
+
+class CandidateAReplayNotSupportedError(ValueError):
+    """Raised by `predict_mu` (and therefore every caller: curves,
+    scenario planning, backtest, optimisation) for a Candidate A fit.
+
+    WP3 (`Media-Mix-Lab: Coding LLM Next Steps After PR #253`): this NumPy
+    replay reconstructs `eta` from intercept/market/trend/season/channels/
+    promo/controls only - it has no term for Candidate A's
+    `search_eta_contribution` (the demand/capture/cap chain's outcome
+    contribution). Before this guard existed, every one of those downstream
+    features would silently evaluate a `mu` missing that entire pathway's
+    contribution - never raising, never warning. This is also exactly the
+    mechanism REQ-SEARCH-002 requires: Search planning/cap optimisation
+    remain disabled until evidence and explicit approval gates pass: a hard
+    failure here rather than a plausible-but-wrong scenario/curve number
+    is the correct way to keep it disabled. Full replay integration
+    (extending this function with the Search chain) is future work.
+    """
 
 
 @dataclass
@@ -327,7 +347,17 @@ def predict_mu(
     structure as data.preprocessor.prepare_fh_modeling_frame's output).
 
     Returns mu, shape (n_obs, n_outcomes), matching frame["outcome_ids"] order.
+
+    Raises `CandidateAReplayNotSupportedError` for a Candidate A fit - see
+    that exception's docstring.
     """
+    if meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE:
+        raise CandidateAReplayNotSupportedError(
+            "predict_mu does not yet represent Candidate A's search-mediated "
+            "pathway (search_eta_contribution) - curves, scenario planning, "
+            "backtest, and optimisation are not yet available for a "
+            "Candidate A fit. See REPO_REVIEW_AND_NEXT_STEPS.md."
+        )
     outcome_ids = meta.outcome_ids
     n_obs = frame["X_media"].shape[0]
     n_out = len(outcome_ids)

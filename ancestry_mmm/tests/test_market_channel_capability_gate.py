@@ -255,14 +255,20 @@ class TestDiagnosticsServiceComputesCapabilitySection:
         assert section.payload["supported"] is False
         assert section.payload["stale"] is True
 
-    def test_schema_version_is_6(self):
+    def test_schema_version_is_at_least_6(self):
+        # WP3 (Media-Mix-Lab: Coding LLM Next Steps After PR #253) bumped
+        # the schema to v7 (search_capacity section) - this test only
+        # needs to confirm market_channel_capability's own v6 shape
+        # survived that later bump, not pin the exact current version
+        # (CURRENT_DIAGNOSTICS_SCHEMA_VERSION in test_diagnostics_artefact.py
+        # is the single source of truth for the exact current value).
         spec = ModelSpec(
             date_col="date", market_col="market", markets=["UK"], channels=["TV"]
         )
         result = DiagnosticsService().evaluate(
             _diag_input(spec=spec, coverage_matrix=_supported_matrix())
         )
-        assert result.diagnostics_artefact.schema_version == 6
+        assert result.diagnostics_artefact.schema_version >= 6
 
 
 # ---------------------------------------------------------------------------

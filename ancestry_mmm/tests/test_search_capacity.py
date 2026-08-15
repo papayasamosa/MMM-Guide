@@ -23,12 +23,15 @@ from ancestry_mmm.core.graph_model_compiler import (
     check_engine_capability,
 )
 from ancestry_mmm.core.search_capacity import (
+    CANDIDATE_A_CAPTURE_SHARE_COMPONENTS,
     SEARCH_CANDIDATE_A_ENGINE,
     SearchCandidateASpec,
+    SearchCapacityValidationError,
     build_candidate_a_search_model,
     candidate_a_forward,
     candidate_a_use_gate,
     counterfactual_search_effects,
+    extract_candidate_a_search_posterior_summary,
     identify_candidate_a_search,
     posterior_outputs_from_forward_draws,
     validate_candidate_a_spec,
@@ -340,3 +343,128 @@ def test_candidate_a_pymc_engine_exposes_required_posterior_deterministics():
     assert required.issubset(model.named_vars)
     assert model._candidate_a_metadata["planning_eligible"] is False
     assert model._candidate_a_metadata["optimisation_eligible"] is False
+
+
+class TestExtractCandidateASearchPosteriorSummary:
+    """WP3 (`Media-Mix-Lab: Coding LLM Next Steps After PR #253`):
+    posterior-evidence extraction for a fitted Candidate A trace. Builds a
+    synthetic `az.InferenceData` directly (rather than a real `pm.sample`
+    fit - too slow for this suite, and covered by
+    test_search_candidate_a_recovery_posterior.py's real NUTS fits) with
+    the exact variable/coord shapes `attach_candidate_a_demand_capture_chain`
+    produces, so the extraction/indexing logic itself is tested without
+    MCMC cost."""
+
+    @staticmethod
+    def _fake_trace(n_obs=6, outcome_ids=("fh_new",), demand_channels=("SearchBrand",)):
+        import arviz as az
+
+        n_chain, n_draw = 2, 5
+        rng = np.random.default_rng(0)
+        n_outcome = len(outcome_ids)
+
+        demand = np.abs(rng.normal(50, 5, size=(n_chain, n_draw, n_obs)))
+        paid_opportunity = demand * 0.4
+        organic = demand * 0.3
+        direct = demand * 0.2
+        cap = np.full((n_chain, n_draw, n_obs), 1000.0)
+        realised_paid = np.minimum(paid_opportunity, cap)
+        captured = organic + direct + realised_paid
+        unmet = demand - captured
+
+        posterior = {
+            "search_demand_market_pool_sigma": rng.normal(0.3, 0.05, (n_chain, n_draw)),
+            "search_demand_market_raw": rng.normal(0, 1, (n_chain, n_draw, 1)),
+            "search_demand_market_offset": rng.normal(0, 0.1, (n_chain, n_draw, 1)),
+            "search_demand_intercept": rng.normal(2.0, 0.1, (n_chain, n_draw)),
+            "search_demand_media_beta": np.abs(
+                rng.normal(0.4, 0.05, (n_chain, n_draw, len(demand_channels)))
+            ),
+            "search_latent_branded_demand": demand,
+            "search_capture_shares": np.abs(
+                rng.normal(0.25, 0.02, (n_chain, n_draw, 4))
+            ),
+            "search_unconstrained_paid_opportunity": paid_opportunity,
+            "search_realised_paid_delivery": realised_paid,
+            "search_organic_capture_expected": organic,
+            "search_direct_navigation_capture_expected": direct,
+            "search_total_captured_demand": captured,
+            "search_unmet_demand": unmet,
+            "search_cap_binding_probability": np.zeros((n_chain, n_draw, n_obs)),
+            "search_unused_capacity": cap - realised_paid,
+            "search_paid_delivery_observation_sigma": np.abs(
+                rng.normal(2, 0.5, (n_chain, n_draw))
+            ),
+            "search_capture_observation_sigma": np.abs(
+                rng.normal(2, 0.5, (n_chain, n_draw))
+            ),
+            "search_paid_capture_outcome_beta": np.abs(
+                rng.normal(0.4, 0.05, (n_chain, n_draw, n_outcome))
+            ),
+            "search_organic_capture_outcome_beta": np.abs(
+                rng.normal(0.3, 0.05, (n_chain, n_draw, n_outcome))
+            ),
+            "search_direct_navigation_capture_outcome_beta": np.abs(
+                rng.normal(0.3, 0.05, (n_chain, n_draw, n_outcome))
+            ),
+            "search_eta_contribution": rng.normal(
+                0, 0.1, (n_chain, n_draw, n_obs, n_outcome)
+            ),
+        }
+        dims = {
+            "search_demand_market_raw": ["market"],
+            "search_demand_market_offset": ["market"],
+            "search_demand_media_beta": ["search_demand_channel"],
+            "search_latent_branded_demand": ["obs"],
+            "search_capture_shares": ["search_capture_share_component"],
+            "search_unconstrained_paid_opportunity": ["obs"],
+            "search_realised_paid_delivery": ["obs"],
+            "search_organic_capture_expected": ["obs"],
+            "search_direct_navigation_capture_expected": ["obs"],
+            "search_total_captured_demand": ["obs"],
+            "search_unmet_demand": ["obs"],
+            "search_cap_binding_probability": ["obs"],
+            "search_unused_capacity": ["obs"],
+            "search_paid_capture_outcome_beta": ["outcome"],
+            "search_organic_capture_outcome_beta": ["outcome"],
+            "search_direct_navigation_capture_outcome_beta": ["outcome"],
+            "search_eta_contribution": ["obs", "outcome"],
+        }
+        coords = {
+            "market": ["MKT0"],
+            "search_demand_channel": list(demand_channels),
+            "search_capture_share_component": list(
+                CANDIDATE_A_CAPTURE_SHARE_COMPONENTS
+            ),
+            "obs": list(range(n_obs)),
+            "outcome": list(outcome_ids),
+        }
+        return az.from_dict(posterior=posterior, coords=coords, dims=dims)
+
+    def test_extracts_summary_with_correct_shapes_and_reconciliation(self):
+        trace = self._fake_trace()
+        summary = extract_candidate_a_search_posterior_summary(
+            trace, outcome_ids=["fh_new"]
+        )
+        assert summary.demand_channel_names == ["SearchBrand"]
+        assert set(summary.demand_media_beta_mean) == {"SearchBrand"}
+        assert set(summary.capture_share_mean) == {"paid", "organic", "direct", "unmet"}
+        assert set(summary.paid_capture_outcome_beta) == {"fh_new"}
+        # Reconciliation holds by construction in the synthetic trace above.
+        assert summary.reconciliation_max_abs_error < 1e-6
+        assert summary.cap_binding_probability_mean == pytest.approx(0.0)
+        assert np.isfinite(summary.rhat_max)
+        assert np.isfinite(summary.ess_bulk_min)
+
+    def test_raises_on_a_trace_missing_candidate_a_variables(self):
+        import arviz as az
+
+        ordinary_trace = az.from_dict(
+            posterior={"beta": np.zeros((1, 2, 1, 1))},
+            dims={"beta": ["outcome", "channel"]},
+            coords={"outcome": ["fh_new"], "channel": ["TV"]},
+        )
+        with pytest.raises(SearchCapacityValidationError):
+            extract_candidate_a_search_posterior_summary(
+                ordinary_trace, outcome_ids=["fh_new"]
+            )

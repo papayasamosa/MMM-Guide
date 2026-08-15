@@ -96,6 +96,8 @@ from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
 from ancestry_mmm.core.market_specific_model import build_fh_market_specific_model
 from ancestry_mmm.core.models import fit_model
+from ancestry_mmm.application.model_fit_service import build_model_for_spec
+from ancestry_mmm.core.search_capacity import SEARCH_CANDIDATE_A_ENGINE
 from ancestry_mmm.core.predict import extract_posterior_params, predict_mu
 from ancestry_mmm.core.market_specific_predict import (
     extract_market_specific_posterior_params,
@@ -468,13 +470,14 @@ st.caption(
     "separately."
 )
 if scorecard:
-    tab_conv, tab_fit, tab_ppc, tab_plaus, tab_ident = st.tabs(
+    tab_conv, tab_fit, tab_ppc, tab_plaus, tab_ident, tab_candidate_a = st.tabs(
         [
             "Convergence",
             "In-sample fit & error metrics",
             "Posterior predictive coverage",
             "Plausibility flags",
             "Identification & collinearity",
+            "Candidate A Search",
         ]
     )
     with tab_conv:
@@ -632,6 +635,79 @@ if scorecard:
                     )
                 elif stab_section.status == "failed":
                     st.error(f"Coefficient stability failed: {stab_section.error}")
+
+    with tab_candidate_a:
+        st.caption(
+            "Candidate A Search mediation/capacity evidence (REQ-SEARCH-002) - "
+            "rendered from the canonical artefact section only, never "
+            "recomputed separately here. This evidence supplies one input to "
+            "the official-use gate; it is not itself an official-use, "
+            "planning, or optimisation approval."
+        )
+        sc_section = diag_artefact.search_capacity if diag_artefact else None
+        if sc_section is None or sc_section.status == "not_applicable":
+            st.info(
+                "Not applicable - this fit did not use the Candidate A Search engine."
+            )
+        elif sc_section.status == "not_computed":
+            st.info(
+                sc_section.error or "Not computed. Click 'Compute scorecard' above."
+            )
+        elif sc_section.status == "failed":
+            st.error(
+                f"Candidate A Search capacity diagnostics failed: {sc_section.error}"
+            )
+        else:
+            for w in sc_section.warnings:
+                st.warning(w)
+            summary = sc_section.payload["posterior_summary"]
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric(
+                "Mean latent demand", format_number(summary["mean_latent_demand"])
+            )
+            c2.metric(
+                "Mean captured demand",
+                format_number(summary["mean_total_captured_demand"]),
+            )
+            c3.metric(
+                "P(cap binding)",
+                f"{summary['cap_binding_probability_mean']:.1%}",
+            )
+            c4.metric("Max R-hat (Search params)", f"{summary['rhat_max']:.3f}")
+            st.caption(
+                f"Reconciliation error (captured + unmet vs. latent demand, "
+                f"posterior mean): {summary['reconciliation_max_abs_error']:.4g}"
+            )
+            with st.expander("Capture shares & outcome betas"):
+                st.json(
+                    {
+                        "capture_share_mean": summary["capture_share_mean"],
+                        "demand_media_beta_mean": summary["demand_media_beta_mean"],
+                        "paid_capture_outcome_beta": summary[
+                            "paid_capture_outcome_beta"
+                        ],
+                        "organic_capture_outcome_beta": summary[
+                            "organic_capture_outcome_beta"
+                        ],
+                        "direct_navigation_capture_outcome_beta": summary[
+                            "direct_navigation_capture_outcome_beta"
+                        ],
+                    }
+                )
+            if sc_section.payload.get("use_gate") is not None:
+                use_gate = sc_section.payload["use_gate"]
+                st.markdown("#### Official-use gate")
+                st.write(
+                    f"Official use eligible: **{use_gate['official_use_eligible']}**"
+                )
+                if use_gate["blocking_reasons"]:
+                    for reason in use_gate["blocking_reasons"]:
+                        st.warning(reason)
+            st.error(
+                "Search planning and cap optimisation remain disabled "
+                "regardless of this evidence (REQ-SEARCH-002) - see "
+                "REPO_REVIEW_AND_NEXT_STEPS.md for current status."
+            )
 else:
     st.info("Compute the scorecard above to see full diagnostic detail by domain.")
 
@@ -1028,6 +1104,19 @@ def _rebuild_fit_time_model():
 
     Shared by "Prior predictive check" and "Predictive density" below -
     both need the identical exact fit-time model structure.
+
+    WP3 (`Media-Mix-Lab: Coding LLM Next Steps After PR #253`): routes
+    through `application.model_fit_service.build_model_for_spec` (the same
+    engine-selection adapter Model Training uses) instead of the previous
+    inline shared/market-specific ternary, which silently rebuilt the
+    *ordinary* model - dropping the entire Candidate A Search chain - for
+    any fit whose approved graph required the Candidate A engine. No UI on
+    this page (or Model Training) yet collects Candidate A Search
+    observations into session state, so `build_model_for_spec` currently
+    fails closed with a specific `ModelFitServiceError` for such a fit
+    instead: an honest "cannot rebuild" error is safer than a silently
+    wrong prior-predictive/predictive-density check against the wrong
+    model structure.
     """
     rebuild_spec = ModelSpec.from_dict(get_state("model_spec"))
     rebuild_causal_graph = None
@@ -1061,21 +1150,18 @@ def _rebuild_fit_time_model():
                 "fingerprint - cannot reconstruct the exact fit-time "
                 "model structure."
             )
-    rebuild_builder = (
-        build_fh_market_specific_model
-        if model_type == "market_specific"
-        else build_fh_hierarchical_model
-    )
-    rebuilt_model, _rebuilt_meta = rebuild_builder(
-        frame,
-        rebuild_spec,
+    result = build_model_for_spec(
+        frame=frame,
+        model_spec=rebuild_spec,
+        model_type=model_type,
         dna_lag_weeks=meta.dna_lag_weeks,
         prior_config=get_state("prior_config"),
         dna_outcome_id=meta.dna_outcome_id,
         direct_dna_outcome_ids=meta.direct_dna_outcome_ids,
         causal_graph=rebuild_causal_graph,
+        search_objects=get_state("search_objects") or [],
     )
-    return rebuilt_model
+    return result.model
 
 
 st.markdown("---")
@@ -1265,6 +1351,20 @@ fold_draws = c3.number_input(
 if st.button("Run backtest"):
     if diag_artefact is None:
         st.error("Compute the scorecard first.")
+    elif meta is not None and meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE:
+        # Backtest fold-fitting below never passes a causal_graph at all
+        # (a pre-existing gap affecting every graph-backed fit, not new
+        # here) - for the ordinary engine that silently falls back to the
+        # legacy pathway catalogue, but a Candidate A fit has no legacy-
+        # catalogue equivalent and no fold has the Search observations
+        # needed to rebuild its demand/capture chain. Fail closed with a
+        # specific reason rather than backtest an incomplete model.
+        st.error(
+            "This fit used the Candidate A Search engine. Out-of-sample "
+            "backtesting for Candidate A is not yet implemented - each "
+            "fold would need its own Search observations, and this "
+            "page's backtest does not yet collect them."
+        )
     else:
         spec = ModelSpec.from_dict(get_state("model_spec"))
         df = get_state("transformed_data")

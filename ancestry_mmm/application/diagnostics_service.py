@@ -19,8 +19,19 @@ import uuid
 import warnings
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Literal,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+)
 
+import numpy as np
 import pandas as pd
 import arviz as az
 import pymc as pm
@@ -57,6 +68,15 @@ from ancestry_mmm.core.market_specific_predict import (
     FHMarketSpecificPosteriorParams,
     extract_market_specific_posterior_params,
 )
+from ancestry_mmm.core.search_capacity import (
+    SEARCH_CANDIDATE_A_ENGINE,
+    SearchCandidateASpec,
+    candidate_a_use_gate,
+    extract_candidate_a_search_posterior_summary,
+    identify_candidate_a_search,
+    validate_candidate_a_spec,
+)
+from ancestry_mmm.core.search_objects import SearchObjectDefinition
 
 # ---------------------------------------------------------------------------
 # Diagnostics version authority (Work Package 1)
@@ -107,8 +127,19 @@ from ancestry_mmm.core.market_specific_predict import (
 # engine, computed by ``DiagnosticsService.evaluate()`` from
 # ``raw_model_spec``/``coverage_matrix`` when both are supplied). Another
 # schema *shape* change, same precedent as v4 -> v5.
-CURRENT_DIAGNOSTICS_SCHEMA_VERSION = 6
-CURRENT_DIAGNOSTICS_VERSION = "6.0.0"
+#
+# Work Package 3 (`Media-Mix-Lab: Coding LLM Next Steps After PR #253`,
+# REQ-SEARCH-002): schema v6 -> v7 adds the ``search_capacity`` section -
+# Candidate A Search mediation/capacity evidence (governed Search object
+# mapping validity, cap identification, demand/capture reconciliation,
+# cap-binding probability, capture-outcome beta posteriors, convergence,
+# and the current `core.search_capacity.candidate_a_use_gate` status),
+# computed only for a fit whose ``model_identity``/`meta` records
+# ``causal_graph_engine == core.search_capacity.SEARCH_CANDIDATE_A_ENGINE``;
+# ``not_applicable`` for every ordinary fit. Another schema *shape* change,
+# same precedent as v5 -> v6.
+CURRENT_DIAGNOSTICS_SCHEMA_VERSION = 7
+CURRENT_DIAGNOSTICS_VERSION = "7.0.0"
 
 # ---------------------------------------------------------------------------
 # Section status
@@ -316,6 +347,9 @@ class DiagnosticsArtefact:
     market_channel_capability: DiagnosticSection = field(
         default_factory=lambda: DiagnosticSection(status="not_computed", payload=None)
     )
+    search_capacity: DiagnosticSection = field(
+        default_factory=lambda: DiagnosticSection(status="not_computed", payload=None)
+    )
 
     # Global warnings and errors
     global_warnings: Tuple[str, ...] = ()
@@ -348,6 +382,7 @@ class DiagnosticsArtefact:
             "prior_predictive": self.prior_predictive.fingerprint_payload(),
             "predictive_density": self.predictive_density.fingerprint_payload(),
             "market_channel_capability": self.market_channel_capability.fingerprint_payload(),
+            "search_capacity": self.search_capacity.fingerprint_payload(),
             "global_warnings": sorted(self.global_warnings),
             "global_errors": sorted(self.global_errors),
             "settings": tuple(sorted(self.settings)),
@@ -380,6 +415,7 @@ class DiagnosticsArtefact:
             "prior_predictive": self.prior_predictive.to_dict(),
             "predictive_density": self.predictive_density.to_dict(),
             "market_channel_capability": self.market_channel_capability.to_dict(),
+            "search_capacity": self.search_capacity.to_dict(),
             "global_warnings": list(self.global_warnings),
             "global_errors": list(self.global_errors),
             "settings": list(self.settings),
@@ -409,7 +445,7 @@ class DiagnosticsArtefact:
         if sv == 1:
             # Schema v1 → wrap summaries into sections, mark legacy_incomplete
             return cls._from_v1(d)
-        if sv in (2, 3, 4, 5, 6):
+        if sv in (2, 3, 4, 5, 6, 7):
             if sv >= 3:
                 error_metrics_sec = DiagnosticSection.from_dict(
                     d.get("error_metrics", {})
@@ -484,6 +520,22 @@ class DiagnosticsArtefact:
                     "channel engine-capability evidence "
                     "(REQ-COVERAGE-001 S6) was added in schema v6.",
                 )
+            if sv >= 7:
+                search_capacity_sec = DiagnosticSection.from_dict(
+                    d.get("search_capacity", {})
+                )
+            else:
+                # Work Package 3: Candidate A Search capacity evidence did
+                # not exist when a schema-v2..v6 artefact was computed -
+                # not_computed, never a fabricated payload (mirrors the
+                # v5 -> v6 pattern directly above).
+                search_capacity_sec = DiagnosticSection(
+                    status="not_computed",
+                    payload=None,
+                    error=f"Not available in schema v{sv} - Candidate A "
+                    "Search capacity evidence (REQ-SEARCH-002) was added "
+                    "in schema v7.",
+                )
             return cls(
                 artefact_id=d.get("artefact_id", ""),
                 diagnostics_version=d.get("diagnostics_version", "2.0.0"),
@@ -510,6 +562,7 @@ class DiagnosticsArtefact:
                 prior_predictive=prior_predictive_sec,
                 predictive_density=predictive_density_sec,
                 market_channel_capability=market_channel_capability_sec,
+                search_capacity=search_capacity_sec,
                 global_warnings=tuple(d.get("global_warnings", [])),
                 global_errors=tuple(d.get("global_errors", [])),
                 settings=tuple(tuple(x) for x in d.get("settings", [])),
@@ -636,6 +689,18 @@ class DiagnosticsInput:
     # unsupported when these are absent or mismatched, never merely warns.
     coverage_matrix_built_against_fingerprint: Optional[str] = None
     joined_dataframe_fingerprint: Optional[str] = None
+    # Work Package 3 (`Media-Mix-Lab: Coding LLM Next Steps After PR #253`,
+    # REQ-SEARCH-002): optional governed Candidate A identity/observations,
+    # enabling the search_capacity section's spec-validation/identification/
+    # use-gate evidence. All optional and additive - no existing caller is
+    # affected; absent, the section still reports posterior-summary evidence
+    # for a Candidate A fit (see evaluate()'s §9).
+    candidate_a_spec: Optional[SearchCandidateASpec] = None
+    candidate_a_search_objects: Sequence[
+        SearchObjectDefinition | Mapping[str, Any]
+    ] = ()
+    candidate_a_paid_search_cap: Optional[np.ndarray] = None
+    candidate_a_paid_search_delivery: Optional[np.ndarray] = None
 
 
 @dataclass
@@ -1046,6 +1111,90 @@ class DiagnosticsService:
                     status="failed", payload=None, error=str(exc)
                 )
 
+        # --- 9. Candidate A Search capacity evidence (REQ-SEARCH-002, Work
+        # Package 3) - a deterministic, cheap check computed inline from
+        # the already-fitted trace (unlike prior_predictive/
+        # predictive_density, which need a fresh model rebuild + sampling).
+        # not_applicable for every ordinary (non-Candidate-A) fit;
+        # spec/identification/use-gate evidence is included only when a
+        # SearchCandidateASpec is supplied - no UI collects one into
+        # session state yet (see REPO_REVIEW_AND_NEXT_STEPS.md), so today
+        # this section reports the posterior-summary evidence only, with an
+        # explicit note that spec-level evidence is unavailable. ---
+        search_capacity_sec: DiagnosticSection
+        if diag_input.meta.causal_graph_engine != SEARCH_CANDIDATE_A_ENGINE:
+            search_capacity_sec = DiagnosticSection(
+                status="not_applicable",
+                payload=None,
+                error="This fit did not use the Candidate A Search engine.",
+            )
+        else:
+            try:
+                summary = extract_candidate_a_search_posterior_summary(
+                    diag_input.trace, diag_input.meta.outcome_ids
+                )
+                payload: Dict[str, Any] = {
+                    "engine": SEARCH_CANDIDATE_A_ENGINE,
+                    "posterior_summary": summary.to_dict(),
+                }
+                section_warnings: List[str] = []
+                if summary.reconciliation_max_abs_error > 1e-3:
+                    section_warnings.append(
+                        "Posterior-mean reconciliation error "
+                        f"({summary.reconciliation_max_abs_error:.4g}) exceeds "
+                        "the 1e-3 tolerance - captured + unmet demand does not "
+                        "closely track latent demand at the posterior mean."
+                    )
+                if summary.rhat_max > 1.05 or not np.isfinite(summary.rhat_max):
+                    section_warnings.append(
+                        f"Candidate A parameter r-hat_max={summary.rhat_max:.3g} "
+                        "indicates possible non-convergence for the Search "
+                        "demand/capture chain specifically."
+                    )
+                if diag_input.candidate_a_spec is not None:
+                    spec_issues = validate_candidate_a_spec(
+                        diag_input.candidate_a_spec,
+                        diag_input.candidate_a_search_objects,
+                    )
+                    identification = identify_candidate_a_search(
+                        diag_input.candidate_a_paid_search_cap
+                        if diag_input.candidate_a_paid_search_cap is not None
+                        else np.array([]),
+                        diag_input.candidate_a_paid_search_delivery
+                        if diag_input.candidate_a_paid_search_delivery is not None
+                        else np.array([]),
+                        cap_provenance=diag_input.candidate_a_spec.cap_provenance,
+                        cap_mapping_resolved=not spec_issues,
+                        capture_mappings_resolved=not spec_issues,
+                    )
+                    use_gate = candidate_a_use_gate(
+                        diag_input.candidate_a_spec, identification
+                    )
+                    payload["spec_issues"] = list(spec_issues)
+                    payload["identification"] = identification.to_dict()
+                    payload["use_gate"] = use_gate.to_dict()
+                else:
+                    payload["spec_issues"] = None
+                    payload["identification"] = None
+                    payload["use_gate"] = None
+                    section_warnings.append(
+                        "No Candidate A SearchCandidateASpec was supplied to "
+                        "this diagnostics run - spec validation, "
+                        "identification, and official-use-gate evidence are "
+                        "unavailable; only posterior-summary evidence is "
+                        "reported."
+                    )
+                search_capacity_sec = DiagnosticSection(
+                    status="computed",
+                    payload=payload,
+                    warnings=tuple(section_warnings),
+                )
+            except Exception as exc:
+                errors.append(f"Candidate A Search capacity diagnostics failed: {exc}")
+                search_capacity_sec = DiagnosticSection(
+                    status="failed", payload=None, error=str(exc)
+                )
+
         # --- Build fingerprinted artefact ---
         identity_fp = (
             diag_input.model_identity.fingerprint()
@@ -1070,6 +1219,7 @@ class DiagnosticsService:
             error_metrics=error_metrics_sec,
             residual_diagnostics=residual_diagnostics_sec,
             market_channel_capability=capability_sec,
+            search_capacity=search_capacity_sec,
             global_warnings=tuple(warnings),
             global_errors=tuple(errors),
             settings=(

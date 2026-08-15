@@ -9,19 +9,21 @@ and does not supersede `AGENTS.md`, `docs/approved_requirements/`, or
 
 Repository: `papayasamosa/Media-Mix-Lab`
 
-Current `main` reviewed: `e117abcd60171c3f2a57b437d617135e475a62bf`
+Current `main` reviewed: `0ed00d8a790669f7fbdf716c070a24fb4442964c`
 
-Current head: **WP1: Candidate A production integration boundary** (merged
-PR #255, 2026-08-15). This revision of the document additionally describes
-Work Package 2 of `Media-Mix-Lab: Coding LLM Next Steps After PR #253`
-(Candidate A synthetic generator and posterior-recovery evidence), landed
-on top of that baseline in the same work session.
+Current head: **WP2: Candidate A synthetic generator and posterior-recovery
+evidence** (merged PR #256, 2026-08-15). This revision of the document
+additionally describes Work Package 3 of `Media-Mix-Lab: Coding LLM Next
+Steps After PR #253` (Candidate A application fit, diagnostics, and
+reporting workflow), landed on top of that baseline in the same work
+session.
 
 Historical markers: earlier versions of this document reviewed
+`e117abcd60171c3f2a57b437d617135e475a62bf` (merged PR #255, WP1),
 `3e2e525300a8526a52f59384271e54fe9815cbe0` (merged PR #254, WP0), and
 before that `b9b13916ad06c09e37cd53aa83a0fa3a7949a0dc` (merged PR #253) and
 `0845b150027dc59b192d2ec314b01910af3496ed` (merged PR #249, before the
-mixed-frequency executor and Candidate A Search engine existed). All three
+mixed-frequency executor and Candidate A Search engine existed). All four
 SHAs are superseded and are recorded here only for history, not as current
 state.
 
@@ -120,11 +122,34 @@ business or modelling definitions:
      `pages/05_Model_Training.py`). Market-specific (Model C) Candidate A
      integration is a documented follow-up, not yet available - requesting
      it raises a specific `ModelFitServiceError` rather than silently
-     falling back to the ordinary builder. Not yet implemented (Work
-     Package 3): Diagnostics, Results, official curve generation, and
-     Scenario Planner integration - a Candidate A fit currently persists
-     (engine identity, spec, trace) but its posterior is not yet extracted
-     into those surfaces.
+     falling back to the ordinary builder.
+  4a. Diagnostics evidence (Work Package 3): implemented. Posterior
+     extraction (`core.search_capacity.
+     extract_candidate_a_search_posterior_summary`) and a canonical
+     `DiagnosticsArtefact` section (schema v7, `search_capacity`, rendered
+     on a "Candidate A Search" Diagnostics tab) now exist. Two silent-
+     correctness gaps were found and closed while building this: the
+     Diagnostics page's model-rebuild helper and `core.attribution.
+     compute_shapley_contributions`/`core.predict.predict_mu` (and
+     therefore every downstream caller: canonical curves, the Scenario
+     Planner, the optimiser, backtest) previously either rebuilt the wrong
+     model or silently produced a `mu`/`mu_total` missing Candidate A's
+     entire search-mediated pathway - both now fail closed with a specific
+     exception instead (`ModelFitServiceError`/
+     `CandidateAAttributionNotSupportedError`/
+     `CandidateAReplayNotSupportedError`). This is the actual mechanism
+     that keeps Results, official curves, the Scenario Planner, and
+     optimisation correctly unavailable for Candidate A today - not a
+     partial or approximate implementation of any of them.
+  4b. Results, official curve generation, and Scenario Planner integration:
+     **not yet implemented**, and not merely un-extracted - REQ-CURVE-001's
+     canonical curve contract structurally excludes the search-mediated
+     pathway from `meta.pathway_masks` by the approved graph-compiler
+     design (REQ-SEARCH-002), and the NumPy replay (`predict_mu`) has no
+     representation for a *counterfactual* Search demand/capture/cap state
+     at a hypothetical scenario/curve spend point - a genuine modelling
+     design question (see `docs/decision_log.md`, Work Package 3 entry),
+     not a mechanical extension.
   5. Full joint posterior-recovery evidence (Work Package 2): a synthetic
      generator and evidence package now exist
      (`core/search_candidate_a_recovery.py`) - an independently-coded

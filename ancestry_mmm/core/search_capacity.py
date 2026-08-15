@@ -14,7 +14,7 @@ optimisation are intentionally not enabled by this module.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import TYPE_CHECKING, Any, Iterable, List, Mapping, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 import numpy as np
 
@@ -39,6 +39,14 @@ from .search_objects import (
 SEARCH_CANDIDATE_A_ENGINE = "pymc_search_candidate_a"
 SEARCH_CANDIDATE_A_FORMULATION_ID = "candidate_a_v1"
 SEARCH_CAP_PROVENANCE_VALUES = frozenset({"observed_platform", "analyst_declared"})
+# Order matches attach_candidate_a_demand_capture_chain's capture_shares[0..3]
+# indexing (paid, organic, direct, implicit-unmet remainder of the Dirichlet).
+CANDIDATE_A_CAPTURE_SHARE_COMPONENTS: tuple[str, ...] = (
+    "paid",
+    "organic",
+    "direct",
+    "unmet",
+)
 
 
 class SearchCapacityValidationError(ValueError):
@@ -731,7 +739,18 @@ def attach_candidate_a_demand_capture_chain(
         raise SearchCapacityValidationError(
             "capture_share_alpha must have four positive entries"
         )
-    capture_shares = pm.Dirichlet("search_capture_shares", a=share_alpha, shape=4)
+    # Explicit dims/coord (rather than relying on PyMC's implicit
+    # "<var>_dim_0" auto-naming for an unnamed shape=4 axis) so downstream
+    # readers (extract_candidate_a_search_posterior_summary below) can
+    # select by the actual component name.
+    model.add_coord(
+        "search_capture_share_component", CANDIDATE_A_CAPTURE_SHARE_COMPONENTS
+    )
+    capture_shares = pm.Dirichlet(
+        "search_capture_shares",
+        a=share_alpha,
+        dims="search_capture_share_component",
+    )
 
     paid_opportunity = pm.Deterministic(
         "search_unconstrained_paid_opportunity",
@@ -822,6 +841,164 @@ def attach_candidate_a_demand_capture_chain(
     )
     return pm.Deterministic(
         "search_eta_contribution", eta_search, dims=("obs", "outcome")
+    )
+
+
+# The exact PyMC variable names `attach_candidate_a_demand_capture_chain`
+# declares - the single source of truth for "which trace variables are
+# Candidate A's", reused by convergence checks and any diagnostics/
+# reporting surface that needs to know without hardcoding the list a
+# second time.
+CANDIDATE_A_TRACE_VARIABLE_NAMES: tuple[str, ...] = (
+    "search_demand_market_pool_sigma",
+    "search_demand_market_raw",
+    "search_demand_market_offset",
+    "search_demand_intercept",
+    "search_demand_media_beta",
+    "search_latent_branded_demand",
+    "search_capture_shares",
+    "search_unconstrained_paid_opportunity",
+    "search_realised_paid_delivery",
+    "search_organic_capture_expected",
+    "search_direct_navigation_capture_expected",
+    "search_total_captured_demand",
+    "search_unmet_demand",
+    "search_cap_binding_probability",
+    "search_unused_capacity",
+    "search_paid_delivery_observation_sigma",
+    "search_capture_observation_sigma",
+    "search_paid_capture_outcome_beta",
+    "search_organic_capture_outcome_beta",
+    "search_direct_navigation_capture_outcome_beta",
+    "search_eta_contribution",
+)
+
+
+@dataclass(frozen=True)
+class CandidateASearchPosteriorSummary:
+    """Posterior evidence for one Candidate A fit, read directly from the
+    trace as distributional summaries (posterior mean/probability across
+    every chain and draw) - not a single point-estimate replay contract
+    like `core.predict.FHPosteriorParams`. This is diagnostic/reporting
+    evidence only; it grants no planning or optimisation eligibility (see
+    AGENTS.md: evidence status is not reporting approval) and is not itself
+    the `core.search_capacity.candidate_a_use_gate` official-use decision.
+    """
+
+    demand_channel_names: List[str]
+    demand_media_beta_mean: Dict[str, float]
+    demand_intercept_mean: float
+    capture_share_mean: Dict[str, float]  # {"paid","organic","direct","unmet"}
+    mean_latent_demand: float
+    mean_total_captured_demand: float
+    mean_unmet_demand: float
+    reconciliation_max_abs_error: float
+    cap_binding_probability_mean: float
+    paid_capture_outcome_beta: Dict[str, float]
+    organic_capture_outcome_beta: Dict[str, float]
+    direct_navigation_capture_outcome_beta: Dict[str, float]
+    rhat_max: float
+    ess_bulk_min: float
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def extract_candidate_a_search_posterior_summary(
+    trace: Any, outcome_ids: Sequence[str]
+) -> CandidateASearchPosteriorSummary:
+    """Extract `CandidateASearchPosteriorSummary` from a fitted Candidate A
+    trace (`az.InferenceData` from `core.models.fit_model` on a model built
+    with `search_candidate_a=...`). Raises `SearchCapacityValidationError`
+    if the trace does not contain the Candidate A variables - callers must
+    already know (`FHModelMeta.causal_graph_engine ==
+    SEARCH_CANDIDATE_A_ENGINE`) that this is a Candidate A fit before
+    calling this; it does not itself infer that from a mixed/legacy trace.
+    """
+
+    import arviz as az
+
+    post = trace.posterior
+    missing = [name for name in CANDIDATE_A_TRACE_VARIABLE_NAMES if name not in post]
+    if missing:
+        raise SearchCapacityValidationError(
+            f"Trace is missing Candidate A variables - not a Candidate A fit: {missing}"
+        )
+
+    demand_channel_names = [str(v) for v in post.coords["search_demand_channel"].values]
+
+    def _mean(var: str) -> Any:
+        return post[var].mean(dim=["chain", "draw"])
+
+    demand_media_beta_mean = {
+        name: float(
+            _mean("search_demand_media_beta").sel(search_demand_channel=name).values
+        )
+        for name in demand_channel_names
+    }
+    capture_shares_mean = _mean("search_capture_shares")
+    capture_share_mean = {
+        component: float(
+            capture_shares_mean.sel(search_capture_share_component=component).values
+        )
+        for component in CANDIDATE_A_CAPTURE_SHARE_COMPONENTS
+    }
+
+    demand_mean_by_period = _mean("search_latent_branded_demand")
+    captured_mean_by_period = _mean("search_total_captured_demand")
+    unmet_mean_by_period = _mean("search_unmet_demand")
+    reconciliation_error = np.abs(
+        (captured_mean_by_period + unmet_mean_by_period - demand_mean_by_period).values
+    )
+
+    paid_capture_outcome_beta = {
+        oid: float(_mean("search_paid_capture_outcome_beta").sel(outcome=oid).values)
+        for oid in outcome_ids
+    }
+    organic_capture_outcome_beta = {
+        oid: float(_mean("search_organic_capture_outcome_beta").sel(outcome=oid).values)
+        for oid in outcome_ids
+    }
+    direct_navigation_capture_outcome_beta = {
+        oid: float(
+            _mean("search_direct_navigation_capture_outcome_beta")
+            .sel(outcome=oid)
+            .values
+        )
+        for oid in outcome_ids
+    }
+
+    with np.errstate(invalid="ignore"):
+        rhat = az.rhat(trace, var_names=list(CANDIDATE_A_TRACE_VARIABLE_NAMES))
+        ess_bulk = az.ess(
+            trace, var_names=list(CANDIDATE_A_TRACE_VARIABLE_NAMES), method="bulk"
+        )
+    rhat_values = [
+        float(v) for var in rhat.data_vars for v in np.ravel(rhat[var].values)
+    ]
+    ess_values = [
+        float(v) for var in ess_bulk.data_vars for v in np.ravel(ess_bulk[var].values)
+    ]
+    rhat_values = [v for v in rhat_values if np.isfinite(v)]
+    ess_values = [v for v in ess_values if np.isfinite(v)]
+
+    return CandidateASearchPosteriorSummary(
+        demand_channel_names=demand_channel_names,
+        demand_media_beta_mean=demand_media_beta_mean,
+        demand_intercept_mean=float(_mean("search_demand_intercept").values),
+        capture_share_mean=capture_share_mean,
+        mean_latent_demand=float(demand_mean_by_period.mean().values),
+        mean_total_captured_demand=float(captured_mean_by_period.mean().values),
+        mean_unmet_demand=float(unmet_mean_by_period.mean().values),
+        reconciliation_max_abs_error=float(np.max(reconciliation_error)),
+        cap_binding_probability_mean=float(
+            _mean("search_cap_binding_probability").mean().values
+        ),
+        paid_capture_outcome_beta=paid_capture_outcome_beta,
+        organic_capture_outcome_beta=organic_capture_outcome_beta,
+        direct_navigation_capture_outcome_beta=direct_navigation_capture_outcome_beta,
+        rhat_max=max(rhat_values) if rhat_values else float("nan"),
+        ess_bulk_min=min(ess_values) if ess_values else float("nan"),
     )
 
 

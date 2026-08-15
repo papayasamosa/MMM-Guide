@@ -486,3 +486,32 @@ class TestPredictMuDirectHaloSeparation:
             mu[self.SPIKE_WEEK + lag, halo_idx]
         )
         assert mu[self.SPIKE_WEEK + lag, kit_idx] == pytest.approx(mu[0, kit_idx])
+
+
+class TestPredictMuFailsClosedForCandidateA:
+    """WP3 (`Media-Mix-Lab: Coding LLM Next Steps After PR #253`):
+    `predict_mu` has no term for Candidate A's `search_eta_contribution` -
+    silently running it on a Candidate A fit would produce a `mu` missing
+    that whole pathway's contribution. Must raise instead, protecting every
+    downstream caller (curves, scenario planning, backtest, optimisation)
+    through this one guard."""
+
+    def test_raises_for_a_candidate_a_engine_meta(self, meta, params):
+        import dataclasses
+
+        from ancestry_mmm.core.predict import CandidateAReplayNotSupportedError
+        from ancestry_mmm.core.search_capacity import SEARCH_CANDIDATE_A_ENGINE
+
+        candidate_a_meta = dataclasses.replace(
+            meta, causal_graph_engine=SEARCH_CANDIDATE_A_ENGINE
+        )
+        frame = {
+            "X_media": np.zeros((3, len(CHANNELS))),
+            "market_bounds": [(0, 3)],
+            "market_idx": np.zeros(3, dtype=int),
+            "promo": np.zeros((3, len(OUTCOME_IDS))),
+            "trend": np.zeros(3),
+            "fourier": np.zeros((3, 2)),
+        }
+        with pytest.raises(CandidateAReplayNotSupportedError):
+            predict_mu(frame, candidate_a_meta, params)
