@@ -347,7 +347,7 @@ def test_official_lifecycle_journey_in_browser(
     )
     # --- Results: all three official response curves are visible ---------
     page.get_by_role("link", name="Results & Response Curves").click()
-    expect(page.get_by_text("Official response curves", exact=True)).to_be_visible(
+    expect(page.get_by_text("Approved response curves", exact=True)).to_be_visible(
         timeout=30_000
     )
     # Saved identifiers are deliberately secondary: they remain available in
@@ -357,13 +357,13 @@ def test_official_lifecycle_journey_in_browser(
         page.get_by_text("Technical details · saved response curve", exact=True).first
     ).to_be_visible(timeout=30_000)
     expect(
-        page.get_by_role("heading", name=re.compile(r"Official response curve")).first
+        page.get_by_role("heading", name=re.compile(r"Approved response curve")).first
     ).to_be_visible(timeout=30_000)
     expect(
         page.get_by_role(
             "heading",
             name=re.compile(
-                r"Official response curve.*Family History.*New.*GSA.*definition 1\.0"
+                r"Approved response curve.*Family History.*New.*GSA.*definition 1\.0"
             ),
         ).first
     ).to_be_visible(timeout=30_000)

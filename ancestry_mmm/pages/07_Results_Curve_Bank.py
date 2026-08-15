@@ -291,7 +291,7 @@ render_page_header(
 )
 render_workspace_note(
     "Evidence and authority",
-    "Inspect observed support, uncertainty, and evidence tier before using a curve; official response curves are kept separate from exploratory views and saved parameter snapshots.",
+    "Inspect observed support, uncertainty, and evidence tier before using a curve; approved response curves are kept separate from exploratory views and saved parameter snapshots.",
     kind="governed",
 )
 render_decision_help(
@@ -340,7 +340,7 @@ with st.container(border=True):
     )
     st.caption(
         "Use the contribution summary for fitted attribution and the exploratory response curves "
-        "for exploratory response evidence. Official response curves remain a separate, "
+        "for exploratory response evidence. Approved response curves remain a separate, "
         "governance-checked view; monetary CPA/ROI appears only where its cost mapping is valid."
     )
 
@@ -435,11 +435,11 @@ def _render_media_unit_section(
 ) -> None:
     """Historical cost trend, response-unit curve, and equivalent delivery/
     response calculators for one (market, channel) - only shown where a
-    media-unit mapping exists (Media Mapping page)."""
+    media-unit mapping exists on Activity Mapping."""
     config = market_config.get_media_unit_config(market, channel)
     if not (config and config.has_media_unit()):
         st.caption(
-            f"No media-unit mapping for {market} / {channel} yet - add one on Media Mapping "
+            f"No media-unit mapping for {market} / {channel} yet - add one on Activity Mapping "
             "to see a response-unit curve, historical cost trend, and delivery/response equivalence "
             "calculators here."
         )
@@ -627,7 +627,7 @@ def _render_official_artifact_curves(artifact, outcome_labels):
         stats = summarize_component_response_by_draw(
             group, by=[], x_col=x_col
         ).sort_values(x_col)
-        title = f"Official response curve · {market} · {channel} · {outcome_label}"
+        title = f"Approved response curve · {market} · {channel} · {outcome_label}"
         if definition_version:
             title += f" (v{definition_version})"
         curve_type = (
@@ -749,7 +749,7 @@ def _render_official_artifact(
     outcome_labels = _outcome_display_labels(outcome_definitions)
     outcome_id = (md.outcome_definition_snapshot or {}).get("outcome_id")
     outcome_label = _display_outcome(outcome_id, outcome_labels)
-    st.markdown(f"#### Official response curve · {outcome_label}")
+    st.markdown(f"#### Approved response curve · {outcome_label}")
     governance = _official_artifact_governance(
         artifact,
         current_identity,
@@ -800,7 +800,7 @@ def _render_official_artifact(
     meta_df = pd.DataFrame(
         [
             {
-                "Curve": "Official response curve",
+                "Curve": "Approved response curve",
                 "Created": md.creation_timestamp,
                 "Outcome": outcome_label,
                 "Curve basis": "Monetary units"
@@ -851,9 +851,9 @@ def _render_official_artifact_section(
     """Render the official curve artifact store section (fail closed)."""
     st.markdown("---")
     with SectionCard(
-        "Official response curves",
+        "Approved response curves",
         description=(
-            "Saved response curves that have passed the required model, outcome, "
+            "Saved response curves approved for governed use after the required model, outcome, "
             "activity, and approval checks. They remain separate from exploratory "
             "response curves and saved parameter snapshots."
         ),
@@ -862,11 +862,11 @@ def _render_official_artifact_section(
         try:
             load_result = load_curve_artifact_store(store_dir, raise_on_malformed=False)
         except CurveArtifactError as exc:
-            st.warning(f"Saved official response curves could not be read: {exc}")
+            st.warning(f"Saved approved response curves could not be read: {exc}")
             return
         if load_result.malformed:
             st.warning(
-                f"{len(load_result.malformed)} saved official response curve record(s) "
+                f"{len(load_result.malformed)} saved approved response curve record(s) "
                 "could not be read and are listed in the technical audit below."
             )
             with st.expander("Technical details · saved curve audit"):
@@ -887,8 +887,8 @@ def _render_official_artifact_section(
                 )
         if not load_result.loaded:
             st.info(
-                "No official response curves have been saved for this project yet. "
-                "Use the official curve workflow after the required approval checks "
+                "No approved response curves have been saved for this project yet. "
+                "Use the Planning Curves workflow after the required approval checks "
                 "are complete."
             )
             return
@@ -954,6 +954,19 @@ st.caption(
     "See where the fitted model attributes incremental outcomes. The views below "
     "describe reporting groupings; they do not replace the causal pathway definitions."
 )
+render_decision_help(
+    "How should I read the outcome views?",
+    controls="Business totals, configured outcome groups, and individual outcomes are separate views of the fitted results.",
+    why="The outcome units are not interchangeable, so a total is not a licence to add sign-ups, kit sales, and GSA counts together.",
+    options={
+        "Business total": "A broad Family History total used for the channel overview.",
+        "Outcome group": "A configured additive reporting total whose member outcomes are not counted again.",
+        "Individual outcome": "One approved outcome definition, shown in its own units.",
+    },
+    normal_path="Start with the business total, inspect configured groups, then use an individual outcome when the unit or segment needs detail.",
+    downstream="The selected view changes the reporting slice only; it does not change fitted pathways, effects, or stored outcome IDs.",
+    invalidates="Changing the fitted outcome catalogue or group treatment can change which reporting views are available.",
+)
 
 if model_type == "market_specific":
     st.markdown("---")
@@ -968,11 +981,7 @@ if model_type == "market_specific":
     dna_kit_outcomes_in_fit = dna_kit_sale_outcome_ids(meta)
     if dna_kit_outcomes_in_fit or fh_signup_ids:
         st.caption(
-            f"Total impact per channel across Family History GSA outcomes only ({', '.join(_display_outcome(item, outcome_labels) for item in fh_gsa_ids) or '(none)'}) - "
-            f"Family History sign-up outcomes ({', '.join(_display_outcome(item, outcome_labels) for item in fh_signup_ids) or '(none)'}) and DNA-product outcomes "
-            f"({', '.join(_display_outcome(item, outcome_labels) for item in dna_kit_outcomes_in_fit) or '(none)'}) are excluded from this total since a "
-            "sign-up count, a kit-sale count and a GSA count aren't the same unit; see their own rows "
-            "in the market x outcome x channel detail below."
+            "Channel totals use Family History GSA outcomes; sign-ups and DNA kits remain separate because their units differ."
         )
     else:
         st.caption(
@@ -1019,10 +1028,10 @@ if model_type == "market_specific":
     st.markdown("#### Contribution waterfall")
     c1, c2 = st.columns(2)
     waterfall_market = c1.selectbox("Market", meta.markets, key="ms_waterfall_market")
-    waterfall_options = {"Total Family History": None}
+    waterfall_options = {"Business total · Total Family History": None}
     waterfall_options.update(
         {
-            label: group_id
+            f"Outcome group · {label}": group_id
             for group_id, label in reporting_group_options(
                 meta.outcome_ids,
                 outcome_groups_at_fit,
@@ -1032,7 +1041,7 @@ if model_type == "market_specific":
     )
     waterfall_options.update(
         {
-            _display_outcome(outcome_id, outcome_labels): outcome_id
+            f"Individual outcome · {_display_outcome(outcome_id, outcome_labels)}": outcome_id
             for outcome_id in meta.outcome_ids
         }
     )
@@ -1075,13 +1084,13 @@ if model_type == "market_specific":
     st.markdown("### Exploratory response curves")
     st.caption(
         "Selected context: choose one market and channel below. This viewer is exploratory "
-        "evidence from the fitted model; it is not an official response curve for headline reporting."
+        "evidence from the fitted model; it is not an approved response curve for headline reporting."
     )
     st.markdown("#### Market-specific channel response curve")
     st.caption(
         "Exploratory response curve (point estimates): spend -> incremental response for one "
         "market and channel, per segment and overall (overall = sum of segment responses). "
-        "These curves are for analysis; use the Official response curves section for "
+        "These curves are for analysis; use the Approved response curves section for "
         "governed evidence."
     )
     c1, c2 = st.columns(2)
@@ -1185,11 +1194,7 @@ else:
     dna_kit_outcomes_in_fit = dna_kit_sale_outcome_ids(meta)
     if dna_kit_outcomes_in_fit or fh_signup_ids:
         st.caption(
-            f"Total impact per Family History channel across GSA outcomes only ({', '.join(_display_outcome(item, outcome_labels) for item in fh_gsa_ids) or '(none)'}) - "
-            f"Family History sign-up outcomes ({', '.join(_display_outcome(item, outcome_labels) for item in fh_signup_ids) or '(none)'}) and DNA-product outcomes "
-            f"({', '.join(_display_outcome(item, outcome_labels) for item in dna_kit_outcomes_in_fit) or '(none)'}) are excluded from this total since a "
-            "sign-up count, a kit-sale count and a GSA count aren't the same unit; see their own rows "
-            "in the outcome x channel detail below."
+            "Channel totals use Family History GSA outcomes; sign-ups and DNA kits remain separate because their units differ."
         )
     else:
         st.caption(
@@ -1230,10 +1235,10 @@ else:
 
     st.markdown("---")
     st.markdown("#### Contribution waterfall")
-    waterfall_options = {"Total Family History": None}
+    waterfall_options = {"Business total · Total Family History": None}
     waterfall_options.update(
         {
-            label: group_id
+            f"Outcome group · {label}": group_id
             for group_id, label in reporting_group_options(
                 meta.outcome_ids,
                 outcome_groups_at_fit,
@@ -1243,7 +1248,7 @@ else:
     )
     waterfall_options.update(
         {
-            _display_outcome(outcome_id, outcome_labels): outcome_id
+            f"Individual outcome · {_display_outcome(outcome_id, outcome_labels)}": outcome_id
             for outcome_id in meta.outcome_ids
         }
     )
@@ -1273,7 +1278,7 @@ else:
     st.markdown("### Exploratory response curves")
     st.caption(
         "Selected context: choose a channel and reference market below. This viewer is "
-        "exploratory evidence from the fitted model; official response curves for "
+        "exploratory evidence from the fitted model; approved response curves for "
         "governed use are shown separately below."
     )
     st.markdown("#### Channel response curve")
@@ -1281,7 +1286,7 @@ else:
         "Exploratory response curve (point estimates): spend -> incremental response for one "
         "channel, per segment and overall (overall = sum of segment responses) - the same "
         "curve every market uses, since it's shared across markets in this model structure. "
-        "These curves are for analysis; use the Official response curves section for "
+        "These curves are for analysis; use the Approved response curves section for "
         "governed evidence."
     )
     viewer_channel = st.selectbox("Channel", meta.channels)
@@ -1388,7 +1393,7 @@ st.caption(
     "These saved records are **fitted parameter snapshots** (Hill/decay/beta "
     "point estimates for one market/channel/segment), not evaluated curves. "
     "They support calibration tracking and evidence review, but are not the "
-    "same thing as a current official response curve."
+    "same thing as a current approved response curve."
 )
 approval_dict = get_state("model_approval")
 model_run_id = get_state("model_run_id")
