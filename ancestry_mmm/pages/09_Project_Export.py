@@ -1134,8 +1134,8 @@ if uploaded_zip is not None and st.button("Import bundle"):
         if imported["market_spec_config"] is None:
             st.caption(
                 "This bundle predates the market-specific redesign - no market descriptors or "
-                "media-unit mappings to import. Add them on Media Mapping / Market "
-                "Descriptors if needed."
+                "media-unit mappings to import. Add them on Activity Mapping / "
+                "Market Context if needed."
             )
         if imported["outcome_definitions"] is None:
             st.caption(
