@@ -3890,7 +3890,6 @@ end-to-end validation remains deferred pending source-data availability.
 
 **Owner:** Data Science / Platform engineering.
 **Status:** Implemented on the WP1 branch; PR and CI remain the release gate.
-
 ## Search mediation and capacity decision package (Work Package 3)
 
 **Date:** 2026-08-15.
