@@ -310,7 +310,7 @@ def _release_aware_locf(
     )
     typed = typed[typed["__release_date"].notna() & typed[value_col].notna()]
     typed = typed.sort_values(["__release_date", date_col])
-    markets = [None]
+    markets: list[Any] = [None]
     if market_col:
         markets = list(typed[market_col].drop_duplicates())
         if not markets and spec.market != "*":
