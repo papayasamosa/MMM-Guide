@@ -3810,3 +3810,36 @@ those as blockers; it does not recommend a statistical option.
 **Owner:** Data Science / Platform engineering.
 **Status:** Implemented as a local readiness harness; real UK execution remains
 analyst-authorised and decision-gated.
+
+## Repository truth reconciliation before mixed-frequency execution (Work Package 0)
+
+**Date:** 2026-08-15.
+
+**Decision:** Reconcile current-status documentation to the merged repository
+at `main` `19fd12416cd882980bc83607f2f7677de38f4d48` (UX Phase 6, PR #248).
+The status documents now describe canonical native-weekly official preparation,
+its governed outer-union calendar, fit-consumed-variable capability gating,
+standard source-pack semantic adoption, the current source-pack UX, and the
+graph/Search governance state as delivered. Historical dated snapshots in
+`REQ-COVERAGE-001` remain labelled as historical rather than being rewritten.
+
+The remaining mixed-frequency gap is specifically executable, approved
+variable-class conversion: the registry is still empty and unsupported
+monthly, quarterly, survey, and irregular official inputs remain fail-closed.
+Ragged market-specific predictor mathematics, production Search mediation and
+capacity/censoring, the sequential weekly planner, future exogenous forecasting,
+and real UK validation remain unresolved or operationally gated.
+
+**Estimand:** None introduced. This package changes documentation and traceability
+only; no source preparation, model, persistence schema, governance decision, or
+planning calculation changes.
+
+**Upstream references:** None consulted; no modelling dependency or external API
+was changed.
+
+**Tests:** Requirements/documentation conformance tests and the normal formatting,
+compile, and diff checks for edited files are the validation gate for this package.
+
+**Owner:** Data Science / Platform engineering.
+**Status:** Implemented as documentation reconciliation; Work Package 1 remains
+the next unblocked package.

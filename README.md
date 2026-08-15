@@ -28,10 +28,11 @@ sources" for a working UK/Australia/Canada dataset with no setup required, then 
 sidebar in order (Transform Pipeline → Data Coverage → Structure → Causal Graph → Channel & Media
 Units → Market Descriptors → Model Configuration → Model Training → Compare Models → Diagnostics →
 Results & Curve Bank → Official Curve Generation → Scenario Planner → Project Export & Recovery).
-Data Coverage is optional - review each variable's missingness/coverage state and build a versioned
-coverage matrix there (REQ-COVERAGE-001); skip it and later pages behave as before, though a market
-x channel engine-capability report bound to that matrix is informational only today (see below), not
-a blocking gate. Causal Graph is optional - build and
+Data Coverage is optional for exploratory work - review each variable's missingness/coverage state and
+build a versioned coverage matrix there (REQ-COVERAGE-001). Official preparation uses the governed
+canonical-weekly path, an outer union of source periods, and a fit-consumed-variable capability gate;
+unsupported or unresolved consumed coverage blocks the official frame rather than being silently filled.
+Causal Graph is optional - build and
 approve a variable-level causal graph there and it becomes the sole authoritative structural input
 to model compilation (REQ-GRAPH-001); skip it and Model Training falls back to the
 `MediaOutcomePathway` catalogue configured on Structure exactly as before.
@@ -65,16 +66,17 @@ Requires Python 3.11 or 3.12 (see [Deployment](#deployment) below for why there'
   controls) joined on date + market, an ordered and replayable transformation pipeline, calculated
   columns via a restricted `ast`-based expression parser (not `eval()`), and validation checks for
   low-variance channels, collinearity, and sparse segments/markets before fitting.
-- **Variable coverage** (`ancestry_mmm/core/coverage.py`, `ancestry_mmm/core/market_data_capability.py`,
+- **Variable coverage and official preparation** (`ancestry_mmm/core/coverage.py`,
+  `ancestry_mmm/core/official_preparation.py`, `ancestry_mmm/core/market_data_capability.py`,
   Data Coverage page): an eight-state missingness vocabulary (`observed_zero`/`missing_expected`/
   `not_applicable`/`unavailable_source`/`suppressed`/`estimated`/`modelled`/`unknown` - never
   collapsed into a nullable flag), a versioned, portable variable coverage matrix built per
   market/product/segment before fitting, immutable source-version capture on upload (checksum,
-  filename, size), explicit join-mode and join-loss/unmatched-key diagnostics
-  (`data.pipeline.join_sources_with_diagnostics`), and a market x channel engine-capability report
-  bound into model identity and the pre-fit prior-predictive check (REQ-COVERAGE-001). Frequency
-  conversion, a canonical mixed-frequency calendar, and an official-use governance gate on coverage
-  are not yet implemented - see `docs/approved_requirements/REQ-COVERAGE-001.md`.
+  filename, size), explicit join-mode and join-loss/unmatched-key diagnostics, and a governed
+  canonical native-weekly official-preparation path using an outer union of source periods. The
+  official capability report covers every source-backed variable consumed by the compiled proposal
+  and is bound into model identity and the fit gate. Executable mixed-frequency conversion remains
+  unresolved and is not inferred from a source frequency or column name.
 - **Diagnostics scorecard** (`ancestry_mmm/core/diagnostics.py`): convergence (R-hat/ESS/
   divergences), in-sample fit, error metrics (MAE/RMSE/sMAPE/WAPE/bias per outcome), residual
   temporal structure (lag-1 autocorrelation/Durbin-Watson, computed within each market's own
@@ -143,10 +145,11 @@ PowerPoint export, real Australia/Canada market builds (the geo hierarchy machin
 and exercised by the synthetic 3-market demo, but needs real data to mean anything), a live feed
 from geo-tests/in-platform tests into the curve bank (the comparison/logging workflow exists; the
 feed is manual), Stage 2 media x context interaction terms (explicitly out of scope per the
-requirements brief), executable frequency conversion and a canonical mixed-frequency calendar for
-variable coverage, and an official-use governance gate that blocks model approval on unsupported
-coverage (today's coverage/capability results are informational only - see
-`docs/approved_requirements/REQ-COVERAGE-001.md`).
+requirements brief), executable frequency conversion for non-native-cadence sources, the full
+policy-backed model-approval treatment for unsupported coverage, and a sequential weekly planner
+with starting adstock and terminal carryover. The current official-preparation gate blocks
+unsupported consumed coverage before fitting; it does not invent a conversion or resolve the
+separate `FR-MOD-015` ragged-predictor mathematics.
 
 ## Project structure
 
