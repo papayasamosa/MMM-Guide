@@ -3970,3 +3970,68 @@ PyMC Marketing.”
 **Owner:** Data Science / Platform engineering.
 **Status:** Approved for implementation; planning/optimisation eligibility
 remains disabled.
+
+## Candidate A synthetic generator and recovery-evidence policy (Work Package 2)
+
+**Date:** 2026-08-15.
+
+**Decision:** Add a synthetic generator (`core.search_candidate_a_recovery`)
+that independently computes the Candidate A forward equations in NumPy
+(reusing only the reference `core.transformations` adstock/Hill functions,
+never the PyMC/PyTensor implementation itself), and evidence-grade
+infrastructure - fast prior-predictive plausibility checks, a real
+`pm.sample` NUTS posterior-recovery suite against the *integrated*
+production model (`core.hierarchical_model.build_fh_hierarchical_model(...,
+search_candidate_a=...)`), and a deterministic identification-sensitivity
+sweep - covering multiple channels with distinct adstock/saturation, a
+direct-only channel (`demand_beta=0.0`), a mediated channel, all three cap
+regimes (never/sometimes/frequently binding), multi-market support, and
+noisy observations.
+
+**Interval-coverage evidence, not point recovery:** posterior-recovery
+checks assert the true value falls inside a reported credible interval
+(with slack), not exact point recovery, per the approved brief's own
+guidance for weakly identified parameters. `CandidateARecoveryPolicy`
+(`core.search_candidate_a_recovery.CANDIDATE_A_RECOVERY_POLICY`) records
+this as a versioned (`wp2-v1`), scoped evidence bar - engine-capability
+evidence only, explicitly not an official-use, planning, or optimisation
+approval. `core.search_capacity.candidate_a_use_gate` remains the single
+official-use gate; this package supplies one of its required evidence
+inputs (`noisy_recovery_passed`), which still requires an explicit
+human/process decision to set.
+
+**Identification finding:** the approved Candidate A graph contract
+(`core.graph_model_compiler.candidate_a_graph_issues`, REQ-SEARCH-002)
+requires every upstream intervention node to carry a mediated edge into
+latent demand - a graph cannot mix demand-mediating and plain-direct-only
+intervention nodes structurally. A "direct-only" channel is therefore
+expressed as a demand-mediating node whose true `demand_beta` is zero, not
+by omitting it from the mediated structure. Separately, noisy delivery
+observation was found to measurably degrade `identify_candidate_a_search`'s
+exact-equality cap-binding detection (`np.isclose(..., rtol=1e-8,
+atol=1e-8)`) - a real, if narrow, identification-sensitivity finding
+recorded in `test_search_candidate_a_recovery.py`, not treated as a defect
+to fix in this package.
+
+**Real MCMC recovery could not be run locally by the implementing agent:**
+PyTensor's Python compilation fallback (no C++ compiler available in that
+environment) fails with `AttributeError: 'Scratchpad' object has no
+attribute 'ufunc'` once a model's summed log-probability graph exceeds a
+NumPy ufunc argument-count ceiling - reproducible even with a minimal
+single-channel Candidate A model, and confirmed to be an environment
+limitation (not a Candidate A-specific defect) since the *ordinary*,
+unmodified hierarchical model hits the same underlying warning once its own
+free-parameter count grows. The forward/deterministic graph (reconciliation,
+non-binding-cap invariant, prior-predictive plausibility) was verified
+locally via `pm.draw`/`pm.sample_prior_predictive`, which do not require
+gradient/logp compilation. The real `pm.sample` suite
+(`test_search_candidate_a_recovery_posterior.py`) is verified by the CI
+runner instead (`candidate-a-recovery` workflow job), which is expected to
+have a working C toolchain.
+
+**Owner:** Data Science / Platform engineering.
+**Status:** Evidence-package delivered. Official Search fit eligibility
+remains gated by explicit human/process review of this evidence plus the
+remaining `candidate_a_use_gate` requirements (prior/posterior predictive,
+counterfactual-contract, explicit model approval) - this package does not
+self-approve any of them.
