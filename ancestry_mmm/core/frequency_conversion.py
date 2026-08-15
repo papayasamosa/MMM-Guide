@@ -59,7 +59,9 @@ def _week_periods(
     return periods
 
 
-def _frequency_period_bounds(value: Any, frequency: str) -> tuple[pd.Timestamp, pd.Timestamp]:
+def _frequency_period_bounds(
+    value: Any, frequency: str
+) -> tuple[pd.Timestamp, pd.Timestamp]:
     frequency_key = frequency.strip().lower()
     timestamp = pd.Timestamp(value).normalize()
     if frequency_key == "daily":
@@ -131,7 +133,9 @@ def _common_evidence(
 
 def _numeric_series(frame: pd.DataFrame, value_col: str) -> pd.Series:
     if value_col not in frame.columns:
-        raise FrequencyConversionError(f"source has no governed value column {value_col!r}")
+        raise FrequencyConversionError(
+            f"source has no governed value column {value_col!r}"
+        )
     values = pd.to_numeric(frame[value_col], errors="coerce")
     invalid = frame[value_col].notna() & values.isna()
     if invalid.any():
@@ -160,7 +164,9 @@ def _validate_source_frame(
     typed = frame.copy()
     typed[date_col] = pd.to_datetime(typed[date_col], errors="coerce")
     if typed[date_col].isna().any():
-        raise FrequencyConversionError(f"source date column {date_col!r} contains invalid dates")
+        raise FrequencyConversionError(
+            f"source date column {date_col!r} contains invalid dates"
+        )
     typed[value_col] = _numeric_series(typed, value_col)
     if market_col and spec.market != "*":
         typed = typed[typed[market_col].astype(str) == str(spec.market)]
@@ -183,7 +189,9 @@ def _calendar_overlap_allocation(
     )
     for row_number, row in frame.iterrows():
         value = row[value_col]
-        source_start, source_end = _frequency_period_bounds(row[date_col], spec.native_frequency)
+        source_start, source_end = _frequency_period_bounds(
+            row[date_col], spec.native_frequency
+        )
         if pd.isna(value):
             continue
         source_days = (source_end - source_start).days + 1
@@ -193,9 +201,13 @@ def _calendar_overlap_allocation(
             overlap_end = min(source_end, target_end)
             overlap_days = (overlap_end - overlap_start).days + 1
             if overlap_days > 0:
-                allocations.append((target_start, float(value) * overlap_days / source_days))
+                allocations.append(
+                    (target_start, float(value) * overlap_days / source_days)
+                )
                 payload = {
-                    "source_row": int(row_number) if isinstance(row_number, (int, np.integer)) else str(row_number),
+                    "source_row": int(row_number)
+                    if isinstance(row_number, (int, np.integer))
+                    else str(row_number),
                     "source_period_start": source_start.strftime("%Y-%m-%d"),
                     "source_period_end": source_end.strftime("%Y-%m-%d"),
                     "target_period_start": target_start.strftime("%Y-%m-%d"),
@@ -215,10 +227,14 @@ def _calendar_overlap_allocation(
                 output[market_col] = row[market_col]
             rows.append(output)
 
-    output = pd.DataFrame(rows, columns=[date_col] + ([market_col] if market_col else []) + [value_col])
+    output = pd.DataFrame(
+        rows, columns=[date_col] + ([market_col] if market_col else []) + [value_col]
+    )
     if not output.empty:
         group_keys = [date_col] + ([market_col] if market_col else [])
-        output = output.groupby(group_keys, as_index=False, dropna=False)[value_col].sum()
+        output = output.groupby(group_keys, as_index=False, dropna=False)[
+            value_col
+        ].sum()
     evidence = _common_evidence(
         spec,
         target_periods=target_periods,
@@ -346,7 +362,11 @@ def _native_cadence_only(
             "native_cadence_only requires native and target frequencies to match"
         )
     typed = frame.copy()
-    typed[date_col] = typed[date_col].map(_week_start) if spec.target_frequency == "weekly" else typed[date_col]
+    typed[date_col] = (
+        typed[date_col].map(_week_start)
+        if spec.target_frequency == "weekly"
+        else typed[date_col]
+    )
     evidence = _common_evidence(
         spec,
         target_periods=target_periods,
@@ -369,7 +389,9 @@ def _event_alignment(
     parameters = spec.parameters
     event_type = str(parameters.get("event_type", "")).strip().lower()
     if event_type not in {"point", "duration"}:
-        raise FrequencyConversionError("event_flag requires parameters.event_type point or duration")
+        raise FrequencyConversionError(
+            "event_flag requires parameters.event_type point or duration"
+        )
     start_column = str(parameters.get("start_column", date_col))
     end_column = str(parameters.get("end_column", start_column))
     whole_week_column = parameters.get("whole_week_indicator_column")
@@ -378,7 +400,9 @@ def _event_alignment(
             "event_flag parameters name a missing whole-week indicator column"
         )
     if start_column not in frame.columns or end_column not in frame.columns:
-        raise FrequencyConversionError("event_flag parameters name missing start/end columns")
+        raise FrequencyConversionError(
+            "event_flag parameters name missing start/end columns"
+        )
     typed = frame.copy()
     typed[start_column] = pd.to_datetime(typed[start_column], errors="coerce")
     typed[end_column] = pd.to_datetime(typed[end_column], errors="coerce")
@@ -391,7 +415,9 @@ def _event_alignment(
         if source_end < source_start:
             raise FrequencyConversionError("event end must not precede event start")
         multiplier = np.nan if pd.isna(source[value_col]) else float(source[value_col])
-        whole_week = bool(source[str(whole_week_column)]) if whole_week_column else False
+        whole_week = (
+            bool(source[str(whole_week_column)]) if whole_week_column else False
+        )
         for target_start in target_periods:
             target_end = target_start + pd.Timedelta(days=6)
             overlap_start = max(source_start, target_start)
@@ -408,7 +434,9 @@ def _event_alignment(
             if market_col:
                 output[market_col] = source[market_col]
             rows.append(output)
-    output = pd.DataFrame(rows, columns=[date_col] + ([market_col] if market_col else []) + [value_col])
+    output = pd.DataFrame(
+        rows, columns=[date_col] + ([market_col] if market_col else []) + [value_col]
+    )
     if not output.empty:
         keys = [date_col] + ([market_col] if market_col else [])
         output = output.groupby(keys, as_index=False, dropna=False)[value_col].sum(
@@ -451,9 +479,7 @@ def _execute_registered(
         )
     if not isinstance(spec.publication_timing, dict):
         raise FrequencyConversionError("publication_timing must be a dictionary")
-    unknown_timing = sorted(
-        set(spec.publication_timing) - {"release_date_column"}
-    )
+    unknown_timing = sorted(set(spec.publication_timing) - {"release_date_column"})
     if unknown_timing:
         raise FrequencyConversionError(
             f"publication_timing has unknown key(s): {unknown_timing}"
@@ -629,11 +655,7 @@ def available_method_ids(variable_class: str) -> tuple[str, ...]:
 
     if variable_class not in VARIABLE_CLASSES:
         raise FrequencyConversionError(f"unknown variable class {variable_class!r}")
-    return tuple(
-        sorted(
-            method_id for method_id in _METHOD_CATALOGUE[variable_class]
-        )
-    )
+    return tuple(sorted(method_id for method_id in _METHOD_CATALOGUE[variable_class]))
 
 
 def execute_frequency_conversion(

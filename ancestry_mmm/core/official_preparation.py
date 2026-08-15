@@ -358,12 +358,17 @@ class OfficialPreparationDataError(ValueError):
 
 
 def _normalise_alignment_specs(
-    alignment_specs: Mapping[str, AlignmentSpecification
-    | Sequence[AlignmentSpecification]],
+    alignment_specs: Mapping[
+        str, AlignmentSpecification | Sequence[AlignmentSpecification]
+    ],
 ) -> tuple[AlignmentSpecification, ...]:
     normalised: list[AlignmentSpecification] = []
     for key, value in alignment_specs.items():
-        items = value if isinstance(value, Sequence) and not isinstance(value, str) else (value,)
+        items = (
+            value
+            if isinstance(value, Sequence) and not isinstance(value, str)
+            else (value,)
+        )
         for item in items:
             if not isinstance(item, AlignmentSpecification):
                 raise OfficialPreparationDataError(
@@ -397,7 +402,8 @@ def _apply_alignment_specs(
         if spec.source_id == source_id
         and (
             spec.native_frequency.strip().lower() != governed_frequency.strip().lower()
-            or spec.target_frequency.strip().lower() != governed_frequency.strip().lower()
+            or spec.target_frequency.strip().lower()
+            != governed_frequency.strip().lower()
         )
     }
     if consumed_set:
@@ -421,7 +427,9 @@ def _apply_alignment_specs(
         .tolist()
     )
     for variable_id in sorted(required_specs):
-        variable_specs = tuple(spec for spec in source_specs if spec.variable_id == variable_id)
+        variable_specs = tuple(
+            spec for spec in source_specs if spec.variable_id == variable_id
+        )
         if not variable_specs:
             raise OfficialPreparationDataError(
                 f"no explicit alignment spec is available for consumed variable {variable_id!r}"

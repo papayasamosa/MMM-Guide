@@ -289,20 +289,12 @@ if variable_columns:
                     if default_frequency
                     else "flow_count"
                 ),
-                "method": (
-                    default_frequency.method
-                    if default_frequency
-                    else ""
-                ),
+                "method": (default_frequency.method if default_frequency else ""),
                 "method_version": (
-                    default_frequency.method_version
-                    if default_frequency
-                    else None
+                    default_frequency.method_version if default_frequency else None
                 ),
                 "method_parameters_json": json.dumps(
-                    default_frequency.method_parameters
-                    if default_frequency
-                    else {},
+                    default_frequency.method_parameters if default_frequency else {},
                     sort_keys=True,
                 ),
                 "publication_lag_periods": (
@@ -311,15 +303,11 @@ if variable_columns:
                     else 0
                 ),
                 "publication_timing_json": json.dumps(
-                    default_frequency.publication_timing
-                    if default_frequency
-                    else {},
+                    default_frequency.publication_timing if default_frequency else {},
                     sort_keys=True,
                 ),
                 "reconciliation_rule": (
-                    default_frequency.reconciliation_rule
-                    if default_frequency
-                    else ""
+                    default_frequency.reconciliation_rule if default_frequency else ""
                 ),
                 "source_id": default_source_id,
                 "source_version": default_source_version,
@@ -381,7 +369,7 @@ if variable_columns:
             ),
             "publication_timing_json": st.column_config.TextColumn(
                 "Publication timing (JSON)",
-                help="For example {\"release_date_column\": \"released_on\"}.",
+                help='For example {"release_date_column": "released_on"}.',
             ),
             "reconciliation_rule": st.column_config.TextColumn(
                 "Reconciliation rule",

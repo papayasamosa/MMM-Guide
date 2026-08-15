@@ -163,9 +163,9 @@ def register_conversion_method(
     """Register a conversion method and its optional governed executor."""
     _METHOD_REGISTRY[(spec.variable_class, spec.method_id)] = spec
     if executor is not None:
-        _METHOD_EXECUTOR_REGISTRY[(spec.variable_class, spec.method_id, spec.version)] = (
-            executor
-        )
+        _METHOD_EXECUTOR_REGISTRY[
+            (spec.variable_class, spec.method_id, spec.version)
+        ] = executor
 
 
 def resolve_conversion_method(
