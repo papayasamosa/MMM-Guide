@@ -13,6 +13,7 @@ import sys
 from collections import defaultdict
 from dataclasses import replace
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -62,9 +63,20 @@ from ancestry_mmm.core.coverage_fabric import (
     filter_cells_by_states,
 )
 from ancestry_mmm.core.fingerprint import fingerprint_dataframe
+from ancestry_mmm.core.frequency_conversion import available_method_ids
 from ancestry_mmm.data import adopted_model_input_frame, detect_column_types
 
 FREQUENCY_OPTIONS = ["daily", "weekly", "monthly", "quarterly", "irregular"]
+_METHOD_OPTIONS = [
+    "",
+    *sorted(
+        {
+            method_id
+            for variable_class in VARIABLE_CLASSES
+            for method_id in available_method_ids(variable_class)
+        }
+    ),
+]
 
 st.set_page_config(
     page_title="Coverage & Gaps | Ancestry Family History & DNA MMM",
@@ -277,6 +289,38 @@ if variable_columns:
                     if default_frequency
                     else "flow_count"
                 ),
+                "method": (
+                    default_frequency.method
+                    if default_frequency
+                    else ""
+                ),
+                "method_version": (
+                    default_frequency.method_version
+                    if default_frequency
+                    else None
+                ),
+                "method_parameters_json": json.dumps(
+                    default_frequency.method_parameters
+                    if default_frequency
+                    else {},
+                    sort_keys=True,
+                ),
+                "publication_lag_periods": (
+                    default_frequency.publication_lag_periods
+                    if default_frequency
+                    else 0
+                ),
+                "publication_timing_json": json.dumps(
+                    default_frequency.publication_timing
+                    if default_frequency
+                    else {},
+                    sort_keys=True,
+                ),
+                "reconciliation_rule": (
+                    default_frequency.reconciliation_rule
+                    if default_frequency
+                    else ""
+                ),
                 "source_id": default_source_id,
                 "source_version": default_source_version,
             }
@@ -285,6 +329,7 @@ if variable_columns:
         "native_frequency": FREQUENCY_OPTIONS,
         "target_frequency": FREQUENCY_OPTIONS,
         "variable_class": VARIABLE_CLASSES,
+        "method": _METHOD_OPTIONS,
     }
     _metadata_editor_df = display_enum_frame(
         pd.DataFrame(metadata_rows), _metadata_enum_values.keys()
@@ -311,6 +356,37 @@ if variable_columns:
                 options=display_enum_options(sorted(VARIABLE_CLASSES)),
                 required=True,
             ),
+            "method": st.column_config.SelectboxColumn(
+                "Approved method (explicit)",
+                options=_METHOD_OPTIONS,
+                help=(
+                    "Select an exact method for mixed-frequency variables. "
+                    "Blank is deliberate and remains blocked until reviewed."
+                ),
+            ),
+            "method_version": st.column_config.NumberColumn(
+                "Method version",
+                min_value=1,
+                step=1,
+                help="Version of the approved method implementation.",
+            ),
+            "method_parameters_json": st.column_config.TextColumn(
+                "Method parameters (JSON)",
+                help="Explicit method parameters; use {} when none are required.",
+            ),
+            "publication_lag_periods": st.column_config.NumberColumn(
+                "Publication lag (periods)",
+                min_value=0,
+                step=1,
+            ),
+            "publication_timing_json": st.column_config.TextColumn(
+                "Publication timing (JSON)",
+                help="For example {\"release_date_column\": \"released_on\"}.",
+            ),
+            "reconciliation_rule": st.column_config.TextColumn(
+                "Reconciliation rule",
+                help="Describe the source-to-target reconciliation rule.",
+            ),
             "source_id": st.column_config.TextColumn("Source", required=True),
             "source_version": st.column_config.NumberColumn(
                 "Source version",
@@ -334,6 +410,25 @@ if variable_columns:
                     native_frequency=str(row["native_frequency"]),
                     target_frequency=str(row["target_frequency"]),
                     variable_class=str(row["variable_class"]),
+                    method=str(row.get("method") or "").strip(),
+                    method_version=(
+                        None
+                        if pd.isna(row.get("method_version"))
+                        or not str(row.get("method_version") or "").strip()
+                        else int(row["method_version"])
+                    ),
+                    method_parameters=json.loads(
+                        str(row.get("method_parameters_json") or "{}")
+                    ),
+                    publication_lag_periods=int(
+                        row.get("publication_lag_periods") or 0
+                    ),
+                    publication_timing=json.loads(
+                        str(row.get("publication_timing_json") or "{}")
+                    ),
+                    reconciliation_rule=str(
+                        row.get("reconciliation_rule") or ""
+                    ).strip(),
                 )
                 for _, row in metadata_editor.iterrows()
             }
@@ -491,6 +586,7 @@ else:
             ic1, ic2, ic3 = st.columns(3)
             ic1.metric("Native frequency", _r.frequency.native_frequency)
             ic1.metric("Target frequency", _r.frequency.target_frequency)
+            ic1.metric("Approved method", _r.frequency.method or "Not selected")
             ic2.metric("Source", f"{_r.source_id} v{_r.source_version}")
             ic2.metric(
                 "Observed window",
@@ -500,6 +596,33 @@ else:
             ic3.metric(
                 "Approved for official use",
                 "Yes" if _r.approved_for_official_use else "No",
+            )
+            st.caption(
+                "Method version: "
+                + (
+                    str(_r.frequency.method_version)
+                    if _r.frequency.method_version is not None
+                    else "not selected"
+                )
+                + "; publication lag: "
+                + str(_r.frequency.publication_lag_periods)
+                + " period(s); reconciliation: "
+                + (_r.frequency.reconciliation_rule or "not recorded")
+            )
+            render_technical_details(
+                details={
+                    "Method parameters": json.dumps(
+                        _r.frequency.method_parameters, sort_keys=True
+                    ),
+                    "Publication timing": json.dumps(
+                        _r.frequency.publication_timing, sort_keys=True
+                    ),
+                    "Definition breaks": "; ".join(
+                        f"{item.break_date}: {item.description}"
+                        for item in _r.definition_breaks
+                    )
+                    or "None recorded",
+                }
             )
             if _r.approved_treatment:
                 st.caption(
@@ -562,6 +685,10 @@ summary_rows = [
         "segment": record.segment or "",
         "native_frequency": record.frequency.native_frequency,
         "target_frequency": record.frequency.target_frequency,
+        "method": record.frequency.method or "",
+        "method_version": record.frequency.method_version or "",
+        "publication_lag_periods": record.frequency.publication_lag_periods,
+        "reconciliation_rule": record.frequency.reconciliation_rule,
         "observed_start": record.observed_start or "",
         "observed_end": record.observed_end or "",
         "expected_start": record.expected_start or "",
@@ -583,6 +710,10 @@ summary_df = pd.DataFrame(summary_rows).rename(
         "segment": "Customer segment",
         "native_frequency": "Source frequency",
         "target_frequency": "Model frequency",
+        "method": "Approved method",
+        "method_version": "Method version",
+        "publication_lag_periods": "Publication lag",
+        "reconciliation_rule": "Reconciliation rule",
         "observed_start": "Observed start",
         "observed_end": "Observed end",
         "expected_start": "Expected start",

@@ -1,25 +1,21 @@
 """Canonical-calendar and mixed-frequency alignment contracts
-(REQ-COVERAGE-001 S4, Work Package C).
+(REQ-COVERAGE-001 S4, Work Package C/WP1).
 
 Completes the *architecture* needed for approved mixed-frequency
-transformations, without inventing an unapproved statistical conversion
-method. REQ-COVERAGE-001 S4 authorises variable-class-specific conversion
-semantics but does not approve one concrete method for any variable class
-(`docs/approved_requirements/REQ-COVERAGE-001.md`, "Out of scope"): "Any
-specific imputation formula, interpolation kernel, or default fill method
-not named in S4" remains unapproved. This module therefore defines:
+transformations. The WP1 brief supplies a deliberately closed deterministic
+catalogue; this module remains the governance authority and never infers a
+method from a column name or frequency. REQ-COVERAGE-001 S4 still forbids an
+unapproved statistical default. This module therefore defines:
 
 - ``AlignmentSpecification``: the versioned, typed decision record S4
   requires (source frequency, target frequency, method, parameters, market
   scope, effective period, publication/release timing, reconciliation rule,
   support boundary) - distinct from a generic fill operation.
 - a conversion-method registry/protocol (``register_conversion_method``/
-  ``resolve_conversion_method``) that starts genuinely empty - no method is
-  registered for any variable class, so every alignment request today
-  resolves to an explicit ``unsupported_no_approved_method`` result, never a
-  fabricated series. A future, separately-approved requirement (the brief's
-  Work Package D) registers a concrete method once one is approved; this
-  module does not anticipate what that method will be.
+  ``resolve_conversion_method``) whose method ID and version must be selected
+  explicitly. The framework-independent WP1 executor registers the approved
+  catalogue at official-preparation assessment time; an absent or mismatched
+  method remains an explicit unsupported result.
 - leakage (publication-lag), definition-break, and support-boundary checks
   that operate on already-known inputs, independent of which (if any)
   method is eventually approved.
@@ -32,18 +28,16 @@ not named in S4" remains unapproved. This module therefore defines:
   governed calendar decision gets ``CalendarResolutionRequiredError``,
   never a silently-inferred calendar from raw source intersection.
 
-Deliberately NOT done here (REQ-COVERAGE-001 S4/"Out of scope", and this
-brief's own Work Package C/D boundary):
+Deliberately NOT done here:
 
-- No conversion method (interpolation, allocation, forward-fill, ...) is
-  implemented for any variable class.
+- The executor is kept in ``core.frequency_conversion`` so this contract does
+  not contain conversion algebra or mutate source frames.
 - No conversion is wired into `data.pipeline.join_sources`/
   `join_sources_with_diagnostics` or the exploratory Transform Pipeline -
   those keep working exactly as before (explicit join mode + join-loss
   diagnostics, PR #157). The official-preparation boundary may call the
-  read-only `assess_official_preparation` service below: while the registry
-  is empty it returns an actionable decision-required result and never
-  changes the native source or exploratory frame.
+  read-only `assess_official_preparation` service below; it never changes the
+  native source or exploratory frame.
 - No default project-calendar source (e.g. "whichever source has the
   longest/shortest history") is chosen - REQ-COVERAGE-001 S1's "never
   truncate to the narrowest common window" applies here too.
@@ -53,7 +47,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import date
-from typing import Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 import pandas as pd
 
@@ -66,7 +60,7 @@ from .coverage import (
     official_fit_blocking_issues,
 )
 
-# --- Conversion-method registry (starts empty - see module docstring) -----
+# --- Conversion-method registry (populated by the WP1 executor catalogue) --
 
 
 @dataclass(frozen=True)
@@ -110,10 +104,10 @@ class ConversionMethodSpec:
 
 # evaluator_id-style registry (mirrors core.validation_policy._EVALUATOR_
 # REGISTRY / register_evaluator): (variable_class, method_id) -> spec.
-# Genuinely empty - no entry point in this module registers anything.
-# Work Package D registers a concrete method here only once a modelling
-# decision approves one; this module never does so itself.
+# The registry remains empty until the framework-independent WP1 catalogue is
+# explicitly installed by official-preparation assessment.
 _METHOD_REGISTRY: Dict[Tuple[str, str], ConversionMethodSpec] = {}
+_METHOD_EXECUTOR_REGISTRY: Dict[Tuple[str, str, int], Callable[..., Any]] = {}
 
 
 # Decision-support vocabulary for the official-preparation UI. This is not a
@@ -163,11 +157,15 @@ FREQUENCY_METHOD_DECISIONS_REQUIRED = {
 
 def register_conversion_method(
     spec: ConversionMethodSpec,
+    *,
+    executor: Optional[Callable[..., Any]] = None,
 ) -> None:
-    """Register a conversion method spec. Never called by this module
-    itself - reserved for a future, separately-approved dependent package
-    (this brief's Work Package D) to call once a method is approved."""
+    """Register a conversion method and its optional governed executor."""
     _METHOD_REGISTRY[(spec.variable_class, spec.method_id)] = spec
+    if executor is not None:
+        _METHOD_EXECUTOR_REGISTRY[(spec.variable_class, spec.method_id, spec.version)] = (
+            executor
+        )
 
 
 def resolve_conversion_method(
@@ -177,13 +175,20 @@ def resolve_conversion_method(
     ``method_id``), or ``None`` if none is registered/approved. Never
     guesses a default method across variable classes (REQ-COVERAGE-001 S4:
     "a single default method must never be applied across classes")."""
-    if method_id is not None:
-        spec = _METHOD_REGISTRY.get((variable_class, method_id))
-        return spec if spec is not None and spec.approved else None
-    for (vc, _mid), spec in _METHOD_REGISTRY.items():
-        if vc == variable_class and spec.approved:
-            return spec
-    return None
+    if method_id is None:
+        return None
+    spec = _METHOD_REGISTRY.get((variable_class, method_id))
+    return spec if spec is not None and spec.approved else None
+
+
+def resolve_conversion_executor(
+    spec: ConversionMethodSpec,
+) -> Optional[Callable[..., Any]]:
+    """Return the executor registered for the exact approved method version."""
+
+    return _METHOD_EXECUTOR_REGISTRY.get(
+        (spec.variable_class, spec.method_id, spec.version)
+    )
 
 
 def registered_method_count() -> int:
@@ -212,6 +217,8 @@ class AlignmentSpecification:
     variable_class: str
     publication_lag_periods: int = 0
     method_id: Optional[str] = None
+    method_version: Optional[int] = None
+    publication_timing: Dict[str, object] = field(default_factory=dict)
     # The version of *this decision*, distinct from `source_version` (which
     # identifies the input source, not the alignment decision made about
     # it) - review finding: without this, two materially different
@@ -249,6 +256,8 @@ class AlignmentSpecification:
             )
         if self.publication_lag_periods < 0:
             raise ValueError("publication_lag_periods must be >= 0")
+        if self.method_version is not None and self.method_version < 1:
+            raise ValueError("method_version must be >= 1 when supplied")
         if self.decision_version < 1:
             raise ValueError("decision_version must be >= 1")
         for label, start, end in (
@@ -357,7 +366,9 @@ ALIGNMENT_STATUSES = (
     "unsupported_no_approved_method",
     "unsupported_definition_break",
     "unsupported_leakage",
+    "unsupported_parameters",
     "method_available",
+    "ready",
 )
 
 # The only statuses that represent a genuinely usable outcome. Review
@@ -367,7 +378,7 @@ ALIGNMENT_STATUSES = (
 # promises ("register a method, nothing else needs to change") was not
 # actually honoured. `supported` is now derived from `status`, so the two
 # can never disagree.
-_SUPPORTED_STATUSES = frozenset({"method_available"})
+_SUPPORTED_STATUSES = frozenset({"method_available", "ready"})
 
 
 @dataclass(frozen=True)
@@ -378,14 +389,11 @@ class AlignmentResult:
     drop, approximate, or mask what cannot be officially converted; always
     name the specific reason).
 
-    ``status="method_available"`` means an approved conversion method is
-    registered for ``spec.variable_class`` and no known blocker (a
-    definition break, or - when checkable - publication leakage) applies.
-    It does NOT mean data has actually been converted: this module reports
-    feasibility only, never executes a conversion - a dependent execution
-    service (this brief's Work Package D and beyond) performs that,
-    reading the resolved `ConversionMethodSpec` this result implies via
-    `resolve_conversion_method`.
+    ``status="method_available"`` means an approved method is registered but
+    its exact-version executor is not. ``status="ready"`` means the governed
+    executor is registered and the known definition-break and publication
+    checks pass; the official preparation boundary still records execution
+    evidence separately.
     """
 
     spec: AlignmentSpecification
@@ -422,15 +430,9 @@ def evaluate_alignment_request(
     enough information is supplied, the definition-break and
     publication-leakage checks.
 
-    In production, this returns ``unsupported_no_approved_method`` for
-    every request today - see module docstring: no conversion method is
-    approved for any variable class yet, so `resolve_conversion_method`
-    never returns one there. Unlike an earlier version of this function,
-    that is a live consequence of the registry being empty, not a
-    hardcoded fallback: once a dependent, separately-approved package
-    calls `register_conversion_method` with `approved=True`, this
-    function's own logic already returns ``status="method_available"``
-    for a matching request without needing to be rewritten.
+    The method ID is always explicit. A catalogue entry without an executor
+    remains ``method_available``; an exact-version executor returns
+    ``ready``. There is no class- or frequency-based default.
 
     Checks run in this order, each capable of blocking independently of
     whether a method is ever approved: a definition break inside
@@ -489,14 +491,44 @@ def evaluate_alignment_request(
                 "required before this alignment can be resolved officially."
             ),
         )
+    if spec.method_version is not None and spec.method_version != method.version:
+        return AlignmentResult(
+            spec=spec,
+            status="unsupported_no_approved_method",
+            reason=(
+                f"Requested method {method.method_id!r} version "
+                f"{spec.method_version} but approved version {method.version} "
+                "is registered; update the persisted decision explicitly."
+            ),
+        )
+    executor = resolve_conversion_executor(method)
+    if executor is None:
+        return AlignmentResult(
+            spec=spec,
+            status="method_available",
+            reason=(
+                f"Approved method {method.method_id!r} v{method.version} is "
+                f"registered for variable class {spec.variable_class!r}, but "
+                "no governed executor is registered for that exact version."
+            ),
+        )
+    from .frequency_conversion import FrequencyConversionError, validate_conversion_spec
+
+    try:
+        validate_conversion_spec(spec)
+    except FrequencyConversionError as exc:
+        return AlignmentResult(
+            spec=spec,
+            status="unsupported_parameters",
+            reason=f"The selected conversion parameters are invalid: {exc}",
+        )
     return AlignmentResult(
         spec=spec,
-        status="method_available",
+        status="ready",
         reason=(
             f"Approved method {method.method_id!r} v{method.version} is "
-            f"registered for variable class {spec.variable_class!r}. This "
-            "module reports feasibility only - it does not execute the "
-            "conversion; a dependent execution service performs that."
+            f"registered with a governed executor for variable class "
+            f"{spec.variable_class!r}."
         ),
     )
 
@@ -593,6 +625,7 @@ OFFICIAL_PREPARATION_STATUSES = (
     "unsupported_no_approved_method",
     "unsupported_definition_break",
     "unsupported_leakage",
+    "unsupported_parameters",
     "method_available",
 )
 
@@ -603,10 +636,8 @@ class OfficialPreparationResult:
 
     This service deliberately does not mutate a frame. ``ready`` is only
     possible when a governed canonical calendar exists, coverage is not
-    unresolved, and no frequency conversion is required. A future package
-    may add a concrete, approved conversion executor; until then a
-    mixed-frequency request is explicitly unsupported rather than being
-    satisfied by an inner join or fill operation.
+    unresolved, and every required conversion has a versioned, validated
+    executor. Native data is never altered by this decision record.
     """
 
     status: str
@@ -618,6 +649,7 @@ class OfficialPreparationResult:
     native_data_preserved: bool = True
     capability_evidence: Optional[dict] = None
     consumed_variable_ids: Tuple[str, ...] = ()
+    conversion_evidence: Tuple[dict, ...] = ()
 
     def __post_init__(self) -> None:
         if self.status not in OFFICIAL_PREPARATION_STATUSES:
@@ -645,6 +677,7 @@ class OfficialPreparationResult:
             "native_data_preserved": self.native_data_preserved,
             "capability_evidence": self.capability_evidence,
             "consumed_variable_ids": list(self.consumed_variable_ids),
+            "conversion_evidence": list(self.conversion_evidence),
             "ready": self.ready,
         }
 
@@ -667,6 +700,9 @@ def _alignment_spec_from_coverage_record(
         variable_class=frequency.variable_class,
         publication_lag_periods=frequency.publication_lag_periods,
         method_id=frequency.method or None,
+        method_version=frequency.method_version,
+        publication_timing=frequency.publication_timing,
+        parameters=frequency.method_parameters,
         reconciliation_rule=frequency.reconciliation_rule,
         effective_start=record.effective_start,
         effective_end=record.effective_end,
@@ -674,6 +710,26 @@ def _alignment_spec_from_coverage_record(
         support_end=record.observed_end,
         definition_breaks=record.definition_breaks,
     )
+
+
+def alignment_specs_from_coverage_matrix(
+    matrix: VariableCoverageMatrix,
+    *,
+    target_frequency: Optional[str] = None,
+    consumed_variable_ids: Optional[Tuple[str, ...]] = None,
+) -> dict[str, tuple[AlignmentSpecification, ...]]:
+    """Build explicit, persisted alignment specs for consumed variables."""
+
+    consumed = set(consumed_variable_ids or ())
+    grouped: dict[str, list[AlignmentSpecification]] = {}
+    for record in matrix.records:
+        if consumed and record.variable_id not in consumed:
+            continue
+        spec = _alignment_spec_from_coverage_record(
+            record, target_frequency=target_frequency
+        )
+        grouped.setdefault(record.variable_id, []).append(spec)
+    return {variable_id: tuple(items) for variable_id, items in grouped.items()}
 
 
 def assess_official_preparation(
@@ -691,7 +747,7 @@ def assess_official_preparation(
     The result is intentionally a governance/readiness report, not a
     transformation. Native-frequency rows and missingness are never changed.
     A mixed-frequency record is sent through ``evaluate_alignment_request``;
-    with the currently empty registry this produces
+    with no explicit method this produces
     ``unsupported_no_approved_method``. The generic Transform Pipeline is
     therefore not an implicit fallback.
 
@@ -715,6 +771,13 @@ def assess_official_preparation(
                 "it must not be inferred from a source intersection.",
             ),
         )
+
+    # The catalogue/executor is a separate framework-independent module so
+    # this contract remains the authority for readiness and never infers a
+    # method from a column name or source frequency.
+    from .frequency_conversion import ensure_approved_frequency_methods
+
+    ensure_approved_frequency_methods()
 
     consumed_ids = set(consumed_variable_ids or ())
     records = tuple(
@@ -860,6 +923,7 @@ def assess_official_preparation(
             "unsupported_no_approved_method",
             "unsupported_definition_break",
             "unsupported_leakage",
+            "unsupported_parameters",
         }:
             status = "decision_required"
         decisions = tuple(
@@ -881,15 +945,25 @@ def assess_official_preparation(
             consumed_variable_ids=tuple(consumed_variable_ids or ()),
         )
 
-    # Feasibility is not execution. Until a separately-scoped executor is
-    # supplied, do not allow a method registry entry by itself to create a
-    # model frame from native-frequency inputs.
+    if all(result.status == "ready" for result in results):
+        return OfficialPreparationResult(
+            status="ready",
+            reason=(
+                "Coverage is resolved and every required mixed-frequency "
+                "conversion has an approved, versioned executor."
+            ),
+            canonical_calendar=calendar,
+            alignment_results=results,
+            conversion_variable_classes=conversion_classes,
+            capability_evidence=capability_evidence,
+            consumed_variable_ids=tuple(consumed_variable_ids or ()),
+        )
+
     return OfficialPreparationResult(
         status="method_available",
         reason=(
-            "An approved conversion method is available, but this boundary "
-            "does not execute conversions. Use the separately governed "
-            "conversion executor before official preparation."
+            "An approved conversion method is available, but at least one "
+            "method has no exact-version executor."
         ),
         canonical_calendar=calendar,
         alignment_results=results,

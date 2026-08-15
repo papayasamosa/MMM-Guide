@@ -141,7 +141,9 @@ class TestConversionMethodRegistry:
             )
         )
         try:
-            resolved = resolve_conversion_method("rate_index")
+            resolved = resolve_conversion_method(
+                "rate_index", method_id="test-only-approved-method"
+            )
             assert resolved is not None
             assert resolved.method_id == "test-only-approved-method"
         finally:
@@ -451,7 +453,9 @@ class TestEvaluateAlignmentRequest:
             )
         )
         try:
-            result = evaluate_alignment_request(_spec())
+            result = evaluate_alignment_request(
+                _spec(method_id="test-only-eval-method")
+            )
             assert result.status == "method_available"
             assert result.supported is True
             assert "test-only-eval-method" in result.reason

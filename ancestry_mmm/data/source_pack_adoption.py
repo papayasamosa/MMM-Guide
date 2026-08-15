@@ -333,11 +333,11 @@ def adopted_model_input_sources(
     context_model_input: pd.DataFrame | None,
     context_variable_metadata: Sequence[Mapping[str, object]],
 ) -> dict[str, pd.DataFrame] | None:
-    """Return adopted source frames eligible for the current native-weekly path.
+    """Return adopted source frames for the governed official-prep assessor.
 
-    A mixed/native non-weekly context is reported as an unsupported source
-    state. It is never repeated, interpolated, or silently omitted from the
-    official frame.
+    Native cadence metadata is retained for the official mixed-frequency
+    executor. This adoption seam does not infer, repeat, interpolate, or
+    silently omit a non-weekly context variable.
     """
 
     frames = {
@@ -351,17 +351,6 @@ def adopted_model_input_sources(
     }
     if not frames:
         return None
-    frequencies = {
-        str(item.get("native_frequency") or "").strip().lower()
-        for item in context_variable_metadata
-        if item.get("native_frequency")
-    }
-    if frequencies and frequencies != {"weekly"}:
-        raise ValueError(
-            "The adopted context source includes non-weekly native frequency "
-            f"({', '.join(sorted(frequencies))}); no approved official "
-            "conversion method is registered."
-        )
     return frames
 
 
@@ -375,8 +364,8 @@ def adopted_model_input_frame(
 
     This is only a UI/model-structure convenience frame.  It preserves the
     native rows and missingness and is not the official preparation gate;
-    :func:`adopted_model_input_sources` remains the stricter weekly eligibility
-    boundary used by official preparation.
+    :func:`adopted_model_input_sources` preserves source tables for the
+    explicit official-preparation alignment review.
     """
 
     frames = [
