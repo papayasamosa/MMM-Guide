@@ -1,0 +1,150 @@
+"""Work Package 0 (`Media-Mix-Lab: Coding LLM Next Steps After PR #253`):
+anti-drift checks for current-state documentation.
+
+These are deliberately narrow, literal checks against specific claims known
+to have drifted after PRs #250-#253 (mixed-frequency executor, Candidate A
+Search engine capability). They are not a general prose-consistency checker
+and must not be treated as a competing requirements authority - they only
+catch a status file re-asserting a claim already proven false by the code
+or by another status file.
+
+When a future PR resolves a real gap (e.g. Candidate A production
+integration), update the "current" markers here in the same PR rather than
+weakening or deleting the assertion.
+"""
+
+import re
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+README = REPO_ROOT / "README.md"
+REPO_REVIEW = REPO_ROOT / "REPO_REVIEW_AND_NEXT_STEPS.md"
+FREQUENCY_DECISION = REPO_ROOT / "docs" / "decision_required_frequency_methods.md"
+
+STATUS_DOCS = [README, REPO_REVIEW]
+
+# Literal phrasing that has previously appeared in status docs claiming
+# mixed-frequency execution does not exist. The executor has existed since
+# PR #250 (docs/mixed_frequency_alignment_wp1.md); these phrases must not
+# come back into a "current state" document without a corresponding fix.
+STALE_MIXED_FREQUENCY_PHRASES = [
+    "executable frequency conversion for non-native-cadence sources, the",
+    "conversion-method registry remains empty",
+    "registry remains empty. No interpolation, allocation,",
+]
+
+# Literal phrasing that has previously appeared claiming capacity-constrained
+# Search modelling is wholly absent. The Candidate A engine capability has
+# existed since PR #253 (ancestry_mmm/core/search_capacity.py); these must
+# not reappear unqualified.
+STALE_SEARCH_ABSENT_PHRASES = [
+    "capacity-constrained Search model, and Chronos-2 integration are\n  not yet implemented",
+    "capacity-constrained Search model, and Chronos-2 integration are not yet implemented",
+]
+
+SHA_RE = re.compile(r"\b[0-9a-f]{40}\b")
+
+
+def _read(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+def test_mixed_frequency_execution_not_claimed_absent():
+    """A status doc must not simultaneously be reachable from this test
+    suite (i.e. describe current behaviour) while asserting the executor
+    does not exist - it has, since PR #250."""
+    for doc in STATUS_DOCS:
+        text = _read(doc)
+        for phrase in STALE_MIXED_FREQUENCY_PHRASES:
+            assert phrase not in text, (
+                f"{doc.name} contains stale claim that mixed-frequency "
+                f"execution is unimplemented: {phrase!r}. The governed "
+                "executor has existed since PR #250 "
+                "(docs/mixed_frequency_alignment_wp1.md) - update the "
+                "status doc instead of reintroducing this claim."
+            )
+
+
+def test_candidate_a_search_engine_not_claimed_wholly_absent():
+    """A status doc must not claim capacity-constrained Search modelling is
+    wholly absent - the Candidate A engine capability has existed since
+    PR #253, even though it is not yet integrated into the ordinary fit
+    workflow. The two facts must be stated separately, never collapsed into
+    one blanket 'not implemented' claim."""
+    for doc in STATUS_DOCS:
+        text = _read(doc)
+        for phrase in STALE_SEARCH_ABSENT_PHRASES:
+            assert phrase not in text, (
+                f"{doc.name} contains stale claim that Search capacity "
+                f"modelling is wholly absent: {phrase!r}. "
+                "ancestry_mmm/core/search_capacity.py (REQ-SEARCH-002) has "
+                "existed since PR #253 as engine capability, even though "
+                "it is not yet integrated into Model Training - state that "
+                "distinction, not a blanket absence."
+            )
+
+
+def test_repo_review_documents_candidate_a_integration_gap():
+    """REPO_REVIEW_AND_NEXT_STEPS.md must distinguish the Candidate A engine
+    capability existing from it being integrated into the ordinary fit
+    workflow - collapsing the two into a single claim is exactly the drift
+    this work package exists to prevent."""
+    text = _read(REPO_REVIEW)
+    assert "search_capacity.py" in text, (
+        "REPO_REVIEW_AND_NEXT_STEPS.md must reference the implemented "
+        "Candidate A engine module."
+    )
+    assert (
+        "not yet implemented" in text.lower() or "not yet integrated" in text.lower()
+    ), (
+        "REPO_REVIEW_AND_NEXT_STEPS.md must state that full integration "
+        "with the ordinary MMM fit workflow is not yet implemented."
+    )
+
+
+def test_repo_review_current_sha_is_well_formed_and_historical_shas_are_labelled():
+    """The doc's 'Current main reviewed' SHA must be a real 40-hex commit
+    SHA, and any other 40-hex SHA mentioned in the file must be explicitly
+    labelled historical/superseded on the same line - never left looking
+    like current state."""
+    text = _read(REPO_REVIEW)
+    match = re.search(r"Current `main` reviewed: `([0-9a-f]{40})`", text)
+    assert match, (
+        "REPO_REVIEW_AND_NEXT_STEPS.md must state a 40-hex 'Current `main` reviewed' SHA."
+    )
+    current_sha = match.group(1)
+
+    # Check within paragraphs (blank-line-delimited), not single lines, so
+    # ordinary prose wrapping doesn't force the label onto the same physical
+    # line as the SHA.
+    paragraphs = text.split("\n\n")
+    for paragraph in paragraphs:
+        for sha in SHA_RE.findall(paragraph):
+            if sha == current_sha:
+                continue
+            lowered = paragraph.lower()
+            assert "historical" in lowered or "superseded" in lowered, (
+                f"REPO_REVIEW_AND_NEXT_STEPS.md mentions SHA {sha} without "
+                "labelling it historical/superseded in the same paragraph - "
+                "a status file must not hard-code an old main SHA as though "
+                "it were current."
+            )
+
+
+def test_frequency_decision_doc_reflects_approved_wp1_catalogue():
+    """The frequency-methods decision-required doc must not claim the
+    conversion registry is empty - the WP1 catalogue has been approved and
+    registered since PR #250."""
+    text = _read(FREQUENCY_DECISION)
+    assert "registry remains empty" not in text, (
+        "docs/decision_required_frequency_methods.md still claims the "
+        "conversion-method registry is empty; the WP1 catalogue "
+        "(calendar_overlap_allocation / release_aware_locf / "
+        "native_cadence_only / calendar_event_alignment) has been approved "
+        "and registered since PR #250 "
+        "(ancestry_mmm/core/frequency_conversion.py:ensure_approved_frequency_methods)."
+    )
+    assert "approved and registered" in text or "is approved" in text, (
+        "docs/decision_required_frequency_methods.md must state that the "
+        "WP1 method catalogue is approved for official use."
+    )

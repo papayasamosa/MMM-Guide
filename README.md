@@ -115,8 +115,11 @@ Requires Python 3.11 or 3.12 (see [Deployment](#deployment) below for why there'
   for Model C, with a media-unit planning mode - all evaluated with a documented steady-state
   response approximation using the model's real fitted curves, not literal MCMC-in-the-loop.
   **Current state:** the Scenario Planner is a steady-state monthly approximation. The full
-  sequential weekly planner, capacity-constrained Search model, and Chronos-2 integration are
-  not yet implemented (see `docs/approved_requirements/` for the capability roadmap).
+  sequential weekly planner and Chronos-2 integration are not yet implemented. A Candidate A
+  capacity-constrained Search engine capability now exists (`core/search_capacity.py`,
+  `REQ-SEARCH-002`) but is not yet wired into Model Training, Diagnostics, Results, official
+  curves, or the Scenario Planner, and Search planning/optimisation remain disabled pending
+  evidence and approval (see `docs/approved_requirements/` for the capability roadmap).
 - **Outcome governance** (`ancestry_mmm/core/outcome_approval.py`): separate outcome definition,
   analytical eligibility, and approval for use — a fitted outcome does not automatically become
   planning-eligible. Net Bill Through is conditionally available: it requires both an approved
@@ -147,11 +150,13 @@ PowerPoint export, real Australia/Canada market builds (the geo hierarchy machin
 and exercised by the synthetic 3-market demo, but needs real data to mean anything), a live feed
 from geo-tests/in-platform tests into the curve bank (the comparison/logging workflow exists; the
 feed is manual), Stage 2 media x context interaction terms (explicitly out of scope per the
-requirements brief), executable frequency conversion for non-native-cadence sources, the full
-policy-backed model-approval treatment for unsupported coverage, and a sequential weekly planner
-with starting adstock and terminal carryover. The current official-preparation gate blocks
-unsupported consumed coverage before fitting; it does not invent a conversion or resolve the
-separate `FR-MOD-015` ragged-predictor mathematics.
+requirements brief), the full policy-backed model-approval treatment for unsupported coverage, and
+a sequential weekly planner with starting adstock and terminal carryover. Executable frequency
+conversion for non-native-cadence sources **is now built** for the governed method catalogue
+(`docs/mixed_frequency_alignment_wp1.md`); it remains deliberately narrow and does not resolve
+`FR-MOD-015` ragged-predictor mathematics. A Candidate A Search mediation/capacity engine
+capability is implemented (`core/search_capacity.py`) but not yet integrated into the ordinary fit
+workflow - see the Scenario Planner section above and `REPO_REVIEW_AND_NEXT_STEPS.md`.
 
 ## Project structure
 
