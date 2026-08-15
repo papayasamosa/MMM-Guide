@@ -9,10 +9,16 @@ and does not supersede `AGENTS.md`, `docs/approved_requirements/`, or
 
 Repository: `papayasamosa/Media-Mix-Lab`
 
-Current `main` reviewed: `0845b150027dc59b192d2ec314b01910af3496ed`
+Current `main` reviewed: `b9b13916ad06c09e37cd53aa83a0fa3a7949a0dc`
 
-Current head: **Repository truth reconciliation before mixed-frequency execution**
-(merged PR #249, 2026-08-15; WP1 is the current implementation brief).
+Current head: **Implement Candidate A Search mediation capacity engine**
+(merged PR #253, 2026-08-15; this reconciliation is Work Package 0 of
+`Media-Mix-Lab: Coding LLM Next Steps After PR #253`).
+
+Historical marker: an earlier version of this document reviewed
+`0845b150027dc59b192d2ec314b01910af3496ed` (merged PR #249, before the
+mixed-frequency executor and Candidate A Search engine existed). That SHA is
+superseded and is recorded here only for history, not as current state.
 
 The local Python distribution name remains `mmm-guide` for compatibility with
 the existing install, script, export, and deployment surface. That legacy
@@ -48,31 +54,60 @@ The current implementation includes:
   scenario-planning, and optimisation contracts.
 - Canonical native-weekly official preparation with an explicit governed
   calendar, an outer union of governed source periods, preserved missingness,
-  and a fit-consumed-variable capability gate. WP1 now adds an explicit,
-  versioned mixed-frequency catalogue/executor; missing method IDs, version
+  and a fit-consumed-variable capability gate, plus an explicit, versioned,
+  **executable** mixed-frequency conversion catalogue/executor
+  (`calendar_overlap_allocation` for `flow_count`, `release_aware_locf` for
+  `stock_level`/`rate_index`/`survey_measurement`, `native_cadence_only` for
+  `survey_measurement`, `calendar_event_alignment` for `event_flag` —
+  `docs/mixed_frequency_alignment_wp1.md`). Missing method IDs, version
   mismatches, definition breaks, leakage, and unsupported parameter shapes
-  still fail closed.
+  still fail closed; conversion is selected from the Coverage review, never
+  inferred from source frequency or column names.
 - Standard source-pack semantic adoption for Outcomes, Activity and Media,
   Context and External Factors, and optional Experiment Evidence, plus the
   current source-pack template/download and realistic synthetic-pack UX.
 - Current graph-authoritative Causal Graph and Search-object governance UX,
   including direct, cross-product-halo, and excluded/diagnostic-only support
   with unsupported production graph roles still blocked.
+- A governed Candidate A Search mediation/capacity engine capability
+  (`ancestry_mmm/core/search_capacity.py`, `REQ-SEARCH-002`): a typed
+  `SearchCandidateASpec`, forward/reconciliation contracts, a standalone
+  Candidate A PyMC builder, identification diagnostics, outcome-scale
+  direct/mediated/total effect helpers, a Candidate A use gate, and exact
+  Candidate A graph/compiler support. This is real, tested engine capability
+  — it is **not yet** wired into the ordinary Model Training fit workflow,
+  the normal posterior extraction path, Diagnostics, Results, official curve
+  generation, or the Scenario Planner (see Known bounded gaps).
 
 ## Known bounded gaps
 
 These are implementation or decision boundaries, not permission to invent
 business or modelling definitions:
 
-- WP1's conversion catalogue is deliberately narrow: flow counts use
-  calendar-day overlap allocation; stock/rate/survey values use release-aware
-  LOCF (or an explicit native-cadence survey method); and events use explicit
-  point/duration calendar alignment. It is not a generic interpolation or
-  imputation layer, and broader ragged-window or policy-backed method choices
-  remain bounded gaps.
-- Ragged market-specific predictor mathematics (`FR-MOD-015`), production
-  mediation, Search capacity/censoring mathematics, moderated pathways, and
-  residual-interaction engine support remain decision-bound or unsupported.
+- The mixed-frequency conversion catalogue is deliberately narrow (see above).
+  It is not a generic interpolation or imputation layer, and broader
+  ragged-window or policy-backed method choices remain bounded gaps.
+- Candidate A Search mediation/capacity status must be stated precisely, not
+  as a single implemented/unimplemented flag:
+  1. Search object governance (REQ-SEARCH-001): implemented.
+  2. Candidate A formulation (REQ-SEARCH-002): approved for implementation
+     and validation.
+  3. Candidate A standalone engine and graph/compiler capability: implemented
+     (`core/search_capacity.py`), with synthetic and conditional recovery
+     tests.
+  4. Full integration with the ordinary MMM fit workflow (Model Training,
+     `hierarchical_model.py`/`market_specific_model.py`, posterior
+     extraction, Diagnostics, Results, official curves, Scenario Planner):
+     **not yet implemented.**
+  5. Official Search fit eligibility: still gated by full joint posterior
+     recovery evidence, prior/posterior predictive checks, and identification
+     diagnostics beyond the current conditional recovery test.
+  6. Search planning eligibility: disabled.
+  7. Search-cap optimisation: disabled.
+
+  Ragged market-specific predictor mathematics (`FR-MOD-015`), moderated
+  pathways, and residual-interaction engine support remain decision-bound or
+  unsupported, independent of Candidate A.
 - The full-core mypy debt ceiling is now 276 errors; it is a ceiling, not a
   target. CI must fail if the measured count increases.
 - Scenario planning remains a steady-state monthly approximation rather than
