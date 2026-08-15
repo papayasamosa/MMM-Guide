@@ -16,35 +16,53 @@ remains every project's default until an analyst builds and approves one -
 `resolve_pathway_masks_preferring_graph` below is a byte-for-byte passthrough
 to `core.pathways.resolve_validated_pathway_masks`.
 
-The current engine cannot compile every structure the graph domain's role
-vocabulary can express (REQ-GRAPH-001 S4/S5): `core.hierarchical_model`/
-`core.market_specific_model` only understand a flat (outcome_id, channel)
-cell system with three equation-gating roles (primary_direct/
-active_cross_product/exploratory_cross_product) plus exclusion - there is
-no multi-hop mediation, capacity-constraint, moderation, or
-residual-interaction pathway in either builder yet. `check_engine_capability`
-below says so explicitly and blocks compilation of anything it cannot
-express, rather than silently dropping or approximating it (AGENTS.md: do
-not imply a dependency natively supports a capability it does not).
+The ordinary PyMC-hierarchical/market-specific engines cannot compile every
+structure the graph domain's role vocabulary can express
+(REQ-GRAPH-001 S4/S5): they understand a flat (outcome_id, channel) cell
+system with three equation-gating roles (primary_direct/
+active_cross_product/exploratory_cross_product) plus exclusion. The
+explicit Candidate A Search linked engine below adds one narrowly typed
+mediated/capacity structure; moderation, residual interaction, and every
+other mediated/capacity structure remain blocked rather than silently
+dropped or approximated (AGENTS.md: do not imply a dependency natively
+supports a capability it does not).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from .activities import ActivityDefinition, resolve_graph_activity_predictor
 from .causal_graph import (
     CausalGraph,
+    CausalNode,
     EDGE_ROLE_CROSS_PRODUCT_HALO,
+    EDGE_ROLE_CAPACITY_CONSTRAINED,
     EDGE_ROLE_DIRECT,
     EDGE_ROLE_EXCLUDED_DIAGNOSTIC_ONLY,
+    EDGE_ROLE_MEDIATED,
     GRAPH_STATUS_APPROVED,
     GraphCompilationPlan,
     NODE_ROLE_INTERVENTION,
     NODE_ROLE_OUTCOME,
+    NODE_ROLE_CAPACITY_OR_CAP,
+    NODE_ROLE_DEMAND_CAPTURE,
     build_compilation_plan_preview,
     validate_causal_graph,
+)
+from .search_capacity import (
+    SEARCH_CANDIDATE_A_ENGINE,
+)
+from .search_objects import (
+    SEARCH_ROLE_DEMAND,
+    SEARCH_ROLE_DIRECT_NAV_CAPTURE,
+    SEARCH_ROLE_ORGANIC_CAPTURE,
+    SEARCH_ROLE_PAID_CAP,
+    SEARCH_ROLE_PAID_DELIVERY,
+    SEARCH_ROLE_PAID_SPEND,
+    SearchObjectDefinition,
+    current_search_object_versions,
 )
 from .pathways import (
     PATHWAY_ROLE_ACTIVE_CROSS_PRODUCT,
@@ -72,6 +90,297 @@ class UnsupportedGraphStructureError(ValueError):
     """Raised when a graph is not approved, fails validation, or contains a
     structure the target engine cannot express. Always carries the specific
     reason(s) - never a bare rejection."""
+
+
+@dataclass(frozen=True)
+class SearchCandidateAGraphPlan:
+    """The only mediated/capacity graph shape authorised by REQ-SEARCH-002."""
+
+    outcome_node_id: str
+    demand_node_id: str
+    cap_node_id: str
+    organic_capture_node_id: str
+    direct_navigation_node_id: str
+    upstream_intervention_node_ids: Tuple[str, ...]
+    mediated_edge_ids: Tuple[str, ...]
+    capacity_edge_ids: Tuple[str, ...]
+    search_capture_edge_ids: Tuple[str, ...]
+    formulation_id: str = "candidate_a_v1"
+
+    def to_dict(self) -> dict:
+        return {
+            "outcome_node_id": self.outcome_node_id,
+            "demand_node_id": self.demand_node_id,
+            "cap_node_id": self.cap_node_id,
+            "organic_capture_node_id": self.organic_capture_node_id,
+            "direct_navigation_node_id": self.direct_navigation_node_id,
+            "upstream_intervention_node_ids": list(self.upstream_intervention_node_ids),
+            "mediated_edge_ids": list(self.mediated_edge_ids),
+            "capacity_edge_ids": list(self.capacity_edge_ids),
+            "search_capture_edge_ids": list(self.search_capture_edge_ids),
+            "formulation_id": self.formulation_id,
+        }
+
+
+def _current_search_object_by_id(
+    search_objects: Iterable[SearchObjectDefinition | Mapping[str, object]],
+) -> dict[str, SearchObjectDefinition]:
+    return {
+        item.search_object_id: item
+        for item in current_search_object_versions(search_objects)
+    }
+
+
+def candidate_a_graph_issues(
+    graph: CausalGraph,
+    *,
+    search_objects: Iterable[SearchObjectDefinition | Mapping[str, object]] = (),
+) -> tuple[str, ...]:
+    """Validate only the typed Candidate A Search graph contract.
+
+    Metadata labels and node names are not used as a substitute for governed
+    Search identities. Every Search node is bound by ``search_object_id`` and
+    the separate delivery object remains descriptive context, not a graph
+    node of its own.
+    """
+
+    issues: list[str] = []
+    definitions = _current_search_object_by_id(search_objects)
+    if not definitions:
+        return ("Candidate A requires governed Search object definitions",)
+    node_by_id = {node.node_id: node for node in graph.nodes}
+    outcomes = [node for node in graph.nodes if node.role == NODE_ROLE_OUTCOME]
+    if len(outcomes) != 1:
+        issues.append("Candidate A requires exactly one fitted final-outcome node")
+    outcome = outcomes[0] if len(outcomes) == 1 else None
+
+    required = {
+        SEARCH_ROLE_DEMAND: NODE_ROLE_DEMAND_CAPTURE,
+        SEARCH_ROLE_PAID_CAP: NODE_ROLE_CAPACITY_OR_CAP,
+        SEARCH_ROLE_ORGANIC_CAPTURE: NODE_ROLE_DEMAND_CAPTURE,
+        SEARCH_ROLE_DIRECT_NAV_CAPTURE: NODE_ROLE_DEMAND_CAPTURE,
+    }
+    nodes_by_role: dict[str, list[CausalNode]] = {role: [] for role in required}
+    for node in graph.nodes:
+        if node.search_object_id in definitions:
+            definition = definitions[node.search_object_id]
+            if definition.search_role in nodes_by_role:
+                nodes_by_role[definition.search_role].append(node)
+            elif definition.search_role in {
+                SEARCH_ROLE_PAID_SPEND,
+                SEARCH_ROLE_PAID_DELIVERY,
+            }:
+                # Paid spend/delivery remain separate governed objects. Paid
+                # delivery is not a graph node; paid spend may be present only
+                # as a normal intervention if a separate pathway is declared.
+                pass
+            else:
+                issues.append(
+                    f"Node '{node.node_id}' is bound to unsupported Search role "
+                    f"'{definition.search_role}'"
+                )
+        elif node.search_object_id:
+            issues.append(
+                f"Node '{node.node_id}' references unknown governed Search object "
+                f"'{node.search_object_id}'"
+            )
+    for role, node_role in required.items():
+        nodes = nodes_by_role[role]
+        if len(nodes) != 1:
+            issues.append(
+                f"Candidate A requires exactly one '{role}' node with graph role "
+                f"'{node_role}'"
+            )
+        elif nodes[0].role != node_role:
+            issues.append(
+                f"Search object '{nodes[0].search_object_id}' must use graph role "
+                f"'{node_role}'"
+            )
+    for role in (SEARCH_ROLE_PAID_SPEND, SEARCH_ROLE_PAID_DELIVERY):
+        if not any(item.search_role == role for item in definitions.values()):
+            issues.append(f"governed Search object for '{role}' is missing")
+
+    if issues or outcome is None:
+        return tuple(issues)
+    demand = nodes_by_role[SEARCH_ROLE_DEMAND][0]
+    cap = nodes_by_role[SEARCH_ROLE_PAID_CAP][0]
+    organic = nodes_by_role[SEARCH_ROLE_ORGANIC_CAPTURE][0]
+    direct_navigation = nodes_by_role[SEARCH_ROLE_DIRECT_NAV_CAPTURE][0]
+    upstream = [
+        node
+        for node in graph.nodes
+        if node.role == NODE_ROLE_INTERVENTION
+        and not node.search_object_id
+    ]
+    if not upstream:
+        issues.append("Candidate A requires at least one upstream intervention")
+
+    mediated = [edge for edge in graph.edges if edge.role == EDGE_ROLE_MEDIATED]
+    capacity = [edge for edge in graph.edges if edge.role == EDGE_ROLE_CAPACITY_CONSTRAINED]
+    expected_upstream_mediated = {
+        (node.node_id, demand.node_id) for node in upstream
+    }
+    actual_upstream_mediated = {
+        (edge.source_node_id, edge.target_node_id)
+        for edge in mediated
+        if (edge.source_node_id, edge.target_node_id) in expected_upstream_mediated
+    }
+    if actual_upstream_mediated != expected_upstream_mediated:
+        issues.append(
+            "each upstream intervention must have exactly one mediated edge to "
+            "latent branded-search demand"
+        )
+    demand_to_outcome = [
+        edge
+        for edge in mediated
+        if edge.source_node_id == demand.node_id
+        and edge.target_node_id == outcome.node_id
+    ]
+    if len(demand_to_outcome) != 1:
+        issues.append(
+            "Candidate A requires exactly one mediated branded-demand to final-"
+            "outcome edge for realised Search capture"
+        )
+    demand_to_cap = [
+        edge
+        for edge in capacity
+        if edge.source_node_id == demand.node_id and edge.target_node_id == cap.node_id
+    ]
+    if len(demand_to_cap) != 1:
+        issues.append(
+            "Candidate A requires exactly one branded-demand to Paid Search cap "
+            "capacity-constrained edge"
+        )
+    for node in (organic, direct_navigation):
+        matching = [
+            edge
+            for edge in graph.edges
+            if edge.source_node_id == node.node_id
+            and edge.target_node_id == outcome.node_id
+            and edge.role == EDGE_ROLE_DIRECT
+        ]
+        if len(matching) != 1:
+            issues.append(
+                f"Search capture node '{node.node_id}' must have exactly one "
+                "separate direct edge to the final outcome"
+            )
+    for node in upstream:
+        matching = [
+            edge
+            for edge in graph.edges
+            if edge.source_node_id == node.node_id
+            and edge.target_node_id == outcome.node_id
+            and edge.role == EDGE_ROLE_DIRECT
+        ]
+        if len(matching) != 1:
+            issues.append(
+                f"upstream intervention '{node.node_id}' must retain a separate "
+                "direct media-to-outcome pathway"
+            )
+
+    allowed = {
+        EDGE_ROLE_DIRECT,
+        EDGE_ROLE_MEDIATED,
+        EDGE_ROLE_CAPACITY_CONSTRAINED,
+        EDGE_ROLE_EXCLUDED_DIAGNOSTIC_ONLY,
+    }
+    authorised_mediated = expected_upstream_mediated | {
+        (demand.node_id, outcome.node_id)
+    }
+    authorised_capacity = {(demand.node_id, cap.node_id)}
+    authorised_capture_direct = {
+        (organic.node_id, outcome.node_id),
+        (direct_navigation.node_id, outcome.node_id),
+    }
+    for edge in graph.edges:
+        if edge.role not in allowed:
+            issues.append(
+                f"Candidate A does not support edge role '{edge.role}' in this graph"
+            )
+            continue
+        pair = (edge.source_node_id, edge.target_node_id)
+        if edge.role == EDGE_ROLE_DIRECT:
+            source = node_by_id.get(edge.source_node_id)
+            if pair not in authorised_capture_direct and not (
+                source is not None
+                and source.role == NODE_ROLE_INTERVENTION
+                and edge.target_node_id == outcome.node_id
+            ):
+                issues.append(
+                    f"Candidate A direct edge '{edge.edge_id}' is outside the "
+                    "authorised capture or upstream-to-outcome structure"
+                )
+        if edge.role == EDGE_ROLE_MEDIATED and pair not in authorised_mediated:
+            issues.append(
+                f"Candidate A mediated edge '{edge.edge_id}' is outside the "
+                "authorised upstream/demand/capture structure"
+            )
+        if edge.role == EDGE_ROLE_CAPACITY_CONSTRAINED and pair not in authorised_capacity:
+            issues.append(
+                f"Candidate A capacity edge '{edge.edge_id}' is outside the authorised "
+                "demand-to-cap structure"
+            )
+    return tuple(dict.fromkeys(issues))
+
+
+def compile_candidate_a_search_graph(
+    graph: CausalGraph,
+    *,
+    search_objects: Iterable[SearchObjectDefinition | Mapping[str, object]] = (),
+) -> SearchCandidateAGraphPlan:
+    issues = candidate_a_graph_issues(graph, search_objects=search_objects)
+    if issues:
+        raise UnsupportedGraphStructureError(
+            "Graph is not supported by Candidate A Search engine: " + "; ".join(issues)
+        )
+    definitions = _current_search_object_by_id(search_objects)
+    nodes_by_role = {
+        role: next(
+            node
+            for node in graph.nodes
+            if node.search_object_id and definitions.get(node.search_object_id, None) is not None
+            and definitions[node.search_object_id].search_role == role
+        )
+        for role in (
+            SEARCH_ROLE_DEMAND,
+            SEARCH_ROLE_PAID_CAP,
+            SEARCH_ROLE_ORGANIC_CAPTURE,
+            SEARCH_ROLE_DIRECT_NAV_CAPTURE,
+        )
+    }
+    outcome = next(node for node in graph.nodes if node.role == NODE_ROLE_OUTCOME)
+    upstream = tuple(
+        node.node_id
+        for node in graph.nodes
+        if node.role == NODE_ROLE_INTERVENTION and not node.search_object_id
+    )
+    mediated_ids = tuple(
+        edge.edge_id for edge in graph.edges if edge.role == EDGE_ROLE_MEDIATED
+    )
+    capacity_ids = tuple(
+        edge.edge_id for edge in graph.edges if edge.role == EDGE_ROLE_CAPACITY_CONSTRAINED
+    )
+    search_capture_ids = tuple(
+        edge.edge_id
+        for edge in graph.edges
+        if edge.source_node_id
+        in {
+            nodes_by_role[SEARCH_ROLE_DEMAND].node_id,
+            nodes_by_role[SEARCH_ROLE_ORGANIC_CAPTURE].node_id,
+            nodes_by_role[SEARCH_ROLE_DIRECT_NAV_CAPTURE].node_id,
+        }
+    )
+    return SearchCandidateAGraphPlan(
+        outcome_node_id=outcome.node_id,
+        demand_node_id=nodes_by_role[SEARCH_ROLE_DEMAND].node_id,
+        cap_node_id=nodes_by_role[SEARCH_ROLE_PAID_CAP].node_id,
+        organic_capture_node_id=nodes_by_role[SEARCH_ROLE_ORGANIC_CAPTURE].node_id,
+        direct_navigation_node_id=nodes_by_role[SEARCH_ROLE_DIRECT_NAV_CAPTURE].node_id,
+        upstream_intervention_node_ids=upstream,
+        mediated_edge_ids=mediated_ids,
+        capacity_edge_ids=capacity_ids,
+        search_capture_edge_ids=search_capture_ids,
+    )
 
 
 @dataclass(frozen=True)
@@ -109,7 +418,10 @@ class GraphApprovalEligibility:
 
 
 def check_graph_approval_eligibility(
-    graph: CausalGraph, *, engine: str = GRAPH_ENGINE_PYMC_HIERARCHICAL
+    graph: CausalGraph,
+    *,
+    engine: str = GRAPH_ENGINE_PYMC_HIERARCHICAL,
+    search_objects: Iterable[SearchObjectDefinition | Mapping[str, object]] = (),
 ) -> GraphApprovalEligibility:
     """The single path a UI or service should call to decide whether Approve
     may be enabled for `graph` against `engine` - never structural validity
@@ -122,7 +434,9 @@ def check_graph_approval_eligibility(
         return GraphApprovalEligibility(
             is_eligible=False, validation_errors=validation.errors
         )
-    capability_reasons = tuple(check_engine_capability(graph, engine=engine))
+    capability_reasons = tuple(
+        check_engine_capability(graph, engine=engine, search_objects=search_objects)
+    )
     return GraphApprovalEligibility(
         is_eligible=not capability_reasons,
         validation_errors=(),
@@ -131,11 +445,16 @@ def check_graph_approval_eligibility(
 
 
 def check_engine_capability(
-    graph: CausalGraph, *, engine: str = GRAPH_ENGINE_PYMC_HIERARCHICAL
+    graph: CausalGraph,
+    *,
+    engine: str = GRAPH_ENGINE_PYMC_HIERARCHICAL,
+    search_objects: Iterable[SearchObjectDefinition | Mapping[str, object]] = (),
 ) -> List[str]:
     """Reasons the current engine cannot compile this (already
     structurally-valid) graph. Empty list = supported. Does not repeat
     `validate_causal_graph`'s own checks - call that first."""
+    if engine == SEARCH_CANDIDATE_A_ENGINE:
+        return list(candidate_a_graph_issues(graph, search_objects=search_objects))
     reasons: List[str] = []
     node_by_id = {n.node_id: n for n in graph.nodes}
     for edge in graph.edges:
@@ -175,6 +494,7 @@ def resolved_pathway_masks_from_graph(
     activity_definitions: Optional[
         Sequence[ActivityDefinition | Mapping[str, object]]
     ] = None,
+    excluded_edge_ids: Optional[set[str]] = None,
 ) -> ResolvedPathwayMasks:
     """Compiles a graph's structural edges directly into a
     `ResolvedPathwayMasks` - the same operational object
@@ -198,6 +518,8 @@ def resolved_pathway_masks_from_graph(
     node_by_id = {node.node_id: node for node in graph.nodes}
     components: List[ResolvedPathwayComponent] = []
     for edge in graph.edges:
+        if excluded_edge_ids and edge.edge_id in excluded_edge_ids:
+            continue
         if edge.role == EDGE_ROLE_EXCLUDED_DIAGNOSTIC_ONLY:
             continue
         if edge.role == EDGE_ROLE_DIRECT:
@@ -263,6 +585,7 @@ class GraphCompilationResult:
     plan: GraphCompilationPlan
     pathway_masks: ResolvedPathwayMasks
     causal_graph_structural_fingerprint: str
+    search_candidate_a: Optional[SearchCandidateAGraphPlan] = None
 
 
 class GraphModelCompiler:
@@ -276,9 +599,13 @@ class GraphModelCompiler:
         activity_definitions: Optional[
             Sequence[ActivityDefinition | Mapping[str, object]]
         ] = None,
+        search_objects: Optional[
+            Sequence[SearchObjectDefinition | Mapping[str, object]]
+        ] = None,
     ) -> None:
         self.engine = engine
         self.activity_definitions = activity_definitions
+        self.search_objects = search_objects or []
 
     def compile(self, graph: CausalGraph) -> GraphCompilationResult:
         """Raises UnsupportedGraphStructureError - always with the specific
@@ -297,7 +624,9 @@ class GraphModelCompiler:
             raise UnsupportedGraphStructureError(
                 "Graph failed validation: " + "; ".join(validation.errors)
             )
-        capability_issues = check_engine_capability(graph, engine=self.engine)
+        capability_issues = check_engine_capability(
+            graph, engine=self.engine, search_objects=self.search_objects
+        )
         if capability_issues:
             raise UnsupportedGraphStructureError(
                 f"Graph is not supported by engine '{self.engine}': "
@@ -306,13 +635,29 @@ class GraphModelCompiler:
         plan = build_compilation_plan_preview(
             graph, activity_definitions=self.activity_definitions
         )
-        pathway_masks = resolved_pathway_masks_from_graph(
-            graph, activity_definitions=self.activity_definitions
-        )
+        search_candidate_a = None
+        if self.engine == SEARCH_CANDIDATE_A_ENGINE:
+            search_candidate_a = compile_candidate_a_search_graph(
+                graph, search_objects=self.search_objects
+            )
+            pathway_masks = resolved_pathway_masks_from_graph(
+                graph,
+                activity_definitions=self.activity_definitions,
+                excluded_edge_ids=(
+                    set(search_candidate_a.search_capture_edge_ids)
+                    | set(search_candidate_a.mediated_edge_ids)
+                    | set(search_candidate_a.capacity_edge_ids)
+                ),
+            )
+        else:
+            pathway_masks = resolved_pathway_masks_from_graph(
+                graph, activity_definitions=self.activity_definitions
+            )
         return GraphCompilationResult(
             plan=plan,
             pathway_masks=pathway_masks,
             causal_graph_structural_fingerprint=graph.structural_fingerprint(),
+            search_candidate_a=search_candidate_a,
         )
 
 

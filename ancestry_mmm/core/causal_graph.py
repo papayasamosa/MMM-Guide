@@ -118,7 +118,8 @@ class CausalNode:
     fingerprint()`, same as review-notes-style fields are excluded from
     `core.outcome_approval.fingerprint_outcome_definition` - it never
     determines compiled structure by construction, only calculation-relevant
-    typed fields (`role`, `product`, `segment`, `market`) do.
+    typed fields (`role`, `product`, `segment`, `market`, and governed Search
+    identity when present) do.
     """
 
     node_id: str
@@ -127,6 +128,11 @@ class CausalNode:
     product: str = ""
     segment: str = ""
     market: str = ""
+    # Governed Search identity when this node represents one of the separate
+    # Search objects.  Ordinary activity nodes leave this blank.  It is part
+    # of structural identity because changing the bound Search object changes
+    # what the Candidate A linked engine compiles.
+    search_object_id: str = ""
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
@@ -289,7 +295,8 @@ class CausalGraph:
 
     def structural_fingerprint(self) -> str:
         """Deterministic SHA-256 over only calculation-relevant fields:
-        node id/role/product/segment/market, edge id/endpoints/role/lag.
+        node id/role/product/segment/market/Search identity, edge
+        id/endpoints/role/lag.
         Independent of node order, edge order, `status`, approval metadata,
         and `layout` entirely."""
         payload = {
@@ -300,6 +307,7 @@ class CausalGraph:
                     "product": n.product,
                     "segment": n.segment,
                     "market": n.market,
+                    "search_object_id": n.search_object_id,
                 }
                 for n in sorted(self.nodes, key=lambda n: n.node_id)
             ],

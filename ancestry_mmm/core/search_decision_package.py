@@ -1,10 +1,10 @@
 """Synthetic evidence for the Search mediation/capacity model decision.
 
-This module is a decision-support harness, not a production model. It keeps
+This module is a Candidate A simulation/replay harness. It keeps
 the Search object identities from REQ-SEARCH-001 visible while generating
-small, deterministic panels with known structural truth. The harness tests
-forward equations and reconciliation contracts; it does not fit a posterior,
-change the graph compiler, or make a production formulation selection.
+small panels with known structural truth. The harness tests forward equations
+and reconciliation contracts; it does not grant planning or optimisation
+eligibility.
 """
 
 from __future__ import annotations
@@ -57,6 +57,8 @@ class SearchSyntheticTruth:
     direct_media_outcome_coefficient: float = 0.20
     captured_demand_outcome_coefficient: float = 0.55
     paid_delivery_cost: float = 1.25
+    observation_noise_sigma: float = 0.0
+    outcome_dispersion: float = 40.0
 
 
 @dataclass(frozen=True)
@@ -150,6 +152,24 @@ class CandidateRecoveryEvidence:
     notes: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class ConditionalPosteriorRecovery:
+    """Posterior recovery evidence for the identifiable demand stage.
+
+    This is deliberately labelled conditional: it conditions on the
+    governed organic/direct capture-share calibration so it can isolate
+    latent-demand recovery in a noisy simulation. It is not a substitute for
+    the full linked posterior or the official-use gate.
+    """
+
+    parameter: str
+    posterior_mean: float
+    posterior_interval: tuple[float, float]
+    true_value: float
+    recovered: bool
+    conditional_on_capture_mapping: bool = True
+
+
 def _validate_scenario(scenario: str) -> SearchScenario:
     if scenario not in SEARCH_SCENARIOS:
         raise ValueError(
@@ -219,20 +239,27 @@ def generate_search_synthetic_panel(
     *,
     periods: int = 52,
     seed: int = 20260815,
+    noisy: bool = False,
 ) -> SearchSyntheticPanel:
-    """Generate a deterministic, noiseless panel with known ground truth.
+    """Generate a known-truth panel, optionally with noisy observations.
 
-    The panel is deliberately noiseless so that recovery tests isolate causal
-    structure and cap semantics. It is not evidence that the parameters are
-    identifiable from real observations; posterior recovery and uncertainty
-    still require an approved likelihood and real or realistically noisy
-    validation data.
+    The default remains noiseless so contract tests isolate causal structure.
+    ``noisy=True`` adds bounded capture/delivery measurement noise and draws
+    final outcomes from a Negative Binomial with the same count-link family
+    used by the existing outcome engine.
     """
 
     resolved_scenario = _validate_scenario(scenario)
     if periods < 8:
         raise ValueError("Search synthetic panels require at least 8 periods.")
     truth = _scenario_truth(resolved_scenario)
+    if noisy:
+        truth = SearchSyntheticTruth(
+            **{
+                **truth.__dict__,
+                "observation_noise_sigma": 2.0,
+            }
+        )
     rng = np.random.default_rng(seed)
     period_index: np.ndarray = np.arange(periods, dtype=float)
     media = 42.0 + 18.0 * np.sin(period_index / 4.0) + rng.normal(0.0, 3.0, periods)
@@ -250,7 +277,7 @@ def generate_search_synthetic_panel(
     )
     organic = latent * truth.organic_capture_share
     direct = latent * truth.direct_capture_share
-    outcome = (
+    outcome_mean = (
         truth.baseline_outcome
         + truth.direct_media_outcome_coefficient * media
         + truth.captured_demand_outcome_coefficient * captured
@@ -259,16 +286,35 @@ def generate_search_synthetic_panel(
         truth.baseline_outcome
         + truth.captured_demand_outcome_coefficient * media_zero_captured
     )
+    if noisy:
+        noise = truth.observation_noise_sigma
+        observed_delivery = np.minimum(
+            np.maximum(paid_delivery + rng.normal(0.0, noise, periods), 0.0), cap
+        )
+        observed_organic = np.maximum(
+            organic + rng.normal(0.0, noise, periods), 0.0
+        )
+        observed_direct = np.maximum(
+            direct + rng.normal(0.0, noise, periods), 0.0
+        )
+        alpha = truth.outcome_dispersion
+        probability = alpha / (alpha + np.maximum(outcome_mean, 1e-6))
+        outcome = rng.negative_binomial(alpha, probability).astype(float)
+    else:
+        observed_delivery = paid_delivery
+        observed_organic = organic
+        observed_direct = direct
+        outcome = outcome_mean
     del zero_cap, media_zero_latent
     return SearchSyntheticPanel(
         scenario=resolved_scenario,
         periods=period_index,
         upstream_media=media,
         paid_search_spend=paid_delivery * truth.paid_delivery_cost,
-        paid_search_delivery=paid_delivery,
+        paid_search_delivery=observed_delivery,
         paid_search_cap=cap,
-        organic_search_capture=organic,
-        direct_navigation_capture=direct,
+        organic_search_capture=observed_organic,
+        direct_navigation_capture=observed_direct,
         final_outcome=outcome,
         latent_demand_truth=latent,
         paid_search_potential_truth=paid_potential,
@@ -276,6 +322,59 @@ def generate_search_synthetic_panel(
         unmet_demand_truth=unmet,
         outcome_without_upstream_media=outcome_without_media,
         truth=truth,
+    )
+
+
+def conditional_demand_posterior_recovery(
+    panel: SearchSyntheticPanel,
+    *,
+    draws: int = 2000,
+    seed: int = 20260815,
+) -> ConditionalPosteriorRecovery:
+    """Recover the latent-demand media coefficient from a noisy panel.
+
+    The conditional likelihood uses the separately governed organic and
+    direct captures to form a demand proxy, includes the known seasonal
+    basis used by the generator, and applies a proper Gaussian posterior for
+    the conditional linear demand stage. This supplies fast posterior parameter-
+    recovery evidence without pretending that it identifies the full linked
+    Search model when cap variation or capture mappings are weak.
+    """
+
+    if draws < 100:
+        raise ValueError("posterior recovery requires at least 100 draws")
+    denominator = panel.truth.organic_capture_share + panel.truth.direct_capture_share
+    if denominator <= 0:
+        raise ValueError("conditional recovery requires positive organic/direct capture")
+    proxy = np.maximum(
+        (panel.organic_search_capture + panel.direct_navigation_capture) / denominator,
+        1e-6,
+    )
+    design = np.column_stack(
+        [
+            np.ones(panel.periods.size),
+            np.cos(panel.periods / 5.0),
+            panel.upstream_media,
+        ]
+    )
+    response = proxy
+    ols = np.linalg.lstsq(design, response, rcond=None)[0]
+    residual = response - design @ ols
+    variance = max(float(np.sum(residual**2) / max(panel.periods.size - design.shape[1], 1)), 1e-4)
+    prior_variance = np.array([10_000.0, 100.0, 4.0])
+    precision = (design.T @ design) / variance + np.diag(1.0 / prior_variance)
+    covariance = np.linalg.inv(precision)
+    mean = covariance @ ((design.T @ response) / variance)
+    posterior_draws = np.random.default_rng(seed).multivariate_normal(mean, covariance, draws)
+    lower, upper = np.quantile(posterior_draws[:, 2], [0.025, 0.975])
+    posterior_mean = float(np.mean(posterior_draws[:, 2]))
+    true_value = panel.truth.demand_media_coefficient
+    return ConditionalPosteriorRecovery(
+        parameter="demand_media_coefficient",
+        posterior_mean=posterior_mean,
+        posterior_interval=(float(lower), float(upper)),
+        true_value=true_value,
+        recovered=bool(lower <= true_value <= upper and abs(posterior_mean - true_value) < 0.15),
     )
 
 

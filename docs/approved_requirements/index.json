@@ -292,6 +292,30 @@
       ]
     },
     {
+      "requirement_id": "REQ-SEARCH-002",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-SEARCH-002.md",
+      "affected_modules": [
+        "ancestry_mmm/core/search_capacity.py",
+        "ancestry_mmm/core/search_decision_package.py",
+        "ancestry_mmm/core/graph_model_compiler.py",
+        "ancestry_mmm/core/causal_graph.py",
+        "ancestry_mmm/core/persistence.py",
+        "docs/pymc_marketing_alignment.md",
+        "docs/decision_log.md"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_search_capacity.py::test_candidate_a_identification_gate_fails_closed_without_cap_support"
+      ]
+    },
+    {
       "requirement_id": "REQ-COVERAGE-001",
       "status": "approved_for_implementation",
       "record_path": "docs/approved_requirements/REQ-COVERAGE-001.md",

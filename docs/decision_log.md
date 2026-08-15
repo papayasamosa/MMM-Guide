@@ -3931,3 +3931,42 @@ recorded in an approved repository decision record and scoped brief.
 
 **Owner:** Data Science / Platform engineering.
 **Status:** Decision-support package; production formulation unresolved.
+
+## Candidate A Search mediation and capacity approval (Work Package 4)
+
+**Date:** 2026-08-15.
+
+**Decision:** Candidate A, the structural latent-demand formulation with an
+explicit hard Paid Search cap, is approved as the first production Search
+mediation/capacity formulation. Candidate C remains available only as a
+diagnostic/sensitivity benchmark. Candidate B is not implemented at this
+stage.
+
+This is approval to implement and validate the architecture. It is not
+approval of the resulting Search estimates for official planning use. The
+implementation is governed by `REQ-SEARCH-002` and must preserve all seven
+Search identities from `REQ-SEARCH-001`; it must not create a generic Brand
+Search variable, treat Paid Search delivery as demand, or treat a cap as
+guaranteed spend/delivery. The demand reconciliation, separate organic and
+direct capture, direct upstream pathway, explicit counterfactual effects,
+posterior-draw aggregation, and fail-closed identification requirements are
+part of the approved implementation contract.
+
+Candidate A is a custom linked PyMC engine capability. The ordinary
+PyMC-hierarchical graph engine remains closed to mediated and
+capacity-constrained structures, and unrelated mediated/capacity structures
+remain unsupported. Search planning and cap optimisation remain disabled
+until noisy recovery, prior/posterior predictive, identification,
+counterfactual-contract, and explicit model-approval gates all pass.
+
+**Upstream alignment:** PyMC `v5.28.5` `Censored` and
+`NegativeBinomial`, plus PyMC-Marketing `v0.19.4` public MMM APIs, were
+reviewed. They cover general Bayesian likelihood/sampling and standard MMM
+transformations; the governed Search objects, Candidate A structural
+reconciliation, graph extension, and identification gates are custom. The
+project therefore continues to use the claim “Built in PyMC and informed by
+PyMC Marketing.”
+
+**Owner:** Data Science / Platform engineering.
+**Status:** Approved for implementation; planning/optimisation eligibility
+remains disabled.

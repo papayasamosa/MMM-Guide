@@ -1433,6 +1433,43 @@ def test_export_then_import_search_objects_round_trip(tmp_path, sample_project):
     assert objects[0]["search_object_id"] == "uk_paid_search_spend"
 
 
+def test_export_then_import_candidate_a_search_configuration_round_trip(
+    tmp_path, sample_project
+):
+    """REQ-SEARCH-002: Candidate A formulation and identification evidence
+    are durable alongside the separate governed Search objects."""
+    project = dict(sample_project)
+    project["search_candidate_a_spec"] = {
+        "formulation_id": "candidate_a_v1",
+        "outcome_definition_id": "fh_new_sign_up_v1",
+        "planning_eligible": False,
+        "optimisation_eligible": False,
+    }
+    project["search_identification_report"] = {
+        "official_eligible": False,
+        "blocking_reasons": ["non-binding cap support is insufficient"],
+    }
+
+    imported = import_project(
+        export_project(tmp_path / "candidate-a.zip", **project)
+    )
+
+    assert imported["search_candidate_a_spec"]["formulation_id"] == "candidate_a_v1"
+    assert imported["search_candidate_a_spec"]["planning_eligible"] is False
+    assert imported["search_identification_report"]["official_eligible"] is False
+
+
+def test_import_candidate_a_search_quarantines_future_schema():
+    from ancestry_mmm.core.persistence import resolve_imported_candidate_a_search
+
+    resolved, warnings = resolve_imported_candidate_a_search(
+        {"search_candidate_a_spec": {"schema_version": 99}}
+    )
+
+    assert resolved is None
+    assert warnings and "quarantined" in warnings[0]
+
+
 def test_import_project_search_objects_absent_for_legacy_bundle(
     tmp_path, sample_project
 ):

@@ -5,6 +5,7 @@ import pytest
 
 from ancestry_mmm.core.search_decision_package import (
     SEARCH_SCENARIOS,
+    conditional_demand_posterior_recovery,
     generate_search_synthetic_panel,
     run_search_recovery_suite,
     simulate_structural_hard_cap,
@@ -97,3 +98,26 @@ def test_realised_total_effect_is_direct_plus_realised_mediated_effect():
     assert effects.total_outcome_effect == pytest.approx(
         np.sum(panel.final_outcome - panel.outcome_without_upstream_media)
     )
+
+
+@pytest.mark.parametrize("scenario", SEARCH_SCENARIOS)
+def test_noisy_simulation_preserves_cap_and_separate_observed_search_objects(scenario):
+    panel = generate_search_synthetic_panel(scenario, noisy=True, seed=20260815)
+
+    assert np.all(panel.paid_search_delivery <= panel.paid_search_cap + 1e-12)
+    assert panel.paid_search_spend.shape == panel.paid_search_delivery.shape
+    assert np.all(panel.organic_search_capture >= 0)
+    assert np.all(panel.direct_navigation_capture >= 0)
+    assert np.all(panel.final_outcome >= 0)
+
+
+def test_noisy_conditional_posterior_recovers_latent_demand_media_parameter():
+    panel = generate_search_synthetic_panel(
+        "cap_sometimes_binds", noisy=True, seed=20260815, periods=104
+    )
+    evidence = conditional_demand_posterior_recovery(panel, draws=1200)
+
+    assert evidence.conditional_on_capture_mapping
+    assert evidence.parameter == "demand_media_coefficient"
+    assert evidence.recovered
+    assert evidence.posterior_interval[0] <= evidence.true_value <= evidence.posterior_interval[1]

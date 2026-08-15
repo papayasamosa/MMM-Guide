@@ -53,8 +53,8 @@ truth; this table is descriptive, not authoritative over it.
 | `direct` (from an `intervention` node to an `outcome` node) | Supported |
 | `cross_product_halo` (from an `intervention` node to an `outcome` node) | Supported |
 | `excluded_diagnostic_only` | Supported (compiles to nothing) |
-| `mediated` | Not yet supported — no multi-hop mediation path in either builder |
-| `capacity_constrained` | Not yet supported — no capacity/censoring equation in either builder |
+| `mediated` | Supported only by the explicit Candidate A Search linked engine for its authorised Search structure (`REQ-SEARCH-002`); unsupported by the ordinary PyMC-hierarchical engine |
+| `capacity_constrained` | Supported only by the explicit Candidate A Search linked engine for its authorised Search structure (`REQ-SEARCH-002`); unsupported for every other structure |
 | `moderated` | Not yet supported — no moderation term in either builder |
 | `residual_interaction` | Not yet supported |
 | any edge whose source is not `intervention` or target is not `outcome` (except `excluded_diagnostic_only`) | Not yet supported |
