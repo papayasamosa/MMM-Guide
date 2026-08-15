@@ -407,18 +407,18 @@ _structural_unsaved, _layout_unsaved, _has_saved_version = _graph_change_state(
 
 render_page_header(
     "causal_graph",
-    task_prompt="Which causal pathways are approved for model compilation?",
+    task_prompt="Which causal pathways should guide this model?",
     badges=[page_readiness("causal_graph"), graph.status],
 )
 render_workspace_note(
     "Authoritative structure",
-    "The approved graph is the structural input for compilation; layout edits are separate from causal edits.",
+    "The approved graph guides model setup; layout edits are separate from relationship edits.",
     kind="governed",
 )
 st.caption(
     "Use the canvas or the accessible forms below to map approved pathways. "
     "The variable library, canvas, and inspector share one graph state; the "
-    "model-plan preview and save/approve/compile controls are below."
+    "model-plan preview and save/approve controls are below."
 )
 
 with InfoPanel(
@@ -429,9 +429,7 @@ with InfoPanel(
     with status_summary_cols[0]:
         st.caption("Status")
         render_status_badge(graph.status)
-        st.caption(
-            "Draft is editable and not authoritative; approved is authoritative for compilation."
-        )
+        st.caption("Draft can be edited; the approved graph is used for model setup.")
     status_summary_cols[1].metric("Version", graph.graph_version)
     if not _has_saved_version:
         status_summary_cols[2].metric(
@@ -444,7 +442,7 @@ with InfoPanel(
             "Unsaved" if _structural_unsaved else "None since last save",
         )
     status_summary_cols[2].caption(
-        "Structural = stales any compiled model configuration once saved/approved."
+        "Structural = stales model settings once saved/approved."
     )
     if not _has_saved_version:
         status_summary_cols[3].metric(
@@ -468,7 +466,7 @@ if _structural_unsaved:
     ):
         st.caption(
             "Use Save draft (section 3 below) to record an auditable version, "
-            "or Approve once validation and compilation readiness both pass."
+            "or Approve once validation and model-setup checks both pass."
         )
 
 st.markdown("---")
@@ -528,7 +526,7 @@ with st.expander("Seed nodes from current Structure (optional)"):
     st.caption(
         f"Detected {len(seed_scoped_activities)} governed activity node(s), {len(seed_outcome_ids)} "
         f"outcome candidate(s), and {len(seedable_search_objects)} governed Search "
-        "object(s) from Model Structure / Media Mapping. Adds one node per "
+        "object(s) from Model Structure / Activity Mapping. Adds one node per "
         "item using its governed Search role - imported source-draft outcomes "
         "are candidates only, and no edges are inferred or invented."
     )
@@ -745,7 +743,7 @@ _workbench_canvas_col.__exit__(None, None, None)
 
 _inspector_section = SectionCard(
     "Inspector",
-    description="Selected node/edge properties, validation, and compilation readiness - reads and writes the exact same graph state as the canvas.",
+    description="Selected node/edge properties, validation, and model-setup checks - reads and writes the exact same graph state as the canvas.",
 )
 _workbench_inspector_col.__enter__()
 _inspector_section.__enter__()
@@ -910,24 +908,22 @@ else:
 for warning in validation.warnings:
     st.warning(warning)
 
-st.markdown("#### Compilation readiness")
+st.markdown("#### Model setup readiness")
 st.caption(
-    "Whether the current model setup can compile this graph. Checked before "
-    "Approve is enabled, not only when preparing a model configuration "
-    "afterwards, so an unsupported structure is never approved in the "
-    "first place."
+    "Whether the current model setup supports this graph. Checked before "
+    "Approve is enabled, so an unsupported structure is not approved."
 )
 approval_eligibility = check_graph_approval_eligibility(
     graph, engine=GRAPH_ENGINE_PYMC_HIERARCHICAL
 )
 if not validation.is_valid:
-    st.info("Fix validation errors above before compilation readiness can be checked.")
+    st.info("Fix validation errors above before model-setup readiness can be checked.")
 elif approval_eligibility.is_eligible:
-    st.success("This graph is ready for model compilation.")
+    st.success("This graph is ready to guide model setup.")
 else:
     st.error(
-        "This graph is structurally valid but cannot be used for model "
-        "compilation yet - fix these before approving:\n\n"
+        "This graph is structurally valid but cannot guide model setup yet - "
+        "fix these before approving:\n\n"
         + "\n".join(f"- {reason}" for reason in approval_eligibility.capability_reasons)
     )
 _inspector_section.__exit__(None, None, None)
@@ -937,7 +933,7 @@ st.markdown("---")
 st.markdown("### Model-plan preview")
 st.caption(
     "A structural preview of the plan this graph would create. Use "
-    "Compilation readiness above to see whether the current fit supports it."
+    "Model setup readiness above to see whether the current fit supports it."
 )
 if validation.is_valid:
     plan = build_compilation_plan_preview(

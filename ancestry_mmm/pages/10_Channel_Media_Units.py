@@ -22,9 +22,6 @@ from ancestry_mmm.utils import (
     init_session_state,
     readable_label,
     set_state,
-    display_enum_frame,
-    display_enum_options,
-    restore_enum_frame,
 )
 from ancestry_mmm.components import (
     apply_theme,
@@ -500,9 +497,7 @@ with SectionCard(
                 f"Change-history entries: {len(detail.change_history)}."
             )
 
-        save_activity = st.form_submit_button(
-            "Save required activity governance", type="primary"
-        )
+        save_activity = st.form_submit_button("Save activity mapping", type="primary")
 
     if save_activity:
         try:
@@ -601,13 +596,18 @@ with SectionCard(
                 if rebuild_scenarios:
                     set_state("scenarios", [])
                 if rebuild_curves or rebuild_scenarios:
+                    _cleared_outputs = []
+                    if rebuild_curves:
+                        _cleared_outputs.append("affected curve/economics references")
+                    if rebuild_scenarios:
+                        _cleared_outputs.append("affected scenarios")
                     st.warning(
-                        "Saved. A downstream governance field changed, so stale "
-                        "curve/economics references and affected scenarios were "
-                        "invalidated according to the activity change matrix."
+                        "Activity mapping saved. "
+                        + " and ".join(_cleared_outputs).capitalize()
+                        + " were cleared because this change affects downstream results."
                     )
                 else:
-                    st.success("Required activity governance saved.")
+                    st.success("Activity mapping saved.")
             st.session_state["activity_detail_mode"] = "edit"
         except (TypeError, ValueError) as exc:
             st.error(f"Nothing was saved. Resolve this activity first: {exc}")
@@ -663,6 +663,15 @@ _search_overview_rows = [
     }
     for row in search_object_rows
 ]
+_saved_search_definitions = [
+    SearchObjectDefinition.from_dict(item) for item in search_object_rows
+]
+_saved_search_errors = [
+    f"{issue.search_object_id} (market {issue.market}): {issue.detail}"
+    for issue in validate_search_object_catalogue(_saved_search_definitions)
+]
+for search_error in _saved_search_errors:
+    st.error(search_error)
 st.markdown("#### Search object overview")
 if _search_overview_rows:
     st.caption(
@@ -674,186 +683,273 @@ else:
         "No Search objects are registered yet. Add the first demand, spend, delivery, cap, organic, or direct-navigation object in the detailed setup below."
     )
 
-_search_editor_section = st.expander(
-    "Edit Search object details", expanded=not bool(_search_overview_rows)
-)
-_search_editor_section.__enter__()
-st.markdown("#### Search object details")
-st.caption(
-    "Group identity, source, measurement, planning, review, and effective-period fields here. Save creates a new version when a saved row changes."
-)
+if "search_detail_mode" not in st.session_state:
+    st.session_state["search_detail_mode"] = "edit" if search_object_rows else "add"
 
-search_object_columns = [
-    "market",
-    "search_object_id",
-    "search_role",
-    "channel",
-    "source_column",
-    "unit",
-    "currency",
-    "product",
-    "state",
-    "planning_eligibility",
-    "model_input_column",
-    "source",
-    "effective_period_start",
-    "effective_period_end",
-    "approval_status",
-    "approved_by",
-    "approved_at",
-    "search_object_version",
-]
-_search_enum_values = {
-    "search_role": SEARCH_ROLES,
-    "unit": SEARCH_UNITS,
-    "state": SEARCH_OBJECT_STATES,
-    "planning_eligibility": PLANNING_ELIGIBILITY,
-    "approval_status": APPROVAL_STATUSES,
-}
-_search_object_df = pd.DataFrame(search_object_rows).reindex(
-    columns=search_object_columns
-)
-for _text_col in (
-    "search_object_id",
-    "channel",
-    "source_column",
-    "currency",
-    "product",
-    "model_input_column",
-    "source",
-    "effective_period_start",
-    "effective_period_end",
+selected_search_index = 0
+if search_object_rows:
+    selected_search_index = st.selectbox(
+        "Selected Search object",
+        list(range(len(search_object_rows))),
+        index=min(
+            int(st.session_state.get("search_selected_index", 0)),
+            len(search_object_rows) - 1,
+        ),
+        format_func=lambda index: (
+            f"{search_object_rows[index].get('market') or 'All markets'} · "
+            f"{_search_overview_label(search_object_rows[index])}"
+        ),
+        key="search_selected_index",
+    )
+    selected_search_index = int(selected_search_index)
+    if st.button("Add Search object", key="add_search_object"):
+        st.session_state["search_detail_mode"] = "add"
+        st.rerun()
+else:
+    st.button("Add Search object", key="add_search_object", type="primary")
+
+if st.session_state.get("search_detail_mode") == "add" or not search_object_rows:
+    detail = SimpleNamespace(
+        search_object_id="",
+        search_role=SEARCH_ROLES[0],
+        source_column="",
+        unit=SEARCH_UNITS[0],
+        market=mapping_markets[0] if mapping_markets else "*",
+        channel="",
+        product="",
+        currency="",
+        grain="market_week",
+        state="observed",
+        planning_eligibility="excluded",
+        model_input_column="",
+        source="channel & media units UI",
+        evidence_status="not_assessed",
+        approval_status="draft",
+        approved_by="",
+        approved_at="",
+        effective_period_start="",
+        effective_period_end="",
+        search_object_version=1,
+    )
+    _is_new_search_object = True
+else:
+    detail = SearchObjectDefinition.from_dict(search_object_rows[selected_search_index])
+    _is_new_search_object = False
+
+
+def _search_text(value: object) -> str:
+    return "" if value is None else str(value)
+
+
+def _search_options(values, current: str) -> list[str]:
+    options = list(values)
+    if current and current not in options:
+        options.insert(0, current)
+    return options or [""]
+
+
+with st.expander(
+    "Add Search object" if _is_new_search_object else "Edit Search object details",
+    expanded=True,
 ):
-    # An empty (or all-null) reindexed column infers float64, which
-    # TextColumn rejects outright - force object dtype so the column
-    # renders as editable text even with no rows yet.
-    _search_object_df[_text_col] = _search_object_df[_text_col].astype("object")
-_search_editor_df = display_enum_frame(_search_object_df, _search_enum_values.keys())
-search_object_editor = st.data_editor(
-    _search_editor_df,
-    num_rows="dynamic",
-    width="stretch",
-    key="search_object_governance_editor",
-    column_config={
-        "market": st.column_config.SelectboxColumn(
-            "Market", options=mapping_markets, required=True
-        ),
-        "search_role": st.column_config.SelectboxColumn(
-            "Search role",
-            options=display_enum_options(SEARCH_ROLES),
-            required=True,
-        ),
-        "search_object_id": st.column_config.TextColumn(
-            "Search object reference",
-            required=True,
-            help="Stable technical reference for this Search object; it is not the routine display label.",
-        ),
-        "channel": st.column_config.TextColumn("Channel"),
-        "source_column": st.column_config.TextColumn("Source field", required=True),
-        "unit": st.column_config.SelectboxColumn(
-            "Measurement unit",
-            options=display_enum_options(SEARCH_UNITS),
-            required=True,
-        ),
-        "currency": st.column_config.TextColumn("Currency"),
-        "product": st.column_config.TextColumn("Product"),
-        "state": st.column_config.SelectboxColumn(
+    st.caption(
+        "Choose one Search object at a time. The overview compares saved objects; "
+        "the detail form keeps identity, measurement, planning, validity, and review fields readable."
+    )
+    with st.form("search_object_detail_form", clear_on_submit=False):
+        st.markdown("#### Identity and role")
+        identity_a, identity_b = st.columns(2)
+        search_object_id = identity_a.text_input(
+            "Search object reference *",
+            value=_search_text(detail.search_object_id),
+            help="Stable technical identity for this Search object; the overview uses the human role label instead.",
+        )
+        market = identity_b.selectbox(
+            "Market *",
+            _search_options([*mapping_markets, "*"], _search_text(detail.market)),
+            index=_search_options(
+                [*mapping_markets, "*"], _search_text(detail.market)
+            ).index(_search_text(detail.market)),
+        )
+        role_a, role_b = st.columns(2)
+        search_role = role_a.selectbox(
+            "Search role *",
+            SEARCH_ROLES,
+            index=SEARCH_ROLES.index(detail.search_role)
+            if detail.search_role in SEARCH_ROLES
+            else 0,
+            format_func=readable_label,
+            help="Classify demand, Paid Search spend, delivery, cap, organic capture, or direct navigation explicitly.",
+        )
+        channel = role_b.text_input(
+            "Channel / relationship",
+            value=_search_text(detail.channel),
+            help="Used to relate a Paid Search cap to its matching spend or delivery object.",
+        )
+        product = st.text_input("Product", value=_search_text(detail.product))
+
+        st.markdown("#### Measurement and model use")
+        measure_a, measure_b = st.columns(2)
+        source_column = measure_a.text_input(
+            "Source field *",
+            value=_search_text(detail.source_column),
+            help="Observed source column; it is not inferred from the Search object reference.",
+        )
+        unit = measure_b.selectbox(
+            "Measurement unit *",
+            SEARCH_UNITS,
+            index=SEARCH_UNITS.index(detail.unit) if detail.unit in SEARCH_UNITS else 0,
+            format_func=readable_label,
+        )
+        model_a, model_b = st.columns(2)
+        currency = model_a.text_input(
+            "Currency",
+            value=_search_text(detail.currency),
+            help="Required for monetary Paid Search spend or cap; leave blank for non-monetary units.",
+        )
+        model_input_column = model_b.text_input(
+            "Model input column",
+            value=_search_text(detail.model_input_column),
+        )
+        state_a, state_b = st.columns(2)
+        state = state_a.selectbox(
             "Data status",
-            options=display_enum_options(SEARCH_OBJECT_STATES),
-            required=True,
-        ),
-        "planning_eligibility": st.column_config.SelectboxColumn(
+            SEARCH_OBJECT_STATES,
+            index=SEARCH_OBJECT_STATES.index(detail.state)
+            if detail.state in SEARCH_OBJECT_STATES
+            else 0,
+            format_func=readable_label,
+        )
+        planning_eligibility = state_b.selectbox(
             "Planning eligibility",
-            options=display_enum_options(PLANNING_ELIGIBILITY),
-            required=True,
-        ),
-        "model_input_column": st.column_config.TextColumn("Model input column"),
-        "source": st.column_config.TextColumn("Source / provenance"),
-        "approval_status": st.column_config.SelectboxColumn(
+            sorted(PLANNING_ELIGIBILITY),
+            index=sorted(PLANNING_ELIGIBILITY).index(detail.planning_eligibility)
+            if detail.planning_eligibility in PLANNING_ELIGIBILITY
+            else 0,
+            format_func=readable_label,
+        )
+
+        st.markdown("#### Validity period")
+        validity_a, validity_b = st.columns(2)
+        effective_period_start = validity_a.text_input(
+            "Effective from (YYYY-MM-DD)",
+            value=_search_text(detail.effective_period_start),
+        )
+        effective_period_end = validity_b.text_input(
+            "Effective to (YYYY-MM-DD)",
+            value=_search_text(detail.effective_period_end),
+        )
+
+        st.markdown("#### Review")
+        review_a, review_b = st.columns(2)
+        evidence_status = review_a.text_input(
+            "Evidence status", value=_search_text(detail.evidence_status)
+        )
+        approval_status = review_b.selectbox(
             "Review status",
-            options=display_enum_options(APPROVAL_STATUSES),
-            required=True,
-        ),
-        "effective_period_start": st.column_config.TextColumn(
-            "Effective from (YYYY-MM-DD)"
-        ),
-        "effective_period_end": st.column_config.TextColumn(
-            "Effective to (YYYY-MM-DD)"
-        ),
-        "search_object_version": st.column_config.NumberColumn(
-            "Version", disabled=True, help="System-managed - see Save behaviour below."
-        ),
-    },
-)
-search_object_editor = restore_enum_frame(
-    search_object_editor,
-    _search_enum_values.keys(),
-    _search_enum_values,
-)
-st.caption(
-    "Editing an already-saved row does not overwrite it in place - Save creates "
-    "a new, higher-numbered version of that row's "
-    "(market, search_object_id) lineage, resets its Approval to draft, and "
-    "keeps the version it replaced in the version history below. A brand "
-    "new row (a search_object_id not already saved) starts at version 1."
-)
+            sorted(APPROVAL_STATUSES),
+            index=sorted(APPROVAL_STATUSES).index(detail.approval_status)
+            if detail.approval_status in APPROVAL_STATUSES
+            else 0,
+            format_func=readable_label,
+        )
+        approved_a, approved_b = st.columns(2)
+        approved_by = approved_a.text_input(
+            "Approved by", value=_search_text(detail.approved_by)
+        )
+        approved_at = approved_b.text_input(
+            "Approved on", value=_search_text(detail.approved_at)
+        )
 
-existing_search_objects_by_key = {
-    (str(item.get("market", "*")), str(item.get("search_object_id", ""))): item
-    for item in existing_search_object_items
-}
+        with st.expander("Technical details", expanded=False):
+            source = st.text_input(
+                "Source / provenance", value=_search_text(detail.source)
+            )
+            grain = st.text_input("Data grain", value=_search_text(detail.grain))
+            st.caption(
+                f"Current saved version: {detail.search_object_version}. "
+                "Saving a change creates a new version and retains the previous record."
+            )
 
-search_object_definitions = []
-search_object_versions_to_record = []
-search_object_errors = []
-for row_number, row in search_object_editor.fillna("").iterrows():
-    if not str(row["search_object_id"]):
-        continue
+        save_search = st.form_submit_button("Save Search setup", type="primary")
+
+if save_search:
     try:
         editable_fields = dict(
-            search_role=str(row["search_role"]),
-            source_column=str(row["source_column"]),
-            unit=str(row["unit"]),
-            channel=str(row["channel"]),
-            product=str(row["product"]),
-            currency=str(row["currency"]),
-            state=str(row["state"] or "observed"),
-            planning_eligibility=str(row["planning_eligibility"] or "excluded"),
-            model_input_column=str(row["model_input_column"]),
-            source=str(row["source"] or "channel & media units UI"),
-            approval_status=str(row["approval_status"] or "draft"),
-            approved_by=str(row["approved_by"]) or None,
-            approved_at=str(row["approved_at"]) or None,
-            effective_period_start=str(row["effective_period_start"]) or None,
-            effective_period_end=str(row["effective_period_end"]) or None,
+            search_role=search_role,
+            source_column=source_column.strip(),
+            unit=unit,
+            channel=channel.strip(),
+            product=product.strip(),
+            currency=currency.strip(),
+            grain=grain.strip() or "market_week",
+            state=state,
+            planning_eligibility=planning_eligibility,
+            model_input_column=model_input_column.strip(),
+            source=source.strip() or "channel & media units UI",
+            evidence_status=evidence_status.strip() or "not_assessed",
+            approval_status=approval_status,
+            approved_by=approved_by.strip() or None,
+            approved_at=approved_at.strip() or None,
+            effective_period_start=effective_period_start.strip() or None,
+            effective_period_end=effective_period_end.strip() or None,
         )
-        market = str(row["market"] or "*")
-        search_object_id = str(row["search_object_id"])
-        prior_dict = existing_search_objects_by_key.get((market, search_object_id))
-        if prior_dict is not None:
-            prior = SearchObjectDefinition.from_dict(prior_dict)
-            unversioned_edit = replace(prior, **editable_fields)
-            if unversioned_edit.to_dict() == prior.to_dict():
-                candidate = prior
-            else:
-                candidate = new_search_object_version(prior, **editable_fields)
-                search_object_versions_to_record.append(candidate)
-        else:
+        market = market.strip() or "*"
+        search_object_id = search_object_id.strip()
+        if not search_object_id:
+            raise ValueError("Search object reference is required.")
+        if _is_new_search_object:
             candidate = SearchObjectDefinition(
-                search_object_id=search_object_id, market=market, **editable_fields
+                search_object_id=search_object_id,
+                market=market,
+                **editable_fields,
             )
-            search_object_versions_to_record.append(candidate)
-        search_object_definitions.append(candidate)
-    except ValueError as exc:
-        search_object_errors.append(f"Row {row_number + 1}: {exc}")
+            updated = [*search_object_rows, candidate.to_dict()]
+            version_to_record = candidate
+        else:
+            prior = SearchObjectDefinition.from_dict(
+                search_object_rows[selected_search_index]
+            )
+            if market != prior.market or search_object_id != prior.search_object_id:
+                raise ValueError(
+                    "A saved Search object's reference and market identify its lineage; "
+                    "add a new Search object for a different identity."
+                )
+            unversioned_edit = replace(prior, **editable_fields)
+            candidate = (
+                prior
+                if unversioned_edit.to_dict() == prior.to_dict()
+                else new_search_object_version(prior, **editable_fields)
+            )
+            updated = list(search_object_rows)
+            updated[selected_search_index] = candidate.to_dict()
+            version_to_record = None if candidate is prior else candidate
 
-for issue in validate_search_object_catalogue(search_object_definitions):
-    search_object_errors.append(
-        f"{issue.search_object_id} (market {issue.market}): {issue.detail}"
-    )
-
-for search_error in search_object_errors:
-    st.error(search_error)
+        candidate_definitions = [
+            SearchObjectDefinition.from_dict(item) for item in updated
+        ]
+        search_object_errors = [
+            f"{issue.search_object_id} (market {issue.market}): {issue.detail}"
+            for issue in validate_search_object_catalogue(candidate_definitions)
+        ]
+        if search_object_errors:
+            for search_error in search_object_errors:
+                st.error(search_error)
+            st.error("Nothing was saved. Resolve every Search object error first.")
+        else:
+            set_state("search_objects", updated)
+            if version_to_record is not None:
+                set_state(
+                    "search_object_versions",
+                    (get_state("search_object_versions") or [])
+                    + [version_to_record.to_dict()],
+                )
+            st.session_state["search_detail_mode"] = "edit"
+            if _is_new_search_object:
+                st.session_state["search_selected_index"] = len(updated) - 1
+            st.success("Search setup saved.")
+    except (TypeError, ValueError) as exc:
+        st.error(f"Nothing was saved. Resolve this Search object first: {exc}")
 
 with st.expander("Technical details · Search version history"):
     _search_object_version_history = get_state("search_object_versions") or []
@@ -872,22 +968,6 @@ with st.expander("Technical details · Search version history"):
             f"v{_version.get('search_object_version')} - "
             f"{_version.get('approval_status')}"
         )
-_search_editor_section.__exit__(None, None, None)
-if st.button("Save Search setup"):
-    if search_object_errors:
-        st.error("Nothing was saved. Resolve every Search object error first.")
-    else:
-        set_state(
-            "search_objects",
-            [definition.to_dict() for definition in search_object_definitions],
-        )
-        if search_object_versions_to_record:
-            set_state(
-                "search_object_versions",
-                (get_state("search_object_versions") or [])
-                + [defn.to_dict() for defn in search_object_versions_to_record],
-            )
-        st.success("Search setup saved.")
 _search_section.__exit__(None, None, None)
 
 st.markdown("---")

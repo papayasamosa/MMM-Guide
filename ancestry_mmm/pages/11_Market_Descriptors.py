@@ -126,7 +126,7 @@ with st.container(border=True):
     summary_cols[0].metric("Markets", len(spec.markets))
     summary_cols[1].metric("Currencies set", f"{currency_set}/{len(spec.markets)}")
     summary_cols[2].metric("Optional profiles", descriptor_profiles)
-    summary_cols[3].metric("Media-unit coverage", "See Media Mapping")
+    summary_cols[3].metric("Media-unit coverage", "See Activity Mapping")
 
 for market in spec.markets:
     market_df = (

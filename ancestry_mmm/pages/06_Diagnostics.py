@@ -903,7 +903,7 @@ elif not scorecard:
 elif not activity_governance_ready:
     st.error(
         "Model approval is blocked until Activity & causal-role governance "
-        "is complete and approved on Media Mapping: "
+        "is complete and approved on Activity Mapping: "
         + "; ".join(activity_governance_errors)
     )
 elif current_identity is None:

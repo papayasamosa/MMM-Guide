@@ -1,5 +1,5 @@
 """AppTest coverage for REQ-DATAIN-001's pooling_group_id survival through
-pages/10_Channel_Media_Units.py's "Save required activity governance" flow.
+pages/10_Channel_Media_Units.py's "Save activity mapping" flow.
 
 Regression for a PR #167 review finding: pooling_group_id must survive the
 activity mapping save flow - an unrelated edit must not silently reset the
@@ -73,9 +73,7 @@ def test_save_preserves_pooling_group_id_through_an_unrelated_edit():
     at = _run_at(df, spec, activity_definitions=[existing.to_dict()])
     assert not at.exception, f"page raised: {at.exception}"
 
-    save_button = next(
-        b for b in at.button if b.label == "Save required activity governance"
-    )
+    save_button = next(b for b in at.button if b.label == "Save activity mapping")
     save_button.click().run()
     assert not at.exception, f"save click raised: {at.exception}"
 
@@ -91,9 +89,7 @@ def test_save_does_not_fabricate_pooling_group_id_for_a_new_row():
     at = _run_at(df, spec)
     assert not at.exception, f"page raised: {at.exception}"
 
-    save_button = next(
-        b for b in at.button if b.label == "Save required activity governance"
-    )
+    save_button = next(b for b in at.button if b.label == "Save activity mapping")
     save_button.click().run()
     assert not at.exception, f"save click raised: {at.exception}"
 
@@ -111,7 +107,7 @@ def test_activity_mapping_is_reachable_before_model_structure():
     at.run()
 
     assert not at.exception, f"pre-structure mapping page raised: {at.exception}"
-    assert any(item.label == "Save required activity governance" for item in at.button)
+    assert any(item.label == "Save activity mapping" for item in at.button)
     assert any("No governed activities exist yet" in item.value for item in at.info)
 
 
