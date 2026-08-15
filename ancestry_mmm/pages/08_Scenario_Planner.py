@@ -209,9 +209,7 @@ def _humanise_scenario_output(dataframe, outcome_labels):
         )
     if "outcome_id" in displayed.columns:
         displayed["Outcome"] = displayed["outcome_id"].map(
-            lambda value: outcome_labels.get(
-                str(value), readable_label(str(value))
-            )
+            lambda value: outcome_labels.get(str(value), readable_label(str(value)))
         )
         displayed = displayed.drop(columns=["outcome_id"])
     displayed = displayed.drop(
@@ -257,7 +255,9 @@ def _render_scenario_output(dataframe, outcome_labels, *, technical_title):
     render_technical_details(
         title=technical_title,
         details={
-            "Raw evaluator fields": ", ".join(str(column) for column in dataframe.columns),
+            "Raw evaluator fields": ", ".join(
+                str(column) for column in dataframe.columns
+            ),
             "Display rule": "Outcome IDs and implementation fields are retained in the evaluator output and disclosed here, not used as routine business labels.",
         },
     )
@@ -273,7 +273,9 @@ def _render_economics_table(dataframe, *, technical_title):
     render_technical_details(
         title=technical_title,
         details={
-            "Core evaluator fields": ", ".join(str(column) for column in dataframe.columns),
+            "Core evaluator fields": ", ".join(
+                str(column) for column in dataframe.columns
+            ),
             "Calculation rule": "All CPA and ROI values are supplied by the core evaluator; this page does not recompute them.",
         },
     )
@@ -1765,7 +1767,9 @@ with tab_constrained:
             st.caption("**Planning use** (persisted with this result)")
             render_status_badge("exploratory")
         else:
-            st.caption("**Planning use: Official planning** (persisted with this result)")
+            st.caption(
+                "**Planning use: Official planning** (persisted with this result)"
+            )
         c1, c2 = st.columns(2)
         c1.metric(
             f"Current total ({_objective_labels[objective]})",
@@ -2028,9 +2032,7 @@ with SectionCard(
                         "exploratory": "Exploratory sensitivity",
                     }
                 )
-            compare_display = compare_display.rename(
-                columns=_SCENARIO_DISPLAY_COLUMNS
-            )
+            compare_display = compare_display.rename(columns=_SCENARIO_DISPLAY_COLUMNS)
             st.dataframe(
                 compare_display,
                 width="stretch",

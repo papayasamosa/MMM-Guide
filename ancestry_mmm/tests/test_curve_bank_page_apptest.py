@@ -612,9 +612,7 @@ def test_official_curve_artifact_renders_when_authorized(monkeypatch, tmp_path):
     )
     at.run()
     assert not at.exception, f"page raised: {at.exception}"
-    assert any(
-        "Saved response curves approved" in (c.value or "") for c in at.caption
-    )
+    assert any("Saved response curves approved" in (c.value or "") for c in at.caption)
     assert any("art-official-1" in (markdown.value or "") for markdown in at.markdown)
     # Exploratory viewers stay clearly separate from official response curves.
     assert any(
@@ -976,8 +974,7 @@ def test_results_dashboard_separates_summary_and_exploratory_curve_context():
     metric_labels = {metric.label for metric in at.metric}
     assert all(
         any(
-            "Business total" in str(option)
-            and "Total Family History" in str(option)
+            "Business total" in str(option) and "Total Family History" in str(option)
             for option in box.options
         )
         for box in scope_selectors

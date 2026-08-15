@@ -1132,9 +1132,7 @@ def test_constraints_are_visually_distinct_from_assumptions():
     _seed_consistent_session_state(at, value_currency="GBP")
     at.run()
     assert not at.exception, f"page raised: {at.exception}"
-    assert any(
-        "Planning assumptions & use" in (m.value or "") for m in at.markdown
-    )
+    assert any("Planning assumptions & use" in (m.value or "") for m in at.markdown)
     assert any(
         "Constraints (distinct from the assumptions above)" in (m.value or "")
         for m in at.markdown
