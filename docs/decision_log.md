@@ -3890,3 +3890,44 @@ end-to-end validation remains deferred pending source-data availability.
 
 **Owner:** Data Science / Platform engineering.
 **Status:** Implemented on the WP1 branch; PR and CI remain the release gate.
+## Search mediation and capacity decision package (Work Package 3)
+
+**Date:** 2026-08-15.
+
+**Decision:** Add a self-contained, decision-support-only synthetic harness
+and decision document comparing three explicit Search formulations: structural
+latent demand with a hard cap, probabilistic capture with cap-aware censoring,
+and a reduced-form diagnostic benchmark. Preserve the existing governed
+identities for branded-search demand, Paid Search spend, Paid Search delivery,
+Paid Search cap, organic capture, direct navigation, final outcome, and
+residual Paid Search incrementality as an output. Do not enable mediated or
+capacity-constrained graph edges.
+
+**Estimand and output scale:** The synthetic contract evaluates direct
+outcome-scale effect, realised mediated/captured outcome effect, captured and
+unmet demand volumes, realised total outcome effect, and unconstrained
+potential outcome effect. It enforces `captured + unmet = latent`; unmet
+potential is diagnostic and is not added to realised total response.
+
+**Evidence:** Deterministic known-truth fixtures cover never-binding,
+sometimes-binding, heavily-binding, upstream-media/cap limitation,
+organic/direct absorption, and high-association/low-incremental-capture cases.
+Candidate A recovers the forward equations exactly and raising a non-binding
+cap creates no delivery or capture. This is contract-level forward recovery,
+not posterior parameter recovery or an identifiability claim.
+
+**Upstream references:** Official PyMC `Censored` and `NegativeBinomial`
+documentation and the pinned PyMC-Marketing 0.19.4 MMM package were reviewed.
+Standard MMM transformations, priors, posterior prediction, curves,
+calibration, and optimisation are upstream-supported; the bespoke latent
+demand/capacity/censoring graph, decomposition, and governance remain custom
+and require an approved linked-model design.
+
+**Decision gate:** Human approval is still required to select the production
+formulation and approve its likelihood, estimand, hierarchy/priors,
+identification/data requirements, posterior/planning outputs, and failure
+states. No production Search implementation starts until that decision is
+recorded in an approved repository decision record and scoped brief.
+
+**Owner:** Data Science / Platform engineering.
+**Status:** Decision-support package; production formulation unresolved.
