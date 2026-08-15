@@ -37,7 +37,14 @@ from .outcomes import (
 from .causal_graph import CausalGraph
 from .graph_model_compiler import (
     GRAPH_ENGINE_PYMC_HIERARCHICAL,
+    GraphModelCompiler,
+    UnsupportedGraphStructureError,
     resolve_pathway_masks_preferring_graph,
+)
+from .search_capacity import (
+    SEARCH_CANDIDATE_A_ENGINE,
+    CandidateASearchFitInputs,
+    attach_candidate_a_demand_capture_chain,
 )
 from .pathways import (
     MediaOutcomePathway,
@@ -364,6 +371,7 @@ def build_fh_hierarchical_model(
     prior_config: Optional[Dict] = None,
     direct_dna_outcome_ids: Optional[List[str]] = None,
     causal_graph: Optional[CausalGraph] = None,
+    search_candidate_a: Optional[CandidateASearchFitInputs] = None,
 ) -> "tuple[pm.Model, FHModelMeta]":
     """
     Build the joint hierarchical FH model.
@@ -382,6 +390,8 @@ def build_fh_hierarchical_model(
             approved causal graph configured - pages/05_Model_Training.py
             passes one only when the project's graph status is approved)
             reproduces exactly today's pathway-catalogue-driven behaviour.
+            Required (non-None) whenever `search_candidate_a` is supplied -
+            Candidate A has no legacy-catalogue equivalent.
         dna_outcome_id: which outcome_id is the FH DNA cross-sell outcome
             (auto-detected from the outcome_ids if not given)
         prior_config: optional dict of prior overrides (see defaults below)
@@ -394,12 +404,29 @@ def build_fh_hierarchical_model(
             (docs/dna_fh_causal_structure.md). Defaults to
             `[dna_outcome_id]` - a fit with no DNA-product outcomes behaves
             exactly as before.
+        search_candidate_a: WP1 (`Media-Mix-Lab: Coding LLM Next Steps After
+            PR #253`) - REQ-SEARCH-002's Candidate A production integration.
+            When supplied, `causal_graph` must be an approved graph whose
+            structure satisfies `core.graph_model_compiler.
+            candidate_a_graph_issues` (raises UnsupportedGraphStructureError
+            otherwise). The demand-driving channels named in
+            `search_candidate_a.demand_channel_names` reuse this model's
+            *own* shared adstock/Hill-saturated `sat_media` - never a second,
+            simplified transform - and the resulting cap-constrained
+            capture chain adds an extra outcome-predictor contribution
+            alongside the ordinary direct/cross-product terms. None (the
+            default) reproduces exactly today's behaviour and never touches
+            `FHModelMeta.causal_graph_engine`.
 
     Returns:
         (unfit PyMC Model, FHModelMeta). Fit the model with core.models.fit_model;
         keep the FHModelMeta alongside the trace - core.predict needs it to
         replay this model's math in NumPy for scenario planning/diagnostics.
     """
+    if search_candidate_a is not None and causal_graph is None:
+        raise UnsupportedGraphStructureError(
+            "Candidate A requires an approved causal graph; none was supplied."
+        )
     prior_config = prior_config or {}
     assert_model_frame_net_billthrough_complete(frame)
 
@@ -447,25 +474,69 @@ def build_fh_hierarchical_model(
         channel: ("DNA" if index in dna_channel_idx else "Family History")
         for index, channel in enumerate(channels)
     }
-    pathway_masks = resolve_pathway_masks_preferring_graph(
-        causal_graph=causal_graph,
-        outcome_ids=outcome_ids,
-        channels=channels,
-        pathways=pathway_catalogue,
-        channel_products=channel_products,
-        outcome_products=outcome_products,
-        fitted_outcome_ids=outcome_ids,
-        diagnostic_only_outcome_ids=[
-            outcome.outcome_id
-            for outcome in outcome_catalogue
-            if getattr(outcome, "role", None) == "diagnostic"
-        ],
-        dna_channel_idx=dna_channel_idx,
-        dna_outcome_id=dna_outcome_id,
-        direct_dna_outcome_ids=direct_dna_outcome_ids,
-        dna_lag_weeks=dna_lag_weeks,
-        activity_definitions=frame.get("activity_definitions"),
-    )
+    if search_candidate_a is not None:
+        # Guaranteed by the earlier "search_candidate_a requires causal_graph"
+        # check; re-asserted here so mypy narrows causal_graph from
+        # Optional[CausalGraph] for the .compile(causal_graph) call below.
+        assert causal_graph is not None
+        # Candidate A is a separate, explicitly selected linked engine
+        # (REQ-SEARCH-002): the ordinary `resolve_pathway_masks_preferring_
+        # graph` always compiles against GRAPH_ENGINE_PYMC_HIERARCHICAL and
+        # would fail closed on this graph's mediated/capacity edges. Compile
+        # against the Candidate A engine instead - its `pathway_masks`
+        # already excludes the demand/organic/direct-navigation "search
+        # capture" edges (`attach_candidate_a_demand_capture_chain` supplies
+        # their contribution separately below), leaving only the plain
+        # upstream-channel and any DNA cross-product-halo direct edges.
+        compiled = GraphModelCompiler(
+            engine=SEARCH_CANDIDATE_A_ENGINE,
+            activity_definitions=frame.get("activity_definitions"),
+            search_objects=search_candidate_a.search_objects,
+        ).compile(causal_graph)
+        pathway_masks = compiled.pathway_masks
+        graph_plan = compiled.search_candidate_a
+        if graph_plan is None:  # pragma: no cover - GraphModelCompiler invariant
+            raise UnsupportedGraphStructureError(
+                "Candidate A engine compilation did not produce a Search graph plan."
+            )
+        expected_demand_channels = set(graph_plan.upstream_intervention_node_ids)
+        actual_demand_channels = set(search_candidate_a.demand_channel_names)
+        if actual_demand_channels != expected_demand_channels:
+            raise UnsupportedGraphStructureError(
+                "search_candidate_a.demand_channel_names "
+                f"{sorted(actual_demand_channels)} does not match the approved "
+                f"graph's upstream intervention nodes {sorted(expected_demand_channels)}."
+            )
+        unknown_demand_channels = [
+            name
+            for name in search_candidate_a.demand_channel_names
+            if name not in channels
+        ]
+        if unknown_demand_channels:
+            raise UnsupportedGraphStructureError(
+                f"Candidate A demand channel(s) {unknown_demand_channels} are not "
+                "in this fit's own channels."
+            )
+    else:
+        pathway_masks = resolve_pathway_masks_preferring_graph(
+            causal_graph=causal_graph,
+            outcome_ids=outcome_ids,
+            channels=channels,
+            pathways=pathway_catalogue,
+            channel_products=channel_products,
+            outcome_products=outcome_products,
+            fitted_outcome_ids=outcome_ids,
+            diagnostic_only_outcome_ids=[
+                outcome.outcome_id
+                for outcome in outcome_catalogue
+                if getattr(outcome, "role", None) == "diagnostic"
+            ],
+            dna_channel_idx=dna_channel_idx,
+            dna_outcome_id=dna_outcome_id,
+            direct_dna_outcome_ids=direct_dna_outcome_ids,
+            dna_lag_weeks=dna_lag_weeks,
+            activity_definitions=frame.get("activity_definitions"),
+        )
 
     channel_mean_spend = X_media.mean(axis=0)
     channel_mean_spend = np.where(channel_mean_spend > 0, channel_mean_spend, 1.0)
@@ -739,6 +810,16 @@ def build_fh_hierarchical_model(
             + eta_promo
         )
 
+        if search_candidate_a is not None:
+            eta = eta + attach_candidate_a_demand_capture_chain(
+                model=model,
+                sat_media=sat_media,
+                channels=channels,
+                market_idx=market_idx,
+                fit_inputs=search_candidate_a,
+                prior_config=prior_config,
+            )
+
         # -----------------------------------------------------------------
         # Outcome-level controls, e.g. DNA kit price acting only on the DNA
         # cross-sell outcome's equation. Keyed by outcome_id (frame["outcome_controls"] -
@@ -801,6 +882,9 @@ def build_fh_hierarchical_model(
         )
 
     outcome_catalogue: List[Any] = frame.get("outcomes") or []
+    _no_search_candidate_a_graph_engine = (
+        GRAPH_ENGINE_PYMC_HIERARCHICAL if causal_graph is not None else ""
+    )
     meta = FHModelMeta(
         markets=markets,
         outcome_ids=outcome_ids,
@@ -842,7 +926,9 @@ def build_fh_hierarchical_model(
             causal_graph.structural_fingerprint() if causal_graph is not None else ""
         ),
         causal_graph_engine=(
-            GRAPH_ENGINE_PYMC_HIERARCHICAL if causal_graph is not None else ""
+            SEARCH_CANDIDATE_A_ENGINE
+            if search_candidate_a is not None
+            else _no_search_candidate_a_graph_engine
         ),
     )
     return model, meta

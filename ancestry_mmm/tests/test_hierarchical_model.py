@@ -287,6 +287,285 @@ class TestSingleChannelSingleMarketSurvivesPmDraw:
             assert field_expr in source_c, f"Model C missing: {field_expr}"
 
 
+class TestCandidateASearchIntegration:
+    """WP1 (`Media-Mix-Lab: Coding LLM Next Steps After PR #253`): Candidate A
+    production integration boundary. Builds a real `pm.Model` (via
+    `build_fh_hierarchical_model(..., search_candidate_a=...)`) against a
+    minimal approved Candidate A causal graph, and uses `pm.draw` (never
+    `pm.sample`) to stay fast, mirroring
+    TestSingleChannelSingleMarketSurvivesPmDraw's convention above."""
+
+    @staticmethod
+    def _frame():
+        n = 8
+        rng = np.random.default_rng(0)
+        return {
+            "markets": ["UK"],
+            "market_idx": np.zeros(n, dtype=int),
+            "market_bounds": [(0, n)],
+            "channels": ["SearchBrand"],
+            "dna_channel_idx": [],
+            "outcome_ids": ["fh_new"],
+            "X_media": rng.uniform(50, 150, size=(n, 1)),
+            "Y": rng.uniform(8, 15, size=(n, 1)),
+            "promo": np.zeros((n, 1)),
+            "X_controls": np.zeros((n, 0)),
+            "control_names": [],
+            "fourier": np.zeros((n, 2)),
+            "trend": np.linspace(1.0, 1.1, n),
+            "unpooled_markets": [],
+        }
+
+    @staticmethod
+    def _approved_graph():
+        from ancestry_mmm.core.causal_graph import (
+            CausalEdge,
+            CausalGraph,
+            EDGE_ROLE_CAPACITY_CONSTRAINED,
+            EDGE_ROLE_DIRECT,
+            EDGE_ROLE_MEDIATED,
+            GRAPH_STATUS_APPROVED,
+            NODE_ROLE_CAPACITY_OR_CAP,
+            NODE_ROLE_DEMAND_CAPTURE,
+            NODE_ROLE_INTERVENTION,
+            NODE_ROLE_OUTCOME,
+            CausalNode,
+        )
+
+        nodes = [
+            CausalNode(node_id="SearchBrand", role=NODE_ROLE_INTERVENTION),
+            CausalNode(node_id="fh_new", role=NODE_ROLE_OUTCOME),
+            CausalNode(
+                node_id="demand_node",
+                role=NODE_ROLE_DEMAND_CAPTURE,
+                search_object_id="obj_demand",
+            ),
+            CausalNode(
+                node_id="cap_node",
+                role=NODE_ROLE_CAPACITY_OR_CAP,
+                search_object_id="obj_cap",
+            ),
+            CausalNode(
+                node_id="organic_node",
+                role=NODE_ROLE_DEMAND_CAPTURE,
+                search_object_id="obj_organic",
+            ),
+            CausalNode(
+                node_id="direct_node",
+                role=NODE_ROLE_DEMAND_CAPTURE,
+                search_object_id="obj_direct",
+            ),
+        ]
+        edges = [
+            CausalEdge("SearchBrand", "fh_new", role=EDGE_ROLE_DIRECT),
+            CausalEdge("SearchBrand", "demand_node", role=EDGE_ROLE_MEDIATED),
+            CausalEdge("demand_node", "fh_new", role=EDGE_ROLE_MEDIATED),
+            CausalEdge("demand_node", "cap_node", role=EDGE_ROLE_CAPACITY_CONSTRAINED),
+            CausalEdge("organic_node", "fh_new", role=EDGE_ROLE_DIRECT),
+            CausalEdge("direct_node", "fh_new", role=EDGE_ROLE_DIRECT),
+        ]
+        return CausalGraph(
+            graph_id="g1",
+            graph_version=1,
+            nodes=nodes,
+            edges=edges,
+            status=GRAPH_STATUS_APPROVED,
+        )
+
+    @staticmethod
+    def _search_objects():
+        from ancestry_mmm.core.search_objects import (
+            SEARCH_ROLE_DEMAND,
+            SEARCH_ROLE_DIRECT_NAV_CAPTURE,
+            SEARCH_ROLE_ORGANIC_CAPTURE,
+            SEARCH_ROLE_PAID_CAP,
+            SEARCH_ROLE_PAID_DELIVERY,
+            SEARCH_ROLE_PAID_SPEND,
+            UNIT_EXPOSURE_COUNT,
+            UNIT_MONETARY,
+            UNIT_RESPONSE_COUNT,
+            SearchObjectDefinition,
+        )
+
+        return [
+            SearchObjectDefinition(
+                search_object_id="obj_demand",
+                search_role=SEARCH_ROLE_DEMAND,
+                source_column="search_demand_raw",
+                unit=UNIT_EXPOSURE_COUNT,
+            ),
+            SearchObjectDefinition(
+                search_object_id="obj_cap",
+                search_role=SEARCH_ROLE_PAID_CAP,
+                source_column="search_cap_raw",
+                unit=UNIT_EXPOSURE_COUNT,
+            ),
+            SearchObjectDefinition(
+                search_object_id="obj_organic",
+                search_role=SEARCH_ROLE_ORGANIC_CAPTURE,
+                source_column="search_organic_raw",
+                unit=UNIT_RESPONSE_COUNT,
+            ),
+            SearchObjectDefinition(
+                search_object_id="obj_direct",
+                search_role=SEARCH_ROLE_DIRECT_NAV_CAPTURE,
+                source_column="search_direct_raw",
+                unit=UNIT_RESPONSE_COUNT,
+            ),
+            SearchObjectDefinition(
+                search_object_id="obj_spend",
+                search_role=SEARCH_ROLE_PAID_SPEND,
+                source_column="search_spend_raw",
+                unit=UNIT_MONETARY,
+                currency="GBP",
+            ),
+            SearchObjectDefinition(
+                search_object_id="obj_delivery",
+                search_role=SEARCH_ROLE_PAID_DELIVERY,
+                source_column="search_delivery_raw",
+                unit=UNIT_EXPOSURE_COUNT,
+            ),
+        ]
+
+    def _build(self, *, cap_value: float):
+        from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
+        from ancestry_mmm.core.schema import ModelSpec
+        from ancestry_mmm.core.search_capacity import (
+            CandidateASearchFitInputs,
+            SearchCandidateASpec,
+        )
+
+        frame = self._frame()
+        n = frame["X_media"].shape[0]
+        rng = np.random.default_rng(1)
+        spec = SearchCandidateASpec(
+            outcome_definition_id="fh_new",
+            outcome_definition_version="1",
+            outcome_definition_fingerprint="fp",
+            market_scope="UK",
+            demand_object_id="obj_demand",
+            paid_spend_object_id="obj_spend",
+            paid_delivery_object_id="obj_delivery",
+            paid_cap_object_id="obj_cap",
+            organic_capture_object_id="obj_organic",
+            direct_navigation_object_id="obj_direct",
+        )
+        fit_inputs = CandidateASearchFitInputs(
+            spec=spec,
+            demand_channel_names=["SearchBrand"],
+            paid_search_delivery=rng.uniform(5, 15, size=n),
+            paid_search_cap=np.full(n, cap_value),
+            organic_search_capture=rng.uniform(5, 15, size=n),
+            direct_navigation_capture=rng.uniform(5, 15, size=n),
+            search_objects=self._search_objects(),
+        )
+        model_spec = ModelSpec(
+            date_col="date",
+            market_col="market",
+            markets=["UK"],
+            segment_outcomes={"New": "fh_new_gsa"},
+            channels=["SearchBrand"],
+        )
+        model, meta = build_fh_hierarchical_model(
+            frame,
+            model_spec,
+            causal_graph=self._approved_graph(),
+            search_candidate_a=fit_inputs,
+        )
+        return model, meta, fit_inputs
+
+    def test_candidate_a_engine_is_recorded_on_fit_time_meta(self):
+        from ancestry_mmm.core.search_capacity import SEARCH_CANDIDATE_A_ENGINE
+
+        _model, meta, _fit_inputs = self._build(cap_value=1000.0)
+        assert meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE
+
+    def test_missing_causal_graph_fails_closed(self):
+        from ancestry_mmm.core.graph_model_compiler import (
+            UnsupportedGraphStructureError,
+        )
+        from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
+        from ancestry_mmm.core.schema import ModelSpec
+        from ancestry_mmm.core.search_capacity import (
+            CandidateASearchFitInputs,
+            SearchCandidateASpec,
+        )
+
+        frame = self._frame()
+        n = frame["X_media"].shape[0]
+        spec = SearchCandidateASpec(
+            outcome_definition_id="fh_new",
+            outcome_definition_version="1",
+            outcome_definition_fingerprint="fp",
+            market_scope="UK",
+            demand_object_id="obj_demand",
+            paid_spend_object_id="obj_spend",
+            paid_delivery_object_id="obj_delivery",
+            paid_cap_object_id="obj_cap",
+            organic_capture_object_id="obj_organic",
+            direct_navigation_object_id="obj_direct",
+        )
+        fit_inputs = CandidateASearchFitInputs(
+            spec=spec,
+            demand_channel_names=["SearchBrand"],
+            paid_search_delivery=np.full(n, 5.0),
+            paid_search_cap=np.full(n, 100.0),
+            organic_search_capture=np.full(n, 5.0),
+            direct_navigation_capture=np.full(n, 5.0),
+            search_objects=self._search_objects(),
+        )
+        model_spec = ModelSpec(
+            date_col="date",
+            market_col="market",
+            markets=["UK"],
+            segment_outcomes={"New": "fh_new_gsa"},
+            channels=["SearchBrand"],
+        )
+        with pytest.raises(UnsupportedGraphStructureError):
+            build_fh_hierarchical_model(
+                frame, model_spec, causal_graph=None, search_candidate_a=fit_inputs
+            )
+
+    def test_reconciliation_and_non_binding_cap_invariant_hold_under_pm_draw(self):
+        """Draws from the prior (fixed seed) and checks, for every draw:
+        captured + unmet == latent (structural reconciliation), and with a
+        cap set far above any plausible demand, the cap never binds and
+        realised delivery always equals the unconstrained opportunity (a
+        non-binding cap must not create or destroy value)."""
+        import pymc as pm
+
+        model, _meta, _fit_inputs = self._build(cap_value=1_000_000.0)
+        names = [
+            "search_latent_branded_demand",
+            "search_total_captured_demand",
+            "search_unmet_demand",
+            "search_unconstrained_paid_opportunity",
+            "search_realised_paid_delivery",
+            "search_cap_binding_probability",
+        ]
+        with model:
+            draws = pm.draw(
+                [model.named_vars[name] for name in names], draws=5, random_seed=0
+            )
+        demand, captured, unmet, paid_opportunity, realised_paid, cap_binding = draws
+        np.testing.assert_allclose(captured + unmet, demand, rtol=1e-6, atol=1e-6)
+        assert np.all(unmet >= -1e-8)
+        np.testing.assert_allclose(
+            realised_paid, paid_opportunity, rtol=1e-6, atol=1e-6
+        )
+        assert np.all(cap_binding == 0.0)
+
+    def test_search_eta_contribution_has_obs_by_outcome_shape(self):
+        import pymc as pm
+
+        model, _meta, _fit_inputs = self._build(cap_value=1000.0)
+        with model:
+            value = pm.draw(
+                model.named_vars["search_eta_contribution"], draws=1, random_seed=0
+            )
+        assert np.asarray(value).shape == (8, 1)
+
+
 class TestResolveDirectDnaOutcomeIds:
     OUTCOME_IDS = [
         "fh_new",

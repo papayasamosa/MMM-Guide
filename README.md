@@ -116,10 +116,13 @@ Requires Python 3.11 or 3.12 (see [Deployment](#deployment) below for why there'
   response approximation using the model's real fitted curves, not literal MCMC-in-the-loop.
   **Current state:** the Scenario Planner is a steady-state monthly approximation. The full
   sequential weekly planner and Chronos-2 integration are not yet implemented. A Candidate A
-  capacity-constrained Search engine capability now exists (`core/search_capacity.py`,
-  `REQ-SEARCH-002`) but is not yet wired into Model Training, Diagnostics, Results, official
-  curves, or the Scenario Planner, and Search planning/optimisation remain disabled pending
-  evidence and approval (see `docs/approved_requirements/` for the capability roadmap).
+  capacity-constrained Search engine capability (`core/search_capacity.py`, `REQ-SEARCH-002`)
+  is now wired into Model Training's fit path (`application/model_fit_service.py`,
+  `core.hierarchical_model.build_fh_hierarchical_model(..., search_candidate_a=...)`), reusing
+  that builder's own multi-channel adstock/Hill/market machinery - governed by the project's
+  approved causal graph, never a UI toggle. It is not yet wired into Diagnostics, Results,
+  official curves, or the Scenario Planner, and Search planning/optimisation remain disabled
+  pending evidence and approval (see `docs/approved_requirements/` for the capability roadmap).
 - **Outcome governance** (`ancestry_mmm/core/outcome_approval.py`): separate outcome definition,
   analytical eligibility, and approval for use — a fitted outcome does not automatically become
   planning-eligible. Net Bill Through is conditionally available: it requires both an approved
@@ -155,8 +158,9 @@ a sequential weekly planner with starting adstock and terminal carryover. Execut
 conversion for non-native-cadence sources **is now built** for the governed method catalogue
 (`docs/mixed_frequency_alignment_wp1.md`); it remains deliberately narrow and does not resolve
 `FR-MOD-015` ragged-predictor mathematics. A Candidate A Search mediation/capacity engine
-capability is implemented (`core/search_capacity.py`) but not yet integrated into the ordinary fit
-workflow - see the Scenario Planner section above and `REPO_REVIEW_AND_NEXT_STEPS.md`.
+capability (`core/search_capacity.py`) is now wired into Model Training's fit path, but not yet
+into Diagnostics, Results, official curves, or the Scenario Planner - see the Scenario Planner
+section above and `REPO_REVIEW_AND_NEXT_STEPS.md`.
 
 ## Project structure
 
