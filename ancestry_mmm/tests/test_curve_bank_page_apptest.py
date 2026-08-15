@@ -475,7 +475,7 @@ def test_curve_bank_section_labels_entries_as_parameter_snapshots_not_official()
     assert "official curve bank" not in source
     # The qualifier caption points to the official section as the only
     # official rendering path.
-    assert "Official response curves" in source
+    assert "Approved response curves" in source
 
 
 # ---------------------------------------------------------------------------
@@ -613,7 +613,7 @@ def test_official_curve_artifact_renders_when_authorized(monkeypatch, tmp_path):
     at.run()
     assert not at.exception, f"page raised: {at.exception}"
     assert any(
-        "Saved response curves that have passed" in (c.value or "") for c in at.caption
+        "Saved response curves approved" in (c.value or "") for c in at.caption
     )
     assert any("art-official-1" in (markdown.value or "") for markdown in at.markdown)
     # Exploratory viewers stay clearly separate from official response curves.
@@ -653,7 +653,7 @@ def test_official_section_empty_store_shows_info(monkeypatch, tmp_path):
     at.run()
     assert not at.exception, f"page raised: {at.exception}"
     assert any(
-        "No official response curves have been saved" in (i.value or "")
+        "No approved response curves have been saved" in (i.value or "")
         for i in at.info
     )
 
@@ -820,7 +820,7 @@ def test_official_curve_chart_renders_for_model_input_curve_with_two_components(
         df.value for df in at.dataframe if "Curve" in getattr(df.value, "columns", [])
     ]
     assert meta_dataframes, "expected the official response-curve summary to render"
-    assert meta_dataframes[0]["Curve"].iloc[0] == "Official response curve"
+    assert meta_dataframes[0]["Curve"].iloc[0] == "Approved response curve"
     assert any("NewSegment" in (markdown.value or "") for markdown in at.markdown)
 
 
@@ -958,8 +958,9 @@ def test_results_dashboard_separates_summary_and_exploratory_curve_context():
     assert any("Results dashboard" in text for text in markdown)
     assert any("Contribution summary" in text for text in markdown)
     assert any("Exploratory response curves" in text for text in markdown)
+    assert any("Approved response curves" in text for text in markdown)
     assert any(
-        "exploratory evidence" in text and "official response curves" in text
+        "exploratory evidence" in text and "approved response curves" in text
         for text in captions
     )
     assert not any("core.pathways" in text for text in captions)
@@ -973,6 +974,14 @@ def test_results_dashboard_separates_summary_and_exploratory_curve_context():
         for box in scope_selectors
     )
     metric_labels = {metric.label for metric in at.metric}
+    assert all(
+        any(
+            "Business total" in str(option)
+            and "Total Family History" in str(option)
+            for option in box.options
+        )
+        for box in scope_selectors
+    )
     assert {
         "Fit state",
         "Model type",

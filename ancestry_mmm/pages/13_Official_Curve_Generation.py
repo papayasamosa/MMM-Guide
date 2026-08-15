@@ -429,12 +429,12 @@ render_page_header(
     task_prompt="Can this approved fit support a governed Planning Curve?",
 )
 render_workspace_note(
-    "Planning Curve",
-    "This workflow creates an evaluated Planning Curve only when fit identity, outcome approval, evidence, and cost mappings satisfy their gates.",
+    "Create Planning Curves",
+    "Create an evaluated Planning Curve only when fit identity, outcome approval, evidence, and cost mappings satisfy their gates.",
     kind="governed",
 )
 st.caption(
-    "Generates an evaluated Planning Curve from the approved fit. It is distinct "
+    "Create an evaluated Planning Curve from the approved fit. It is distinct "
     "from exploratory fitted-parameter snapshots in Results & Response Curves. "
     "Supports both model-input curves and "
     "monetary curves (an approved, effective cost mapping plus currency/FX "
@@ -488,7 +488,7 @@ with st.container(border=True):
         "Configure and review" if _dashboard_trained else "Blocked",
     )
     st.caption(
-        "This page creates official, evaluated Planning Curves. Readiness blockers are "
+        "This page creates approved, evaluated Planning Curves. Readiness blockers are "
         "shown before saving; the saved curve carries its own outcome definition, "
         "reference context, support, evidence, and permission state."
     )
@@ -672,6 +672,10 @@ with SectionCard(
     st.caption(
         f"Selected outcome: {_outcome_display_label(selected_outcome)}. "
         "Its approval and maturity rules travel with the saved Planning Curve."
+    )
+    st.caption(
+        "The selector uses the approved business outcome label; the stored outcome "
+        "identifier remains available in Technical details for audit."
     )
     requested_use_label = st.selectbox(
         "Use to check after saving",

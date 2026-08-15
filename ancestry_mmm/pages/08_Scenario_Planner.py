@@ -110,6 +110,175 @@ from ancestry_mmm.application.scenario_service import (
 from ancestry_mmm.data.preprocessor import create_fourier_features_from_calendar
 
 
+def _catalogue_value(item, key, default=None):
+    if isinstance(item, dict):
+        return item.get(key, default)
+    return getattr(item, key, default)
+
+
+def _scenario_outcome_labels(outcome_definitions, outcome_groups):
+    """Build display labels without changing persisted outcome/group IDs."""
+    labels = {}
+    for outcome in outcome_definitions or []:
+        outcome_id = _catalogue_value(outcome, "outcome_id")
+        if not outcome_id:
+            continue
+        parts = [
+            str(_catalogue_value(outcome, key, "")).strip()
+            for key in ("product", "segment", "metric")
+            if str(_catalogue_value(outcome, key, "")).strip()
+        ]
+        label = " · ".join(parts) or readable_label(str(outcome_id))
+        version = str(_catalogue_value(outcome, "definition_version", "")).strip()
+        if version:
+            label += f" (definition {version})"
+        labels[str(outcome_id)] = label
+    for group in outcome_groups or []:
+        group_id = _catalogue_value(group, "group_id")
+        if group_id:
+            labels[str(group_id)] = _catalogue_value(
+                group, "group_label", readable_label(str(group_id))
+            )
+    return labels
+
+
+_SCENARIO_DISPLAY_COLUMNS = {
+    "scenario": "Scenario",
+    "market": "Market",
+    "governance_mode": "Planning use",
+    "total_spend": "Total spend",
+    "total_value": "Total outcome value",
+    "total_value_is_complete": "Complete value total",
+    "total_fh_gsa": "Total Family History GSAs",
+    "total_fh_signups": "Total Family History sign-ups",
+    "total_dna_kits": "Total DNA kits",
+    "month": "Month",
+    "predicted_outcome": "Predicted outcome",
+    "predicted_total_outcome": "Predicted total outcome",
+    "predicted_counterfactual_outcome": "Comparison baseline",
+    "incremental_outcome": "Incremental outcome",
+    "incremental_outcome_all_activities": "Incremental outcome · all activity",
+    "incremental_outcome_paid_decisions": "Incremental outcome · paid decisions",
+    "incremental_outcome_response_only_activities": "Incremental outcome · response-only activity",
+    "value": "Outcome value",
+    "incremental_total_value": "Incremental outcome value",
+    "paid_spend": "Paid-media spend",
+    "fully_loaded_owned_spend": "Fully loaded owned spend",
+    "campaign_cost_spend": "Campaign-cost spend",
+    "fh_gsa": "Family History GSAs",
+    "fh_signups": "Family History sign-ups",
+    "fh_net_billthrough": "Family History net bill-through",
+    "dna_kits": "DNA kits",
+    "incremental_fh_gsa": "Incremental Family History GSAs",
+    "incremental_fh_signups": "Incremental Family History sign-ups",
+    "incremental_fh_net_billthrough": "Incremental Family History net bill-through",
+    "incremental_dna_kits": "Incremental DNA kits",
+    "economics_availability_status": "Economics availability",
+    "whole_plan_incremental_nbt_cpa": "Whole-plan Net Bill Through CPA",
+    "paid_media_incremental_nbt_cpa": "Paid-media Net Bill Through CPA",
+    "whole_plan_incremental_roi": "Whole-plan incremental ROI",
+    "paid_media_incremental_roi": "Paid-media incremental ROI",
+    "whole_plan_cost_per_fh_gsa": "Whole-plan Family History GSA CPA",
+    "paid_media_incremental_cpa": "Paid-media incremental CPA",
+    "whole_plan_cost_per_dna_kit": "Whole-plan DNA kit CPA",
+    "whole_plan_cost_per_fh_signup": "Whole-plan Family History sign-up CPA",
+}
+
+_SCENARIO_TECHNICAL_COLUMNS = {
+    "counterfactual_media_input",
+    "resolved_counterfactual_vector",
+    "counterfactual_policy",
+    "counterfactual_policy_fingerprint",
+    "unpriced_outcome_ids",
+    "economics_coverage",
+    "activity_definitions_fingerprint",
+    "scenario_plan_fingerprint",
+    "planning_objective",
+}
+
+
+def _humanise_scenario_output(dataframe, outcome_labels):
+    """Return the business-facing view of evaluator output."""
+    displayed = dataframe.copy()
+    if "governance_mode" in displayed.columns:
+        displayed["governance_mode"] = displayed["governance_mode"].replace(
+            {
+                "official": "Official planning",
+                "exploratory": "Exploratory sensitivity",
+            }
+        )
+    if "outcome_id" in displayed.columns:
+        displayed["Outcome"] = displayed["outcome_id"].map(
+            lambda value: outcome_labels.get(
+                str(value), readable_label(str(value))
+            )
+        )
+        displayed = displayed.drop(columns=["outcome_id"])
+    displayed = displayed.drop(
+        columns=[
+            column
+            for column in _SCENARIO_TECHNICAL_COLUMNS
+            if column in displayed.columns
+        ]
+    )
+    preferred = [
+        "month",
+        "Outcome",
+        "predicted_outcome",
+        "predicted_total_outcome",
+        "predicted_counterfactual_outcome",
+        "incremental_outcome",
+        "value",
+        "total_spend",
+        "paid_spend",
+    ]
+    ordered = [column for column in preferred if column in displayed.columns]
+    ordered.extend(column for column in displayed.columns if column not in ordered)
+    displayed = displayed[ordered]
+    return displayed.rename(columns=_SCENARIO_DISPLAY_COLUMNS)
+
+
+def _humanise_economics_table(dataframe):
+    displayed = dataframe.copy()
+    if "plan" in displayed.columns:
+        displayed["plan"] = displayed["plan"].replace(
+            {"current": "Current plan", "optimised": "Optimised plan"}
+        )
+    return displayed.rename(columns=_SCENARIO_DISPLAY_COLUMNS)
+
+
+def _render_scenario_output(dataframe, outcome_labels, *, technical_title):
+    displayed = _humanise_scenario_output(dataframe, outcome_labels)
+    st.dataframe(
+        displayed,
+        width="stretch",
+        column_config=dataframe_column_config(displayed),
+    )
+    render_technical_details(
+        title=technical_title,
+        details={
+            "Raw evaluator fields": ", ".join(str(column) for column in dataframe.columns),
+            "Display rule": "Outcome IDs and implementation fields are retained in the evaluator output and disclosed here, not used as routine business labels.",
+        },
+    )
+
+
+def _render_economics_table(dataframe, *, technical_title):
+    displayed = _humanise_economics_table(dataframe)
+    st.dataframe(
+        displayed,
+        width="stretch",
+        column_config=dataframe_column_config(displayed),
+    )
+    render_technical_details(
+        title=technical_title,
+        details={
+            "Core evaluator fields": ", ".join(str(column) for column in dataframe.columns),
+            "Calculation rule": "All CPA and ROI values are supplied by the core evaluator; this page does not recompute them.",
+        },
+    )
+
+
 st.set_page_config(
     page_title="Scenario Planner | Ancestry Family History & DNA MMM",
     layout="wide",
@@ -189,6 +358,10 @@ outcome_definitions = [outcome for outcome in (get_state("outcome_definitions") 
 outcome_groups_at_fit = getattr(meta, "outcome_groups_at_fit", None) or []
 outcome_group_treatments_at_fit = (
     getattr(meta, "outcome_group_treatments_at_fit", None) or []
+)
+outcome_labels = _scenario_outcome_labels(
+    outcome_definitions,
+    outcome_groups_at_fit,
 )
 nbt_completeness_metadata = get_state("net_billthrough_metadata")
 if frame is None or meta is None or params is None:
@@ -519,7 +692,7 @@ if unmapped_cost_bearing_channels:
         "Defaulted to 0 for cost-bearing activities with no approved, effective "
         "cost mapping (never inferred from the raw model input): "
         + ", ".join(readable_label(c) for c in sorted(unmapped_cost_bearing_channels))
-        + ". Configure a mapping on Media Mapping to seed a spend default."
+        + ". Configure a mapping on Activity Mapping to seed a spend default."
     )
 if historical_reference_date is not None and any(
     definition.is_cost_bearing for definition in by_input_for_seeding.values()
@@ -720,7 +893,7 @@ def _invalidate_stale_cached_result(
     if result.get("governance_mode") != current_governance_mode:
         st.session_state[state_key] = None
         st.info(
-            "Governance mode changed since this result was computed - re-run "
+            "Planning use changed since this result was computed - re-run "
             "the optimisation to refresh it."
         )
         return None
@@ -738,10 +911,10 @@ def _invalidate_stale_cached_result(
 
 
 st.markdown("---")
-st.markdown("### Planning assumptions & governance")
+st.markdown("### Planning assumptions & use")
 st.caption(
     "These are assumptions the plan is evaluated under, not decisions in the spend-plan "
-    "grid above - the counterfactual policy, governance mode, and optimisation objective "
+    "grid above - the comparison baseline, planning use, and optimisation objective "
     "below apply to every tab further down."
 )
 
@@ -806,17 +979,19 @@ _demand_capture_rule_index = (
     else 0
 )
 demand_capture_rule = st.radio(
-    "Demand-capture counterfactual",
+    "How should demand-capture activity behave in the comparison baseline?",
     _DEMAND_CAPTURE_RULE_OPTIONS,
     index=_demand_capture_rule_index,
     horizontal=True,
     format_func=lambda value: {
-        "hold_plan": "Hold demand-capture activity at the candidate level",
-        "zero": "Set demand-capture activity to zero (sensitivity only)",
+        "hold_plan": "Hold at the candidate level",
+        "zero": "Set to zero for sensitivity",
     }[value],
     help=(
-        "Demand capture is never zeroed implicitly. This explicit selection "
-        "is stored with the scenario and objective."
+        "Demand-capture activity is never zeroed implicitly. Hold it at the "
+        "candidate level for the ordinary comparison, or set it to zero only "
+        "as an explicitly labelled sensitivity assumption. This choice is "
+        "stored with the scenario and objective."
     ),
 )
 if _cf_policy_safe_to_sync:
@@ -871,20 +1046,20 @@ else:
 # read from session state before this point, and every call below is built
 # from this value, not from a stale read captured earlier in the script.
 governance_mode = st.radio(
-    "Governance mode",
+    "Planning use",
     ["official", "exploratory"],
     horizontal=True,
     key="scenario_governance_mode",
     format_func=lambda value: {
-        "official": "Official - requires approved activity and outcome governance",
-        "exploratory": "Exploratory - sensitivity only, skips approval gates",
+        "official": "Official planning",
+        "exploratory": "Exploratory sensitivity",
     }[value],
     help=(
-        "Official mode blocks optimisation against any activity whose governance "
+        "Official planning blocks optimisation against any activity whose governance "
         "isn't approved (draft or rejected model role, economic treatment, or "
         "planning eligibility must not drive an official recommendation), and "
         "against any target outcome without a matching, active approval. "
-        "Exploratory mode skips both checks - always visibly labelled below, "
+        "Exploratory sensitivity skips both checks - always visibly labelled below, "
         "never a silent fallback."
     ),
 )
@@ -1240,8 +1415,10 @@ with tab_manual:
         "Everything below is computed from the spend plan grid above - edit the plan, not "
         "these tables, to change these numbers."
     )
-    st.dataframe(
-        predicted, width="stretch", column_config=dataframe_column_config(predicted)
+    _render_scenario_output(
+        predicted,
+        outcome_labels,
+        technical_title="Technical details · calculated output",
     )
     totals_source = aggregate_outcome_groups(
         predicted,
@@ -1258,17 +1435,20 @@ with tab_manual:
     st.markdown("**Totals by outcome**")
     if outcome_groups_at_fit:
         st.caption(
-            "Configured additive outcome groups are shown as draw-safe/reporting totals; "
-            "their member rows are not counted again in this table."
+            "Outcome-group totals are shown once; their member outcomes are not counted again."
         )
-    st.dataframe(totals, width="stretch", column_config=dataframe_column_config(totals))
+    _render_scenario_output(
+        totals,
+        outcome_labels,
+        technical_title="Technical details · outcome totals",
+    )
     if (
         "total_value_is_complete" in predicted.columns
         and not predicted["total_value_is_complete"].all()
     ):
         st.caption(
-            "Total predicted value excludes outcome_id(s) with no LTV weight configured (never "
-            "silently treated as $1) - set a value weight for every outcome on the Structure page "
+            "Total predicted value excludes outcomes with no value weight configured (never "
+            "silently treated as $1) - set a value weight for every outcome on Model Structure "
             "for a complete total."
         )
     by_month_cols = ["fh_gsa", "fh_net_billthrough", "dna_kits"] + (
@@ -1295,17 +1475,16 @@ with tab_manual:
     total_label, total_value = _objective_totals[objective]
     st.metric(total_label, f"{total_value:,.0f}")
 
-    st.markdown("**Governed economics by month**")
+    st.markdown("**Economics by month**")
     st.caption(
-        "Straight from the core evaluator - never recomputed on this page. `whole_plan_*` "
-        "fields are blank for a month where response-only activity contributes to the "
-        "incremental outcome without a corresponding spend (a whole-plan cost-per-outcome "
-        "would be misleading there); `paid_media_*` fields are scoped to paid spend only and "
-        "are never suppressed this way."
+        "Calculated by the model evaluator. Whole-plan measures are unavailable when "
+        "response-only activity makes that scope incompatible; paid-media measures remain "
+        "available when supported."
     )
     econ_table = monthly_economics_table(predicted)
-    st.dataframe(
-        econ_table, width="stretch", column_config=dataframe_column_config(econ_table)
+    _render_economics_table(
+        econ_table,
+        technical_title="Technical details · economics fields",
     )
     if not whole_plan_scope_compatible(predicted):
         st.caption(
@@ -1418,10 +1597,10 @@ with tab_manual:
                     "**Predicted outcomes with uncertainty (mean / median / 90% credible interval)**"
                 )
                 summary_df = uncertainty_result["summary"]
-                st.dataframe(
+                _render_scenario_output(
                     summary_df,
-                    width="stretch",
-                    column_config=dataframe_column_config(summary_df),
+                    outcome_labels,
+                    technical_title="Technical details · uncertainty summary",
                 )
                 prob = uncertainty_result["prob_outperforms_baseline"]
                 if prob is not None:
@@ -1446,8 +1625,8 @@ with tab_constrained:
         "Add the constraints Ancestry actually plans against: locked cells (e.g. committed TV "
         "bookings), fixed channel/month totals, bounded movement from the current plan, and "
         "minimum-spend floors (e.g. DNA promotional windows). Constraints are hard bounds the "
-        "optimiser must respect; they are separate from the planning assumptions (counterfactual "
-        "policy, governance mode, objective) set above, which shape how a plan is evaluated "
+        "optimiser must respect; they are separate from the planning assumptions (comparison "
+        "baseline, planning use, and objective) set above, which shape how a plan is evaluated "
         "rather than what values it may take."
     )
     if "scenario_constraints" not in st.session_state:
@@ -1583,10 +1762,10 @@ with tab_constrained:
         # status STATUS_BADGES covers (it's this scenario's governance mode,
         # not a state to flag) and stays plain text, same as before.
         if result["governance_mode"] == "exploratory":
-            st.caption("**Governance mode** (persisted with this result)")
+            st.caption("**Planning use** (persisted with this result)")
             render_status_badge("exploratory")
         else:
-            st.caption("**Governance mode: Official** (persisted with this result)")
+            st.caption("**Planning use: Official planning** (persisted with this result)")
         c1, c2 = st.columns(2)
         c1.metric(
             f"Current total ({_objective_labels[objective]})",
@@ -1598,22 +1777,19 @@ with tab_constrained:
             delta=f"{result['objective_value'] - result['current_objective_value']:,.0f}",
         )
 
-        st.markdown("**Governed economics by month: current vs optimised**")
+        st.markdown("**Economics by month: current vs optimised**")
         st.caption(
-            "Straight from the core evaluator - never recomputed on this page. `whole_plan_*` "
-            "fields are blank for a month where response-only activity contributes to the "
-            "incremental outcome without a corresponding spend; `paid_media_*` fields are "
-            "scoped to paid spend only and are never suppressed this way."
+            "Calculated by the model evaluator; scope-limited measures remain visibly unavailable "
+            "where the comparison is not supported."
         )
         current_econ = monthly_economics_table(result["current_predicted"])
         current_econ.insert(0, "plan", "current")
         optimised_econ = monthly_economics_table(result["predicted"])
         optimised_econ.insert(0, "plan", "optimised")
         combined_econ = pd.concat([current_econ, optimised_econ], ignore_index=True)
-        st.dataframe(
+        _render_economics_table(
             combined_econ,
-            width="stretch",
-            column_config=dataframe_column_config(combined_econ),
+            technical_title="Technical details · comparison economics fields",
         )
         if not (
             whole_plan_scope_compatible(result["current_predicted"])
@@ -1631,10 +1807,10 @@ with tab_constrained:
             width="stretch",
             column_config=dataframe_column_config(plan_result_df),
         )
-        st.dataframe(
+        _render_scenario_output(
             result["predicted"],
-            width="stretch",
-            column_config=dataframe_column_config(result["predicted"]),
+            outcome_labels,
+            technical_title="Technical details · optimised evaluator output",
         )
 
         name = st.text_input(
@@ -1734,10 +1910,10 @@ with tab_unconstrained:
         # See the matching comment above (constrained-result section) - same
         # shared-vocabulary fix, applied here for the unconstrained result.
         if result["governance_mode"] == "exploratory":
-            st.caption("**Governance mode**")
+            st.caption("**Planning use**")
             render_status_badge("exploratory")
         else:
-            st.caption("**Governance mode: Official**")
+            st.caption("**Planning use: Official planning**")
         c1, c2 = st.columns(2)
         c1.metric(
             f"Current total ({_objective_labels[objective]})",
@@ -1749,22 +1925,19 @@ with tab_unconstrained:
             delta=f"{result['objective_value'] - result['current_objective_value']:,.0f}",
         )
 
-        st.markdown("**Governed economics by month: current vs theoretical optimum**")
+        st.markdown("**Economics by month: current vs theoretical optimum**")
         st.caption(
-            "Straight from the core evaluator - never recomputed on this page. `whole_plan_*` "
-            "fields are blank for a month where response-only activity contributes to the "
-            "incremental outcome without a corresponding spend; `paid_media_*` fields are "
-            "scoped to paid spend only and are never suppressed this way."
+            "Calculated by the model evaluator; scope-limited measures remain visibly unavailable "
+            "where the benchmark is not supported."
         )
         current_econ = monthly_economics_table(result["current_predicted"])
         current_econ.insert(0, "plan", "current")
         optimised_econ = monthly_economics_table(result["predicted"])
         optimised_econ.insert(0, "plan", "theoretical optimum")
         combined_econ = pd.concat([current_econ, optimised_econ], ignore_index=True)
-        st.dataframe(
+        _render_economics_table(
             combined_econ,
-            width="stretch",
-            column_config=dataframe_column_config(combined_econ),
+            technical_title="Technical details · benchmark economics fields",
         )
         if not (
             whole_plan_scope_compatible(result["current_predicted"])
@@ -1845,10 +2018,30 @@ with SectionCard(
             )
         if current_scenarios:
             compare_df = compare_scenarios(current_scenarios)
+            compare_display = compare_df.copy()
+            if "governance_mode" in compare_display.columns:
+                compare_display["governance_mode"] = compare_display[
+                    "governance_mode"
+                ].replace(
+                    {
+                        "official": "Official planning",
+                        "exploratory": "Exploratory sensitivity",
+                    }
+                )
+            compare_display = compare_display.rename(
+                columns=_SCENARIO_DISPLAY_COLUMNS
+            )
             st.dataframe(
-                compare_df,
+                compare_display,
                 width="stretch",
-                column_config=dataframe_column_config(compare_df),
+                column_config=dataframe_column_config(compare_display),
+            )
+            render_technical_details(
+                title="Technical details · saved scenario comparison",
+                details={
+                    "Comparison source": "Totals and labels are supplied by the saved scenario comparison service.",
+                    "Planning use values": "Official planning and Exploratory sensitivity are display labels for the stored official/exploratory values.",
+                },
             )
         elif not stale_scenario_names:
             st.info("No scenarios saved yet.")

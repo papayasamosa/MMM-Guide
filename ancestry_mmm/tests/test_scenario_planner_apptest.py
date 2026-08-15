@@ -907,7 +907,7 @@ def test_exploratory_result_invalidated_when_switched_back_to_official():
     at = AppTest.from_file(str(PAGE), default_timeout=60)
     _seed_official_governance_state(at)
     at.run()
-    governance_radio = next(r for r in at.radio if r.label == "Governance mode")
+    governance_radio = next(r for r in at.radio if r.label == "Planning use")
     governance_radio.set_value("exploratory").run()
     assert not at.exception, f"page raised: {at.exception}"
     assert any("Exploratory mode" in (w.value or "") for w in at.warning), (
@@ -926,7 +926,7 @@ def test_exploratory_result_invalidated_when_switched_back_to_official():
     assert not at.exception, f"page raised: {at.exception}"
     assert at.session_state["unconstrained_result"] is None
     assert any(
-        "Governance mode changed since this result was computed" in (i.value or "")
+        "Planning use changed since this result was computed" in (i.value or "")
         for i in at.info
     )
 
@@ -1133,11 +1133,22 @@ def test_constraints_are_visually_distinct_from_assumptions():
     at.run()
     assert not at.exception, f"page raised: {at.exception}"
     assert any(
-        "Planning assumptions & governance" in (m.value or "") for m in at.markdown
+        "Planning assumptions & use" in (m.value or "") for m in at.markdown
     )
     assert any(
         "Constraints (distinct from the assumptions above)" in (m.value or "")
         for m in at.markdown
+    )
+    assert any(r.label == "Planning use" for r in at.radio)
+    assert any(
+        r.label
+        == "How should demand-capture activity behave in the comparison baseline?"
+        for r in at.radio
+    )
+    assert any("Economics by month" in (m.value or "") for m in at.markdown)
+    assert all(
+        "outcome_id" not in getattr(dataframe.value, "columns", [])
+        for dataframe in at.dataframe
     )
 
 
@@ -1169,7 +1180,7 @@ def test_allocation_desk_separates_editable_proposed_and_saved_state():
     captions = [c.value or "" for c in at.caption]
     assert any("Allocation desk" in text for text in markdown)
     assert any("Decision outputs" in text for text in markdown)
-    assert any("Planning assumptions & governance" in text for text in markdown)
+    assert any("Planning assumptions & use" in text for text in markdown)
     assert any("Saved scenarios" in text for text in markdown)
     assert any("current reference plan" in text for text in captions)
     assert [tab.label for tab in at.tabs] == [
