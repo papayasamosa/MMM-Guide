@@ -200,7 +200,10 @@ from .optimization import SpendConstraint
 # 15 -> 16 for semantic outcome groups, model treatments, and durable
 # reconciliation evidence (Work Package 3). 16 -> 17 for canonical standard
 # source-pack adoption state and its explicit semantic review statuses (WP3).
-PROJECT_BUNDLE_SCHEMA_VERSION = 17
+# 17 -> 18 for WP1 mixed-frequency method versions, publication timing, and
+# official conversion evidence. Older bundles remain importable because these
+# fields are optional and restore as empty/None until explicitly reviewed.
+PROJECT_BUNDLE_SCHEMA_VERSION = 18
 PROJECT_APP_VERSION = "0.1.0"
 
 

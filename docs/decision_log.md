@@ -3843,3 +3843,50 @@ compile, and diff checks for edited files are the validation gate for this packa
 **Owner:** Data Science / Platform engineering.
 **Status:** Implemented as documentation reconciliation; Work Package 1 remains
 the next unblocked package.
+
+## Explicit mixed-frequency catalogue and official executor (Work Package 1)
+
+**Date:** 2026-08-15.
+
+**Requirement:** Task-specific “Media-Mix-Lab: Coding LLM Next Steps”
+implementation brief, WP1.
+
+**Decision:** Implement a narrow, framework-independent mixed-frequency
+catalogue and executor behind the existing canonical-calendar and official-
+preparation contracts. The Coverage review must persist an explicit variable
+class, method ID, method version, parameters, publication timing, support and
+effective boundaries, definition breaks, and reconciliation rule. The approved
+WP1 method families are calendar-day overlap allocation for flow counts,
+release-aware LOCF for stock/rate/survey measures, native-cadence-only survey
+retention, and explicit point/duration event alignment. Missing method IDs,
+version mismatches, leakage, definition-break crossings, invalid inputs, and
+reconciliation failures remain blocking errors. Native frames and the
+exploratory Transform Pipeline are not overwritten.
+
+**Estimand:** None introduced. The converted output is a weekly source-scale
+model input: flow totals reconcile to the source total; levels/rates/surveys
+carry only released observations; events retain point placement or active-day
+fractions. No MMM likelihood, link, outcome, or causal estimand changed.
+
+**Output scale and units:** Source units are preserved. Flow allocation is by
+calendar-day fraction; duration-event output is a fraction of an event week;
+LOCF values remain in the source unit and include observation-age evidence.
+
+**Upstream references:** Locked `pandas==3.0.3`; official pandas period and
+calendar APIs recorded in `docs/mixed_frequency_alignment_wp1.md`. Context7
+was unavailable. No PyMC or PyMC-Marketing API changed.
+
+**Tests:** Added synthetic mixed-frequency fixture and requirement-tagged
+tests for leap-year/month boundaries, release timing and no backward fill,
+definition breaks, point/duration events, missingness, method metadata and
+matrix round trips, official readiness, and source-pack mixed-cadence review.
+Focused executor, coverage/fingerprint/persistence, source-pack, and UI
+AppTests passed locally on the D-drive environment.
+
+**Remaining limitations:** WP1 targets the governed weekly calendar and does
+not provide generic interpolation, ragged market mathematics, production
+mediation/censoring, or future endogenous-mediator forecasting. Real UK
+end-to-end validation remains deferred pending source-data availability.
+
+**Owner:** Data Science / Platform engineering.
+**Status:** Implemented on the WP1 branch; PR and CI remain the release gate.

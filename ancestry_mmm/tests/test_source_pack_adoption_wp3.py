@@ -3,7 +3,6 @@ from __future__ import annotations
 from io import BytesIO
 
 import pandas as pd
-import pytest
 
 from ancestry_mmm.core.coverage import (
     DOMAIN_ACTIVITY_AND_MEDIA,
@@ -165,7 +164,7 @@ def test_adoption_merges_markets_and_preserves_explicit_activity_semantics():
     assert "ChannelMediaUnitConfig" not in adoption.semantic_statuses[0].adopted_objects
 
 
-def test_context_adoption_keeps_native_rows_and_blocks_mixed_frequency_official_use():
+def test_context_adoption_keeps_native_rows_for_mixed_frequency_review():
     frames, error = load_realistic_sample_sources()
     assert error is None
     output = BytesIO()
@@ -184,13 +183,14 @@ def test_context_adoption_keeps_native_rows_and_blocks_mixed_frequency_official_
     assert adoption.context_data is not None
     assert adoption.context_data["cpi"].notna().any()
     assert adoption.context_data["consumer_confidence"].notna().any()
-    with pytest.raises(ValueError, match="non-weekly native frequency"):
-        adopted_model_input_sources(
-            outcome_data=None,
-            activity_model_input=None,
-            context_model_input=adoption.context_data,
-            context_variable_metadata=adoption.context_variable_metadata,
-        )
+    sources = adopted_model_input_sources(
+        outcome_data=None,
+        activity_model_input=None,
+        context_model_input=adoption.context_data,
+        context_variable_metadata=adoption.context_variable_metadata,
+    )
+    assert sources is not None
+    assert "standard_context" in sources
 
 
 def test_experiment_adoption_retains_evidence_status_without_calibration():

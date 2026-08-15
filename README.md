@@ -75,8 +75,10 @@ Requires Python 3.11 or 3.12 (see [Deployment](#deployment) below for why there'
   filename, size), explicit join-mode and join-loss/unmatched-key diagnostics, and a governed
   canonical native-weekly official-preparation path using an outer union of source periods. The
   official capability report covers every source-backed variable consumed by the compiled proposal
-  and is bound into model identity and the fit gate. Executable mixed-frequency conversion remains
-  unresolved and is not inferred from a source frequency or column name.
+  and is bound into model identity and the fit gate. WP1 adds an explicit, versioned mixed-frequency
+  catalogue/executor for calendar-overlap flow allocation, release-aware stock/rate/survey carry-forward,
+  native-cadence survey retention, and event placement/duration alignment. Method IDs are selected from
+  the Coverage review; source frequency or column names never select a method.
 - **Diagnostics scorecard** (`ancestry_mmm/core/diagnostics.py`): convergence (R-hat/ESS/
   divergences), in-sample fit, error metrics (MAE/RMSE/sMAPE/WAPE/bias per outcome), residual
   temporal structure (lag-1 autocorrelation/Durbin-Watson, computed within each market's own

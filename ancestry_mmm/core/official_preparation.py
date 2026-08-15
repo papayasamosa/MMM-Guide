@@ -20,6 +20,8 @@ import pandas as pd
 
 from .activities import ActivityDefinition
 from .coverage import VariableCoverageMatrix, VariableCoverageRecord
+from .frequency_alignment import AlignmentSpecification
+from .frequency_conversion import FrequencyConversionError, execute_frequency_conversion
 from .market_data_capability import (
     EngineCapabilityResult,
     check_market_channel_capability,
@@ -138,6 +140,7 @@ class CanonicalNativeFrame:
     join_diagnostics: dict
     union_periods: tuple[str, ...]
     pipeline_ops: tuple[str, ...] = ()
+    conversion_evidence: tuple[dict[str, Any], ...] = ()
 
 
 def _as_activity(value: ActivityDefinition | Mapping[str, Any]) -> ActivityDefinition:
@@ -354,6 +357,117 @@ class OfficialPreparationDataError(ValueError):
     """Raised when the official native-frequency path cannot be used safely."""
 
 
+def _normalise_alignment_specs(
+    alignment_specs: Mapping[
+        str, AlignmentSpecification | Sequence[AlignmentSpecification]
+    ],
+) -> tuple[AlignmentSpecification, ...]:
+    normalised: list[AlignmentSpecification] = []
+    for key, value in alignment_specs.items():
+        items = (
+            value
+            if isinstance(value, Sequence) and not isinstance(value, str)
+            else (value,)
+        )
+        for item in items:
+            if not isinstance(item, AlignmentSpecification):
+                raise OfficialPreparationDataError(
+                    f"alignment spec for {key!r} is not an AlignmentSpecification"
+                )
+            if item.variable_id != key:
+                raise OfficialPreparationDataError(
+                    f"alignment spec key {key!r} does not match variable_id {item.variable_id!r}"
+                )
+            normalised.append(item)
+    return tuple(normalised)
+
+
+def _apply_alignment_specs(
+    source_id: str,
+    source: pd.DataFrame,
+    *,
+    date_col: str,
+    market_col: Optional[str],
+    governed_start: pd.Timestamp,
+    governed_end: pd.Timestamp,
+    governed_frequency: str,
+    specs: tuple[AlignmentSpecification, ...],
+    consumed_variable_ids: Sequence[str],
+) -> tuple[pd.DataFrame, tuple[dict[str, Any], ...]]:
+    source_specs = tuple(spec for spec in specs if spec.source_id == source_id)
+    consumed_set = set(consumed_variable_ids)
+    required_specs = {
+        spec.variable_id
+        for spec in specs
+        if spec.source_id == source_id
+        and (
+            spec.native_frequency.strip().lower() != governed_frequency.strip().lower()
+            or spec.target_frequency.strip().lower()
+            != governed_frequency.strip().lower()
+        )
+    }
+    if consumed_set:
+        missing = sorted(
+            variable_id
+            for variable_id in consumed_set
+            if variable_id in source.columns
+            and variable_id not in {spec.variable_id for spec in source_specs}
+            and source_id in {item.source_id for item in specs}
+        )
+        if missing:
+            raise OfficialPreparationDataError(
+                f"consumed mixed-frequency variables have no explicit alignment spec: {missing}"
+            )
+
+    working = source.copy()
+    evidence: list[dict[str, Any]] = []
+    target_periods = tuple(
+        pd.date_range(start=governed_start, end=governed_end, freq="7D")
+        .strftime("%Y-%m-%d")
+        .tolist()
+    )
+    for variable_id in sorted(required_specs):
+        variable_specs = tuple(
+            spec for spec in source_specs if spec.variable_id == variable_id
+        )
+        if not variable_specs:
+            raise OfficialPreparationDataError(
+                f"no explicit alignment spec is available for consumed variable {variable_id!r}"
+            )
+        value_col = str(variable_specs[0].parameters.get("source_column", variable_id))
+        if value_col not in working.columns:
+            raise OfficialPreparationDataError(
+                f"source {source_id!r} has no governed value column {value_col!r} for {variable_id!r}"
+            )
+        converted_frames: list[pd.DataFrame] = []
+        for spec in variable_specs:
+            if spec.source_id != source_id:
+                continue
+            execution = execute_frequency_conversion(
+                working,
+                spec,
+                date_col=date_col,
+                value_col=value_col,
+                target_periods=target_periods,
+                market_col=market_col,
+            )
+            converted_frames.append(execution.frame)
+            evidence.append(execution.evidence)
+        if not converted_frames:
+            raise OfficialPreparationDataError(
+                f"no conversion execution was produced for {variable_id!r}"
+            )
+        keys = [date_col] + ([market_col] if market_col else [])
+        converted = pd.concat(converted_frames, ignore_index=True)
+        if converted.duplicated(keys).any():
+            raise OfficialPreparationDataError(
+                f"alignment specs for {variable_id!r} produce duplicate target keys"
+            )
+        working = working.drop(columns=[value_col])
+        working = working.merge(converted, on=keys, how="outer", sort=True)
+    return working, tuple(evidence)
+
+
 def prepare_canonical_native_frame(
     sources: Mapping[str, pd.DataFrame],
     *,
@@ -363,14 +477,17 @@ def prepare_canonical_native_frame(
     governed_end: str,
     governed_frequency: str,
     pipeline_steps: Sequence[Mapping[str, Any]] = (),
+    alignment_specs: Optional[
+        Mapping[str, AlignmentSpecification | Sequence[AlignmentSpecification]]
+    ] = None,
+    consumed_variable_ids: Sequence[str] = (),
 ) -> CanonicalNativeFrame:
     """Prepare an official frame from already-canonical native source tables.
 
     The join is explicitly an outer join over the union of source keys and is
-    clipped only to the explicitly governed project window.  It never uses an
-    inner intersection and never fills or drops missing observations.  This
-    function is intentionally limited to a weekly target; the mixed-frequency
-    assessor must resolve any other target through an approved method first.
+    clipped only to the explicitly governed project window.  Mixed-frequency
+    variables are converted only when an explicit, versioned alignment spec
+    is supplied; the executor preserves source-scale units and missingness.
     """
 
     if governed_frequency.strip().lower() != "weekly":
@@ -390,6 +507,8 @@ def prepare_canonical_native_frame(
         )
 
     prepared_sources: dict[str, pd.DataFrame] = {}
+    conversion_evidence: list[dict[str, Any]] = []
+    normalised_specs = _normalise_alignment_specs(alignment_specs or {})
     for source_id, source in sources.items():
         if date_col not in source.columns:
             raise OfficialPreparationDataError(
@@ -401,7 +520,22 @@ def prepare_canonical_native_frame(
             )
         typed = source.copy()
         typed[date_col] = pd.to_datetime(typed[date_col])
+        try:
+            typed, source_evidence = _apply_alignment_specs(
+                str(source_id),
+                typed,
+                date_col=date_col,
+                market_col=market_col,
+                governed_start=start,
+                governed_end=end,
+                governed_frequency=governed_frequency,
+                specs=normalised_specs,
+                consumed_variable_ids=consumed_variable_ids,
+            )
+        except (FrequencyConversionError, KeyError, TypeError) as exc:
+            raise OfficialPreparationDataError(str(exc)) from exc
         typed = typed[(typed[date_col] >= start) & (typed[date_col] <= end)]
+        conversion_evidence.extend(source_evidence)
         prepared_sources[str(source_id)] = typed
 
     # Local imports keep the data pipeline independent from this governance
@@ -480,4 +614,5 @@ def prepare_canonical_native_frame(
         join_diagnostics=diagnostics.to_dict(),
         union_periods=union_periods,
         pipeline_ops=tuple(str(step.get("op", "")) for step in pipeline_steps),
+        conversion_evidence=tuple(conversion_evidence),
     )

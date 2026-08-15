@@ -50,7 +50,10 @@ from ancestry_mmm.core.brand_search import (
 )
 from ancestry_mmm.core.coverage import VariableCoverageMatrix
 from ancestry_mmm.core.fingerprint import fingerprint_dataframe
-from ancestry_mmm.core.frequency_alignment import assess_official_preparation
+from ancestry_mmm.core.frequency_alignment import (
+    alignment_specs_from_coverage_matrix,
+    assess_official_preparation,
+)
 from ancestry_mmm.core.market_data_capability import check_market_channel_capability
 from ancestry_mmm.core.official_preparation import (
     build_official_capability_report,
@@ -721,14 +724,23 @@ _official_preparation = assess_official_preparation(
     capability_evidence=_official_capability_report.to_dict(),
 )
 set_state("official_preparation_result", _official_preparation.to_dict())
+_consumed_variable_ids = tuple(
+    item.variable_id for item in _official_capability_report.consumed_variables
+)
+_alignment_specs = (
+    alignment_specs_from_coverage_matrix(
+        _coverage_matrix,
+        target_frequency=_canonical_calendar.get("frequency"),
+        consumed_variable_ids=_consumed_variable_ids,
+    )
+    if _coverage_matrix is not None
+    else {}
+)
 
 if _official_preparation.ready:
     _official_status_label = "Official preparation ready"
     _official_status_badge = "ready"
-    _official_status_reason = (
-        "The reviewed variables are already at the governed target frequency, "
-        "so no frequency conversion is needed."
-    )
+    _official_status_reason = _official_preparation.reason
 elif _official_preparation.status == "unsupported_no_approved_method":
     _official_status_label = "Official preparation unavailable"
     _official_status_badge = "blocked"
@@ -757,6 +769,13 @@ elif _official_preparation.status == "unsupported_leakage":
         "The reviewed frequency treatment would use information outside the "
         "approved preparation boundary. Resolve the frequency decision before "
         "official modelling."
+    )
+elif _official_preparation.status == "unsupported_parameters":
+    _official_status_label = "Official preparation blocked"
+    _official_status_badge = "blocked"
+    _official_status_reason = (
+        "The selected frequency method has missing or unsupported parameters. "
+        "Review the explicit method configuration on Data Coverage."
     )
 else:
     _official_status_label = "Official preparation blocked"
@@ -798,9 +817,9 @@ else:
 if _official_preparation.decisions_required:
     with st.expander("Decisions needed before official preparation"):
         st.caption(
-            "These are governance decisions, not defaults. No interpolation, "
-            "allocation, forward-fill, or other frequency conversion is "
-            "performed by this page."
+            "These are governance decisions, not defaults. Only the explicitly "
+            "catalogued and versioned method is executable; all conversion "
+            "evidence is retained with the official-preparation record."
         )
         for _decision in _official_preparation.decisions_required:
             st.markdown(f"- {_decision}")
@@ -892,6 +911,8 @@ else:
                     governed_end=str(_canonical_calendar["end"]),
                     governed_frequency=str(_canonical_calendar["frequency"]),
                     pipeline_steps=get_state("pipeline_steps") or [],
+                    alignment_specs=_alignment_specs,
+                    consumed_variable_ids=_consumed_variable_ids,
                 )
                 _frame_input = _canonical_frame.frame
             else:
@@ -932,7 +953,12 @@ else:
                 "brand_search_configs", [c.to_dict() for c in brand_search_configs]
             )
             clear_model_state()
-            set_state("official_preparation_result", _official_preparation.to_dict())
+            _official_result_payload = _official_preparation.to_dict()
+            if _canonical_frame is not None:
+                _official_result_payload["conversion_evidence"] = list(
+                    _canonical_frame.conversion_evidence
+                )
+            set_state("official_preparation_result", _official_result_payload)
             set_state(
                 "official_capability_report", _official_capability_report.to_dict()
             )

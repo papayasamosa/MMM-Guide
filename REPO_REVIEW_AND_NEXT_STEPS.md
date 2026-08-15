@@ -9,10 +9,10 @@ and does not supersede `AGENTS.md`, `docs/approved_requirements/`, or
 
 Repository: `papayasamosa/Media-Mix-Lab`
 
-Current `main` reviewed: `19fd12416cd882980bc83607f2f7677de38f4d48`
+Current `main` reviewed: `0845b150027dc59b192d2ec314b01910af3496ed`
 
-Current head: **UX Phase 6: whole-product QA and Search detail editor**
-(merged PR #248, 2026-08-15).
+Current head: **Repository truth reconciliation before mixed-frequency execution**
+(merged PR #249, 2026-08-15; WP1 is the current implementation brief).
 
 The local Python distribution name remains `mmm-guide` for compatibility with
 the existing install, script, export, and deployment surface. That legacy
@@ -48,9 +48,10 @@ The current implementation includes:
   scenario-planning, and optimisation contracts.
 - Canonical native-weekly official preparation with an explicit governed
   calendar, an outer union of governed source periods, preserved missingness,
-  and a fit-consumed-variable capability gate. Unsupported mixed-frequency
-  inputs still fail closed because no executable conversion method is yet
-  registered.
+  and a fit-consumed-variable capability gate. WP1 now adds an explicit,
+  versioned mixed-frequency catalogue/executor; missing method IDs, version
+  mismatches, definition breaks, leakage, and unsupported parameter shapes
+  still fail closed.
 - Standard source-pack semantic adoption for Outcomes, Activity and Media,
   Context and External Factors, and optional Experiment Evidence, plus the
   current source-pack template/download and realistic synthetic-pack UX.
@@ -63,11 +64,12 @@ The current implementation includes:
 These are implementation or decision boundaries, not permission to invent
 business or modelling definitions:
 
-- Executable mixed-frequency conversion remains the next governed data
-  preparation work. The approved frequency-conversion registry is still
-  empty, so monthly, quarterly, survey, and irregular inputs fail closed for
-  official preparation unless already represented at a compatible native
-  cadence.
+- WP1's conversion catalogue is deliberately narrow: flow counts use
+  calendar-day overlap allocation; stock/rate/survey values use release-aware
+  LOCF (or an explicit native-cadence survey method); and events use explicit
+  point/duration calendar alignment. It is not a generic interpolation or
+  imputation layer, and broader ragged-window or policy-backed method choices
+  remain bounded gaps.
 - Ragged market-specific predictor mathematics (`FR-MOD-015`), production
   mediation, Search capacity/censoring mathematics, moderated pathways, and
   residual-interaction engine support remain decision-bound or unsupported.

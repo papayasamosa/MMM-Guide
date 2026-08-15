@@ -27,7 +27,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import date
 from typing import Any, List, Optional
 
@@ -188,6 +188,9 @@ class FrequencyMetadata:
     variable_class: str
     publication_lag_periods: int = 0
     method: str = ""
+    method_version: Optional[int] = None
+    method_parameters: dict[str, Any] = field(default_factory=dict)
+    publication_timing: dict[str, Any] = field(default_factory=dict)
     reconciliation_rule: str = ""
 
     def __post_init__(self) -> None:
@@ -200,6 +203,12 @@ class FrequencyMetadata:
             )
         if self.publication_lag_periods < 0:
             raise ValueError("publication_lag_periods must be >= 0")
+        if self.method_version is not None and self.method_version < 1:
+            raise ValueError("method_version must be >= 1 when supplied")
+        if not isinstance(self.method_parameters, dict):
+            raise ValueError("method_parameters must be a dictionary")
+        if not isinstance(self.publication_timing, dict):
+            raise ValueError("publication_timing must be a dictionary")
 
     def to_dict(self) -> dict:
         return asdict(self)
