@@ -120,4 +120,8 @@ def test_noisy_conditional_posterior_recovers_latent_demand_media_parameter():
     assert evidence.conditional_on_capture_mapping
     assert evidence.parameter == "demand_media_coefficient"
     assert evidence.recovered
-    assert evidence.posterior_interval[0] <= evidence.true_value <= evidence.posterior_interval[1]
+    assert (
+        evidence.posterior_interval[0]
+        <= evidence.true_value
+        <= evidence.posterior_interval[1]
+    )

@@ -49,14 +49,61 @@ from ancestry_mmm.core.search_objects import (
 
 
 def _search_objects() -> list[SearchObjectDefinition]:
-    common = dict(market="UK", state="observed", approval_status="approved", approved_by="test", approved_at="2026-08-15")
+    common = dict(
+        market="UK",
+        state="observed",
+        approval_status="approved",
+        approved_by="test",
+        approved_at="2026-08-15",
+    )
     return [
-        SearchObjectDefinition(search_object_id="demand", search_role=SEARCH_ROLE_DEMAND, source_column="search_demand", unit=UNIT_INDEX, **common),
-        SearchObjectDefinition(search_object_id="spend", search_role=SEARCH_ROLE_PAID_SPEND, source_column="paid_spend", unit=UNIT_MONETARY, currency="GBP", channel="paid-search", planning_eligibility="optimisable", **common),
-        SearchObjectDefinition(search_object_id="delivery", search_role=SEARCH_ROLE_PAID_DELIVERY, source_column="paid_delivery", unit=UNIT_EXPOSURE_COUNT, channel="paid-search", **common),
-        SearchObjectDefinition(search_object_id="cap", search_role=SEARCH_ROLE_PAID_CAP, source_column="paid_cap", unit=UNIT_EXPOSURE_COUNT, channel="paid-search", **common),
-        SearchObjectDefinition(search_object_id="organic", search_role=SEARCH_ROLE_ORGANIC_CAPTURE, source_column="organic_capture", unit=UNIT_RESPONSE_COUNT, **common),
-        SearchObjectDefinition(search_object_id="direct", search_role=SEARCH_ROLE_DIRECT_NAV_CAPTURE, source_column="direct_capture", unit=UNIT_RESPONSE_COUNT, **common),
+        SearchObjectDefinition(
+            search_object_id="demand",
+            search_role=SEARCH_ROLE_DEMAND,
+            source_column="search_demand",
+            unit=UNIT_INDEX,
+            **common,
+        ),
+        SearchObjectDefinition(
+            search_object_id="spend",
+            search_role=SEARCH_ROLE_PAID_SPEND,
+            source_column="paid_spend",
+            unit=UNIT_MONETARY,
+            currency="GBP",
+            channel="paid-search",
+            planning_eligibility="optimisable",
+            **common,
+        ),
+        SearchObjectDefinition(
+            search_object_id="delivery",
+            search_role=SEARCH_ROLE_PAID_DELIVERY,
+            source_column="paid_delivery",
+            unit=UNIT_EXPOSURE_COUNT,
+            channel="paid-search",
+            **common,
+        ),
+        SearchObjectDefinition(
+            search_object_id="cap",
+            search_role=SEARCH_ROLE_PAID_CAP,
+            source_column="paid_cap",
+            unit=UNIT_EXPOSURE_COUNT,
+            channel="paid-search",
+            **common,
+        ),
+        SearchObjectDefinition(
+            search_object_id="organic",
+            search_role=SEARCH_ROLE_ORGANIC_CAPTURE,
+            source_column="organic_capture",
+            unit=UNIT_RESPONSE_COUNT,
+            **common,
+        ),
+        SearchObjectDefinition(
+            search_object_id="direct",
+            search_role=SEARCH_ROLE_DIRECT_NAV_CAPTURE,
+            source_column="direct_capture",
+            unit=UNIT_RESPONSE_COUNT,
+            **common,
+        ),
     ]
 
 
@@ -82,19 +129,41 @@ def _spec(**changes) -> SearchCandidateASpec:
 def _candidate_graph() -> CausalGraph:
     nodes = [
         CausalNode(node_id="tv", role=NODE_ROLE_INTERVENTION),
-        CausalNode(node_id="demand", role=NODE_ROLE_DEMAND_CAPTURE, search_object_id="demand"),
-        CausalNode(node_id="cap", role=NODE_ROLE_CAPACITY_OR_CAP, search_object_id="cap"),
-        CausalNode(node_id="organic", role=NODE_ROLE_DEMAND_CAPTURE, search_object_id="organic"),
-        CausalNode(node_id="direct", role=NODE_ROLE_DEMAND_CAPTURE, search_object_id="direct"),
+        CausalNode(
+            node_id="demand", role=NODE_ROLE_DEMAND_CAPTURE, search_object_id="demand"
+        ),
+        CausalNode(
+            node_id="cap", role=NODE_ROLE_CAPACITY_OR_CAP, search_object_id="cap"
+        ),
+        CausalNode(
+            node_id="organic", role=NODE_ROLE_DEMAND_CAPTURE, search_object_id="organic"
+        ),
+        CausalNode(
+            node_id="direct", role=NODE_ROLE_DEMAND_CAPTURE, search_object_id="direct"
+        ),
         CausalNode(node_id="outcome", role=NODE_ROLE_OUTCOME),
     ]
     edges = [
-        CausalEdge(source_node_id="tv", target_node_id="demand", role=EDGE_ROLE_MEDIATED),
-        CausalEdge(source_node_id="demand", target_node_id="outcome", role=EDGE_ROLE_MEDIATED),
-        CausalEdge(source_node_id="demand", target_node_id="cap", role=EDGE_ROLE_CAPACITY_CONSTRAINED),
-        CausalEdge(source_node_id="organic", target_node_id="outcome", role=EDGE_ROLE_DIRECT),
-        CausalEdge(source_node_id="direct", target_node_id="outcome", role=EDGE_ROLE_DIRECT),
-        CausalEdge(source_node_id="tv", target_node_id="outcome", role=EDGE_ROLE_DIRECT),
+        CausalEdge(
+            source_node_id="tv", target_node_id="demand", role=EDGE_ROLE_MEDIATED
+        ),
+        CausalEdge(
+            source_node_id="demand", target_node_id="outcome", role=EDGE_ROLE_MEDIATED
+        ),
+        CausalEdge(
+            source_node_id="demand",
+            target_node_id="cap",
+            role=EDGE_ROLE_CAPACITY_CONSTRAINED,
+        ),
+        CausalEdge(
+            source_node_id="organic", target_node_id="outcome", role=EDGE_ROLE_DIRECT
+        ),
+        CausalEdge(
+            source_node_id="direct", target_node_id="outcome", role=EDGE_ROLE_DIRECT
+        ),
+        CausalEdge(
+            source_node_id="tv", target_node_id="outcome", role=EDGE_ROLE_DIRECT
+        ),
     ]
     return CausalGraph(
         graph_id="candidate-a",
@@ -119,8 +188,13 @@ def test_candidate_a_reconciles_and_nonbinding_cap_raise_is_invariant():
         direct_navigation_capture_share=0.1,
         paid_search_cap=[1000.0, 10.0],
     )
-    assert np.allclose(state.total_captured_demand + state.unmet_demand, state.latent_branded_search_demand)
-    assert np.allclose(state.realised_paid_search_delivery[0], raised.realised_paid_search_delivery[0])
+    assert np.allclose(
+        state.total_captured_demand + state.unmet_demand,
+        state.latent_branded_search_demand,
+    )
+    assert np.allclose(
+        state.realised_paid_search_delivery[0], raised.realised_paid_search_delivery[0]
+    )
     assert np.allclose(state.total_captured_demand[0], raised.total_captured_demand[0])
     assert np.all(state.realised_paid_search_delivery <= np.array([100.0, 10.0]) + 1e-9)
 
@@ -179,7 +253,10 @@ def test_candidate_a_effects_are_outcome_scale_and_reconcile_before_summary():
         np.array([[100.0, 100.0]]),
         np.array([[150.0, 160.0]]),
     )
-    assert np.allclose(effects.total_realised_media_effect, effects.direct_media_effect + effects.realised_mediated_search_effect)
+    assert np.allclose(
+        effects.total_realised_media_effect,
+        effects.direct_media_effect + effects.realised_mediated_search_effect,
+    )
     assert np.all(effects.unrealised_potential > 0)
 
 
@@ -208,15 +285,26 @@ def test_candidate_a_graph_is_the_only_new_engine_structure():
     objects = _search_objects()
     assert validate_causal_graph(graph).is_valid
     assert check_engine_capability(graph, search_objects=objects)
-    assert check_engine_capability(graph, engine=SEARCH_CANDIDATE_A_ENGINE, search_objects=objects) == []
-    result = GraphModelCompiler(engine=SEARCH_CANDIDATE_A_ENGINE, search_objects=objects).compile(graph)
+    assert (
+        check_engine_capability(
+            graph, engine=SEARCH_CANDIDATE_A_ENGINE, search_objects=objects
+        )
+        == []
+    )
+    result = GraphModelCompiler(
+        engine=SEARCH_CANDIDATE_A_ENGINE, search_objects=objects
+    ).compile(graph)
     assert result.search_candidate_a is not None
     assert result.pathway_masks.primary_channels_by_outcome == {"outcome": ["tv"]}
 
 
 def test_candidate_a_graph_rejects_another_mediated_structure():
     graph = _candidate_graph()
-    graph.edges.append(CausalEdge(source_node_id="tv", target_node_id="organic", role=EDGE_ROLE_MEDIATED))
+    graph.edges.append(
+        CausalEdge(
+            source_node_id="tv", target_node_id="organic", role=EDGE_ROLE_MEDIATED
+        )
+    )
     issues = candidate_a_graph_issues(graph, search_objects=_search_objects())
     assert any("outside the authorised" in issue for issue in issues)
 

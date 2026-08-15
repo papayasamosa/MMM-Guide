@@ -209,17 +209,16 @@ def candidate_a_graph_issues(
     upstream = [
         node
         for node in graph.nodes
-        if node.role == NODE_ROLE_INTERVENTION
-        and not node.search_object_id
+        if node.role == NODE_ROLE_INTERVENTION and not node.search_object_id
     ]
     if not upstream:
         issues.append("Candidate A requires at least one upstream intervention")
 
     mediated = [edge for edge in graph.edges if edge.role == EDGE_ROLE_MEDIATED]
-    capacity = [edge for edge in graph.edges if edge.role == EDGE_ROLE_CAPACITY_CONSTRAINED]
-    expected_upstream_mediated = {
-        (node.node_id, demand.node_id) for node in upstream
-    }
+    capacity = [
+        edge for edge in graph.edges if edge.role == EDGE_ROLE_CAPACITY_CONSTRAINED
+    ]
+    expected_upstream_mediated = {(node.node_id, demand.node_id) for node in upstream}
     actual_upstream_mediated = {
         (edge.source_node_id, edge.target_node_id)
         for edge in mediated
@@ -315,7 +314,10 @@ def candidate_a_graph_issues(
                 f"Candidate A mediated edge '{edge.edge_id}' is outside the "
                 "authorised upstream/demand/capture structure"
             )
-        if edge.role == EDGE_ROLE_CAPACITY_CONSTRAINED and pair not in authorised_capacity:
+        if (
+            edge.role == EDGE_ROLE_CAPACITY_CONSTRAINED
+            and pair not in authorised_capacity
+        ):
             issues.append(
                 f"Candidate A capacity edge '{edge.edge_id}' is outside the authorised "
                 "demand-to-cap structure"
@@ -338,7 +340,8 @@ def compile_candidate_a_search_graph(
         role: next(
             node
             for node in graph.nodes
-            if node.search_object_id and definitions.get(node.search_object_id, None) is not None
+            if node.search_object_id
+            and definitions.get(node.search_object_id, None) is not None
             and definitions[node.search_object_id].search_role == role
         )
         for role in (
@@ -358,7 +361,9 @@ def compile_candidate_a_search_graph(
         edge.edge_id for edge in graph.edges if edge.role == EDGE_ROLE_MEDIATED
     )
     capacity_ids = tuple(
-        edge.edge_id for edge in graph.edges if edge.role == EDGE_ROLE_CAPACITY_CONSTRAINED
+        edge.edge_id
+        for edge in graph.edges
+        if edge.role == EDGE_ROLE_CAPACITY_CONSTRAINED
     )
     search_capture_ids = tuple(
         edge.edge_id

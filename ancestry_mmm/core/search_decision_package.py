@@ -291,12 +291,8 @@ def generate_search_synthetic_panel(
         observed_delivery = np.minimum(
             np.maximum(paid_delivery + rng.normal(0.0, noise, periods), 0.0), cap
         )
-        observed_organic = np.maximum(
-            organic + rng.normal(0.0, noise, periods), 0.0
-        )
-        observed_direct = np.maximum(
-            direct + rng.normal(0.0, noise, periods), 0.0
-        )
+        observed_organic = np.maximum(organic + rng.normal(0.0, noise, periods), 0.0)
+        observed_direct = np.maximum(direct + rng.normal(0.0, noise, periods), 0.0)
         alpha = truth.outcome_dispersion
         probability = alpha / (alpha + np.maximum(outcome_mean, 1e-6))
         outcome = rng.negative_binomial(alpha, probability).astype(float)
@@ -345,7 +341,9 @@ def conditional_demand_posterior_recovery(
         raise ValueError("posterior recovery requires at least 100 draws")
     denominator = panel.truth.organic_capture_share + panel.truth.direct_capture_share
     if denominator <= 0:
-        raise ValueError("conditional recovery requires positive organic/direct capture")
+        raise ValueError(
+            "conditional recovery requires positive organic/direct capture"
+        )
     proxy = np.maximum(
         (panel.organic_search_capture + panel.direct_navigation_capture) / denominator,
         1e-6,
@@ -360,12 +358,16 @@ def conditional_demand_posterior_recovery(
     response = proxy
     ols = np.linalg.lstsq(design, response, rcond=None)[0]
     residual = response - design @ ols
-    variance = max(float(np.sum(residual**2) / max(panel.periods.size - design.shape[1], 1)), 1e-4)
+    variance = max(
+        float(np.sum(residual**2) / max(panel.periods.size - design.shape[1], 1)), 1e-4
+    )
     prior_variance = np.array([10_000.0, 100.0, 4.0])
     precision = (design.T @ design) / variance + np.diag(1.0 / prior_variance)
     covariance = np.linalg.inv(precision)
     mean = covariance @ ((design.T @ response) / variance)
-    posterior_draws = np.random.default_rng(seed).multivariate_normal(mean, covariance, draws)
+    posterior_draws = np.random.default_rng(seed).multivariate_normal(
+        mean, covariance, draws
+    )
     lower, upper = np.quantile(posterior_draws[:, 2], [0.025, 0.975])
     posterior_mean = float(np.mean(posterior_draws[:, 2]))
     true_value = panel.truth.demand_media_coefficient
@@ -374,7 +376,9 @@ def conditional_demand_posterior_recovery(
         posterior_mean=posterior_mean,
         posterior_interval=(float(lower), float(upper)),
         true_value=true_value,
-        recovered=bool(lower <= true_value <= upper and abs(posterior_mean - true_value) < 0.15),
+        recovered=bool(
+            lower <= true_value <= upper and abs(posterior_mean - true_value) < 0.15
+        ),
     )
 
 

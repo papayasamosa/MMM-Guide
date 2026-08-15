@@ -666,7 +666,8 @@ def export_project(
                 "causal_graphs": causal_graphs is not None and bool(causal_graphs),
                 "search_objects": search_objects is not None and bool(search_objects),
                 "search_candidate_a_spec": search_candidate_a_spec is not None,
-                "search_identification_report": search_identification_report is not None,
+                "search_identification_report": search_identification_report
+                is not None,
                 "source_versions": source_versions is not None
                 and bool(source_versions),
                 "source_definitions": source_definitions is not None
@@ -1504,8 +1505,7 @@ def resolve_imported_candidate_a_search(
     if issues:
         return None, [
             "Candidate A Search configuration was quarantined because its "
-            "governed mappings are not valid: "
-            + "; ".join(issues)
+            "governed mappings are not valid: " + "; ".join(issues)
         ]
     return spec.to_dict(), []
 

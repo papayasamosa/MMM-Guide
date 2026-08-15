@@ -115,11 +115,17 @@ class SearchCandidateASpec:
     def from_dict(cls, values: Mapping[str, Any]) -> "SearchCandidateASpec":
         payload = dict(values)
         raw_schema = payload.get("schema_version", 1)
-        if isinstance(raw_schema, bool) or type(raw_schema) is not int or raw_schema != 1:
+        if (
+            isinstance(raw_schema, bool)
+            or type(raw_schema) is not int
+            or raw_schema != 1
+        ):
             raise ValueError(
                 f"Unsupported Candidate A schema_version {raw_schema!r}; expected 1"
             )
-        formulation_id = payload.get("formulation_id", SEARCH_CANDIDATE_A_FORMULATION_ID)
+        formulation_id = payload.get(
+            "formulation_id", SEARCH_CANDIDATE_A_FORMULATION_ID
+        )
         if formulation_id != SEARCH_CANDIDATE_A_FORMULATION_ID:
             raise ValueError(f"Unsupported Search formulation {formulation_id!r}")
         object_ids = payload.get("search_object_ids") or {}
@@ -197,10 +203,7 @@ def validate_candidate_a_spec(
             item
             for item in current
             if item.search_object_id == object_id
-            and (
-                spec.market_scope == "*"
-                or item.market in {spec.market_scope, "*"}
-            )
+            and (spec.market_scope == "*" or item.market in {spec.market_scope, "*"})
         ]
         if len(candidates) > 1:
             issues.append(
@@ -226,7 +229,9 @@ def validate_candidate_a_spec(
     if cap is not None and cap.channel:
         counterpart = spend if cap.unit == UNIT_MONETARY else delivery
         if counterpart is None or counterpart.channel != cap.channel:
-            issues.append("Paid Search cap and its governed counterpart do not share a channel")
+            issues.append(
+                "Paid Search cap and its governed counterpart do not share a channel"
+            )
     return tuple(issues)
 
 
@@ -295,7 +300,9 @@ def candidate_a_forward(
     if np.any(captured > demand + 1e-9) or np.any(unmet < -1e-9):
         raise SearchCapacityValidationError("Candidate A demand reconciliation failed")
     if not np.allclose(captured + unmet, demand, rtol=1e-10, atol=1e-10):
-        raise SearchCapacityValidationError("captured demand plus unmet demand must equal latent demand")
+        raise SearchCapacityValidationError(
+            "captured demand plus unmet demand must equal latent demand"
+        )
     return CandidateAForwardState(
         latent_branded_search_demand=demand,
         unconstrained_paid_search_opportunity=paid_opportunity,
@@ -354,7 +361,9 @@ def identify_candidate_a_search(
     if np.any(cap < 0) or np.any(delivery < 0):
         raise SearchCapacityValidationError("cap and delivery cannot be negative")
     if np.any(delivery > cap + 1e-8):
-        raise SearchCapacityValidationError("observed Paid Search delivery exceeds its cap")
+        raise SearchCapacityValidationError(
+            "observed Paid Search delivery exceeds its cap"
+        )
     labels = np.asarray(
         market_labels if market_labels is not None else ["*" for _ in cap], dtype=str
     )
@@ -381,11 +390,13 @@ def identify_candidate_a_search(
         reasons.append("binding-cap support is insufficient")
     if int(np.sum(nonbinding)) < min_nonbinding_periods:
         reasons.append("non-binding cap support is insufficient")
-    sparse = [market for market, count in market_support.items() if count < min_periods_per_market]
+    sparse = [
+        market
+        for market, count in market_support.items()
+        if count < min_periods_per_market
+    ]
     if sparse:
-        reasons.append(
-            "market support is sparse for " + ", ".join(sparse)
-        )
+        reasons.append("market support is sparse for " + ", ".join(sparse))
     return SearchIdentificationReport(
         cap_unique_values=int(np.unique(cap).size),
         cap_coefficient_of_variation=cv,
@@ -438,7 +449,9 @@ def counterfactual_search_effects(
     total = arrays[0] - arrays[2]
     potential = arrays[3] - arrays[0]
     if not np.allclose(total, direct + mediated, rtol=1e-8, atol=1e-8):
-        raise SearchCapacityValidationError("direct plus realised mediated effect does not reconcile")
+        raise SearchCapacityValidationError(
+            "direct plus realised mediated effect does not reconcile"
+        )
     return SearchPosteriorEffects(
         direct_media_effect=direct,
         realised_mediated_search_effect=mediated,
@@ -476,7 +489,9 @@ def posterior_outputs_from_forward_draws(
     """Aggregate draw-level states only after enforcing each draw's contract."""
 
     if not states:
-        raise SearchCapacityValidationError("at least one posterior forward draw is required")
+        raise SearchCapacityValidationError(
+            "at least one posterior forward draw is required"
+        )
     arrays = {
         field_name: np.stack([getattr(state, field_name) for state in states])
         for field_name in (
@@ -498,7 +513,10 @@ def posterior_outputs_from_forward_draws(
         atol=1e-8,
     ):
         raise SearchCapacityValidationError("posterior draw reconciliation failed")
-    if effects.direct_media_effect.shape != arrays["latent_branded_search_demand"].shape:
+    if (
+        effects.direct_media_effect.shape
+        != arrays["latent_branded_search_demand"].shape
+    ):
         raise SearchCapacityValidationError(
             "counterfactual effect draws must match forward draw shape"
         )
@@ -605,11 +623,19 @@ def build_candidate_a_search_model(
     _same_shape(*arrays)
     upstream, delivery, cap, organic, direct, outcome = arrays
     if any(np.any(value < 0) for value in (delivery, cap, organic, direct, outcome)):
-        raise SearchCapacityValidationError("observed Candidate A counts cannot be negative")
+        raise SearchCapacityValidationError(
+            "observed Candidate A counts cannot be negative"
+        )
     if np.any(delivery > cap + 1e-8):
         raise SearchCapacityValidationError("observed Paid Search delivery exceeds cap")
-    if not outcome_definition_id or not outcome_definition_version or not outcome_definition_fingerprint:
-        raise SearchCapacityValidationError("an approved versioned outcome definition is required")
+    if (
+        not outcome_definition_id
+        or not outcome_definition_version
+        or not outcome_definition_fingerprint
+    ):
+        raise SearchCapacityValidationError(
+            "an approved versioned outcome definition is required"
+        )
     if cap_unit not in {UNIT_MONETARY, UNIT_EXPOSURE_COUNT}:
         raise SearchCapacityValidationError("unsupported cap unit")
     if not np.isfinite(cap_to_delivery_scale) or cap_to_delivery_scale <= 0:
@@ -621,15 +647,21 @@ def build_candidate_a_search_model(
     else:
         market_index = np.asarray(market_idx, dtype=int)
         if market_index.shape != upstream.shape or np.any(market_index < 0):
-            raise SearchCapacityValidationError("market_idx must match periods and be non-negative")
+            raise SearchCapacityValidationError(
+                "market_idx must match periods and be non-negative"
+            )
     n_markets = int(np.max(market_index)) + 1 if market_index.size else 1
     if market_labels is None:
         labels = [str(index) for index in range(n_markets)]
     else:
         labels = list(market_labels)
         if len(labels) != n_markets:
-            raise SearchCapacityValidationError("market_labels must match the market index cardinality")
-    controls_array = None if controls is None else _as_float_vector(controls, "controls")
+            raise SearchCapacityValidationError(
+                "market_labels must match the market index cardinality"
+            )
+    controls_array = (
+        None if controls is None else _as_float_vector(controls, "controls")
+    )
     if controls_array is not None and controls_array.shape != upstream.shape:
         raise SearchCapacityValidationError("controls must match periods")
 
@@ -644,7 +676,9 @@ def build_candidate_a_search_model(
         prior.get("capture_share_alpha", [2.0, 1.5, 1.5, 2.0]), dtype=float
     )
     if share_alpha.shape != (4,) or np.any(share_alpha <= 0):
-        raise SearchCapacityValidationError("capture_share_alpha must have four positive entries")
+        raise SearchCapacityValidationError(
+            "capture_share_alpha must have four positive entries"
+        )
 
     with pm.Model() as model:
         model.add_coord("obs", np.arange(n_obs))
@@ -671,7 +705,11 @@ def build_candidate_a_search_model(
         )
         latent = pm.Deterministic(
             "latent_branded_search_demand",
-            pt.exp(demand_intercept + demand_market_offset[market_index] + demand_media_beta * x_media),
+            pt.exp(
+                demand_intercept
+                + demand_market_offset[market_index]
+                + demand_media_beta * x_media
+            ),
             dims="obs",
         )
         capture_shares = pm.Dirichlet("capture_shares", a=share_alpha, shape=4)
@@ -699,7 +737,9 @@ def build_candidate_a_search_model(
         pm.Deterministic("unmet_demand", latent - captured, dims="obs")
         pm.Deterministic(
             "probability_cap_binding",
-            pt.cast(pt.ge(paid_opportunity, pt.as_tensor_variable(cap_model)), "float64"),
+            pt.cast(
+                pt.ge(paid_opportunity, pt.as_tensor_variable(cap_model)), "float64"
+            ),
             dims="obs",
         )
         pm.Deterministic(
@@ -720,9 +760,27 @@ def build_candidate_a_search_model(
             "direct_navigation_observation_sigma",
             sigma=float(prior.get("capture_observation_sigma", 5.0)),
         )
-        pm.Normal("paid_search_delivery_obs", mu=realised_paid, sigma=delivery_sigma, observed=delivery, dims="obs")
-        pm.Normal("organic_search_capture_obs", mu=organic_expected, sigma=organic_sigma, observed=organic, dims="obs")
-        pm.Normal("direct_navigation_capture_obs", mu=direct_expected, sigma=direct_sigma, observed=direct, dims="obs")
+        pm.Normal(
+            "paid_search_delivery_obs",
+            mu=realised_paid,
+            sigma=delivery_sigma,
+            observed=delivery,
+            dims="obs",
+        )
+        pm.Normal(
+            "organic_search_capture_obs",
+            mu=organic_expected,
+            sigma=organic_sigma,
+            observed=organic,
+            dims="obs",
+        )
+        pm.Normal(
+            "direct_navigation_capture_obs",
+            mu=direct_expected,
+            sigma=direct_sigma,
+            observed=direct,
+            dims="obs",
+        )
 
         direct_beta = pm.Normal(
             "direct_media_beta",
@@ -772,7 +830,11 @@ def build_candidate_a_search_model(
         captured_unconstrained = organic_expected + direct_expected + paid_opportunity
         mu_direct_only = pm.Deterministic(
             "mu_direct_media_only",
-            pt.clip(pt.exp(outcome_intercept + direct_beta * x_media + control_effect), 1e-6, 1e9),
+            pt.clip(
+                pt.exp(outcome_intercept + direct_beta * x_media + control_effect),
+                1e-6,
+                1e9,
+            ),
             dims="obs",
         )
         mu_without_upstream = pm.Deterministic(
@@ -802,9 +864,15 @@ def build_candidate_a_search_model(
             ),
             dims="obs",
         )
-        pm.Deterministic("direct_media_effect", mu_direct_only - mu_without_upstream, dims="obs")
-        pm.Deterministic("realised_mediated_search_effect", mu - mu_direct_only, dims="obs")
-        pm.Deterministic("total_realised_media_effect", mu - mu_without_upstream, dims="obs")
+        pm.Deterministic(
+            "direct_media_effect", mu_direct_only - mu_without_upstream, dims="obs"
+        )
+        pm.Deterministic(
+            "realised_mediated_search_effect", mu - mu_direct_only, dims="obs"
+        )
+        pm.Deterministic(
+            "total_realised_media_effect", mu - mu_without_upstream, dims="obs"
+        )
         pm.Deterministic("unrealised_potential", mu_unconstrained - mu, dims="obs")
         alpha = pm.Gamma(
             "alpha",

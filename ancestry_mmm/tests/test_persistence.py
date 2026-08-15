@@ -1450,9 +1450,7 @@ def test_export_then_import_candidate_a_search_configuration_round_trip(
         "blocking_reasons": ["non-binding cap support is insufficient"],
     }
 
-    imported = import_project(
-        export_project(tmp_path / "candidate-a.zip", **project)
-    )
+    imported = import_project(export_project(tmp_path / "candidate-a.zip", **project))
 
     assert imported["search_candidate_a_spec"]["formulation_id"] == "candidate_a_v1"
     assert imported["search_candidate_a_spec"]["planning_eligible"] is False
