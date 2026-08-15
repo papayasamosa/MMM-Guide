@@ -50,15 +50,14 @@ from ancestry_mmm.core.brand_search import (
 )
 from ancestry_mmm.core.coverage import VariableCoverageMatrix
 from ancestry_mmm.core.fingerprint import fingerprint_dataframe
-from ancestry_mmm.core.frequency_alignment import (
-    alignment_specs_from_coverage_matrix,
-    assess_official_preparation,
-)
 from ancestry_mmm.core.market_data_capability import check_market_channel_capability
 from ancestry_mmm.core.official_preparation import (
-    build_official_capability_report,
     prepare_canonical_native_frame,
     OfficialPreparationDataError,
+)
+from ancestry_mmm.application.official_preparation_service import (
+    describe_official_preparation,
+    review_official_preparation,
 )
 from ancestry_mmm.data import (
     adopted_model_input_frame,
@@ -703,87 +702,26 @@ if st.button("Save governed calendar"):
     except (TypeError, ValueError) as exc:
         st.error(f"Governed calendar was not saved: {exc}")
 
-_official_capability_report = build_official_capability_report(
+_official_review = review_official_preparation(
     spec,
     outcome_definitions,
     _coverage_matrix,
     activity_definitions=get_state("activity_definitions") or [],
     search_objects=get_state("search_objects") or [],
     pipeline_steps=get_state("pipeline_steps") or [],
+    canonical_calendar=_canonical_calendar,
 )
+_official_capability_report = _official_review.capability_report
 set_state("official_capability_report", _official_capability_report.to_dict())
-_official_preparation = assess_official_preparation(
-    _coverage_matrix,
-    governed_start=_canonical_calendar.get("start"),
-    governed_end=_canonical_calendar.get("end"),
-    governed_frequency=_canonical_calendar.get("frequency"),
-    as_of=_canonical_calendar.get("as_of"),
-    consumed_variable_ids=tuple(
-        item.variable_id for item in _official_capability_report.consumed_variables
-    ),
-    capability_evidence=_official_capability_report.to_dict(),
-)
+_official_preparation = _official_review.preparation
 set_state("official_preparation_result", _official_preparation.to_dict())
-_consumed_variable_ids = tuple(
-    item.variable_id for item in _official_capability_report.consumed_variables
-)
-_alignment_specs = (
-    alignment_specs_from_coverage_matrix(
-        _coverage_matrix,
-        target_frequency=_canonical_calendar.get("frequency"),
-        consumed_variable_ids=_consumed_variable_ids,
-    )
-    if _coverage_matrix is not None
-    else {}
-)
+_consumed_variable_ids = _official_review.consumed_variable_ids
+_alignment_specs = _official_review.alignment_specs
 
-if _official_preparation.ready:
-    _official_status_label = "Official preparation ready"
-    _official_status_badge = "ready"
-    _official_status_reason = _official_preparation.reason
-elif _official_preparation.status == "unsupported_no_approved_method":
-    _official_status_label = "Official preparation unavailable"
-    _official_status_badge = "blocked"
-    _official_status_reason = (
-        "No approved method currently exists for converting one or more source "
-        "frequencies for official modelling."
-    )
-elif _official_preparation.status == "method_available":
-    _official_status_label = "Official preparation blocked"
-    _official_status_badge = "blocked"
-    _official_status_reason = (
-        "An approved frequency method is available, but the governed conversion "
-        "executor has not been validated for official modelling yet."
-    )
-elif _official_preparation.status == "unsupported_definition_break":
-    _official_status_label = "Official preparation blocked"
-    _official_status_badge = "blocked"
-    _official_status_reason = (
-        "The reviewed frequency definition changes across the available source "
-        "support, so official preparation needs an explicit resolution."
-    )
-elif _official_preparation.status == "unsupported_leakage":
-    _official_status_label = "Official preparation blocked"
-    _official_status_badge = "blocked"
-    _official_status_reason = (
-        "The reviewed frequency treatment would use information outside the "
-        "approved preparation boundary. Resolve the frequency decision before "
-        "official modelling."
-    )
-elif _official_preparation.status == "unsupported_parameters":
-    _official_status_label = "Official preparation blocked"
-    _official_status_badge = "blocked"
-    _official_status_reason = (
-        "The selected frequency method has missing or unsupported parameters. "
-        "Review the explicit method configuration on Data Coverage."
-    )
-else:
-    _official_status_label = "Official preparation blocked"
-    _official_status_badge = "blocked"
-    _official_status_reason = (
-        "Required coverage, calendar, or frequency decisions are still needed "
-        "before official modelling can be prepared."
-    )
+_official_status = describe_official_preparation(_official_preparation)
+_official_status_label = _official_status.label
+_official_status_badge = _official_status.badge
+_official_status_reason = _official_status.reason
 
 _status_col, _conversion_col = st.columns(2)
 with _status_col:
