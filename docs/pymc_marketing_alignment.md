@@ -1,6 +1,6 @@
 # PyMC Marketing alignment
 
-Status: G2A.5, reviewed 2026-07-24.
+Status: G2A.5 / Candidate A Search engine, reviewed 2026-08-15.
 
 The product claim is: **Built in PyMC and informed by PyMC Marketing.**
 
@@ -32,6 +32,8 @@ Official references inspected for this alignment:
 - [budget optimizer](https://www.pymc-marketing.io/en/stable/api/generated/pymc_marketing.mmm.budget_optimizer.html)
 - [allocation assessment and risk-aware utilities](https://www.pymc-marketing.io/en/stable/notebooks/mmm/mmm_allocation_assessment.html)
 - [lift-test calibration](https://www.pymc-marketing.io/en/stable/api/generated/pymc_marketing.mmm.lift_test.html)
+- [PyMC v5.28.5 Censored distribution](https://github.com/pymc-devs/pymc/blob/v5.28.5/pymc/distributions/censored.py)
+- [PyMC v5.28.5 NegativeBinomial distribution](https://github.com/pymc-devs/pymc/blob/v5.28.5/pymc/distributions/discrete.py)
 
 ## Alignment matrix
 
@@ -47,6 +49,7 @@ Official references inspected for this alignment:
 | Non-monetary inputs | Optimizer supports monetary budgets converted through channel `cost_per_unit` | Governed market × activity inputs; only cost-bearing decisions use market × channel × context mappings, while response-only quantities remain non-monetary | Aligned principle, broader governance/persistence contract |
 | Calibration | Lift-test measurements and cost-per-target calibration | Existing calibration records and custom pathway/model workflow | Informed by upstream; direct API adoption deferred |
 | Optimization | `BudgetOptimizer` evaluates posterior response distributions and supports channel masks, `cost_per_unit`, constraints, and custom/risk-aware utilities | Typed incremental objectives, activity-aware constraints, explicit counterfactual policies, mixed economics, and paired posterior re-evaluation of candidate versus current plan | Semantically aligned; custom implementation retained for multi-outcome pathways and governed mixed-input plans |
+| Search mediation/capacity | PyMC `Censored`/`NegativeBinomial` primitives and PyMC-Marketing MMM transformations | `core.search_capacity` Candidate A linked latent-demand, hard-cap, capture-reconciliation and outcome-scale counterfactual contract; typed graph compiler extension | Custom linked PyMC engine; not native PyMC-Marketing. Candidate C is diagnostic-only, Candidate B is deferred, and Search planning/optimisation remain disabled |
 
 ## Media input and money
 

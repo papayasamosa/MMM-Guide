@@ -388,8 +388,11 @@ requirement)
   "Unsupported edge/node roles today") once available, never approximate
   mediation with an interaction term.
 
-No Search mathematics (demand, capacity, incrementality, or optimisation)
-is implemented by this record or by REQ-SEARCH-002.
+This record did not implement Search mathematics. The deferred mathematical
+decision is now resolved by REQ-SEARCH-002, which approves Candidate A as
+the first production formulation while keeping planning and optimisation
+disabled pending its evidence gates. The object separation and provenance
+rules in this record remain authoritative.
 
 ## Affected modules
 

@@ -201,9 +201,10 @@ from .optimization import SpendConstraint
 # reconciliation evidence (Work Package 3). 16 -> 17 for canonical standard
 # source-pack adoption state and its explicit semantic review statuses (WP3).
 # 17 -> 18 for WP1 mixed-frequency method versions, publication timing, and
-# official conversion evidence. Older bundles remain importable because these
-# fields are optional and restore as empty/None until explicitly reviewed.
-PROJECT_BUNDLE_SCHEMA_VERSION = 18
+# official conversion evidence. 18 -> 19 for the optional Candidate A Search
+# formulation and identification evidence. Older bundles remain importable
+# because these fields restore as None until explicitly reviewed.
+PROJECT_BUNDLE_SCHEMA_VERSION = 19
 PROJECT_APP_VERSION = "0.1.0"
 
 
@@ -297,6 +298,8 @@ def export_project(
     value_mapping: Optional[dict] = None,
     causal_graphs: Optional[List[dict]] = None,
     search_objects: Optional[List[dict]] = None,
+    search_candidate_a_spec: Optional[dict] = None,
+    search_identification_report: Optional[dict] = None,
     source_versions: Optional[List[dict]] = None,
     source_definitions: Optional[List[dict]] = None,
     variable_coverage_matrices: Optional[List[dict]] = None,
@@ -519,6 +522,17 @@ def export_project(
             (tmp / "config" / "search_objects.json").write_text(
                 json.dumps(search_objects, indent=2, default=str)
             )
+        # REQ-SEARCH-002: Candidate A's typed formulation and identification
+        # evidence travel with the governed Search objects. Missing files are
+        # a legacy/no-engine state, never an implicit approval.
+        if search_candidate_a_spec is not None:
+            (tmp / "config" / "search_candidate_a_spec.json").write_text(
+                json.dumps(search_candidate_a_spec, indent=2, default=str)
+            )
+        if search_identification_report is not None:
+            (tmp / "config" / "search_identification_report.json").write_text(
+                json.dumps(search_identification_report, indent=2, default=str)
+            )
         # REQ-COVERAGE-001 S3: append-only immutable SourceVersion history
         # (core.coverage.SourceVersion.to_dict() dicts) - never pruned on
         # export; a bundle preserves every recorded upload's provenance so
@@ -651,6 +665,9 @@ def export_project(
                 "value_mapping": value_mapping is not None,
                 "causal_graphs": causal_graphs is not None and bool(causal_graphs),
                 "search_objects": search_objects is not None and bool(search_objects),
+                "search_candidate_a_spec": search_candidate_a_spec is not None,
+                "search_identification_report": search_identification_report
+                is not None,
                 "source_versions": source_versions is not None
                 and bool(source_versions),
                 "source_definitions": source_definitions is not None
@@ -776,6 +793,10 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         # existed - "no Search objects governed yet" is a valid,
         # not-an-error reading, same convention as causal_graphs above.
         "search_objects": None,
+        # REQ-SEARCH-002: None for bundles exported before Candidate A. The
+        # absence is not approval and must keep official Search use blocked.
+        "search_candidate_a_spec": None,
+        "search_identification_report": None,
         # REQ-COVERAGE-001 S3: None for bundles exported before this
         # capability existed - "no source-version history recorded yet" is
         # a valid, not-an-error reading, same convention as causal_graphs/
@@ -983,6 +1004,14 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         if (config_dir / "search_objects.json").exists():
             result["search_objects"] = json.loads(
                 (config_dir / "search_objects.json").read_text()
+            )
+        if (config_dir / "search_candidate_a_spec.json").exists():
+            result["search_candidate_a_spec"] = json.loads(
+                (config_dir / "search_candidate_a_spec.json").read_text()
+            )
+        if (config_dir / "search_identification_report.json").exists():
+            result["search_identification_report"] = json.loads(
+                (config_dir / "search_identification_report.json").read_text()
             )
         if (config_dir / "source_versions.json").exists():
             result["source_versions"] = json.loads(
@@ -1442,6 +1471,43 @@ def resolve_imported_search_objects(
         ]
 
     return [defn.to_dict() for defn in normalised], warnings
+
+
+def resolve_imported_candidate_a_search(
+    imported: Dict[str, Any],
+) -> Tuple[Optional[dict], List[str]]:
+    """REQ-SEARCH-002: validate the optional Candidate A engine record.
+
+    Raw import retains the file for audit/debugging, but an application must
+    use this resolver before treating the formulation as active. A malformed
+    or future formulation is quarantined and returned as ``None``; missing
+    configuration is the legacy/no-engine state and returns no warning.
+    """
+
+    from .search_capacity import SearchCandidateASpec, validate_candidate_a_spec
+
+    raw_spec = imported.get("search_candidate_a_spec")
+    if raw_spec is None:
+        return None, []
+    if not isinstance(raw_spec, Mapping):
+        return None, [
+            "Candidate A Search configuration is not a mapping and was "
+            "quarantined (dropped, not silently kept)."
+        ]
+    try:
+        spec = SearchCandidateASpec.from_dict(raw_spec)
+    except (TypeError, ValueError, KeyError, AttributeError) as exc:
+        return None, [
+            "Candidate A Search configuration was malformed and was "
+            f"quarantined (dropped, not silently kept): {exc}"
+        ]
+    issues = validate_candidate_a_spec(spec, imported.get("search_objects") or [])
+    if issues:
+        return None, [
+            "Candidate A Search configuration was quarantined because its "
+            "governed mappings are not valid: " + "; ".join(issues)
+        ]
+    return spec.to_dict(), []
 
 
 def resolve_imported_source_versions(

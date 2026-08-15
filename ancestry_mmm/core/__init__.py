@@ -273,6 +273,21 @@ from .outcome_group_totals import (
     selected_reporting_ids,
     summarize_outcome_group_draws,
 )
+from .search_capacity import (
+    CandidateAForwardState,
+    CandidateAPosteriorOutputs,
+    SEARCH_CANDIDATE_A_ENGINE,
+    SEARCH_CANDIDATE_A_FORMULATION_ID,
+    SearchCandidateASpec,
+    SearchIdentificationReport,
+    build_candidate_a_search_model,
+    candidate_a_forward,
+    candidate_a_use_gate,
+    counterfactual_search_effects,
+    identify_candidate_a_search,
+    posterior_outputs_from_forward_draws,
+    validate_candidate_a_spec,
+)
 
 __all__ = [
     "ModelApproval",
@@ -494,4 +509,17 @@ __all__ = [
     "reporting_group_options",
     "selected_reporting_ids",
     "summarize_outcome_group_draws",
+    "CandidateAForwardState",
+    "CandidateAPosteriorOutputs",
+    "SEARCH_CANDIDATE_A_ENGINE",
+    "SEARCH_CANDIDATE_A_FORMULATION_ID",
+    "SearchCandidateASpec",
+    "SearchIdentificationReport",
+    "build_candidate_a_search_model",
+    "candidate_a_forward",
+    "candidate_a_use_gate",
+    "counterfactual_search_effects",
+    "identify_candidate_a_search",
+    "posterior_outputs_from_forward_draws",
+    "validate_candidate_a_spec",
 ]
