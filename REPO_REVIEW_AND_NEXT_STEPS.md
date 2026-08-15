@@ -9,10 +9,10 @@ and does not supersede `AGENTS.md`, `docs/approved_requirements/`, or
 
 Repository: `papayasamosa/Media-Mix-Lab`
 
-Current `main` reviewed: `f3600b789911b5bc92fdc0c5d8238dead3645d69`
+Current `main` reviewed: `19fd12416cd882980bc83607f2f7677de38f4d48`
 
-Current head: **WP8: Add downloadable v2 templates and realistic demo pack**
-(merged PR #237, 2026-08-14).
+Current head: **UX Phase 6: whole-product QA and Search detail editor**
+(merged PR #248, 2026-08-15).
 
 The local Python distribution name remains `mmm-guide` for compatibility with
 the existing install, script, export, and deployment surface. That legacy
@@ -46,24 +46,37 @@ The current implementation includes:
   governed curve artefacts, and cost/FX-aware economics.
 - Validation, approval, staleness, persistence, migration, resumability,
   scenario-planning, and optimisation contracts.
+- Canonical native-weekly official preparation with an explicit governed
+  calendar, an outer union of governed source periods, preserved missingness,
+  and a fit-consumed-variable capability gate. Unsupported mixed-frequency
+  inputs still fail closed because no executable conversion method is yet
+  registered.
+- Standard source-pack semantic adoption for Outcomes, Activity and Media,
+  Context and External Factors, and optional Experiment Evidence, plus the
+  current source-pack template/download and realistic synthetic-pack UX.
+- Current graph-authoritative Causal Graph and Search-object governance UX,
+  including direct, cross-product-halo, and excluded/diagnostic-only support
+  with unsupported production graph roles still blocked.
 
 ## Known bounded gaps
 
 These are implementation or decision boundaries, not permission to invent
 business or modelling definitions:
 
-- Canonical weekly official preparation, full fit-consumed coverage gating,
-  and executable mixed-frequency conversion remain the next governed data
+- Executable mixed-frequency conversion remains the next governed data
   preparation work. The approved frequency-conversion registry is still
-  empty.
+  empty, so monthly, quarterly, survey, and irregular inputs fail closed for
+  official preparation unless already represented at a compatible native
+  cadence.
 - Ragged market-specific predictor mathematics (`FR-MOD-015`), production
   mediation, Search capacity/censoring mathematics, moderated pathways, and
   residual-interaction engine support remain decision-bound or unsupported.
-- The non-Outcomes standard source domains need the semantic parity audit and
-  adoption/export/import checks described in the current implementation
-  sequence.
-- The full-core mypy debt ceiling is now 282 errors; it is a ceiling, not a
+- The full-core mypy debt ceiling is now 276 errors; it is a ceiling, not a
   target. CI must fail if the measured count increases.
+- Scenario planning remains a steady-state monthly approximation rather than
+  a sequential weekly simulation with starting adstock and terminal carryover.
+- Chronos-2 or another future exogenous forecasting integration is not yet
+  implemented.
 - Real UK data readiness is an operational step and must be run only by an
   authorised analyst with approved local data outside Git.
 

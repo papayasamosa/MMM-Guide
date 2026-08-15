@@ -30,8 +30,11 @@ below describes the baseline as of this approval date; see the
 2026-08-11 update immediately below for what has since been built on top
 of it.
 
-**Status as of 2026-08-11 (after PRs #151-#159):** Substantially
-implemented. Dependent, separately-scoped packages have delivered:
+### Historical status as of 2026-08-11 (after PRs #151-#159)
+
+This is a dated implementation snapshot, retained for traceability and
+superseded by the later status sections below. At that point, dependent,
+separately-scoped packages had delivered:
 
 - `core.coverage`: `SourceDefinition`, `SourceVersion`, `FrequencyMetadata`,
   `DefinitionBreak`, `VariableCoverageRecord`, `VariableCoverageMatrix`,
@@ -56,7 +59,8 @@ implemented. Dependent, separately-scoped packages have delivered:
   deterministic market x channel engine-capability report (§6 point 3),
   bound into model staleness and the pre-fit prior-predictive workflow.
 
-Not yet implemented: execution of any approved frequency-conversion method
+At that historical point, the following were not yet implemented: execution
+of any approved frequency-conversion method
 (§4 — no method is approved by this record itself; see "Out of scope"
 below), a canonical-calendar mixed-frequency alignment service, a
 fit-consumed-variable capability report beyond market x channel (outcome
@@ -67,7 +71,7 @@ policy-backed model approval (current results are informational only).
 missing-data likelihood, or per-market predictor-set restructuring is
 approved.
 
-### Status as of 2026-08-13 (after Work Package 6)
+### Historical status as of 2026-08-13 (after Work Package 6)
 
 The official-preparation governance boundary is now implemented through
 `core.frequency_alignment.assess_official_preparation` and the separate
@@ -81,7 +85,7 @@ blocker), while missing governance returns `decision_required`. The
 exploratory Transform Pipeline remains available and is not an official
 frequency-alignment path.
 
-The following remain not implemented: execution of an approved
+At that historical point, the following remained not implemented: execution of an approved
 frequency-conversion method and the broader policy-backed approval gate
 described above. The current WP2 native weekly path is intentionally limited
 to already-canonical inputs and does not resolve mixed-frequency conversion.
@@ -108,7 +112,7 @@ official frame and fit; gaps on unconsumed variables do not. Calendar,
 alignment, capability, and official-frame evidence are persisted and included
 in model identity.
 
-### What already exists today (do not duplicate)
+### Existing contracts and exploratory boundaries (do not duplicate)
 
 - `data.pipeline.join_sources`: the exploratory source join remains
   available, including its explicit join modes and diagnostics. Official
@@ -120,9 +124,9 @@ in model identity.
   awareness. Remains valid as an *exploratory* tool under this record (see
   §7); a dependent requirement must not delete it, only gate its use for
   *official* frequency alignment behind the contract this record defines.
-- `data.loader`: CSV/XLSX/XLS import into an in-memory `DataFrame`, stored
-  in session state. No immutable source-version identity (checksum,
-  original bytes/reference) exists yet.
+- `data.loader`: CSV/XLS/XLSM/Parquet import into an in-memory `DataFrame`,
+  with immutable source-version identity (checksum, original filename, size,
+  and parsed-representation version) captured at upload.
 - `core.market_config`, `core.fingerprint.fingerprint_model_spec`: the
   existing project-identity and fit-relevant-fingerprint mechanisms a
   dependent requirement's coverage/treatment metadata must integrate with,
