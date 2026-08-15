@@ -9,20 +9,21 @@ and does not supersede `AGENTS.md`, `docs/approved_requirements/`, or
 
 Repository: `papayasamosa/Media-Mix-Lab`
 
-Current `main` reviewed: `3e2e525300a8526a52f59384271e54fe9815cbe0`
+Current `main` reviewed: `e117abcd60171c3f2a57b437d617135e475a62bf`
 
-Current head: **Reconcile repository status docs after PR #253 (WP0)**
-(merged PR #254, 2026-08-15). This revision of the document additionally
-describes Work Package 1 of `Media-Mix-Lab: Coding LLM Next Steps After
-PR #253` (Candidate A production integration boundary), landed on top of
-that baseline in the same work session.
+Current head: **WP1: Candidate A production integration boundary** (merged
+PR #255, 2026-08-15). This revision of the document additionally describes
+Work Package 2 of `Media-Mix-Lab: Coding LLM Next Steps After PR #253`
+(Candidate A synthetic generator and posterior-recovery evidence), landed
+on top of that baseline in the same work session.
 
 Historical markers: earlier versions of this document reviewed
-`b9b13916ad06c09e37cd53aa83a0fa3a7949a0dc` (merged PR #253, before the WP0
-reconciliation) and `0845b150027dc59b192d2ec314b01910af3496ed` (merged PR
-#249, before the mixed-frequency executor and Candidate A Search engine
-existed). Both SHAs are superseded and are recorded here only for history,
-not as current state.
+`3e2e525300a8526a52f59384271e54fe9815cbe0` (merged PR #254, WP0), and
+before that `b9b13916ad06c09e37cd53aa83a0fa3a7949a0dc` (merged PR #253) and
+`0845b150027dc59b192d2ec314b01910af3496ed` (merged PR #249, before the
+mixed-frequency executor and Candidate A Search engine existed). All three
+SHAs are superseded and are recorded here only for history, not as current
+state.
 
 The local Python distribution name remains `mmm-guide` for compatibility with
 the existing install, script, export, and deployment surface. That legacy
@@ -124,9 +125,23 @@ business or modelling definitions:
      Scenario Planner integration - a Candidate A fit currently persists
      (engine identity, spec, trace) but its posterior is not yet extracted
      into those surfaces.
-  5. Official Search fit eligibility: still gated by full joint posterior
-     recovery evidence, prior/posterior predictive checks, and identification
-     diagnostics beyond the current conditional recovery test (Work Package 2).
+  5. Full joint posterior-recovery evidence (Work Package 2): a synthetic
+     generator and evidence package now exist
+     (`core/search_candidate_a_recovery.py`) - an independently-coded
+     forward simulator (multiple channels, distinct adstock/saturation,
+     direct-only and mediated channels, all three cap-binding regimes,
+     multi-market, noisy observations), fast prior-predictive plausibility
+     checks, a deterministic identification-sensitivity sweep, and a real
+     `pm.sample` posterior-recovery suite against the *integrated*
+     production model (`test_search_candidate_a_recovery_posterior.py`,
+     `candidate-a-recovery` CI job, schedule/manual-only - real MCMC is too
+     slow for blocking CI). This is interval-coverage evidence at a
+     versioned, documented threshold (`CANDIDATE_A_RECOVERY_POLICY`,
+     `wp2-v1`), not an official-use approval - it supplies one input to
+     `core.search_capacity.candidate_a_use_gate`'s required evidence set,
+     which still needs prior/posterior predictive validation beyond what
+     this package covers, the counterfactual contract, and explicit human
+     model approval before official Search fit eligibility exists.
   6. Search planning eligibility: disabled.
   7. Search-cap optimisation: disabled.
 
