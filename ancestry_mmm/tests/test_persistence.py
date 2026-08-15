@@ -623,6 +623,44 @@ def test_bundle_manifest_workflow_diagnostics_notes_and_curve_state_round_trip(
     assert audit_project_resumability(imported)["resumable"]
 
 
+def test_candidate_a_engine_identity_round_trips_through_model_meta(
+    tmp_path, sample_project
+):
+    """WP1 (`Media-Mix-Lab: Coding LLM Next Steps After PR #253`):
+    FHModelMeta.causal_graph_engine is an existing, already-persisted field
+    (config/model_meta.json, json.dumps(asdict(model_meta))) - Candidate A
+    integration only changes which *value* build_fh_hierarchical_model
+    writes into it, not the schema, so no migration is required. This test
+    proves that value (core.search_capacity.SEARCH_CANDIDATE_A_ENGINE)
+    survives export/import unchanged, exactly like the existing
+    "pymc_hierarchical" value already did."""
+    from ancestry_mmm.core.search_capacity import SEARCH_CANDIDATE_A_ENGINE
+
+    project = dict(sample_project)
+    project["model_meta"] = FHModelMeta(
+        markets=["UK"],
+        outcome_ids=["New"],
+        channels=["SearchBrand"],
+        dna_channels=[],
+        dna_channel_idx=[],
+        non_dna_idx=[0],
+        dna_outcome_id="New",
+        dna_lag_weeks=0,
+        unpooled_markets=[],
+        control_names=[],
+        causal_graph_id="g1",
+        causal_graph_version=1,
+        causal_graph_structural_fingerprint="fp",
+        causal_graph_engine=SEARCH_CANDIDATE_A_ENGINE,
+    )
+    imported = import_project(
+        export_project(tmp_path / "candidate-a-engine.zip", **project)
+    )
+    assert imported["model_meta"]["causal_graph_engine"] == SEARCH_CANDIDATE_A_ENGINE
+    reconstructed = FHModelMeta(**imported["model_meta"])
+    assert reconstructed.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE
+
+
 # ---------------------------------------------------------------------------
 # PR 96B: official curve artifact store project-bundle portability
 # ---------------------------------------------------------------------------

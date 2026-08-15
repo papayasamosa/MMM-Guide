@@ -13,10 +13,14 @@ optimisation are intentionally not enabled by this module.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
-from typing import Any, Iterable, Mapping, Optional, Sequence
+from dataclasses import asdict, dataclass, field
+from typing import TYPE_CHECKING, Any, Iterable, List, Mapping, Optional, Sequence
 
 import numpy as np
+
+if TYPE_CHECKING:
+    import pymc as pm
+    import pytensor.tensor as pt
 
 from .search_objects import (
     SEARCH_ROLE_DEMAND,
@@ -578,6 +582,249 @@ def candidate_a_use_gate(
     )
 
 
+@dataclass(frozen=True)
+class CandidateASearchFitInputs:
+    """The production-integration inputs for
+    `attach_candidate_a_demand_capture_chain`: everything the linked Search
+    chain needs beyond what the ordinary MMM builder (`core.hierarchical_model.
+    build_fh_hierarchical_model`) already computes from `frame`/`spec`.
+
+    `demand_channel_names` must be a subset of the fit's own `channels`
+    (validated by the caller against the approved `SearchCandidateAGraphPlan.
+    upstream_intervention_node_ids` - REQ-GRAPH-001/`core.graph_model_compiler`)
+    so each demand-driving channel keeps its own identity, adstock, and Hill
+    saturation exactly like every other channel (AGENTS.md: "Do not create a
+    second incompatible adstock or Hill implementation"). `paid_search_cap`
+    must already be translated into delivery units by the governed cap
+    mapping (`application.model_fit_service`/`core.media_costs`) - this
+    dataclass never performs that translation itself.
+    """
+
+    spec: SearchCandidateASpec
+    demand_channel_names: List[str]
+    paid_search_delivery: np.ndarray
+    paid_search_cap: np.ndarray
+    organic_search_capture: np.ndarray
+    direct_navigation_capture: np.ndarray
+    search_objects: List[SearchObjectDefinition | Mapping[str, Any]] = field(
+        default_factory=list
+    )
+
+    def __post_init__(self) -> None:
+        if not self.demand_channel_names:
+            raise SearchCapacityValidationError(
+                "Candidate A requires at least one demand-driving upstream channel"
+            )
+        arrays = [
+            _as_float_vector(value, name)
+            for value, name in (
+                (self.paid_search_delivery, "paid_search_delivery"),
+                (self.paid_search_cap, "paid_search_cap"),
+                (self.organic_search_capture, "organic_search_capture"),
+                (self.direct_navigation_capture, "direct_navigation_capture"),
+            )
+        ]
+        _same_shape(*arrays)
+        if any(np.any(value < 0) for value in arrays):
+            raise SearchCapacityValidationError(
+                "observed Candidate A capture/delivery/cap values cannot be negative"
+            )
+        delivery, cap = arrays[0], arrays[1]
+        if np.any(delivery > cap + 1e-8):
+            raise SearchCapacityValidationError(
+                "observed Paid Search delivery exceeds its cap"
+            )
+
+
+def attach_candidate_a_demand_capture_chain(
+    *,
+    model: "pm.Model",
+    sat_media: "pt.TensorVariable",
+    channels: Sequence[str],
+    market_idx: np.ndarray,
+    fit_inputs: CandidateASearchFitInputs,
+    prior_config: Optional[Mapping[str, float]] = None,
+):
+    # No declared return type: pm.Deterministic is untyped (Any) in PyMC's
+    # stubs, and every intermediate value in this chain is built from one -
+    # an explicit "-> pt.TensorVariable" annotation here would just be an
+    # unenforceable claim mypy correctly flags as no-any-return.
+    """Add Candidate A's latent-demand/capture-share/cap chain to a model
+    already under construction, and return the (n_obs, n_outcomes) outcome
+    predictor contribution to add into `eta` alongside the ordinary
+    direct/cross-product channel terms.
+
+    Must be called from inside the same `with pm.Model() as model:` block
+    that produced `sat_media` (`core.hierarchical_model._market_grouped_
+    adstock_and_saturation`) - every demand-driving channel's contribution
+    uses that *already adstocked and Hill-saturated* media, per Candidate
+    A's approved formulation (`docs/search_mediation_capacity_decision_wp3.md`:
+    "X_t is upstream media after the approved adstock/saturation
+    transformation").
+
+    Reconciliation (`captured + unmet = latent`) holds by construction: a
+    single Dirichlet(4) simplex allocates latent demand into
+    paid/organic/direct/unmet shares, so unmet demand can only be driven
+    negative if a cap-hit consumes more than the paid share allows - which
+    cannot happen, since realised paid delivery is `min(paid_opportunity,
+    cap)` and can only ever be <= the paid share of latent demand.
+    `core.graph_model_compiler.GraphModelCompiler` (`engine=
+    SEARCH_CANDIDATE_A_ENGINE`) excludes the demand/organic/direct-nav
+    "search_capture" edges from the ordinary `ResolvedPathwayMasks` it
+    returns - organic and direct-navigation capture get their own
+    coefficients here, never a second, competing pathway_masks cell.
+    """
+
+    import pymc as pm
+    import pytensor.tensor as pt
+
+    prior = dict(prior_config or {})
+    spec = fit_inputs.spec
+    demand_channel_idx = [
+        channels.index(name) for name in fit_inputs.demand_channel_names
+    ]
+
+    cap = pt.as_tensor_variable(fit_inputs.paid_search_cap)
+    delivery_obs = fit_inputs.paid_search_delivery
+    organic_obs = fit_inputs.organic_search_capture
+    direct_obs = fit_inputs.direct_navigation_capture
+    capture_scale = max(float(np.mean(delivery_obs + organic_obs + direct_obs)), 1.0)
+
+    model.add_coord("search_demand_channel", fit_inputs.demand_channel_names)
+
+    demand_market_pool_sigma = pm.HalfNormal(
+        "search_demand_market_pool_sigma",
+        sigma=float(prior.get("pooling_prior_sigma", spec.pooling_prior_sigma)),
+    )
+    demand_market_raw = pm.Normal(
+        "search_demand_market_raw", mu=0.0, sigma=1.0, dims="market"
+    )
+    demand_market_offset = pm.Deterministic(
+        "search_demand_market_offset",
+        demand_market_pool_sigma * demand_market_raw,
+        dims="market",
+    )
+    default_demand_intercept_mu = float(
+        np.log(max(float(np.mean(fit_inputs.paid_search_cap)), 1.0))
+    )
+    demand_intercept = pm.Normal(
+        "search_demand_intercept",
+        mu=float(prior.get("demand_intercept_mu", default_demand_intercept_mu)),
+        sigma=float(prior.get("demand_intercept_sigma", 1.0)),
+    )
+    demand_media_beta = pm.HalfNormal(
+        "search_demand_media_beta",
+        sigma=float(prior.get("demand_prior_sigma", spec.demand_prior_sigma)),
+        dims="search_demand_channel",
+    )
+    demand_media_term = pm.math.dot(sat_media[:, demand_channel_idx], demand_media_beta)
+    demand = pm.Deterministic(
+        "search_latent_branded_demand",
+        pt.exp(demand_intercept + demand_market_offset[market_idx] + demand_media_term),
+        dims="obs",
+    )
+
+    share_alpha = np.asarray(
+        prior.get("capture_share_alpha", [2.0, 1.5, 1.5, 2.0]), dtype=float
+    )
+    if share_alpha.shape != (4,) or np.any(share_alpha <= 0):
+        raise SearchCapacityValidationError(
+            "capture_share_alpha must have four positive entries"
+        )
+    capture_shares = pm.Dirichlet("search_capture_shares", a=share_alpha, shape=4)
+
+    paid_opportunity = pm.Deterministic(
+        "search_unconstrained_paid_opportunity",
+        demand * capture_shares[0],
+        dims="obs",
+    )
+    realised_paid = pm.Deterministic(
+        "search_realised_paid_delivery",
+        pt.minimum(paid_opportunity, cap),
+        dims="obs",
+    )
+    organic_expected = pm.Deterministic(
+        "search_organic_capture_expected", demand * capture_shares[1], dims="obs"
+    )
+    direct_expected = pm.Deterministic(
+        "search_direct_navigation_capture_expected",
+        demand * capture_shares[2],
+        dims="obs",
+    )
+    captured = pm.Deterministic(
+        "search_total_captured_demand",
+        organic_expected + direct_expected + realised_paid,
+        dims="obs",
+    )
+    pm.Deterministic("search_unmet_demand", demand - captured, dims="obs")
+    pm.Deterministic(
+        "search_cap_binding_probability",
+        pt.cast(pt.ge(paid_opportunity, cap), "float64"),
+        dims="obs",
+    )
+    pm.Deterministic(
+        "search_unused_capacity", pt.maximum(cap - realised_paid, 0.0), dims="obs"
+    )
+
+    delivery_sigma = pm.HalfNormal(
+        "search_paid_delivery_observation_sigma",
+        sigma=float(prior.get("delivery_observation_sigma", 5.0)),
+    )
+    capture_obs_sigma = pm.HalfNormal(
+        "search_capture_observation_sigma",
+        sigma=float(prior.get("capture_observation_sigma", 5.0)),
+    )
+    pm.Normal(
+        "search_paid_delivery_obs",
+        mu=realised_paid,
+        sigma=delivery_sigma,
+        observed=delivery_obs,
+        dims="obs",
+    )
+    pm.Normal(
+        "search_organic_capture_obs",
+        mu=organic_expected,
+        sigma=capture_obs_sigma,
+        observed=organic_obs,
+        dims="obs",
+    )
+    pm.Normal(
+        "search_direct_navigation_capture_obs",
+        mu=direct_expected,
+        sigma=capture_obs_sigma,
+        observed=direct_obs,
+        dims="obs",
+    )
+
+    # Separate outcome coefficients for paid/organic/direct capture (REQ-
+    # SEARCH-002: "organic and direct-navigation capture may not be pooled
+    # with Paid Search capture or counted twice") - non-negative, since
+    # captured demand cannot suppress the outcome.
+    beta_paid = pm.HalfNormal(
+        "search_paid_capture_outcome_beta",
+        sigma=float(prior.get("capture_prior_sigma", spec.capture_prior_sigma)),
+        dims="outcome",
+    )
+    beta_organic = pm.HalfNormal(
+        "search_organic_capture_outcome_beta",
+        sigma=float(prior.get("capture_prior_sigma", spec.capture_prior_sigma)),
+        dims="outcome",
+    )
+    beta_direct = pm.HalfNormal(
+        "search_direct_navigation_capture_outcome_beta",
+        sigma=float(prior.get("capture_prior_sigma", spec.capture_prior_sigma)),
+        dims="outcome",
+    )
+    eta_search = (
+        beta_paid[None, :] * (realised_paid / capture_scale)[:, None]
+        + beta_organic[None, :] * (organic_expected / capture_scale)[:, None]
+        + beta_direct[None, :] * (direct_expected / capture_scale)[:, None]
+    )
+    return pm.Deterministic(
+        "search_eta_contribution", eta_search, dims=("obs", "outcome")
+    )
+
+
 def build_candidate_a_search_model(
     *,
     upstream_media: Sequence[float] | np.ndarray,
@@ -903,6 +1150,7 @@ def build_candidate_a_search_model(
 __all__ = [
     "CandidateAForwardState",
     "CandidateAPosteriorOutputs",
+    "CandidateASearchFitInputs",
     "SEARCH_CANDIDATE_A_ENGINE",
     "SEARCH_CANDIDATE_A_FORMULATION_ID",
     "SearchCandidateASpec",
@@ -910,6 +1158,7 @@ __all__ = [
     "SearchIdentificationReport",
     "SearchPosteriorEffects",
     "SearchUseGate",
+    "attach_candidate_a_demand_capture_chain",
     "build_candidate_a_search_model",
     "candidate_a_forward",
     "candidate_a_use_gate",

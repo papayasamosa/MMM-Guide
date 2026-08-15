@@ -35,9 +35,13 @@ from ancestry_mmm.components import (
 )
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.causal_graph import GRAPH_STATUS_APPROVED, CausalGraph
-from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
-from ancestry_mmm.core.market_specific_model import build_fh_market_specific_model
 from ancestry_mmm.core.models import fit_model
+from ancestry_mmm.application.model_fit_service import (
+    SEARCH_CANDIDATE_A_ENGINE,
+    ModelFitServiceError,
+    build_model_for_spec,
+    resolve_engine,
+)
 from ancestry_mmm.core.predict import extract_posterior_params
 from ancestry_mmm.core.market_specific_predict import (
     extract_market_specific_posterior_params,
@@ -191,28 +195,37 @@ def _resolve_causal_graph():
 def _build_proposed_model(build_model_type: str):
     """Build the unfit `(model, meta)` for the CURRENT proposed
     configuration (live `model_spec`/`prior_config`/`dna_lag_weeks`/causal
-    graph) - the exact same builder call "Build & fit model" below uses,
-    just never followed by `fit_model`. Shared by the pre-fit prior
-    predictive preview and the real fit so they can never silently diverge
-    on what "the proposed model" means."""
+    graph) - the exact same call "Build & fit model" below uses, just never
+    followed by `fit_model`. Shared by the pre-fit prior predictive preview
+    and the real fit so they can never silently diverge on what "the
+    proposed model" means.
+
+    WP1 (`Media-Mix-Lab: Coding LLM Next Steps After PR #253`): delegates
+    engine selection to `application.model_fit_service` instead of an
+    inline shared/market-specific ternary. `candidate_a_fit_inputs` is not
+    yet threaded from session state here - no UI on this page collects
+    Candidate A Search observations yet, so a project whose approved graph
+    requires the Candidate A engine currently fails closed with a specific
+    ModelFitServiceError rather than silently falling back to the ordinary
+    builder (see the "not yet integrated" note in REPO_REVIEW_AND_NEXT_STEPS.md).
+    """
     prior_config = get_state("prior_config")
     dna_lag_weeks = get_state("dna_lag_weeks", 4)
     direct_dna_outcome_ids = get_state("direct_dna_outcome_ids") or None
     causal_graph = _resolve_causal_graph()
-    builder = (
-        build_fh_market_specific_model
-        if build_model_type == "market_specific"
-        else build_fh_hierarchical_model
-    )
-    return builder(
-        frame,
-        spec,
+    search_objects = get_state("search_objects") or []
+    result = build_model_for_spec(
+        frame=frame,
+        model_spec=spec,
+        model_type=build_model_type,
         dna_lag_weeks=dna_lag_weeks,
-        prior_config=prior_config,
         dna_outcome_id=spec.fh_dna_cross_sell_outcome_id,
+        prior_config=prior_config,
         direct_dna_outcome_ids=direct_dna_outcome_ids,
         causal_graph=causal_graph,
+        search_objects=search_objects,
     )
+    return result.model, result.meta
 
 
 def _proposed_model_fingerprint(fingerprint_model_type: str) -> str:
@@ -277,6 +290,23 @@ def _proposed_model_fingerprint(fingerprint_model_type: str) -> str:
     )
     return f"{fingerprint_dataframe(frame['df'])}:{model_spec_fingerprint}"
 
+
+try:
+    _resolved_engine = resolve_engine(
+        causal_graph=_resolve_causal_graph(),
+        search_objects=get_state("search_objects") or [],
+    )
+except ModelFitServiceError as _engine_error:
+    _resolved_engine = None
+    st.error(f"This project's approved graph cannot be fit: {_engine_error}")
+if _resolved_engine == SEARCH_CANDIDATE_A_ENGINE:
+    st.info(
+        "This project's approved causal graph requires the **Candidate A Search "
+        "mediation/capacity engine** (REQ-SEARCH-002), not the ordinary shared/"
+        "market-specific engine. Candidate A Search planning and cap optimisation "
+        "remain disabled regardless of fit outcome; see "
+        "`REPO_REVIEW_AND_NEXT_STEPS.md` for current integration status."
+    )
 
 st.markdown("---")
 st.markdown("### Pre-fit prior check")
