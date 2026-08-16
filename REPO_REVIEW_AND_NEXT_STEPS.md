@@ -9,14 +9,18 @@ and does not supersede `AGENTS.md`, `docs/approved_requirements/`, or
 
 Repository: `papayasamosa/Media-Mix-Lab`
 
-Current `main` reviewed: `ef4744f1d587f061e8859cb26e24740325335de2`
+Current `main` reviewed: `6f342afcc03a588eb5738b8813d3d2b8beb54b57`
 
-Current head: **Work Package 5 of `Media-Mix-Lab: Coding LLM Next Steps
-After PR #253`** (sequential simulation kernel), merged as PR #260.
+Current head: **Work Package 1 of `Media-Mix-Lab: Coding LLM Next Steps
+Post WP5`** (monthly-to-weekly phasing contract), landed on top of that
+baseline in the same work session.
 
 Historical markers: earlier versions of this document reviewed
+`ef4744f1d587f061e8859cb26e24740325335de2` (merged PR #260, WP5 of
+`...After PR #253` - the sequential simulation kernel - superseded by
+Work Package 0 of `...Post WP5` above, merged as PR #261),
 `30c841b3c457771a4df0b5e21c06cd281be3f82e` (merged PR #259, WP5 test-double
-fix, superseded by PR #260 above),
+fix, superseded by PR #260),
 `3a0015848bb85c71c0fa3013cdf312bf7e3f80e4` (merged PR #257, WP3),
 `0ed00d8a790669f7fbdf716c070a24fb4442964c` (merged PR #256, WP2),
 `e117abcd60171c3f2a57b437d617135e475a62bf` (merged PR #255, WP1),
@@ -126,6 +130,23 @@ The current implementation includes:
   (`test_sequential_simulation.py`) asserting the kernel's output over a
   future plan window is bit-identical to the existing batch replay
   (`predict_mu`) evaluated over the same series as a whole.
+- A monthly-to-weekly phasing contract (WP1 of `Media-Mix-Lab: Coding LLM
+  Next Steps Post WP5`, `ancestry_mmm/core/planning/phasing.py`,
+  `REQ-SCEN-002`/`REQ-SCEN-003`): `calendar_day_overlap_v1` - inclusive
+  day-overlap allocation with per-month conservation to strict numerical
+  tolerance, auditable boundary-week attribution (a week spanning two
+  months legitimately receives allocations from both); an explicit
+  weekly-schedule override with its own tracked-month-weighted
+  reconciliation check; separate monetary (phase-then-convert via a
+  weekly/period-specific `core.media_costs` mapping resolved per week) and
+  model-input-quantity (no cost conversion) paths, so a plan can never be
+  ambiguously read as both spend and delivery; and a typed
+  `HorizonConfiguration` contract (short/long/plan/terminal horizons,
+  explicit values required). This is a framework-independent core module
+  only - it is not yet wired into `core.sequential_simulation.WeeklyPlan`
+  construction or any application service (see Known bounded gaps below).
+  The future-context builder (trend/Fourier/promotions/controls
+  generation) is explicitly deferred, not part of this module.
 
 ## Known bounded gaps
 
@@ -213,9 +234,14 @@ business or modelling definitions:
   `core.optimization`'s objective) remains a steady-state monthly
   approximation. The underlying sequential weekly simulation kernel with
   starting adstock and terminal carryover now exists (WP5,
-  `core.sequential_simulation`, see Delivered foundation above) - wiring it
-  into the Scenario Planner UI or the optimiser's objective is a documented,
-  not-yet-attempted application-integration follow-up, not a modelling gap.
+  `core.sequential_simulation`, see Delivered foundation above), and so
+  does a monthly-to-weekly phasing contract to feed it (WP1 of
+  `...Post WP5`, `core.planning.phasing`, see Delivered foundation above) -
+  wiring both into the Scenario Planner UI or the optimiser's objective is
+  a documented, not-yet-attempted application-integration follow-up, not a
+  modelling gap. The future-context builder (trend/Fourier/promotions/
+  controls for a future scenario window) is a separate, also-not-yet-
+  implemented dependency of that same integration.
 - Chronos-2 or another future exogenous forecasting integration is not yet
   implemented.
 - Real UK data readiness is an operational step and must be run only by an

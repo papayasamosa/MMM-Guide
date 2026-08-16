@@ -4346,3 +4346,132 @@ production-supported model types; Candidate A diagnostic mediator-state
 replay implemented as a bounded capability. Application-layer integration
 (Scenario Planner UI, optimiser objective) is a documented follow-up, not
 attempted in this targeted work package.
+
+## Reconcile authority docs and index sequential-planning requirements (Work Package 0)
+
+**Date:** 2026-08-16
+**Decision:** Fix documentation drift found in `docs/specification_authority.md`
+(falsely claimed the mixed-frequency conversion-method registry is empty -
+false since PR #250 - and never referenced `REQ-SEARCH-002` despite it
+being approved and indexed since 2026-08-15) and `README.md` (falsely
+claimed Candidate A is wholly unwired from Diagnostics - false since
+PR #257 - and stated the sequential planner is simply "not built" instead
+of distinguishing the implemented kernel from its not-yet-wired Scenario
+Planner integration). Create and index four new requirement records:
+`REQ-STATE-001` (sequential state contract - retroactive, documents the
+already-implemented WP5 kernel), `REQ-SCEN-001` (sequential scenario
+evaluation contract - kernel-level implemented, application-level
+approved-not-yet-built), `REQ-SCEN-002` (monthly-to-weekly phasing,
+`calendar_day_overlap_v1`), `REQ-SCEN-003` (response horizon and terminal
+reporting) - the latter two approved for the next work package per the
+task-specific brief's standing authority (`Media-Mix-Lab: Coding LLM Next
+Steps Post WP5`, 2026-08-16), not yet implemented at the time of this
+package. Extend the existing anti-drift test suite
+(`test_repository_status_conformance.py`) with tests guarding the drift
+just fixed. Add `scripts/wait_for_pr_green_then_merge.ps1` (this repository
+has no effective required-check branch protection on `main`, so a bare
+`gh pr merge --auto` merges immediately rather than waiting for checks -
+exactly what let PR #258 merge red, see the WP4/WP5 entries above) and an
+additive, informational-only CI job (`candidate-a-recovery-gate-check`)
+flagging when a PR touches Candidate A model files.
+**Reason:** Coding agents are required to trust repository-controlled
+authority documents over independently reinterpreting the PRD or the
+codebase from scratch each time - a stale authority document can cause a
+correct agent to stop or implement the wrong boundary. The sequential
+kernel's own requirement records were named (`REQ-STATE-001`,
+`REQ-SCEN-001`-`003`) throughout `docs/specification_authority.md` before
+this package but never actually existed as indexed records - only the
+implementation brief served as approval authority for WP0-WP5, which is a
+correct but temporary pattern that should not persist once a durable
+record can be created.
+**Alternatives considered:** Leaving the sequential-planning records
+unindexed and continuing to cite the implementation brief as authority
+(rejected - the brief is task-specific and will eventually be superseded;
+an indexed record is the durable form this repository's own authority
+hierarchy expects). Bundling the CI merge-gate script into a later work
+package (rejected - PR #258's red-`main` incident already demonstrated
+the unsafe-auto-merge gap is a live risk, not a hypothetical one, so
+closing it was treated as part of this reconciliation package rather than
+deferred further).
+**Impact:** `docs/specification_authority.md`, `README.md`,
+`REPO_REVIEW_AND_NEXT_STEPS.md` corrected; four new
+`docs/approved_requirements/REQ-{STATE-001,SCEN-001,SCEN-002,SCEN-003}.md`
+records indexed; `test_repository_status_conformance.py` extended;
+`scripts/wait_for_pr_green_then_merge.ps1` added;
+`.github/workflows/tests.yml` gained one new, additive, non-blocking job.
+No schema, migration, or persisted-field changes. No core/application
+Python touched, so no mypy debt impact (241 unchanged).
+**Owner:** Data Science / Platform engineering.
+**Status:** Accepted; implemented and merged as PR #261.
+
+## Monthly-to-weekly phasing contract (Work Package 1)
+
+**Date:** 2026-08-16
+**Decision:** Implement `REQ-SCEN-002`'s phasing contract in
+`ancestry_mmm/core/planning/phasing.py`: `calendar_day_overlap_v1`
+(inclusive day-overlap allocation, mirroring
+`core.frequency_conversion._calendar_overlap_allocation`'s own day-counting
+convention without sharing its code path - a forward-looking business plan
+and a backward-looking source-data conversion are governed by different
+requirement records), per-month conservation to strict numerical tolerance
+(`rtol=atol=1e-10`, matching the existing mixed-frequency executor's own
+tolerance), an explicit weekly-schedule override with its own
+reconciliation check, and separate monetary (phase spend, then apply a
+weekly/period-specific `core.media_costs` mapping resolved per week via
+`CostMappingRegistry.resolve(..., as_of=...)`) and model-input-quantity (no
+cost conversion) paths. Also implement `REQ-SCEN-003`'s typed
+`HorizonConfiguration` contract (short/long/plan/terminal horizons,
+explicit values required, no hidden UI-preset constants).
+**Reason:** `REQ-SCEN-002`/`REQ-SCEN-003` were approved-but-not-implemented
+by WP0; per this repository's convention of small, vertically-scoped work
+packages (mirrored throughout this repository's own history - WP1/WP2/WP3
+each delivered one coherent slice of Candidate A rather than one combined
+PR), this package delivers the phasing module and horizon type only,
+explicitly deferring the future-context builder (trend/Fourier/promotions/
+controls generation, `REQ-SCEN-002`'s own "Not yet covered" boundary) and
+all application-layer wiring to separate, dependent work packages.
+**Alternatives considered:** Attributing an explicit weekly schedule's
+boundary-week value to overlapping months by a flat day-fraction of the
+7-day week (`overlap_days / 7`) - rejected after it was caught failing its
+own round-trip test: dividing by 7 unconditionally under-attributes a week
+whose *other* days fall in a month absent from the plan (or outside the
+calendar entirely) rather than in a second *tracked* month, so a schedule
+produced by the governed method's own forward allocation did not reconcile
+against itself. Fixed by normalising each week's tracked-month weight by
+the sum of that week's day-overlap across only the months present in
+`monthly_values` - this exactly reproduces the forward allocation whenever
+a week's non-tracked days would otherwise dilute the check, and only
+becomes a genuine, irreducible split (day-proportional between the two
+tracked months) when a week is shared between two months *both* present in
+the plan, which has no unique answer from one scalar without additional
+information. Requiring a governed cost mapping for every week in the
+monetary path unconditionally (rejected after the same round-trip
+discipline caught it): `CanonicalCalendar` is typically a project's full,
+multi-year window, not just the months being planned, so most weeks in a
+realistic call would have exactly zero phased spend and requiring a cost
+mapping for them regardless would fail in ordinary use; a week with exactly
+zero spend now needs no mapping at all (unambiguous zero regardless of
+cost).
+**Impact:** New `ancestry_mmm/core/planning/phasing.py`
+(`MethodProvenance`, `MonthReconciliation`, `WeeklyAllocationResult`,
+`WeeklyModelInputDerivation`, `MonetaryPhasingResult`,
+`HorizonConfiguration`, `canonical_weeks`,
+`phase_monthly_series_calendar_day_overlap_v1`,
+`reconcile_explicit_weekly_schedule`,
+`phase_monthly_series_explicit_override`,
+`phase_model_input_plan_calendar_day_overlap_v1`,
+`phase_monetary_plan_calendar_day_overlap_v1`); new
+`ancestry_mmm/tests/test_phasing.py` (26 tests); `core/planning/__init__.py`
+re-exports; `REQ-SCEN-002.md`/`REQ-SCEN-003.md` and
+`docs/specification_authority.md` updated to reflect implementation;
+`index.json` required_tests extended. No schema, migration, or
+persisted-field changes - this module is framework-independent and not yet
+called from any application service. mypy: 241 unchanged (`core/planning`
+is the mypy-blocked path; the new module type-checks clean).
+**Owner:** Data Science / Platform engineering.
+**Status:** Core phasing and horizon-configuration contracts implemented
+and tested. Future-context builder and all application-layer wiring
+(`application/scenario_service.py`, `pages/08_Scenario_Planner.py`,
+`core.optimization`'s objective, `core.sequential_simulation.WeeklyPlan`
+construction from a phased result) remain separately-scoped, not attempted
+in this targeted work package.
