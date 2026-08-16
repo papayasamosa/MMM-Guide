@@ -143,7 +143,15 @@ def test_old_mask_only_bundle_is_migrated_to_read_only_compatibility_views():
         )
     )
     legacy_meta = SimpleNamespace(
-        outcome_ids=["fh"], channels=["TV"], pathway_masks=restored
+        outcome_ids=["fh"],
+        channels=["TV"],
+        pathway_masks=restored,
+        # WP4 (Media-Mix-Lab: Coding LLM Next Steps After PR #253):
+        # steady_state_outcome_response now reads
+        # meta.resolved_pathway_masks (FHModelMeta.resolved_pathway_masks
+        # narrows pathway_masks to non-Optional) - this fake meta must
+        # carry both attributes to stand in for a real FHModelMeta.
+        resolved_pathway_masks=restored,
     )
     legacy_params = SimpleNamespace(
         hill_K={"TV": 100.0},
