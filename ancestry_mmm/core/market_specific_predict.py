@@ -189,17 +189,30 @@ def predict_mu_market_specific(
     frame: Dict,
     meta: FHModelMeta,
     params: FHMarketSpecificPosteriorParams,
+    *,
+    precomputed_sat_media: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """Replay Model C's full linear predictor in NumPy. Returns mu, shape
     (n_obs, n_outcomes), matching frame["outcome_ids"] order - same contract
-    as core.predict.predict_mu."""
+    as core.predict.predict_mu.
+
+    `precomputed_sat_media` - see `core.predict.predict_mu`'s identical
+    parameter (WP5, `Media-Mix-Lab: Coding LLM Next Steps After PR #253`)."""
     outcome_ids = meta.outcome_ids
     markets = frame["markets"]
-    n_obs = frame["X_media"].shape[0]
+    n_obs = (
+        frame["X_media"].shape[0]
+        if precomputed_sat_media is None
+        else (precomputed_sat_media.shape[0])
+    )
     n_out = len(outcome_ids)
 
-    sat_media = adstock_saturate_frame_market_specific(
-        frame["X_media"], frame["market_bounds"], markets, meta, params
+    sat_media = (
+        precomputed_sat_media
+        if precomputed_sat_media is not None
+        else adstock_saturate_frame_market_specific(
+            frame["X_media"], frame["market_bounds"], markets, meta, params
+        )
     )
 
     market_idx = frame["market_idx"]

@@ -688,6 +688,30 @@ CURRENT_PLANNING_EVALUATION_SEMANTICS = PlanningEvaluationSemantics(
     prediction_function_version="1.0.0",
 )
 
+# WP5 (`Media-Mix-Lab: Coding LLM Next Steps After PR #253`): the sequential
+# weekly simulation kernel's own truthful semantics - a second, explicitly-
+# labelled evaluation path alongside CURRENT_PLANNING_EVALUATION_SEMANTICS
+# above, never a silent replacement of it (see core/AGENTS.md's "Steady-
+# state versus sequential" section). Unlike the steady-state engine, this
+# one genuinely reconstructs a starting adstock state from real historical
+# media (`core.sequential_simulation.reconstruct_starting_state`) and
+# produces a terminal carryover state
+# (`core.sequential_simulation.simulate_terminal_carryover`), so both
+# applicability flags are True. `within_period_media_assumption` is
+# `"explicit_weekly_plan"` because - unlike the steady-state engine, which
+# assumes spend held constant within a period until it converges - this
+# engine takes an explicit weekly plan as input and never infers within-
+# period spread from a coarser (e.g. monthly) figure; that spread decision
+# is WP6's scope, not this engine's.
+SEQUENTIAL_WEEKLY_PLANNING_EVALUATION_SEMANTICS = PlanningEvaluationSemantics(
+    engine="sequential_weekly",
+    temporal_resolution="weekly",
+    within_period_media_assumption="explicit_weekly_plan",
+    carry_in_state_applicable=True,
+    terminal_state_applicable=True,
+    prediction_function_version="1.0.0",
+)
+
 
 # ---------------------------------------------------------------------------
 # Future assumptions (cost, FX, external controls)

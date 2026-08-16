@@ -4203,3 +4203,146 @@ package with an unverified test-infrastructure change.
 **Status:** mypy ceiling lowered and locked in; local wrapper drift fixed.
 Broader local-suite parallelisation remains a documented, not yet
 attempted, follow-up.
+
+## Sequential simulation kernel (Work Package 5)
+
+**Date:** 2026-08-16.
+
+**Decision:** Implement `ancestry_mmm/core/sequential_simulation.py`, a
+framework-independent weekly state-transition engine for the currently
+production-supported pathways (`core.hierarchical_model.
+build_fh_hierarchical_model` / Model A, and `core.market_specific_model` /
+Model C), sitting alongside - never replacing - the existing steady-state
+planner (`core.optimization`, `core.predict.steady_state_outcome_response`).
+This directly closes the gap `core/AGENTS.md`'s "Steady-state versus
+sequential" section and `REPO_REVIEW_AND_NEXT_STEPS.md` both named:
+"Scenario planning remains a steady-state monthly approximation rather than
+a sequential weekly simulation with starting adstock and terminal
+carryover."
+
+**Design - reuse over reimplementation (AGENTS.md's explicit instruction):**
+rather than a parallel adstock/eta implementation, this work made two
+small, additive, backward-compatible extensions to already-shipped
+production code and built the new kernel on top of them:
+
+1. `core.transformations.geometric_adstock`/`geometric_adstock_matrix`
+   gained an `initial_state` parameter (default `0.0`/`None`, reproducing
+   today's from-scratch behaviour exactly). Continuing the recursion from a
+   real ending state and normalising only the new segment is mathematically
+   exact - not an approximation - versus normalising the whole concatenated
+   series in one call and slicing (proved directly by
+   `TestGeometricAdstockInitialState` in `test_transformations.py`, and by
+   the sequential kernel's own golden-equivalence tests below).
+2. `core.predict.predict_mu`/`core.market_specific_predict.
+   predict_mu_market_specific` gained a `precomputed_sat_media` keyword: when
+   given, the caller's own adstocked-and-saturated media array is used in
+   place of the internal batch computation, while every other term
+   (baseline/market/trend/season/promo/controls, and the direct/cross-
+   product pathway-masked combination) is computed by the exact same,
+   already-tested code path. This is the mechanism that lets the sequential
+   kernel's carry-in-seeded `sat_media` flow through `predict_mu` unchanged,
+   so the two can never silently diverge for any non-adstock term.
+
+**Upstream reference (AGENTS.md's required upstream-reference workflow):**
+`pymc-labs/pymc-marketing` 0.18.1's `GeometricAdstock` is a *finite*
+`l_max`-truncated convolution (typical `l_max` 6-8 weekly), and its own
+forward-simulation notebooks prime that window by prepending `l_max`
+"warm-up" periods into the same array rather than passing an explicit
+carry-in state. This repo's `geometric_adstock` is a genuinely infinite-
+horizon recursive filter - a pre-existing divergence, not introduced here -
+so reproducing upstream's warm-up-prepend pattern would silently truncate
+the decay to a finite window, diverging from what was actually fit. An
+explicit `initial_state` scalar carried through the same recursive formula
+is the correct carry-in mechanism for this repo's own transform (see the
+module docstring for the full gap analysis).
+
+**Historical carry-in (brief: "do not assume zero, do not assume steady
+state, do not let carryover cross market boundaries"):**
+`reconstruct_starting_state`/`reconstruct_starting_state_market_specific`
+replay the real historical media through the *same* recursion (`initial_
+state=0` only at the market's own true history start, matching
+`market_bounds`' existing per-market scoping exactly) to obtain each
+channel's real ending raw-adstock value, plus a real historical
+adstocked-and-saturated media tail (`lag_context_sat_media`) long enough
+to serve the cross-product/halo lag term for the first weeks of a plan
+horizon without an incorrect zero-pad. `SequentialCarryInState` represents
+both explicitly, plus a `to_adstock_state()` projection onto the existing
+`core.planning.value.AdstockState`/`PlanningEvaluationSemantics` governance
+objects (kept unused since PR 72F/82E/88B, anticipating this exact work).
+
+**Candidate/reference contract and posterior handling:** `WeeklyPlan` +
+`simulate_sequential_outcomes`/`_market_specific` are the same pure
+function for both a candidate and a reference run - no-change equality is
+therefore an exact floating-point identity, not a tolerance-tuned
+approximation (`test_no_change_scenario_invariant_is_zero`, marked release-
+blocking per the brief). `simulate_sequential_outcomes_posterior` returns
+every sampled draw's full path stacked (`(n_draws, n_weeks, n_outcomes)`),
+never a summary - aggregation is the caller's responsibility, matching
+`core/AGENTS.md`'s "posterior-draw-level reconciliation before any summary
+statistic".
+
+**Terminal carryover:** `simulate_terminal_carryover` continues the exact
+same recursion past the plan horizon (typically with
+`zero_media_extension_plan`'s all-zero media). It returns a structurally
+separate `SequentialSimulationResult` - nothing in this module or in
+`core.optimization`'s objective functions folds it into an optimisation
+objective.
+
+**Candidate A Search - bounded, unchanged production boundary:** the
+outcome-level `simulate_sequential_outcomes` raises
+`CandidateAReplayNotSupportedError` for a Candidate A engine fit, exactly
+mirroring `predict_mu`'s WP3 guard - wiring `search_eta_contribution` into
+a counterfactual forward replay remains the genuine unresolved modelling
+design question WP3 already identified (REPO_REVIEW_AND_NEXT_STEPS.md),
+not something this package invents a default for. What this package does
+add, exactly as the brief specifies ("Candidate A Search state may be
+replayable for diagnostic/manual simulation, but Search planning
+eligibility remains governed separately"): a new, explicitly diagnostic-
+only `simulate_candidate_a_mediator_state_sequentially`, replaying only the
+demand/capture/cap chain (never the final outcome) week by week by reusing
+`core.search_capacity.candidate_a_forward` directly against a carry-in-
+seeded demand series. `core.search_capacity` also gained
+`CandidateASequentialDrawParams`/`extract_candidate_a_sequential_params`,
+the per-draw analogue of `extract_candidate_a_search_posterior_summary`'s
+existing distributional (posterior-mean) read.
+
+**Evidence:** `test_sequential_simulation.py` (26 tests) covers every item
+in the brief's required test list, centred on
+`TestGoldenEquivalence`: splitting one continuous media series into a
+historical prefix and a future plan, and asserting the sequential kernel's
+output over the future suffix is bit-identical (`rtol=1e-10`) to
+`predict_mu`'s existing batch replay over the whole series - proving
+adstock carry-in, Hill saturation, the DNA cross-product/halo lag, and
+direct/halo reconciliation are all correct simultaneously against the
+model's own already-shipped math, for both Model A and Model C, including
+a market that is not first in `meta.markets` (a real market-indexing bug
+this test caught during development - see the module's `_assemble_replay_
+frame` docstring). Also: zero-media/zero-carry-in baseline, non-zero
+historical carry-in changing week-one output, a one-week impulse's decay
+and lagged halo landing, no-market-leakage, the no-change candidate/
+reference invariant, terminal carryover's decaying residual response as a
+separate result, posterior draws returned unaggregated, Candidate A
+sequential reconciliation (`captured + unmet == demand`) and the non-
+binding-cap invariant (raising a non-binding cap does not change captured
+demand), and fail-closed behaviour for a Candidate A engine's outcome-level
+replay. `test_transformations.py` separately proves `initial_state`'s
+backward compatibility and its exactness versus full-batch recomputation.
+Full local suite (CI-equivalent exclusion set): all tests passing. mypy:
+245 -> 241 (a genuine `hill_function` signature fix - `K`/`S` accept
+`Union[float, np.ndarray]`, matching how every multi-channel caller already
+invokes it - retired 4 pre-existing errors at existing call sites while
+adding 0 net new ones from this package's own new call sites).
+
+**Scope not covered (explicitly deferred, per the brief):** how a monthly
+plan spreads across weeks (WP6); wiring this engine into
+`application/scenario_service.py`/`pages/08_Scenario_Planner.py` or
+`core.optimization`'s objective (a UI/application integration decision, not
+specified by this package); ragged multi-market predictors (WP7) and
+time-varying baseline (WP8) remain separately scoped.
+
+**Owner:** Data Science / Platform engineering.
+**Status:** Sequential simulation kernel implemented and tested for both
+production-supported model types; Candidate A diagnostic mediator-state
+replay implemented as a bounded capability. Application-layer integration
+(Scenario Planner UI, optimiser objective) is a documented follow-up, not
+attempted in this targeted work package.
