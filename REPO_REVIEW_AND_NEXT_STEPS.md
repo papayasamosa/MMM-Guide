@@ -9,23 +9,27 @@ and does not supersede `AGENTS.md`, `docs/approved_requirements/`, or
 
 Repository: `papayasamosa/Media-Mix-Lab`
 
-Current `main` reviewed: `3a0015848bb85c71c0fa3013cdf312bf7e3f80e4`
+Current `main` reviewed: `30c841b3c457771a4df0b5e21c06cd281be3f82e`
 
-Current head: **WP3: Candidate A application fit, diagnostics, and
-reporting workflow** (merged PR #257, 2026-08-15). This revision of the
-document additionally describes Work Package 4 of `Media-Mix-Lab: Coding
-LLM Next Steps After PR #253` (targeted structural and test hardening),
-landed on top of that baseline in the same work session.
+Current head: **Work Package 5 of `Media-Mix-Lab: Coding LLM Next Steps
+After PR #253`** (sequential simulation kernel), landed on top of that
+baseline in the same work session.
 
 Historical markers: earlier versions of this document reviewed
+`3a0015848bb85c71c0fa3013cdf312bf7e3f80e4` (merged PR #257, WP3),
 `0ed00d8a790669f7fbdf716c070a24fb4442964c` (merged PR #256, WP2),
 `e117abcd60171c3f2a57b437d617135e475a62bf` (merged PR #255, WP1),
 `3e2e525300a8526a52f59384271e54fe9815cbe0` (merged PR #254, WP0), and
 before that `b9b13916ad06c09e37cd53aa83a0fa3a7949a0dc` (merged PR #253) and
 `0845b150027dc59b192d2ec314b01910af3496ed` (merged PR #249, before the
-mixed-frequency executor and Candidate A Search engine existed). All five
-SHAs are superseded and are recorded here only for history, not as current
-state.
+mixed-frequency executor and Candidate A Search engine existed). WP4
+(targeted structural/test hardening) merged as PR #258 (`3cfe66de1244fc990c4d47ae6f7fa573ce2f64d2`)
+but that commit briefly left `main`'s own CI red - the repository has no
+branch protection on `main`, so `gh pr merge --auto` merged before checks
+completed; the one-file fix (a test double missing a new attribute) merged
+as PR #259, restoring `main`'s current head above. All SHAs listed in this
+paragraph are superseded and are recorded here only for history, not as
+current state.
 
 The local Python distribution name remains `mmm-guide` for compatibility with
 the existing install, script, export, and deployment surface. That legacy
@@ -99,6 +103,28 @@ The current implementation includes:
   `FHModelMeta.causal_graph_engine` (an existing, already-persisted field)
   carries the Candidate A engine identity through project export/import with
   no schema change - see Known bounded gaps for what remains unintegrated.
+- A sequential (weekly, state-transition) simulation kernel (WP5,
+  `ancestry_mmm/core/sequential_simulation.py`), sitting alongside - never
+  replacing - the existing steady-state monthly planner
+  (`core.optimization`, `core.predict.steady_state_outcome_response`): real
+  historical-media starting-adstock reconstruction
+  (`reconstruct_starting_state`/`_market_specific`, never assuming zero or
+  steady state, never crossing market boundaries), an explicit weekly-plan
+  input contract (`WeeklyPlan` - it never decides how a coarser plan spreads
+  across weeks, deferred to WP6), a candidate/reference contract sharing one
+  simulator (`compute_incremental_outcome`, with an exact-zero no-change
+  invariant), full per-draw posterior paths
+  (`simulate_sequential_outcomes_posterior`, aggregated only by the caller),
+  and terminal carryover as a structurally separate result
+  (`simulate_terminal_carryover`). Implemented for both production-
+  supported model types (shared/Model A and market-specific/Model C).
+  Candidate A gets a bounded, explicitly diagnostic-only mediator-state
+  replay (`simulate_candidate_a_mediator_state_sequentially`) - demand/
+  capture/cap only, never the final outcome; Search planning eligibility
+  remains governed separately. Proven by a golden-equivalence test suite
+  (`test_sequential_simulation.py`) asserting the kernel's output over a
+  future plan window is bit-identical to the existing batch replay
+  (`predict_mu`) evaluated over the same series as a whole.
 
 ## Known bounded gaps
 
@@ -173,13 +199,22 @@ business or modelling definitions:
   Ragged market-specific predictor mathematics (`FR-MOD-015`), moderated
   pathways, and residual-interaction engine support remain decision-bound or
   unsupported, independent of Candidate A.
-- The full-core mypy debt ceiling is now 245 errors (Work Package 4 closed
+- The full-core mypy debt ceiling is now 241 errors (Work Package 4 closed
   the single largest repeated pattern - 34 occurrences of a
   `FHModelMeta.pathway_masks` Optional-narrowing gap now fixed via
-  `FHModelMeta.resolved_pathway_masks`); it is a ceiling, not a target. CI
-  must fail if the measured count increases.
-- Scenario planning remains a steady-state monthly approximation rather than
-  a sequential weekly simulation with starting adstock and terminal carryover.
+  `FHModelMeta.resolved_pathway_masks`; Work Package 5 fixed
+  `core.transformations.hill_function`'s parameter typing - `K`/`S` accept
+  `Union[float, np.ndarray]`, matching how every multi-channel caller
+  already invokes it - retiring 4 further pre-existing errors); it is a
+  ceiling, not a target. CI must fail if the measured count increases.
+- Scenario planning's *application-layer* surface (`application/
+  scenario_service.py`, `pages/08_Scenario_Planner.py`,
+  `core.optimization`'s objective) remains a steady-state monthly
+  approximation. The underlying sequential weekly simulation kernel with
+  starting adstock and terminal carryover now exists (WP5,
+  `core.sequential_simulation`, see Delivered foundation above) - wiring it
+  into the Scenario Planner UI or the optimiser's objective is a documented,
+  not-yet-attempted application-integration follow-up, not a modelling gap.
 - Chronos-2 or another future exogenous forecasting integration is not yet
   implemented.
 - Real UK data readiness is an operational step and must be run only by an

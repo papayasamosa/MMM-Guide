@@ -349,6 +349,8 @@ def predict_mu(
     frame: Dict,
     meta: FHModelMeta,
     params: FHPosteriorParams,
+    *,
+    precomputed_sat_media: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """
     Replay the model's full linear predictor in NumPy for an arbitrary frame
@@ -359,6 +361,19 @@ def predict_mu(
 
     Raises `CandidateAReplayNotSupportedError` for a Candidate A fit - see
     that exception's docstring.
+
+    `precomputed_sat_media` (WP5, `Media-Mix-Lab: Coding LLM Next Steps
+    After PR #253`, sequential simulation kernel): when given, this exact
+    (n_obs, n_channels) adstocked-and-saturated array is used in place of
+    calling `adstock_saturate_frame` on `frame["X_media"]` - every other
+    term (baseline/market/trend/season/promo/controls, and the direct/
+    cross-product pathway-masked combination of the media term) is
+    unchanged, so a caller with its own sequentially-computed (carry-in-
+    seeded) `sat_media` - `core.sequential_simulation` - gets bit-identical
+    non-media math to the batch replay, rather than a second, parallel
+    eta-assembly implementation. `frame["X_media"]` is not read at all in
+    this case (it still may be needed by the caller to build
+    `precomputed_sat_media` itself).
     """
     if meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE:
         raise CandidateAReplayNotSupportedError(
@@ -368,11 +383,19 @@ def predict_mu(
             "Candidate A fit. See REPO_REVIEW_AND_NEXT_STEPS.md."
         )
     outcome_ids = meta.outcome_ids
-    n_obs = frame["X_media"].shape[0]
+    n_obs = (
+        frame["X_media"].shape[0]
+        if precomputed_sat_media is None
+        else (precomputed_sat_media.shape[0])
+    )
     n_out = len(outcome_ids)
 
-    sat_media = adstock_saturate_frame(
-        frame["X_media"], frame["market_bounds"], meta, params
+    sat_media = (
+        precomputed_sat_media
+        if precomputed_sat_media is not None
+        else adstock_saturate_frame(
+            frame["X_media"], frame["market_bounds"], meta, params
+        )
     )
 
     beta_matrix = np.array(

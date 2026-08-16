@@ -32,6 +32,7 @@ from ancestry_mmm.core.search_capacity import (
     candidate_a_use_gate,
     counterfactual_search_effects,
     extract_candidate_a_search_posterior_summary,
+    extract_candidate_a_sequential_params,
     identify_candidate_a_search,
     posterior_outputs_from_forward_draws,
     validate_candidate_a_spec,
@@ -468,3 +469,47 @@ class TestExtractCandidateASearchPosteriorSummary:
             extract_candidate_a_search_posterior_summary(
                 ordinary_trace, outcome_ids=["fh_new"]
             )
+
+
+class TestExtractCandidateASequentialParams:
+    """WP5 (`Media-Mix-Lab: Coding LLM Next Steps After PR #253`): the
+    per-draw analogue of `extract_candidate_a_search_posterior_summary` -
+    `core.sequential_simulation`'s diagnostic mediator-state replay needs
+    one posterior draw's demand/capture-chain parameters, not a
+    distributional summary. Reuses the same synthetic-trace fixture shape."""
+
+    def test_at_none_returns_posterior_mean(self):
+        trace = TestExtractCandidateASearchPosteriorSummary._fake_trace(
+            demand_channels=("SearchBrand", "TV")
+        )
+        params = extract_candidate_a_sequential_params(trace)
+        assert params.demand_channel_names == ["SearchBrand", "TV"]
+        assert set(params.demand_market_offset) == {"MKT0"}
+        assert set(params.demand_media_beta) == {"SearchBrand", "TV"}
+        assert set(params.capture_share) == {"paid", "organic", "direct", "unmet"}
+        post = trace.posterior
+        assert params.demand_intercept == pytest.approx(
+            float(post["search_demand_intercept"].mean(dim=["chain", "draw"]).values)
+        )
+
+    def test_at_specific_draw_selects_that_draw_not_the_mean(self):
+        trace = TestExtractCandidateASearchPosteriorSummary._fake_trace()
+        mean_params = extract_candidate_a_sequential_params(trace)
+        draw_params = extract_candidate_a_sequential_params(trace, at=(0, 0))
+        post = trace.posterior
+        expected = float(post["search_demand_intercept"].isel(chain=0, draw=0).values)
+        assert draw_params.demand_intercept == pytest.approx(expected)
+        assert draw_params.demand_intercept != pytest.approx(
+            mean_params.demand_intercept
+        )
+
+    def test_raises_on_a_trace_missing_candidate_a_variables(self):
+        import arviz as az
+
+        ordinary_trace = az.from_dict(
+            posterior={"beta": np.zeros((1, 2, 1, 1))},
+            dims={"beta": ["outcome", "channel"]},
+            coords={"outcome": ["fh_new"], "channel": ["TV"]},
+        )
+        with pytest.raises(SearchCapacityValidationError):
+            extract_candidate_a_sequential_params(ordinary_trace)

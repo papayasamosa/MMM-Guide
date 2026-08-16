@@ -41,6 +41,92 @@ def test_geometric_adstock_matrix_matches_per_channel_calls():
     np.testing.assert_allclose(result[:, 1], expected_col1)
 
 
+class TestGeometricAdstockInitialState:
+    """WP5 (`Media-Mix-Lab: Coding LLM Next Steps After PR #253`, sequential
+    simulation kernel): `initial_state` seeds the recursion with a carried-
+    in raw accumulator value instead of implicitly starting at zero. These
+    tests prove the two required properties: (1) the default reproduces
+    today's from-scratch behaviour exactly (backward compatibility), and
+    (2) continuing the recursion from a real ending state is mathematically
+    exact - not an approximation - versus running the whole concatenated
+    series through the original zero-start call and slicing off the tail."""
+
+    def test_default_initial_state_matches_original_zero_start_behaviour(self):
+        x = np.array([3.0, 1.0, 4.0, 1.0, 5.0, 0.0, 2.0])
+        original = geometric_adstock(x, decay_rate=0.6, normalize=True)
+        explicit_zero = geometric_adstock(
+            x, decay_rate=0.6, normalize=True, initial_state=0.0
+        )
+        np.testing.assert_allclose(original, explicit_zero)
+
+    def test_matrix_default_initial_state_matches_original_zero_start_behaviour(self):
+        X = np.array([[10.0, 1.0], [0.0, 1.0], [5.0, 1.0]])
+        decay_rates = np.array([0.5, 0.25])
+        original = geometric_adstock_matrix(X, decay_rates, normalize=True)
+        explicit_zero = geometric_adstock_matrix(
+            X, decay_rates, normalize=True, initial_state=np.zeros(2)
+        )
+        np.testing.assert_allclose(original, explicit_zero)
+
+    def test_continuing_from_real_ending_state_matches_full_batch_computation(self):
+        # "Adstock equivalence to current batch transformation": splitting
+        # one continuous series into a "historical" prefix and a "future"
+        # suffix, reconstructing the ending raw state from the prefix, and
+        # continuing the future suffix from that state must give bit-
+        # identical results to running the whole series through the
+        # existing batch transformation in one call and slicing.
+        rng = np.random.default_rng(0)
+        full = rng.uniform(0.0, 100.0, size=20)
+        decay = 0.7
+        n_hist = 12
+
+        full_batch = geometric_adstock(full, decay_rate=decay, normalize=True)
+        expected_future = full_batch[n_hist:]
+
+        hist_raw = geometric_adstock(full[:n_hist], decay_rate=decay, normalize=False)
+        starting_state = hist_raw[-1]
+        future_result = geometric_adstock(
+            full[n_hist:],
+            decay_rate=decay,
+            normalize=True,
+            initial_state=starting_state,
+        )
+        np.testing.assert_allclose(future_result, expected_future, rtol=1e-12)
+
+    def test_matrix_continuing_from_real_ending_state_matches_full_batch_computation(
+        self,
+    ):
+        rng = np.random.default_rng(1)
+        full = rng.uniform(0.0, 100.0, size=(20, 3))
+        decay_rates = np.array([0.7, 0.3, 0.5])
+        n_hist = 8
+
+        full_batch = geometric_adstock_matrix(full, decay_rates, normalize=True)
+        expected_future = full_batch[n_hist:]
+
+        hist_raw = geometric_adstock_matrix(full[:n_hist], decay_rates, normalize=False)
+        starting_state = hist_raw[-1]
+        future_result = geometric_adstock_matrix(
+            full[n_hist:],
+            decay_rates,
+            normalize=True,
+            initial_state=starting_state,
+        )
+        np.testing.assert_allclose(future_result, expected_future, rtol=1e-12)
+
+    def test_nonzero_initial_state_changes_first_period_output(self):
+        x = np.array([0.0, 0.0, 0.0])
+        zero_start = geometric_adstock(x, decay_rate=0.5, normalize=True)
+        carried_in = geometric_adstock(
+            x, decay_rate=0.5, normalize=True, initial_state=10.0
+        )
+        assert zero_start[0] == pytest.approx(0.0)
+        # raw[0] = x[0] + decay*initial_state = 0 + 0.5*10 = 5; normalize
+        # scales the whole output by (1 - decay) = 0.5 afterwards -> 2.5.
+        assert carried_in[0] == pytest.approx(0.5 * (0.5 * 10.0))
+        assert np.all(carried_in > zero_start)
+
+
 def test_geometric_adstock_matches_pymc_marketing_unnormalized():
     """Guard the portion of the upstream transform we intentionally match."""
     pytest.importorskip("pymc_marketing")

@@ -1,7 +1,7 @@
 """Marketing mix model transformations: adstock and saturation functions."""
 
 import numpy as np
-from typing import Union
+from typing import Optional, Union
 import pytensor
 import pytensor.tensor as pt
 
@@ -10,6 +10,7 @@ def geometric_adstock(
     x: np.ndarray,
     decay_rate: float,
     normalize: bool = True,
+    initial_state: float = 0.0,
 ) -> np.ndarray:
     """
     Apply geometric adstock transformation.
@@ -22,16 +23,32 @@ def geometric_adstock(
         x: Array of spend values, shape (n_periods,)
         decay_rate: Decay rate between 0 and 1. Higher values = longer carryover.
         normalize: Whether to normalize by (1 - decay_rate) to maintain scale.
-
-    Returns:
-        Adstocked values, same shape as input.
+        initial_state: The raw (pre-normalize) recursion value carried in from
+            before `x[0]` - `0.0` (the default) reproduces this function's
+            original from-scratch behaviour exactly. WP5 (`Media-Mix-Lab:
+            Coding LLM Next Steps After PR #253`, sequential simulation
+            kernel) uses a non-zero value to seed a weekly plan's adstock
+            recursion with the real ending state reconstructed from
+            historical media, rather than assuming a plan horizon starts
+            from zero carryover. This is a raw accumulator value - the same
+            one this recursion already carries internally before the
+            `normalize` scaling is applied to the output - not an
+            already-normalized/saturated quantity. Because `normalize` is
+            an elementwise scaling of each already-computed raw value, this
+            is mathematically exact (not an approximation): continuing the
+            recursion from a real ending state and normalizing only the new
+            segment gives bit-identical results to normalizing the entire
+            concatenated (history + new segment) series in one call and
+            slicing off the new segment - see
+            `TestGeometricAdstockInitialState` in test_transformations.py.
     """
     n = len(x)
     adstocked = np.zeros(n)
-    adstocked[0] = x[0]
+    adstocked_prev = float(initial_state)
 
-    for t in range(1, n):
-        adstocked[t] = x[t] + decay_rate * adstocked[t - 1]
+    for t in range(n):
+        adstocked_prev = x[t] + decay_rate * adstocked_prev
+        adstocked[t] = adstocked_prev
 
     if normalize:
         adstocked = adstocked * (1 - decay_rate)
@@ -43,6 +60,7 @@ def geometric_adstock_matrix(
     X: np.ndarray,
     decay_rates: Union[float, np.ndarray],
     normalize: bool = True,
+    initial_state: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """
     Apply geometric adstock to multiple channels.
@@ -51,6 +69,10 @@ def geometric_adstock_matrix(
         X: Array of spend values, shape (n_periods, n_channels)
         decay_rates: Single decay rate or array of rates per channel
         normalize: Whether to normalize
+        initial_state: Per-channel raw carry-in state, shape (n_channels,) -
+            `None` (the default) means every channel starts from zero,
+            reproducing this function's original behaviour exactly. See
+            `geometric_adstock`'s `initial_state` parameter.
 
     Returns:
         Adstocked values, same shape as input.
@@ -59,18 +81,22 @@ def geometric_adstock_matrix(
 
     if isinstance(decay_rates, (int, float)):
         decay_rates = np.full(n_channels, decay_rates)
+    if initial_state is None:
+        initial_state = np.zeros(n_channels)
 
     result = np.zeros_like(X)
     for j in range(n_channels):
-        result[:, j] = geometric_adstock(X[:, j], decay_rates[j], normalize)
+        result[:, j] = geometric_adstock(
+            X[:, j], decay_rates[j], normalize, initial_state=initial_state[j]
+        )
 
     return result
 
 
 def hill_function(
     x: np.ndarray,
-    K: float,
-    S: float,
+    K: Union[float, np.ndarray],
+    S: Union[float, np.ndarray],
 ) -> np.ndarray:
     """
     Apply Hill function (saturation/diminishing returns).
@@ -80,8 +106,14 @@ def hill_function(
 
     Args:
         x: Input values (typically adstocked spend)
-        K: Half-saturation point (spend level at 50% saturation)
-        S: Shape parameter (steepness of the curve)
+        K: Half-saturation point (spend level at 50% saturation) - a scalar,
+            or a per-channel array broadcastable against `x`'s trailing
+            axis (every existing caller with a multi-channel `x` - e.g.
+            `core.predict.adstock_saturate_frame` - already passes an
+            array here; the parameter type previously only documented the
+            single-channel call shape).
+        S: Shape parameter (steepness of the curve) - same scalar-or-array
+            contract as `K`.
 
     Returns:
         Saturated values in [0, 1] range.

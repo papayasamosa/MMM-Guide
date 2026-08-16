@@ -1002,6 +1002,92 @@ def extract_candidate_a_search_posterior_summary(
     )
 
 
+@dataclass(frozen=True)
+class CandidateASequentialDrawParams:
+    """One posterior draw's Candidate A demand/capture-chain parameters -
+    everything `core.sequential_simulation` needs to replay the demand
+    equation (`exp(intercept + market_offset + dot(sat_media[demand_idx],
+    beta))`) and capture/cap arithmetic (`candidate_a_forward`) at an
+    arbitrary counterfactual weekly spend point, for diagnostic sequential
+    simulation only (WP5, `Media-Mix-Lab: Coding LLM Next Steps After
+    PR #253`). This is the per-draw analogue of
+    `CandidateASearchPosteriorSummary`'s distributional (posterior-mean)
+    read - NOT a grant of planning/optimisation eligibility
+    (`candidate_a_use_gate` remains the sole official-use decision)."""
+
+    demand_channel_names: List[str]
+    demand_intercept: float
+    demand_market_offset: Dict[str, float]
+    demand_media_beta: Dict[str, float]
+    capture_share: Dict[str, float]  # {"paid", "organic", "direct", "unmet"}
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def extract_candidate_a_sequential_params(
+    trace: Any,
+    at: Optional[tuple[int, int]] = None,
+) -> CandidateASequentialDrawParams:
+    """Pull one posterior draw's (or, with `at=None`, the posterior mean's)
+    Candidate A demand/capture-chain parameters - matching
+    `core.predict.extract_posterior_params`'s `at` convention (a specific
+    `(chain, draw)` index pair makes per-draw sequential simulation
+    possible, exactly like every other per-draw posterior extraction in
+    this codebase - `core.uncertainty.sample_draw_indices` picks the
+    indices).
+
+    Raises `SearchCapacityValidationError` if the trace does not contain
+    the Candidate A demand/capture variables - not a Candidate A fit.
+    """
+    post = trace.posterior
+    required = (
+        "search_demand_intercept",
+        "search_demand_market_offset",
+        "search_demand_media_beta",
+        "search_capture_shares",
+    )
+    missing = [name for name in required if name not in post]
+    if missing:
+        raise SearchCapacityValidationError(
+            f"Trace is missing Candidate A variables - not a Candidate A fit: {missing}"
+        )
+
+    def _reduce(da: Any) -> Any:
+        if at is not None:
+            return da.isel(chain=at[0], draw=at[1])
+        return da.mean(dim=["chain", "draw"])
+
+    demand_channel_names = [str(v) for v in post.coords["search_demand_channel"].values]
+    market_names = [str(v) for v in post.coords["market"].values]
+
+    demand_media_beta_reduced = _reduce(post["search_demand_media_beta"])
+    demand_media_beta = {
+        name: float(demand_media_beta_reduced.sel(search_demand_channel=name).values)
+        for name in demand_channel_names
+    }
+    demand_market_offset_reduced = _reduce(post["search_demand_market_offset"])
+    demand_market_offset = {
+        m: float(demand_market_offset_reduced.sel(market=m).values)
+        for m in market_names
+    }
+    capture_shares_reduced = _reduce(post["search_capture_shares"])
+    capture_share = {
+        component: float(
+            capture_shares_reduced.sel(search_capture_share_component=component).values
+        )
+        for component in CANDIDATE_A_CAPTURE_SHARE_COMPONENTS
+    }
+
+    return CandidateASequentialDrawParams(
+        demand_channel_names=demand_channel_names,
+        demand_intercept=float(_reduce(post["search_demand_intercept"]).values),
+        demand_market_offset=demand_market_offset,
+        demand_media_beta=demand_media_beta,
+        capture_share=capture_share,
+    )
+
+
 def build_candidate_a_search_model(
     *,
     upstream_media: Sequence[float] | np.ndarray,
@@ -1328,6 +1414,7 @@ __all__ = [
     "CandidateAForwardState",
     "CandidateAPosteriorOutputs",
     "CandidateASearchFitInputs",
+    "CandidateASequentialDrawParams",
     "SEARCH_CANDIDATE_A_ENGINE",
     "SEARCH_CANDIDATE_A_FORMULATION_ID",
     "SearchCandidateASpec",
@@ -1340,6 +1427,7 @@ __all__ = [
     "candidate_a_forward",
     "candidate_a_use_gate",
     "counterfactual_search_effects",
+    "extract_candidate_a_sequential_params",
     "identify_candidate_a_search",
     "posterior_outputs_from_forward_draws",
     "validate_candidate_a_spec",
