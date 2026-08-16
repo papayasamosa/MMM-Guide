@@ -114,15 +114,20 @@ Requires Python 3.11 or 3.12 (see [Deployment](#deployment) below for why there'
   movement, minimum-spend floors), and a clearly-labelled unconstrained benchmark - market-aware
   for Model C, with a media-unit planning mode - all evaluated with a documented steady-state
   response approximation using the model's real fitted curves, not literal MCMC-in-the-loop.
-  **Current state:** the Scenario Planner is a steady-state monthly approximation. The full
-  sequential weekly planner and Chronos-2 integration are not yet implemented. A Candidate A
-  capacity-constrained Search engine capability (`core/search_capacity.py`, `REQ-SEARCH-002`)
-  is now wired into Model Training's fit path (`application/model_fit_service.py`,
+  **Current state:** the Scenario Planner application is a steady-state monthly approximation.
+  A framework-independent sequential (weekly, state-transition) simulation kernel
+  (`core/sequential_simulation.py`) exists alongside it - real historical-media starting-adstock
+  reconstruction, an explicit weekly-plan contract, a candidate/reference incremental-outcome
+  contract, and terminal carryover, for both production-supported model types - but it is not yet
+  wired into this page or the optimiser's objective, and Chronos-2 integration is not implemented.
+  A Candidate A capacity-constrained Search engine capability (`core/search_capacity.py`,
+  `REQ-SEARCH-002`) is now wired into Model Training's fit path (`application/model_fit_service.py`,
   `core.hierarchical_model.build_fh_hierarchical_model(..., search_candidate_a=...)`), reusing
   that builder's own multi-channel adstock/Hill/market machinery - governed by the project's
-  approved causal graph, never a UI toggle. It is not yet wired into Diagnostics, Results,
-  official curves, or the Scenario Planner, and Search planning/optimisation remain disabled
-  pending evidence and approval (see `docs/approved_requirements/` for the capability roadmap).
+  approved causal graph, never a UI toggle - and into a dedicated "Candidate A Search" Diagnostics
+  tab. It is not yet wired into Results, official curves, or the Scenario Planner, and Search
+  planning/optimisation remain disabled pending evidence and approval (see
+  `docs/approved_requirements/` for the capability roadmap).
 - **Outcome governance** (`ancestry_mmm/core/outcome_approval.py`): separate outcome definition,
   analytical eligibility, and approval for use — a fitted outcome does not automatically become
   planning-eligible. Net Bill Through is conditionally available: it requires both an approved
@@ -153,14 +158,16 @@ PowerPoint export, real Australia/Canada market builds (the geo hierarchy machin
 and exercised by the synthetic 3-market demo, but needs real data to mean anything), a live feed
 from geo-tests/in-platform tests into the curve bank (the comparison/logging workflow exists; the
 feed is manual), Stage 2 media x context interaction terms (explicitly out of scope per the
-requirements brief), the full policy-backed model-approval treatment for unsupported coverage, and
-a sequential weekly planner with starting adstock and terminal carryover. Executable frequency
-conversion for non-native-cadence sources **is now built** for the governed method catalogue
-(`docs/mixed_frequency_alignment_wp1.md`); it remains deliberately narrow and does not resolve
-`FR-MOD-015` ragged-predictor mathematics. A Candidate A Search mediation/capacity engine
-capability (`core/search_capacity.py`) is now wired into Model Training's fit path, but not yet
-into Diagnostics, Results, official curves, or the Scenario Planner - see the Scenario Planner
-section above and `REPO_REVIEW_AND_NEXT_STEPS.md`.
+requirements brief), and the full policy-backed model-approval treatment for unsupported coverage.
+A sequential (weekly, state-transition) simulation kernel with starting adstock and terminal
+carryover **is now built** (`core/sequential_simulation.py`); it is not yet wired into the
+Scenario Planner application or the optimiser's objective - see the Scenario Planner section
+above. Executable frequency conversion for non-native-cadence sources **is now built** for the
+governed method catalogue (`docs/mixed_frequency_alignment_wp1.md`); it remains deliberately
+narrow and does not resolve `FR-MOD-015` ragged-predictor mathematics. A Candidate A Search
+mediation/capacity engine capability (`core/search_capacity.py`) is now wired into Model Training's
+fit path and into a dedicated Diagnostics tab, but not yet into Results, official curves, or the
+Scenario Planner - see the Scenario Planner section above and `REPO_REVIEW_AND_NEXT_STEPS.md`.
 
 ## Project structure
 

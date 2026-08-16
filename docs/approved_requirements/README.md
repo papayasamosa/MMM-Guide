@@ -46,3 +46,5 @@ Coding agents must not independently interpret or reconcile the external Ancestr
 - `REQ-COVERAGE-*` — variable coverage, missingness-state, and mixed-frequency data authority
 - `REQ-DATAIN-*` — data input contract: logical source domains and cross-market activity identity
 - `REQ-ACTIVITY-*` — governed activity identity, reporting taxonomy, and funnel classification
+- `REQ-STATE-*` — sequential (weekly, state-transition) simulation state contract
+- `REQ-SCEN-*` — sequential scenario evaluation, monthly-to-weekly phasing, and horizon/terminal reporting

@@ -1,6 +1,6 @@
 {
   "schema_version": 3,
-  "generated_at": "2026-08-14",
+  "generated_at": "2026-08-16",
   "requirements": [
     {
       "requirement_id": "REQ-AUTH-001",
@@ -432,6 +432,93 @@
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable"
+      ]
+    },
+    {
+      "requirement_id": "REQ-STATE-001",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-STATE-001.md",
+      "affected_modules": [
+        "ancestry_mmm/core/sequential_simulation.py",
+        "ancestry_mmm/core/transformations.py",
+        "ancestry_mmm/core/predict.py",
+        "ancestry_mmm/core/market_specific_predict.py",
+        "ancestry_mmm/tests/test_sequential_simulation.py"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_sequential_simulation.py::TestGoldenEquivalence::test_shared_model_sequential_matches_full_batch",
+        "ancestry_mmm/tests/test_sequential_simulation.py::TestReconstructStartingState::test_zero_history_gives_zero_starting_adstock",
+        "ancestry_mmm/tests/test_sequential_simulation.py::TestReconstructStartingState::test_nonzero_history_reconstructs_matching_raw_adstock",
+        "ancestry_mmm/tests/test_sequential_simulation.py::TestNoMarketLeakage::test_changing_another_markets_history_does_not_affect_this_markets_carry_in"
+      ]
+    },
+    {
+      "requirement_id": "REQ-SCEN-001",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-SCEN-001.md",
+      "affected_modules": [
+        "ancestry_mmm/core/sequential_simulation.py",
+        "ancestry_mmm/tests/test_sequential_simulation.py"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_sequential_simulation.py::TestCandidateReferenceContract::test_no_change_scenario_invariant_is_zero",
+        "ancestry_mmm/tests/test_sequential_simulation.py::TestPosteriorHandling::test_returns_one_full_path_per_draw_not_a_summary"
+      ]
+    },
+    {
+      "requirement_id": "REQ-SCEN-002",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-SCEN-002.md",
+      "affected_modules": [
+        "ancestry_mmm/core/planning/phasing.py",
+        "ancestry_mmm/core/sequential_simulation.py",
+        "ancestry_mmm/core/frequency_alignment.py",
+        "ancestry_mmm/core/media_costs.py",
+        "ancestry_mmm/core/media_units.py"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable"
+      ]
+    },
+    {
+      "requirement_id": "REQ-SCEN-003",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-SCEN-003.md",
+      "affected_modules": [
+        "ancestry_mmm/core/sequential_simulation.py",
+        "application/scenario_service.py",
+        "ancestry_mmm/pages/08_Scenario_Planner.py",
+        "ancestry_mmm/core/scenario_governance.py"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_sequential_simulation.py::TestTerminalCarryover::test_terminal_carryover_shows_decaying_residual_response"
       ]
     }
   ]

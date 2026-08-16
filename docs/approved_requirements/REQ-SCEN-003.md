@@ -1,0 +1,84 @@
+# REQ-SCEN-003: Response horizon and terminal reporting contract
+
+## Approval and traceability
+
+Approved for implementation by the task-specific implementation brief
+`Media-Mix-Lab: Coding LLM Next Steps Post WP5` (2026-08-16), per this
+repository's standard authority hierarchy. Depends on `REQ-STATE-001` (the
+kernel already computes ending state and terminal carryover as structurally
+separate results - `simulate_terminal_carryover`/
+`simulate_terminal_carryover_market_specific`) and `REQ-SCEN-001`
+(candidate/reference evaluation this reporting wraps). The kernel-level
+mechanics this record reports on already exist; the horizon-configuration
+and reporting/persistence contract below is new and not yet implemented at
+the application layer.
+
+## Starting and ending state reporting
+
+An application surfacing sequential results must report starting carryover
+(reconstructed from historical activity through the fit cut-off,
+`REQ-STATE-001`) and ending carryover (remaining after the formal plan
+window) as an analyst-readable summary - not raw state arrays as the
+primary UI. Raw state may remain available in expandable technical detail.
+
+## Short/long/terminal horizon configuration
+
+A typed horizon configuration must be persisted with every sequential
+scenario, containing:
+
+- short horizon (initial standard preset: weeks 0-4)
+- long horizon (initial standard preset: weeks 5-52)
+- plan horizon (the formal plan window)
+- terminal continuation horizon (initial standard preset: 52 weeks,
+  configurable)
+
+The core contract must accept explicit horizon values; UI presets are a
+convenience default, never a hidden constant.
+
+## Terminal carryover is reported separately
+
+Terminal carryover must be reported separately from the formal plan-window
+incremental outcome - never automatically included in the optimisation
+objective in the first sequential-planning release. A later, separately
+approved requirement may authorise terminal value in the objective; until
+then, an optimiser or scenario summary that folds terminal carryover into
+its headline incremental-outcome number violates this record.
+
+## Posterior aggregation
+
+Consistent with `REQ-SCEN-001` item 5: sequential uncertainty must be
+calculated draw by draw. Do not simulate only posterior means and call the
+result posterior uncertainty; do not add separately summarised
+direct/halo/component medians; do not break draw alignment. Aggregate
+draws only after the complete path (plan-window and, where reported,
+terminal) has been evaluated per draw.
+
+## Method labelling
+
+Every result produced under this contract must record and display which
+evaluation method (sequential weekly vs. steady-state monthly
+approximation) produced it, consistent with `REQ-SCEN-001` item 7. A
+result must never be presented as timing-aware (starting carryover,
+month-by-month timing, short/long response, terminal carryover) unless it
+was produced by the sequential contract.
+
+## Affected modules (future implementation)
+
+- `ancestry_mmm/core/sequential_simulation.py`
+  (`simulate_terminal_carryover`/`simulate_terminal_carryover_market_specific`
+  already implemented at kernel level; horizon-configuration typing is new)
+- `application/scenario_service.py`, `pages/08_Scenario_Planner.py` (not yet
+  wired to this contract - see `REPO_REVIEW_AND_NEXT_STEPS.md`)
+- Scenario persistence/staleness (`core.scenario_governance`,
+  `core.persistence`) - horizon configuration and terminal-carryover result
+  must be part of the persisted, fingerprinted scenario record
+
+## Owner and status
+
+**Owner:** Data Science / Platform engineering.
+
+**Status:** Approved for implementation. Kernel-level terminal-carryover
+mechanics (item 1's dependency) are already implemented and tested
+(`REQ-STATE-001`). The horizon-configuration type, its persistence, and its
+exclusion from the optimisation objective are approved but not yet
+implemented.
