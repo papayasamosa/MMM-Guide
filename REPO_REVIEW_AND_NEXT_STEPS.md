@@ -9,13 +9,14 @@ and does not supersede `AGENTS.md`, `docs/approved_requirements/`, or
 
 Repository: `papayasamosa/Media-Mix-Lab`
 
-Current `main` reviewed: `30c841b3c457771a4df0b5e21c06cd281be3f82e`
+Current `main` reviewed: `ef4744f1d587f061e8859cb26e24740325335de2`
 
 Current head: **Work Package 5 of `Media-Mix-Lab: Coding LLM Next Steps
-After PR #253`** (sequential simulation kernel), landed on top of that
-baseline in the same work session.
+After PR #253`** (sequential simulation kernel), merged as PR #260.
 
 Historical markers: earlier versions of this document reviewed
+`30c841b3c457771a4df0b5e21c06cd281be3f82e` (merged PR #259, WP5 test-double
+fix, superseded by PR #260 above),
 `3a0015848bb85c71c0fa3013cdf312bf7e3f80e4` (merged PR #257, WP3),
 `0ed00d8a790669f7fbdf716c070a24fb4442964c` (merged PR #256, WP2),
 `e117abcd60171c3f2a57b437d617135e475a62bf` (merged PR #255, WP1),
@@ -27,9 +28,9 @@ mixed-frequency executor and Candidate A Search engine existed). WP4
 but that commit briefly left `main`'s own CI red - the repository has no
 branch protection on `main`, so `gh pr merge --auto` merged before checks
 completed; the one-file fix (a test double missing a new attribute) merged
-as PR #259, restoring `main`'s current head above. All SHAs listed in this
-paragraph are superseded and are recorded here only for history, not as
-current state.
+as PR #259, restoring `main`'s CI to green before WP5 (PR #260) merged on
+top of it. All SHAs listed in this paragraph are superseded and are
+recorded here only for history, not as current state.
 
 The local Python distribution name remains `mmm-guide` for compatibility with
 the existing install, script, export, and deployment surface. That legacy

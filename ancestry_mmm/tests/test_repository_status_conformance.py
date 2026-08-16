@@ -20,6 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 README = REPO_ROOT / "README.md"
 REPO_REVIEW = REPO_ROOT / "REPO_REVIEW_AND_NEXT_STEPS.md"
 FREQUENCY_DECISION = REPO_ROOT / "docs" / "decision_required_frequency_methods.md"
+SPEC_AUTHORITY = REPO_ROOT / "docs" / "specification_authority.md"
 
 STATUS_DOCS = [README, REPO_REVIEW]
 
@@ -147,4 +148,72 @@ def test_frequency_decision_doc_reflects_approved_wp1_catalogue():
     assert "approved and registered" in text or "is approved" in text, (
         "docs/decision_required_frequency_methods.md must state that the "
         "WP1 method catalogue is approved for official use."
+    )
+
+
+# Literal phrasing that has previously appeared in docs/specification_authority.md
+# claiming the mixed-frequency conversion-method registry is empty as a
+# blanket, current-state fact. The WP1 catalogue has been approved and
+# registered since PR #250 (docs/decision_required_frequency_methods.md,
+# core.frequency_conversion.ensure_approved_frequency_methods) - a bare
+# "registry is currently empty"/"registry above is therefore still empty"
+# claim is stale unless scoped to "outside the WP1 catalogue".
+STALE_SPEC_AUTHORITY_REGISTRY_EMPTY_PHRASES = [
+    "the conversion-method registry is currently empty",
+    "the conversion-method registry above is therefore still empty",
+]
+
+
+def test_spec_authority_frequency_registry_not_claimed_empty():
+    """docs/specification_authority.md must not claim the mixed-frequency
+    conversion-method registry is empty - the WP1 catalogue has been
+    approved and registered since PR #250, the same fact
+    test_frequency_decision_doc_reflects_approved_wp1_catalogue enforces
+    for docs/decision_required_frequency_methods.md. A repository authority
+    doc and its own dependent decision doc must not disagree about whether
+    a registered method catalogue exists."""
+    text = _read(SPEC_AUTHORITY)
+    for phrase in STALE_SPEC_AUTHORITY_REGISTRY_EMPTY_PHRASES:
+        assert phrase not in text, (
+            f"docs/specification_authority.md contains stale claim: "
+            f"{phrase!r}. The WP1 catalogue (six method/variable-class "
+            "registrations) has been approved and registered since PR #250 "
+            "(docs/decision_required_frequency_methods.md, "
+            "core.frequency_conversion.ensure_approved_frequency_methods) "
+            "and executes via core.official_preparation - update the "
+            "authority doc instead of reintroducing this claim."
+        )
+
+
+def test_spec_authority_references_req_search_002():
+    """docs/specification_authority.md must reference REQ-SEARCH-002 (the
+    approved, implemented Candidate A Search mediation/capacity engine
+    record) in its 'approved requirement records already implemented'
+    section - the record has existed and been indexed since 2026-08-15, and
+    an authority doc that never mentions it while still asserting 'no
+    approved requirement/decision yet' for Search demand/capacity
+    mathematics is exactly the kind of drift this file exists to prevent."""
+    text = _read(SPEC_AUTHORITY)
+    assert "REQ-SEARCH-002" in text, (
+        "docs/specification_authority.md must reference REQ-SEARCH-002 "
+        "(docs/approved_requirements/REQ-SEARCH-002.md), approved "
+        "2026-08-15 and indexed in docs/approved_requirements/index.json."
+    )
+
+
+def test_readme_does_not_claim_candidate_a_wholly_unwired_from_diagnostics():
+    """README.md must not claim Candidate A is wholly unwired from
+    Diagnostics - a dedicated 'Candidate A Search' Diagnostics tab
+    (DiagnosticsArtefact.search_capacity, schema v7) has existed since
+    PR #257 (WP3). README may still correctly state Candidate A is not
+    wired into Results, official curves, or the Scenario Planner - those
+    remain true - but 'Diagnostics' must not appear in that same negative
+    list without qualification."""
+    text = _read(README)
+    assert "not yet wired into Diagnostics" not in text, (
+        "README.md claims Candidate A is 'not yet wired into Diagnostics' - "
+        "false since PR #257 added a dedicated 'Candidate A Search' "
+        "Diagnostics tab (pages/06_Diagnostics.py, "
+        "DiagnosticsArtefact.search_capacity). State the Results/official-"
+        "curves/Scenario-Planner gap separately from Diagnostics."
     )

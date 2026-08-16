@@ -647,3 +647,53 @@ jobs:
       - name: Run Candidate A posterior recovery tests
         run: uv run pytest ancestry_mmm/tests/test_search_candidate_a_recovery_posterior.py -v --tb=short --no-cov
         timeout-minutes: 60
+
+  # -- Candidate A model-mathematics change detector (pull_request only) --
+  # WP0 (Media-Mix-Lab: Coding LLM Next Steps Post WP5): candidate-a-recovery
+  # above is intentionally schedule/manual-only (real NUTS sampling is too
+  # slow for blocking CI), so it is not a normal PR gate on its own. This
+  # job is purely informational and never fails the workflow - it flags,
+  # via a workflow annotation, when a PR's diff touches a Candidate A
+  # model-mathematics file (REQ-SEARCH-002's affected modules), so a
+  # reviewer or scripts/wait_for_pr_green_then_merge.ps1
+  # -RequireCandidateARecovery knows to require a manually-dispatched
+  # successful candidate-a-recovery run before merging. It is deliberately
+  # additive - it does not change candidate-a-recovery's own trigger
+  # condition, so it cannot affect that job's existing behaviour.
+  candidate-a-recovery-gate-check:
+    name: Candidate A recovery gate check
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Flag if this PR changes Candidate A model mathematics
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          changed="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
+          echo "Changed files:"
+          echo "$changed"
+          candidate_a_paths=(
+            "ancestry_mmm/core/search_capacity.py"
+            "ancestry_mmm/core/search_candidate_a_recovery.py"
+            "ancestry_mmm/core/search_decision_package.py"
+            "ancestry_mmm/core/graph_model_compiler.py"
+            "ancestry_mmm/core/hierarchical_model.py"
+            "ancestry_mmm/core/causal_graph.py"
+          )
+          hit=0
+          for path in "${candidate_a_paths[@]}"; do
+            if echo "$changed" | grep -qxF "$path"; then
+              echo "  -> matched Candidate A affected module: $path"
+              hit=1
+            fi
+          done
+          if [ "$hit" -eq 1 ]; then
+            echo "::warning::This PR changes Candidate A model-mathematics file(s) (REQ-SEARCH-002 affected modules). candidate-a-recovery is schedule/manual-only and did not run automatically for this PR - dispatch it manually (workflow_dispatch) and require it to succeed before merging (see scripts/wait_for_pr_green_then_merge.ps1 -RequireCandidateARecovery)."
+          else
+            echo "No Candidate A model-mathematics files changed in this PR - no manual recovery run required by this check."
+          fi

@@ -132,23 +132,24 @@ Each row below is one of two distinct states, not to be conflated:
 | Starting state and terminal state | Kernel implemented; no indexed requirement record yet | Bundled with sequential/weekly planning above - see that row. |
 | Future-assumption bundles | No approved requirement/decision yet | No indexed record exists. |
 | Time-varying baseline | No approved requirement/decision yet | No indexed record exists; see `AGENTS.md`'s future-variable-role #5 for the standing invariant any future approval must satisfy. |
-| Search demand/capacity mathematics (latent demand estimation, cap-hit probability, captured-versus-unmet demand, joint media/cap optimisation) | No approved requirement/decision yet | `REQ-SEARCH-001` (approved, implemented — see below) covers Search object separation/governance only and explicitly places this mathematics out of scope; no record yet approves the modelling contract itself. |
+| Search demand/capacity mathematics (latent demand estimation, cap-hit probability, captured-versus-unmet demand, joint media/cap optimisation) | Requirement exists but capability incomplete | `REQ-SEARCH-002` (approved 2026-08-15, implemented — see below) approves Candidate A, the first production Search mediation/capacity formulation, depending on the governed identities in `REQ-SEARCH-001` and the compiler in `REQ-GRAPH-001`. The approval authorises implementation and validation only; it does not approve Search estimates for official planning or optimisation — Search planning eligibility and cap optimisation remain disabled pending that separate evidence. |
 | Capacity and cap semantics (`REQ-CAP-001`) | No approved requirement/decision yet | `AGENTS.md`'s "Capacity and cap invariants" section states the standing business/mathematical invariant; no `REQ-CAP-001` record yet translates it into an approved modelling contract. |
 | Experiment translation and recalibration | No approved requirement/decision yet | No indexed record exists. |
 | Reporting semantics | No approved requirement/decision yet | No indexed record exists. |
 | Background jobs and service boundaries | No approved requirement/decision yet | No indexed record exists. |
 | Prior-vs-posterior comparison summaries — `REQ-VAL-001` remaining scope | Requirement exists but capability incomplete | `REQ-VAL-001` is approved and substantially implemented, including prior predictive evidence (schema v4, `core.diagnostics.prior_predictive_summary`) and predictive-density evidence (schema v5, `core.diagnostics.predictive_density_summary` — PSIS-LOO/WAIC via `pm.compute_log_likelihood` + `az.loo`/`az.waic`, no refit). Its own record text explicitly defers this remaining check as a separately-scoped dependent package. |
-| Variable coverage / mixed-frequency data contracts (Part 3 v1.6 overlay) — `REQ-COVERAGE-001` implementation scope | Requirement exists but capability incomplete | `REQ-COVERAGE-001` is approved and translates the v1.6 overlay's authority (canonical missingness-state vocabulary, coverage invariants, coverage-matrix requirement) into repository requirements. Delivered incrementally in PRs #151-#161 (2026-08-09 to 2026-08-11): source/coverage-matrix domain objects (`core.coverage`), immutable source-version capture on upload, the coverage-matrix builder and Data Coverage review UI, explicit join-mode and join-loss/unmatched-key diagnostics (`data.pipeline.join_sources_with_diagnostics`), a market x channel engine-capability report (`core.market_data_capability`) bound into model fingerprinting, project export/import, and the pre-fit prior-predictive workflow, an official-use governance gate binding that capability report (plus coverage-matrix freshness) to policy-backed model approval as an optional validation-policy gate, and canonical-calendar/mixed-frequency alignment contracts (`core.frequency_alignment`) — see "Approved requirement records already implemented" below. Still not implemented: execution of an approved frequency-conversion method (no method is approved by this record — see its own "Out of scope" — the conversion-method registry is currently empty), wiring the canonical-calendar contracts into actual data preparation, and a fit-consumed-variable capability report beyond market x channel. `FR-MOD-015` remains explicitly unresolved (record §6). |
+| Variable coverage / mixed-frequency data contracts (Part 3 v1.6 overlay) — `REQ-COVERAGE-001` implementation scope | Requirement exists but capability incomplete | `REQ-COVERAGE-001` is approved and translates the v1.6 overlay's authority (canonical missingness-state vocabulary, coverage invariants, coverage-matrix requirement) into repository requirements. Delivered incrementally in PRs #151-#161 (2026-08-09 to 2026-08-11): source/coverage-matrix domain objects (`core.coverage`), immutable source-version capture on upload, the coverage-matrix builder and Data Coverage review UI, explicit join-mode and join-loss/unmatched-key diagnostics (`data.pipeline.join_sources_with_diagnostics`), a market x channel engine-capability report (`core.market_data_capability`) bound into model fingerprinting, project export/import, and the pre-fit prior-predictive workflow, an official-use governance gate binding that capability report (plus coverage-matrix freshness) to policy-backed model approval as an optional validation-policy gate, and canonical-calendar/mixed-frequency alignment contracts (`core.frequency_alignment`) — see "Approved requirement records already implemented" below. `REQ-COVERAGE-001` itself approves the typed contract only, not a statistical method (its own "Out of scope"); a narrow WP1 method catalogue (six method/variable-class registrations: `flow_count`/`calendar_overlap_allocation`, `stock_level`/`rate_index`/`survey_measurement`/`release_aware_locf`, `survey_measurement`/`native_cadence_only`, `event_flag`/`calendar_event_alignment`) was separately approved and registered since PR #250 (2026-08-15) by `docs/decision_required_frequency_methods.md`, is registered by default (`core.frequency_conversion.ensure_approved_frequency_methods`), and executes through `core.official_preparation` via `execute_frequency_conversion`. A variable class/method combination outside that narrow catalogue still has no approved method and remains decision-required. Still not implemented: a fit-consumed-variable capability report beyond market x channel. `FR-MOD-015` remains explicitly unresolved (record §6). |
 | Market-specific / ragged predictor sets inside the hierarchical model equations (`FR-MOD-015`) | No approved requirement/decision yet | `REQ-COVERAGE-001` explicitly reserves this — no masking, zeroing, missing-data likelihood, or separate-coefficient treatment is approved; the current engine may only compile the rectangular subset it already supports and must fail closed for a requested ragged-predictor treatment it cannot represent. |
 | Graph-compilable mediated / capacity-constrained / moderated / residual-interaction edges — `REQ-GRAPH-001` remaining scope | Requirement exists but capability incomplete | `REQ-GRAPH-001` is approved and implemented for `direct`, `cross_product_halo`, and `excluded_diagnostic_only` edges. The remaining edge roles are valid graph vocabulary but not yet engine-compilable (`core.graph_model_compiler.check_engine_capability` is authoritative on current support). |
 
 ## Approved requirement records already implemented (with documented capability boundaries)
 
-`REQ-GRAPH-001` (graph-authoritative causal configuration) and
-`REQ-SEARCH-001` (Search object separation/governance) are approved,
-indexed requirement records with substantive implementation. Neither is a
-gap requiring a new decision record — each has an explicit, narrower
-capability boundary documented in its own record:
+`REQ-GRAPH-001` (graph-authoritative causal configuration),
+`REQ-SEARCH-001` (Search object separation/governance), and `REQ-SEARCH-002`
+(Candidate A Search mediation/capacity engine) are approved, indexed
+requirement records with substantive implementation. None is a gap
+requiring a new decision record — each has an explicit, narrower capability
+boundary documented in its own record:
 
 - `REQ-GRAPH-001` (`docs/approved_requirements/REQ-GRAPH-001.md`): the graph
   domain, versioning, structural/layout fingerprints, deterministic
@@ -161,6 +162,28 @@ capability boundary documented in its own record:
   validation, effective periods, version history, persistence, and
   fit-relevant fingerprint integration. Search demand/capacity mathematics
   is explicitly out of scope for this record — see the gaps table above.
+- `REQ-SEARCH-002` (`docs/approved_requirements/REQ-SEARCH-002.md`):
+  Candidate A, the first production Search mediation/capacity formulation
+  (approved 2026-08-15), depending on `REQ-SEARCH-001`'s governed identities
+  and `REQ-GRAPH-001`'s compiler. `core.search_capacity` is wired into Model
+  Training's fit path (`application/model_fit_service.py`,
+  `core.hierarchical_model.build_fh_hierarchical_model(...,
+  search_candidate_a=...)`), governed by the project's approved causal
+  graph, never a UI toggle, and into a dedicated "Candidate A Search"
+  Diagnostics tab (`DiagnosticsArtefact.search_capacity` schema v7,
+  `core.search_capacity.extract_candidate_a_search_posterior_summary`).
+  `core.predict.predict_mu` and `core.attribution.compute_shapley_
+  contributions` fail closed with a specific, documented exception for a
+  Candidate A fit rather than silently reconstructing an outcome missing
+  the search-mediated pathway — this is the actual mechanism keeping
+  Search planning/optimisation disabled, not a separate per-feature gate.
+  Not yet wired: Results attribution, official response curves, and
+  Scenario Planner replay (`predict_mu` has no way to re-evaluate a
+  *counterfactual* Search state at a hypothetical scenario/curve point — a
+  modelling design question, not a mechanical extension; reasons recorded
+  in `docs/decision_log.md`). The approval authorises implementation and
+  validation only; it does not approve Search estimates for official
+  planning or optimisation.
 - `REQ-COVERAGE-001` (`docs/approved_requirements/REQ-COVERAGE-001.md`):
   the variable-coverage/missingness domain (`core.coverage`:
   `SourceDefinition`, `SourceVersion`, `FrequencyMetadata`,
@@ -180,16 +203,20 @@ capability boundary documented in its own record:
   `market_channel_capability` validation gate (`core.validation_policy`,
   `DiagnosticsArtefact.market_channel_capability`), and canonical-calendar/
   mixed-frequency alignment contracts (`core.frequency_alignment`:
-  `AlignmentSpecification`, a conversion-method registry that starts
-  genuinely empty, publication-leakage/definition-break/support-boundary
-  checks, and `resolve_canonical_calendar` — fails closed with
-  `CalendarResolutionRequiredError` rather than inferring a calendar from
-  raw source intersection) are implemented. Frequency-conversion
-  *execution* (no method is approved by this record — see its own "Out of
-  scope" — the conversion-method registry above is therefore still empty),
-  wiring the canonical-calendar contracts into actual data preparation
-  (`data.pipeline`/Transform Pipeline), and a fit-consumed-variable
-  capability report beyond market x channel (outcome source columns,
-  controls, promotions) remain unimplemented — see the gaps table above.
+  `AlignmentSpecification`, publication-leakage/definition-break/
+  support-boundary checks, and `resolve_canonical_calendar` — fails closed
+  with `CalendarResolutionRequiredError` rather than inferring a calendar
+  from raw source intersection) are implemented. `REQ-COVERAGE-001` itself
+  approves this typed contract only and starts with a genuinely empty
+  conversion-method registry — it does not select a statistical method
+  (its own "Out of scope"). Frequency-conversion *execution* for a narrow
+  WP1 method catalogue was separately approved and registered since PR
+  #250 (2026-08-15, `docs/decision_required_frequency_methods.md`,
+  `core.frequency_conversion.ensure_approved_frequency_methods`) and is
+  wired into official-use data preparation (`core.official_preparation`,
+  `execute_frequency_conversion`) — see the gaps-table row above for the
+  current catalogue and its boundary. A fit-consumed-variable capability
+  report beyond market x channel (outcome source columns, controls,
+  promotions) remains unimplemented — see the gaps table above.
   `FR-MOD-015` (market-specific/ragged predictor sets) remains explicitly
   unresolved (record §6).
