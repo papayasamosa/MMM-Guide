@@ -217,30 +217,30 @@ def predict_mu_market_specific(
     # construction exactly (same masks, same media, same beta multiplication,
     # same einsum contraction pattern) - see core.predict.predict_mu's
     # matching comment.
-    primary_mask = meta.pathway_masks.primary_matrix(
+    primary_mask = meta.resolved_pathway_masks.primary_matrix(
         outcome_ids, meta.channels
     )  # (O, C)
     eta_primary = np.einsum(
         "oc,osc->os", sat_media, beta_by_row * primary_mask[None, :, :]
     )
 
-    cross_cells = meta.pathway_masks.active_cells(
+    cross_cells = meta.resolved_pathway_masks.active_cells(
         outcome_ids, meta.channels
-    ) + meta.pathway_masks.exploratory_cells(outcome_ids, meta.channels)
+    ) + meta.resolved_pathway_masks.exploratory_cells(outcome_ids, meta.channels)
     eta_cross = np.zeros((n_obs, n_out))
     if cross_cells:
         strength_matrix = _cross_product_strength_matrix(meta, params)
         lagged = {
             lag: lag_frame(sat_media, frame["market_bounds"], lag)
             for lag in {
-                meta.pathway_masks.lag_for_component(
+                meta.resolved_pathway_masks.lag_for_component(
                     outcome_ids[cell[0]], meta.channels[cell[1]]
                 )
                 for cell in cross_cells
             }
         }
         for oi, ci in cross_cells:
-            component_lag = meta.pathway_masks.lag_for_component(
+            component_lag = meta.resolved_pathway_masks.lag_for_component(
                 outcome_ids[oi], meta.channels[ci]
             )
             eta_cross[:, oi] += (

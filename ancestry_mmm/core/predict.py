@@ -75,7 +75,7 @@ class FHPosteriorParams:
     # core.pathways.resolve_pathway_masks). Whichever of the two roles a
     # cell actually has, its strength value lives here uniformly - callers
     # don't need to know which sub-role produced it, only which cells
-    # (meta.pathway_masks.active_cells()/.exploratory_cells()) to apply it to.
+    # (meta.resolved_pathway_masks.active_cells()/.exploratory_cells()) to apply it to.
     promo_coef: Dict[str, float]  # promo_coef[outcome_id]
     market_offset: Dict[str, Dict[str, float]]  # market_offset[market][outcome_id]
     intercept: Dict[str, float]
@@ -287,9 +287,9 @@ def _cross_product_strength_matrix(
     below (via `_pathway_weight`, which adds the `primary_direct` `1.0`)."""
     outcome_ids, channels = meta.outcome_ids, meta.channels
     mat = np.zeros((len(outcome_ids), len(channels)), dtype=float)
-    for oi, ci in meta.pathway_masks.active_cells(
+    for oi, ci in meta.resolved_pathway_masks.active_cells(
         outcome_ids, channels
-    ) + meta.pathway_masks.exploratory_cells(outcome_ids, channels):
+    ) + meta.resolved_pathway_masks.exploratory_cells(outcome_ids, channels):
         mat[oi, ci] = params.pathway_strength.get(outcome_ids[oi], {}).get(
             channels[ci], 0.0
         )
@@ -314,22 +314,31 @@ def _pathway_weight(
     `active_cross_product`/`exploratory_cross_product`, `0.0` for an
     excluded cell (in neither)."""
     weight = 0.0
-    is_direct = channel in meta.pathway_masks.primary_channels_by_outcome.get(
+    is_direct = channel in meta.resolved_pathway_masks.primary_channels_by_outcome.get(
         outcome_id, []
     )
-    direct_eligible = not planning_only or meta.pathway_masks.component_eligible(
-        outcome_id, channel, "direct", "planning"
+    direct_eligible = (
+        not planning_only
+        or meta.resolved_pathway_masks.component_eligible(
+            outcome_id, channel, "direct", "planning"
+        )
     )
     if is_direct and direct_eligible:
         weight = 1.0
-    is_active = channel in meta.pathway_masks.active_channels_by_outcome.get(
+    is_active = channel in meta.resolved_pathway_masks.active_channels_by_outcome.get(
         outcome_id, []
     )
-    is_exploratory = channel in meta.pathway_masks.exploratory_channels_by_outcome.get(
-        outcome_id, []
+    is_exploratory = (
+        channel
+        in meta.resolved_pathway_masks.exploratory_channels_by_outcome.get(
+            outcome_id, []
+        )
     )
-    cross_eligible = not planning_only or meta.pathway_masks.component_eligible(
-        outcome_id, channel, "cross_product", "planning"
+    cross_eligible = (
+        not planning_only
+        or meta.resolved_pathway_masks.component_eligible(
+            outcome_id, channel, "cross_product", "planning"
+        )
     )
     if cross_eligible and (is_active or is_exploratory):
         weight += params.pathway_strength.get(outcome_id, {}).get(channel, 0.0)
@@ -374,28 +383,28 @@ def predict_mu(
     # build_fh_hierarchical_model's eta_primary/eta_active/eta_exploratory
     # construction exactly (same masks, same media, same beta multiplication)
     # so this NumPy replay can never silently diverge from what was fit.
-    primary_mask = meta.pathway_masks.primary_matrix(
+    primary_mask = meta.resolved_pathway_masks.primary_matrix(
         outcome_ids, meta.channels
     )  # (O, C)
     eta_primary = sat_media @ (beta_matrix * primary_mask).T
 
-    cross_cells = meta.pathway_masks.active_cells(
+    cross_cells = meta.resolved_pathway_masks.active_cells(
         outcome_ids, meta.channels
-    ) + meta.pathway_masks.exploratory_cells(outcome_ids, meta.channels)
+    ) + meta.resolved_pathway_masks.exploratory_cells(outcome_ids, meta.channels)
     eta_cross = np.zeros((n_obs, n_out))
     if cross_cells:
         strength_matrix = _cross_product_strength_matrix(meta, params)
         lagged = {
             lag: lag_frame(sat_media, frame["market_bounds"], lag)
             for lag in {
-                meta.pathway_masks.lag_for_component(
+                meta.resolved_pathway_masks.lag_for_component(
                     outcome_ids[cell[0]], meta.channels[cell[1]]
                 )
                 for cell in cross_cells
             }
         }
         for oi, ci in cross_cells:
-            component_lag = meta.pathway_masks.lag_for_component(
+            component_lag = meta.resolved_pathway_masks.lag_for_component(
                 outcome_ids[oi], meta.channels[ci]
             )
             eta_cross[:, oi] += (

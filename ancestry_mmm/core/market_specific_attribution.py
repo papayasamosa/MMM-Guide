@@ -89,18 +89,18 @@ def _channel_log_terms_market_specific(
     sat_media = adstock_saturate_frame_market_specific(
         frame["X_media"], frame["market_bounds"], markets, meta, params
     )
-    primary_mask = meta.pathway_masks.primary_matrix(
+    primary_mask = meta.resolved_pathway_masks.primary_matrix(
         outcome_ids, meta.channels
     )  # (O, C)
 
-    cross_cells = meta.pathway_masks.active_cells(
+    cross_cells = meta.resolved_pathway_masks.active_cells(
         outcome_ids, meta.channels
-    ) + meta.pathway_masks.exploratory_cells(outcome_ids, meta.channels)
+    ) + meta.resolved_pathway_masks.exploratory_cells(outcome_ids, meta.channels)
     if cross_cells:
         cross_product_lag_media = {
             lag: lag_frame(sat_media, frame["market_bounds"], lag)
             for lag in {
-                meta.pathway_masks.lag_for_component(
+                meta.resolved_pathway_masks.lag_for_component(
                     outcome_ids[cell[0]], meta.channels[cell[1]]
                 )
                 for cell in cross_cells
@@ -126,11 +126,11 @@ def _channel_log_terms_market_specific(
         term = np.zeros((n_obs, n_out))
         for si, oid in enumerate(outcome_ids):
             b = beta_by_row[:, si, ci]
-            direct_visible = meta.pathway_masks.component_eligible(
+            direct_visible = meta.resolved_pathway_masks.component_eligible(
                 oid, ch, "direct", purpose
             )
             value = b * primary_mask[si, ci] * direct_visible * sat_media[:, ci]
-            cross_visible = meta.pathway_masks.component_eligible(
+            cross_visible = meta.resolved_pathway_masks.component_eligible(
                 oid, ch, "cross_product", purpose
             )
             if (
@@ -143,7 +143,7 @@ def _channel_log_terms_market_specific(
                     + b
                     * strength_matrix[si, ci]
                     * cross_product_lag_media[
-                        meta.pathway_masks.lag_for_component(oid, ch)
+                        meta.resolved_pathway_masks.lag_for_component(oid, ch)
                     ][:, ci]
                 )
             term[:, si] = value

@@ -107,6 +107,27 @@ class TestFHModelMetaOutcomeCatalogueDicts:
         assert meta.outcome_id_to_source_column == {"fh_new": "GSA_New"}
 
 
+class TestFHModelMetaResolvedPathwayMasks:
+    """WP4 (`Media-Mix-Lab: Coding LLM Next Steps After PR #253`):
+    characterization test for `resolved_pathway_masks`, added to close the
+    largest single repeated full-core mypy debt pattern (34 of 276 baseline
+    errors) by narrowing `pathway_masks: Optional[ResolvedPathwayMasks]` to
+    its guaranteed-non-Optional runtime type at call sites - `__post_init__`
+    always resolves it to a real object, never leaves it `None`."""
+
+    def test_returns_the_same_object_post_init_resolved(self):
+        meta = _meta()
+        assert meta.pathway_masks is not None
+        assert meta.resolved_pathway_masks is meta.pathway_masks
+
+    def test_returns_the_same_object_when_pathway_masks_passed_explicitly(self):
+        from ancestry_mmm.core.pathways import ResolvedPathwayMasks
+
+        explicit = ResolvedPathwayMasks()
+        meta = _meta(pathway_masks=explicit)
+        assert meta.resolved_pathway_masks is explicit
+
+
 class TestFHModelMetaCausalGraphIdentityDefaults:
     """REQ-GRAPH-001 work package: fit-time causal graph identity fields
     default to "not used" (empty string / 0), never None, so a bundle saved
