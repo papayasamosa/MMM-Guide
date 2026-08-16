@@ -81,7 +81,7 @@ $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
 $checksAppeared = $false
 
 while ((Get-Date) -lt $deadline) {
-    $checksJson = Get-GhOrFail @("pr", "checks", "$PRNumber", "--repo", $Repo, "--json", "name,state,bucket", "--required")
+    $checksJson = Get-GhOrFail @("pr", "checks", "$PRNumber", "--repo", $Repo, "--json", "name,state,bucket")
     $checks = @()
     if ($checksJson -and $checksJson.Trim().Length -gt 0) {
         $checks = $checksJson | ConvertFrom-Json
