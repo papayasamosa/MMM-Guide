@@ -9,21 +9,21 @@ and does not supersede `AGENTS.md`, `docs/approved_requirements/`, or
 
 Repository: `papayasamosa/Media-Mix-Lab`
 
-Current `main` reviewed: `0ed00d8a790669f7fbdf716c070a24fb4442964c`
+Current `main` reviewed: `3a0015848bb85c71c0fa3013cdf312bf7e3f80e4`
 
-Current head: **WP2: Candidate A synthetic generator and posterior-recovery
-evidence** (merged PR #256, 2026-08-15). This revision of the document
-additionally describes Work Package 3 of `Media-Mix-Lab: Coding LLM Next
-Steps After PR #253` (Candidate A application fit, diagnostics, and
-reporting workflow), landed on top of that baseline in the same work
-session.
+Current head: **WP3: Candidate A application fit, diagnostics, and
+reporting workflow** (merged PR #257, 2026-08-15). This revision of the
+document additionally describes Work Package 4 of `Media-Mix-Lab: Coding
+LLM Next Steps After PR #253` (targeted structural and test hardening),
+landed on top of that baseline in the same work session.
 
 Historical markers: earlier versions of this document reviewed
+`0ed00d8a790669f7fbdf716c070a24fb4442964c` (merged PR #256, WP2),
 `e117abcd60171c3f2a57b437d617135e475a62bf` (merged PR #255, WP1),
 `3e2e525300a8526a52f59384271e54fe9815cbe0` (merged PR #254, WP0), and
 before that `b9b13916ad06c09e37cd53aa83a0fa3a7949a0dc` (merged PR #253) and
 `0845b150027dc59b192d2ec314b01910af3496ed` (merged PR #249, before the
-mixed-frequency executor and Candidate A Search engine existed). All four
+mixed-frequency executor and Candidate A Search engine existed). All five
 SHAs are superseded and are recorded here only for history, not as current
 state.
 
@@ -173,8 +173,11 @@ business or modelling definitions:
   Ragged market-specific predictor mathematics (`FR-MOD-015`), moderated
   pathways, and residual-interaction engine support remain decision-bound or
   unsupported, independent of Candidate A.
-- The full-core mypy debt ceiling is now 276 errors; it is a ceiling, not a
-  target. CI must fail if the measured count increases.
+- The full-core mypy debt ceiling is now 245 errors (Work Package 4 closed
+  the single largest repeated pattern - 34 occurrences of a
+  `FHModelMeta.pathway_masks` Optional-narrowing gap now fixed via
+  `FHModelMeta.resolved_pathway_masks`); it is a ceiling, not a target. CI
+  must fail if the measured count increases.
 - Scenario planning remains a steady-state monthly approximation rather than
   a sequential weekly simulation with starting adstock and terminal carryover.
 - Chronos-2 or another future exogenous forecasting integration is not yet

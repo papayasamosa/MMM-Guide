@@ -4135,3 +4135,71 @@ than inventing one"):**
 delivered. Search planning, cap optimisation, Results, official curves,
 and attribution remain disabled/unavailable for Candidate A - not a partial
 or approximate implementation of any of them.
+
+## Targeted structural and test hardening (Work Package 4)
+
+**Date:** 2026-08-16.
+
+**Decision:** Close the single largest repeated full-core mypy debt
+pattern with a characterization-tested, zero-behaviour-change fix, and fix
+a real local-vs-CI test drift this work session itself introduced.
+
+**mypy debt reduction (276 -> 245, 31 errors closed):**
+`FHModelMeta.pathway_masks: Optional[ResolvedPathwayMasks]` is guaranteed
+non-`None` after `__post_init__` runs (it always resolves to a real object
+when `None` is passed, and nothing outside `__post_init__` ever reassigns
+it - confirmed by an exhaustive grep across the package before making this
+change). Despite that runtime guarantee, every call site that read
+`meta.pathway_masks.<method>()` across `core/attribution.py`,
+`core/market_specific_attribution.py`, `core/predict.py`, and
+`core/market_specific_predict.py` was flagged by mypy (`Item "None" of
+"ResolvedPathwayMasks | None" has no attribute ...`), since mypy cannot
+infer a `__post_init__`-established invariant across call boundaries. Added
+`FHModelMeta.resolved_pathway_masks` - a property that asserts the
+(always-true) non-`None` invariant once and returns the narrowed type -
+and updated the four call sites to use it. Characterization tests
+(`TestFHModelMetaResolvedPathwayMasks`) were added before the mechanical
+replacement, proving the property returns the exact same object
+`pathway_masks` already held (identity, not a copy) both for the
+`__post_init__`-resolved default case and an explicitly-passed value. Pure
+type-narrowing - no behavioural change; full regression sweep across the
+four touched files plus `core/canonical_curves.py`/`core/optimization.py`/
+`core/market_specific_model.py`/`core/search_capacity.py` (275 tests) all
+green. `.mypy-baseline-count` lowered from 276 to 245 to lock the
+improvement in, per the CI ratchet's own instruction ("lower
+.mypy-baseline-count to $current to lock the improvement in"). GitHub
+issue #123 updated to match.
+
+**Local test-suite drift (self-inflicted, found and fixed):**
+`scripts/run_full_test_suite.ps1` (the single documented local entry point
+for the real 75% coverage floor) had silently drifted out of sync with
+`.github/workflows/tests.yml`'s Python 3.11/3.12 job commands: Work
+Package 2 added `test_search_candidate_a_recovery_posterior.py` (real
+`pm.sample` NUTS fits, ~7-8 minutes on CI's compiler-equipped runner) to
+the CI ignore list but not to this local wrapper. Without a C compiler
+available - not unusual on a bare Windows dev machine - PyTensor's Python
+compilation fallback can outright fail on this file's larger models
+(`AttributeError: 'Scratchpad' object has no attribute 'ufunc'`, first
+observed in WP2) rather than merely running slowly, so an unmodified local
+full-suite run could hang or error out entirely, not just take longer than
+CI's ~9 minutes. Added the matching `--ignore` flag and documented why in
+the script's own header, alongside the pre-existing (undocumented until
+now) `test_persistence.py`/browser-journey exclusions.
+
+**Other likely contributors to local-vs-CI runtime gap, not addressed
+here:** no `pytest-xdist`/parallelisation is configured anywhere in the
+project (verified: no reference in `pyproject.toml`, `uv.lock`, or CI);
+Windows filesystem/antivirus overhead on thousands of small file
+operations (coverage instrumentation, node-id collection) is a well-known
+Windows-vs-Linux-runner gap unrelated to this codebase. Adding
+`pytest-xdist` locally is a plausible next step (the brief explicitly
+permits "deterministic safe parallelisation"), but verifying the ~3,000-
+test suite has no shared-state/ordering assumptions that would break under
+parallel execution is its own, separate investigation - not attempted in
+this targeted work package to avoid conflating a mypy-debt/correctness
+package with an unverified test-infrastructure change.
+
+**Owner:** Data Science / Platform engineering.
+**Status:** mypy ceiling lowered and locked in; local wrapper drift fixed.
+Broader local-suite parallelisation remains a documented, not yet
+attempted, follow-up.

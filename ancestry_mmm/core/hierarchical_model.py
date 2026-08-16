@@ -242,6 +242,31 @@ class FHModelMeta:
             )
 
     @property
+    def resolved_pathway_masks(self) -> ResolvedPathwayMasks:
+        """`pathway_masks`, narrowed to its guaranteed-non-Optional runtime
+        type. `__post_init__` above always resolves `pathway_masks` to a
+        real `ResolvedPathwayMasks` instance before construction completes
+        - it is never left `None`, and nothing outside `__post_init__`
+        reassigns it - so every caller that already holds a constructed
+        `FHModelMeta` can use this instead of repeating the same
+        `is not None` narrowing mypy cannot otherwise infer across call
+        boundaries (WP4, `Media-Mix-Lab: Coding LLM Next Steps After
+        PR #253` - this was the single largest repeated full-core mypy
+        debt pattern: 34 of 276 baseline errors were `Item "None" of
+        "ResolvedPathwayMasks | None" has no attribute ...` at call sites
+        that already relied on this exact invariant). `pathway_masks`
+        itself stays `Optional` in its own field declaration because that
+        remains the honest *input* type - a caller may construct with
+        `pathway_masks=None` and let `__post_init__` resolve it.
+        """
+        assert self.pathway_masks is not None, (
+            "FHModelMeta.pathway_masks is None on an already-constructed "
+            "instance - only possible if __post_init__ was bypassed (e.g. "
+            "object.__new__, or a pickle/copy path that skips __init__)."
+        )
+        return self.pathway_masks
+
+    @property
     def kit_only_outcome_ids(self) -> List[str]:
         """DNA-product outcome_ids (`direct_dna_outcome_ids` minus
         `dna_outcome_id`) - these have ONLY a direct pathway to DNA media,
