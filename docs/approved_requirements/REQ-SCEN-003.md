@@ -62,23 +62,29 @@ result must never be presented as timing-aware (starting carryover,
 month-by-month timing, short/long response, terminal carryover) unless it
 was produced by the sequential contract.
 
-## Affected modules (future implementation)
+## Affected modules
 
 - `ancestry_mmm/core/sequential_simulation.py`
   (`simulate_terminal_carryover`/`simulate_terminal_carryover_market_specific`
-  already implemented at kernel level; horizon-configuration typing is new)
-- `application/scenario_service.py`, `pages/08_Scenario_Planner.py` (not yet
-  wired to this contract - see `REPO_REVIEW_AND_NEXT_STEPS.md`)
-- Scenario persistence/staleness (`core.scenario_governance`,
-  `core.persistence`) - horizon configuration and terminal-carryover result
-  must be part of the persisted, fingerprinted scenario record
+  implemented at kernel level)
+- `ancestry_mmm/core/planning/phasing.py` (`HorizonConfiguration` -
+  implemented, WP1: short/long/plan/terminal horizons, explicit values
+  required, no hidden UI-preset constants)
+- `ancestry_mmm/tests/test_phasing.py` (implemented, WP1)
+- Not yet touched: `application/scenario_service.py`,
+  `pages/08_Scenario_Planner.py` (not yet wired to this contract - see
+  `REPO_REVIEW_AND_NEXT_STEPS.md`), scenario persistence/staleness
+  (`core.scenario_governance`, `core.persistence` - horizon configuration
+  and terminal-carryover result must become part of the persisted,
+  fingerprinted scenario record once that wiring exists)
 
 ## Owner and status
 
 **Owner:** Data Science / Platform engineering.
 
-**Status:** Approved for implementation. Kernel-level terminal-carryover
-mechanics (item 1's dependency) are already implemented and tested
-(`REQ-STATE-001`). The horizon-configuration type, its persistence, and its
-exclusion from the optimisation objective are approved but not yet
-implemented.
+**Status:** Kernel-level terminal-carryover mechanics (`REQ-STATE-001`)
+and the typed `HorizonConfiguration` contract (WP1,
+`core.planning.phasing.HorizonConfiguration`) are implemented and tested.
+Persistence with a saved scenario, and exclusion of terminal carryover
+from the optimisation objective, are approved but not yet implemented -
+both require the not-yet-built application-layer integration.

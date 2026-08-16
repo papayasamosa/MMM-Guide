@@ -128,8 +128,8 @@ Each row below is one of two distinct states, not to be conflated:
 | Capability | State | Notes |
 |---|---|---|
 | Governed FX (`REQ-FX-001`–`REQ-FX-006`) | No approved requirement/decision yet | No indexed record exists. |
-| Sequential / weekly planning (`REQ-STATE-001`, `REQ-SCEN-001`–`003`) | Kernel implemented; no indexed requirement record yet | The engine capability exists (WP5, `Media-Mix-Lab: Coding LLM Next Steps After PR #253`, `core.sequential_simulation`) - real historical-carry-in reconstruction, an explicit weekly-plan contract, the candidate/reference incremental-outcome contract, and terminal carryover, for both production-supported model types. It sits alongside the existing steady-state monthly engine, never replacing it, and is not yet wired into the Scenario Planner UI or the optimiser's objective (an application-integration decision, not covered by this brief). No `REQ-STATE-001`/`REQ-SCEN-001`–`003` record has been indexed in `docs/approved_requirements/` for this capability - the implementation brief served as this work package's approval authority per this repository's standard authority hierarchy, the same pattern used for WP0–WP4. |
-| Starting state and terminal state | Kernel implemented; no indexed requirement record yet | Bundled with sequential/weekly planning above - see that row. |
+| Sequential / weekly planning (`REQ-STATE-001`, `REQ-SCEN-001`–`003`) | Requirement exists but capability incomplete | All four records are approved and indexed (WP0, PR #261) - see "Approved requirement records already implemented" below for what each has delivered. Application-layer integration (`application/scenario_service.py`, `pages/08_Scenario_Planner.py`, `core.optimization`'s objective) remains unimplemented for all four. |
+| Starting state and terminal state | Requirement exists but capability incomplete | Bundled with sequential/weekly planning above - see that row and `REQ-STATE-001`/`REQ-SCEN-003`. |
 | Future-assumption bundles | No approved requirement/decision yet | No indexed record exists. |
 | Time-varying baseline | No approved requirement/decision yet | No indexed record exists; see `AGENTS.md`'s future-variable-role #5 for the standing invariant any future approval must satisfy. |
 | Search demand/capacity mathematics (latent demand estimation, cap-hit probability, captured-versus-unmet demand, joint media/cap optimisation) | Requirement exists but capability incomplete | `REQ-SEARCH-002` (approved 2026-08-15, implemented — see below) approves Candidate A, the first production Search mediation/capacity formulation, depending on the governed identities in `REQ-SEARCH-001` and the compiler in `REQ-GRAPH-001`. The approval authorises implementation and validation only; it does not approve Search estimates for official planning or optimisation — Search planning eligibility and cap optimisation remain disabled pending that separate evidence. |
@@ -145,8 +145,11 @@ Each row below is one of two distinct states, not to be conflated:
 ## Approved requirement records already implemented (with documented capability boundaries)
 
 `REQ-GRAPH-001` (graph-authoritative causal configuration),
-`REQ-SEARCH-001` (Search object separation/governance), and `REQ-SEARCH-002`
-(Candidate A Search mediation/capacity engine) are approved, indexed
+`REQ-SEARCH-001` (Search object separation/governance), `REQ-SEARCH-002`
+(Candidate A Search mediation/capacity engine), `REQ-STATE-001` (sequential
+state contract), `REQ-SCEN-001` (sequential scenario evaluation contract),
+`REQ-SCEN-002` (monthly-to-weekly phasing contract), and `REQ-SCEN-003`
+(response horizon and terminal reporting contract) are approved, indexed
 requirement records with substantive implementation. None is a gap
 requiring a new decision record — each has an explicit, narrower capability
 boundary documented in its own record:
@@ -184,6 +187,44 @@ boundary documented in its own record:
   in `docs/decision_log.md`). The approval authorises implementation and
   validation only; it does not approve Search estimates for official
   planning or optimisation.
+- `REQ-STATE-001` (`docs/approved_requirements/REQ-STATE-001.md`): the
+  sequential (weekly, state-transition) simulation state contract —
+  real historical-media starting-adstock reconstruction, no cross-market
+  carryover, an explicit `WeeklyPlan` input contract, ending state and
+  terminal continuation as structurally separate results, and full
+  per-draw posterior paths (`core.sequential_simulation`, WP5, PR #260).
+  Implemented and verified for both production-supported model types.
+  Not yet covered: how a monthly plan becomes a `WeeklyPlan`
+  (`REQ-SCEN-002`) and application-layer integration.
+- `REQ-SCEN-001` (`docs/approved_requirements/REQ-SCEN-001.md`): the
+  sequential scenario evaluation contract. Kernel-level items (same
+  simulator for candidate/reference, exact-zero no-change invariant,
+  Model A and Model C support, full per-draw posterior propagation) are
+  implemented (`core.sequential_simulation.compute_incremental_outcome`/
+  `simulate_sequential_outcomes_posterior`). Application-level items
+  (monthly aggregation after weekly evaluation, steady-state/sequential
+  method labelling) are approved but not yet implemented — no
+  application service consumes this contract yet.
+- `REQ-SCEN-002` (`docs/approved_requirements/REQ-SCEN-002.md`): the
+  monthly-to-weekly phasing contract (WP1, `core.planning.phasing`).
+  `calendar_day_overlap_v1` (exact day-overlap allocation, per-month
+  conservation to strict numerical tolerance, auditable boundary-week
+  attribution), an explicit weekly-schedule override with its own
+  reconciliation check, and separate monetary (`phase_monetary_plan_
+  calendar_day_overlap_v1`, phase-then-convert via a weekly/period-
+  specific `core.media_costs` mapping) and model-input-quantity
+  (`phase_model_input_plan_calendar_day_overlap_v1`, no cost mapping)
+  paths are implemented and tested (`ancestry_mmm/tests/test_phasing.py`).
+  Not yet wired into any application service or Streamlit page — this is
+  a framework-independent core module only, per this record's own scope.
+- `REQ-SCEN-003` (`docs/approved_requirements/REQ-SCEN-003.md`): response
+  horizon and terminal reporting. The typed `HorizonConfiguration`
+  contract (short/long/plan/terminal horizons, explicit values required)
+  is implemented (`core.planning.phasing.HorizonConfiguration`), and its
+  kernel-level dependency (terminal carryover as a structurally separate
+  result) has existed since `REQ-STATE-001`. Persistence with a saved
+  scenario, and exclusion of terminal carryover from the optimisation
+  objective, remain unimplemented pending application-layer integration.
 - `REQ-COVERAGE-001` (`docs/approved_requirements/REQ-COVERAGE-001.md`):
   the variable-coverage/missingness domain (`core.coverage`:
   `SourceDefinition`, `SourceVersion`, `FrequencyMetadata`,

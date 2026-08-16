@@ -97,23 +97,44 @@ posterior, and the same cost mapping, except where cost itself is an
 explicitly varied assumption - consistent with `REQ-SCEN-001`'s
 candidate/reference contract.
 
-## Affected modules (future implementation)
+## Affected modules
 
-- A new phasing module (e.g. `ancestry_mmm/core/planning/phasing.py`)
-- `ancestry_mmm/core/sequential_simulation.py` (`WeeklyPlan` construction)
-- `ancestry_mmm/core/frequency_alignment.py` /
-  `ancestry_mmm/core/frequency_conversion.py` (reuse the canonical
-  calendar; do not create a competing calendar representation)
-- `ancestry_mmm/core/media_costs.py`, `ancestry_mmm/core/media_units.py`
-  (weekly/period-specific cost mapping reuse)
+- `ancestry_mmm/core/planning/phasing.py` (implemented, WP1)
+- `ancestry_mmm/core/frequency_alignment.py` (`CanonicalCalendar` reused
+  directly - no competing calendar representation created)
+- `ancestry_mmm/core/media_costs.py` (`CostMappingRegistry.resolve(...,
+  as_of=...)` reused for weekly/period-specific cost mapping)
+- `ancestry_mmm/tests/test_phasing.py` (implemented, WP1)
+- Not yet touched: `ancestry_mmm/core/sequential_simulation.py`
+  (`WeeklyPlan` construction from a `WeeklyAllocationResult` is an
+  application-layer wiring step, not yet implemented), the future-context
+  builder (trend/Fourier/promotions/controls generation - explicitly
+  deferred, see "Not yet implemented" below), any `application/` service
+  or Streamlit page.
 
 ## Owner and status
 
 **Owner:** Data Science / Platform engineering.
 
-**Status:** Approved for implementation; not yet implemented. Required
-tests before this record's status may change to reflect implementation:
-exact monthly conservation, explicit-override reconciliation and mismatch
-blocking, monetary-versus-model-input path separation, missing-required-
-control blocking in official mode, and fingerprint/serialisation round
-trip - see the implementation brief's Work Package 1 test list.
+**Status:** Core phasing contract implemented and tested (WP1,
+`core.planning.phasing`): `calendar_day_overlap_v1` with per-month
+conservation to strict numerical tolerance and auditable boundary-week
+attribution, an explicit weekly-schedule override with its own
+reconciliation check (weeks are attributed to *tracked* months only, in
+proportion to each tracked month's share of the week's day-overlap - not
+diluted by an untracked adjacent month), separate monetary
+(phase-then-convert, per-week cost-mapping resolution) and model-input
+(no cost conversion) paths, and a typed `HorizonConfiguration` contract
+(`REQ-SCEN-003`'s dependency). A week with exactly zero phased spend
+requires no cost mapping (unambiguously zero regardless of cost) - this
+matters because `CanonicalCalendar` is typically a project's full,
+multi-year window, not just the months being planned.
+
+**Not yet implemented:** the future-context builder (trend/Fourier from
+the canonical future calendar, explicit promotions/events, official-mode
+fail-closed missing-control checks, exploratory-mode labelled
+hold-last-observed assumption) - deliberately deferred as a separate,
+dependent work package, not bundled into this phasing-only record's
+implementation; wiring a phased `WeeklyAllocationResult` into
+`core.sequential_simulation.WeeklyPlan`; any `application/` service or
+Streamlit page.
