@@ -5164,3 +5164,81 @@ thresholds as decision-required").
 **Owner:** Data Science / Platform engineering.
 **Status:** Accepted; implemented on this work package's branch. PR and CI
 remain the release gate.
+
+
+## Sequential Scenario Planner UI semantic-defect reconciliation (Work Package 0, part 2)
+
+**Context:** Section 6 of `Media-Mix-Lab: Coding LLM Next Steps After PR
+#267 and Latest PRD Validation Updates` (2026-08-17) identified four
+current semantic/architecture defects in the page-level sequential adapter
+(`pages/08_Scenario_Planner.py`) that had to be corrected before treating
+the manual sequential-planning UI path as governed: (1) the shared plan
+start month is silently ignored and the analyst's entered monthly values
+are re-seated onto a different real calendar - changing seasonality/cost
+context without disclosure; (2) partial-first-month pro-ration, phasing,
+and per-week cost-mapping conversion were implemented only inside the
+page, violating the thin-interface principle (`AGENTS.md`: "The interface
+must call shared, tested application or analytical services"); (3) the
+page automatically switches to exploratory mode and automatically applies
+`hold_last_observed` to every eligible fitted exogenous control with no
+explicit analyst choice; (4) the page supplies an all-zero future
+promotion map with no visible UI element or label.
+
+**Decision:** Resolved (1) without inventing a bridge-period/start-date
+business contract - the brief explicitly permits "constrain the UI to the
+supported start semantics and make the input calendar unambiguous" as an
+alternative to a full contract. The sequential tab now shows an explicit
+entered-month -> real-calendar-month reassignment table whenever the two
+differ, and blocks calculation until the analyst checks an explicit
+acknowledgment box. (3) and (4) are resolved the same way: each becomes an
+explicit, checkbox-gated acknowledgment before any result is calculated
+(never an automatic default), per the user's explicit direction that all
+three should be a "blocking choice before results show" rather than a
+"visible default with override." No new future-control-input or
+promotion-schedule editor was built - those remain separately tracked,
+larger UI features; the fix here is that the sequential path cannot
+proceed on an unacknowledged assumption, not that every alternative input
+mechanism now exists.
+
+(2) is resolved by moving the arithmetic into `core.planning.phasing`
+as three new functions -
+`reseat_ordinal_monthly_plan_to_start_week`,
+`phase_monthly_series_from_partial_start_calendar_day_overlap_v1`, and
+`phase_monetary_plan_from_partial_start_calendar_day_overlap_v1` - mirroring
+the existing whole-month functions' structure and provenance contract
+exactly, with their own unit tests
+(`TestReseatOrdinalMonthlyPlanToStartWeek`, `TestPhaseFromPartialStart`,
+`TestMonetaryPhaseFromPartialStart` in `test_phasing.py`). This supersedes
+the WP1-phasing decision log entry's earlier choice to keep this logic
+page-local "for this package" pending "a second caller" - the current
+brief's explicit instruction to move it now is a task-specific
+implementation brief, which outranks that earlier engineering-decision
+rationale per the repository's own authority hierarchy.
+
+**Rejected alternative:** Threading the three new explicit-choice booleans
+into `_evaluate_sequential_manual_plan`'s own signature and business logic
+(rejected - the evaluation mathematics for exploratory hold-last and
+zero-promotion were already correct and already fingerprinted via
+`build_future_context`'s existing `future_context_fingerprint`; the actual
+defect was that the page called the evaluator before consent existed, not
+that the evaluator computed the wrong thing. Gating the *call* in the
+render function keeps the fix minimal and leaves the evaluator's tested
+contract unchanged).
+
+**Impact:** `ancestry_mmm/core/planning/phasing.py` (three new functions);
+`ancestry_mmm/pages/08_Scenario_Planner.py` (`_prorated_sequential_monthly_
+values`/`_first_month_fragment_schedule` removed; `_phase_channel`
+simplified to call the new core functions; `_render_sequential_manual_tab`
+gained three acknowledgment gates before any evaluation call);
+`ancestry_mmm/tests/test_phasing.py` (8 new tests for the three new
+functions); `ancestry_mmm/tests/test_scenario_planner_apptest.py` (one new
+test asserting the gate blocks by default; the existing render test
+updated to acknowledge the gates before asserting results appear). No
+change to `core.sequential_simulation`, `core.sequential_evaluation_
+context`, or `core.planning.future_context` - the underlying evaluation
+mathematics and fingerprinting are unchanged. mypy: `core/planning`
+remains zero-tolerance clean; full-core ratchet unchanged at 241/241.
+
+**Owner:** Data Science / Platform engineering.
+**Status:** Accepted; implemented on this work package's branch. PR and CI
+remain the release gate.
