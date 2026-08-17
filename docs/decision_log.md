@@ -5400,3 +5400,70 @@ No schema, migration, or persisted-artefact changes.
 **Owner:** Data Science / Platform engineering.
 **Status:** Accepted; implemented on this work package's branch. PR and CI
 remain the release gate.
+
+
+## Structural stability evidence across time-respecting folds (Work Package 2, part 2)
+
+**Context:** REQ-STAB-001 (approved Work Package 0) required distinguishing
+predictive stability (whether out-of-sample error is stable across folds -
+already assessable via `core.diagnostics.expanding_window_backtest`/
+`core.validation_folds`) from structural stability (whether decision-
+driving quantities such as adstock decay, Hill K/S, media response
+coefficients, baseline behaviour, hierarchy parameters, and selected
+marginal economics move materially across the same folds) as two
+genuinely separate evidence dimensions - a model can predict adequately
+while its structural quantities drift, and neither `core.diagnostics` nor
+`core.identification_diagnostics` compared anything across folds; both
+compute their evidence on a single fit.
+
+**Decision:** Added `core.structural_stability`: `FoldParameterSnapshot`
+(one fold's decision-driving parameter point values and, where available,
+posterior draws - the caller's own naming convention for parameter keys,
+e.g. `"hill_K__TV"`), `ParameterFoldComparison` (the per-parameter
+comparison across every fold that reported it, exposing only a plain
+descriptive `point_range` - explicitly never a threshold, pass/fail
+verdict, or materiality judgement, verified by a dedicated test asserting
+no `status`/`verdict`/`pass`/`fail`/`stable`/`unstable` key exists in the
+serialised output), and `StructuralStabilityArtefact`/`assess_structural_
+stability` (the full structured comparison; a parameter missing from one
+fold's snapshot is recorded as an explicit limitation, never silently
+dropped or backfilled).
+
+This module does not re-fit a model per fold - it accepts caller-supplied
+snapshots, mirroring `core.validation_folds`'s own established Work
+Package 1 pattern ("the caller supplies the fold-local computation, this
+module only assembles and compares the result"). `FoldParameterSnapshot.
+fold_id` is intended to match `core.validation_folds.ValidationFold.
+fold_id`; an integration test proves fold IDs from `build_expanding_
+window_folds` flow through this module's comparison unchanged, satisfying
+REQ-STAB-001 requirement 6's "the two records share one notion of what a
+historical fold is."
+
+**Rejected alternative:** Wiring this evidence into `DiagnosticsArtefact`/
+`pages/06_Diagnostics.py` now that both this record and `REQ-PPD-001`
+have core contracts (rejected, on inspection - unlike `REQ-PPD-001`,
+which only needs a single already-available trace/frame/meta/params call
+and could genuinely be wired into `DiagnosticsService.evaluate()` today,
+this record's evidence structurally requires *multiple folds' already
+re-estimated* parameter values as input, and no real per-fold model
+re-estimation pipeline exists anywhere in this repository yet - the same
+expensive, unresolved "real-fold PyMC recovery" question `REQ-LEAK-001`
+already recorded, not newly introduced here. Wiring an artefact section
+that could only ever be populated by a caller manually assembling
+synthetic snapshots would not be genuine evidence integration; it would
+create the appearance of a working feature with no real data behind it.
+The schema/UI work for both records remains a coherent follow-up once a
+real multi-fold re-estimation path exists).
+
+**Impact:** `ancestry_mmm/core/structural_stability.py` (new);
+`ancestry_mmm/tests/test_structural_stability.py` (new, 18 tests);
+`docs/approved_requirements/REQ-STAB-001.md`/`index.json`/`docs/
+specification_authority.md` updated (including a corrected note on
+`REQ-PPD-001`'s own gap-table row explaining precisely why its UI wiring
+remains deferred). No change to `core.diagnostics`, `core.validation_
+folds`, or any persisted artefact. mypy: new module clean; full-core
+ratchet unchanged at 241/241.
+
+**Owner:** Data Science / Platform engineering.
+**Status:** Accepted; implemented on this work package's branch. PR and CI
+remain the release gate.

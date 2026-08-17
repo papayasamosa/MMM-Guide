@@ -565,6 +565,7 @@
       "status": "approved_for_implementation",
       "record_path": "docs/approved_requirements/REQ-STAB-001.md",
       "affected_modules": [
+        "ancestry_mmm/core/structural_stability.py",
         "docs/approved_requirements/REQ-STAB-001.md",
         "docs/approved_requirements/index.json"
       ],
@@ -575,7 +576,12 @@
         "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
-        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable"
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_structural_stability.py::TestAssessStructuralStability::test_drifting_parameter_has_large_point_range_reported_descriptively",
+        "ancestry_mmm/tests/test_structural_stability.py::TestAssessStructuralStability::test_missing_parameter_in_one_fold_records_a_limitation",
+        "ancestry_mmm/tests/test_structural_stability.py::TestAssessStructuralStability::test_posterior_draws_preserved_per_fold_not_reduced_to_point",
+        "ancestry_mmm/tests/test_structural_stability.py::TestParameterFoldComparison::test_no_threshold_or_verdict_field_exists",
+        "ancestry_mmm/tests/test_structural_stability.py::TestSharedFoldIdentityWithValidationFolds::test_fold_ids_from_validation_folds_flow_through_unchanged"
       ]
     },
     {
