@@ -210,25 +210,31 @@ boundary documented in its own record:
   evaluation, steady-state/sequential method labelling) are approved but
   not yet implemented — no application service consumes this contract yet.
 - `REQ-SCEN-002` (`docs/approved_requirements/REQ-SCEN-002.md`): the
-  monthly-to-weekly phasing contract (WP1, `core.planning.phasing`).
-  `calendar_day_overlap_v1` (exact day-overlap allocation, per-month
-  conservation to strict numerical tolerance, auditable boundary-week
-  attribution), an explicit weekly-schedule override with its own
-  reconciliation check, and separate monetary (`phase_monetary_plan_
-  calendar_day_overlap_v1`, phase-then-convert via a weekly/period-
-  specific `core.media_costs` mapping) and model-input-quantity
-  (`phase_model_input_plan_calendar_day_overlap_v1`, no cost mapping)
-  paths are implemented and tested (`ancestry_mmm/tests/test_phasing.py`).
-  Not yet wired into any application service or Streamlit page — this is
-  a framework-independent core module only, per this record's own scope.
+  monthly-to-weekly phasing and future-context contract. Phasing
+  (`calendar_day_overlap_v1`, WP1, `core.planning.phasing`): exact
+  day-overlap allocation, per-month conservation to strict numerical
+  tolerance, auditable boundary-week attribution, an explicit
+  weekly-schedule override with its own reconciliation check, and separate
+  monetary/model-input-quantity paths. Future context (WP4 of `...Post
+  PR262`, `core.planning.future_context`): trend/Fourier continued via the
+  fitted model's own definitions, official-mode fail-closed missing-
+  control checks, exploratory-mode labelled `hold_last_observed`. Governed
+  `WeeklyPlan` construction (`core.planning.weekly_plan_builder`) and the
+  terminal candidate/reference evaluator (`core.planning.
+  terminal_response`) complete the core-module implementation. Not yet
+  wired into any application service or Streamlit page — these remain
+  framework-independent core modules only, per this record's own scope.
 - `REQ-SCEN-003` (`docs/approved_requirements/REQ-SCEN-003.md`): response
   horizon and terminal reporting. The typed `HorizonConfiguration`
   contract (short/long/plan/terminal horizons, explicit values required)
-  is implemented (`core.planning.phasing.HorizonConfiguration`), and its
-  kernel-level dependency (terminal carryover as a structurally separate
-  result) has existed since `REQ-STATE-001`. Persistence with a saved
-  scenario, and exclusion of terminal carryover from the optimisation
-  objective, remain unimplemented pending application-layer integration.
+  is implemented (`core.planning.phasing.HorizonConfiguration`), and the
+  business-facing terminal candidate/reference evaluator
+  (`core.planning.terminal_response`, WP4 of `...Post PR262`) reports
+  terminal incremental response as a structurally separate result, sharing
+  one real future non-decision context between candidate and reference.
+  Persistence with a saved scenario, and exclusion of terminal carryover
+  from the optimisation objective, remain unimplemented pending
+  application-layer integration.
 - `REQ-COVERAGE-001` (`docs/approved_requirements/REQ-COVERAGE-001.md`):
   the variable-coverage/missingness domain (`core.coverage`:
   `SourceDefinition`, `SourceVersion`, `FrequencyMetadata`,

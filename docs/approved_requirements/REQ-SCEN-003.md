@@ -70,7 +70,13 @@ was produced by the sequential contract.
 - `ancestry_mmm/core/planning/phasing.py` (`HorizonConfiguration` -
   implemented, WP1: short/long/plan/terminal horizons, explicit values
   required, no hidden UI-preset constants)
-- `ancestry_mmm/tests/test_phasing.py` (implemented, WP1)
+- `ancestry_mmm/core/planning/terminal_response.py` (implemented, WP4 of
+  `...Post PR262`: the business-facing terminal candidate/reference
+  evaluator - real shared future non-decision context, zero future
+  decision media only, `TerminalIncrementalResult` reported as a
+  structurally separate type from any plan-window result)
+- `ancestry_mmm/tests/test_phasing.py` (implemented, WP1),
+  `ancestry_mmm/tests/test_terminal_response.py` (implemented, WP4)
 - Not yet touched: `application/scenario_service.py`,
   `pages/08_Scenario_Planner.py` (not yet wired to this contract - see
   `REPO_REVIEW_AND_NEXT_STEPS.md`), scenario persistence/staleness
@@ -82,9 +88,11 @@ was produced by the sequential contract.
 
 **Owner:** Data Science / Platform engineering.
 
-**Status:** Kernel-level terminal-carryover mechanics (`REQ-STATE-001`)
-and the typed `HorizonConfiguration` contract (WP1,
-`core.planning.phasing.HorizonConfiguration`) are implemented and tested.
-Persistence with a saved scenario, and exclusion of terminal carryover
-from the optimisation objective, are approved but not yet implemented -
-both require the not-yet-built application-layer integration.
+**Status:** Kernel-level terminal-carryover mechanics (`REQ-STATE-001`),
+the typed `HorizonConfiguration` contract (WP1,
+`core.planning.phasing.HorizonConfiguration`), and the business-facing
+terminal candidate/reference evaluator (WP4,
+`core.planning.terminal_response`) are implemented and tested. Persistence
+with a saved scenario, and exclusion of terminal carryover from the
+optimisation objective, are approved but not yet implemented - both
+require the not-yet-built application-layer integration.
