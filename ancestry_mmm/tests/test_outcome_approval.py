@@ -949,9 +949,7 @@ class TestAuthorityConsistency:
             "## Version history: focused Bayesian validation, causal "
             "identification, calibration and forecast-risk overlay",
             1,
-        )[1].split(
-            "## Version history: focused Part 3 v1.6 overlay", 1
-        )[0]
+        )[1].split("## Version history: focused Part 3 v1.6 overlay", 1)[0]
         rows = self._markdown_table_rows(overlay_section)
         assert rows, "no rows parsed from the validation-overlay table"
 
