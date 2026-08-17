@@ -1,6 +1,6 @@
 {
   "schema_version": 3,
-  "generated_at": "2026-08-16",
+  "generated_at": "2026-08-17",
   "requirements": [
     {
       "requirement_id": "REQ-AUTH-001",
@@ -533,6 +533,150 @@
         "ancestry_mmm/tests/test_phasing.py::TestHorizonConfiguration::test_defaults_are_valid",
         "ancestry_mmm/tests/test_phasing.py::TestHorizonConfiguration::test_rejects_inverted_bounds",
         "ancestry_mmm/tests/test_phasing.py::TestHorizonConfiguration::test_round_trip"
+      ]
+    },
+    {
+      "requirement_id": "REQ-LEAK-001",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-LEAK-001.md",
+      "affected_modules": [
+        "docs/approved_requirements/REQ-LEAK-001.md",
+        "docs/approved_requirements/index.json"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable"
+      ]
+    },
+    {
+      "requirement_id": "REQ-STAB-001",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-STAB-001.md",
+      "affected_modules": [
+        "docs/approved_requirements/REQ-STAB-001.md",
+        "docs/approved_requirements/index.json"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable"
+      ]
+    },
+    {
+      "requirement_id": "REQ-PPD-001",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-PPD-001.md",
+      "affected_modules": [
+        "docs/approved_requirements/REQ-PPD-001.md",
+        "docs/approved_requirements/index.json"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable"
+      ]
+    },
+    {
+      "requirement_id": "REQ-IDENT-001",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-IDENT-001.md",
+      "affected_modules": [
+        "docs/approved_requirements/REQ-IDENT-001.md",
+        "docs/approved_requirements/index.json"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable"
+      ]
+    },
+    {
+      "requirement_id": "REQ-LATENT-001",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-LATENT-001.md",
+      "affected_modules": [
+        "docs/approved_requirements/REQ-LATENT-001.md",
+        "docs/approved_requirements/index.json"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable"
+      ]
+    },
+    {
+      "requirement_id": "REQ-EXPMODE-001",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-EXPMODE-001.md",
+      "affected_modules": [
+        "docs/approved_requirements/REQ-EXPMODE-001.md",
+        "docs/approved_requirements/index.json"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable"
+      ]
+    },
+    {
+      "requirement_id": "REQ-CALIB-001",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-CALIB-001.md",
+      "affected_modules": [
+        "docs/approved_requirements/REQ-CALIB-001.md",
+        "docs/approved_requirements/index.json"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable"
+      ]
+    },
+    {
+      "requirement_id": "REQ-FORECAST-001",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-FORECAST-001.md",
+      "affected_modules": [
+        "docs/approved_requirements/REQ-FORECAST-001.md",
+        "docs/approved_requirements/index.json"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable"
       ]
     }
   ]
