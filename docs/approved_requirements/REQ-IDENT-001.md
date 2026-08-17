@@ -28,7 +28,46 @@ diagnostic layer; it does not replace either existing check.
 
 ## Capability status
 
-Not yet implemented. Target-state contract only.
+Core diagnostic implemented (Work Package 3, 2026-08-17):
+`ancestry_mmm/core/estimand_identification.py`'s `assess_backdoor_
+identification` implements Pearl's back-door criterion for an
+adjustment-based total-effect estimand, composing `networkx`'s own
+`is_d_separator`/`find_minimal_d_separator` (Context7 `/networkx/
+networkx`; pinned `>=3.5,<4.0`, the version that introduced these current
+names) rather than a hand-derived d-separation implementation — no
+Ancestry-specific graph-theory algorithm is written from scratch.
+`EstimandIdentificationResult` reports, per Requirement 2: whether
+backdoor paths remain open (`status`); the proposed adjustment set;
+treatment descendants incorrectly included in it (Pearl's second
+back-door condition, checked separately in the original graph); a
+constructive minimal adjustment set (excluding treatment's descendants)
+when the proposed one fails; and members of the proposed set whose
+removal would improve separation, flagged as likely colliders/collider
+descendants (verified against a constructed collider scenario, not only
+the simple-confounder case). `EstimandIdentificationResult` never exposes
+a bare boolean; every result carries `GRAPHICAL_IDENTIFICATION_
+DISCLAIMER` (Requirement 1) and an explicit limitation that this checker
+cannot determine whether a graph node is actually observed data
+(Requirement 2's "unavailable or unmeasured" item — `core.causal_graph.
+CausalNode` has no observability field, so this is disclosed as a
+limitation, never assumed either way).
+
+Requesting `effect_type="direct"` returns `unsupported_by_current_
+checker` rather than silently applying the total-effect criterion to a
+direct-effect request (Requirement 3's closed status vocabulary, all five
+values implemented) — direct/natural-direct effect identification
+requires a different criterion this module does not implement.
+Structural/linked-model estimands (Requirement 4) are correspondingly out
+of this module's scope by construction: it only ever answers an
+adjustment-based question.
+
+Not yet implemented: Requirement 5 (extending `core.graph_model_
+compiler`'s blocking-error contract to fail official compilation on an
+incompatible adjustment-based estimand) and `DiagnosticsArtefact`/
+Diagnostics-page wiring (Requirement 6's reporting separation) — both
+deferred as separate integration follow-ups, consistent with how Work
+Package 1/2's core diagnostics were shipped ahead of their own compiler/
+UI wiring.
 
 ## Requirement
 
@@ -107,20 +146,40 @@ one undifferentiated "identified"/"not identified" flag.
 - the business and technical labels used for each status (Part 10 §47
   `UX-028`).
 
-## Affected modules (target)
+## Affected modules
 
-- `ancestry_mmm/core/identification_diagnostics.py` (extend, or a new sibling
-  module for estimand-specific graphical checks — module boundary to be
-  decided at implementation time)
+- `ancestry_mmm/core/estimand_identification.py` (new —
+  `EstimandIdentificationResult`, `assess_backdoor_identification`)
+- `pyproject.toml` / `uv.lock` (new dependency: `networkx>=3.5,<4.0`)
 - `ancestry_mmm/core/causal_graph.py` (read-only consumer of the approved
-  graph; this record must not add a second, divergent structural validator)
+  graph via `_build_digraph`; this record does not add a second,
+  divergent structural validator — `excluded_diagnostic_only` edges are
+  excluded from the identification graph, matching `REQ-GRAPH-001`'s own
+  "compiles to nothing" rule)
+- `ancestry_mmm/core/identification_diagnostics.py` (unchanged — this
+  record's diagnostic is additional, not a replacement)
+- `ancestry_mmm/core/graph_model_compiler.py` (not yet touched — Requirement
+  5's compiler-blocking extension is deferred)
 - `ancestry_mmm/pages/14_Causal_Graph.py` / `ancestry_mmm/pages/06_
-  Diagnostics.py` (surface the diagnostic and its mandated disclaimer)
-- `docs/approved_requirements/REQ-IDENT-001.md` (new)
-- `docs/approved_requirements/index.json` (new entry)
+  Diagnostics.py` (not yet wired — deferred)
+- `docs/approved_requirements/REQ-IDENT-001.md` (this record)
+- `docs/approved_requirements/index.json` (updated)
 
 ## Required tests
 
+- `ancestry_mmm/tests/test_estimand_identification.py` (18 tests: a
+  simple-confounder scenario proving the empty set leaves a backdoor path
+  open and adjusting for the confounder is graph-compatible; a mediator/
+  treatment-descendant scenario proving it is flagged and excluded from
+  the constructive minimal adjustment set; a constructed collider
+  scenario proving conditioning on a collider that was already blocking
+  a path by default correctly reopens it and is flagged as the
+  problematic member, never the genuine confounder in the same proposed
+  set; `effect_type="direct"` returning `unsupported_by_current_checker`;
+  treatment/outcome absent from the graph returning `not_applicable`; a
+  cyclic graph returning `unsupported_by_current_checker` rather than a
+  silently wrong answer; `excluded_diagnostic_only` edges excluded from
+  the identification graph; and result validation/round-trip)
 - `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists`
 - `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists`
 - `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid`
@@ -131,15 +190,28 @@ one undifferentiated "identified"/"not identified" flag.
 
 ## Migration impact
 
-None yet.
+None to persisted artefacts. New dependency `networkx>=3.5,<4.0` added to
+`pyproject.toml`/`uv.lock` (pure-Python, MIT-licensed, no known
+vulnerabilities per `pip-audit` against the updated lock file).
 
 ## Unresolved decisions
 
 - Graph-library/algorithm choice for backdoor-path and adjustment-set
-  computation (Context7/upstream-reference workflow required before
-  selection, per root `AGENTS.md`).
-- Whether this diagnostic is computed synchronously at graph-approval time,
-  at model-compile time, or both.
+  computation — **resolved**: `networkx>=3.5,<4.0` (`is_d_separator`,
+  `find_minimal_d_separator`), verified via Context7 against
+  `/networkx/networkx` current documentation before selection, per root
+  `AGENTS.md`'s required upstream-reference workflow.
+- Whether this diagnostic is computed synchronously at graph-approval
+  time, at model-compile time, or both — deferred to the Requirement 5
+  compiler-integration follow-up.
+- The full set of graphical-identification statuses, when graph checks
+  are required versus optional, and the accepted identification
+  strategies for structural/linked estimands (Part 7 §48 `VL-026`) —
+  this implementation provides the five-value status vocabulary Part 10
+  §17.7 suggested; which statuses are officially *required* for a given
+  use remains that separate decision.
+- The business and technical labels used for each status (Part 10 §47
+  `UX-028`).
 
 ## Owner
 

@@ -612,6 +612,9 @@
       "status": "approved_for_implementation",
       "record_path": "docs/approved_requirements/REQ-IDENT-001.md",
       "affected_modules": [
+        "ancestry_mmm/core/estimand_identification.py",
+        "pyproject.toml",
+        "uv.lock",
         "docs/approved_requirements/REQ-IDENT-001.md",
         "docs/approved_requirements/index.json"
       ],
@@ -622,7 +625,12 @@
         "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
-        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable"
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_estimand_identification.py::TestSimpleConfounder::test_adjusting_for_confounder_is_graph_compatible",
+        "ancestry_mmm/tests/test_estimand_identification.py::TestTreatmentDescendantExclusion::test_minimal_adjustment_set_never_includes_a_treatment_descendant",
+        "ancestry_mmm/tests/test_estimand_identification.py::TestColliderOpensPath::test_adjusting_for_the_collider_too_reopens_the_path",
+        "ancestry_mmm/tests/test_estimand_identification.py::TestScopeBoundaries::test_direct_effect_type_is_unsupported",
+        "ancestry_mmm/tests/test_estimand_identification.py::TestScopeBoundaries::test_excluded_diagnostic_only_edges_are_not_part_of_the_causal_graph"
       ]
     },
     {

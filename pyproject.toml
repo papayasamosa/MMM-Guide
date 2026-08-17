@@ -45,6 +45,14 @@ dependencies = [
     # Excel support (for data dictionary)
     "openpyxl>=3.1.0",
     "graphviz>=0.21",
+    # REQ-IDENT-001: estimand-specific graphical identification (backdoor
+    # paths, adjustment sets) via networkx's own d-separation algorithms
+    # (networkx.algorithms.d_separation) - not a re-derived implementation.
+    # >=3.5 because NetworkX 3.5 removed the older `d_separated`/
+    # `minimum_d_separator` names in favour of `is_d_separator`/
+    # `find_minimal_d_separator`/`is_minimal_d_separator`, which is what
+    # core/estimand_identification.py uses.
+    "networkx>=3.5,<4.0",
     # Parquet read/write for project persistence (ancestry_mmm/core/persistence.py)
     "pyarrow>=14.0.0",
 ]
