@@ -9,10 +9,10 @@ and does not supersede `AGENTS.md`, `docs/approved_requirements/`, or
 
 Repository: `papayasamosa/Media-Mix-Lab`
 
-**Repository state through merged PR #264** (`WP3: draw-consistent
-sequential state and evaluation context`, part of `Media-Mix-Lab: Coding
+**Repository state through merged PR #265** (`WP4: future context, governed
+WeeklyPlan construction, terminal response`, part of `Media-Mix-Lab: Coding
 LLM Next Steps Post PR262`) - merge commit
-`ce5b3962b7eb4f66bc7549ab62cc6178c02e1220`.
+`ba29b04526843879722fc0f4bc4cf799063e4733`.
 
 This document deliberately identifies its baseline by merged PR/work-package
 milestone, never by a field claiming to be "current `main`": a branch
@@ -30,6 +30,9 @@ remote truth.
 
 Historical markers (all superseded merge commits; recorded only for
 history, never as current state):
+`ce5b3962b7eb4f66bc7549ab62cc6178c02e1220` (merged PR #264, WP3 of
+`...Post PR262` - draw-consistent sequential state and evaluation context -
+superseded by PR #265 above),
 `8ddf3568aad0f6806f43e9fe3e5e2ddcfea471cd` (merged PR #263, WP2 of
 `...Post PR262` - authority-doc reconciliation and merge-gate hardening -
 superseded by PR #264 above),
@@ -221,8 +224,35 @@ The current implementation includes:
   future decision media only (the initial residual-carryover policy), and
   reports `candidate - reference` as a structurally separate
   `TerminalIncrementalResult`. All three remain framework-independent core
-  modules only - not yet wired into any application service or Streamlit
-  page (see Known bounded gaps below).
+  modules only.
+- Sequential-weekly manual scenario evaluation service (Work Package 5 of
+  `Media-Mix-Lab: Coding LLM Next Steps Post PR262`,
+  `ancestry_mmm/core/sequential_scenario_evaluation.py`,
+  `ancestry_mmm/application/scenario_service.py`): orchestrates already-
+  governed candidate/reference `WeeklyPlan`s through historical-state
+  reconstruction, one shared `SequentialEvaluationContext`, weekly
+  incrementality, monthly aggregation (only after weekly evaluation),
+  short/long horizon response, terminal incremental carryover (structurally
+  separate), and optional fully draw-consistent posterior evaluation -
+  reusing the same governance/economics machinery
+  (`core.planning_governance.resolve_planning_governance`,
+  `core.scenario_governance.resolve_scenario_plan`, both confirmed period-
+  key-agnostic, not steady-state-specific) the existing steady-state path
+  uses, so the two paths never diverge in what "official" governance
+  means. `ScenarioService.evaluate_manual_sequential` dispatches to it,
+  mirroring `evaluate_manual`'s existing dispatch pattern. Also fixed in
+  this package: `core.optimization.validate_scenario_dependencies`'s
+  `planning_semantics_fingerprint` staleness check was hard-coded to only
+  recognise the steady-state engine's semantics as "current" - a
+  sequential scenario would have appeared permanently stale the moment it
+  was saved; now engine-aware. Candidate A fail-closed behaviour is
+  inherited for free (calling into `core.sequential_simulation` means
+  `CandidateAReplayNotSupportedError` propagates unchanged). **Not yet
+  wired into any Streamlit page** - `pages/08_Scenario_Planner.py` does
+  not yet offer a sequential-weekly method choice, and no phasing/future-
+  context pipeline is wired from user input; scenario persistence/
+  staleness for a saved sequential scenario also does not yet exist. See
+  Known bounded gaps below.
 
 ## Known bounded gaps
 
@@ -305,24 +335,29 @@ business or modelling definitions:
   `Union[float, np.ndarray]`, matching how every multi-channel caller
   already invokes it - retiring 4 further pre-existing errors); it is a
   ceiling, not a target. CI must fail if the measured count increases.
-- Scenario planning's *application-layer* surface (`application/
-  scenario_service.py`, `pages/08_Scenario_Planner.py`,
-  `core.optimization`'s objective) remains a steady-state monthly
-  approximation. Every core-module piece the sequential path needs now
-  exists (see Delivered foundation above): the sequential weekly
-  simulation kernel with starting adstock, terminal carryover, and
-  draw-consistent posterior evaluation for both model types (WP5 of
-  `...After PR #253` / WP3 of `...Post PR262`,
-  `core.sequential_simulation`), a monthly-to-weekly phasing contract
-  (WP1 of `...Post WP5`, `core.planning.phasing`), a future-context
-  builder, governed `WeeklyPlan` construction boundary, and terminal
-  candidate/reference evaluator (WP4 of `...Post PR262`,
+- The Scenario Planner *page* (`pages/08_Scenario_Planner.py`) and
+  `core.optimization`'s objective still only offer the steady-state
+  monthly approximation - a sequential-weekly method choice is not yet
+  exposed in the UI. Every layer below the page now exists (see Delivered
+  foundation above): the sequential weekly simulation kernel with starting
+  adstock, terminal carryover, and draw-consistent posterior evaluation
+  for both model types (WP5 of `...After PR #253` / WP3 of `...Post
+  PR262`, `core.sequential_simulation`), a monthly-to-weekly phasing
+  contract (WP1 of `...Post WP5`, `core.planning.phasing`), a future-
+  context builder, governed `WeeklyPlan` construction boundary, and
+  terminal candidate/reference evaluator (WP4 of `...Post PR262`,
   `core.planning.future_context`/`weekly_plan_builder`/
-  `terminal_response`), and a shared sequential evaluation context (WP3,
-  `core.sequential_evaluation_context`). Wiring all of this into the
-  Scenario Planner UI or the optimiser's objective is a documented,
-  not-yet-attempted application-integration follow-up (Work Package 5 of
-  `...Post PR262`), not a modelling or core-engineering gap.
+  `terminal_response`), a shared sequential evaluation context (WP3,
+  `core.sequential_evaluation_context`), and - as of WP5 of `...Post
+  PR262` - the application-*service* orchestration layer itself
+  (`core.sequential_scenario_evaluation`, `application.scenario_service.
+  ScenarioService.evaluate_manual_sequential`), reusing the steady-state
+  path's own governance/economics machinery rather than duplicating it.
+  Wiring this service into the Scenario Planner UI (a method toggle, the
+  phasing/future-context pipeline driven by user input, sequential result
+  rendering, persistence/staleness, and a real browser-lifecycle test) or
+  the optimiser's objective is a documented, not-yet-attempted follow-up,
+  not a modelling or core-engineering gap.
 - Chronos-2 or another future exogenous forecasting integration is not yet
   implemented.
 - Real UK data readiness is an operational step and must be run only by an

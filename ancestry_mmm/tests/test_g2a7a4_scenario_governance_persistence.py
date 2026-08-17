@@ -10,6 +10,7 @@ from ancestry_mmm.core.optimization import (
     ARTEFACT_KINDS,
     ARTEFACT_KIND_REQUIRED_USE,
     CURRENT_PLANNING_EVALUATION_SEMANTICS,
+    SEQUENTIAL_WEEKLY_PLANNING_EVALUATION_SEMANTICS,
     PlanningObjective,
     PlanningGovernanceError,
     ResolvedOutcomeAuthorisation,
@@ -777,6 +778,56 @@ class TestLegacyMigration:
                 ],
                 "planning_semantics_fingerprint": (
                     CURRENT_PLANNING_EVALUATION_SEMANTICS.fingerprint()
+                ),
+            },
+        }
+        status = scenario_dependency_status(
+            scenario,
+            current_model_run_id="run-1",
+            current_data_fingerprint="d-1",
+            current_model_spec_fingerprint="s-1",
+            current_posterior_fingerprint="p-1",
+        )
+        assert status == "current"
+
+    def test_schema_4_with_current_sequential_planning_semantics_fingerprint_is_current(
+        self,
+    ):
+        """Work Package 5 (`Media-Mix-Lab: Coding LLM Next Steps Post
+        PR262`): a schema-4 scenario whose planning_semantics_fingerprint
+        matches the sequential-weekly engine (not the steady-state one) must
+        also be `current`, not `stale` - the comparison must be engine-
+        aware, recognising every currently-approved evaluation engine's
+        semantics, not only CURRENT_PLANNING_EVALUATION_SEMANTICS. Before
+        this fix, a sequential scenario would have appeared permanently
+        stale the moment it was saved."""
+        assert (
+            SEQUENTIAL_WEEKLY_PLANNING_EVALUATION_SEMANTICS.fingerprint()
+            != CURRENT_PLANNING_EVALUATION_SEMANTICS.fingerprint()
+        )
+        scenario = {
+            "name": "schema-4-current-sequential",
+            "market": "UK",
+            "governance_mode": "official",
+            "artefact_kind": "manual_scenario",
+            "schema_version": 4,
+            "governance_dependencies": {
+                "model_run_id": "run-1",
+                "model_approval_fingerprint": "maf-1",
+                "data_fingerprint": "d-1",
+                "model_spec_fingerprint": "s-1",
+                "posterior_fingerprint": "p-1",
+                "planning_objective_fingerprint": "obj-1",
+                "outcome_authorisations": [
+                    {
+                        "outcome_id": "New",
+                        "requested_use": "planning",
+                        "approval_id": "apr-1",
+                        "definition_fingerprint": "def-fp-1",
+                    }
+                ],
+                "planning_semantics_fingerprint": (
+                    SEQUENTIAL_WEEKLY_PLANNING_EVALUATION_SEMANTICS.fingerprint()
                 ),
             },
         }

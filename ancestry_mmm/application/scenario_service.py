@@ -6,6 +6,18 @@ PR 51B: Correctly dispatches to ``evaluate_manual_scenario()`` for manual
 scenarios and ``optimize_scenario()`` for optimisation. Identity fields
 (model_run_id, fingerprints) must be supplied explicitly — never read
 from ``FHModelMeta``.
+
+Work Package 5 (`Media-Mix-Lab: Coding LLM Next Steps Post PR262`): adds
+``evaluate_manual_sequential()``, dispatching to ``core.
+sequential_scenario_evaluation.evaluate_manual_scenario_sequential`` for
+the sequential-weekly method - the same dispatch pattern as
+``evaluate_manual``, calling a different core module rather than branching
+inside the existing method. The caller (not this service) is responsible
+for phasing the monthly plan and building the future context/governed
+``WeeklyPlan``\\ s (``core.planning.phasing``/``future_context``/
+``weekly_plan_builder``) - this service only evaluates already-built
+weekly plans, mirroring how ``evaluate_manual`` only evaluates an
+already-built ``spend_plan``.
 """
 
 from __future__ import annotations
@@ -21,6 +33,8 @@ from ancestry_mmm.core.predict import FHPosteriorParams
 from ancestry_mmm.core.market_specific_predict import FHMarketSpecificPosteriorParams
 from ancestry_mmm.core.activities import ActivityDefinition
 from ancestry_mmm.core.media_costs import CostMappingRegistry
+from ancestry_mmm.core.planning.future_context import FutureContextResult
+from ancestry_mmm.core.planning.phasing import HorizonConfiguration
 from ancestry_mmm.core.scenario_governance import (
     ScenarioPlan,
     CounterfactualPolicy,
@@ -31,6 +45,11 @@ from ancestry_mmm.core.planning.value import (
     PlanningObjective,
     ScenarioEvaluationResult,
 )
+from ancestry_mmm.core.sequential_evaluation_context import SequentialEvaluationContext
+from ancestry_mmm.core.sequential_scenario_evaluation import (
+    SequentialScenarioEvaluationResult,
+)
+from ancestry_mmm.core.sequential_simulation import WeeklyPlan
 from ancestry_mmm.core.validation_policy import ApprovalReadiness, ThresholdPolicy
 from ancestry_mmm.core.outcome_approval import OutcomeApproval
 
@@ -72,6 +91,57 @@ class ManualScenarioInput:
     currency_context: Optional[CurrencyContext] = None
     approval_readiness: Optional[ApprovalReadiness] = None
     current_policy: Optional[ThresholdPolicy] = None
+
+
+@dataclass
+class SequentialManualScenarioInput:
+    """Typed input for sequential-weekly manual scenario evaluation
+    (Work Package 5, `REQ-SCEN-001`/`REQ-SCEN-002`).
+
+    ``candidate_plan``/``reference_plan`` must already be governed
+    ``WeeklyPlan``\\ s (``core.planning.weekly_plan_builder.
+    build_governed_weekly_plan``) sharing the same market/canonical weeks
+    as ``evaluation_context`` - this service evaluates, it does not phase
+    a monthly plan or build a future context itself. All identity fields
+    are explicit. Never read from ``FHModelMeta``.
+    """
+
+    market: str
+    candidate_plan: WeeklyPlan
+    reference_plan: WeeklyPlan
+    meta: FHModelMeta
+    params: AnyPosteriorParams
+    historical_frame: Dict[str, Any]
+    horizon_configuration: HorizonConfiguration
+    evaluation_context: SequentialEvaluationContext
+    weekly_plan_fingerprint: str
+    reference_weekly_plan_fingerprint: str
+    model_type: str = "shared"
+    future_context: Optional[FutureContextResult] = None
+    terminal_future_context: Optional[FutureContextResult] = None
+    approval: Optional[ModelApproval] = None
+    model_run_id: str = ""
+    data_fingerprint: str = ""
+    model_spec_fingerprint: str = ""
+    posterior_fingerprint: str = ""
+    planning_objective: Optional[PlanningObjective] = None
+    activity_definitions: Optional[List[ActivityDefinition]] = None
+    scenario_plan: Optional[ScenarioPlan] = None
+    counterfactual_policy: Optional[CounterfactualPolicy] = None
+    cost_mapping_registry: Optional[CostMappingRegistry] = None
+    cost_context_id: Optional[str] = None
+    cost_as_of_by_period: Optional[Dict[str, str]] = None
+    outcome_approvals: Optional[List[OutcomeApproval]] = None
+    governance_mode: str = "official"
+    nbt_completeness_metadata: Optional[dict] = None
+    artefact_kind: str = "manual_scenario"
+    value_mapping: Optional[OutcomeValueMapping] = None
+    currency_context: Optional[CurrencyContext] = None
+    approval_readiness: Optional[ApprovalReadiness] = None
+    current_policy: Optional[ThresholdPolicy] = None
+    trace: Optional[Any] = None
+    n_posterior_draws: int = 0
+    posterior_seed: int = 42
 
 
 @dataclass
@@ -127,6 +197,7 @@ class ScenarioServiceResult:
     evaluation: Optional[ScenarioEvaluationResult] = None
     evaluation_df: Optional[pd.DataFrame] = None
     optimisation_result: Optional[dict] = None
+    sequential_evaluation: Optional[SequentialScenarioEvaluationResult] = None
     errors: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
 
@@ -135,8 +206,13 @@ class ScenarioService:
     """Application service for scenario planning and evaluation.
 
     Dispatches to the correct core API:
-    - ``evaluate_manual_scenario()`` for manual scenarios
-    - ``optimize_scenario()`` for optimisation
+    - ``evaluate_manual_scenario()`` for steady-state monthly manual
+      scenarios
+    - ``optimize_scenario()`` for steady-state optimisation
+    - ``evaluate_manual_scenario_sequential()`` for sequential-weekly
+      manual scenarios (Work Package 5) - a distinct, always-labelled
+      method (``REQ-SCEN-001`` item 7), never a silent alternative to the
+      steady-state path
 
     Does not access Streamlit session state, mutate global state, or
     render any UI.
@@ -206,6 +282,95 @@ class ScenarioService:
 
         return ScenarioServiceResult(
             evaluation=evaluation,
+            errors=errors,
+            warnings=warnings,
+        )
+
+    def evaluate_manual_sequential(
+        self, sc_input: SequentialManualScenarioInput
+    ) -> ScenarioServiceResult:
+        """Evaluate a sequential-weekly manual scenario (Work Package 5).
+
+        Calls ``evaluate_manual_scenario_sequential()`` with the correct
+        signature. All identity fields must be supplied explicitly.
+        ``candidate_plan``/``reference_plan`` must already be governed
+        ``WeeklyPlan``\\ s - phasing and future-context construction are
+        the caller's responsibility.
+        """
+        errors: List[str] = []
+        warnings: List[str] = []
+
+        if sc_input.candidate_plan is None or sc_input.reference_plan is None:
+            errors.append("No candidate/reference weekly plan provided.")
+            return ScenarioServiceResult(errors=errors)
+        if sc_input.params is None:
+            errors.append("No posterior params provided.")
+            return ScenarioServiceResult(errors=errors)
+        if sc_input.meta is None:
+            errors.append("No model metadata provided.")
+            return ScenarioServiceResult(errors=errors)
+        if sc_input.evaluation_context is None:
+            errors.append("No sequential evaluation context provided.")
+            return ScenarioServiceResult(errors=errors)
+        if sc_input.governance_mode == "official" and sc_input.approval is None:
+            errors.append("No model approval provided.")
+            return ScenarioServiceResult(errors=errors)
+
+        if errors:
+            return ScenarioServiceResult(errors=errors)
+
+        from ancestry_mmm.core.sequential_scenario_evaluation import (
+            evaluate_manual_scenario_sequential,
+        )
+
+        try:
+            evaluation = evaluate_manual_scenario_sequential(
+                market=sc_input.market,
+                candidate_plan=sc_input.candidate_plan,
+                reference_plan=sc_input.reference_plan,
+                meta=sc_input.meta,
+                params=sc_input.params,
+                historical_frame=sc_input.historical_frame,
+                horizon_configuration=sc_input.horizon_configuration,
+                evaluation_context=sc_input.evaluation_context,
+                weekly_plan_fingerprint=sc_input.weekly_plan_fingerprint,
+                reference_weekly_plan_fingerprint=sc_input.reference_weekly_plan_fingerprint,
+                model_type=sc_input.model_type,
+                future_context=sc_input.future_context,
+                terminal_future_context=sc_input.terminal_future_context,
+                approval=sc_input.approval,
+                model_run_id=sc_input.model_run_id,
+                data_fingerprint=sc_input.data_fingerprint,
+                model_spec_fingerprint=sc_input.model_spec_fingerprint,
+                posterior_fingerprint=sc_input.posterior_fingerprint,
+                planning_objective=sc_input.planning_objective,
+                activity_definitions=sc_input.activity_definitions,
+                scenario_plan=sc_input.scenario_plan,
+                counterfactual_policy=sc_input.counterfactual_policy,
+                cost_mapping_registry=sc_input.cost_mapping_registry,
+                cost_context_id=sc_input.cost_context_id,
+                cost_as_of_by_period=sc_input.cost_as_of_by_period,
+                outcome_approvals=sc_input.outcome_approvals,
+                governance_mode=sc_input.governance_mode,
+                nbt_completeness_metadata=sc_input.nbt_completeness_metadata,
+                artefact_kind=sc_input.artefact_kind,
+                value_mapping=sc_input.value_mapping,
+                currency_context=sc_input.currency_context,
+                approval_readiness=sc_input.approval_readiness,
+                current_policy=sc_input.current_policy,
+                trace=sc_input.trace,
+                n_posterior_draws=sc_input.n_posterior_draws,
+                posterior_seed=sc_input.posterior_seed,
+            )
+        except Exception as exc:
+            errors.append(f"Sequential manual scenario evaluation failed: {exc}")
+            return ScenarioServiceResult(errors=errors)
+
+        if evaluation.warnings:
+            warnings.extend(evaluation.warnings)
+
+        return ScenarioServiceResult(
+            sequential_evaluation=evaluation,
             errors=errors,
             warnings=warnings,
         )

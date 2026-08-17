@@ -75,14 +75,23 @@ was produced by the sequential contract.
   evaluator - real shared future non-decision context, zero future
   decision media only, `TerminalIncrementalResult` reported as a
   structurally separate type from any plan-window result)
+- `ancestry_mmm/core/sequential_scenario_evaluation.py` (implemented,
+  WP5: `SequentialScenarioEvaluationResult.short_horizon_incremental`/
+  `.long_horizon_incremental` computed from `HorizonConfiguration` over
+  already-evaluated weekly incremental output; `.terminal` holds the
+  `TerminalIncrementalResult` when a terminal future context is supplied,
+  always structurally separate from the plan-window fields)
+- `ancestry_mmm/application/scenario_service.py`
+  (`ScenarioService.evaluate_manual_sequential`, implemented, WP5)
 - `ancestry_mmm/tests/test_phasing.py` (implemented, WP1),
-  `ancestry_mmm/tests/test_terminal_response.py` (implemented, WP4)
-- Not yet touched: `application/scenario_service.py`,
-  `pages/08_Scenario_Planner.py` (not yet wired to this contract - see
-  `REPO_REVIEW_AND_NEXT_STEPS.md`), scenario persistence/staleness
-  (`core.scenario_governance`, `core.persistence` - horizon configuration
-  and terminal-carryover result must become part of the persisted,
-  fingerprinted scenario record once that wiring exists)
+  `ancestry_mmm/tests/test_terminal_response.py` (implemented, WP4),
+  `ancestry_mmm/tests/test_sequential_scenario_evaluation.py` (implemented,
+  WP5)
+- Not yet touched: `pages/08_Scenario_Planner.py` (not yet wired to this
+  contract - see `REPO_REVIEW_AND_NEXT_STEPS.md`), scenario persistence/
+  staleness (`core.scenario_governance`, `core.persistence` - horizon
+  configuration and terminal-carryover result must become part of the
+  persisted, fingerprinted scenario record once that wiring exists)
 
 ## Owner and status
 

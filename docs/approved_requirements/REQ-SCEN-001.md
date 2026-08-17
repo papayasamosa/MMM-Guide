@@ -54,39 +54,73 @@ phased plans feeding this same contract), which is not yet built.
    exists, and never by simulating only posterior means and calling the
    result posterior uncertainty.
 
-## Approved contract (application level - not yet built)
+## Approved contract (application level)
 
 The following extend the kernel-level contract above to
-application-facing scenario evaluation. They are approved for
-implementation, not yet implemented:
+application-facing scenario evaluation. Items 6-8 are implemented at the
+application-*service* level (Work Package 5 of `...Post PR262`,
+`core.sequential_scenario_evaluation.evaluate_manual_scenario_sequential`,
+`application.scenario_service.ScenarioService.evaluate_manual_sequential`)
+- Streamlit UI wiring (`pages/08_Scenario_Planner.py`) remains a separate,
+  not-yet-implemented follow-up (see "Not yet covered" below):
 
 6. **Monthly aggregation only after weekly evaluation.** An application
    presenting a monthly-grain result must sum/aggregate the already-computed
    weekly outcomes - it must never independently apply an annual or
-   monthly curve to a coarser grain and call that "sequential."
+   monthly curve to a coarser grain and call that "sequential." Implemented:
+   `SequentialScenarioEvaluationResult.monthly_incremental` is computed by
+   grouping already-evaluated `weekly_incremental` rows by month and
+   summing, never by an independent monthly calculation.
 7. **Steady-state and sequential are distinct, always-labelled methods.**
    An application offering both the existing steady-state monthly
    approximation (`core.optimization`, `core.predict.
    steady_state_outcome_response`) and this sequential contract must never
    allow the method to be ambiguous - each evaluation result must record
-   which method produced it, and a UI must label both, per
-   `REQ-SCEN-002`/`REQ-SCEN-003` and this repository's `docs/decision_log.md`
-   entry for WP5.
+   which method produced it. Implemented at the service level:
+   `SequentialScenarioEvaluationResult.calculation_method` and
+   `.planning_semantics` (always `SEQUENTIAL_WEEKLY_PLANNING_EVALUATION_
+   SEMANTICS`, never the steady-state constant) record this unconditionally,
+   including in exploratory mode - unlike the steady-state path, which
+   only stamps `planning_semantics` in official mode, this contract's own
+   method-labelling requirement applies regardless of governance mode. A
+   UI surfacing this must still label both methods - that part remains
+   `pages/08_Scenario_Planner.py`'s not-yet-implemented responsibility.
 8. **Candidate/reference plans share the same phasing policy** (see
    `REQ-SCEN-002`) unless a difference in phasing itself is an explicit,
-   recorded scenario decision.
+   recorded scenario decision. Enforced at the evaluation-service level via
+   `core.sequential_evaluation_context.SequentialEvaluationContext`/
+   `compute_incremental_outcome_with_context` (Work Package 3): candidate
+   and reference are evaluated through the exact same context object,
+   structurally guaranteeing identical phasing/future-assumption/cost/
+   counterfactual-policy identity unless a field is explicitly named as
+   allowed to differ.
 
 ## Not yet covered by this record
 
 - The monthly-to-weekly phasing that produces the `WeeklyPlan` inputs to
-  this contract in an application context - `REQ-SCEN-002`.
-- Response-horizon and terminal-carryover reporting semantics -
-  `REQ-SCEN-003`.
-- Any specific application/UI (`application/scenario_service.py`,
-  `pages/08_Scenario_Planner.py`) or optimiser objective wiring - separate,
-  not-yet-approved follow-up work packages.
+  this contract in an application context - `REQ-SCEN-002` (phasing itself
+  implemented, WP1; wiring it to build the `WeeklyPlan`/`FutureContextResult`
+  inputs `evaluate_manual_scenario_sequential` consumes is the caller's -
+  currently only tests', not yet the Streamlit page's - responsibility).
+- Streamlit UI (`pages/08_Scenario_Planner.py`): a method toggle, rendering
+  the sequential result, and wiring the phasing/future-context/governed-
+  `WeeklyPlan`-construction pipeline end to end from user input - not yet
+  implemented, a separate, not-yet-approved follow-up.
+- Scenario persistence/staleness for a saved sequential scenario
+  (`core.persistence`, `core.scenario_governance`) - not yet implemented;
+  `validate_scenario_dependencies`'s `planning_semantics_fingerprint`
+  check is engine-aware as of Work Package 5 (recognises both
+  `CURRENT_PLANNING_EVALUATION_SEMANTICS` and `SEQUENTIAL_WEEKLY_
+  PLANNING_EVALUATION_SEMANTICS` as current), but no save/load path for a
+  `SequentialScenarioEvaluationResult` exists yet.
+- Optimiser objective wiring for the sequential contract - separate,
+  not-yet-approved follow-up work package.
 - Candidate A final-outcome sequential replay - blocked pending the
   counterfactual-replay decision recorded against `REQ-SEARCH-002`.
+  Inherited for free by this record's implementation: calling into
+  `core.sequential_simulation`'s functions means `CandidateAReplayNotSupportedError`
+  propagates through `evaluate_manual_scenario_sequential` exactly as it
+  does through `core.predict.predict_mu`, with no separate gate required.
 
 ## Affected modules
 
@@ -94,8 +128,17 @@ implementation, not yet implemented:
   (`compute_incremental_outcome`, `simulate_sequential_outcomes_posterior`
   and its draw-consistent/Model C variants)
 - `ancestry_mmm/core/sequential_evaluation_context.py` (Work Package 3)
+- `ancestry_mmm/core/sequential_scenario_evaluation.py` (Work Package 5 -
+  application-level items 6-8)
+- `ancestry_mmm/application/scenario_service.py`
+  (`SequentialManualScenarioInput`, `ScenarioService.
+  evaluate_manual_sequential`, Work Package 5)
+- `ancestry_mmm/core/optimization.py` (`validate_scenario_dependencies`'s
+  `planning_semantics_fingerprint` check made engine-aware, Work Package 5)
 - `ancestry_mmm/tests/test_sequential_simulation.py`
 - `ancestry_mmm/tests/test_sequential_evaluation_context.py` (Work Package 3)
+- `ancestry_mmm/tests/test_sequential_scenario_evaluation.py`,
+  `ancestry_mmm/tests/test_scenario_service_sequential.py` (Work Package 5)
 
 ## Owner and status
 
