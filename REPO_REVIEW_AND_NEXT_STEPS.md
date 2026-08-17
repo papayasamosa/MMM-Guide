@@ -9,10 +9,9 @@ and does not supersede `AGENTS.md`, `docs/approved_requirements/`, or
 
 Repository: `papayasamosa/Media-Mix-Lab`
 
-**Repository state through merged PR #268** (`WP0: reconcile PRD Bayesian
-validation/identification/calibration overlay into repository authority`,
-part of `Media-Mix-Lab: Coding LLM Next Steps After PR #267 and Latest
-PRD Validation Updates`).
+**Repository state through merged PR #269** (`WP0 (part 2): reconcile
+sequential Scenario Planner UI semantic defects`, part of `Media-Mix-Lab:
+Coding LLM Next Steps After PR #267 and Latest PRD Validation Updates`).
 
 This document deliberately identifies its baseline by merged PR/work-package
 milestone, never by a field claiming to be "current `main`": a branch
@@ -30,6 +29,9 @@ remote truth.
 
 Historical markers (all superseded merge commits; recorded only for
 history, never as current state):
+`a047bca8ddddea760a376b8f3de2e0429d691280` (merged PR #268, WP0: PRD
+Bayesian validation/identification/calibration authority reconciliation -
+superseded by PR #269 above),
 `f7ed28630b50b24baa4b806fcb47213b0a156e0a` (merged PR #267, WP5 part 2 of
 `...Post PR262` - sequential scenario planner UI wiring - superseded by
 PR #268 above),
