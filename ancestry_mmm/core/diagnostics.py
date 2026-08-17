@@ -101,6 +101,127 @@ def error_metrics_by_outcome(
     return pd.DataFrame(rows)
 
 
+def _posterior_predictive_metric_distributions_core(
+    trace: az.InferenceData,
+    frame: Dict,
+    meta: FHModelMeta,
+    point_metrics: pd.DataFrame,
+    *,
+    credible_mass: float = 0.9,
+) -> pd.DataFrame:
+    """Shared draw-level computation behind `posterior_predictive_metric_
+    distributions` (Model A) and `posterior_predictive_metric_
+    distributions_market_specific` (Model C) - `trace.posterior["mu"]`'s
+    shape does not depend on whether `hill_K`/`beta` are market-specific
+    (the same reason `posterior_predictive_coverage` is reused unchanged
+    for both model types - see `core.market_specific_diagnostics`'s
+    module docstring), so only the caller-supplied point-metric values
+    (from each model type's own `error_metrics_by_outcome*` function)
+    differ between the two.
+
+    REQ-PPD-001: for each of MAE/RMSE/sMAPE/WAPE/bias, retain the
+    metric's distribution across posterior predictive draws, not only the
+    point value computed once from the posterior-mean prediction. Three
+    genuinely different analytical objects, never given an interchangeable
+    label:
+
+    1. ``{metric}_point`` - the point value the caller's own `error_
+       metrics_by_outcome*` function already computed from the
+       posterior-mean prediction; passed in and reused unchanged here,
+       never recomputed, so the two can never silently diverge.
+    2. ``{metric}_mean``/``{metric}_median`` - the mean/median of that
+       same metric calculated *independently per posterior draw* (this
+       function's new evidence). For a non-linear metric such as RMSE,
+       the metric of the posterior mean is not generally equal to the
+       mean of the metric - these are genuinely different numbers.
+    3. ``{metric}_lower``/``{metric}_upper`` - the ``credible_mass``
+       empirical interval of that per-draw metric distribution. This is
+       an interval *of the metric*, not the posterior predictive interval
+       for the outcome itself (`posterior_predictive_coverage` computes
+       that separate object) - the two must never share a label.
+
+    Uses `trace.posterior["mu"]` directly (shape ``(obs, outcome, chain,
+    draw)``, the same posterior-draw-stacking convention `posterior_
+    predictive_coverage` already uses) rather than deriving the per-draw
+    metric from any already-summarised quantity.
+    """
+    if "mu" not in trace.posterior:  # type: ignore[attr-defined]
+        raise ValueError(
+            "trace.posterior has no 'mu' variable - posterior predictive "
+            "metric distributions require the fitted mean-prediction "
+            "deterministic to be present in the trace."
+        )
+    point_by_outcome = point_metrics.set_index("outcome_id")
+
+    Y = frame["Y"]
+    mu_draws = (
+        trace.posterior["mu"]  # type: ignore[attr-defined]
+        .stack(sample=("chain", "draw"))
+        .values
+    )  # (obs, outcome, sample)
+    n_samples = mu_draws.shape[2]
+    lower_q, upper_q = (1 - credible_mass) / 2, 1 - (1 - credible_mass) / 2
+
+    rows = []
+    for i, oid in enumerate(meta.outcome_ids):
+        actual = Y[:, i][:, None]  # (obs, 1), broadcasts over the sample axis
+        pred = mu_draws[:, i, :]  # (obs, sample)
+
+        mae_draws = np.mean(np.abs(actual - pred), axis=0)
+        rmse_draws = np.sqrt(np.mean((actual - pred) ** 2, axis=0))
+
+        smape_denom = (np.abs(actual) + np.abs(pred)) / 2  # (obs, sample)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            smape_terms = np.abs(actual - pred) / smape_denom
+        smape_terms = np.where(smape_denom == 0, np.nan, smape_terms)
+        smape_draws = np.nanmean(smape_terms, axis=0) * 100
+
+        wape_denom = np.sum(np.abs(actual))  # scalar - actual does not vary by draw
+        if wape_denom == 0:
+            wape_draws = np.full(n_samples, np.nan)
+        else:
+            wape_draws = np.sum(np.abs(actual - pred), axis=0) / wape_denom * 100
+
+        bias_draws = np.mean(pred - actual, axis=0)
+
+        point = point_by_outcome.loc[oid]
+        row: Dict[str, Any] = {"outcome_id": oid, "draw_count": n_samples}
+        for metric_name, draws, point_value in (
+            ("mae", mae_draws, point["mae"]),
+            ("rmse", rmse_draws, point["rmse"]),
+            ("smape_pct", smape_draws, point["smape_pct"]),
+            ("wape_pct", wape_draws, point["wape_pct"]),
+            ("bias", bias_draws, point["bias"]),
+        ):
+            row[f"{metric_name}_point"] = float(point_value)
+            row[f"{metric_name}_mean"] = float(np.nanmean(draws))
+            row[f"{metric_name}_median"] = float(np.nanmedian(draws))
+            row[f"{metric_name}_lower"] = float(np.nanquantile(draws, lower_q))
+            row[f"{metric_name}_upper"] = float(np.nanquantile(draws, upper_q))
+        row["credible_mass"] = credible_mass
+        rows.append(row)
+
+    return pd.DataFrame(rows)
+
+
+def posterior_predictive_metric_distributions(
+    trace: az.InferenceData,
+    frame: Dict,
+    meta: FHModelMeta,
+    params: FHPosteriorParams,
+    *,
+    credible_mass: float = 0.9,
+) -> pd.DataFrame:
+    """REQ-PPD-001 (Model A / shared model): see
+    `_posterior_predictive_metric_distributions_core` for the full
+    contract. The point-metric column reuses `error_metrics_by_outcome`
+    unchanged."""
+    point_metrics = error_metrics_by_outcome(frame, meta, params)
+    return _posterior_predictive_metric_distributions_core(
+        trace, frame, meta, point_metrics, credible_mass=credible_mass
+    )
+
+
 def residual_temporal_diagnostics(
     frame: Dict, meta: FHModelMeta, params: FHPosteriorParams
 ) -> pd.DataFrame:
