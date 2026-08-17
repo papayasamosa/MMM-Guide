@@ -2,15 +2,23 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
+import numpy as np
 import pytest
 
 from ancestry_mmm.core.frequency_alignment import CanonicalCalendar
-from ancestry_mmm.core.media_costs import CostMappingRegistry, FixedCostPerUnitMapping
+from ancestry_mmm.core.media_costs import (
+    CostMappingRegistry,
+    FixedCostPerUnitMapping,
+    GovernedCostMapping,
+)
 from ancestry_mmm.core.planning.phasing import (
     EXPLICIT_OVERRIDE_METHOD_ID,
     HorizonConfiguration,
     PHASING_METHOD_ID,
     PHASING_METHOD_VERSION,
+    MethodProvenance,
     PhasingReconciliationError,
     WeeklyAllocationResult,
     canonical_weeks,
@@ -394,6 +402,142 @@ class TestFingerprintsAndSerialization:
         )
         restored = WeeklyAllocationResult.from_dict(result.to_dict())
         assert restored == result
+
+
+class TestExplicitWeeklyScheduleValidation:
+    """Work Package 2 hardening (brief §5.10/§8.4): an explicit weekly
+    schedule must never let an off-calendar/unknown key, a non-finite
+    value, or a negative value pass through silently."""
+
+    def test_off_calendar_key_is_rejected_not_silently_ignored(self):
+        calendar = _calendar("2025-12-29", "2026-02-28")
+        schedule = dict.fromkeys(canonical_weeks(calendar), 100.0)
+        schedule["2099-01-01"] = 100.0  # not a canonical week
+        with pytest.raises(ValueError, match="outside the canonical calendar"):
+            reconcile_explicit_weekly_schedule(
+                monthly_values={"2026-01": sum(schedule.values()) - 100.0},
+                weekly_schedule=schedule,
+                calendar=calendar,
+            )
+
+    def test_non_finite_value_is_rejected(self):
+        calendar = _calendar("2025-12-29", "2026-02-28")
+        schedule = {w: 100.0 for w in canonical_weeks(calendar)}
+        first_week = canonical_weeks(calendar)[0]
+        schedule[first_week] = float("nan")
+        with pytest.raises(ValueError, match="finite"):
+            reconcile_explicit_weekly_schedule(
+                monthly_values={"2026-01": 400.0},
+                weekly_schedule=schedule,
+                calendar=calendar,
+            )
+
+    def test_negative_value_is_rejected(self):
+        calendar = _calendar("2025-12-29", "2026-02-28")
+        schedule = {w: 100.0 for w in canonical_weeks(calendar)}
+        first_week = canonical_weeks(calendar)[0]
+        schedule[first_week] = -50.0
+        with pytest.raises(ValueError, match="negative"):
+            reconcile_explicit_weekly_schedule(
+                monthly_values={"2026-01": 400.0},
+                weekly_schedule=schedule,
+                calendar=calendar,
+            )
+
+
+class TestWeeklyAllocationResultDefensiveValidation:
+    """Work Package 2 hardening (brief §5.10): `WeeklyAllocationResult`
+    must reject invalid values even when constructed directly, not only
+    when built by the module's own governed functions."""
+
+    def _provenance(self) -> MethodProvenance:
+        return MethodProvenance(
+            method_id=PHASING_METHOD_ID,
+            method_version=PHASING_METHOD_VERSION,
+            canonical_calendar_start="2026-01-05",
+            canonical_calendar_end="2026-01-11",
+        )
+
+    def test_rejects_negative_value_on_direct_construction(self):
+        with pytest.raises(ValueError, match="negative"):
+            WeeklyAllocationResult(
+                market="UK",
+                series_id="TV",
+                period_labels=("2026-01-05",),
+                values=(-1.0,),
+                provenance=self._provenance(),
+                reconciliation=(),
+            )
+
+    def test_rejects_non_finite_value_on_direct_construction(self):
+        with pytest.raises(ValueError, match="finite"):
+            WeeklyAllocationResult(
+                market="UK",
+                series_id="TV",
+                period_labels=("2026-01-05",),
+                values=(float("inf"),),
+                provenance=self._provenance(),
+                reconciliation=(),
+            )
+
+
+@dataclass(frozen=True)
+class _TwoValueMalformedMapping(GovernedCostMapping):
+    """Test double simulating a malformed/custom cost mapping that returns
+    more than one derived value for a scalar spend input."""
+
+    method: str = "malformed_two_value"
+
+    def spend_to_media_input(self, spend):
+        return np.array([spend, spend])
+
+
+@dataclass(frozen=True)
+class _NegativeMalformedMapping(GovernedCostMapping):
+    """Test double simulating a malformed cost mapping returning a
+    negative derived model-input value."""
+
+    method: str = "malformed_negative"
+
+    def spend_to_media_input(self, spend):
+        return np.array([-abs(spend) - 1.0])
+
+
+class TestMonetaryPathCostMappingResultValidation:
+    """Work Package 2 hardening (brief §5.11): the monetary phasing path
+    must fail closed rather than silently discard extra values, or accept
+    a non-finite/negative derived model-input value, from a malformed or
+    custom cost mapping."""
+
+    def test_multi_value_mapping_result_blocks(self):
+        calendar = _calendar("2025-12-29", "2026-02-28")
+        mapping = _TwoValueMalformedMapping(
+            **_governance(effective_period_start="2025-01-01")
+        )
+        registry = CostMappingRegistry([mapping])
+        with pytest.raises(PhasingReconciliationError, match="exactly one"):
+            phase_monetary_plan_calendar_day_overlap_v1(
+                market="UK",
+                channel="Search",
+                monthly_spend={"2026-01": 1400.0},
+                calendar=calendar,
+                cost_registry=registry,
+            )
+
+    def test_negative_mapping_result_blocks(self):
+        calendar = _calendar("2025-12-29", "2026-02-28")
+        mapping = _NegativeMalformedMapping(
+            **_governance(effective_period_start="2025-01-01")
+        )
+        registry = CostMappingRegistry([mapping])
+        with pytest.raises(PhasingReconciliationError, match="negative"):
+            phase_monetary_plan_calendar_day_overlap_v1(
+                market="UK",
+                channel="Search",
+                monthly_spend={"2026-01": 1400.0},
+                calendar=calendar,
+                cost_registry=registry,
+            )
 
 
 class TestHorizonConfiguration:

@@ -55,11 +55,19 @@ and a market:
    `simulate_terminal_carryover`/`simulate_terminal_carryover_market_specific`
    evaluate the ending state's continuation under a zero-further-media
    reference plan, as a separate call.
-6. **Full per-draw posterior paths.** `simulate_sequential_outcomes_posterior`
-   propagates the complete weekly path per posterior draw; aggregation
-   (to a horizon, to monthly, to a summary statistic) is left to the
-   caller - the kernel never aggregates first and calls the result
-   posterior uncertainty.
+6. **Full future recursion per posterior draw, conditional on one shared
+   carry-in state.** `simulate_sequential_outcomes_posterior` runs every
+   sampled posterior draw's own decay/Hill parameters through the complete
+   weekly recursion independently; aggregation (to a horizon, to monthly,
+   to a summary statistic) is left to the caller - the kernel never
+   aggregates first and calls the result posterior uncertainty. This is
+   *not* yet a fully draw-consistent posterior path: `carry_in` is one
+   fixed `SequentialCarryInState` passed once and reused for every draw,
+   so historical starting-adstock uncertainty (which itself depends on
+   each draw's own decay/Hill parameters) is not propagated into the
+   beginning of the future horizon - only future-recursion uncertainty
+   conditional on that shared state is. See "Not yet covered by this
+   record".
 7. **State provenance.** `SequentialCarryInState` is a typed, serialisable
    object precisely so a scenario or a report can record *which* starting
    state a given evaluation used, not just its numeric contents.
@@ -96,6 +104,21 @@ contract.
 
 - How a monthly business plan is translated into a `WeeklyPlan` -
   `REQ-SCEN-002`.
+- Draw-consistent reconstruction of historical carry-in state: a
+  high-level evaluator that, per selected posterior draw, extracts that
+  draw's own parameters, reconstructs `SequentialCarryInState` with those
+  same parameters, and only then evaluates the future plan - so
+  early-horizon output reflects each draw's own historical adstock/
+  saturation trajectory, not one state shared across all draws. Not yet
+  implemented; the existing fixed-carry-in `simulate_sequential_outcomes_
+  posterior` remains available as a documented, explicitly conditional
+  helper.
+- A market-specific (Model C) equivalent of `simulate_sequential_outcomes_
+  posterior`. Model C has full deterministic sequential replay
+  (`simulate_sequential_outcomes_market_specific`,
+  `reconstruct_starting_state_market_specific`), but no high-level
+  draw-level posterior-array wrapper yet - only the shared/Model A path
+  has one today.
 - Application-layer integration (`application/scenario_service.py`,
   `pages/08_Scenario_Planner.py`, `core.optimization`'s objective) -
   a documented, not-yet-attempted follow-up (see
