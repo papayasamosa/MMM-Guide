@@ -5467,3 +5467,88 @@ ratchet unchanged at 241/241.
 **Owner:** Data Science / Platform engineering.
 **Status:** Accepted; implemented on this work package's branch. PR and CI
 remain the release gate.
+
+
+## Estimand-specific graphical identification (Work Package 3)
+
+**Context:** REQ-IDENT-001 (approved Work Package 0) required a diagnostic
+distinct from `core.causal_graph.validate_causal_graph` (structural
+validation - bad controls, cycles, roles) and `core.identification_
+diagnostics` (fitted-model evidence - posterior correlation, condition
+number): for a *specific requested estimand* (a treatment, an outcome,
+and a proposed adjustment set), assess open backdoor paths, treatment
+descendants incorrectly included as controls, colliders opened by
+conditioning, and whether a minimal valid adjustment set exists - Pearl's
+back-door criterion, applied to the approved causal graph.
+
+**Decision:** Before writing any graph-theory code, checked Context7
+against `/networkx/networkx` (root `AGENTS.md`'s required upstream-
+reference workflow) rather than hand-deriving d-separation logic.
+Confirmed NetworkX 3.5 introduced (and, per its own 3.5 release notes,
+simultaneously retired the older `d_separated`/`minimum_d_separator`
+names in favour of) `is_d_separator`, `is_minimal_d_separator`, and
+`find_minimal_d_separator` (`networkx.algorithms.d_separation`) - the
+exact primitives Pearl's back-door criterion needs. Added `networkx>=
+3.5,<4.0` as a new dependency (pure-Python, MIT, `pip-audit`-clean
+against the updated lock file) rather than reimplementing d-separation
+from scratch, per root `AGENTS.md`'s "prefer supported public APIs...
+do not reimplement upstream functionality without a documented reason."
+
+`core.estimand_identification.assess_backdoor_identification`: builds a
+plain `nx.DiGraph` from the approved `CausalGraph` (excluding
+`excluded_diagnostic_only` edges, which "compile to nothing" per
+REQ-GRAPH-001 and are not genuine causal relationships); removes the
+treatment's outgoing edges to form the "backdoor graph" (the standard
+Pearl transformation); checks `is_d_separator` on the proposed adjustment
+set; separately checks, in the *original* (non-backdoor) graph, whether
+any proposed member is a descendant of treatment (Pearl's second
+condition, which a bare d-separation check on the backdoor graph alone
+does not enforce); and, for each proposed member, checks whether removing
+it alone would improve separation - a member whose removal helps is
+flagged as a likely collider/collider-descendant. Verified against a
+hand-constructed collider scenario (a path already blocked by a collider
+by default, which conditioning on it wrongly reopens, alongside a genuine
+confounder that does need adjustment) to prove the collider-flagging
+logic actually distinguishes the two cases rather than merely happening
+to pass a simpler test.
+
+`EstimandIdentificationResult` never exposes a bare boolean "identified"
+field - only the five-value status vocabulary Part 10 §17.7 suggested,
+plus a mandatory `disclaimer` field carrying REQ-IDENT-001 requirement
+1's exact wording, so a caller cannot access a result without also
+receiving the "this is not proof" qualification. Every result also
+records an explicit limitation that this checker cannot determine
+whether a graph node corresponds to observed data (`core.causal_graph.
+CausalNode` has no observability field) - never silently assumed either
+way.
+
+`effect_type="direct"` returns `unsupported_by_current_checker` rather
+than silently applying the total-effect back-door criterion to a
+direct-effect request - direct/natural-direct effect identification needs
+a different criterion this module does not implement (REQ-IDENT-001
+requirement 4's separation from structural/linked-model identification).
+
+**Rejected alternative:** Hand-implementing backdoor-path enumeration and
+d-separation from first principles (rejected - this is exactly the kind
+of well-established graph algorithm root `AGENTS.md`'s upstream-reference
+workflow exists to prevent reimplementing; `networkx` is a small,
+mature, MIT-licensed, pure-Python dependency with no meaningful
+supply-chain concern, and using its own vetted implementation is safer
+than an Ancestry-specific reimplementation of a subtle algorithm where a
+bug could silently misreport identification status).
+
+**Impact:** `ancestry_mmm/core/estimand_identification.py` (new);
+`ancestry_mmm/tests/test_estimand_identification.py` (new, 18 tests);
+`pyproject.toml`/`uv.lock` (new dependency `networkx>=3.5,<4.0`);
+`docs/approved_requirements/REQ-IDENT-001.md`/`index.json`/`docs/
+specification_authority.md` updated. No change to `core.causal_graph`,
+`core.graph_model_compiler`, or `core.identification_diagnostics`. mypy:
+new module clean; full-core ratchet unchanged at 241/241. `pip-audit`
+against the updated lock file: no known vulnerabilities. Deferred:
+`core.graph_model_compiler` blocking-error extension (REQ-IDENT-001
+requirement 5) and `DiagnosticsArtefact`/Diagnostics-page wiring
+(requirement 6), both separate integration follow-ups.
+
+**Owner:** Data Science / Platform engineering.
+**Status:** Accepted; implemented on this work package's branch. PR and CI
+remain the release gate.
