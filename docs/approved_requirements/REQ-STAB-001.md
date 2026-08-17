@@ -22,7 +22,47 @@ structural quantities across them.
 
 ## Capability status
 
-Not yet implemented. Target-state contract only.
+Core contract implemented (Work Package 2 part 2, 2026-08-17):
+`ancestry_mmm/core/structural_stability.py` provides `FoldParameterSnapshot`
+(one fold's decision-driving parameter point values and, where available,
+posterior draws — Requirement 3's "preserve uncertainty per fold"),
+`ParameterFoldComparison` (the per-parameter comparison across every fold
+that reported it, exposing only a plain descriptive `point_range` — never
+a threshold, pass/fail verdict, or materiality judgement), and
+`StructuralStabilityArtefact`/`assess_structural_stability` (the
+structured, per-parameter comparison across folds, satisfying
+Requirement 3's "never one opaque aggregate health score"). A missing
+parameter in one fold's snapshot is recorded as an explicit limitation,
+never silently dropped or backfilled.
+
+This module does not itself re-fit a model per fold — the caller supplies
+each fold's parameter snapshot (a real per-fold re-fit, an injected/fake
+extraction for fast contract tests, or another approved method), mirroring
+`core.validation_folds`'s own established pattern from Work Package 1 of
+"the caller supplies the fold-local computation, this module only
+assembles and compares the result". `FoldParameterSnapshot.fold_id` is
+intended to match a `core.validation_folds.ValidationFold.fold_id`
+(verified by an integration test), satisfying Requirement 6's "the two
+records share one notion of what a historical fold is".
+
+Requirement 4 (automatic interpretation of instability — genuine
+evolution vs. weak identification vs. data-definition change vs. leakage
+artefact vs. misspecification) is explicitly **not** automated by this
+module; that judgement remains a human reviewer's, informed by this
+evidence.
+
+Not yet wired: `DiagnosticsArtefact`/Diagnostics-page integration. Unlike
+`REQ-PPD-001` (which only needs a single existing trace/frame/meta/params
+call and could be wired into `DiagnosticsService.evaluate()` today), this
+record's evidence structurally requires multiple folds' *already re-
+estimated* parameter values as input — and no real per-fold re-estimation
+pipeline exists yet in this repository (the same expensive, unresolved
+"real-fold PyMC recovery" question `REQ-LEAK-001` already recorded, not
+newly introduced here). Wiring an artefact section that can only ever be
+populated by a caller manually assembling synthetic snapshots would not
+be genuine evidence integration. The schema/UI work for both `REQ-PPD-
+001` and this record remains a coherent follow-up once a real multi-fold
+re-estimation path exists to feed it.
 
 ## Requirement
 
@@ -97,17 +137,29 @@ closed.
   status labels shown in reporting (Part 9 §48 `RP-022`);
 - any specific numeric instability threshold.
 
-## Affected modules (target)
+## Affected modules
 
-- `ancestry_mmm/core/diagnostics.py` (extend `DiagnosticsArtefact` with a new
-  additive structural-stability section)
-- `ancestry_mmm/pages/06_Diagnostics.py` (render predictive vs. structural
-  stability separately)
-- `docs/approved_requirements/REQ-STAB-001.md` (new)
-- `docs/approved_requirements/index.json` (new entry)
+- `ancestry_mmm/core/structural_stability.py` (new —
+  `FoldParameterSnapshot`, `ParameterFoldComparison`,
+  `StructuralStabilityArtefact`, `assess_structural_stability`)
+- `ancestry_mmm/core/diagnostics.py` (not yet touched — `DiagnosticsArtefact`
+  schema extension deferred, see Capability status)
+- `ancestry_mmm/pages/06_Diagnostics.py` (not yet wired — deferred)
+- `docs/approved_requirements/REQ-STAB-001.md` (this record)
+- `docs/approved_requirements/index.json` (updated)
 
 ## Required tests
 
+- `ancestry_mmm/tests/test_structural_stability.py` (18 tests: snapshot/
+  comparison/artefact construction and round-trip; a stable parameter
+  reporting a near-zero range; a synthetic drifting parameter reporting
+  its full range with no threshold applied; independent multi-parameter
+  comparison; a missing-parameter-in-one-fold limitation; posterior draws
+  preserved per fold rather than reduced to a point; an explicit check
+  that no `status`/`verdict`/`pass`/`fail`/`stable`/`unstable` field
+  exists in the serialised comparison; and an integration test proving
+  fold IDs from `core.validation_folds.build_expanding_window_folds` flow
+  through unchanged)
 - `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists`
 - `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists`
 - `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid`
@@ -118,18 +170,22 @@ closed.
 
 ## Migration impact
 
-None yet. Implementation will require an additive `DiagnosticsArtefact`
-schema bump following the existing pattern (schema v2 → v3 → v4 → v5
-precedent in `REQ-VAL-001`).
+None yet. `core.structural_stability` is a new, additive module with no
+persisted artefact today; `DiagnosticsArtefact` is not yet touched.
 
 ## Unresolved decisions
 
 - Whether real-fold PyMC re-estimation for structural-stability evidence
-  runs in normal CI or is schedule/manual evidence (cost-dependent; measure
-  before deciding).
-- The structured artefact's exact shape (deferred to implementation; must
-  remain a structured per-quantity record, never one composite score, per
-  Requirement 3).
+  runs in normal CI or is schedule/manual evidence (cost-dependent;
+  measure before deciding) — unchanged from `REQ-LEAK-001`'s own open
+  question; not resolved by this record either.
+- `DiagnosticsArtefact`/Diagnostics-page schema and UI wiring for both
+  this record and `REQ-PPD-001` — deferred until a real multi-fold
+  re-estimation pipeline exists to supply genuine `FoldParameterSnapshot`
+  evidence (see Capability status).
+- The minimum fold-support, parameter/effect classes, materiality rules,
+  and permitted-use consequences for time-slice structural instability
+  remain Part 7 `VL-022`'s open decision, not approved here.
 
 ## Owner
 
