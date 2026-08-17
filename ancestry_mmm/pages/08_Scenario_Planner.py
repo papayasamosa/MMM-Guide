@@ -117,14 +117,11 @@ from ancestry_mmm.core.planning.future_context import (
     build_future_context,
 )
 from ancestry_mmm.core.planning.phasing import (
-    PHASING_METHOD_ID,
-    PHASING_METHOD_VERSION,
     HorizonConfiguration,
-    MethodProvenance,
-    WeeklyAllocationResult,
-    WeeklyModelInputDerivation,
     canonical_weeks,
-    phase_monthly_series_calendar_day_overlap_v1,
+    phase_monetary_plan_from_partial_start_calendar_day_overlap_v1,
+    phase_monthly_series_from_partial_start_calendar_day_overlap_v1,
+    reseat_ordinal_monthly_plan_to_start_week,
 )
 from ancestry_mmm.core.planning.weekly_plan_builder import build_governed_weekly_plan
 from ancestry_mmm.core.sequential_evaluation_context import SequentialEvaluationContext
@@ -316,68 +313,6 @@ def _sequential_plan_start_week(frame, market, spec) -> pd.Timestamp:
     return market_dates.max() + pd.Timedelta(days=7)
 
 
-def _prorated_sequential_monthly_values(
-    monthly_values_by_channel: dict, plan_start_week: pd.Timestamp, n_months: int
-) -> tuple[dict, list[str]]:
-    """Re-key each channel's ordered monthly spend/quantity values onto the
-    real calendar months starting at `plan_start_week`, pro-rating only the
-    first month for the partial period from `plan_start_week` to that
-    month's end (the days before `plan_start_week` in that calendar month
-    are already historical, not part of this plan - REQ-SCEN-002's phasing
-    contract requires a canonical calendar that fully covers every month it
-    phases, so a genuinely partial first month must be pro-rated, not
-    passed at its full entered value)."""
-    first_month_start = plan_start_week.replace(day=1)
-    sequential_months = [
-        (first_month_start + pd.DateOffset(months=i)).strftime("%Y-%m")
-        for i in range(n_months)
-    ]
-    first_month_end = first_month_start + pd.offsets.MonthEnd(0)
-    days_in_first_month = (first_month_end - first_month_start).days + 1
-    covered_days_in_first_month = (first_month_end - plan_start_week).days + 1
-    proration = covered_days_in_first_month / days_in_first_month
-
-    reseated: dict = {}
-    for channel, monthly_values in monthly_values_by_channel.items():
-        ordered_values = [monthly_values[m] for m in monthly_values]
-        reseated[channel] = {}
-        for i, label in enumerate(sequential_months):
-            value = ordered_values[i]
-            if i == 0:
-                value = value * proration
-            reseated[channel][label] = value
-    return reseated, sequential_months
-
-
-def _first_month_fragment_schedule(
-    value: float,
-    weeks: tuple,
-    plan_start_week: pd.Timestamp,
-    first_month_end: pd.Timestamp,
-) -> dict:
-    """Split an already-pro-rated first-month value across the canonical
-    weeks that actually overlap the covered (future) portion of that month
-    - the same day-overlap formula `calendar_day_overlap_v1` itself uses,
-    just scoped to `[plan_start_week, first_month_end]` instead of the
-    month's full calendar bounds, since REQ-SCEN-002's governed function
-    can only reconcile a month `calendar` fully covers (see
-    `_prorated_sequential_monthly_values`). Computed directly here rather
-    than routed through the governed function, so the two "how many days
-    does this week get" computations can never disagree and silently
-    double-count or double-shrink the pro-rated value."""
-    total_days = (first_month_end - plan_start_week).days + 1
-    schedule: dict = {}
-    for w in weeks:
-        w_start = pd.Timestamp(w)
-        w_end = w_start + pd.Timedelta(days=6)
-        overlap_start = max(plan_start_week, w_start)
-        overlap_end = min(first_month_end, w_end)
-        overlap_days = (overlap_end - overlap_start).days + 1
-        if overlap_days > 0:
-            schedule[w] = value * overlap_days / total_days
-    return schedule
-
-
 def _evaluate_sequential_manual_plan(
     *,
     market: str,
@@ -407,9 +342,6 @@ def _evaluate_sequential_manual_plan(
     candidate_monthly_by_channel = {
         c: {m: spend_plan[m][c] for m in spend_plan} for c in meta.channels
     }
-    reseated_candidate, sequential_months = _prorated_sequential_monthly_values(
-        candidate_monthly_by_channel, plan_start_week, n_months
-    )
 
     # Reference (counterfactual) uses the SAME resolution the steady-state
     # path uses (core.scenario_governance.resolve_counterfactual is
@@ -427,9 +359,35 @@ def _evaluate_sequential_manual_plan(
         c: {m: reference_monthly_plan[m][c] for m in reference_monthly_plan}
         for c in meta.channels
     }
-    reseated_reference, _ = _prorated_sequential_monthly_values(
-        reference_monthly_by_channel, plan_start_week, n_months
-    )
+
+    # Re-keying each channel's ordered monthly values onto the real
+    # calendar months starting at `plan_start_week` (pro-rating a partial
+    # first month) is the governed `core.planning.phasing` contract
+    # (`reseat_ordinal_monthly_plan_to_start_week`), not page-local logic -
+    # WP0 of `Media-Mix-Lab: Coding LLM Next Steps After PR #267` moved
+    # this out of the page (previously `_prorated_sequential_monthly_
+    # values`) to resolve the thin-interface violation flagged there.
+    sequential_months: tuple = ()
+    reseated_candidate: dict = {}
+    for c in meta.channels:
+        ordered_values = [
+            candidate_monthly_by_channel[c][m] for m in candidate_monthly_by_channel[c]
+        ]
+        reseated_candidate[c], sequential_months = (
+            reseat_ordinal_monthly_plan_to_start_week(
+                ordinal_monthly_values=ordered_values,
+                plan_start_week=plan_start_week,
+            )
+        )
+    reseated_reference: dict = {}
+    for c in meta.channels:
+        ordered_values = [
+            reference_monthly_by_channel[c][m] for m in reference_monthly_by_channel[c]
+        ]
+        reseated_reference[c], _ = reseat_ordinal_monthly_plan_to_start_week(
+            ordinal_monthly_values=ordered_values,
+            plan_start_week=plan_start_week,
+        )
 
     calendar_end = pd.Timestamp(sequential_months[-1] + "-01") + pd.offsets.MonthEnd(0)
     calendar = CanonicalCalendar(
@@ -446,107 +404,40 @@ def _evaluate_sequential_manual_plan(
     )
     cost_as_of_by_period = {w: w for w in weeks}
 
-    first_month = sequential_months[0]
-    first_month_start = plan_start_week.replace(day=1)
-    first_month_end = first_month_start + pd.offsets.MonthEnd(0)
-
-    def _phase_channel(monthly_values_by_month: dict, channel: str):
+    def _phase_channel(reseated_monthly_values: dict, channel: str):
         # The first sequential month is necessarily partial (the plan
         # starts mid-month, immediately after history ends - see
-        # `_sequential_plan_start_week`), so its already-pro-rated value is
-        # phased directly here (`_first_month_fragment_schedule`) rather
-        # than through the governed `calendar_day_overlap_v1` function,
-        # which requires `calendar` to fully cover every month it phases
-        # (REQ-SCEN-002) and would otherwise silently double-shrink the
-        # pro-rated value. Every subsequent (whole) month is phased
-        # normally through the governed function, unmodified - the two
-        # contributions are additive per week, never a choice between them,
-        # since a boundary week between month 1 and month 2 legitimately
-        # carries spend from both.
+        # `_sequential_plan_start_week`); the governed phasing functions
+        # below (`core.planning.phasing`) phase that already-pro-rated
+        # fragment and every subsequent whole month additively per week,
+        # so a boundary week between month 1 and month 2 legitimately
+        # carries spend from both - this page no longer implements that
+        # arithmetic itself (WP0 of `Media-Mix-Lab: Coding LLM Next Steps
+        # After PR #267`, resolving the thin-interface violation flagged
+        # there; previously `_first_month_fragment_schedule` plus an
+        # inline per-week cost-mapping loop).
         definition = activity_map.get(channel)
         is_cost_bearing = definition.is_cost_bearing if definition else True
 
-        weekly_spend_by_week = dict.fromkeys(weeks, 0.0)
-        fragment_schedule = _first_month_fragment_schedule(
-            monthly_values_by_month[first_month],
-            weeks,
-            plan_start_week,
-            first_month_end,
-        )
-        weekly_spend_by_week.update(fragment_schedule)
-
-        rest_monthly_values = {
-            m: v for m, v in monthly_values_by_month.items() if m != first_month
-        }
-        if rest_monthly_values:
-            rest_result = phase_monthly_series_calendar_day_overlap_v1(
+        if is_cost_bearing and governed_cost_registry is not None:
+            # `channel_allocations` (below) takes `WeeklyAllocationResult`
+            # or `WeeklyModelInputDerivation` directly, never the combined
+            # `MonetaryPhasingResult` wrapper - the derived model-input
+            # quantity is what a fit-time model input expects.
+            return phase_monetary_plan_from_partial_start_calendar_day_overlap_v1(
                 market=market,
-                series_id=channel,
-                monthly_values=rest_monthly_values,
+                channel=channel,
+                reseated_monthly_spend=reseated_monthly_values,
+                plan_start_week=plan_start_week,
                 calendar=calendar,
-            )
-            for label, value in zip(rest_result.period_labels, rest_result.values):
-                weekly_spend_by_week[label] += value
-
-        weekly_result = WeeklyAllocationResult(
+                cost_registry=governed_cost_registry,
+            ).weekly_model_input
+        return phase_monthly_series_from_partial_start_calendar_day_overlap_v1(
             market=market,
             series_id=channel,
-            period_labels=weeks,
-            values=tuple(weekly_spend_by_week[w] for w in weeks),
-            provenance=MethodProvenance(
-                method_id=PHASING_METHOD_ID,
-                method_version=PHASING_METHOD_VERSION,
-                parameters={"partial_first_month": first_month},
-                canonical_calendar_start=calendar.start,
-                canonical_calendar_end=calendar.end,
-            ),
-            reconciliation=(),
-        )
-
-        if not (is_cost_bearing and governed_cost_registry is not None):
-            return weekly_result
-
-        model_input_values = []
-        mapping_ids = []
-        for label, spend in zip(weekly_result.period_labels, weekly_result.values):
-            if spend == 0.0:
-                model_input_values.append(0.0)
-                mapping_ids.append("")
-                continue
-            mapping = governed_cost_registry.resolve(
-                market, channel, "default", as_of=label
-            )
-            if mapping is None:
-                raise ValueError(
-                    f"No governed, currently-valid cost mapping for "
-                    f"market={market!r} channel={channel!r} as_of={label!r} - "
-                    "cannot derive a weekly model-input quantity from phased "
-                    "spend for this week."
-                )
-            derived = np.asarray(mapping.spend_to_media_input(spend)).reshape(-1)
-            if derived.size != 1:
-                raise ValueError(
-                    f"Cost mapping {mapping.mapping_id!r} returned "
-                    f"{derived.size} value(s) for a single scalar weekly "
-                    f"spend ({channel=!r} {label=!r} spend={spend!r}) - "
-                    "expected exactly one derived model-input value."
-                )
-            derived_value = float(derived[0])
-            if not np.isfinite(derived_value) or derived_value < 0:
-                raise ValueError(
-                    f"Cost mapping {mapping.mapping_id!r} returned an "
-                    f"invalid derived model-input value ({derived_value!r}) "
-                    f"for {channel=!r} {label=!r} spend={spend!r}."
-                )
-            model_input_values.append(derived_value)
-            mapping_ids.append(mapping.mapping_id)
-
-        return WeeklyModelInputDerivation(
-            market=market,
-            channel=channel,
-            period_labels=weekly_result.period_labels,
-            values=tuple(model_input_values),
-            mapping_ids=tuple(mapping_ids),
+            reseated_monthly_values=reseated_monthly_values,
+            plan_start_week=plan_start_week,
+            calendar=calendar,
         )
 
     candidate_allocations = {
@@ -2039,6 +1930,81 @@ def _render_sequential_manual_tab():
         "applies to steady-state monthly). Each planned month's spend values are "
         "used in the same order, starting from that continuation point."
     )
+
+    # WP0 of `Media-Mix-Lab: Coding LLM Next Steps After PR #267`: three
+    # assumptions this method makes automatically must instead be explicit,
+    # analyst-acknowledged choices before any result is calculated or
+    # shown - never a silent page default. Each gate below is scoped to
+    # `plan_key` (market/months/start_month), so a changed plan requires
+    # re-acknowledgment rather than carrying forward a stale consent.
+    all_acknowledged = True
+
+    preview_start_week = _sequential_plan_start_week(frame, market, spec)
+    sequential_start_month = preview_start_week.strftime("%Y-%m")
+    if sequential_start_month != months[0]:
+        shifted_months = [
+            (preview_start_week.replace(day=1) + pd.DateOffset(months=i)).strftime(
+                "%Y-%m"
+            )
+            for i in range(n_months)
+        ]
+        st.warning(
+            f"**'Plan start month' above is set to {months[0]}, but sequential weekly "
+            f"always starts {preview_start_week.date()}** - immediately after this "
+            "market's historical data ends, with no gap or overlap. Each entered "
+            "monthly value keeps its position (1st entered month, 2nd, ...) but is "
+            "reassigned to a different real calendar month below, which can change "
+            "its seasonality and cost context:"
+        )
+        st.dataframe(
+            pd.DataFrame(
+                {"Entered as": months, "Sequential weekly will use": shifted_months}
+            ),
+            width="stretch",
+            hide_index=True,
+        )
+        start_month_ack = st.checkbox(
+            "I understand my entered monthly values will be reassigned to these "
+            "different calendar months, and want to proceed.",
+            key=f"{plan_key}_seq_start_month_ack",
+        )
+        all_acknowledged = all_acknowledged and start_month_ack
+
+    control_names = tuple(getattr(meta, "control_names", ()) or ())
+    outcome_control_names = getattr(meta, "outcome_control_names", None) or {}
+    has_exogenous_controls = bool(control_names) or bool(
+        any(names for names in outcome_control_names.values())
+    )
+    if has_exogenous_controls:
+        st.warning(
+            "**This model has fitted exogenous control(s) with no future-value input "
+            "available in this UI yet.** Sequential weekly can only proceed by "
+            "explicitly holding each one at its last observed value - a labelled, "
+            "exploratory assumption, never an official forecast."
+        )
+        hold_last_ack = st.checkbox(
+            "I explicitly choose to hold each exogenous control at its last "
+            "observed value (exploratory) for this evaluation.",
+            key=f"{plan_key}_seq_hold_last_ack",
+        )
+        all_acknowledged = all_acknowledged and hold_last_ack
+
+    st.warning(
+        "**No promotion schedule can be entered for sequential weekly in this UI "
+        "yet.** Choose explicitly rather than relying on an unstated default:"
+    )
+    no_promotion_ack = st.checkbox(
+        "I explicitly confirm no promotion is planned for this plan window.",
+        key=f"{plan_key}_seq_no_promotion_ack",
+    )
+    all_acknowledged = all_acknowledged and no_promotion_ack
+
+    if not all_acknowledged:
+        st.info(
+            "Confirm the assumption(s) above to calculate this sequential scenario."
+        )
+        return
+
     try:
         service_result, plan_start_week, weeks, future_context = (
             _evaluate_sequential_manual_plan(
