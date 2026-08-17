@@ -112,6 +112,7 @@ from .planning import (
     AdstockState,  # noqa: F401 — re-exported for scenario governance callers
     CurrencyContext,
     CURRENT_PLANNING_EVALUATION_SEMANTICS,
+    SEQUENTIAL_WEEKLY_PLANNING_EVALUATION_SEMANTICS,
     OutcomeValueMapping,
     PlanningEvaluationSemantics,  # noqa: F401 — re-exported for scenario governance callers
     PlanningObjective,
@@ -129,6 +130,18 @@ from .planning import (
 WEEKS_PER_MONTH = 365.25 / 12 / 7  # ~4.348
 
 AnyPosteriorParams = Union[FHPosteriorParams, FHMarketSpecificPosteriorParams]
+
+# WP5 (`Media-Mix-Lab: Coding LLM Next Steps Post PR262`): every currently-
+# approved evaluation engine's PlanningEvaluationSemantics fingerprint - see
+# validate_scenario_dependencies's planning_semantics_fingerprint check
+# below. Add a new engine's constant here (never remove an existing one
+# without a migration) when a further evaluation engine is approved.
+_CURRENT_PLANNING_SEMANTICS_FINGERPRINTS = frozenset(
+    {
+        CURRENT_PLANNING_EVALUATION_SEMANTICS.fingerprint(),
+        SEQUENTIAL_WEEKLY_PLANNING_EVALUATION_SEMANTICS.fingerprint(),
+    }
+)
 
 
 def _is_nbt_outcome(outcome_id: str, meta: object) -> bool:
@@ -718,8 +731,18 @@ def validate_scenario_dependencies(
     # much as a schema < 4 one would, e.g. one built through the legacy
     # inline-dict path in scenario_to_dict) rather than "invalid" - a
     # missing disclosure is a provenance gap, not malformed data. A
-    # mismatched fingerprint (a future sequential engine, or a changed
-    # prediction_function_version) is stale.
+    # mismatched fingerprint (an unrecognised engine, or a changed
+    # prediction_function_version for a recognised one) is stale.
+    #
+    # WP5 (`Media-Mix-Lab: Coding LLM Next Steps Post PR262`): this must
+    # recognise EVERY currently-approved evaluation engine's semantics as
+    # "current", not only the steady-state one - a sequential-weekly
+    # scenario stamped with SEQUENTIAL_WEEKLY_PLANNING_EVALUATION_SEMANTICS
+    # would otherwise appear permanently stale the moment it was saved, even
+    # though nothing about it had actually changed. This was anticipated in
+    # the comment above before the sequential engine existed ("a future
+    # sequential engine... is stale") but never actually implemented as
+    # engine-aware.
     saved_semantics_fp = deps.get("planning_semantics_fingerprint")
     if not saved_semantics_fp:
         issues.append(
@@ -733,7 +756,7 @@ def validate_scenario_dependencies(
                 ),
             )
         )
-    elif saved_semantics_fp != CURRENT_PLANNING_EVALUATION_SEMANTICS.fingerprint():
+    elif saved_semantics_fp not in _CURRENT_PLANNING_SEMANTICS_FINGERPRINTS:
         issues.append(
             ScenarioDependencyIssue(
                 artefact_id=scenario.get("name", "<unknown>"),

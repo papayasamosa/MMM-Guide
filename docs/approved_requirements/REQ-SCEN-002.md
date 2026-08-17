@@ -117,12 +117,21 @@ candidate/reference contract.
   directly - no competing calendar representation created)
 - `ancestry_mmm/core/media_costs.py` (`CostMappingRegistry.resolve(...,
   as_of=...)` reused for weekly/period-specific cost mapping)
+- `ancestry_mmm/core/sequential_scenario_evaluation.py` (implemented,
+  WP5 - orchestrates phased/governed weekly plans through candidate/
+  reference evaluation, monthly aggregation, horizons, terminal, posterior)
+- `ancestry_mmm/application/scenario_service.py`
+  (`SequentialManualScenarioInput`, `ScenarioService.
+  evaluate_manual_sequential`, implemented, WP5)
 - `ancestry_mmm/tests/test_phasing.py`,
   `ancestry_mmm/tests/test_future_context.py`,
   `ancestry_mmm/tests/test_weekly_plan_builder.py`,
-  `ancestry_mmm/tests/test_terminal_response.py`
-- Not yet touched: any `application/` service or Streamlit page - a
-  separate, dependent work package.
+  `ancestry_mmm/tests/test_terminal_response.py`,
+  `ancestry_mmm/tests/test_sequential_scenario_evaluation.py`,
+  `ancestry_mmm/tests/test_scenario_service_sequential.py`
+- Not yet touched: `pages/08_Scenario_Planner.py` - a separate,
+  dependent follow-up (method toggle, phasing/future-context pipeline
+  wired to user input, sequential result rendering, persistence).
 
 ## Owner and status
 
@@ -173,6 +182,25 @@ candidate/reference contract.
   `TerminalIncrementalResult` - never folded into a plan-window result or
   an optimisation objective.
 
-**Not yet implemented:** any `application/` service (`application/
-scenario_service.py`) or Streamlit page (`pages/08_Scenario_Planner.py`)
-consuming any of the above - a separate, dependent work package.
+- Sequential scenario evaluation service (WP5,
+  `core.sequential_scenario_evaluation`,
+  `application.scenario_service.ScenarioService.evaluate_manual_sequential`):
+  orchestrates already-governed candidate/reference `WeeklyPlan`s through
+  historical-state reconstruction, one shared `SequentialEvaluationContext`,
+  weekly incrementality, monthly aggregation, short/long horizon response,
+  terminal incremental carryover (structurally separate), and optional
+  fully draw-consistent posterior evaluation - reusing the same governance/
+  economics machinery (`resolve_planning_governance`, `resolve_scenario_plan`)
+  the steady-state path uses, stamping `SEQUENTIAL_WEEKLY_PLANNING_
+  EVALUATION_SEMANTICS` rather than the steady-state constant.
+  `core.optimization.validate_scenario_dependencies`'s
+  `planning_semantics_fingerprint` staleness check was made engine-aware in
+  the same package (previously hard-coded to only recognise the
+  steady-state constant as "current" - a sequential scenario would have
+  appeared permanently stale).
+
+**Not yet implemented:** Streamlit page (`pages/08_Scenario_Planner.py`)
+consuming any of the above - a separate, dependent follow-up work package
+(method toggle, phasing/future-context pipeline wired to user input,
+sequential result rendering, persistence, and a real browser-lifecycle
+test).

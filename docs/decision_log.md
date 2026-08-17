@@ -4809,3 +4809,129 @@ reassignment; renamed the local instead of reusing the parameter name).
 **Owner:** Data Science / Platform engineering.
 **Status:** Accepted; implemented on this work package's branch. PR and CI
 remain the release gate.
+
+## Sequential scenario evaluation service (Work Package 5, part 1)
+
+**Date:** 2026-08-17
+**Decision:** `Media-Mix-Lab: Coding LLM Next Steps Post PR262`'s Work
+Package 5 brief covers both an application-service evaluation layer
+(§11.1-11.3, most of §11.5-11.7) and Streamlit UI integration (§11.4, the
+remainder of §11.5-11.7 - a method toggle, a real-browser lifecycle test).
+Split into two coherent slices rather than one combined PR, mirroring this
+repository's own established pattern (recorded against Candidate A:
+"WP1/WP2/WP3 each delivered one coherent slice... rather than one combined
+PR"). This package is the first slice: the core evaluation service,
+governance-reuse, and full test coverage below - genuinely mergeable and
+valuable on its own. The Streamlit page/browser-test slice is a focused,
+explicitly-tracked follow-up (see `REPO_REVIEW_AND_NEXT_STEPS.md`'s
+updated "Known bounded gaps").
+
+Delivered:
+
+1. **`core/sequential_scenario_evaluation.py`**:
+   `evaluate_manual_scenario_sequential` orchestrates an already-governed
+   candidate/reference `WeeklyPlan` pair (built by the caller via
+   `core.planning.weekly_plan_builder.build_governed_weekly_plan`) through:
+   shared historical-state reconstruction (one carry-in for both candidate
+   and reference, per `REQ-SCEN-001` item 1), evaluation through
+   `core.sequential_evaluation_context.compute_incremental_outcome_with_context`
+   (both sides pass the *same* context object, structurally guaranteeing
+   identical non-decision identity), monthly aggregation by summing
+   already-computed weekly rows (never an independent monthly
+   recalculation), configured short/long horizon summation
+   (`HorizonConfiguration`'s own inclusive-bounds convention), optional
+   terminal incremental response (`core.planning.terminal_response`,
+   structurally separate field, never merged into the plan-window result),
+   optional fully draw-consistent posterior evaluation
+   (`simulate_sequential_outcomes_posterior[_market_specific]_draw_consistent`,
+   WP3), and economics coverage via `core.scenario_governance.
+   resolve_scenario_plan` (confirmed period-key-agnostic - works unchanged
+   against weekly period labels, no fork needed).
+2. **Governance reuse, not reimplementation.** Official-mode governance
+   resolution calls the exact same `core.planning_governance.
+   resolve_planning_governance` and builds the same
+   `core.planning.value.ScenarioGovernanceDependencies` shape
+   `core.optimization.evaluate_manual_scenario` (the steady-state path)
+   uses - the only difference is stamping `SEQUENTIAL_WEEKLY_PLANNING_
+   EVALUATION_SEMANTICS` instead of `CURRENT_PLANNING_EVALUATION_
+   SEMANTICS`. The two evaluation methods can never disagree about what
+   "official" governance means, because they resolve it through the same
+   code.
+3. **New result type, not a stretched one.** `SequentialScenarioEvaluationResult`
+   is deliberately separate from `core.planning.value.
+   ScenarioEvaluationResult` - that type's `predicted: pd.DataFrame` field
+   is a monthly-wide-table shape (and the existing scenario-persistence
+   CSV convention assumes it), which does not fit a weekly/terminal/
+   posterior-draw result. Not a competing planning domain - a distinct
+   result shape for a distinct calculation grain, exactly the boundary
+   `core.planning.weekly_plan_builder`'s own docstring already drew
+   against `ScenarioPlan`.
+4. **`validate_scenario_dependencies`'s staleness check fixed to be
+   engine-aware.** Research before writing any code found this real,
+   pre-existing latent bug: the `planning_semantics_fingerprint` staleness
+   comparison (`core/optimization.py`, added by PR 88B) was hard-coded to
+   compare only against `CURRENT_PLANNING_EVALUATION_SEMANTICS.fingerprint()`
+   - a schema-4 scenario evaluated under any other engine's semantics
+   would always read `stale`, forever, even with nothing else changed. The
+   comment already sitting above that check had anticipated this exact
+   gap ("a future sequential engine... is stale") without it ever being
+   implemented as engine-aware. Fixed with a
+   `_CURRENT_PLANNING_SEMANTICS_FINGERPRINTS` frozenset covering every
+   currently-approved engine's semantics fingerprint - extend it, never
+   shrink it, when a further evaluation engine is approved. Required
+   exporting `SEQUENTIAL_WEEKLY_PLANNING_EVALUATION_SEMANTICS` from
+   `core.planning`'s package `__init__` (previously private to
+   `core.planning.value`, unused anywhere in the application).
+5. **`application/scenario_service.py`**: `SequentialManualScenarioInput`
+   and `ScenarioService.evaluate_manual_sequential` added, mirroring
+   `evaluate_manual`'s exact dispatch shape (validate required fields,
+   local-import the core function, `try`/`except Exception` wrapping) -
+   confirmed by research to be this module's own established pattern for
+   adding a new evaluation path, not a deviation from it.
+6. **Candidate A boundary inherited for free**, confirmed by research
+   before implementation: `simulate_sequential_outcomes[_market_specific]`
+   already raises `CandidateAReplayNotSupportedError` for a Candidate A
+   fit (mirroring `core.predict.predict_mu`'s existing WP3 guard) - calling
+   into those functions means this new evaluation path fails closed with
+   no additional gate required.
+
+**Alternatives considered:** Branching inside `core.optimization.
+evaluate_manual_scenario`/`ScenarioService.evaluate_manual` for the
+sequential case (rejected - the existing dispatch-pattern precedent, and
+this repository's "do not create a second incompatible planning domain"
+instruction, both point to a parallel function/method calling a different
+core module, not a branch inside the steady-state one). Coercing sequential
+output into `ScenarioEvaluationResult.predicted`'s monthly-wide-table shape
+to avoid a new result type (rejected - would either lose the weekly/
+terminal/posterior-draw detail the sequential contract exists to provide,
+or silently misuse a field whose shape assumes monthly grain). Delivering
+the Streamlit page integration in the same PR (rejected - genuinely a
+much larger, qualitatively different diff requiring visual verification in
+a running app; splitting into two coherent slices matches this
+repository's own established multi-PR pattern and keeps this package
+independently reviewable and mergeable).
+**Impact:** New `ancestry_mmm/core/sequential_scenario_evaluation.py`;
+`ancestry_mmm/application/scenario_service.py` extended
+(`SequentialManualScenarioInput`, `evaluate_manual_sequential`,
+`ScenarioServiceResult.sequential_evaluation`); `ancestry_mmm/core/
+optimization.py`'s `validate_scenario_dependencies` fixed (engine-aware
+semantics comparison); `ancestry_mmm/core/planning/__init__.py` re-exports
+`SEQUENTIAL_WEEKLY_PLANNING_EVALUATION_SEMANTICS`; new
+`ancestry_mmm/tests/test_sequential_scenario_evaluation.py`,
+`test_scenario_service_sequential.py`; `ancestry_mmm/tests/
+test_g2a7a4_scenario_governance_persistence.py` extended with the
+engine-aware staleness regression; `docs/approved_requirements/
+REQ-SCEN-001.md`/`REQ-SCEN-002.md`/`REQ-SCEN-003.md` and
+`docs/specification_authority.md` updated;
+`REPO_REVIEW_AND_NEXT_STEPS.md` baseline bumped to PR #265, "Delivered
+foundation"/"Known bounded gaps" updated. No schema, migration, or
+persisted-field changes - a saved sequential scenario's persistence
+format does not exist yet (remains part of the UI-integration follow-up).
+mypy: 241 unchanged (new module type-checks clean; the blocking
+`core/planning` + `core/validation_policy.py` + `application` mypy scope
+also remains clean). Real UK end-to-end data validation: DEFERRED pending
+authorised source-data availability (unaffected by this package).
+**Owner:** Data Science / Platform engineering.
+**Status:** Accepted; implemented on this work package's branch. PR and CI
+remain the release gate. Streamlit UI integration is Work Package 5, part
+2 - not started.

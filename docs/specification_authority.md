@@ -207,8 +207,12 @@ boundary documented in its own record:
   WP3 — guarding candidate/reference identity beyond
   `compute_incremental_outcome`'s own market/period/outcome check) are
   implemented. Application-level items (monthly aggregation after weekly
-  evaluation, steady-state/sequential method labelling) are approved but
-  not yet implemented — no application service consumes this contract yet.
+  evaluation, steady-state/sequential method labelling, shared phasing
+  policy) are now implemented at the application-*service* level (WP5 of
+  `...Post PR262`, `core.sequential_scenario_evaluation`, `application.
+  scenario_service.ScenarioService.evaluate_manual_sequential`) — the
+  Streamlit page (`pages/08_Scenario_Planner.py`) does not yet consume
+  this service.
 - `REQ-SCEN-002` (`docs/approved_requirements/REQ-SCEN-002.md`): the
   monthly-to-weekly phasing and future-context contract. Phasing
   (`calendar_day_overlap_v1`, WP1, `core.planning.phasing`): exact
