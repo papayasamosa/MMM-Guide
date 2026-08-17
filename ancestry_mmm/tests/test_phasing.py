@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from ancestry_mmm.core.frequency_alignment import CanonicalCalendar
@@ -24,9 +25,12 @@ from ancestry_mmm.core.planning.phasing import (
     canonical_weeks,
     phase_model_input_plan_calendar_day_overlap_v1,
     phase_monetary_plan_calendar_day_overlap_v1,
+    phase_monetary_plan_from_partial_start_calendar_day_overlap_v1,
     phase_monthly_series_calendar_day_overlap_v1,
     phase_monthly_series_explicit_override,
+    phase_monthly_series_from_partial_start_calendar_day_overlap_v1,
     reconcile_explicit_weekly_schedule,
+    reseat_ordinal_monthly_plan_to_start_week,
 )
 
 
@@ -345,6 +349,149 @@ class TestMonetaryPath:
                 channel="Search",
                 monthly_spend={"2026-01": 100.0},
                 calendar=calendar,
+                cost_registry=registry,
+            )
+
+
+class TestReseatOrdinalMonthlyPlanToStartWeek:
+    """WP0 (`Media-Mix-Lab: Coding LLM Next Steps After PR #267`): the
+    partial-first-month reseating logic formerly duplicated in
+    `pages/08_Scenario_Planner.py`'s `_prorated_sequential_monthly_values`."""
+
+    def test_mid_month_start_prorates_first_month_only(self):
+        # A plan_start_week of 2026-06-15 covers 16 of June's 30 days.
+        reseated, months = reseat_ordinal_monthly_plan_to_start_week(
+            ordinal_monthly_values=[3000.0, 6000.0],
+            plan_start_week=pd.Timestamp("2026-06-15"),
+        )
+        assert months == ("2026-06", "2026-07")
+        assert reseated["2026-06"] == pytest.approx(3000.0 * 16 / 30, abs=1e-9)
+        assert reseated["2026-07"] == pytest.approx(6000.0, abs=1e-9)
+
+    def test_first_of_month_start_has_no_proration(self):
+        reseated, months = reseat_ordinal_monthly_plan_to_start_week(
+            ordinal_monthly_values=[1000.0],
+            plan_start_week=pd.Timestamp("2026-03-01"),
+        )
+        assert months == ("2026-03",)
+        assert reseated["2026-03"] == pytest.approx(1000.0, abs=1e-9)
+
+    def test_rejects_empty_sequence(self):
+        with pytest.raises(ValueError, match="must not be empty"):
+            reseat_ordinal_monthly_plan_to_start_week(
+                ordinal_monthly_values=[],
+                plan_start_week=pd.Timestamp("2026-06-15"),
+            )
+
+
+class TestPhaseFromPartialStart:
+    """WP0: the fragment-plus-rest weekly phasing formerly duplicated as
+    `_first_month_fragment_schedule` in `pages/08_Scenario_Planner.py`."""
+
+    def test_single_partial_month_reconciles_to_prorated_fragment(self):
+        plan_start_week = pd.Timestamp("2026-06-15")
+        reseated, _ = reseat_ordinal_monthly_plan_to_start_week(
+            ordinal_monthly_values=[3000.0],
+            plan_start_week=plan_start_week,
+        )
+        calendar = _calendar("2026-06-08", "2026-06-30")
+        result = phase_monthly_series_from_partial_start_calendar_day_overlap_v1(
+            market="UK",
+            series_id="TV",
+            reseated_monthly_values=reseated,
+            plan_start_week=plan_start_week,
+            calendar=calendar,
+        )
+        assert sum(result.values) == pytest.approx(reseated["2026-06"], abs=1e-9)
+        # No spend falls before plan_start_week.
+        for label, value in zip(result.period_labels, result.values):
+            if pd.Timestamp(label) + pd.Timedelta(days=6) < plan_start_week:
+                assert value == 0.0
+
+    def test_boundary_week_between_first_and_second_month_gets_both(self):
+        plan_start_week = pd.Timestamp("2026-06-15")
+        reseated, _ = reseat_ordinal_monthly_plan_to_start_week(
+            ordinal_monthly_values=[3000.0, 6000.0],
+            plan_start_week=plan_start_week,
+        )
+        calendar = _calendar("2026-06-08", "2026-07-31")
+        result = phase_monthly_series_from_partial_start_calendar_day_overlap_v1(
+            market="UK",
+            series_id="TV",
+            reseated_monthly_values=reseated,
+            plan_start_week=plan_start_week,
+            calendar=calendar,
+        )
+        total = sum(result.values)
+        assert total == pytest.approx(
+            reseated["2026-06"] + reseated["2026-07"], abs=1e-9
+        )
+        # The week spanning June/July (2026-06-29) must carry a
+        # contribution from both months, not be assigned wholly to one.
+        boundary_week = "2026-06-29"
+        assert boundary_week in result.period_labels
+        assert result.as_dict_by_week()[boundary_week] > 0.0
+
+    def test_rejects_empty_reseated_values(self):
+        with pytest.raises(ValueError, match="must not be empty"):
+            phase_monthly_series_from_partial_start_calendar_day_overlap_v1(
+                market="UK",
+                series_id="TV",
+                reseated_monthly_values={},
+                plan_start_week=pd.Timestamp("2026-06-15"),
+                calendar=_calendar("2026-06-08", "2026-06-30"),
+            )
+
+
+class TestMonetaryPhaseFromPartialStart:
+    """WP0: the per-week cost-mapping derivation formerly duplicated inline
+    inside `pages/08_Scenario_Planner.py`'s `_phase_channel`."""
+
+    def test_phases_then_converts_via_cost_mapping(self):
+        plan_start_week = pd.Timestamp("2026-06-15")
+        reseated, _ = reseat_ordinal_monthly_plan_to_start_week(
+            ordinal_monthly_values=[1600.0],
+            plan_start_week=plan_start_week,
+        )
+        calendar = _calendar("2026-06-08", "2026-06-30")
+        mapping = FixedCostPerUnitMapping(
+            **_governance(effective_period_start="2025-01-01"), cost_per_media_input=2.0
+        )
+        registry = CostMappingRegistry([mapping])
+        result = phase_monetary_plan_from_partial_start_calendar_day_overlap_v1(
+            market="UK",
+            channel="Search",
+            reseated_monthly_spend=reseated,
+            plan_start_week=plan_start_week,
+            calendar=calendar,
+            cost_registry=registry,
+        )
+        assert sum(result.weekly_spend.values) == pytest.approx(
+            reseated["2026-06"], abs=1e-9
+        )
+        for spend, quantity in zip(
+            result.weekly_spend.values, result.weekly_model_input.values
+        ):
+            assert quantity == pytest.approx(spend / 2.0, abs=1e-9)
+        for spend, mapping_id in zip(
+            result.weekly_spend.values, result.weekly_model_input.mapping_ids
+        ):
+            assert mapping_id == (mapping.mapping_id if spend != 0.0 else "")
+
+    def test_missing_cost_mapping_blocks(self):
+        plan_start_week = pd.Timestamp("2026-06-15")
+        reseated, _ = reseat_ordinal_monthly_plan_to_start_week(
+            ordinal_monthly_values=[100.0],
+            plan_start_week=plan_start_week,
+        )
+        registry = CostMappingRegistry([])
+        with pytest.raises(PhasingReconciliationError):
+            phase_monetary_plan_from_partial_start_calendar_day_overlap_v1(
+                market="UK",
+                channel="Search",
+                reseated_monthly_spend=reseated,
+                plan_start_week=plan_start_week,
+                calendar=_calendar("2026-06-08", "2026-06-30"),
                 cost_registry=registry,
             )
 

@@ -1178,12 +1178,55 @@ def test_saved_scenarios_are_labelled_as_persisted_state():
 # ---------------------------------------------------------------------------
 
 
+# WP0 (`Media-Mix-Lab: Coding LLM Next Steps After PR #267`): the sequential
+# tab must not calculate or show any result until the analyst has explicitly
+# acknowledged every assumption this method would otherwise apply
+# automatically (a plan-start-month reassignment, an exploratory hold-last-
+# observed switch for fitted exogenous controls, and a zero-promotion
+# default) - see `_render_sequential_manual_tab`'s acknowledgment gates.
+_SEQUENTIAL_ACK_LABEL_PREFIXES = (
+    "I understand my entered monthly values will be reassigned",
+    "I explicitly choose to hold each exogenous control",
+    "I explicitly confirm no promotion is planned",
+)
+
+
+def _check_sequential_acknowledgment_gates(at) -> None:
+    for checkbox in at.checkbox:
+        if checkbox.label and any(
+            checkbox.label.startswith(prefix)
+            for prefix in _SEQUENTIAL_ACK_LABEL_PREFIXES
+        ):
+            checkbox.check()
+
+
+def test_sequential_weekly_manual_tab_blocks_until_assumptions_acknowledged():
+    """Selecting 'Sequential weekly' must not calculate or render any result
+    while a required assumption checkbox remains unchecked - never an
+    automatic page default standing in for analyst consent."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_official_governance_state(at)
+    at.run()
+
+    method_radio = next(
+        r for r in at.radio if r.label == "Manual plan evaluation method"
+    )
+    method_radio.set_value("sequential_weekly").run()
+    assert not at.exception, f"selecting sequential_weekly raised: {at.exception}"
+
+    markdown_text = [m.value or "" for m in at.markdown]
+    assert not any("Weekly incremental outcome" in text for text in markdown_text)
+    assert any(
+        "Confirm the assumption(s) above" in (info.value or "") for info in at.info
+    )
+
+
 def test_sequential_weekly_manual_tab_renders_without_exception():
     """Selecting 'Sequential weekly' on the manual-plan evaluation-method
-    radio must route the manual tab through
-    ScenarioService.evaluate_manual_sequential and render its weekly/monthly
-    incremental tables and horizon metrics, instead of the default
-    steady-state monthly path - without raising."""
+    radio, then acknowledging every required assumption, must route the
+    manual tab through ScenarioService.evaluate_manual_sequential and
+    render its weekly/monthly incremental tables and horizon metrics,
+    instead of the default steady-state monthly path - without raising."""
     at = AppTest.from_file(str(PAGE), default_timeout=60)
     _seed_official_governance_state(at)
     at.run()
@@ -1195,6 +1238,10 @@ def test_sequential_weekly_manual_tab_renders_without_exception():
     assert method_radio.value == "steady_state_monthly"
     method_radio.set_value("sequential_weekly").run()
     assert not at.exception, f"selecting sequential_weekly raised: {at.exception}"
+
+    _check_sequential_acknowledgment_gates(at)
+    at.run()
+    assert not at.exception, f"acknowledging assumptions raised: {at.exception}"
 
     markdown_text = [m.value or "" for m in at.markdown]
     assert any("Weekly incremental outcome" in text for text in markdown_text)

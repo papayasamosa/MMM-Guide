@@ -9,9 +9,9 @@ and does not supersede `AGENTS.md`, `docs/approved_requirements/`, or
 
 Repository: `papayasamosa/Media-Mix-Lab`
 
-**Repository state through merged PR #267** (`WP5 (part 2): sequential
-scenario planner UI wiring`, part of `Media-Mix-Lab: Coding LLM Next Steps
-Post PR262`).
+**Repository state through merged PR #269** (`WP0 (part 2): reconcile
+sequential Scenario Planner UI semantic defects`, part of `Media-Mix-Lab:
+Coding LLM Next Steps After PR #267 and Latest PRD Validation Updates`).
 
 This document deliberately identifies its baseline by merged PR/work-package
 milestone, never by a field claiming to be "current `main`": a branch
@@ -29,6 +29,12 @@ remote truth.
 
 Historical markers (all superseded merge commits; recorded only for
 history, never as current state):
+`a047bca8ddddea760a376b8f3de2e0429d691280` (merged PR #268, WP0: PRD
+Bayesian validation/identification/calibration authority reconciliation -
+superseded by PR #269 above),
+`f7ed28630b50b24baa4b806fcb47213b0a156e0a` (merged PR #267, WP5 part 2 of
+`...Post PR262` - sequential scenario planner UI wiring - superseded by
+PR #268 above),
 `79bbc174e90eb7ec62595f379a61912966be6ec2` (merged PR #266, WP5 part 1 of
 `...Post PR262` - sequential scenario evaluation service - superseded by
 PR #267 above),
@@ -262,27 +268,34 @@ The current implementation includes:
   sequential plan window always starts the Monday immediately following
   the market's last historical week, continuing the exact same weekly
   cadence with no gap - never the steady-state tab's user-chosen start
-  month. Reuses the existing monthly spend-plan grid and governance
-  inputs unchanged: re-seats the analyst's ordered monthly values onto
-  real calendar months, resolves the reference/counterfactual plan via
-  the existing `core.scenario_governance.resolve_counterfactual` at
-  monthly grain before re-seating (identically to the candidate, confirmed
-  period-key-agnostic), builds a future context (official mode unless the
-  fit has exogenous controls, in which case exploratory
-  `hold_last_observed` with an explicit not-decision-ready warning), and
-  routes through `ScenarioService.evaluate_manual_sequential`. Because the
-  first sequential month is therefore necessarily partial and
-  `calendar_day_overlap_v1` can only reconcile a month its `calendar`
-  fully covers (`REQ-SCEN-002`), the page phases that first month directly
-  with the same day-overlap formula scoped to the covered days only, and
-  every subsequent whole month through the unmodified governed function,
-  summing the two contributions per week - `core/planning/phasing.py`
-  itself is unchanged. Renders weekly and monthly incremental tables and
-  short/long response-horizon metrics. **Not yet implemented in this UI:**
-  terminal incremental carryover and posterior uncertainty (available via
-  the core/service APIs directly), sequential-weekly optimisation, and
-  saving/exporting a sequential scenario - all explicitly disclosed on the
-  page, not silently absent. See Known bounded gaps below.
+  month. Renders weekly and monthly incremental tables and short/long
+  response-horizon metrics. **Not yet implemented in this UI:** terminal
+  incremental carryover and posterior uncertainty (available via the
+  core/service APIs directly), sequential-weekly optimisation, and
+  saving/exporting a sequential scenario - all explicitly disclosed on
+  the page, not silently absent. See Known bounded gaps below.
+- Sequential Scenario Planner UI semantic-defect reconciliation (Work
+  Package 0 part 2 of `Media-Mix-Lab: Coding LLM Next Steps After PR
+  #267 and Latest PRD Validation Updates`, `pages/08_Scenario_Planner.py`,
+  `core/planning/phasing.py`): the re-seating of the analyst's ordered
+  monthly values onto real calendar months, the partial-first-month
+  phasing, and the per-week cost-mapping conversion are now governed
+  `core.planning.phasing` functions
+  (`reseat_ordinal_monthly_plan_to_start_week`,
+  `phase_monthly_series_from_partial_start_calendar_day_overlap_v1`,
+  `phase_monetary_plan_from_partial_start_calendar_day_overlap_v1`) with
+  their own unit tests - `core/planning/phasing.py` is no longer
+  unchanged by this UI path. The sequential tab now blocks calculation
+  until the analyst explicitly acknowledges, via checkbox, each of: the
+  entered-month -> real-calendar-month reassignment (shown as a table
+  whenever the two differ); holding any fitted exogenous control at its
+  last observed value (exploratory, not an official forecast); and that
+  no promotion is planned for the plan window - none of the three is an
+  automatic page default any longer. Resolves via UI disclosure and
+  explicit consent, not a new bridge-period/start-date business contract
+  (the brief's own permitted alternative). No new future-control-input or
+  promotion-schedule editor was built - those remain separate, larger UI
+  features tracked as bounded gaps, not resolved here.
 
 ## Known bounded gaps
 

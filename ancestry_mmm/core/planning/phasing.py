@@ -39,7 +39,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from typing import Any, Dict, Mapping, Optional, Tuple
+from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -631,6 +631,249 @@ def phase_monetary_plan_calendar_day_overlap_v1(
         # Fail closed on a malformed/custom cost mapping rather than
         # silently discarding extra values (brief §5.11): a scalar weekly
         # spend must map to exactly one derived model-input value.
+        if derived.size != 1:
+            raise PhasingReconciliationError(
+                f"Cost mapping {mapping.mapping_id!r} returned "
+                f"{derived.size} value(s) for a single scalar weekly spend "
+                f"({market=!r} {channel=!r} {label=!r} spend={spend!r}) - "
+                "expected exactly one derived model-input value."
+            )
+        derived_value = float(derived[0])
+        if not np.isfinite(derived_value):
+            raise PhasingReconciliationError(
+                f"Cost mapping {mapping.mapping_id!r} returned a non-finite "
+                f"derived model-input value ({derived_value!r}) for "
+                f"{market=!r} {channel=!r} {label=!r} spend={spend!r}."
+            )
+        if derived_value < 0:
+            raise PhasingReconciliationError(
+                f"Cost mapping {mapping.mapping_id!r} returned a negative "
+                f"derived model-input value ({derived_value!r}) for "
+                f"{market=!r} {channel=!r} {label=!r} spend={spend!r}."
+            )
+        model_input_values.append(derived_value)
+        mapping_ids.append(mapping.mapping_id)
+
+    weekly_model_input = WeeklyModelInputDerivation(
+        market=market,
+        channel=channel,
+        period_labels=weekly_spend.period_labels,
+        values=tuple(model_input_values),
+        mapping_ids=tuple(mapping_ids),
+    )
+    return MonetaryPhasingResult(
+        weekly_spend=weekly_spend, weekly_model_input=weekly_model_input
+    )
+
+
+def reseat_ordinal_monthly_plan_to_start_week(
+    *,
+    ordinal_monthly_values: Sequence[float],
+    plan_start_week: pd.Timestamp,
+) -> Tuple[Dict[str, float], Tuple[str, ...]]:
+    """Re-key an ordered sequence of monthly plan values (the analyst's 1st
+    entered month, 2nd entered month, ...) onto the real calendar months
+    starting at `plan_start_week`, pro-rating only the first month for the
+    partial period from `plan_start_week` to that month's end (WP0 of
+    `Media-Mix-Lab: Coding LLM Next Steps After PR #267`, resolving the
+    sequential-planner defect where this reseating happened only inside
+    `pages/08_Scenario_Planner.py`).
+
+    This function only performs the *reseating* (which real month each
+    ordinal value now belongs to, and how much of the first one is
+    covered); it does not decide whether reseating onto a start week other
+    than the one the analyst's entered labels imply is itself an
+    appropriate default - that is an application/UI-layer disclosure and
+    consent concern (see `pages/08_Scenario_Planner.py`'s explicit
+    plan-start reconciliation gate), not this module's.
+
+    `plan_start_week` need not fall on the first of a month - the returned
+    first month is pro-rated for the *remaining* days in that calendar
+    month from `plan_start_week` onward. Returns `(reseated_by_month,
+    sequential_months)` where `reseated_by_month` maps each real
+    `"YYYY-MM"` label to its (possibly pro-rated) value, and
+    `sequential_months` is the same set of labels in chronological order -
+    the caller needs the ordered labels separately because `dict` key order
+    is not itself a documented contract for callers outside this module.
+    """
+    n_months = len(ordinal_monthly_values)
+    if n_months == 0:
+        raise ValueError("ordinal_monthly_values must not be empty.")
+    first_month_start = plan_start_week.replace(day=1)
+    sequential_months = tuple(
+        (first_month_start + pd.DateOffset(months=i)).strftime("%Y-%m")
+        for i in range(n_months)
+    )
+    first_month_end = first_month_start + pd.offsets.MonthEnd(0)
+    days_in_first_month = (first_month_end - first_month_start).days + 1
+    covered_days_in_first_month = (first_month_end - plan_start_week).days + 1
+    proration = covered_days_in_first_month / days_in_first_month
+
+    reseated: Dict[str, float] = {}
+    for i, label in enumerate(sequential_months):
+        value = float(ordinal_monthly_values[i])
+        reseated[label] = value * proration if i == 0 else value
+    return reseated, sequential_months
+
+
+def phase_monthly_series_from_partial_start_calendar_day_overlap_v1(
+    *,
+    market: str,
+    series_id: str,
+    reseated_monthly_values: Mapping[str, float],
+    plan_start_week: pd.Timestamp,
+    calendar: CanonicalCalendar,
+) -> WeeklyAllocationResult:
+    """Phase a monthly series whose first month is a partial period
+    starting at `plan_start_week` (already pro-rated by
+    `reseat_ordinal_monthly_plan_to_start_week`) onto canonical weeks.
+
+    The already-pro-rated first-month value is spread only across the
+    canonical weeks overlapping `[plan_start_week, first-month-end]` -
+    using the same day-overlap formula `calendar_day_overlap_v1` itself
+    uses, just scoped to the covered (future) portion of that month, since
+    `calendar_day_overlap_v1` can only reconcile a month `calendar` fully
+    covers (REQ-SCEN-002) and would otherwise silently double-shrink the
+    already-pro-rated value. Every subsequent (whole) month is phased
+    normally through `phase_monthly_series_calendar_day_overlap_v1`,
+    unmodified. The two contributions are additive per week, never a
+    choice between them, since a boundary week between the first and
+    second month legitimately carries spend from both.
+    """
+    if not reseated_monthly_values:
+        raise ValueError("reseated_monthly_values must not be empty.")
+    weeks = canonical_weeks(calendar)
+    week_bounds = {w: _week_bounds(w) for w in weeks}
+
+    first_month = min(reseated_monthly_values)
+    first_month_start = plan_start_week.replace(day=1)
+    first_month_end = first_month_start + pd.offsets.MonthEnd(0)
+    fragment_value = float(reseated_monthly_values[first_month])
+    total_fragment_days = (first_month_end - plan_start_week).days + 1
+
+    allocated: Dict[str, float] = {w: 0.0 for w in weeks}
+    fragment_weeks = []
+    fragment_allocated_total = 0.0
+    for label in weeks:
+        w_start, w_end = week_bounds[label]
+        overlap_start = max(plan_start_week, w_start)
+        overlap_end = min(first_month_end, w_end)
+        overlap_days = (overlap_end - overlap_start).days + 1
+        if overlap_days > 0:
+            amount = fragment_value * overlap_days / total_fragment_days
+            allocated[label] += amount
+            fragment_allocated_total += amount
+            fragment_weeks.append(label)
+
+    fragment_within_tolerance = bool(
+        np.isclose(
+            fragment_allocated_total,
+            fragment_value,
+            rtol=RECONCILIATION_RTOL,
+            atol=RECONCILIATION_ATOL,
+        )
+    )
+    if not fragment_within_tolerance:
+        raise PhasingReconciliationError(
+            f"Partial-first-month phasing did not reconcile month {first_month!r}: "
+            f"allocated {fragment_allocated_total!r} != pro-rated fragment value "
+            f"{fragment_value!r} (tolerance rtol={RECONCILIATION_RTOL}, "
+            f"atol={RECONCILIATION_ATOL})."
+        )
+    reconciliation = [
+        MonthReconciliation(
+            month=first_month,
+            source_value=fragment_value,
+            allocated_total=fragment_allocated_total,
+            within_tolerance=fragment_within_tolerance,
+            weeks=tuple(fragment_weeks),
+        )
+    ]
+
+    rest_values = {m: v for m, v in reseated_monthly_values.items() if m != first_month}
+    if rest_values:
+        rest_result = phase_monthly_series_calendar_day_overlap_v1(
+            market=market,
+            series_id=series_id,
+            monthly_values=rest_values,
+            calendar=calendar,
+        )
+        for label, value in zip(rest_result.period_labels, rest_result.values):
+            allocated[label] += value
+        reconciliation.extend(rest_result.reconciliation)
+
+    values = tuple(allocated[w] for w in weeks)
+    provenance = MethodProvenance(
+        method_id=PHASING_METHOD_ID,
+        method_version=PHASING_METHOD_VERSION,
+        parameters={"partial_first_month": first_month},
+        canonical_calendar_start=calendar.start,
+        canonical_calendar_end=calendar.end,
+        source_monthly_plan_fingerprint=_sha256_hex(
+            {m: reseated_monthly_values[m] for m in sorted(reseated_monthly_values)}
+        ),
+        generated_weekly_plan_fingerprint=_sha256_hex(
+            {"period_labels": list(weeks), "values": list(values)}
+        ),
+    )
+    return WeeklyAllocationResult(
+        market=market,
+        series_id=series_id,
+        period_labels=weeks,
+        values=values,
+        provenance=provenance,
+        reconciliation=tuple(reconciliation),
+    )
+
+
+def phase_monetary_plan_from_partial_start_calendar_day_overlap_v1(
+    *,
+    market: str,
+    channel: str,
+    reseated_monthly_spend: Mapping[str, float],
+    plan_start_week: pd.Timestamp,
+    calendar: CanonicalCalendar,
+    cost_registry: CostMappingRegistry,
+    cost_context_id: str = "default",
+) -> MonetaryPhasingResult:
+    """Monetary counterpart to
+    `phase_monthly_series_from_partial_start_calendar_day_overlap_v1`,
+    mirroring `phase_monetary_plan_calendar_day_overlap_v1`'s spend ->
+    governed weekly cost mapping -> model-input order for a plan whose
+    first month is a partial period (WP0 of `Media-Mix-Lab: Coding LLM
+    Next Steps After PR #267`, resolving the sequential-planner defect
+    where this per-week cost-mapping derivation was duplicated inline in
+    `pages/08_Scenario_Planner.py`).
+
+    Raises `PhasingReconciliationError` if no governed, currently-valid
+    cost mapping is resolvable for a week with non-zero phased spend -
+    never silently falls back to an unapproved or expired mapping, exactly
+    like `phase_monetary_plan_calendar_day_overlap_v1`.
+    """
+    weekly_spend = phase_monthly_series_from_partial_start_calendar_day_overlap_v1(
+        market=market,
+        series_id=channel,
+        reseated_monthly_values=reseated_monthly_spend,
+        plan_start_week=plan_start_week,
+        calendar=calendar,
+    )
+
+    model_input_values = []
+    mapping_ids = []
+    for label, spend in zip(weekly_spend.period_labels, weekly_spend.values):
+        if spend == 0.0:
+            model_input_values.append(0.0)
+            mapping_ids.append("")
+            continue
+        mapping = cost_registry.resolve(market, channel, cost_context_id, as_of=label)
+        if mapping is None:
+            raise PhasingReconciliationError(
+                f"No governed, currently-valid cost mapping for market={market!r} "
+                f"channel={channel!r} cost_context_id={cost_context_id!r} "
+                f"as_of={label!r} - cannot derive a weekly model-input quantity "
+                "from phased spend for this week."
+            )
+        derived = np.asarray(mapping.spend_to_media_input(spend)).reshape(-1)
         if derived.size != 1:
             raise PhasingReconciliationError(
                 f"Cost mapping {mapping.mapping_id!r} returned "
