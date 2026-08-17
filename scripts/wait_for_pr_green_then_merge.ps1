@@ -1,19 +1,17 @@
 <#
-Safe merge gate (Work Package 0, `Media-Mix-Lab: Coding LLM Next Steps
-Post WP5`): this repository has no effective required-check branch
-protection on `main`, so a bare `gh pr merge --auto` merges as soon as it
-is invoked rather than waiting for checks - this is exactly what let
-PR #258 merge while `main`'s own CI was still red (see
-REPO_REVIEW_AND_NEXT_STEPS.md's WP4/WP5 history paragraph). This script is
-the substitute gate: poll every normal blocking check to a real terminal
-state, merge only when every one has succeeded (deliberately skipped
-schedule/manual-only jobs are allowed), then poll the push-triggered `main`
-workflow run to a real terminal state before reporting done.
-
-This script does not itself decide whether the expensive Candidate A
-posterior-recovery job must have a manual run before merging a PR that
-changes Candidate A model mathematics (REQ-SEARCH-002 affected modules) -
-that is a human/agent judgement call the caller makes with -RequireCandidateARecovery.
+Safe merge gate (Work Package 0 of `Media-Mix-Lab: Coding LLM Next Steps
+Post WP5`; hardened by Work Package 2 of `...Post PR262`): this repository
+has no effective required-check branch protection on `main`, so a bare
+`gh pr merge --auto` merges as soon as it is invoked rather than waiting for
+checks - this is exactly what let PR #258 merge while `main`'s own CI was
+still red (see REPO_REVIEW_AND_NEXT_STEPS.md's WP4/WP5 history paragraph).
+This script is the substitute gate: verify remote/auth state, capture the
+PR's exact head SHA, poll every normal blocking check (plus an automatically
+dispatched Candidate A posterior recovery run when the PR touches Candidate
+A model mathematics) to a real terminal state, refuse any unclassified CI
+check, re-verify the head has not moved immediately before merging with an
+expected-head guard, then poll the push-triggered `main` workflow run to a
+real terminal state before reporting done.
 
 Usage:
     pwsh scripts/wait_for_pr_green_then_merge.ps1 -PRNumber 261
@@ -43,11 +41,35 @@ param(
         "Deterministic attribution recovery",
         "Candidate A posterior recovery"
     ),
+    # Checks that are known to exist, never block merge on their own
+    # (pull_request-only, informational annotations), and must not trip the
+    # fail-closed "unexpected check" guard below.
+    [string[]]$InformationalChecks = @(
+        "Candidate A recovery gate check"
+    ),
+    # Kept in sync by hand with .github/workflows/tests.yml's
+    # candidate-a-recovery-gate-check job's candidate_a_paths array and
+    # docs/approved_requirements/REQ-SEARCH-002.md's "Affected modules" -
+    # both describe the same governed boundary from different angles
+    # (CI annotation vs. this merge gate's automatic dispatch decision).
+    [string[]]$CandidateAPaths = @(
+        "ancestry_mmm/core/search_capacity.py",
+        "ancestry_mmm/core/search_candidate_a_recovery.py",
+        "ancestry_mmm/core/search_decision_package.py",
+        "ancestry_mmm/core/graph_model_compiler.py",
+        "ancestry_mmm/core/hierarchical_model.py",
+        "ancestry_mmm/core/causal_graph.py"
+    ),
     [switch]$RequireCandidateARecovery,
     [string]$MergeMethod = "squash",
     [int]$PollIntervalSeconds = 30,
     [int]$TimeoutMinutes = 60,
-    [switch]$SkipMainVerification
+    # Deliberately not named "-SkipMainVerification" (brief §5.13: "Consider
+    # deprecating/removing that bypass from the normal agent path" - the
+    # required contract is "green PR -> merge -> green main -> next work
+    # package", not merely "green PR -> merge"). The autonomous flow must
+    # never pass this. It exists only for a human operator's manual/debug use.
+    [switch]$DangerouslySkipMainVerification
 )
 
 $ErrorActionPreference = "Stop"
@@ -61,18 +83,95 @@ function Get-GhOrFail {
     return $output
 }
 
-if ($PRNumber -eq 0) {
-    Write-Host "No -PRNumber supplied; resolving PR for the current branch..."
-    $prJson = Get-GhOrFail @("pr", "view", "--repo", $Repo, "--json", "number,headRefName,headRefOid")
-    $pr = $prJson | ConvertFrom-Json
-    $PRNumber = $pr.number
-    Write-Host "Resolved PR #$PRNumber (branch $($pr.headRefName), head $($pr.headRefOid))"
+# ---------------------------------------------------------------------------
+# Remote/auth preflight (brief §5.13/§8.5) - never trust local state without
+# verifying it against the actual remote first.
+# ---------------------------------------------------------------------------
+
+Write-Host "Verifying origin remote identity..."
+$remoteUrl = (git remote get-url origin 2>&1)
+if ($LASTEXITCODE -ne 0) {
+    throw "git remote get-url origin failed: $remoteUrl"
+}
+if ($remoteUrl -notmatch [regex]::Escape($Repo)) {
+    throw "origin remote ($remoteUrl) does not reference the expected repository " +
+        "($Repo). Refusing to continue against a mismatched remote."
+}
+Write-Host "  origin -> $remoteUrl (matches expected repo $Repo)"
+
+Write-Host "Fetching origin..."
+git fetch origin --quiet 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw "git fetch origin failed."
+}
+
+Write-Host "Verifying gh authentication..."
+$authCheck = & gh auth status 2>&1
+if ($LASTEXITCODE -ne 0) {
+    if ($env:GITHUB_TOKEN -or $env:GH_TOKEN) {
+        Write-Host "  gh auth status failed with GITHUB_TOKEN/GH_TOKEN set in the " +
+            "environment - clearing the override for this script and retrying " +
+            "against a keyring-stored login..."
+        Remove-Item Env:\GITHUB_TOKEN -ErrorAction SilentlyContinue
+        Remove-Item Env:\GH_TOKEN -ErrorAction SilentlyContinue
+    }
+    $authRetry = & gh auth status 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "gh is not authenticated against github.com even after clearing " +
+            "GITHUB_TOKEN/GH_TOKEN:`n$authRetry"
+    }
+}
+$authWhoAmI = & gh api user --jq .login 2>&1
+if ($LASTEXITCODE -ne 0 -or -not $authWhoAmI) {
+    throw "gh auth status passed but 'gh api user' failed - authentication is not usable: $authWhoAmI"
+}
+Write-Host "  gh authenticated as $authWhoAmI"
+
+# ---------------------------------------------------------------------------
+# Resolve the PR and capture its exact head SHA now, before any waiting -
+# this is the value every later check/merge step is verified against
+# (brief §5.13 "PR-head race").
+# ---------------------------------------------------------------------------
+
+$viewArgs = @("pr", "view", "--repo", $Repo, "--json", "number,headRefName,headRefOid,baseRefOid")
+if ($PRNumber -ne 0) {
+    $viewArgs = @("pr", "view", "$PRNumber", "--repo", $Repo, "--json", "number,headRefName,headRefOid,baseRefOid")
+}
+$pr = (Get-GhOrFail $viewArgs) | ConvertFrom-Json
+$PRNumber = $pr.number
+$headRefName = $pr.headRefName
+$capturedHeadSha = $pr.headRefOid
+Write-Host "Resolved PR #$PRNumber (branch $headRefName). Captured head SHA: $capturedHeadSha"
+
+# ---------------------------------------------------------------------------
+# Automatic Candidate A path detection (brief §5.13 "Candidate A recovery
+# remains caller-selected" - this replaces the caller having to remember
+# -RequireCandidateARecovery for a PR that changes Candidate A model
+# mathematics).
+# ---------------------------------------------------------------------------
+
+if (-not $RequireCandidateARecovery) {
+    Write-Host "Checking whether PR #$PRNumber changes any Candidate A model-mathematics file..."
+    $diffOutput = Get-GhOrFail @("pr", "diff", "$PRNumber", "--repo", $Repo, "--name-only")
+    $changedFiles = ($diffOutput -join "`n") -split "`r?`n" | Where-Object { $_ }
+    $hitPaths = $CandidateAPaths | Where-Object { $changedFiles -contains $_ }
+    if ($hitPaths.Count -gt 0) {
+        Write-Host "  Candidate A affected module(s) changed: $($hitPaths -join ', ')"
+        Write-Host "  Automatically requiring Candidate A posterior recovery before merge."
+        $RequireCandidateARecovery = $true
+    }
+    else {
+        Write-Host "  No Candidate A affected module changed - recovery not required."
+    }
 }
 
 if ($RequireCandidateARecovery) {
     $AllowedSkippedChecks = $AllowedSkippedChecks | Where-Object { $_ -ne "Candidate A posterior recovery" }
     $RequiredChecks = $RequiredChecks + "Candidate A posterior recovery"
     Write-Host "REQUIRE-CANDIDATE-A-RECOVERY set: a successful, non-skipped 'Candidate A posterior recovery' run is now required before merge."
+    Write-Host "Dispatching a workflow_dispatch run of 'Tests' on branch $headRefName so 'candidate-a-recovery' runs against this PR's head..."
+    Get-GhOrFail @("workflow", "run", "Tests", "--repo", $Repo, "--ref", $headRefName) | Out-Null
+    Write-Host "  Dispatched. It should attach to this PR's checks list (matched by head SHA) once GitHub registers it."
 }
 
 Write-Host "Waiting for PR #$PRNumber's checks to appear..."
@@ -100,11 +199,24 @@ if (-not $checksAppeared) {
 
 Write-Host "Polling PR #$PRNumber's required checks until every one reaches a terminal state..."
 
+$knownChecks = @($RequiredChecks) + @($AllowedSkippedChecks) + @($InformationalChecks)
 $allGreen = $false
 
 while ((Get-Date) -lt $deadline) {
     $checksJson = Get-GhOrFail @("pr", "checks", "$PRNumber", "--repo", $Repo, "--json", "name,state,bucket")
     $checks = $checksJson | ConvertFrom-Json
+
+    # Fail closed on a check this script does not recognise at all (brief
+    # §5.13 "Static check list" - a newly-added CI job must block merge
+    # until explicitly classified, not be silently ignored).
+    $unexpected = $checks | Where-Object { $knownChecks -notcontains $_.name } |
+        Select-Object -ExpandProperty name -Unique
+    if ($unexpected.Count -gt 0) {
+        throw "PR #$PRNumber reports unclassified CI check(s) this script does not " +
+            "recognise: $($unexpected -join ', '). Refusing to merge until each is " +
+            "explicitly added to -RequiredChecks, -AllowedSkippedChecks, or " +
+            "-InformationalChecks - a newly-added CI job must not be silently ignored."
+    }
 
     $byName = @{}
     foreach ($check in $checks) {
@@ -161,10 +273,26 @@ if (-not $allGreen) {
     throw "Timed out after $TimeoutMinutes minute(s) waiting for PR #$PRNumber's required checks to go green. Not merging."
 }
 
-Write-Host "All required checks green for PR #$PRNumber. Merging (method: $MergeMethod)..."
+Write-Host "All required checks green for PR #$PRNumber."
+
+# ---------------------------------------------------------------------------
+# Re-verify the head immediately before merging (brief §5.13 "PR-head race")
+# and merge only the exact head whose checks were observed, using gh's own
+# expected-head guard as a second, server-side layer of protection.
+# ---------------------------------------------------------------------------
+
+Write-Host "Re-checking PR #$PRNumber's head SHA immediately before merge..."
+$prNow = (Get-GhOrFail @("pr", "view", "$PRNumber", "--repo", $Repo, "--json", "headRefOid")) | ConvertFrom-Json
+if ($prNow.headRefOid -ne $capturedHeadSha) {
+    throw "PR #$PRNumber's head moved from $capturedHeadSha to $($prNow.headRefOid) after " +
+        "checks were observed green. Refusing to merge a commit whose checks were not " +
+        "verified against this exact head - re-run this script against the new head."
+}
+
+Write-Host "Head confirmed unchanged ($capturedHeadSha). Merging (method: $MergeMethod)..."
 
 $mergeFlag = "--$MergeMethod"
-Get-GhOrFail @("pr", "merge", "$PRNumber", "--repo", $Repo, $mergeFlag, "--delete-branch=false") | Out-Null
+Get-GhOrFail @("pr", "merge", "$PRNumber", "--repo", $Repo, $mergeFlag, "--delete-branch=false", "--match-head-commit", $capturedHeadSha) | Out-Null
 
 $prAfterMerge = Get-GhOrFail @("pr", "view", "$PRNumber", "--repo", $Repo, "--json", "state,mergeCommit,mergedAt")
 $prState = $prAfterMerge | ConvertFrom-Json
@@ -184,8 +312,10 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host "Confirmed: $mergeSha is on origin/main."
 
-if ($SkipMainVerification) {
-    Write-Host "SkipMainVerification set - not waiting for the push-triggered main workflow. Done."
+if ($DangerouslySkipMainVerification) {
+    Write-Host "WARNING: -DangerouslySkipMainVerification set - not waiting for the push-triggered main workflow."
+    Write-Host "WARNING: this bypasses the required 'green PR -> merge -> green main -> next work package' contract."
+    Write-Host "WARNING: this flag must never be used by the autonomous work-package loop."
     exit 0
 }
 

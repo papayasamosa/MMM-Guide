@@ -103,32 +103,57 @@ def test_repo_review_documents_candidate_a_integration_gap():
     )
 
 
-def test_repo_review_current_sha_is_well_formed_and_historical_shas_are_labelled():
-    """The doc's 'Current main reviewed' SHA must be a real 40-hex commit
-    SHA, and any other 40-hex SHA mentioned in the file must be explicitly
-    labelled historical/superseded on the same line - never left looking
-    like current state."""
-    text = _read(REPO_REVIEW)
-    match = re.search(r"Current `main` reviewed: `([0-9a-f]{40})`", text)
-    assert match, (
-        "REPO_REVIEW_AND_NEXT_STEPS.md must state a 40-hex 'Current `main` reviewed' SHA."
-    )
-    current_sha = match.group(1)
+CURRENT_MAIN_FIELD_RE = re.compile(
+    r"current\s*`?main`?\s*(reviewed|sha|is)", re.IGNORECASE
+)
 
-    # Check within paragraphs (blank-line-delimited), not single lines, so
-    # ordinary prose wrapping doesn't force the label onto the same physical
-    # line as the SHA.
+
+def test_repo_review_does_not_use_a_necessarily_drifting_current_main_field():
+    """A version-controlled status file must never assert "this SHA is
+    current `main`": a branch cannot know the future squash-merge commit
+    SHA that will become `main`, so that field is guaranteed to go stale
+    the moment the next PR merges (exactly what happened - an earlier
+    revision claimed PR #261's merge commit as "current `main`" while
+    PR #262 was already merged on top of it, see docs/decision_log.md and
+    the Work Package 2 entry that replaced this convention).
+
+    The replacement convention is a "Repository state through merged PR
+    #<N>" milestone marker plus explicitly historical/superseded SHAs -
+    never a field claiming to be the live current SHA."""
+    text = _read(REPO_REVIEW)
+    assert not CURRENT_MAIN_FIELD_RE.search(text), (
+        "REPO_REVIEW_AND_NEXT_STEPS.md contains a 'current main' SHA field "
+        "again - this convention was deliberately removed because it "
+        "necessarily drifts on every subsequent merge. Use a "
+        "'Repository state through merged PR #<N>' milestone marker "
+        "instead, and resolve the actual live origin/main SHA from GitHub, "
+        "never from this file."
+    )
+    assert re.search(r"Repository state through merged PR #\d+", text), (
+        "REPO_REVIEW_AND_NEXT_STEPS.md must state its baseline as "
+        "'Repository state through merged PR #<N>', not a live SHA field."
+    )
+
+
+def test_repo_review_historical_shas_are_labelled():
+    """Every 40-hex SHA mentioned in the file must be explicitly labelled
+    historical/superseded (or as a specific merge commit for a milestone
+    PR) in the same paragraph - never left looking like unlabelled current
+    state."""
+    text = _read(REPO_REVIEW)
     paragraphs = text.split("\n\n")
     for paragraph in paragraphs:
         for sha in SHA_RE.findall(paragraph):
-            if sha == current_sha:
-                continue
             lowered = paragraph.lower()
-            assert "historical" in lowered or "superseded" in lowered, (
+            assert (
+                "historical" in lowered
+                or "superseded" in lowered
+                or "merge commit" in lowered
+            ), (
                 f"REPO_REVIEW_AND_NEXT_STEPS.md mentions SHA {sha} without "
-                "labelling it historical/superseded in the same paragraph - "
-                "a status file must not hard-code an old main SHA as though "
-                "it were current."
+                "labelling it historical/superseded/as a specific merge "
+                "commit in the same paragraph - a status file must not "
+                "leave a bare SHA looking like unlabelled current state."
             )
 
 

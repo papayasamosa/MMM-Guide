@@ -9,13 +9,29 @@ and does not supersede `AGENTS.md`, `docs/approved_requirements/`, or
 
 Repository: `papayasamosa/Media-Mix-Lab`
 
-Current `main` reviewed: `6f342afcc03a588eb5738b8813d3d2b8beb54b57`
+**Repository state through merged PR #262** (`WP1: Monthly-to-weekly
+phasing contract`, REQ-SCEN-002, part of `Media-Mix-Lab: Coding LLM Next
+Steps Post WP5`) - merge commit `a2a4f75422f58f16c1894a2ef02b7a9bb375e53b`.
 
-Current head: **Work Package 1 of `Media-Mix-Lab: Coding LLM Next Steps
-Post WP5`** (monthly-to-weekly phasing contract), landed on top of that
-baseline in the same work session.
+This document deliberately identifies its baseline by merged PR/work-package
+milestone, never by a field claiming to be "current `main`": a branch
+cannot know the future squash-merge commit SHA that will become `main`, so
+a hard-coded "this SHA is current" field is guaranteed to go stale the
+moment the next PR merges (this happened in practice - an earlier revision
+of this section claimed `6f342afcc03a588eb5738b8813d3d2b8beb54b57`, PR
+#261's merge commit, as "current `main`" while PR #262 was already merged
+on top of it). `ancestry_mmm/tests/test_repository_status_conformance.py::
+test_repo_review_does_not_use_a_necessarily_drifting_current_main_field`
+guards this convention. Before relying on this document for the actual
+live state of `main`, fetch `origin` and resolve `origin/main`'s SHA from
+GitHub directly - never treat a version-controlled status file as live
+remote truth.
 
-Historical markers: earlier versions of this document reviewed
+Historical markers (all superseded merge commits; recorded only for
+history, never as current state): `6f342afcc03a588eb5738b8813d3d2b8beb54b57`
+(merged PR #261, WP0 of `...Post WP5` - reconciled `REQ-SCEN-002`'s
+top-of-file wording, indexed `REQ-STATE-001`/`REQ-SCEN-001`-`003`, added
+`scripts/wait_for_pr_green_then_merge.ps1`),
 `ef4744f1d587f061e8859cb26e24740325335de2` (merged PR #260, WP5 of
 `...After PR #253` - the sequential simulation kernel - superseded by
 Work Package 0 of `...Post WP5` above, merged as PR #261),

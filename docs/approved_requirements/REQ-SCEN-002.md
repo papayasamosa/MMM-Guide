@@ -7,14 +7,16 @@ Approved for implementation by the task-specific implementation brief
 repository's standard authority hierarchy ("1. the task-specific
 implementation brief"). Depends on `REQ-STATE-001` (the `WeeklyPlan`
 contract this phasing produces inputs for) and `REQ-SCEN-001` (the
-evaluation contract those weekly plans feed). Not yet implemented -
-`REPO_REVIEW_AND_NEXT_STEPS.md` records this as "WP6" ("`WeeklyPlan`... it
-never decides how a coarser plan spreads across weeks, deferred to WP6").
+evaluation contract those weekly plans feed). The core phasing contract is
+implemented and tested (WP1 of that brief, `core.planning.phasing`, merged
+as PR #262) - see "Owner and status" below for the precise implemented
+versus not-yet-implemented boundary.
 
-This record approves the contract; it does not itself implement
-`ancestry_mmm/core/sequential_simulation.py`'s `WeeklyPlan` producer. That
-implementation is a separate, dependent work package and must cite this
-record.
+This record approves the contract; the phasing module it implements does
+not itself wire a `WeeklyAllocationResult` into
+`ancestry_mmm/core/sequential_simulation.py`'s `WeeklyPlan` construction.
+That wiring, and the future-context builder, are separate, dependent work
+packages and must cite this record.
 
 ## Planning interface and calculation grain
 

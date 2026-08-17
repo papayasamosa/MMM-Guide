@@ -123,6 +123,41 @@ def _validate_monthly_values(monthly_values: Mapping[str, float]) -> None:
             )
 
 
+def _validate_weekly_schedule(
+    weekly_schedule: Mapping[str, float], canonical: Tuple[str, ...]
+) -> None:
+    """Guard an analyst-supplied explicit weekly schedule before it is used
+    (brief §8.4/§5.10): every key must be a canonical target week - a
+    weekly value keyed by a label outside the canonical calendar (a typo,
+    a stale label from a resized calendar, a non-canonical date format)
+    must never be silently ignored by falling through
+    `weekly_schedule.get(label, 0.0)`'s per-canonical-week lookup. Every
+    value must be finite and non-negative - this module is scoped to flow
+    quantities/spend only (REQ-SCEN-002's own "excluded from this phasing
+    method" boundary excludes promotions/controls/caps, which may
+    legitimately need other signs elsewhere)."""
+    canonical_set = set(canonical)
+    unknown = sorted(set(weekly_schedule) - canonical_set)
+    if unknown:
+        raise ValueError(
+            "weekly_schedule contains key(s) outside the canonical calendar "
+            f"weeks and cannot be silently ignored: {unknown!r}. Every "
+            "supplied key must be a canonical target week "
+            f"({canonical[0]!r}..{canonical[-1]!r})."
+        )
+    for label, value in weekly_schedule.items():
+        if not np.isfinite(value):
+            raise ValueError(
+                f"weekly_schedule[{label!r}] must be finite, got {value!r}."
+            )
+        if value < 0:
+            raise ValueError(
+                f"weekly_schedule[{label!r}] is negative ({value!r}) - an "
+                "explicit weekly spend/model-input schedule must be "
+                "non-negative."
+            )
+
+
 @dataclass(frozen=True)
 class MethodProvenance:
     """Stored provenance for a governed phasing allocation (REQ-SCEN-002:
@@ -201,6 +236,24 @@ class WeeklyAllocationResult:
                 "period_labels and values must have the same length "
                 f"({len(self.period_labels)} != {len(self.values)})."
             )
+        # Defensive - not just a guard on the two module functions that
+        # build this dataclass, but on direct construction too (brief
+        # §5.10: "WeeklyAllocationResult should also defensively reject
+        # invalid values even if it is constructed directly"). This module
+        # only ever represents flow-quantity/spend weekly allocations, so
+        # every value must be finite and non-negative.
+        for label, value in zip(self.period_labels, self.values):
+            if not np.isfinite(value):
+                raise ValueError(
+                    f"WeeklyAllocationResult.values[{label!r}] must be finite, "
+                    f"got {value!r}."
+                )
+            if value < 0:
+                raise ValueError(
+                    f"WeeklyAllocationResult.values[{label!r}] is negative "
+                    f"({value!r}) - a weekly spend/model-input allocation "
+                    "must be non-negative."
+                )
 
     def as_array(self) -> np.ndarray:
         return np.asarray(self.values, dtype=float)
@@ -358,6 +411,7 @@ def reconcile_explicit_weekly_schedule(
     """
     _validate_monthly_values(monthly_values)
     weeks = canonical_weeks(calendar)
+    _validate_weekly_schedule(weekly_schedule, weeks)
     week_bounds = {w: _week_bounds(w) for w in weeks}
     month_bounds = {month: _month_bounds(month) for month in monthly_values}
 
@@ -574,7 +628,30 @@ def phase_monetary_plan_calendar_day_overlap_v1(
                 "from phased spend for this week."
             )
         derived = np.asarray(mapping.spend_to_media_input(spend)).reshape(-1)
-        model_input_values.append(float(derived[0]))
+        # Fail closed on a malformed/custom cost mapping rather than
+        # silently discarding extra values (brief §5.11): a scalar weekly
+        # spend must map to exactly one derived model-input value.
+        if derived.size != 1:
+            raise PhasingReconciliationError(
+                f"Cost mapping {mapping.mapping_id!r} returned "
+                f"{derived.size} value(s) for a single scalar weekly spend "
+                f"({market=!r} {channel=!r} {label=!r} spend={spend!r}) - "
+                "expected exactly one derived model-input value."
+            )
+        derived_value = float(derived[0])
+        if not np.isfinite(derived_value):
+            raise PhasingReconciliationError(
+                f"Cost mapping {mapping.mapping_id!r} returned a non-finite "
+                f"derived model-input value ({derived_value!r}) for "
+                f"{market=!r} {channel=!r} {label=!r} spend={spend!r}."
+            )
+        if derived_value < 0:
+            raise PhasingReconciliationError(
+                f"Cost mapping {mapping.mapping_id!r} returned a negative "
+                f"derived model-input value ({derived_value!r}) for "
+                f"{market=!r} {channel=!r} {label=!r} spend={spend!r}."
+            )
+        model_input_values.append(derived_value)
         mapping_ids.append(mapping.mapping_id)
 
     weekly_model_input = WeeklyModelInputDerivation(

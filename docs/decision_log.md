@@ -4475,3 +4475,126 @@ and tested. Future-context builder and all application-layer wiring
 `core.optimization`'s objective, `core.sequential_simulation.WeeklyPlan`
 construction from a phased result) remain separately-scoped, not attempted
 in this targeted work package.
+
+## Post-PR262 correctness, authority, and release-gate hardening (Work Package 2)
+
+**Date:** 2026-08-17
+**Decision:** Before building the application-level sequential planner
+(`Media-Mix-Lab: Coding LLM Next Steps Post PR262`), fix the authority-doc
+and release-gate defects that PR #262's review surfaced rather than build
+on top of them:
+
+1. `REQ-SCEN-002.md`'s own top-of-file "Approval and traceability" section
+   still said the phasing contract was "Not yet implemented" and cited a
+   stale "WP6" label, directly contradicting its own "Owner and status"
+   section a few dozen lines below, which correctly said WP1 implemented
+   it. Fixed - the top section now states the implemented status and cites
+   PR #262.
+2. `REPO_REVIEW_AND_NEXT_STEPS.md`'s "Current `main` reviewed: `<SHA>`"
+   field is structurally guaranteed to go stale: a branch cannot know the
+   future squash-merge commit SHA that will become `main`, and this
+   happened in practice (the field named PR #261's merge commit while
+   PR #262 was already merged on top of it). Replaced with a "Repository
+   state through merged PR #<N>" milestone marker; the previously-existing
+   anti-drift test that enforced the old convention
+   (`test_repo_review_current_sha_is_well_formed_and_historical_shas_are_labelled`)
+   is replaced with one that forbids the "current main" field pattern from
+   reappearing (`test_repo_review_does_not_use_a_necessarily_drifting_current_main_field`)
+   plus one that still requires every mentioned SHA to be explicitly
+   labelled historical/superseded/a specific merge commit
+   (`test_repo_review_historical_shas_are_labelled`).
+3. `REQ-STATE-001`/`REQ-SCEN-001` described `simulate_sequential_outcomes_
+   posterior`'s "full per-draw posterior paths" without distinguishing
+   that it varies each draw's own decay/Hill parameters through the future
+   recursion but reuses one fixed, caller-supplied `SequentialCarryInState`
+   across every draw - historical starting-adstock uncertainty is not
+   propagated. Tightened both records' wording and "Not yet covered"
+   sections to name this gap and the related gap that no market-specific
+   (Model C) equivalent of this posterior helper exists yet - both remain
+   real, not-yet-implemented capabilities for Work Package 3.
+4. GitHub issue #123 said the mypy debt ratchet was 245; the authoritative
+   `.mypy-baseline-count` file has read 241 since Work Package 4/5 of the
+   prior brief. Updated the issue to 241 and pointed it at
+   `.mypy-baseline-count` as the authoritative source, to prevent the
+   two from silently disagreeing again.
+5. `core/planning/phasing.py` hardening: an explicit weekly schedule key
+   outside the canonical calendar was silently ignored (the reconciliation
+   loop only ever read canonical week labels via `.get(label, 0.0)`, never
+   validating the schedule's own keys) rather than rejected -
+   `_validate_weekly_schedule` now requires every key be canonical and
+   every value finite and non-negative. `WeeklyAllocationResult` validated
+   its `period_labels`/`values` length match but not the values themselves
+   - `__post_init__` now defensively rejects non-finite/negative values
+   even on direct construction, not only via the module's own governed
+   functions. The monetary path's scalar cost-mapping call reshaped the
+   mapping's return value and silently took only the first element,
+   discarding any extra values a malformed/custom mapping might return -
+   it now fails closed (`PhasingReconciliationError`) unless the mapping
+   returns exactly one finite, non-negative value. Added numerical-
+   equivalence coverage (`test_phasing_calendar_overlap_equivalence.py`)
+   between this module's day-overlap arithmetic and
+   `core.frequency_conversion`'s independently-governed
+   `calendar_overlap_allocation` day-overlap arithmetic across leap
+   February, a 30-day month, a 31-day month, a shared boundary week, a
+   narrow/partial calendar, and consecutive tracked months - the two
+   remain deliberately separate governance objects/method IDs (different
+   requirement records, forward-planning vs. backward-conversion), this
+   only guards the shared arithmetic principle from silently drifting.
+6. `scripts/wait_for_pr_green_then_merge.ps1` hardening: added a remote/
+   auth preflight (verifies the `origin` remote matches the expected repo,
+   fetches it, verifies `gh` authentication, and clears a stale invalid
+   `GITHUB_TOKEN`/`GH_TOKEN` environment override that shadows a working
+   keyring login rather than failing outright - this exact failure mode
+   was hit live while preparing this package); captures the PR's exact
+   head SHA once, before any waiting, and re-verifies it is unchanged
+   immediately before merging, using `gh pr merge --match-head-commit` as
+   a second, server-side guard against a race where new commits land
+   after checks were observed green; fails closed on any CI check name
+   not explicitly classified as required, allowed-skipped, or
+   informational, rather than silently ignoring a newly-added job; and
+   automatically detects whether the PR's diff touches a Candidate A
+   model-mathematics file (the same file list
+   `candidate-a-recovery-gate-check` annotates, kept in sync by a
+   cross-checking test) and dispatches the schedule/manual-only
+   `candidate-a-recovery` job itself via `gh workflow run
+   --ref <branch>` rather than depending on the caller remembering
+   `-RequireCandidateARecovery`. The unsafe post-merge-verification bypass
+   was renamed from `-SkipMainVerification` to
+   `-DangerouslySkipMainVerification` (unchanged behaviour, harder to
+   reach for by habit) and now prints an explicit warning naming the
+   contract it breaks ("green PR -> merge -> green main -> next work
+   package") - the autonomous work-package loop must never pass it.
+   `test_merge_gate_script_contract.py` adds static contract coverage
+   (plus a live Windows-PowerShell-5.1 parse check when a `pwsh`/
+   `powershell` binary is available) for each of these properties, since
+   this repository has no Pester tooling and the Python test jobs run on
+   `ubuntu-latest`.
+
+**Alternatives considered:** Leaving `REQ-STATE-001`/`REQ-SCEN-001`'s
+wording as "implemented" without qualification (rejected - `AGENTS.md`'s
+authority hierarchy requires authority records not overstate posterior
+completeness; Work Package 3 depends on this gap being named precisely, not
+rediscovered). Deleting the old "current main SHA" anti-drift test outright
+instead of replacing it with an equivalent-strength test for the new
+convention (rejected - the brief requires an anti-drift test for whichever
+convention is chosen, not merely removing the old one). Merging
+`core.planning.phasing`'s day-overlap arithmetic with
+`core.frequency_conversion`'s into one shared function (rejected, per the
+brief - the two remain intentionally separately governed; only numerical
+equivalence coverage was added, not a shared code path).
+**Impact:** `docs/approved_requirements/REQ-SCEN-002.md`,
+`docs/approved_requirements/REQ-STATE-001.md`,
+`docs/approved_requirements/REQ-SCEN-001.md`,
+`REPO_REVIEW_AND_NEXT_STEPS.md` updated; `ancestry_mmm/core/planning/
+phasing.py` hardened (no new public contract, only stricter validation on
+the existing one); `ancestry_mmm/tests/test_phasing.py` extended; new
+`ancestry_mmm/tests/test_phasing_calendar_overlap_equivalence.py`; new
+`ancestry_mmm/tests/test_merge_gate_script_contract.py`;
+`ancestry_mmm/tests/test_repository_status_conformance.py`'s SHA-drift test
+replaced; `scripts/wait_for_pr_green_then_merge.ps1` hardened; GitHub issue
+#123 updated. No schema, migration, or persisted-field changes. mypy: 241
+unchanged (no core/application code outside `core/planning/phasing.py`
+touched, and that module already type-checked clean).
+**Owner:** Data Science / Platform engineering.
+**Status:** Accepted; implemented on this work package's branch. PR and CI
+remain the release gate.

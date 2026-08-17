@@ -30,14 +30,22 @@ phased plans feeding this same contract), which is not yet built.
 4. **Both production-supported model types.** Model A (shared/joint
    hierarchical) and Model C (market-specific, partially pooled) are both
    supported via the `_market_specific` function variants.
-5. **Posterior draw propagation.** `simulate_sequential_outcomes_posterior`
-   runs every sampled posterior draw through the full weekly recursion
-   independently and returns the complete per-draw array
+5. **Posterior draw propagation, conditional on a shared carry-in state.**
+   `simulate_sequential_outcomes_posterior` runs every sampled posterior
+   draw's own parameters through the full weekly recursion independently
+   and returns the complete per-draw array
    (`shape (n_draws, n_weeks, n_outcomes)`) - it does not aggregate.
    Aggregation (mean/median/credible interval) is the caller's job,
    performed on the draw axis after the full path exists for every draw -
    never per-component before this array exists, and never by simulating
-   only posterior means and calling the result posterior uncertainty.
+   only posterior means and calling the result posterior uncertainty. This
+   function receives one fixed `SequentialCarryInState` shared across every
+   draw, so it propagates future-recursion posterior uncertainty
+   conditional on that shared starting state, not fully draw-consistent
+   uncertainty from historical carry-in reconstruction onward - see
+   `REQ-STATE-001`'s "Not yet covered by this record" for the distinct,
+   not-yet-implemented draw-consistent evaluator and the Model C parity
+   gap.
 
 ## Approved contract (application level - not yet built)
 
