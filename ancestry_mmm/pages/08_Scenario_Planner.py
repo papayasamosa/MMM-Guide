@@ -97,6 +97,7 @@ from ancestry_mmm.core.scenario_governance import (
     CounterfactualPolicy,
     ScenarioPlan,
     classify_activity_plan,
+    resolve_counterfactual,
 )
 from ancestry_mmm.core.validation_policy import (
     load_approval_readiness,
@@ -106,8 +107,27 @@ from ancestry_mmm.application.scenario_service import (
     ManualScenarioInput,
     OptimisationInput,
     ScenarioService,
+    SequentialManualScenarioInput,
 )
 from ancestry_mmm.data.preprocessor import create_fourier_features_from_calendar
+from ancestry_mmm.core.frequency_alignment import CanonicalCalendar
+from ancestry_mmm.core.planning.future_context import (
+    EXPLORATORY_MODE,
+    OFFICIAL_MODE,
+    build_future_context,
+)
+from ancestry_mmm.core.planning.phasing import (
+    PHASING_METHOD_ID,
+    PHASING_METHOD_VERSION,
+    HorizonConfiguration,
+    MethodProvenance,
+    WeeklyAllocationResult,
+    WeeklyModelInputDerivation,
+    canonical_weeks,
+    phase_monthly_series_calendar_day_overlap_v1,
+)
+from ancestry_mmm.core.planning.weekly_plan_builder import build_governed_weekly_plan
+from ancestry_mmm.core.sequential_evaluation_context import SequentialEvaluationContext
 
 
 def _catalogue_value(item, key, default=None):
@@ -279,6 +299,359 @@ def _render_economics_table(dataframe, *, technical_title):
             "Calculation rule": "All CPA and ROI values are supplied by the core evaluator; this page does not recompute them.",
         },
     )
+
+
+def _sequential_plan_start_week(frame, market, spec) -> pd.Timestamp:
+    """The Monday immediately following this market's last historical
+    canonical week - continuing the exact same weekly cadence as the
+    fitted data, with no gap and no overlap (WP5, `Media-Mix-Lab: Coding
+    LLM Next Steps Post PR262`). Sequential mode always starts here,
+    never at the steady-state tab's user-chosen `start_month` - avoiding
+    an unmodelled gap (or double-counted overlap) between the historical
+    carry-in and the first planned week."""
+    market_mask = np.array(frame["df"][spec.market_col] == market)
+    market_dates = pd.to_datetime(frame["dates"])[market_mask]
+    if len(market_dates) == 0:
+        raise ValueError(f"No historical weeks found for market {market!r}.")
+    return market_dates.max() + pd.Timedelta(days=7)
+
+
+def _prorated_sequential_monthly_values(
+    monthly_values_by_channel: dict, plan_start_week: pd.Timestamp, n_months: int
+) -> tuple[dict, list[str]]:
+    """Re-key each channel's ordered monthly spend/quantity values onto the
+    real calendar months starting at `plan_start_week`, pro-rating only the
+    first month for the partial period from `plan_start_week` to that
+    month's end (the days before `plan_start_week` in that calendar month
+    are already historical, not part of this plan - REQ-SCEN-002's phasing
+    contract requires a canonical calendar that fully covers every month it
+    phases, so a genuinely partial first month must be pro-rated, not
+    passed at its full entered value)."""
+    first_month_start = plan_start_week.replace(day=1)
+    sequential_months = [
+        (first_month_start + pd.DateOffset(months=i)).strftime("%Y-%m")
+        for i in range(n_months)
+    ]
+    first_month_end = first_month_start + pd.offsets.MonthEnd(0)
+    days_in_first_month = (first_month_end - first_month_start).days + 1
+    covered_days_in_first_month = (first_month_end - plan_start_week).days + 1
+    proration = covered_days_in_first_month / days_in_first_month
+
+    reseated: dict = {}
+    for channel, monthly_values in monthly_values_by_channel.items():
+        ordered_values = [monthly_values[m] for m in monthly_values]
+        reseated[channel] = {}
+        for i, label in enumerate(sequential_months):
+            value = ordered_values[i]
+            if i == 0:
+                value = value * proration
+            reseated[channel][label] = value
+    return reseated, sequential_months
+
+
+def _first_month_fragment_schedule(
+    value: float,
+    weeks: tuple,
+    plan_start_week: pd.Timestamp,
+    first_month_end: pd.Timestamp,
+) -> dict:
+    """Split an already-pro-rated first-month value across the canonical
+    weeks that actually overlap the covered (future) portion of that month
+    - the same day-overlap formula `calendar_day_overlap_v1` itself uses,
+    just scoped to `[plan_start_week, first_month_end]` instead of the
+    month's full calendar bounds, since REQ-SCEN-002's governed function
+    can only reconcile a month `calendar` fully covers (see
+    `_prorated_sequential_monthly_values`). Computed directly here rather
+    than routed through the governed function, so the two "how many days
+    does this week get" computations can never disagree and silently
+    double-count or double-shrink the pro-rated value."""
+    total_days = (first_month_end - plan_start_week).days + 1
+    schedule: dict = {}
+    for w in weeks:
+        w_start = pd.Timestamp(w)
+        w_end = w_start + pd.Timedelta(days=6)
+        overlap_start = max(plan_start_week, w_start)
+        overlap_end = min(first_month_end, w_end)
+        overlap_days = (overlap_end - overlap_start).days + 1
+        if overlap_days > 0:
+            schedule[w] = value * overlap_days / total_days
+    return schedule
+
+
+def _evaluate_sequential_manual_plan(
+    *,
+    market: str,
+    meta,
+    params,
+    frame,
+    spec,
+    n_months: int,
+    spend_plan: dict,
+    activity_definitions,
+    counterfactual_policy,
+    governed_cost_registry,
+    planning_objective,
+    identity_kwargs: dict,
+    scenario_governance_kwargs: dict,
+    value_mapping,
+    currency_context,
+):
+    """Build and evaluate a sequential-weekly manual scenario from the same
+    monthly spend_plan/governance inputs the steady-state tab uses (WP5,
+    `Media-Mix-Lab: Coding LLM Next Steps Post PR262`). Raises `ValueError`
+    with an analyst-readable message on any failure the caller should
+    render via `st.error`; never raises for an ordinary governance/
+    validation rejection surfaced instead as `ScenarioServiceResult.errors`.
+    """
+    plan_start_week = _sequential_plan_start_week(frame, market, spec)
+    candidate_monthly_by_channel = {
+        c: {m: spend_plan[m][c] for m in spend_plan} for c in meta.channels
+    }
+    reseated_candidate, sequential_months = _prorated_sequential_monthly_values(
+        candidate_monthly_by_channel, plan_start_week, n_months
+    )
+
+    # Reference (counterfactual) uses the SAME resolution the steady-state
+    # path uses (core.scenario_governance.resolve_counterfactual is
+    # confirmed period-key-agnostic), applied to the original monthly plan
+    # BEFORE re-seating onto the sequential calendar - the counterfactual
+    # rule (zero/hold_plan/explicit) is evaluated per real analyst-entered
+    # month, then re-seated and pro-rated identically to the candidate.
+    reference_monthly_plan = resolve_counterfactual(
+        spend_plan,
+        market=market,
+        activity_definitions=activity_definitions or None,
+        policy=counterfactual_policy,
+    )
+    reference_monthly_by_channel = {
+        c: {m: reference_monthly_plan[m][c] for m in reference_monthly_plan}
+        for c in meta.channels
+    }
+    reseated_reference, _ = _prorated_sequential_monthly_values(
+        reference_monthly_by_channel, plan_start_week, n_months
+    )
+
+    calendar_end = pd.Timestamp(sequential_months[-1] + "-01") + pd.offsets.MonthEnd(0)
+    calendar = CanonicalCalendar(
+        start=plan_start_week.strftime("%Y-%m-%d"),
+        end=calendar_end.strftime("%Y-%m-%d"),
+        frequency="weekly",
+    )
+    weeks = canonical_weeks(calendar)
+
+    activity_map = (
+        activity_by_model_input(activity_definitions, market)
+        if activity_definitions
+        else {}
+    )
+    cost_as_of_by_period = {w: w for w in weeks}
+
+    first_month = sequential_months[0]
+    first_month_start = plan_start_week.replace(day=1)
+    first_month_end = first_month_start + pd.offsets.MonthEnd(0)
+
+    def _phase_channel(monthly_values_by_month: dict, channel: str):
+        # The first sequential month is necessarily partial (the plan
+        # starts mid-month, immediately after history ends - see
+        # `_sequential_plan_start_week`), so its already-pro-rated value is
+        # phased directly here (`_first_month_fragment_schedule`) rather
+        # than through the governed `calendar_day_overlap_v1` function,
+        # which requires `calendar` to fully cover every month it phases
+        # (REQ-SCEN-002) and would otherwise silently double-shrink the
+        # pro-rated value. Every subsequent (whole) month is phased
+        # normally through the governed function, unmodified - the two
+        # contributions are additive per week, never a choice between them,
+        # since a boundary week between month 1 and month 2 legitimately
+        # carries spend from both.
+        definition = activity_map.get(channel)
+        is_cost_bearing = definition.is_cost_bearing if definition else True
+
+        weekly_spend_by_week = dict.fromkeys(weeks, 0.0)
+        fragment_schedule = _first_month_fragment_schedule(
+            monthly_values_by_month[first_month],
+            weeks,
+            plan_start_week,
+            first_month_end,
+        )
+        weekly_spend_by_week.update(fragment_schedule)
+
+        rest_monthly_values = {
+            m: v for m, v in monthly_values_by_month.items() if m != first_month
+        }
+        if rest_monthly_values:
+            rest_result = phase_monthly_series_calendar_day_overlap_v1(
+                market=market,
+                series_id=channel,
+                monthly_values=rest_monthly_values,
+                calendar=calendar,
+            )
+            for label, value in zip(rest_result.period_labels, rest_result.values):
+                weekly_spend_by_week[label] += value
+
+        weekly_result = WeeklyAllocationResult(
+            market=market,
+            series_id=channel,
+            period_labels=weeks,
+            values=tuple(weekly_spend_by_week[w] for w in weeks),
+            provenance=MethodProvenance(
+                method_id=PHASING_METHOD_ID,
+                method_version=PHASING_METHOD_VERSION,
+                parameters={"partial_first_month": first_month},
+                canonical_calendar_start=calendar.start,
+                canonical_calendar_end=calendar.end,
+            ),
+            reconciliation=(),
+        )
+
+        if not (is_cost_bearing and governed_cost_registry is not None):
+            return weekly_result
+
+        model_input_values = []
+        mapping_ids = []
+        for label, spend in zip(weekly_result.period_labels, weekly_result.values):
+            if spend == 0.0:
+                model_input_values.append(0.0)
+                mapping_ids.append("")
+                continue
+            mapping = governed_cost_registry.resolve(
+                market, channel, "default", as_of=label
+            )
+            if mapping is None:
+                raise ValueError(
+                    f"No governed, currently-valid cost mapping for "
+                    f"market={market!r} channel={channel!r} as_of={label!r} - "
+                    "cannot derive a weekly model-input quantity from phased "
+                    "spend for this week."
+                )
+            derived = np.asarray(mapping.spend_to_media_input(spend)).reshape(-1)
+            if derived.size != 1:
+                raise ValueError(
+                    f"Cost mapping {mapping.mapping_id!r} returned "
+                    f"{derived.size} value(s) for a single scalar weekly "
+                    f"spend ({channel=!r} {label=!r} spend={spend!r}) - "
+                    "expected exactly one derived model-input value."
+                )
+            derived_value = float(derived[0])
+            if not np.isfinite(derived_value) or derived_value < 0:
+                raise ValueError(
+                    f"Cost mapping {mapping.mapping_id!r} returned an "
+                    f"invalid derived model-input value ({derived_value!r}) "
+                    f"for {channel=!r} {label=!r} spend={spend!r}."
+                )
+            model_input_values.append(derived_value)
+            mapping_ids.append(mapping.mapping_id)
+
+        return WeeklyModelInputDerivation(
+            market=market,
+            channel=channel,
+            period_labels=weekly_result.period_labels,
+            values=tuple(model_input_values),
+            mapping_ids=tuple(mapping_ids),
+        )
+
+    candidate_allocations = {
+        c: _phase_channel(reseated_candidate[c], c) for c in meta.channels
+    }
+    reference_allocations = {
+        c: _phase_channel(reseated_reference[c], c) for c in meta.channels
+    }
+
+    n_fourier_harmonics = spec.fourier_harmonics
+    market_mask = np.array(frame["df"][spec.market_col] == market)
+    historical_n_weeks = int(market_mask.sum())
+    control_names = tuple(getattr(meta, "control_names", ()) or ())
+    outcome_control_names = getattr(meta, "outcome_control_names", None) or {}
+    has_exogenous_controls = bool(control_names) or bool(
+        any(names for names in outcome_control_names.values())
+    )
+    future_mode = EXPLORATORY_MODE if has_exogenous_controls else OFFICIAL_MODE
+
+    last_observed_controls = {}
+    last_observed_outcome_controls = {}
+    if has_exogenous_controls and market_mask.any():
+        for i, name in enumerate(control_names):
+            last_observed_controls[name] = float(
+                frame["X_controls"][market_mask, i][-1]
+            )
+        for oid, names in outcome_control_names.items():
+            for i, name in enumerate(names):
+                last_observed_outcome_controls[f"{oid}.{name}"] = float(
+                    frame["outcome_controls"][oid][market_mask, i][-1]
+                )
+
+    future_context = build_future_context(
+        market=market,
+        period_labels=weeks,
+        historical_n_weeks=historical_n_weeks,
+        n_fourier_harmonics=n_fourier_harmonics,
+        outcome_ids=tuple(meta.outcome_ids),
+        control_names=control_names,
+        outcome_control_names=outcome_control_names,
+        mode=future_mode,
+        promo_future={oid: {w: 0.0 for w in weeks} for oid in meta.outcome_ids},
+        eligible_for_hold_last_observed=frozenset(last_observed_controls)
+        | frozenset(last_observed_outcome_controls),
+        hold_last_observed=frozenset(last_observed_controls)
+        | frozenset(last_observed_outcome_controls),
+        last_observed_controls=last_observed_controls,
+        last_observed_outcome_controls=last_observed_outcome_controls,
+    )
+
+    candidate_plan, candidate_provenance = build_governed_weekly_plan(
+        market=market,
+        meta=meta,
+        channel_allocations=candidate_allocations,
+        future_context=future_context,
+        expected_n_fourier_columns=2 * n_fourier_harmonics,
+    )
+    reference_plan, reference_provenance = build_governed_weekly_plan(
+        market=market,
+        meta=meta,
+        channel_allocations=reference_allocations,
+        future_context=future_context,
+        expected_n_fourier_columns=2 * n_fourier_harmonics,
+    )
+
+    evaluation_context = SequentialEvaluationContext(
+        model_identity=identity_kwargs.get("model_spec_fingerprint", "") or "unset",
+        posterior_identity=identity_kwargs.get("posterior_fingerprint", "") or "unset",
+        market=market,
+        canonical_calendar_identity=f"{calendar.start}:{calendar.end}",
+        historical_state_source_identity=identity_kwargs.get("data_fingerprint", "")
+        or "unset",
+        evaluation_semantics_identity="sequential_weekly",
+        phasing_policy_identity="calendar_day_overlap_v1",
+        future_assumption_identity=future_context.fingerprint(),
+        cost_context_identity="default",
+        counterfactual_policy_identity=counterfactual_policy.fingerprint() or "unset",
+    )
+
+    sc_input = SequentialManualScenarioInput(
+        market=market,
+        candidate_plan=candidate_plan,
+        reference_plan=reference_plan,
+        meta=meta,
+        params=params,
+        historical_frame=frame,
+        horizon_configuration=HorizonConfiguration(),
+        evaluation_context=evaluation_context,
+        weekly_plan_fingerprint=candidate_provenance.fingerprint(),
+        reference_weekly_plan_fingerprint=reference_provenance.fingerprint(),
+        future_context=future_context,
+        planning_objective=planning_objective,
+        activity_definitions=activity_definitions or None,
+        counterfactual_policy=counterfactual_policy,
+        cost_mapping_registry=governed_cost_registry,
+        cost_context_id="default",
+        cost_as_of_by_period=cost_as_of_by_period,
+        artefact_kind="manual_scenario",
+        value_mapping=value_mapping,
+        currency_context=currency_context,
+        **identity_kwargs,
+        **scenario_governance_kwargs,
+    )
+    service_result = ScenarioService().evaluate_manual_sequential(sc_input)
+    return service_result, plan_start_week, weeks, future_context
 
 
 st.set_page_config(
@@ -1090,6 +1463,37 @@ cost_as_of_by_month = {
     month: f"{month}-01" if len(month) == 7 else month for month in months
 }
 
+# WP5 (`Media-Mix-Lab: Coding LLM Next Steps Post PR262`): the manual-plan
+# evaluation method - steady-state (existing, default, every other tab
+# still uses it exclusively) or sequential weekly (new). Never silently
+# switches: the radio's own return value is the single source of truth for
+# this rerun, exactly like governance_mode above. Sequential weekly only
+# evaluates the "Edited plan and calculated result" tab in this release -
+# the constrained/unconstrained optimiser tabs remain steady-state-only
+# (sequential optimisation is a separate, not-yet-implemented work
+# package).
+evaluation_method = st.radio(
+    "Manual plan evaluation method",
+    ["steady_state_monthly", "sequential_weekly"],
+    horizontal=True,
+    key="scenario_evaluation_method",
+    format_func=lambda value: {
+        "steady_state_monthly": "Steady-state monthly approximation",
+        "sequential_weekly": "Sequential weekly",
+    }[value],
+    help=(
+        "Sequential weekly simulates real week-by-week media carry-in from "
+        "this market's own historical spend, continuing immediately after "
+        "the fitted data ends - recommended for timing-aware decisions. "
+        "Steady-state monthly approximates each month independently at its "
+        "adstock steady state and cannot answer starting carryover, "
+        "month-by-month timing, short/long response horizons, or terminal "
+        "carryover. Only the 'Edited plan and calculated result' tab below "
+        "offers sequential weekly in this release - the optimiser tabs "
+        "remain steady-state only."
+    ),
+)
+
 # G2A.7a.7: build objective options from fitted outcome catalogue
 _fitted_outcome_ids = set(meta.outcome_ids) if hasattr(meta, "outcome_ids") else set()
 _has_fh_gsa = bool(fh_gsa_outcome_ids(meta)) if hasattr(meta, "outcome_ids") else False
@@ -1379,7 +1783,8 @@ tab_manual, tab_constrained, tab_unconstrained = st.tabs(
     ]
 )
 
-with tab_manual:
+
+def _render_steady_state_manual_tab():
     st.markdown("Predicted outcomes for the spend plan as edited above.")
     # PR 82C: routed through ScenarioService.evaluate_manual() with a typed
     # ManualScenarioInput - the page no longer calls evaluate_manual_scenario()
@@ -1620,6 +2025,131 @@ with tab_manual:
                     f"Based on {uncertainty_result['n_draws']} sampled posterior draws - a subsample of "
                     "the full posterior for speed, not the full posterior itself."
                 )
+
+
+def _render_sequential_manual_tab():
+    st.markdown(
+        "Predicted outcomes for the spend plan as edited above, simulated week by "
+        "week from this market's real historical carry-in."
+    )
+    st.caption(
+        "**Sequential weekly starts immediately after this market's historical data "
+        "ends**, continuing the exact same weekly cadence with no gap - not at the "
+        f"{months[0]} you selected in 'Plan start month' above (that control still "
+        "applies to steady-state monthly). Each planned month's spend values are "
+        "used in the same order, starting from that continuation point."
+    )
+    try:
+        service_result, plan_start_week, weeks, future_context = (
+            _evaluate_sequential_manual_plan(
+                market=market,
+                meta=meta,
+                params=params,
+                frame=frame,
+                spec=spec,
+                n_months=n_months,
+                spend_plan=spend_plan,
+                activity_definitions=activity_definitions,
+                counterfactual_policy=counterfactual_policy,
+                governed_cost_registry=governed_cost_registry,
+                planning_objective=planning_objective,
+                identity_kwargs=identity_kwargs,
+                scenario_governance_kwargs=scenario_governance_kwargs,
+                value_mapping=value_mapping,
+                currency_context=currency_context,
+            )
+        )
+    except ValueError as exc:
+        st.error(f"Cannot build the sequential weekly plan: {exc}")
+        return
+
+    if service_result.errors:
+        for _err in service_result.errors:
+            st.error(f"Cannot evaluate this scenario: {_err}")
+        return
+    for _warn in service_result.warnings:
+        st.warning(_warn)
+
+    result = service_result.sequential_evaluation
+    st.caption(
+        f"Plan window: {weeks[0]} through {weeks[-1]} ({len(weeks)} weeks), "
+        f"starting {plan_start_week.date()}."
+    )
+    if not future_context.is_decision_ready:
+        st.warning(
+            "**Not decision-ready.** This market has exogenous control(s) with no "
+            "future-value input in this UI yet - held at their last observed value "
+            "(an explicit, exploratory assumption, not an official forecast). "
+            "Use steady-state monthly for an official recommendation until future "
+            "control input is added here."
+        )
+
+    st.markdown("#### Weekly incremental outcome (candidate − reference)")
+    weekly_df = pd.DataFrame(
+        result.weekly_incremental,
+        index=result.weekly_period_labels,
+        columns=result.outcome_ids,
+    )
+    st.dataframe(
+        weekly_df, width="stretch", column_config=dataframe_column_config(weekly_df)
+    )
+
+    st.markdown(
+        "#### Monthly incremental outcome (summed from weekly - never recalculated)"
+    )
+    monthly_df = pd.DataFrame(
+        result.monthly_incremental,
+        index=result.monthly_period_labels,
+        columns=result.outcome_ids,
+    )
+    st.dataframe(
+        monthly_df, width="stretch", column_config=dataframe_column_config(monthly_df)
+    )
+
+    st.markdown("#### Response horizons")
+    horizon_cols = st.columns(2)
+    for col, (label, values) in zip(
+        horizon_cols,
+        (
+            ("Short-horizon incremental (weeks 0-4)", result.short_horizon_incremental),
+            ("Long-horizon incremental (weeks 5-52)", result.long_horizon_incremental),
+        ),
+    ):
+        with col:
+            for outcome_id, value in zip(result.outcome_ids, values):
+                st.metric(f"{readable_label(outcome_id)} · {label}", f"{value:,.1f}")
+
+    st.caption(
+        "Terminal incremental carryover and posterior uncertainty are not yet "
+        "available in this UI for the sequential method - use the core "
+        "`core.planning.terminal_response`/`simulate_sequential_outcomes_posterior_"
+        "draw_consistent` APIs directly, or steady-state monthly's own uncertainty "
+        "panel below (a different, non-sequential calculation)."
+    )
+    render_technical_details(
+        title="Technical details · sequential evaluation provenance",
+        details={
+            "Calculation method": result.calculation_method,
+            "Phasing method": result.phasing_method_id,
+            "Weekly plan fingerprint (candidate)": result.weekly_plan_fingerprint,
+            "Weekly plan fingerprint (reference)": result.reference_weekly_plan_fingerprint,
+            "Future-context fingerprint": result.future_context_fingerprint,
+            "Starting-state fingerprint": result.starting_state_fingerprint,
+            "Evaluation-context fingerprint": result.evaluation_context_fingerprint,
+            "Decision-ready": str(future_context.is_decision_ready),
+        },
+    )
+    st.caption(
+        "Saving a sequential scenario is not yet available - only steady-state "
+        "monthly scenarios can be saved and exported in this release."
+    )
+
+
+with tab_manual:
+    if evaluation_method == "sequential_weekly":
+        _render_sequential_manual_tab()
+    else:
+        _render_steady_state_manual_tab()
 
 with tab_constrained:
     st.markdown("#### Constraints (distinct from the assumptions above)")

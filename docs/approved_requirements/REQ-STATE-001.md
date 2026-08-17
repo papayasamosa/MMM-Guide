@@ -130,11 +130,12 @@ contract.
   counterfactual-policy identity together and requiring a candidate and
   reference pair be evaluated through the same one - `REQ-SCEN-001`
   (`core.sequential_evaluation_context`, Work Package 3).
-- Application-layer integration (`application/scenario_service.py`,
-  `pages/08_Scenario_Planner.py`, `core.optimization`'s objective) -
-  a documented, not-yet-attempted follow-up (see
+- `core.optimization`'s objective (sequential optimisation) - a
+  documented, not-yet-attempted follow-up (see
   `REPO_REVIEW_AND_NEXT_STEPS.md`, "Known bounded gaps").
-- Sequential optimisation.
+  `application/scenario_service.py` (Work Package 5) and the manual-plan
+  tab of `pages/08_Scenario_Planner.py` (Work Package 5 part 2) are now
+  implemented for manual (non-optimised) evaluation.
 
 ## Affected modules
 

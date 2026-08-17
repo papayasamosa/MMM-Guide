@@ -128,7 +128,7 @@ Each row below is one of two distinct states, not to be conflated:
 | Capability | State | Notes |
 |---|---|---|
 | Governed FX (`REQ-FX-001`–`REQ-FX-006`) | No approved requirement/decision yet | No indexed record exists. |
-| Sequential / weekly planning (`REQ-STATE-001`, `REQ-SCEN-001`–`003`) | Requirement exists but capability incomplete | All four records are approved and indexed (WP0, PR #261) - see "Approved requirement records already implemented" below for what each has delivered. Application-layer integration (`application/scenario_service.py`, `pages/08_Scenario_Planner.py`, `core.optimization`'s objective) remains unimplemented for all four. |
+| Sequential / weekly planning (`REQ-STATE-001`, `REQ-SCEN-001`–`003`) | Requirement exists but capability incomplete | All four records are approved and indexed (WP0, PR #261) - see "Approved requirement records already implemented" below for what each has delivered. `application/scenario_service.py` (WP5) and the manual-plan tab of `pages/08_Scenario_Planner.py` (WP5 part 2) now consume the contract for manual (non-optimised) evaluation; `core.optimization`'s objective (sequential optimisation) remains unimplemented for all four. |
 | Starting state and terminal state | Requirement exists but capability incomplete | Bundled with sequential/weekly planning above - see that row and `REQ-STATE-001`/`REQ-SCEN-003`. |
 | Future-assumption bundles | No approved requirement/decision yet | No indexed record exists. |
 | Time-varying baseline | No approved requirement/decision yet | No indexed record exists; see `AGENTS.md`'s future-variable-role #5 for the standing invariant any future approval must satisfy. |
@@ -208,11 +208,13 @@ boundary documented in its own record:
   `compute_incremental_outcome`'s own market/period/outcome check) are
   implemented. Application-level items (monthly aggregation after weekly
   evaluation, steady-state/sequential method labelling, shared phasing
-  policy) are now implemented at the application-*service* level (WP5 of
+  policy) are implemented at the application-*service* level (WP5 of
   `...Post PR262`, `core.sequential_scenario_evaluation`, `application.
-  scenario_service.ScenarioService.evaluate_manual_sequential`) — the
-  Streamlit page (`pages/08_Scenario_Planner.py`) does not yet consume
-  this service.
+  scenario_service.ScenarioService.evaluate_manual_sequential`), and, for
+  the manual-plan path, in the Streamlit page (`pages/08_Scenario_
+  Planner.py`, WP5 part 2 - the "Manual plan evaluation method" radio on
+  the "Edited plan and calculated result" tab); the constrained and
+  unconstrained-benchmark tabs remain steady-state-only.
 - `REQ-SCEN-002` (`docs/approved_requirements/REQ-SCEN-002.md`): the
   monthly-to-weekly phasing and future-context contract. Phasing
   (`calendar_day_overlap_v1`, WP1, `core.planning.phasing`): exact
@@ -225,9 +227,14 @@ boundary documented in its own record:
   control checks, exploratory-mode labelled `hold_last_observed`. Governed
   `WeeklyPlan` construction (`core.planning.weekly_plan_builder`) and the
   terminal candidate/reference evaluator (`core.planning.
-  terminal_response`) complete the core-module implementation. Not yet
-  wired into any application service or Streamlit page — these remain
-  framework-independent core modules only, per this record's own scope.
+  terminal_response`) complete the core-module implementation. Wired into
+  `application.scenario_service` (WP5) and the manual-plan tab of
+  `pages/08_Scenario_Planner.py` (WP5 part 2) — the page phases its
+  necessarily-partial first sequential month (the plan starts the Monday
+  immediately after history ends, not at a month boundary) with the same
+  day-overlap formula scoped to covered days, summed with the unmodified
+  governed function's output for every subsequent whole month; `phasing.py`
+  itself is unchanged.
 - `REQ-SCEN-003` (`docs/approved_requirements/REQ-SCEN-003.md`): response
   horizon and terminal reporting. The typed `HorizonConfiguration`
   contract (short/long/plan/terminal horizons, explicit values required)

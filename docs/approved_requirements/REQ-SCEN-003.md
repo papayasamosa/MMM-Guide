@@ -87,11 +87,17 @@ was produced by the sequential contract.
   `ancestry_mmm/tests/test_terminal_response.py` (implemented, WP4),
   `ancestry_mmm/tests/test_sequential_scenario_evaluation.py` (implemented,
   WP5)
-- Not yet touched: `pages/08_Scenario_Planner.py` (not yet wired to this
-  contract - see `REPO_REVIEW_AND_NEXT_STEPS.md`), scenario persistence/
-  staleness (`core.scenario_governance`, `core.persistence` - horizon
-  configuration and terminal-carryover result must become part of the
-  persisted, fingerprinted scenario record once that wiring exists)
+- `ancestry_mmm/pages/08_Scenario_Planner.py` (implemented, WP5 part 2:
+  the manual "Sequential weekly" tab renders short/long horizon metrics
+  and labels the calculation method - but not terminal carryover or
+  posterior uncertainty, both explicitly disclosed as not yet available in
+  this UI rather than silently omitted)
+- Not yet implemented: terminal carryover / posterior uncertainty in the
+  UI (available via the core/service APIs directly), scenario persistence/
+  staleness for a saved sequential scenario (`core.scenario_governance`,
+  `core.persistence` - horizon configuration and terminal-carryover result
+  must become part of the persisted, fingerprinted scenario record once
+  that wiring exists)
 
 ## Owner and status
 
@@ -101,7 +107,7 @@ was produced by the sequential contract.
 the typed `HorizonConfiguration` contract (WP1,
 `core.planning.phasing.HorizonConfiguration`), and the business-facing
 terminal candidate/reference evaluator (WP4,
-`core.planning.terminal_response`) are implemented and tested. Persistence
-with a saved scenario, and exclusion of terminal carryover from the
-optimisation objective, are approved but not yet implemented - both
-require the not-yet-built application-layer integration.
+`core.planning.terminal_response`) are implemented and tested. Short/long
+horizon reporting and method labelling are implemented in the Streamlit UI
+(WP5 part 2). Persistence with a saved scenario, and terminal carryover/
+posterior uncertainty in the UI, are approved but not yet implemented.
