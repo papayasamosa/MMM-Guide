@@ -5552,3 +5552,88 @@ requirement 5) and `DiagnosticsArtefact`/Diagnostics-page wiring
 **Owner:** Data Science / Platform engineering.
 **Status:** Accepted; implemented on this work package's branch. PR and CI
 remain the release gate.
+
+
+## Latent-state scale and location identification (Work Package 3, second record)
+
+**Context:** REQ-LATENT-001 (approved Work Package 0) required a
+model-agnostic contract for declaring and empirically checking the
+identifying strategy behind any fitted latent causal state (e.g.
+Candidate A's `latent_branded_search_demand`). No module in the
+repository previously declared or validated such a strategy - prior
+regularisation alone was never a substitute for a genuine identifying
+constraint (requirement 2).
+
+**Decision:** Implement `core.latent_state_identification` as a
+standalone, model-agnostic module: `LatentStateIdentificationDeclaration`
+stores one of five approved strategy kinds plus a required, non-empty
+description and optional anchor reference - the identifying choice is
+recorded explicitly, never left implicit in code. `assess_latent_state_
+identification` resolves a closed four-value status
+(`identified`/`review_required`/`not_identified`/`unsupported_by_
+current_checker`): no declaration is `not_identified` outright; a
+declaration with no supplied posterior draws is `review_required`
+(declared but not yet empirically checked under sampling); fewer than
+two supplied chains is `unsupported_by_current_checker`; two or more
+chains are compared by each chain's median of a caller-supplied
+representative scalar, and disagreement in sign across chains - a
+structural indeterminacy, not a graded threshold - is `not_identified`
+with `sign_flip_detected=True`. `scale_drift_ratio` is always reported
+as descriptive evidence only, mirroring `core.structural_stability.
+ParameterFoldComparison.point_range`'s "report movement, never a
+verdict" pattern from Work Package 2 part 2, since no scale-drift
+materiality threshold has been approved. `is_eligible_for_official_use`
+implements requirement 5's fail-closed use-eligibility gate: only
+`identified` is eligible for official causal reporting, curve
+publication, planning, or optimisation for the affected pathway - every
+other status, including `review_required`, fails closed, mirroring the
+existing Search fail-closed pattern for an unwired Candidate A pathway
+(REQ-SEARCH-002). Every result carries a fixed disclaimer and never
+exposes a bare boolean. This module does not fit or re-fit a model -
+the caller supplies the declaration and, optionally, per-chain
+posterior draws, mirroring `core.structural_stability`'s established
+"the caller supplies the fold-local computation" pattern from Work
+Package 2 part 2.
+
+This module does **not** modify `core.search_capacity` and does not
+assert or imply any specific identifying anchor for Candidate A's
+latent branded-search demand. Candidate A's actual anchor (`MD-021`) is
+an explicitly unresolved statistical modelling decision per
+REQ-LATENT-001's own "Unresolved decisions" section and the PRD-
+authority instruction governing this program: do not implement directly
+from PRD prose without an approved requirement or decision package, and
+do not guess an unresolved statistical, causal, business, or governance
+decision. Requirement 3 (`core.graph_model_compiler` blocking-error
+extension for unresolved latent-state identification) and the remaining
+two sub-items of requirement 4 (full synthetic-recovery validation and
+decision-instability detection, both of which require a real fit/re-fit
+pipeline this module does not run) are deferred as separate integration
+follow-ups, consistent with how REQ-IDENT-001 deferred its own
+equivalent compiler-blocking requirement earlier in this same work
+package.
+
+**Rejected alternative:** Baking a specific identifying anchor for
+Candidate A's `latent_branded_search_demand` directly into `core.
+search_capacity` as part of this record (rejected - REQ-LATENT-001
+explicitly reserves this as a decision-required statistical choice, not
+resolvable by a reconciliation record or by this coding pass; guessing
+an anchor would silently determine what one unit of the latent state
+means, which requirement 2 requires to be a substantive, deliberate
+choice).
+
+**Impact:** `ancestry_mmm/core/latent_state_identification.py` (new);
+`ancestry_mmm/tests/test_latent_state_identification.py` (new, 26
+tests); `docs/approved_requirements/REQ-LATENT-001.md`/`index.json`/
+`docs/specification_authority.md` updated. No change to `core.
+search_capacity`, `core.graph_model_compiler`, `core.estimand_
+identification`, or `core.structural_stability`. mypy: new module
+clean; full-core ratchet unchanged at 241/241. No new dependency.
+Deferred: `core.graph_model_compiler` blocking-error extension
+(REQ-LATENT-001 requirement 3), full synthetic-recovery/decision-
+instability validation (remainder of requirement 4), and
+`DiagnosticsArtefact`/Causal-Graph-page wiring - all separate
+integration follow-ups.
+
+**Owner:** Data Science / Platform engineering.
+**Status:** Accepted; implemented on this work package's branch. PR and CI
+remain the release gate.
