@@ -699,7 +699,7 @@ class TestAuthorityConsistency:
             / "index.json"
         )
         data = json.loads(index_path.read_text())
-        assert data["generated_at"] == "2026-08-16"
+        assert data["generated_at"] == "2026-08-17"
 
         datain = next(
             req
@@ -931,6 +931,87 @@ class TestAuthorityConsistency:
         assert "2026-08-09" in status_section
         assert "2026-08-11" in status_section
         assert "#151" in status_section and "#159" in status_section
+
+    def test_validation_overlay_table_scopes_only_the_five_named_parts(self):
+        """Work Package 0: the focused Bayesian-validation/causal-
+        identification/calibration/forecast-risk overlay table names exactly
+        Parts 3, 6, 7, 9 and 10 with their new versions (v1.7/v1.6/v1.5/
+        v1.5/v1.6 respectively) and every other part as retained - a
+        structured, per-row check rather than a substring search, so a
+        regression that bumped an unrelated part's row (or missed one of the
+        five) is caught even if the surrounding prose still reads
+        correctly."""
+        authority_path = (
+            Path(__file__).parent.parent.parent / "docs" / "specification_authority.md"
+        )
+        content = authority_path.read_text()
+        overlay_section = content.split(
+            "## Version history: focused Bayesian validation, causal "
+            "identification, calibration and forecast-risk overlay",
+            1,
+        )[1].split("## Version history: focused Part 3 v1.6 overlay", 1)[0]
+        rows = self._markdown_table_rows(overlay_section)
+        assert rows, "no rows parsed from the validation-overlay table"
+
+        by_part = {cells[0]: cells[1] for cells in rows}
+        assert set(by_part) == {f"Part {n}" for n in range(1, 12)}, sorted(by_part)
+
+        expected_overlay_version = {
+            "Part 3": "v1.7",
+            "Part 6": "v1.6",
+            "Part 7": "v1.5",
+            "Part 9": "v1.5",
+            "Part 10": "v1.6",
+        }
+        for part, expected_version in expected_overlay_version.items():
+            assert expected_version in by_part[part], (
+                f"{part}'s row is {by_part[part]!r}, expected to contain "
+                f"{expected_version!r}"
+            )
+        for part, version in by_part.items():
+            if part in expected_overlay_version:
+                continue
+            assert "focused overlay" not in version, (
+                f"{part}'s row claims a focused overlay ({version!r}); only "
+                "Parts 3, 6, 7, 9 and 10 are overlaid by this brief"
+            )
+
+    def test_validation_overlay_requirement_records_classified_incomplete(self):
+        """The eight REQ-* records this overlay produced (REQ-LEAK-001,
+        REQ-STAB-001, REQ-PPD-001, REQ-IDENT-001, REQ-LATENT-001,
+        REQ-EXPMODE-001, REQ-CALIB-001, REQ-FORECAST-001) must each appear in
+        the implementation-gaps table classified "Requirement exists but
+        capability incomplete" - never "no approved requirement/decision
+        yet", since each is an approved, indexed record even though none has
+        any implementation yet."""
+        authority_path = (
+            Path(__file__).parent.parent.parent / "docs" / "specification_authority.md"
+        )
+        content = authority_path.read_text()
+        gaps_section = content.split(
+            "## Current implementation gaps requiring decision records", 1
+        )[1].split("## Approved requirement records already implemented", 1)[0]
+        gap_rows = self._markdown_table_rows(gaps_section)
+        assert gap_rows, "no rows parsed from the implementation-gaps table"
+
+        incomplete_state = "Requirement exists but capability incomplete"
+        for requirement_id in (
+            "REQ-LEAK-001",
+            "REQ-STAB-001",
+            "REQ-PPD-001",
+            "REQ-IDENT-001",
+            "REQ-LATENT-001",
+            "REQ-EXPMODE-001",
+            "REQ-CALIB-001",
+            "REQ-FORECAST-001",
+        ):
+            own_rows = [row for row in gap_rows if requirement_id in row[0]]
+            assert own_rows, f"no implementation-gaps row references {requirement_id}"
+            for row in own_rows:
+                assert row[1] == incomplete_state, (
+                    f"{requirement_id}'s own capability row is classified "
+                    f"{row[1]!r}, expected {incomplete_state!r}: {row}"
+                )
 
 
 # ---------------------------------------------------------------------------

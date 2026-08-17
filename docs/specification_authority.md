@@ -29,6 +29,57 @@ event definition and permitted uses remain governed by the outcome-approval
 chain — this repository does not hard-code a GSA default, and no change here
 introduces one.
 
+## Version history: focused Bayesian validation, causal identification, calibration and forecast-risk overlay
+
+A newer focused source has been supplied, covering five parts:
+
+```text
+Ancestry MMM PRD Part 3, Cross-Document Coherent v1.7
+  Bayesian Validation and Experiment Calibration
+Ancestry MMM PRD Part 6, Cross-Document Coherent v1.6
+  Causal Identification and Stability
+Ancestry MMM PRD Part 7, Cross-Document Coherent v1.5
+  Bayesian Validation, Structural Stability and Calibration
+Ancestry MMM PRD Part 9, Cross-Document Coherent v1.5
+  Bayesian Validation, Stability and Forecast Risk
+Ancestry MMM PRD Part 10, Cross-Document Coherent v1.6
+  Validation, Identification, Calibration and Forecast Risk
+```
+
+This is a **focused overlay/replacement for exactly these five parts**, not
+a full-suite version bump. It does not, by itself, move any other part's
+version, and it does not, by itself, move Part 3 beyond this overlay's
+v1.7 (superseding the narrower Part 3 v1.6 variable-coverage/mixed-frequency
+overlay recorded below — that overlay's own approved capability,
+`REQ-COVERAGE-001`, is retained in full; only the version label advances).
+
+| Part | Version | Notes |
+|---|---|---|
+| Part 1 | v1.4 (within v1.5 suite) | Retained; not updated by this overlay |
+| Part 2 | v1.4 (within v1.5 suite) | Retained; not updated by this overlay |
+| Part 3 | v1.7 focused overlay | Bayesian validation and experiment calibration — supersedes the v1.6 variable-coverage/mixed-frequency overlay's version label; that overlay's approved capability (`REQ-COVERAGE-001`) is unaffected |
+| Part 4 | v1.4 (within v1.5 suite) | Retained; not updated by this overlay |
+| Part 5 | v1.4 (within v1.5 suite) | Retained; not updated by this overlay |
+| Part 6 | v1.6 focused overlay | Estimand-specific causal identification, latent-state identification, structural stability, experiment calibration — see `REQ-IDENT-001`, `REQ-LATENT-001`, `REQ-STAB-001`, `REQ-EXPMODE-001`, `REQ-CALIB-001` |
+| Part 7 | v1.5 focused overlay | Uncertainty-aware predictive validation, leakage-safe historical validation, structural stability, identification, calibration, downstream forecast consequence — see `REQ-LEAK-001`, `REQ-STAB-001`, `REQ-PPD-001`, `REQ-IDENT-001`, `REQ-LATENT-001`, `REQ-EXPMODE-001`, `REQ-CALIB-001`, `REQ-FORECAST-001` |
+| Part 8 | v1.4 (within v1.5 suite) | Retained; not updated by this overlay |
+| Part 9 | v1.5 focused overlay | Reporting requirements for the above evidence types — see the same records; reporting must consume, not recompute, these artefacts |
+| Part 10 | v1.6 focused overlay | UX requirements for the above evidence types, including the mandated graphical-identification disclaimer — see the same records |
+| Part 11 | v1.5 (graph-first update) | Retained; not updated by this overlay |
+
+Do not treat this table as evidence that Part 1, 2, 4, 5, 8, or 11 is now at
+any of v1.5/v1.6/v1.7 from this overlay. `REQ-LEAK-001`, `REQ-STAB-001`,
+`REQ-PPD-001`, `REQ-IDENT-001`, `REQ-LATENT-001`, `REQ-EXPMODE-001`,
+`REQ-CALIB-001`, and `REQ-FORECAST-001` (all `docs/approved_requirements/`)
+translate this overlay's implementation-ready invariants into repository
+authority. Each explicitly excludes the specific numeric thresholds,
+formulas, and business/UX label decisions that the source PRD parts
+themselves leave open in their own decision registers (Part 6 §37
+`MD-001`–`MD-021`; Part 7 §48 `VL-001`–`VL-027`; Part 9 §48 `RP-001`–`RP-025`;
+Part 10 §47 `UX-001`–`UX-030`) — none of those ~100 individually numbered
+items is approved by this overlay's reconciliation, and none may be
+hard-coded from PRD prose without a separate decision record.
+
 ## Version history: focused Part 3 v1.6 overlay (variable coverage and mixed frequency)
 
 A newer focused source has been supplied, covering Part 3 only:
@@ -41,16 +92,16 @@ Variable Coverage and Mixed Frequency
 
 This is a **focused overlay/replacement for Part 3**, not a full-suite
 version bump. It does not, by itself, move any other part to v1.6. The
-table below is the authoritative per-part version record — a part not
-listed as v1.6 remains at its v1.5-suite-manifest content (v1.4 normative
-content for Parts 1, 2, 4, 5, 7, 8, 9; the v1.5 graph-first update for
-Parts 6, 10, 11, per the table above).
+table below is the authoritative per-part version record for this overlay
+alone — superseded for Part 3 specifically by the v1.7 overlay recorded
+above, which retains this overlay's approved capability
+(`REQ-COVERAGE-001`) in full and only advances the version label.
 
 | Part | Version | Notes |
 |---|---|---|
 | Part 1 | v1.4 (within v1.5 suite) | Retained; not updated by this overlay |
 | Part 2 | v1.4 (within v1.5 suite) | Retained; not updated by this overlay |
-| Part 3 | v1.6 focused overlay | Variable coverage and mixed-frequency handling — see `REQ-COVERAGE-001` |
+| Part 3 | v1.6 focused overlay | Variable coverage and mixed-frequency handling — see `REQ-COVERAGE-001`; superseded in version label only by the v1.7 overlay above |
 | Part 4 | v1.4 (within v1.5 suite) | Retained; not updated by this overlay |
 | Part 5 | v1.4 (within v1.5 suite) | Retained; not updated by this overlay |
 | Part 6 | v1.5 (graph-first update) | Retained; not updated by this overlay |
@@ -134,13 +185,21 @@ Each row below is one of two distinct states, not to be conflated:
 | Time-varying baseline | No approved requirement/decision yet | No indexed record exists; see `AGENTS.md`'s future-variable-role #5 for the standing invariant any future approval must satisfy. |
 | Search demand/capacity mathematics (latent demand estimation, cap-hit probability, captured-versus-unmet demand, joint media/cap optimisation) | Requirement exists but capability incomplete | `REQ-SEARCH-002` (approved 2026-08-15, implemented — see below) approves Candidate A, the first production Search mediation/capacity formulation, depending on the governed identities in `REQ-SEARCH-001` and the compiler in `REQ-GRAPH-001`. The approval authorises implementation and validation only; it does not approve Search estimates for official planning or optimisation — Search planning eligibility and cap optimisation remain disabled pending that separate evidence. |
 | Capacity and cap semantics (`REQ-CAP-001`) | No approved requirement/decision yet | `AGENTS.md`'s "Capacity and cap invariants" section states the standing business/mathematical invariant; no `REQ-CAP-001` record yet translates it into an approved modelling contract. |
-| Experiment translation and recalibration | No approved requirement/decision yet | No indexed record exists. |
+| Experiment translation and recalibration | Requirement exists but capability incomplete | Superseded by `REQ-EXPMODE-001`/`REQ-CALIB-001` below (approved 2026-08-17) — see those rows. |
 | Reporting semantics | No approved requirement/decision yet | No indexed record exists. |
 | Background jobs and service boundaries | No approved requirement/decision yet | No indexed record exists. |
 | Prior-vs-posterior comparison summaries — `REQ-VAL-001` remaining scope | Requirement exists but capability incomplete | `REQ-VAL-001` is approved and substantially implemented, including prior predictive evidence (schema v4, `core.diagnostics.prior_predictive_summary`) and predictive-density evidence (schema v5, `core.diagnostics.predictive_density_summary` — PSIS-LOO/WAIC via `pm.compute_log_likelihood` + `az.loo`/`az.waic`, no refit). Its own record text explicitly defers this remaining check as a separately-scoped dependent package. |
 | Variable coverage / mixed-frequency data contracts (Part 3 v1.6 overlay) — `REQ-COVERAGE-001` implementation scope | Requirement exists but capability incomplete | `REQ-COVERAGE-001` is approved and translates the v1.6 overlay's authority (canonical missingness-state vocabulary, coverage invariants, coverage-matrix requirement) into repository requirements. Delivered incrementally in PRs #151-#161 (2026-08-09 to 2026-08-11): source/coverage-matrix domain objects (`core.coverage`), immutable source-version capture on upload, the coverage-matrix builder and Data Coverage review UI, explicit join-mode and join-loss/unmatched-key diagnostics (`data.pipeline.join_sources_with_diagnostics`), a market x channel engine-capability report (`core.market_data_capability`) bound into model fingerprinting, project export/import, and the pre-fit prior-predictive workflow, an official-use governance gate binding that capability report (plus coverage-matrix freshness) to policy-backed model approval as an optional validation-policy gate, and canonical-calendar/mixed-frequency alignment contracts (`core.frequency_alignment`) — see "Approved requirement records already implemented" below. `REQ-COVERAGE-001` itself approves the typed contract only, not a statistical method (its own "Out of scope"); a narrow WP1 method catalogue (six method/variable-class registrations: `flow_count`/`calendar_overlap_allocation`, `stock_level`/`rate_index`/`survey_measurement`/`release_aware_locf`, `survey_measurement`/`native_cadence_only`, `event_flag`/`calendar_event_alignment`) was separately approved and registered since PR #250 (2026-08-15) by `docs/decision_required_frequency_methods.md`, is registered by default (`core.frequency_conversion.ensure_approved_frequency_methods`), and executes through `core.official_preparation` via `execute_frequency_conversion`. A variable class/method combination outside that narrow catalogue still has no approved method and remains decision-required. Still not implemented: a fit-consumed-variable capability report beyond market x channel. `FR-MOD-015` remains explicitly unresolved (record §6). |
 | Market-specific / ragged predictor sets inside the hierarchical model equations (`FR-MOD-015`) | No approved requirement/decision yet | `REQ-COVERAGE-001` explicitly reserves this — no masking, zeroing, missing-data likelihood, or separate-coefficient treatment is approved; the current engine may only compile the rectangular subset it already supports and must fail closed for a requested ragged-predictor treatment it cannot represent. |
 | Graph-compilable mediated / capacity-constrained / moderated / residual-interaction edges — `REQ-GRAPH-001` remaining scope | Requirement exists but capability incomplete | `REQ-GRAPH-001` is approved and implemented for `direct`, `cross_product_halo`, and `excluded_diagnostic_only` edges. The remaining edge roles are valid graph vocabulary but not yet engine-compilable (`core.graph_model_compiler.check_engine_capability` is authoritative on current support). |
+| Leakage-safe, time-respecting historical validation folds (`REQ-LEAK-001`) | Requirement exists but capability incomplete | Approved 2026-08-17 (Work Package 0, PRD Part 3 v1.7/Part 7 v1.5 reconciliation). `core.diagnostics.expanding_window_backtest` performs a date-sliced split only; it does not yet satisfy the fold-local source-vintage/preprocessing reconstruction this record requires. Zero implementation yet. |
+| Structural stability evidence across historical folds (`REQ-STAB-001`) | Requirement exists but capability incomplete | Approved 2026-08-17. Depends on `REQ-LEAK-001`'s fold-manifest contract. No module currently re-estimates decision-driving quantities across time-respecting folds. Zero implementation yet. |
+| Posterior predictive metric distributions (`REQ-PPD-001`) | Requirement exists but capability incomplete | Approved 2026-08-17. Additive to `REQ-VAL-001`'s existing posterior-mean point metrics (`core.diagnostics.error_metrics_by_outcome`); no draw-level metric distribution is computed yet. Zero implementation yet. |
+| Estimand-specific graphical identification (`REQ-IDENT-001`) | Requirement exists but capability incomplete | Approved 2026-08-17. Distinct from `REQ-GRAPH-001`'s existing structural validation (bad controls, cycles, roles) and from `core.identification_diagnostics`'s existing correlation/condition-number checks — neither performs backdoor-path or adjustment-set analysis for a requested estimand. Zero implementation yet. |
+| Latent-state scale/location identification (`REQ-LATENT-001`) | Requirement exists but capability incomplete | Approved 2026-08-17. Candidate A's latent branded-search demand (`core.search_capacity`, `REQ-SEARCH-002`) is the first concrete integration target per the reconciling brief; it has no recorded identification strategy yet. Zero implementation yet. |
+| Experiment evidence modes and provenance (`REQ-EXPMODE-001`) | Requirement exists but capability incomplete | Approved 2026-08-17, superseding the prior "no approved requirement/decision yet" state for experiment translation/recalibration. No experiment-registry module exists in this repository. Zero implementation yet. |
+| Calibrated-versus-uncalibrated model comparison (`REQ-CALIB-001`) | Requirement exists but capability incomplete | Approved 2026-08-17. Depends on `REQ-EXPMODE-001`. No calibration mechanism exists. Zero implementation yet. |
+| Downstream forecast-consequence evidence (`REQ-FORECAST-001`) | Requirement exists but capability incomplete | Approved 2026-08-17. Separate from, and narrower than, the still-unapproved "Future-assumption bundles" row above — covers only the consequence-assessment contract for an already-classified exogenous control. Zero implementation yet. |
 
 ## Approved requirement records already implemented (with documented capability boundaries)
 

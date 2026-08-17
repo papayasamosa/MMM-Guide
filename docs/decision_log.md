@@ -5074,3 +5074,93 @@ clean; `pages/` is outside the mypy CI gate.
 **Owner:** Data Science / Platform engineering.
 **Status:** Accepted; implemented on this work package's branch. PR and CI
 remain the release gate.
+
+
+## PRD authority reconciliation: Bayesian validation, causal identification, calibration and forecast-risk overlay (Work Package 0)
+
+**Context:** The task-specific implementation brief `Media-Mix-Lab: Coding
+LLM Next Steps After PR #267 and Latest PRD Validation Updates`
+(2026-08-17) supplied five newer focused PRD revisions - Part 3 v1.7
+(Bayesian validation and experiment calibration), Part 6 v1.6 (estimand-
+specific causal identification, latent-state identification, structural
+stability, experiment calibration), Part 7 v1.5 (uncertainty-aware
+predictive validation, leakage-safe historical validation, structural
+stability, identification, calibration, downstream forecast consequence),
+Part 9 v1.5 (reporting requirements for those evidence types), and Part 10
+v1.6 (UX requirements for those evidence types) - none of which had yet
+been reconciled into `docs/specification_authority.md` or
+`docs/approved_requirements/`. The five source documents were supplied as
+local, untracked files under `docs/PRD/` on a separate, unrelated stale
+checkout (`agent/ux-refinement-pr6`, forked around PR #178-181); they have
+never been committed to this repository in any branch (consistent with how
+RFP/vendor PRD material has always been kept local-only, not version
+controlled) and were read in place rather than copied into this branch.
+
+**Decision:** Reconciled the five parts' implementation-ready invariants
+into eight new scoped approved requirement records - `REQ-LEAK-001`
+(leakage-safe/time-respecting historical validation folds), `REQ-STAB-001`
+(structural stability evidence across time-respecting folds), `REQ-PPD-001`
+(posterior predictive metric distributions, distinct from point/outcome-PI
+metrics), `REQ-IDENT-001` (estimand-specific graphical identification -
+backdoor paths/adjustment sets, distinct from `REQ-GRAPH-001`'s existing
+structural graph validation and `core.identification_diagnostics`'s existing
+correlation/condition-number checks), `REQ-LATENT-001` (latent-state scale/
+location identification, with Candidate A's latent branded-search demand as
+the first concrete integration target per the brief), `REQ-EXPMODE-001`
+(experiment evidence modes and provenance - `validation_only`/
+`prior_calibration`/`likelihood_calibration`/`diagnostic_comparison`),
+`REQ-CALIB-001` (calibrated-versus-uncalibrated model comparison), and
+`REQ-FORECAST-001` (downstream forecast-consequence evidence, narrower than
+the still-unapproved future-assumption-bundle scope). All eight are
+target-state contracts only - zero implementation exists yet for any of
+them; each record's own "Capability status" says so explicitly.
+
+Each record explicitly excludes the specific numeric thresholds, formulas,
+and business/UX label decisions that the source PRD parts themselves leave
+as open decision-required items in their own internal registers (Part 6 S37
+`MD-001`-`MD-021`; Part 7 S48 `VL-001`-`VL-027`; Part 9 S48
+`RP-001`-`RP-025`; Part 10 S47 `UX-001`-`UX-030` - roughly 100 individually
+numbered open items across the four registers). None of those items is
+approved by this reconciliation; each remains decision-required and must not
+be hard-coded from PRD prose in a future work package without a separate
+decision record, per the brief's own instruction not to "invent blocking
+thresholds or a likelihood-calibration formula."
+
+`docs/specification_authority.md` gained a new "Version history: focused
+Bayesian validation, causal identification, calibration and forecast-risk
+overlay" section with a five-part per-part version table (superseding the
+prior narrower Part 3 v1.6 variable-coverage overlay's version label only -
+that overlay's approved capability, `REQ-COVERAGE-001`, is unaffected), and
+eight new rows in the "Current implementation gaps" table (all classified
+"Requirement exists but capability incomplete", the established state for
+an approved record with zero-to-partial implementation, distinct from "no
+approved requirement/decision yet"). The pre-existing "Experiment
+translation and recalibration" gap row is superseded by the two new
+experiment-related rows rather than left as a contradictory duplicate.
+
+**Rejected alternative:** Converting the ~100 VL-*/RP-*/UX-*/MD-* items into
+100 individual new decision-log or `docs/approved_requirements/` entries
+(rejected - the source PRD parts already maintain these as their own
+numbered, versioned registers; duplicating them here would create a second,
+divergent copy that could drift from the source on the next PRD revision.
+Each new `REQ-*` record instead cites the specific register IDs it defers
+to, by number, so a future reconciliation can locate them without
+re-deriving the full list).
+
+**Impact:** `docs/approved_requirements/REQ-LEAK-001.md`,
+`REQ-STAB-001.md`, `REQ-PPD-001.md`, `REQ-IDENT-001.md`,
+`REQ-LATENT-001.md`, `REQ-EXPMODE-001.md`, `REQ-CALIB-001.md`,
+`REQ-FORECAST-001.md` (new); `docs/approved_requirements/index.json` (eight
+new entries, `generated_at` bumped to 2026-08-17); `docs/specification_
+authority.md` (new overlay section, eight new/updated gaps-table rows);
+`ancestry_mmm/tests/test_outcome_approval.py` (new anti-drift tests guarding
+the new overlay table and the eight new records' gap-table classification).
+No core module, schema, or persisted artefact changes - this Work Package
+is documentation/governance reconciliation only, per its own scope
+("translate implementation-ready invariants into scoped approved
+requirement records ... leave genuinely unresolved statistical methods/
+thresholds as decision-required").
+
+**Owner:** Data Science / Platform engineering.
+**Status:** Accepted; implemented on this work package's branch. PR and CI
+remain the release gate.
