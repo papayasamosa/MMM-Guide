@@ -9,9 +9,10 @@ and does not supersede `AGENTS.md`, `docs/approved_requirements/`, or
 
 Repository: `papayasamosa/Media-Mix-Lab`
 
-**Repository state through merged PR #262** (`WP1: Monthly-to-weekly
-phasing contract`, REQ-SCEN-002, part of `Media-Mix-Lab: Coding LLM Next
-Steps Post WP5`) - merge commit `a2a4f75422f58f16c1894a2ef02b7a9bb375e53b`.
+**Repository state through merged PR #263** (`WP2: post-PR262 authority
+reconciliation and merge-gate hardening`, part of `Media-Mix-Lab: Coding
+LLM Next Steps Post PR262`) - merge commit
+`8ddf3568aad0f6806f43e9fe3e5e2ddcfea471cd`.
 
 This document deliberately identifies its baseline by merged PR/work-package
 milestone, never by a field claiming to be "current `main`": a branch
@@ -28,7 +29,11 @@ GitHub directly - never treat a version-controlled status file as live
 remote truth.
 
 Historical markers (all superseded merge commits; recorded only for
-history, never as current state): `6f342afcc03a588eb5738b8813d3d2b8beb54b57`
+history, never as current state):
+`a2a4f75422f58f16c1894a2ef02b7a9bb375e53b` (merged PR #262, WP1 of
+`...Post WP5` - the monthly-to-weekly phasing contract, `core.planning.
+phasing`, `REQ-SCEN-002`/`REQ-SCEN-003` - superseded by PR #263 above),
+`6f342afcc03a588eb5738b8813d3d2b8beb54b57`
 (merged PR #261, WP0 of `...Post WP5` - reconciled `REQ-SCEN-002`'s
 top-of-file wording, indexed `REQ-STATE-001`/`REQ-SCEN-001`-`003`, added
 `scripts/wait_for_pr_green_then_merge.ps1`),
@@ -145,7 +150,28 @@ The current implementation includes:
   remains governed separately. Proven by a golden-equivalence test suite
   (`test_sequential_simulation.py`) asserting the kernel's output over a
   future plan window is bit-identical to the existing batch replay
-  (`predict_mu`) evaluated over the same series as a whole.
+  (`predict_mu`) evaluated over the same series as a whole. Work Package 3
+  of `Media-Mix-Lab: Coding LLM Next Steps Post PR262` added: a fully
+  draw-consistent posterior evaluator for both model types
+  (`simulate_sequential_outcomes_posterior_draw_consistent`/`..._market_
+  specific_draw_consistent` - each selected posterior draw's own
+  parameters reconstruct historical carry-in *and* run the future
+  recursion, proven per-draw against the batch replay and covered by a
+  regression that fails if a fixed carry-in state were accidentally reused
+  across draws), Model C posterior-evaluator parity at the fixed-carry-in
+  level (`simulate_sequential_outcomes_posterior_market_specific`), a
+  fail-closed historical-state resolution boundary
+  (`_resolve_and_validate_market_history` - rejects a `historical_frame`
+  whose market bounds/index metadata is malformed or internally
+  inconsistent rather than silently reconstructing carry-in from the wrong
+  market), and a typed shared evaluation context
+  (`ancestry_mmm/core/sequential_evaluation_context.py`,
+  `SequentialEvaluationContext`/`require_matching_context`/
+  `compute_incremental_outcome_with_context`) that catches a candidate/
+  reference pair built from mismatched model/posterior/historical-state/
+  phasing/future-assumption/cost/counterfactual-policy identity -
+  something `compute_incremental_outcome`'s own market/period/outcome
+  check alone cannot see.
 - A monthly-to-weekly phasing contract (WP1 of `Media-Mix-Lab: Coding LLM
   Next Steps Post WP5`, `ancestry_mmm/core/planning/phasing.py`,
   `REQ-SCEN-002`/`REQ-SCEN-003`): `calendar_day_overlap_v1` - inclusive

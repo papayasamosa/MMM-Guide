@@ -55,25 +55,46 @@ and a market:
    `simulate_terminal_carryover`/`simulate_terminal_carryover_market_specific`
    evaluate the ending state's continuation under a zero-further-media
    reference plan, as a separate call.
-6. **Full future recursion per posterior draw, conditional on one shared
-   carry-in state.** `simulate_sequential_outcomes_posterior` runs every
-   sampled posterior draw's own decay/Hill parameters through the complete
-   weekly recursion independently; aggregation (to a horizon, to monthly,
-   to a summary statistic) is left to the caller - the kernel never
-   aggregates first and calls the result posterior uncertainty. This is
-   *not* yet a fully draw-consistent posterior path: `carry_in` is one
-   fixed `SequentialCarryInState` passed once and reused for every draw,
-   so historical starting-adstock uncertainty (which itself depends on
-   each draw's own decay/Hill parameters) is not propagated into the
-   beginning of the future horizon - only future-recursion uncertainty
-   conditional on that shared state is. See "Not yet covered by this
-   record".
+6. **Full future recursion per posterior draw**, in two documented
+   variants:
+   - conditional on one shared, caller-supplied carry-in state
+     (`simulate_sequential_outcomes_posterior`,
+     `simulate_sequential_outcomes_posterior_market_specific`): every
+     sampled posterior draw's own decay/Hill parameters run through the
+     complete weekly recursion independently, but historical starting-
+     adstock uncertainty is not propagated - only future-recursion
+     uncertainty conditional on the shared state is;
+   - **fully draw-consistent** (`simulate_sequential_outcomes_posterior_
+     draw_consistent`, `simulate_sequential_outcomes_posterior_market_
+     specific_draw_consistent`, Work Package 3): for every selected
+     posterior draw, that draw's own parameters are used to reconstruct
+     `SequentialCarryInState` from the historical frame *and* to run the
+     future recursion, so early-horizon output reflects each draw's own
+     historical adstock/saturation trajectory. Proven against the batch
+     replay per draw (not merely per posterior mean), including a market
+     that is not first in the fit's market list, and covered by a
+     regression that fails if the evaluator were refactored to reuse one
+     fixed carry-in state across draws
+     (`ancestry_mmm/tests/test_sequential_simulation.py::
+     TestEarlyHorizonUncertaintyRegression`).
+
+   In both variants, aggregation (to a horizon, to monthly, to a summary
+   statistic) is left to the caller - the kernel never aggregates first
+   and calls the result posterior uncertainty.
 7. **State provenance.** `SequentialCarryInState` is a typed, serialisable
    object precisely so a scenario or a report can record *which* starting
    state a given evaluation used, not just its numeric contents.
 8. **Model/prediction-math reuse extends to both production-supported
    model types** (shared/Model A and market-specific/Model C) via the
-   `_market_specific` function variants.
+   `_market_specific` function variants, including both posterior-
+   evaluator variants in item 6.
+9. **Historical-state resolution fails closed on malformed frame metadata**
+   (`_resolve_and_validate_market_history`, Work Package 3): a
+   `historical_frame` whose `market_bounds` length does not match the
+   fit's market count, whose bounds fall outside `X_media`, or whose
+   `market_bounds`/`market_idx` disagree about which rows belong to the
+   requested market, raises rather than silently reconstructing carry-in
+   state from the wrong market's history.
 
 ## Candidate A boundary
 
@@ -104,21 +125,11 @@ contract.
 
 - How a monthly business plan is translated into a `WeeklyPlan` -
   `REQ-SCEN-002`.
-- Draw-consistent reconstruction of historical carry-in state: a
-  high-level evaluator that, per selected posterior draw, extracts that
-  draw's own parameters, reconstructs `SequentialCarryInState` with those
-  same parameters, and only then evaluates the future plan - so
-  early-horizon output reflects each draw's own historical adstock/
-  saturation trajectory, not one state shared across all draws. Not yet
-  implemented; the existing fixed-carry-in `simulate_sequential_outcomes_
-  posterior` remains available as a documented, explicitly conditional
-  helper.
-- A market-specific (Model C) equivalent of `simulate_sequential_outcomes_
-  posterior`. Model C has full deterministic sequential replay
-  (`simulate_sequential_outcomes_market_specific`,
-  `reconstruct_starting_state_market_specific`), but no high-level
-  draw-level posterior-array wrapper yet - only the shared/Model A path
-  has one today.
+- A single shared, typed evaluation context binding model/posterior/
+  market/calendar/historical-state/phasing/future-assumption/cost/
+  counterfactual-policy identity together and requiring a candidate and
+  reference pair be evaluated through the same one - `REQ-SCEN-001`
+  (`core.sequential_evaluation_context`, Work Package 3).
 - Application-layer integration (`application/scenario_service.py`,
   `pages/08_Scenario_Planner.py`, `core.optimization`'s objective) -
   a documented, not-yet-attempted follow-up (see
@@ -128,17 +139,21 @@ contract.
 ## Affected modules
 
 - `ancestry_mmm/core/sequential_simulation.py`
+- `ancestry_mmm/core/sequential_evaluation_context.py` (Work Package 3)
 - `ancestry_mmm/core/transformations.py` (`initial_state` carry-in
   parameter)
 - `ancestry_mmm/core/predict.py`, `ancestry_mmm/core/market_specific_predict.py`
   (`precomputed_sat_media` override)
 - `ancestry_mmm/tests/test_sequential_simulation.py`
+- `ancestry_mmm/tests/test_sequential_evaluation_context.py` (Work Package 3)
 
 ## Owner and status
 
 **Owner:** Data Science / Platform engineering.
 
 **Status:** Approved and implemented. State contract implemented and
-verified for both production-supported model types; Candidate A mediator
-state replay implemented as a bounded diagnostic capability only.
-Application-layer integration is a separate, not-yet-approved follow-up.
+verified for both production-supported model types, including fully
+draw-consistent posterior evaluation and fail-closed historical-state
+resolution (Work Package 3); Candidate A mediator state replay implemented
+as a bounded diagnostic capability only. Application-layer integration is
+a separate, not-yet-approved follow-up.
