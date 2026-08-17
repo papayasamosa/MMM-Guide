@@ -191,20 +191,24 @@ boundary documented in its own record:
   sequential (weekly, state-transition) simulation state contract —
   real historical-media starting-adstock reconstruction, no cross-market
   carryover, an explicit `WeeklyPlan` input contract, ending state and
-  terminal continuation as structurally separate results, and full
-  per-draw posterior paths (`core.sequential_simulation`, WP5, PR #260).
-  Implemented and verified for both production-supported model types.
-  Not yet covered: how a monthly plan becomes a `WeeklyPlan`
-  (`REQ-SCEN-002`) and application-layer integration.
+  terminal continuation as structurally separate results, both a fixed-
+  carry-in and a fully draw-consistent posterior evaluator for both
+  production-supported model types (`core.sequential_simulation`, WP5/PR
+  #260, draw-consistent evaluators added WP3 of `...Post PR262`), and
+  fail-closed historical-state resolution
+  (`_resolve_and_validate_market_history`, WP3). Not yet covered: how a
+  monthly plan becomes a `WeeklyPlan` (`REQ-SCEN-002`) and application-layer
+  integration.
 - `REQ-SCEN-001` (`docs/approved_requirements/REQ-SCEN-001.md`): the
   sequential scenario evaluation contract. Kernel-level items (same
   simulator for candidate/reference, exact-zero no-change invariant,
-  Model A and Model C support, full per-draw posterior propagation) are
-  implemented (`core.sequential_simulation.compute_incremental_outcome`/
-  `simulate_sequential_outcomes_posterior`). Application-level items
-  (monthly aggregation after weekly evaluation, steady-state/sequential
-  method labelling) are approved but not yet implemented — no
-  application service consumes this contract yet.
+  Model A and Model C support, both posterior-propagation variants, and a
+  typed shared evaluation context — `core.sequential_evaluation_context`,
+  WP3 — guarding candidate/reference identity beyond
+  `compute_incremental_outcome`'s own market/period/outcome check) are
+  implemented. Application-level items (monthly aggregation after weekly
+  evaluation, steady-state/sequential method labelling) are approved but
+  not yet implemented — no application service consumes this contract yet.
 - `REQ-SCEN-002` (`docs/approved_requirements/REQ-SCEN-002.md`): the
   monthly-to-weekly phasing contract (WP1, `core.planning.phasing`).
   `calendar_day_overlap_v1` (exact day-overlap allocation, per-month

@@ -17,9 +17,18 @@ phased plans feeding this same contract), which is not yet built.
    `params`/starting carry-in state, differing only in the decision being
    varied (the media plan, or an explicitly-varied cost assumption).
    `compute_incremental_outcome` structurally guards market/period/outcome
-   identity between the two results; passing consistent `meta`/`params`/
-   carry-in to both `simulate_sequential_outcomes` calls is the caller's
-   responsibility.
+   identity between the two results only; it cannot see whether the two
+   results were actually built from the same model/posterior/historical-
+   state/phasing/future-assumption/cost/counterfactual-policy identity.
+   `core.sequential_evaluation_context.SequentialEvaluationContext` /
+   `require_matching_context` / `compute_incremental_outcome_with_context`
+   (Work Package 3) close that gap: a typed, fingerprintable context object
+   naming every one of those identities, with a guard that raises
+   `MismatchedSequentialEvaluationContextError` unless a caller explicitly
+   names which field is allowed to differ (e.g. a deliberately varied cost
+   assumption). Prefer `compute_incremental_outcome_with_context` over
+   calling `compute_incremental_outcome` directly once candidate/reference
+   contexts exist.
 2. **Incremental outcome is always `candidate outcome - reference outcome`**
    (`compute_incremental_outcome`, shape `(n_weeks, n_outcomes)`).
 3. **Exact-zero no-change invariant.** An identical candidate and reference
@@ -30,22 +39,20 @@ phased plans feeding this same contract), which is not yet built.
 4. **Both production-supported model types.** Model A (shared/joint
    hierarchical) and Model C (market-specific, partially pooled) are both
    supported via the `_market_specific` function variants.
-5. **Posterior draw propagation, conditional on a shared carry-in state.**
-   `simulate_sequential_outcomes_posterior` runs every sampled posterior
-   draw's own parameters through the full weekly recursion independently
-   and returns the complete per-draw array
-   (`shape (n_draws, n_weeks, n_outcomes)`) - it does not aggregate.
-   Aggregation (mean/median/credible interval) is the caller's job,
-   performed on the draw axis after the full path exists for every draw -
-   never per-component before this array exists, and never by simulating
-   only posterior means and calling the result posterior uncertainty. This
-   function receives one fixed `SequentialCarryInState` shared across every
-   draw, so it propagates future-recursion posterior uncertainty
-   conditional on that shared starting state, not fully draw-consistent
-   uncertainty from historical carry-in reconstruction onward - see
-   `REQ-STATE-001`'s "Not yet covered by this record" for the distinct,
-   not-yet-implemented draw-consistent evaluator and the Model C parity
-   gap.
+5. **Posterior draw propagation**, in two documented variants (see
+   `REQ-STATE-001` item 6 for the full description): conditional on a
+   shared, caller-supplied carry-in state
+   (`simulate_sequential_outcomes_posterior`,
+   `..._market_specific`), or fully draw-consistent, reconstructing
+   historical carry-in per draw from that same draw's own parameters
+   (`simulate_sequential_outcomes_posterior_draw_consistent`,
+   `..._market_specific_draw_consistent`, Work Package 3). Both return the
+   complete per-draw array (`shape (n_draws, n_weeks, n_outcomes)`) - never
+   aggregated internally. Aggregation (mean/median/credible interval)
+   remains the caller's job, performed on the draw axis after the full
+   path exists for every draw - never per-component before this array
+   exists, and never by simulating only posterior means and calling the
+   result posterior uncertainty.
 
 ## Approved contract (application level - not yet built)
 
@@ -84,8 +91,11 @@ implementation, not yet implemented:
 ## Affected modules
 
 - `ancestry_mmm/core/sequential_simulation.py`
-  (`compute_incremental_outcome`, `simulate_sequential_outcomes_posterior`)
+  (`compute_incremental_outcome`, `simulate_sequential_outcomes_posterior`
+  and its draw-consistent/Model C variants)
+- `ancestry_mmm/core/sequential_evaluation_context.py` (Work Package 3)
 - `ancestry_mmm/tests/test_sequential_simulation.py`
+- `ancestry_mmm/tests/test_sequential_evaluation_context.py` (Work Package 3)
 
 ## Owner and status
 

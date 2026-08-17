@@ -4598,3 +4598,102 @@ touched, and that module already type-checked clean).
 **Owner:** Data Science / Platform engineering.
 **Status:** Accepted; implemented on this work package's branch. PR and CI
 remain the release gate.
+
+## Draw-consistent sequential state and evaluation context (Work Package 3)
+
+**Date:** 2026-08-17
+**Decision:** Harden the sequential engine for application-level
+uncertainty and candidate/reference correctness (`Media-Mix-Lab: Coding
+LLM Next Steps Post PR262`), closing three gaps Work Package 2's authority
+review named precisely rather than glossed over:
+
+1. **Draw-consistent posterior evaluation.** `simulate_sequential_
+   outcomes_posterior` (existing, WP5) receives one fixed `carry_in`,
+   reused for every posterior draw - only future-recursion parameters vary
+   by draw, so historical starting-adstock uncertainty is not propagated.
+   Added `simulate_sequential_outcomes_posterior_draw_consistent`: for
+   each selected draw, extract that draw's own parameters via the
+   existing `extract_posterior_params`, reconstruct
+   `SequentialCarryInState` from the historical frame using those same
+   parameters (`reconstruct_starting_state` already accepted per-draw
+   `FHPosteriorParams` - the missing piece was the per-draw caller loop
+   around it, not new carry-in mathematics), then evaluate the future
+   plan. Proven against the batch replay (`predict_mu`) per individual
+   draw, not merely at the posterior mean - including a market that is
+   not first in the fit's market list.
+2. **Model C posterior parity.** Model C had full deterministic sequential
+   replay (`simulate_sequential_outcomes_market_specific`,
+   `reconstruct_starting_state_market_specific`) but no high-level
+   draw-level posterior-array wrapper at all. Added
+   `simulate_sequential_outcomes_posterior_market_specific` (fixed-
+   carry-in parity with the existing Model A function) and
+   `simulate_sequential_outcomes_posterior_market_specific_draw_consistent`
+   (draw-consistent parity), both proven the same way as their Model A
+   counterparts.
+3. **Historical-state safety.** `reconstruct_starting_state`'s market-block
+   lookup (`historical_frame["market_bounds"][meta.markets.index(market)]`)
+   was unchecked: a too-short `market_bounds` raised an unhelpful
+   `IndexError`, an out-of-range bound silently read past `X_media`, and -
+   the genuinely dangerous case - a `market_bounds`/`market_idx`
+   disagreement would silently reconstruct carry-in from a different
+   market's history with no error at all. `_resolve_and_validate_market_
+   history` now validates all three explicitly and raises a specific,
+   actionable `ValueError` for each failure mode, shared by both Model A
+   and Model C reconstruction.
+4. **Shared sequential evaluation context.** `compute_incremental_outcome`
+   can only check market/period/outcome identity between two results - it
+   cannot see whether a candidate and reference were actually evaluated
+   with the same model/posterior/historical-state/phasing/future-
+   assumption/cost/counterfactual-policy identity, leaving "same non-
+   decision assumptions" a caller-trust convention rather than an
+   enforced one. New `core/sequential_evaluation_context.py`:
+   `SequentialEvaluationContext` (ten required identity/fingerprint
+   fields - deliberately strings, not deep objects, since the phasing/
+   future-context/cost-mapping application services those identities will
+   eventually come from do not exist yet, per `REQ-SCEN-002`'s own "Not
+   yet covered" boundary), `require_matching_context` (raises unless a
+   caller explicitly names which field is allowed to differ - e.g. a
+   deliberately varied cost assumption), and
+   `compute_incremental_outcome_with_context` (the existing function,
+   guarded).
+
+Also added: a regression fixture proving draw-specific historical carry-in
+genuinely changes early-horizon output when decay varies meaningfully
+between draws, and specifically proving `simulate_sequential_outcomes_
+posterior_draw_consistent`'s output for one draw differs from what a
+"reused a fixed carry-in across draws" implementation would produce -
+protecting the draw-consistency property itself against a future
+refactor, not just its current correctness.
+
+**Alternatives considered:** Building the draw-consistent evaluator as new
+carry-in mathematics (rejected - `reconstruct_starting_state` already
+accepted per-draw parameters; the gap was purely the missing per-draw
+caller loop, and inventing a second carry-in reconstruction path would
+duplicate already-tested code for no reason). Making
+`SequentialEvaluationContext` hold references to the actual phasing/
+future-context/cost-mapping objects instead of identity strings (rejected
+- those application-layer services do not exist yet; a context module
+that imports them now would either invent their shape prematurely or
+create a circular/forward dependency on not-yet-built code - identity
+strings let each service supply its own stable identity once it exists,
+without this module needing to know its internal shape). Silently
+tolerating a `market_bounds`/`market_idx` mismatch as "caller error, not
+our problem" (rejected - AGENTS.md's fail-closed principle and this
+specific gap's blast radius, silently leaking another market's history
+into a carry-in reconstruction, make this exactly the kind of defect that
+must raise rather than warn).
+**Impact:** `ancestry_mmm/core/sequential_simulation.py` (three new public
+functions, `_resolve_and_validate_market_history`, updated `__all__`); new
+`ancestry_mmm/core/sequential_evaluation_context.py`; new
+`ancestry_mmm/tests/test_sequential_evaluation_context.py`;
+`ancestry_mmm/tests/test_sequential_simulation.py` extended (four new test
+classes: draw-consistent posterior, Model C parity, early-horizon
+regression, historical-state safety); `docs/approved_requirements/
+REQ-STATE-001.md`/`REQ-SCEN-001.md` updated to describe the new
+capabilities precisely, replacing the "not yet covered" gaps Work Package
+2 named. No schema, migration, or persisted-field changes - this remains a
+framework-independent core-module addition, not yet called from any
+application service. mypy: 241 unchanged (new module type-checks clean).
+**Owner:** Data Science / Platform engineering.
+**Status:** Accepted; implemented on this work package's branch. PR and CI
+remain the release gate.

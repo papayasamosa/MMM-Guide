@@ -191,6 +191,67 @@ def _max_cross_product_lag_weeks(meta: FHModelMeta) -> int:
     )
 
 
+def _resolve_and_validate_market_history(
+    historical_frame: Dict[str, Any], meta: FHModelMeta, market: str
+) -> Tuple[int, int]:
+    """Safely resolve `market`'s own historical-row slice from a full
+    production-style frame, and fail closed on malformed frame metadata
+    rather than silently reconstructing carry-in state from another
+    market's history (WP3, brief §9.6 - "Historical-state safety"). An
+    unchecked `market_bounds[meta.markets.index(market)]` lookup (the
+    kernel's pre-WP3 behaviour) could raise an unhelpful `IndexError` on a
+    too-short `market_bounds`, silently read past the end of `X_media` on
+    an out-of-range bound, or - the genuinely dangerous case - return a
+    slice whose rows do not actually all belong to `market` if
+    `market_bounds` and `market_idx` disagree, which would leak another
+    market's history into this carry-in reconstruction without any error
+    at all."""
+    if market not in meta.markets:
+        raise ValueError(
+            f"'{market}' is not one of this model's markets: {meta.markets}"
+        )
+    market_pos = meta.markets.index(market)
+
+    market_bounds = historical_frame.get("market_bounds")
+    if market_bounds is None or len(market_bounds) != len(meta.markets):
+        got = 0 if market_bounds is None else len(market_bounds)
+        raise ValueError(
+            "historical_frame['market_bounds'] must have exactly one "
+            f"(start, end) entry per this fit's market ({len(meta.markets)} "
+            f"expected, for markets {list(meta.markets)}), got {got}."
+        )
+    start, end = market_bounds[market_pos]
+
+    X_media = historical_frame.get("X_media")
+    if X_media is None:
+        raise ValueError("historical_frame['X_media'] is required.")
+    n_rows = len(X_media)
+    if not (0 <= start <= end <= n_rows):
+        raise ValueError(
+            f"historical_frame['market_bounds'][{market_pos}] = ({start}, "
+            f"{end}) is not a valid slice of X_media ({n_rows} rows) for "
+            f"market {market!r}."
+        )
+
+    market_idx = historical_frame.get("market_idx")
+    if market_idx is None or len(market_idx) != n_rows:
+        raise ValueError(
+            "historical_frame['market_idx'] must have exactly one entry per "
+            "X_media row."
+        )
+    block = np.asarray(market_idx[start:end])
+    if block.size > 0 and not np.all(block == market_pos):
+        raise ValueError(
+            f"historical_frame['market_bounds'][{market_pos}] for market "
+            f"{market!r} does not correspond to rows whose market_idx is "
+            f"consistently {market_pos} - this frame's market_bounds/"
+            "market_idx metadata is inconsistent, which would otherwise "
+            "leak another market's history into this market's carry-in "
+            "reconstruction. Refusing to proceed."
+        )
+    return int(start), int(end)
+
+
 def _reconstruct_starting_state(
     historical_frame: Dict[str, Any],
     meta: FHModelMeta,
@@ -201,12 +262,7 @@ def _reconstruct_starting_state(
     K: np.ndarray,
     S: np.ndarray,
 ) -> SequentialCarryInState:
-    if market not in meta.markets:
-        raise ValueError(
-            f"'{market}' is not one of this model's markets: {meta.markets}"
-        )
-    market_pos = meta.markets.index(market)
-    start, end = historical_frame["market_bounds"][market_pos]
+    start, end = _resolve_and_validate_market_history(historical_frame, meta, market)
     X_hist = historical_frame["X_media"][start:end]
 
     # Reconstruct starting adstock from the actual historical media
@@ -715,13 +771,127 @@ def simulate_sequential_outcomes_posterior(
     posterior summaries... do not add independently summarised medians"
     (AGENTS.md) means aggregation (mean/median/credible interval) is the
     caller's job, performed on this array's draw axis (0) - never inside
-    this function, and never per-component before this array exists."""
+    this function, and never per-component before this array exists.
+
+    Conditional on one shared `carry_in`, reused for every draw (WP3, brief
+    §5.4/§9.1): this varies each draw's own decay/Hill parameters through
+    the *future* recursion, but historical starting-adstock uncertainty is
+    not propagated, because `carry_in` was reconstructed once (typically
+    from posterior-mean parameters) rather than per draw. See
+    `simulate_sequential_outcomes_posterior_draw_consistent` for the fully
+    draw-consistent evaluator that reconstructs `carry_in` per draw too -
+    prefer that one for an application-facing posterior-uncertainty claim.
+    This fixed-carry-in function remains available as a documented,
+    explicitly conditional API (e.g. for a caller that has already fixed a
+    specific historical state by design, or for interactive speed)."""
     from .predict import extract_posterior_params
 
     draws = []
     for chain, draw in sample_draw_indices(trace, n_draws, seed):
         params = extract_posterior_params(trace, meta, at=(chain, draw))
         result = simulate_sequential_outcomes(plan, carry_in, meta, params)
+        draws.append(result.mu)
+    stacked: np.ndarray = np.stack(draws, axis=0)
+    return stacked
+
+
+def simulate_sequential_outcomes_posterior_draw_consistent(
+    plan: WeeklyPlan,
+    historical_frame: Dict[str, Any],
+    trace: Any,
+    meta: FHModelMeta,
+    market: str,
+    *,
+    as_of_period_label: str = "",
+    n_draws: int = DEFAULT_N_DRAWS,
+    seed: int = 42,
+) -> np.ndarray:
+    """Model A (shared) fully draw-consistent posterior evaluator (WP3,
+    closes `REQ-STATE-001`'s "Not yet covered" draw-consistent carry-in
+    gap): for every selected posterior draw, extracts that draw's own
+    parameters, reconstructs `SequentialCarryInState` from `historical_frame`
+    using those SAME parameters (`reconstruct_starting_state` already
+    accepts per-draw `FHPosteriorParams` - this function is the missing
+    per-draw caller loop around it, not new carry-in mathematics), and only
+    then evaluates the future plan - so early-horizon output reflects each
+    draw's own historical adstock/saturation trajectory, not one state
+    shared across every draw. Returns the same
+    shape-`(n_draws, n_weeks, n_outcomes)` full per-draw array as
+    `simulate_sequential_outcomes_posterior` - aggregation remains the
+    caller's job, on the draw axis, after this full array exists."""
+    from .predict import extract_posterior_params
+
+    draws = []
+    for chain, draw in sample_draw_indices(trace, n_draws, seed):
+        params = extract_posterior_params(trace, meta, at=(chain, draw))
+        carry_in = reconstruct_starting_state(
+            historical_frame, meta, params, market, as_of_period_label
+        )
+        result = simulate_sequential_outcomes(plan, carry_in, meta, params)
+        draws.append(result.mu)
+    stacked: np.ndarray = np.stack(draws, axis=0)
+    return stacked
+
+
+def simulate_sequential_outcomes_posterior_market_specific(
+    plan: WeeklyPlan,
+    carry_in: SequentialCarryInState,
+    trace: Any,
+    meta: FHModelMeta,
+    *,
+    n_draws: int = DEFAULT_N_DRAWS,
+    seed: int = 42,
+) -> np.ndarray:
+    """Model C (market-specific) mirror of
+    `simulate_sequential_outcomes_posterior` (WP3, closes `REQ-STATE-001`'s
+    "Not yet covered" Model C posterior-parity gap at the fixed-carry-in
+    level) - same conditional-on-one-shared-`carry_in` contract, using
+    `extract_market_specific_posterior_params` and
+    `simulate_sequential_outcomes_market_specific`. See
+    `simulate_sequential_outcomes_posterior_market_specific_draw_consistent`
+    for the fully draw-consistent Model C evaluator."""
+    from .market_specific_predict import extract_market_specific_posterior_params
+
+    draws = []
+    for chain, draw in sample_draw_indices(trace, n_draws, seed):
+        params = extract_market_specific_posterior_params(trace, meta, at=(chain, draw))
+        result = simulate_sequential_outcomes_market_specific(
+            plan, carry_in, meta, params
+        )
+        draws.append(result.mu)
+    stacked: np.ndarray = np.stack(draws, axis=0)
+    return stacked
+
+
+def simulate_sequential_outcomes_posterior_market_specific_draw_consistent(
+    plan: WeeklyPlan,
+    historical_frame: Dict[str, Any],
+    trace: Any,
+    meta: FHModelMeta,
+    market: str,
+    *,
+    as_of_period_label: str = "",
+    n_draws: int = DEFAULT_N_DRAWS,
+    seed: int = 42,
+) -> np.ndarray:
+    """Model C (market-specific) mirror of
+    `simulate_sequential_outcomes_posterior_draw_consistent` - same fully
+    draw-consistent contract (draw-specific parameters used for both
+    historical carry-in reconstruction and the future recursion), using
+    `extract_market_specific_posterior_params`,
+    `reconstruct_starting_state_market_specific`, and
+    `simulate_sequential_outcomes_market_specific`."""
+    from .market_specific_predict import extract_market_specific_posterior_params
+
+    draws = []
+    for chain, draw in sample_draw_indices(trace, n_draws, seed):
+        params = extract_market_specific_posterior_params(trace, meta, at=(chain, draw))
+        carry_in = reconstruct_starting_state_market_specific(
+            historical_frame, meta, params, market, as_of_period_label
+        )
+        result = simulate_sequential_outcomes_market_specific(
+            plan, carry_in, meta, params
+        )
         draws.append(result.mu)
     stacked: np.ndarray = np.stack(draws, axis=0)
     return stacked
@@ -833,6 +1003,9 @@ __all__ = [
     "simulate_sequential_outcomes",
     "simulate_sequential_outcomes_market_specific",
     "simulate_sequential_outcomes_posterior",
+    "simulate_sequential_outcomes_posterior_draw_consistent",
+    "simulate_sequential_outcomes_posterior_market_specific",
+    "simulate_sequential_outcomes_posterior_market_specific_draw_consistent",
     "simulate_terminal_carryover",
     "simulate_terminal_carryover_market_specific",
     "zero_media_extension_plan",
