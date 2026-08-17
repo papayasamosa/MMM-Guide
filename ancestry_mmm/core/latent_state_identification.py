@@ -218,9 +218,7 @@ class LatentStateIdentificationResult:
         }
 
     @classmethod
-    def from_dict(
-        cls, values: Mapping[str, Any]
-    ) -> "LatentStateIdentificationResult":
+    def from_dict(cls, values: Mapping[str, Any]) -> "LatentStateIdentificationResult":
         declaration_values = values.get("declaration")
         return cls(
             latent_state_id=values["latent_state_id"],
