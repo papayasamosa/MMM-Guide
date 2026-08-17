@@ -16,9 +16,10 @@ This record approves the contract. The phasing module (WP1) plus the
 future-context builder, governed `WeeklyPlan` construction boundary, and
 terminal candidate/reference evaluator (Work Package 4 of `Media-Mix-Lab:
 Coding LLM Next Steps Post PR262`) together implement it at the core-module
-level - see "Owner and status" below for the precise boundary. No
-`application/` service or Streamlit page consumes any of this yet; that
-remains a separate, dependent work package.
+level - see "Owner and status" below for the precise boundary. The manual
+"Sequential weekly" tab on `pages/08_Scenario_Planner.py` (WP5 part 2 of
+`Media-Mix-Lab: Coding LLM Next Steps Post PR262`) is the first consumer;
+constrained/unconstrained optimisation remain steady-state-only.
 
 ## Planning interface and calculation grain
 
@@ -123,15 +124,28 @@ candidate/reference contract.
 - `ancestry_mmm/application/scenario_service.py`
   (`SequentialManualScenarioInput`, `ScenarioService.
   evaluate_manual_sequential`, implemented, WP5)
+- `ancestry_mmm/pages/08_Scenario_Planner.py` (implemented, WP5 part 2 -
+  "Manual plan evaluation method" toggle on the "Edited plan and
+  calculated result" tab only; constrained/unconstrained optimisation
+  remain steady-state-only. The sequential plan window always starts the
+  Monday immediately after the market's last historical week, continuing
+  the exact same weekly cadence with no gap - never at the steady-state
+  tab's user-chosen start month. Because that first sequential month is
+  therefore necessarily partial, and `calendar_day_overlap_v1`/its
+  explicit-override sibling can each only reconcile a month `calendar`
+  fully covers (or, for the override, only when every month sharing a week
+  is itself tracked - see "Owner and status" below), the page phases that
+  first month directly with the same day-overlap formula, scoped to the
+  covered days only, and phases every subsequent whole month through the
+  unmodified governed function, summing the two per week - `phasing.py`
+  itself is unchanged.)
 - `ancestry_mmm/tests/test_phasing.py`,
   `ancestry_mmm/tests/test_future_context.py`,
   `ancestry_mmm/tests/test_weekly_plan_builder.py`,
   `ancestry_mmm/tests/test_terminal_response.py`,
   `ancestry_mmm/tests/test_sequential_scenario_evaluation.py`,
-  `ancestry_mmm/tests/test_scenario_service_sequential.py`
-- Not yet touched: `pages/08_Scenario_Planner.py` - a separate,
-  dependent follow-up (method toggle, phasing/future-context pipeline
-  wired to user input, sequential result rendering, persistence).
+  `ancestry_mmm/tests/test_scenario_service_sequential.py`,
+  `ancestry_mmm/tests/test_scenario_planner_apptest.py`
 
 ## Owner and status
 
@@ -199,8 +213,26 @@ candidate/reference contract.
   steady-state constant as "current" - a sequential scenario would have
   appeared permanently stale).
 
-**Not yet implemented:** Streamlit page (`pages/08_Scenario_Planner.py`)
-consuming any of the above - a separate, dependent follow-up work package
-(method toggle, phasing/future-context pipeline wired to user input,
-sequential result rendering, persistence, and a real browser-lifecycle
-test).
+- Streamlit UI (WP5 part 2, `pages/08_Scenario_Planner.py`): a "Manual
+  plan evaluation method" radio (steady-state monthly / sequential
+  weekly), applying only to the "Edited plan and calculated result" tab.
+  Reuses the existing monthly spend-plan grid and governance inputs
+  unchanged - re-seats the analyst's ordered monthly values onto the real
+  calendar months starting at the historical-continuation Monday, resolves
+  the reference/counterfactual plan via the existing
+  `core.scenario_governance.resolve_counterfactual` at monthly grain before
+  re-seating (identically to the candidate), phases both through
+  `core.planning.phasing` (partial-first-month handling above), builds a
+  future context (official mode unless the fit has exogenous controls, in
+  which case exploratory `hold_last_observed` with an explicit
+  not-decision-ready warning), builds governed `WeeklyPlan`s, and routes
+  through `ScenarioService.evaluate_manual_sequential`. Renders weekly and
+  monthly incremental tables, short/long response-horizon metrics, and
+  provenance fingerprints.
+
+**Not yet implemented:** sequential-weekly constrained/unconstrained
+optimisation (both optimiser tabs remain steady-state-only), terminal
+incremental carryover and posterior uncertainty in this UI (available via
+the core APIs directly), and saving/exporting a sequential scenario (only
+steady-state monthly scenarios can be saved in this release) - all
+explicitly disclosed in the UI, not silently absent.

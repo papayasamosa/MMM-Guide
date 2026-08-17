@@ -4935,3 +4935,142 @@ authorised source-data availability (unaffected by this package).
 **Status:** Accepted; implemented on this work package's branch. PR and CI
 remain the release gate. Streamlit UI integration is Work Package 5, part
 2 - not started.
+
+## Sequential scenario planner UI wiring (Work Package 5, part 2)
+
+**Date:** 2026-08-17
+**Decision:** Wire `core.sequential_scenario_evaluation`/`ScenarioService.
+evaluate_manual_sequential` (Work Package 5, part 1) into
+`pages/08_Scenario_Planner.py`'s manual "Edited plan and calculated
+result" tab, per `Media-Mix-Lab: Coding LLM Next Steps Post PR262` §11.4.
+A "Manual plan evaluation method" radio (steady-state monthly / sequential
+weekly) is the single source of truth for the rerun, mirroring the
+existing `governance_mode` radio's own pattern - never inferred, never
+silently switched. Only the manual tab; the constrained and unconstrained-
+benchmark optimiser tabs remain steady-state-only (a separate,
+not-yet-approved follow-up, consistent with WP5 part 1's own scope split).
+
+Delivered:
+
+1. **Plan window always continues history with no gap.**
+   `_sequential_plan_start_week` returns the Monday immediately following
+   the market's last historical canonical week - never the steady-state
+   tab's user-chosen "Plan start month" - to avoid an unmodelled gap or
+   double-counted overlap between historical carry-in and the first
+   planned week.
+2. **Reused inputs, not a parallel plan representation.** The sequential
+   tab reuses the existing monthly spend-plan grid, activity/counterfactual/
+   cost-mapping/objective/value-mapping/currency-context state unchanged -
+   only re-seating the analyst's *ordered* monthly values onto real
+   calendar months starting at the continuation point (order preserved,
+   labels replaced). The reference/counterfactual plan is resolved via the
+   existing `core.scenario_governance.resolve_counterfactual` at monthly
+   grain first, then re-seated identically to the candidate - reusing the
+   steady-state path's own governance resolution rather than inventing a
+   sequential-specific one.
+3. **A genuinely partial first month cannot be phased through
+   `calendar_day_overlap_v1` unmodified - a real defect found and fixed
+   during this package, not merely a design choice.** Because the plan
+   window starts mid-month (point 1), the first sequential month's
+   covered days are a strict subset of the real calendar month, but
+   `REQ-SCEN-002`'s governed phasing function requires its `calendar` to
+   *fully* cover every month it phases (reconciliation checks
+   `allocated_total == value` against the month's *full* day count,
+   regardless of how much of that month the calendar's weeks actually
+   span). The first implementation pro-rated the first month's value by
+   `covered_days / days_in_month` and fed it through the governed function
+   using a `calendar` truncated to start at the plan's continuation week -
+   this reconciled but the phasing function *also* computed the same
+   `covered_days / days_in_month` day-overlap ratio internally (since its
+   `source_days` is always the real month's full length), silently
+   squaring the intended pro-ration (a 76.1 vs 7.61 - 10x - mismatch caught
+   by a new `test_scenario_planner_apptest.py` case exercising the
+   sequential tab, not by manual review). Fixed by phasing the first
+   month's value directly: a small page-local helper
+   (`_first_month_fragment_schedule`) applies the same day-overlap formula
+   `calendar_day_overlap_v1` itself uses, but scoped to `[plan_start_week,
+   first_month_end]` (the covered days only) rather than the month's full
+   calendar bounds, and every subsequent whole month is phased through the
+   *unmodified* governed function, calendar unchanged - the two
+   contributions are summed per week (never chosen between), since a
+   boundary week between month 1 and month 2 legitimately carries spend
+   from both. `core/planning/phasing.py` itself is not modified; this
+   composition lives entirely in the page.
+4. **Future context and decision-readiness.** Official mode unless the fit
+   has exogenous controls, in which case exploratory `hold_last_observed`
+   (held at each control's last observed value) with an explicit
+   not-decision-ready warning - matching `REQ-SCEN-002`'s official/
+   exploratory control-continuation contract exactly, reusing
+   `core.planning.future_context.build_future_context` unchanged.
+5. **Rendered output.** Weekly and monthly incremental outcome tables
+   (monthly summed from weekly, never independently recalculated -
+   `REQ-SCEN-001` item 6), short/long response-horizon metrics, and
+   provenance fingerprints via the existing `render_technical_details`
+   pattern. Explicit captions disclose that terminal incremental
+   carryover, posterior uncertainty, and scenario saving are not yet
+   available for this method in this UI - never silently absent.
+6. **A second, real pre-existing bug found and fixed in the same package:**
+   the counterfactual resolution call passed `activity_definitions`
+   (the session-state list, `[]` when no activities are configured) to
+   `resolve_counterfactual` directly, instead of `activity_definitions or
+   None` (the pattern used everywhere else on this page). Since
+   `resolve_counterfactual` treats a non-`None` `activity_definitions` as
+   "every model-input column must have a matching activity definition,"
+   the empty-list default made a sequential evaluation with no configured
+   activities fail with "missing activity definition for model input" -
+   caught by the same new AppTest case before it reached a real user.
+
+**Alternatives considered:** Anchoring the sequential plan window to a
+real calendar-month boundary instead of the historical-continuation Monday
+(rejected - breaks the "continue the exact same weekly cadence with no
+gap" contract WP5 part 1's own kernel-level invariants assume, and would
+either duplicate or contradict history for the days between the month
+start and the actual continuation point). Extending the phasing
+`calendar` back to the first day of the first month so
+`calendar_day_overlap_v1` sees a "whole" month, then discarding the
+weeks before the continuation point after the fact (rejected - `canonical_
+weeks` anchors its 7-day cadence to `calendar.start`, so a month-aligned
+calendar start generates a *different* weekly grid than one anchored to
+the continuation Monday, breaking cadence continuity for every week, not
+just the first). Using `phasing.py`'s explicit-weekly-schedule override
+(`reconcile_explicit_weekly_schedule`) for the whole plan (considered and
+rejected after working through the arithmetic - its per-week
+tracked-month weighting reconstructs each month's share by that week's
+*relative* day-overlap among tracked months sharing it, which does not
+generally equal `calendar_day_overlap_v1`'s own per-month-normalized
+contribution at a boundary week once one of the two months uses a
+different (covered-days, not full-days) normalizer - correct only for the
+single-tracked-month-per-week case, not the general one this plan window
+needs). Modifying `core.planning.phasing` itself to accept a partial first
+month (rejected for this package - `phasing.py` is a shared,
+requirements-governed module already merged and tested under WP1; the
+page-local day-overlap-fragment-plus-governed-function composition
+achieves the identical numerical result without changing its contract or
+blast radius, and remains available as a future refactor if a second
+caller needs the same partial-month case).
+**Impact:** `ancestry_mmm/pages/08_Scenario_Planner.py` extended (method
+radio, `_sequential_plan_start_week`, `_prorated_sequential_monthly_
+values`, `_first_month_fragment_schedule`, `_evaluate_sequential_manual_
+plan`, `_render_sequential_manual_tab`, `_render_steady_state_manual_tab`
+- the pre-existing steady-state tab body converted to a same-indentation
+function rather than re-indented, a deliberate minimal-diff choice);
+`ancestry_mmm/tests/test_scenario_planner_apptest.py` extended with two
+new cases (sequential tab renders its own content without exception; the
+default method stays steady-state) and one existing invariant count
+(`**scenario_governance_kwargs`) updated from 4 to 5 for the new call
+site; `docs/approved_requirements/REQ-SCEN-001.md`/`REQ-SCEN-002.md`/
+`REQ-SCEN-003.md`/`REQ-STATE-001.md` and `docs/specification_authority.md`
+updated to reflect UI implementation (and, for `REQ-SCEN-001.md`, a
+pre-existing inconsistency between its own inline "implemented" item
+annotations and its stale "Owner and status" footer, corrected in
+passing); `REPO_REVIEW_AND_NEXT_STEPS.md` baseline bumped to PR #267
+(also correcting WP5 part 1's own entry, which had bumped it to #265
+instead of its actual PR #266), "Delivered foundation"/"Known bounded
+gaps" updated. No schema, migration, or persisted-field changes - saving a
+sequential scenario remains out of scope for this UI. mypy: `core`
+ratchet unchanged at 241; the three always-zero-tolerance scopes
+(`core/planning`, `core/validation_policy.py`, `application`) remain
+clean; `pages/` is outside the mypy CI gate.
+**Owner:** Data Science / Platform engineering.
+**Status:** Accepted; implemented on this work package's branch. PR and CI
+remain the release gate.

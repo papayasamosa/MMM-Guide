@@ -60,9 +60,10 @@ The following extend the kernel-level contract above to
 application-facing scenario evaluation. Items 6-8 are implemented at the
 application-*service* level (Work Package 5 of `...Post PR262`,
 `core.sequential_scenario_evaluation.evaluate_manual_scenario_sequential`,
-`application.scenario_service.ScenarioService.evaluate_manual_sequential`)
-- Streamlit UI wiring (`pages/08_Scenario_Planner.py`) remains a separate,
-  not-yet-implemented follow-up (see "Not yet covered" below):
+`application.scenario_service.ScenarioService.evaluate_manual_sequential`).
+The manual "Sequential weekly" tab on `pages/08_Scenario_Planner.py` (WP5
+part 2) is the first Streamlit UI consumer - constrained/unconstrained
+optimisation remain steady-state-only (see "Not yet covered" below):
 
 6. **Monthly aggregation only after weekly evaluation.** An application
    presenting a monthly-grain result must sum/aggregate the already-computed
@@ -82,9 +83,11 @@ application-*service* level (Work Package 5 of `...Post PR262`,
    SEMANTICS`, never the steady-state constant) record this unconditionally,
    including in exploratory mode - unlike the steady-state path, which
    only stamps `planning_semantics` in official mode, this contract's own
-   method-labelling requirement applies regardless of governance mode. A
-   UI surfacing this must still label both methods - that part remains
-   `pages/08_Scenario_Planner.py`'s not-yet-implemented responsibility.
+   method-labelling requirement applies regardless of governance mode.
+   Implemented in the UI (WP5 part 2): the "Manual plan evaluation method"
+   radio on `pages/08_Scenario_Planner.py` is the single source of truth
+   for which method a given rerun uses, never inferred or silently
+   switched.
 8. **Candidate/reference plans share the same phasing policy** (see
    `REQ-SCEN-002`) unless a difference in phasing itself is an explicit,
    recorded scenario decision. Enforced at the evaluation-service level via
@@ -100,12 +103,9 @@ application-*service* level (Work Package 5 of `...Post PR262`,
 - The monthly-to-weekly phasing that produces the `WeeklyPlan` inputs to
   this contract in an application context - `REQ-SCEN-002` (phasing itself
   implemented, WP1; wiring it to build the `WeeklyPlan`/`FutureContextResult`
-  inputs `evaluate_manual_scenario_sequential` consumes is the caller's -
-  currently only tests', not yet the Streamlit page's - responsibility).
-- Streamlit UI (`pages/08_Scenario_Planner.py`): a method toggle, rendering
-  the sequential result, and wiring the phasing/future-context/governed-
-  `WeeklyPlan`-construction pipeline end to end from user input - not yet
-  implemented, a separate, not-yet-approved follow-up.
+  inputs `evaluate_manual_scenario_sequential` consumes is implemented for
+  the manual-plan path by `pages/08_Scenario_Planner.py` (WP5 part 2), and
+  by tests - not yet by the optimiser tabs).
 - Scenario persistence/staleness for a saved sequential scenario
   (`core.persistence`, `core.scenario_governance`) - not yet implemented;
   `validate_scenario_dependencies`'s `planning_semantics_fingerprint`
@@ -113,8 +113,13 @@ application-*service* level (Work Package 5 of `...Post PR262`,
   `CURRENT_PLANNING_EVALUATION_SEMANTICS` and `SEQUENTIAL_WEEKLY_
   PLANNING_EVALUATION_SEMANTICS` as current), but no save/load path for a
   `SequentialScenarioEvaluationResult` exists yet.
-- Optimiser objective wiring for the sequential contract - separate,
+- Optimiser objective wiring for the sequential contract - both the
+  constrained and unconstrained-benchmark tabs on
+  `pages/08_Scenario_Planner.py` remain steady-state-only; a separate,
   not-yet-approved follow-up work package.
+- Terminal incremental carryover and posterior uncertainty in the UI - the
+  service/core APIs support both, but the WP5 part 2 manual tab does not
+  yet render either (explicitly disclosed in the UI, not silently absent).
 - Candidate A final-outcome sequential replay - blocked pending the
   counterfactual-replay decision recorded against `REQ-SEARCH-002`.
   Inherited for free by this record's implementation: calling into
@@ -139,13 +144,18 @@ application-*service* level (Work Package 5 of `...Post PR262`,
 - `ancestry_mmm/tests/test_sequential_evaluation_context.py` (Work Package 3)
 - `ancestry_mmm/tests/test_sequential_scenario_evaluation.py`,
   `ancestry_mmm/tests/test_scenario_service_sequential.py` (Work Package 5)
+- `ancestry_mmm/pages/08_Scenario_Planner.py`,
+  `ancestry_mmm/tests/test_scenario_planner_apptest.py` (Work Package 5
+  part 2 - manual-tab UI wiring)
 
 ## Owner and status
 
 **Owner:** Data Science / Platform engineering.
 
 **Status:** Kernel-level contract (items 1-5) approved and implemented.
-Application-level contract (items 6-8) approved for implementation by this
-record; not yet implemented - see `REQ-SCEN-002`/`REQ-SCEN-003` for the
-dependent contracts that must exist first, and `REPO_REVIEW_AND_NEXT_STEPS.md`
-("Known bounded gaps") for current application-layer status.
+Application-level contract (items 6-8) implemented at the service level
+(Work Package 5) and, for the manual-plan path only, in the Streamlit UI
+(Work Package 5 part 2) - see `REQ-SCEN-002`/`REQ-SCEN-003` for the
+dependent contracts, and `REPO_REVIEW_AND_NEXT_STEPS.md` ("Known bounded
+gaps") for current application-layer status (optimiser wiring, terminal/
+posterior UI, persistence).

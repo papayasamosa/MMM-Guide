@@ -887,7 +887,11 @@ def test_page_resolves_policy_and_readiness_exactly_once():
     (load_threshold_policy/load_approval_readiness) rather than calling
     ThresholdPolicy.from_dict()/ApprovalReadiness.from_dict() directly - the
     "exactly once" invariant this test protects is unchanged, just via the
-    new call site."""
+    new call site.
+
+    WP5 (`Media-Mix-Lab: Coding LLM Next Steps Post PR262`): the sequential
+    manual evaluation call site (evaluate_manual_sequential) is a fifth
+    consumer of the same scenario_governance_kwargs dict."""
     source = PAGE.read_text(encoding="utf-8")
     assert source.count("load_threshold_policy(") == 1
     assert source.count("load_approval_readiness(") == 1
@@ -895,7 +899,7 @@ def test_page_resolves_policy_and_readiness_exactly_once():
     assert "ApprovalReadiness.from_dict(" not in source
     # The same scenario_governance_kwargs dict (built from current_policy/
     # current_readiness) must be spread into every planning/uncertainty call.
-    assert source.count("**scenario_governance_kwargs") == 4
+    assert source.count("**scenario_governance_kwargs") == 5
 
 
 def test_exploratory_result_invalidated_when_switched_back_to_official():
@@ -1165,6 +1169,57 @@ def test_saved_scenarios_are_labelled_as_persisted_state():
         "Saved scenarios - persisted state" in (m.value or "") for m in at.markdown
     )
     assert any("Persisted state:" in (c.value or "") for c in at.caption)
+
+
+# ---------------------------------------------------------------------------
+# WP5 (`Media-Mix-Lab: Coding LLM Next Steps Post PR262`): sequential-weekly
+# manual plan evaluation method on the "Edited plan and calculated result"
+# tab.
+# ---------------------------------------------------------------------------
+
+
+def test_sequential_weekly_manual_tab_renders_without_exception():
+    """Selecting 'Sequential weekly' on the manual-plan evaluation-method
+    radio must route the manual tab through
+    ScenarioService.evaluate_manual_sequential and render its weekly/monthly
+    incremental tables and horizon metrics, instead of the default
+    steady-state monthly path - without raising."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_official_governance_state(at)
+    at.run()
+    assert not at.exception, f"initial load raised: {at.exception}"
+
+    method_radio = next(
+        r for r in at.radio if r.label == "Manual plan evaluation method"
+    )
+    assert method_radio.value == "steady_state_monthly"
+    method_radio.set_value("sequential_weekly").run()
+    assert not at.exception, f"selecting sequential_weekly raised: {at.exception}"
+
+    markdown_text = [m.value or "" for m in at.markdown]
+    assert any("Weekly incremental outcome" in text for text in markdown_text)
+    assert any("Monthly incremental outcome" in text for text in markdown_text)
+    assert any("Response horizons" in text for text in markdown_text)
+
+    captions = [c.value or "" for c in at.caption]
+    assert any(text.startswith("Plan window:") for text in captions)
+
+    metric_labels = {metric.label for metric in at.metric}
+    assert any("Short-horizon incremental" in label for label in metric_labels)
+    assert any("Long-horizon incremental" in label for label in metric_labels)
+
+
+def test_steady_state_manual_tab_still_renders_by_default():
+    """The default evaluation method stays steady-state monthly - switching
+    the radio to sequential and back (or simply never touching it) must
+    still render the pre-existing steady-state content unchanged."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_official_governance_state(at)
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    assert any(
+        "Predicted outcomes for the spend plan" in (m.value or "") for m in at.markdown
+    )
 
 
 def test_allocation_desk_separates_editable_proposed_and_saved_state():

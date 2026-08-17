@@ -9,10 +9,9 @@ and does not supersede `AGENTS.md`, `docs/approved_requirements/`, or
 
 Repository: `papayasamosa/Media-Mix-Lab`
 
-**Repository state through merged PR #265** (`WP4: future context, governed
-WeeklyPlan construction, terminal response`, part of `Media-Mix-Lab: Coding
-LLM Next Steps Post PR262`) - merge commit
-`ba29b04526843879722fc0f4bc4cf799063e4733`.
+**Repository state through merged PR #267** (`WP5 (part 2): sequential
+scenario planner UI wiring`, part of `Media-Mix-Lab: Coding LLM Next Steps
+Post PR262`).
 
 This document deliberately identifies its baseline by merged PR/work-package
 milestone, never by a field claiming to be "current `main`": a branch
@@ -30,6 +29,12 @@ remote truth.
 
 Historical markers (all superseded merge commits; recorded only for
 history, never as current state):
+`79bbc174e90eb7ec62595f379a61912966be6ec2` (merged PR #266, WP5 part 1 of
+`...Post PR262` - sequential scenario evaluation service - superseded by
+PR #267 above),
+`ba29b04526843879722fc0f4bc4cf799063e4733` (merged PR #265, WP4 of
+`...Post PR262` - future context, governed WeeklyPlan construction,
+terminal response - superseded by PR #266 above),
 `ce5b3962b7eb4f66bc7549ab62cc6178c02e1220` (merged PR #264, WP3 of
 `...Post PR262` - draw-consistent sequential state and evaluation context -
 superseded by PR #265 above),
@@ -247,12 +252,37 @@ The current implementation includes:
   sequential scenario would have appeared permanently stale the moment it
   was saved; now engine-aware. Candidate A fail-closed behaviour is
   inherited for free (calling into `core.sequential_simulation` means
-  `CandidateAReplayNotSupportedError` propagates unchanged). **Not yet
-  wired into any Streamlit page** - `pages/08_Scenario_Planner.py` does
-  not yet offer a sequential-weekly method choice, and no phasing/future-
-  context pipeline is wired from user input; scenario persistence/
-  staleness for a saved sequential scenario also does not yet exist. See
-  Known bounded gaps below.
+  `CandidateAReplayNotSupportedError` propagates unchanged).
+- Sequential-weekly manual scenario evaluation wired into the Scenario
+  Planner UI (Work Package 5 part 2 of `Media-Mix-Lab: Coding LLM Next
+  Steps Post PR262`, `pages/08_Scenario_Planner.py`): a "Manual plan
+  evaluation method" radio (steady-state monthly / sequential weekly) on
+  the "Edited plan and calculated result" tab only - the constrained and
+  unconstrained-benchmark optimiser tabs remain steady-state-only. The
+  sequential plan window always starts the Monday immediately following
+  the market's last historical week, continuing the exact same weekly
+  cadence with no gap - never the steady-state tab's user-chosen start
+  month. Reuses the existing monthly spend-plan grid and governance
+  inputs unchanged: re-seats the analyst's ordered monthly values onto
+  real calendar months, resolves the reference/counterfactual plan via
+  the existing `core.scenario_governance.resolve_counterfactual` at
+  monthly grain before re-seating (identically to the candidate, confirmed
+  period-key-agnostic), builds a future context (official mode unless the
+  fit has exogenous controls, in which case exploratory
+  `hold_last_observed` with an explicit not-decision-ready warning), and
+  routes through `ScenarioService.evaluate_manual_sequential`. Because the
+  first sequential month is therefore necessarily partial and
+  `calendar_day_overlap_v1` can only reconcile a month its `calendar`
+  fully covers (`REQ-SCEN-002`), the page phases that first month directly
+  with the same day-overlap formula scoped to the covered days only, and
+  every subsequent whole month through the unmodified governed function,
+  summing the two contributions per week - `core/planning/phasing.py`
+  itself is unchanged. Renders weekly and monthly incremental tables and
+  short/long response-horizon metrics. **Not yet implemented in this UI:**
+  terminal incremental carryover and posterior uncertainty (available via
+  the core/service APIs directly), sequential-weekly optimisation, and
+  saving/exporting a sequential scenario - all explicitly disclosed on the
+  page, not silently absent. See Known bounded gaps below.
 
 ## Known bounded gaps
 
@@ -335,29 +365,19 @@ business or modelling definitions:
   `Union[float, np.ndarray]`, matching how every multi-channel caller
   already invokes it - retiring 4 further pre-existing errors); it is a
   ceiling, not a target. CI must fail if the measured count increases.
-- The Scenario Planner *page* (`pages/08_Scenario_Planner.py`) and
-  `core.optimization`'s objective still only offer the steady-state
-  monthly approximation - a sequential-weekly method choice is not yet
-  exposed in the UI. Every layer below the page now exists (see Delivered
-  foundation above): the sequential weekly simulation kernel with starting
-  adstock, terminal carryover, and draw-consistent posterior evaluation
-  for both model types (WP5 of `...After PR #253` / WP3 of `...Post
-  PR262`, `core.sequential_simulation`), a monthly-to-weekly phasing
-  contract (WP1 of `...Post WP5`, `core.planning.phasing`), a future-
-  context builder, governed `WeeklyPlan` construction boundary, and
-  terminal candidate/reference evaluator (WP4 of `...Post PR262`,
-  `core.planning.future_context`/`weekly_plan_builder`/
-  `terminal_response`), a shared sequential evaluation context (WP3,
-  `core.sequential_evaluation_context`), and - as of WP5 of `...Post
-  PR262` - the application-*service* orchestration layer itself
-  (`core.sequential_scenario_evaluation`, `application.scenario_service.
-  ScenarioService.evaluate_manual_sequential`), reusing the steady-state
-  path's own governance/economics machinery rather than duplicating it.
-  Wiring this service into the Scenario Planner UI (a method toggle, the
-  phasing/future-context pipeline driven by user input, sequential result
-  rendering, persistence/staleness, and a real browser-lifecycle test) or
-  the optimiser's objective is a documented, not-yet-attempted follow-up,
-  not a modelling or core-engineering gap.
+- The Scenario Planner *page*'s manual tab (`pages/08_Scenario_
+  Planner.py`, WP5 part 2 of `...Post PR262`) now offers a sequential-
+  weekly method choice alongside the existing steady-state monthly
+  approximation - see Delivered foundation above for what it wires
+  together and its own explicitly-disclosed gaps (terminal carryover,
+  posterior uncertainty, persistence not yet in this UI). Both optimiser
+  tabs (constrained and unconstrained-benchmark) and `core.optimization`'s
+  objective still only offer the steady-state monthly approximation - a
+  sequential-weekly method choice is not yet exposed there. Wiring
+  sequential evaluation into the optimiser's objective (and, for the
+  manual tab, terminal/posterior rendering, persistence/staleness, and a
+  real browser-lifecycle test for the sequential path) is a documented,
+  not-yet-attempted follow-up, not a modelling or core-engineering gap.
 - Chronos-2 or another future exogenous forecasting integration is not yet
   implemented.
 - Real UK data readiness is an operational step and must be run only by an
