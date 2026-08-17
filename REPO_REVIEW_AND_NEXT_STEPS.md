@@ -9,10 +9,10 @@ and does not supersede `AGENTS.md`, `docs/approved_requirements/`, or
 
 Repository: `papayasamosa/Media-Mix-Lab`
 
-**Repository state through merged PR #263** (`WP2: post-PR262 authority
-reconciliation and merge-gate hardening`, part of `Media-Mix-Lab: Coding
+**Repository state through merged PR #264** (`WP3: draw-consistent
+sequential state and evaluation context`, part of `Media-Mix-Lab: Coding
 LLM Next Steps Post PR262`) - merge commit
-`8ddf3568aad0f6806f43e9fe3e5e2ddcfea471cd`.
+`ce5b3962b7eb4f66bc7549ab62cc6178c02e1220`.
 
 This document deliberately identifies its baseline by merged PR/work-package
 milestone, never by a field claiming to be "current `main`": a branch
@@ -30,6 +30,9 @@ remote truth.
 
 Historical markers (all superseded merge commits; recorded only for
 history, never as current state):
+`8ddf3568aad0f6806f43e9fe3e5e2ddcfea471cd` (merged PR #263, WP2 of
+`...Post PR262` - authority-doc reconciliation and merge-gate hardening -
+superseded by PR #264 above),
 `a2a4f75422f58f16c1894a2ef02b7a9bb375e53b` (merged PR #262, WP1 of
 `...Post WP5` - the monthly-to-weekly phasing contract, `core.planning.
 phasing`, `REQ-SCEN-002`/`REQ-SCEN-003` - superseded by PR #263 above),
@@ -185,10 +188,41 @@ The current implementation includes:
   ambiguously read as both spend and delivery; and a typed
   `HorizonConfiguration` contract (short/long/plan/terminal horizons,
   explicit values required). This is a framework-independent core module
-  only - it is not yet wired into `core.sequential_simulation.WeeklyPlan`
-  construction or any application service (see Known bounded gaps below).
-  The future-context builder (trend/Fourier/promotions/controls
-  generation) is explicitly deferred, not part of this module.
+  only - not yet wired into any application service (see Known bounded
+  gaps below).
+- Future context, governed `WeeklyPlan` construction, and terminal
+  incremental response (Work Package 4 of `Media-Mix-Lab: Coding LLM Next
+  Steps Post PR262`, `REQ-SCEN-002`/`REQ-SCEN-003`) - the bridge from
+  phased monthly decisions plus explicit future assumptions to an
+  application-safe weekly simulation input:
+  `ancestry_mmm/core/planning/future_context.py` continues the fitted
+  model's own trend definition (per-market row-index normalized by
+  historical count) and Fourier/seasonality definition (calendar-anchored,
+  day-of-year) forward into future weeks - mirrored, not imported, from
+  `data.preprocessor` (`core` must not depend on `data`), kept numerically
+  identical by test; official mode fails closed on any missing future
+  promo/control value, exploratory mode permits an explicitly opted-in,
+  eligible control to use a labelled/fingerprinted/decision-excluded
+  `hold_last_observed` assumption (promotions/events never get this
+  relaxation, in any mode).
+  `ancestry_mmm/core/planning/weekly_plan_builder.py` is the governed
+  construction boundary above phased allocations + future context -
+  validates exact canonical week order, exact expected channel set (no
+  unknown channel silently ignored), finite non-negative values even on
+  direct construction, and Fourier/outcome/control shape/identity against
+  the fitted model - before building `core.sequential_simulation.
+  WeeklyPlan`; stores construction provenance/fingerprint; does not
+  duplicate `application.scenario_service.ScenarioPlan`.
+  `ancestry_mmm/core/planning/terminal_response.py` is the business-facing
+  terminal candidate/reference evaluator distinguished from
+  `core.sequential_simulation.zero_media_extension_plan`'s low-level
+  all-zero decay fixture: extends candidate and reference over the SAME
+  future calendar sharing ONE real future non-decision context, zero
+  future decision media only (the initial residual-carryover policy), and
+  reports `candidate - reference` as a structurally separate
+  `TerminalIncrementalResult`. All three remain framework-independent core
+  modules only - not yet wired into any application service or Streamlit
+  page (see Known bounded gaps below).
 
 ## Known bounded gaps
 
@@ -274,16 +308,21 @@ business or modelling definitions:
 - Scenario planning's *application-layer* surface (`application/
   scenario_service.py`, `pages/08_Scenario_Planner.py`,
   `core.optimization`'s objective) remains a steady-state monthly
-  approximation. The underlying sequential weekly simulation kernel with
-  starting adstock and terminal carryover now exists (WP5,
-  `core.sequential_simulation`, see Delivered foundation above), and so
-  does a monthly-to-weekly phasing contract to feed it (WP1 of
-  `...Post WP5`, `core.planning.phasing`, see Delivered foundation above) -
-  wiring both into the Scenario Planner UI or the optimiser's objective is
-  a documented, not-yet-attempted application-integration follow-up, not a
-  modelling gap. The future-context builder (trend/Fourier/promotions/
-  controls for a future scenario window) is a separate, also-not-yet-
-  implemented dependency of that same integration.
+  approximation. Every core-module piece the sequential path needs now
+  exists (see Delivered foundation above): the sequential weekly
+  simulation kernel with starting adstock, terminal carryover, and
+  draw-consistent posterior evaluation for both model types (WP5 of
+  `...After PR #253` / WP3 of `...Post PR262`,
+  `core.sequential_simulation`), a monthly-to-weekly phasing contract
+  (WP1 of `...Post WP5`, `core.planning.phasing`), a future-context
+  builder, governed `WeeklyPlan` construction boundary, and terminal
+  candidate/reference evaluator (WP4 of `...Post PR262`,
+  `core.planning.future_context`/`weekly_plan_builder`/
+  `terminal_response`), and a shared sequential evaluation context (WP3,
+  `core.sequential_evaluation_context`). Wiring all of this into the
+  Scenario Planner UI or the optimiser's objective is a documented,
+  not-yet-attempted application-integration follow-up (Work Package 5 of
+  `...Post PR262`), not a modelling or core-engineering gap.
 - Chronos-2 or another future exogenous forecasting integration is not yet
   implemented.
 - Real UK data readiness is an operational step and must be run only by an

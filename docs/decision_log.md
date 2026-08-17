@@ -4697,3 +4697,115 @@ application service. mypy: 241 unchanged (new module type-checks clean).
 **Owner:** Data Science / Platform engineering.
 **Status:** Accepted; implemented on this work package's branch. PR and CI
 remain the release gate.
+
+## Future context, governed WeeklyPlan construction, and terminal incremental response (Work Package 4)
+
+**Date:** 2026-08-17
+**Decision:** Build the bridge from phased monthly decisions plus explicit
+future assumptions to an application-safe weekly simulation input
+(`Media-Mix-Lab: Coding LLM Next Steps Post PR262`), three new
+framework-independent `core/planning/` modules:
+
+1. **`future_context.py`** - continues the fitted model's own trend and
+   Fourier/seasonality definitions into future weeks, rather than
+   inventing a new one. Research finding before writing any code: trend is
+   defined in `data.preprocessor.prepare_fh_modeling_frame` as a
+   per-market row-position index normalized by that market's own
+   historical row count (`arange(n) / max(n - 1, 1)`) - not date-derived,
+   no shared origin across markets - while Fourier/seasonality
+   (`create_fourier_features_from_calendar`) is already a pure function of
+   calendar date (day-of-year, `period_days=365.25`) with no historical-
+   length dependency, so it generalises to future dates unchanged.
+   `continue_trend` extends the SAME trend formula forward at future row
+   positions (never reset to zero, never held flat - the existing
+   Scenario Planner's steady-state approximation holds trend flat at the
+   last historical value, explicitly documented there as "a planning
+   approximation, not a forecast"; this module's contract requires the
+   real continuation instead). `continue_fourier` reproduces the same
+   calendar-anchored formula. Neither function *imports*
+   `data.preprocessor` - that module already imports from `core`
+   (`core.schema`, `core.outcomes`), so `core` importing back from `data`
+   would be a circular/layering-inverted dependency (confirmed by an
+   actual `ImportError` when first wired into `core/planning/__init__.py`
+   - see point 4 below). Both formulas are mirrored instead, kept
+   numerically identical by test. Promotions/events always require an
+   explicit future value in every mode (no relaxation); exogenous controls
+   require an explicit future value in official mode (fail closed if
+   absent) or may use an explicitly opted-in, explicitly eligible
+   `hold_last_observed` assumption in exploratory mode only - recorded
+   per-control and excluded from decision-ready status.
+2. **`weekly_plan_builder.py`** - the governed construction boundary above
+   phased allocations (`core.planning.phasing.WeeklyAllocationResult`/
+   `WeeklyModelInputDerivation`) and a `FutureContextResult`: validates
+   exact canonical week order, an exact expected channel set (an unknown
+   extra channel previously would have been silently ignored by
+   `WeeklyPlan.to_media_matrix`, which only raises for a *missing*
+   channel), finite non-negative allocation values even on a directly-
+   constructed allocation, and Fourier/outcome/control shape and identity
+   against the fitted model - before constructing `core.sequential_
+   simulation.WeeklyPlan`. Stores construction provenance/fingerprint.
+   Deliberately does not duplicate `application.scenario_service.
+   ScenarioPlan` (the steady-state method's own input type).
+3. **`terminal_response.py`** - the business-facing terminal candidate/
+   reference evaluator the prior authority review (Work Package 2) named
+   as missing: `core.sequential_simulation.zero_media_extension_plan` is a
+   low-level decay fixture (zero future media AND zero promo/trend/
+   Fourier/controls), correct for isolating pure adstock decay in a unit
+   test but not a business terminal-response definition. This module
+   extends candidate and reference over the SAME future calendar sharing
+   ONE real future non-decision context (trend/seasonality/controls/
+   promotions, never zeroed), zero future decision media only (the
+   initial residual-carryover policy), and reports `candidate - reference`
+   as a structurally separate, typed `TerminalIncrementalResult` - never
+   folded into a plan-window result or an optimisation objective.
+4. **Circular-import fix.** Initially wired `weekly_plan_builder`/
+   `terminal_response` into `core/planning/__init__.py`'s top-level
+   re-exports (matching `phasing.py`'s own precedent) - this produced a
+   real `ImportError` (`cannot import name 'DEFAULT_N_DRAWS' from
+   partially initialized module 'ancestry_mmm.core.uncertainty'`), because
+   `core.sequential_simulation` itself imports `core.planning.value`,
+   which triggers `core/planning/__init__.py` to execute first; that
+   `__init__.py` importing `terminal_response`, which imports
+   `core.sequential_simulation` back, completed the cycle. Fixed by
+   importing `weekly_plan_builder`/`terminal_response` directly from their
+   submodule paths (not re-exported from the package `__init__`) -
+   `future_context.py` has no such dependency and remains re-exported.
+   Caught before merge by the exact `Compile + Import` CI job's own
+   `import ancestry_mmm.core.optimization` check, reproduced locally
+   first.
+
+**Alternatives considered:** Holding trend flat at the last historical
+value for the future window, matching the existing Scenario Planner's
+steady-state approximation (rejected - REQ-SCEN-002 requires the future
+context be "generated deterministically... using the same model
+definition the fitted model used," and that existing approximation is
+itself explicitly documented as a steady-state-only compromise, not a
+contract this genuinely sequential future-context builder should inherit).
+Importing `create_fourier_features_from_calendar`/the trend formula
+directly from `data.preprocessor` (rejected - real circular import, `data`
+already depends on `core`; mirrored with equivalence tests instead,
+matching this repository's existing precedent for `core.planning.phasing`
+vs. `core.frequency_conversion`'s day-overlap arithmetic). Allowing
+promotions to use `hold_last_observed` in exploratory mode, symmetric with
+exogenous controls (rejected - REQ-SCEN-002's text scopes that relaxation
+to "future exogenous controls" only; promotions/events require an explicit
+planned value or approved event schedule in every mode).
+**Impact:** New `ancestry_mmm/core/planning/future_context.py`,
+`weekly_plan_builder.py`, `terminal_response.py`; `core/planning/__init__.py`
+re-exports extended (`future_context` only, see point 4 above) and its
+module-layout docstring updated to explain the two modules deliberately
+not re-exported; new `ancestry_mmm/tests/test_future_context.py`,
+`test_weekly_plan_builder.py`, `test_terminal_response.py`; `docs/
+approved_requirements/REQ-SCEN-002.md`/`REQ-SCEN-003.md` and
+`docs/specification_authority.md` updated to reflect implementation;
+`REPO_REVIEW_AND_NEXT_STEPS.md` baseline bumped to PR #264 and "Delivered
+foundation"/"Known bounded gaps" updated. No schema, migration, or
+persisted-field changes - these remain framework-independent core modules,
+not yet called from any application service (Work Package 5). mypy: 241
+unchanged (one new error surfaced and fixed during development - a
+parameter-name shadowing issue in `future_context.py` that widened a
+local variable's inferred type back to its declared parameter type after
+reassignment; renamed the local instead of reusing the parameter name).
+**Owner:** Data Science / Platform engineering.
+**Status:** Accepted; implemented on this work package's branch. PR and CI
+remain the release gate.

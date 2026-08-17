@@ -8,6 +8,17 @@ compatibility.
 Domain layout:
 - ``value.py``: Pure value objects and dataclasses (canonical definitions)
 - ``phasing.py``: Monthly-to-weekly phasing contract (REQ-SCEN-002, WP1)
+- ``future_context.py``: Future trend/Fourier/promo/control context
+  builder (REQ-SCEN-002, WP4 of ``...Post PR262``)
+- ``weekly_plan_builder.py``: Governed ``WeeklyPlan`` construction
+  boundary (WP4 of ``...Post PR262``) - import directly
+  (``core.planning.weekly_plan_builder``), not re-exported here: it
+  depends on ``core.sequential_simulation``, which itself imports
+  ``core.planning.value`` - re-exporting it from this package's
+  ``__init__`` would be a circular import.
+- ``terminal_response.py``: Terminal candidate/reference evaluator
+  (WP4 of ``...Post PR262``) - same reason, import directly
+  (``core.planning.terminal_response``), not re-exported here.
 - ``governance.py``: Planning governance logic (to be moved)
 - ``objectives.py``: Planning objectives (to be moved)
 - ``constraints.py``: Spend constraints (to be moved)
@@ -20,6 +31,18 @@ Domain layout:
 
 from __future__ import annotations
 
+from .future_context import (
+    EXPLICIT_ASSUMPTION,
+    EXPLORATORY_MODE,
+    HOLD_LAST_OBSERVED_ASSUMPTION,
+    OFFICIAL_MODE,
+    FutureContextError,
+    FutureContextResult,
+    FutureControlAssumption,
+    build_future_context,
+    continue_fourier,
+    continue_trend,
+)
 from .phasing import (
     EXPLICIT_OVERRIDE_METHOD_ID,
     HorizonConfiguration,
@@ -61,11 +84,18 @@ __all__ = [
     "AdstockState",
     "CurrencyContext",
     "CURRENT_PLANNING_EVALUATION_SEMANTICS",
+    "EXPLICIT_ASSUMPTION",
     "EXPLICIT_OVERRIDE_METHOD_ID",
+    "EXPLORATORY_MODE",
+    "FutureContextError",
+    "FutureContextResult",
+    "FutureControlAssumption",
+    "HOLD_LAST_OBSERVED_ASSUMPTION",
     "HorizonConfiguration",
     "MethodProvenance",
     "MonetaryPhasingResult",
     "MonthReconciliation",
+    "OFFICIAL_MODE",
     "OutcomeValueMapping",
     "PHASING_METHOD_ID",
     "PHASING_METHOD_VERSION",
@@ -81,7 +111,10 @@ __all__ = [
     "ScenarioValidationContext",
     "WeeklyAllocationResult",
     "WeeklyModelInputDerivation",
+    "build_future_context",
     "canonical_weeks",
+    "continue_fourier",
+    "continue_trend",
     "phase_model_input_plan_calendar_day_overlap_v1",
     "phase_monetary_plan_calendar_day_overlap_v1",
     "phase_monthly_series_calendar_day_overlap_v1",
