@@ -23,7 +23,59 @@ constraint.
 
 ## Capability status
 
-Not yet implemented. Target-state contract only.
+Core diagnostic implemented (Work Package 3, second record, 2026-08-17):
+`ancestry_mmm/core/latent_state_identification.py` provides a model-
+agnostic identification-declaration contract and empirical stability
+check. `LatentStateIdentificationDeclaration` stores the identifying
+strategy for one latent state explicitly (one of the five kinds listed
+in Requirement 1; a required, non-empty `description`; an optional
+`anchor_reference`) — satisfying Requirement 2's "must be stored ...
+not left implicit in code." `assess_latent_state_identification`
+resolves a closed, four-value status per latent state (`identified`;
+`review_required`; `not_identified`; `unsupported_by_current_checker`):
+no declaration at all is `not_identified` outright (Requirement 1
+directly unmet); a declaration with no supplied posterior draws is
+`review_required` (declared but not yet empirically checked under
+sampling, per Requirement 4); fewer than two supplied chains is
+`unsupported_by_current_checker`; two or more chains are compared by
+each chain's median of a caller-supplied representative scalar, and
+disagreement in sign across chains — a structural indeterminacy, not a
+graded threshold — is `not_identified` with `sign_flip_detected=True`
+(Requirement 4's "posterior sampling does not reveal unresolved scale
+or sign indeterminacy"). `scale_drift_ratio` is always reported as
+descriptive evidence only, mirroring `core.structural_stability.
+ParameterFoldComparison.point_range`'s "report movement, never a
+verdict" pattern, since no scale-drift materiality threshold has been
+approved. `is_eligible_for_official_use` implements Requirement 5's
+fail-closed use-eligibility gate: only `identified` is eligible: every
+other status, including `review_required`, fails closed. Every result
+carries `LATENT_STATE_IDENTIFICATION_DISCLAIMER` and never exposes a
+bare boolean. This is a standalone module/dataclass family, never
+collapsed into `EstimandIdentificationResult` or
+`StructuralStabilityArtefact` (Requirement 6).
+
+This module does not fit or re-fit a model — the caller supplies the
+declaration and, optionally, per-chain posterior draws, mirroring
+`core.structural_stability`'s established "the caller supplies the
+fold-local computation" pattern. It does not modify `core.
+search_capacity` and does not assert or imply any specific identifying
+anchor for Candidate A's `latent_branded_search_demand` — that
+substantive statistical choice (`MD-021`) remains an explicitly
+unresolved decision, per this reconciliation record's own "Unresolved
+decisions" section and the PRD-authority instruction governing this
+program (do not implement directly from PRD prose without an approved
+requirement or decision package; do not guess an unresolved statistical
+decision).
+
+Not yet implemented: Requirement 3 (extending `core.graph_model_
+compiler`'s blocking-error contract for unresolved latent-state
+identification), full synthetic-recovery validation and decision-
+instability detection for Requirement 4's remaining two sub-items (both
+require a real fit/re-fit pipeline this module does not run), and
+`DiagnosticsArtefact`/Causal-Graph-page wiring — all deferred as
+separate integration follow-ups, consistent with how Work Package 1/2/3's
+other core diagnostics were shipped ahead of their own compiler/UI
+wiring.
 
 ## Requirement
 
@@ -95,18 +147,38 @@ undifferentiated status.
 - business/technical labels for identification status (Part 10 §47
   `UX-028`).
 
-## Affected modules (target)
+## Affected modules
 
-- `ancestry_mmm/core/search_capacity.py` (Candidate A's latent demand state
-  — first concrete integration target, per PRD reconciliation instruction)
-- `ancestry_mmm/core/graph_model_compiler.py` (extend blocking-error
-  contract for unresolved latent-state identification)
-- a shared latent-state identification domain object (module TBD)
-- `docs/approved_requirements/REQ-LATENT-001.md` (new)
-- `docs/approved_requirements/index.json` (new entry)
+- `ancestry_mmm/core/latent_state_identification.py` (new —
+  `LatentStateIdentificationDeclaration`, `LatentStateIdentificationResult`,
+  `assess_latent_state_identification`, `is_eligible_for_official_use`)
+- `ancestry_mmm/core/search_capacity.py` (not yet touched — Candidate A's
+  latent demand state remains the first concrete integration target, but
+  its actual identifying anchor is a separate, unresolved decision)
+- `ancestry_mmm/core/graph_model_compiler.py` (not yet touched —
+  Requirement 3's compiler-blocking extension is deferred)
+- `ancestry_mmm/core/structural_stability.py` (read-only precedent for
+  this record's "caller supplies the computation" and "report movement,
+  never a verdict" patterns — no shared code, no coupling)
+- `ancestry_mmm/pages/14_Causal_Graph.py` / `ancestry_mmm/pages/06_
+  Diagnostics.py` (not yet wired — deferred)
+- `docs/approved_requirements/REQ-LATENT-001.md` (this record)
+- `docs/approved_requirements/index.json` (updated)
 
 ## Required tests
 
+- `ancestry_mmm/tests/test_latent_state_identification.py` (26 tests:
+  declaration validation/round-trip; no declaration resolving
+  `not_identified` regardless of supplied chain draws; a declaration
+  with no chain draws resolving `review_required`; fewer than two
+  chains resolving `unsupported_by_current_checker`; disagreeing signs
+  across two and three chains resolving `not_identified` with
+  `sign_flip_detected=True`, including a zero-median chain counting as
+  a distinct sign; agreeing signs resolving `identified` with a
+  descriptive `scale_drift_ratio`; caller-contract errors for a missing
+  latent_state_id, a mismatched declaration latent_state_id, and an
+  empty chain; the fail-closed use-eligibility gate for every status;
+  and result validation/round-trip with and without a declaration)
 - `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists`
 - `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists`
 - `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid`
@@ -117,11 +189,12 @@ undifferentiated status.
 
 ## Migration impact
 
-None yet. Implementing Requirement 3 against Candidate A will require
-`core.search_capacity`'s latent-demand construction to declare an
-identification strategy — a fit-relevant change requiring re-fit and
-fingerprint invalidation for any project with an existing Candidate A fit,
-once implemented.
+None to persisted artefacts or model-mathematics files — this module is
+additive and standalone. Implementing Requirement 3 against Candidate A
+will still require `core.search_capacity`'s latent-demand construction
+to declare an identification strategy — a fit-relevant change requiring
+re-fit and fingerprint invalidation for any project with an existing
+Candidate A fit, once implemented.
 
 ## Unresolved decisions
 

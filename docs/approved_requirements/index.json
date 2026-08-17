@@ -638,6 +638,7 @@
       "status": "approved_for_implementation",
       "record_path": "docs/approved_requirements/REQ-LATENT-001.md",
       "affected_modules": [
+        "ancestry_mmm/core/latent_state_identification.py",
         "docs/approved_requirements/REQ-LATENT-001.md",
         "docs/approved_requirements/index.json"
       ],
@@ -648,7 +649,12 @@
         "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
-        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable"
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_latent_state_identification.py::TestNoDeclaration::test_missing_declaration_is_not_identified",
+        "ancestry_mmm/tests/test_latent_state_identification.py::TestSignFlipDetection::test_disagreeing_signs_across_chains_is_not_identified",
+        "ancestry_mmm/tests/test_latent_state_identification.py::TestStableAcrossChains::test_agreeing_signs_is_identified",
+        "ancestry_mmm/tests/test_latent_state_identification.py::TestUseEligibilityGate::test_review_required_is_not_eligible",
+        "ancestry_mmm/tests/test_latent_state_identification.py::TestResultValidation::test_round_trip_with_declaration"
       ]
     },
     {
