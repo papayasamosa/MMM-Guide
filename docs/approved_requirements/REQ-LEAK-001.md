@@ -26,7 +26,47 @@ this repository currently claims to satisfy the contract below.
 
 ## Capability status
 
-Not yet implemented. Target-state contract only.
+Core contract implemented (Work Package 1, 2026-08-17):
+`ancestry_mmm/core/validation_folds.py` provides `ValidationFold` (typed,
+versioned fold manifest satisfying Requirement 1), `build_expanding_
+window_folds` (the same boundary arithmetic `expanding_window_backtest`
+uses internally, extracted into inspectable fold objects),
+`assess_fold_source_reconstruction` (per-variable leakage assessment
+against a `core.coverage.VariableCoverageMatrix`, reusing `core.
+frequency_alignment.check_publication_leakage`/`check_definition_break_
+crossing` rather than a second leakage-detection mechanism — satisfies
+Requirements 2-4), and `leakage_safe_expanding_window_backtest` (refuses
+to call `fit_fold_fn` for a fold whose assessment did not clear —
+satisfies Requirement 3/5's "provable, not assumed" and "time-respecting,
+never random-split" invariants).
+
+`information_cutoff` defaults to a fold's own `train_end` — the
+leakage-safe semantic requires asking "what was knowable exactly at the
+end of this fold's training window", not "what do we know today with
+every subsequent revision". A caller with a genuine point-in-time vintage
+source may supply a different, later `information_cutoff` explicitly.
+
+What this assessment can verify today is bounded by what `Variable
+CoverageMatrix` metadata records: effective periods, publication lag,
+definition breaks, and coverage-segment ambiguity (`unavailable_source`/
+`unknown` states overlapping a fold's training window are reported as a
+`cannot_verify` limitation, never silently treated as safe). It does
+**not** yet rebuild the full model-ready `frame`/scaling/mixed-frequency
+pipeline per fold from raw sources (Requirement 2's "scaling fit on
+training data only", "lag/adstock/state initialisation" items remain a
+contract for a future real-model-integration pass, not verified by
+metadata alone) — this is recorded as an explicit remaining scope, not
+silently claimed as done. `core.diagnostics.expanding_window_backtest`
+itself is unchanged and still carries no leakage-safety claim.
+
+Not yet wired: `DiagnosticsArtefact`/Diagnostics-page integration
+(deferred so Work Package 2's structural-stability evidence — which
+Requirement 6 says must share these same fold manifests — is designed
+into the same schema/UI addition once, not twice); expensive real-fold
+PyMC re-fitting (this record's own "Unresolved decisions" already flagged
+this as schedule/manual evidence pending a measured normal-CI runtime
+case, and none is added here — all tests use injected/fake `fit_fold_fn`
+callables per the brief's own instruction).
 
 ## Requirement
 
@@ -101,16 +141,27 @@ be hard-coded from this record:
   (Part 7 §48 `VL-002`);
 - any specific numeric tolerance for fold-level reconciliation checks.
 
-## Affected modules (target)
+## Affected modules
 
-- `ancestry_mmm/core/diagnostics.py` (extend; `expanding_window_backtest`
-  must not be presented as satisfying this contract until extended)
-- a new fold-manifest domain object (module TBD at implementation time)
-- `docs/approved_requirements/REQ-LEAK-001.md` (new)
-- `docs/approved_requirements/index.json` (new entry)
+- `ancestry_mmm/core/validation_folds.py` (new — `ValidationFold`,
+  `VariableReconstructionAssessment`, `FoldReconstructionAssessment`,
+  `build_expanding_window_folds`, `assess_fold_source_reconstruction`,
+  `leakage_safe_expanding_window_backtest`)
+- `ancestry_mmm/core/diagnostics.py` (unchanged — `expanding_window_
+  backtest` remains a plain date-sliced backtest with no leakage-safety
+  claim; verified by `TestLeakageSafeExpandingWindowBacktest::
+  test_does_not_mutate_expanding_window_backtest`)
+- `docs/approved_requirements/REQ-LEAK-001.md` (this record)
+- `docs/approved_requirements/index.json` (updated)
 
 ## Required tests
 
+- `ancestry_mmm/tests/test_validation_folds.py` (30 tests: fold
+  construction/validation, fold-boundary and no-future-leakage-in-split
+  blocking tests, per-variable leakage assessment across every status —
+  safe, not-yet-effective, publication-lag risk, definition-break
+  crossing, cannot-verify — and the key blocking test that a fold failing
+  assessment never calls `fit_fold_fn`)
 - `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists`
 - `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists`
 - `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid`
@@ -121,16 +172,25 @@ be hard-coded from this record:
 
 ## Migration impact
 
-None. No existing schema, model, or persisted artefact changes as a result
-of this record.
+None. `core.validation_folds` is a new, additive module with no persisted
+artefact today; no existing schema, model, or persisted artefact changes.
 
 ## Unresolved decisions
 
-- Fold-manifest schema and storage location (new module vs. extending
-  `core.diagnostics`).
+- The minimum source-vintage/publication-lag/preprocessing evidence
+  required to describe a fold as leakage-safe *for production use* (Part
+  7 §48 `VL-023`) — this record reports what it can verify and what it
+  cannot; the production threshold policy remains a separate decision.
+- Whether/how to rebuild the full model-ready `frame`/scaling/mixed-
+  frequency pipeline per fold from raw sources, beyond what `Variable
+  CoverageMatrix` metadata can verify — deferred to a future
+  real-model-integration pass.
+- `DiagnosticsArtefact`/Diagnostics-page schema and UI wiring — deferred
+  to be designed jointly with Work Package 2's structural-stability
+  evidence (Requirement 6), not built twice.
 - Whether expensive real-fold PyMC recovery runs as schedule/manual CI
-  evidence or normal-CI evidence, per the brief's own guidance that this
-  should be justified by measured normal-CI runtime.
+  evidence or normal-CI evidence — no real-model test was added; all
+  tests use injected/fake `fit_fold_fn` callables.
 
 ## Owner
 

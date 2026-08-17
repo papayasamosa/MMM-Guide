@@ -5242,3 +5242,84 @@ remains zero-tolerance clean; full-core ratchet unchanged at 241/241.
 **Owner:** Data Science / Platform engineering.
 **Status:** Accepted; implemented on this work package's branch. PR and CI
 remain the release gate.
+
+
+## Leakage-safe historical validation foundation (Work Package 1)
+
+**Context:** REQ-LEAK-001 (approved Work Package 0) required making
+historical validation reconstruct the information state available at
+each fold, rather than trusting a caller-supplied date slice. `core.
+diagnostics.expanding_window_backtest` already existed but performed only
+a bare date-sliced train/test split with no way to verify whether the
+preprocessing state behind the supplied dataframe was itself leakage-safe.
+
+**Decision:** Added `core/validation_folds.py`: `ValidationFold` (a typed,
+versioned fold manifest - fold ID, train/test window, market/outcome
+scope, and an `information_cutoff` that defaults to the fold's own
+`train_end`, not "today" - the leakage-safe semantic is "what was
+knowable exactly at the end of this fold's training window", never "what
+do we know today with the benefit of every subsequent revision"),
+`build_expanding_window_folds` (the same boundary arithmetic `expanding_
+window_backtest` uses internally, extracted into inspectable objects),
+`assess_fold_source_reconstruction` (per-variable leakage assessment
+against a `core.coverage.VariableCoverageMatrix`, reusing `core.
+frequency_alignment.check_publication_leakage`/`check_definition_break_
+crossing` rather than inventing a second leakage-detection mechanism -
+flags a variable not yet effective, crossing an unapproved definition
+break, subject to publication-lag leakage as of the fold's cutoff, or
+overlapping an `unavailable_source`/`unknown` coverage segment as
+`cannot_verify`, the last of which is guaranteed to also record a
+fold-level limitation so it can never be silently treated as safe), and
+`leakage_safe_expanding_window_backtest` (builds folds, assesses each,
+and - the key contract guarantee - never calls `fit_fold_fn` for a fold
+the assessment did not clear).
+
+`core.diagnostics.expanding_window_backtest` itself is completely
+unchanged - this is an additive module, not a silent upgrade of that
+helper's contract, per REQ-LEAK-001's own instruction not to present the
+existing helper as satisfying the stronger contract. A dedicated test
+(`test_does_not_mutate_expanding_window_backtest`) asserts the original
+function's output has no `leakage_safe` column and remains fully usable.
+
+**Scope boundary (recorded, not silently assumed complete):** this
+assessment verifies what `VariableCoverageMatrix` metadata can prove
+(effective periods, publication lag, definition breaks, coverage-segment
+ambiguity). It does not rebuild the full model-ready `frame`/scaling/
+mixed-frequency pipeline per fold from raw sources - REQ-LEAK-001
+requirement 2's "scaling fit on training data only" and "lag/adstock/
+state initialisation" items remain a contract for a future real-model-
+integration pass. `DiagnosticsArtefact`/Diagnostics-page wiring is also
+deferred, so it can be designed once, jointly with Work Package 2's
+structural-stability evidence (REQ-LEAK-001 requirement 6 requires the
+two share one fold-manifest notion, not two divergent ones).
+
+**Rejected alternative:** Wiring this evidence into `DiagnosticsArtefact`
+(a new schema v8 section) and the Diagnostics page in this same package
+(rejected - Work Package 2's structural-stability evidence is explicitly
+required to consume the same fold manifests; building the schema/UI
+integration now and again for WP2 risks two divergent implementations of
+"what a fold reconstructed". Building the typed core contract with fast,
+synthetic, injected-fit-function tests first - exactly what the brief's
+own WP1 instructions ask for - and deferring the shared UI/schema
+integration to when both consumers exist is the narrower, lower-risk
+sequencing).
+
+**Impact:** `ancestry_mmm/core/validation_folds.py` (new);
+`ancestry_mmm/tests/test_validation_folds.py` (new, 30 tests - fold
+construction/validation, fold-boundary and no-future-leakage-in-split
+blocking tests, per-variable leakage assessment across every status, and
+the key blocking test proving a failed-assessment fold never reaches
+`fit_fold_fn`); `docs/approved_requirements/REQ-LEAK-001.md` (Capability
+status, Affected modules, Required tests, and Unresolved decisions
+updated to reflect what is implemented and what remains);
+`docs/approved_requirements/index.json` (updated); `docs/specification_
+authority.md` (gap-table row updated). No change to `core.diagnostics`,
+`core.coverage`, or `core.frequency_alignment` - this module only
+composes their existing, already-tested primitives. mypy: new module
+clean under `--ignore-missing-imports --follow-imports=silent`; full-core
+ratchet unchanged at 241/241. No schema, migration, or persisted-artefact
+changes.
+
+**Owner:** Data Science / Platform engineering.
+**Status:** Accepted; implemented on this work package's branch. PR and CI
+remain the release gate.

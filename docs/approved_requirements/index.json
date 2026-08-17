@@ -540,6 +540,7 @@
       "status": "approved_for_implementation",
       "record_path": "docs/approved_requirements/REQ-LEAK-001.md",
       "affected_modules": [
+        "ancestry_mmm/core/validation_folds.py",
         "docs/approved_requirements/REQ-LEAK-001.md",
         "docs/approved_requirements/index.json"
       ],
@@ -550,7 +551,13 @@
         "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
-        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable"
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_validation_folds.py::TestBuildExpandingWindowFolds::test_no_future_row_ever_enters_a_fold_train_window",
+        "ancestry_mmm/tests/test_validation_folds.py::TestBuildExpandingWindowFolds::test_mutating_future_rows_never_changes_an_earlier_folds_train_slice",
+        "ancestry_mmm/tests/test_validation_folds.py::TestAssessFoldSourceReconstruction::test_publication_lag_with_default_information_cutoff_leaks",
+        "ancestry_mmm/tests/test_validation_folds.py::TestLeakageSafeExpandingWindowBacktest::test_unsafe_fold_never_calls_fit_fold_fn",
+        "ancestry_mmm/tests/test_validation_folds.py::TestLeakageSafeExpandingWindowBacktest::test_mixed_folds_call_fit_fold_fn_only_for_the_safe_ones",
+        "ancestry_mmm/tests/test_validation_folds.py::TestLeakageSafeExpandingWindowBacktest::test_does_not_mutate_expanding_window_backtest"
       ]
     },
     {
