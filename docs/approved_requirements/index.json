@@ -583,6 +583,8 @@
       "status": "approved_for_implementation",
       "record_path": "docs/approved_requirements/REQ-PPD-001.md",
       "affected_modules": [
+        "ancestry_mmm/core/diagnostics.py",
+        "ancestry_mmm/core/market_specific_diagnostics.py",
         "docs/approved_requirements/REQ-PPD-001.md",
         "docs/approved_requirements/index.json"
       ],
@@ -593,7 +595,10 @@
         "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
-        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable"
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_posterior_predictive_metric_distributions.py::TestPosteriorPredictiveMetricDistributions::test_point_value_matches_error_metrics_by_outcome_exactly",
+        "ancestry_mmm/tests/test_posterior_predictive_metric_distributions.py::TestPosteriorPredictiveMetricDistributions::test_distribution_mean_differs_from_point_for_nonlinear_metric_under_noise",
+        "ancestry_mmm/tests/test_posterior_predictive_metric_distributions.py::TestPosteriorPredictiveMetricDistributionsMarketSpecific::test_point_value_matches_market_specific_error_metrics_exactly"
       ]
     },
     {

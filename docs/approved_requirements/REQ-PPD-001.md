@@ -23,7 +23,36 @@ evidence, not a replacement for it.
 
 ## Capability status
 
-Not yet implemented. Target-state contract only.
+Core contract implemented (Work Package 2, 2026-08-17):
+`core.diagnostics.posterior_predictive_metric_distributions` (Model A) and
+`core.market_specific_diagnostics.posterior_predictive_metric_
+distributions_market_specific` (Model C) compute, per outcome, the
+per-draw distribution of MAE/RMSE/sMAPE/WAPE/bias from `trace.
+posterior["mu"]` (the same posterior-draw-stacking convention `posterior_
+predictive_coverage` already uses), alongside the existing posterior-mean
+point value reused unchanged from `error_metrics_by_outcome`/`error_
+metrics_by_outcome_market_specific` — the two computations can never
+silently diverge because the point value is passed through, not
+recomputed. Each metric gets five columns (`{metric}_point`, `_mean`,
+`_median`, `_lower`, `_upper`) satisfying Requirement 4's artefact-content
+list, plus `draw_count` and `credible_mass`. The draw-level mechanics are
+shared between Model A/C via a private `_posterior_predictive_metric_
+distributions_core` helper (`mu`'s shape does not depend on market-
+specificity), so the two model types can never silently diverge in how
+the distribution itself is computed — only in which point-metric function
+supplies the comparison value.
+
+sMAPE's percentage-metric safeguard (Requirement 3) is handled per draw:
+observations where both actual and predicted are exactly zero are masked
+out of that draw's sMAPE rather than producing a 0/0 artefact, mirroring
+the existing scalar `_smape` helper's own safeguard.
+
+Not yet wired: `DiagnosticsArtefact`/Diagnostics-page integration —
+deferred to land together with `REQ-STAB-001`'s structural-stability
+evidence in one schema/UI addition (the Diagnostics UI must separate
+predictive quality, predictive stability, structural stability,
+identification and approval readiness as one coherent view, not several
+uncoordinated ones), not built twice.
 
 ## Requirement
 
@@ -84,18 +113,25 @@ uncertainty") for more than one of the three objects in Requirement 1.
   anywhere in the source PRD parts and must not be defaulted from this
   record.
 
-## Affected modules (target)
+## Affected modules
 
-- `ancestry_mmm/core/diagnostics.py` (extend; new function alongside
-  `error_metrics_by_outcome`/`market_specific_diagnostics` equivalent,
-  computed per posterior predictive draw rather than on the posterior mean)
-- `ancestry_mmm/pages/06_Diagnostics.py` (render the distribution and the
-  point metric as visually and linguistically distinct)
-- `docs/approved_requirements/REQ-PPD-001.md` (new)
-- `docs/approved_requirements/index.json` (new entry)
+- `ancestry_mmm/core/diagnostics.py` (new: `posterior_predictive_metric_
+  distributions`, `_posterior_predictive_metric_distributions_core`)
+- `ancestry_mmm/core/market_specific_diagnostics.py` (new:
+  `posterior_predictive_metric_distributions_market_specific`)
+- `ancestry_mmm/pages/06_Diagnostics.py` (not yet wired — deferred to land
+  with `REQ-STAB-001`)
+- `docs/approved_requirements/REQ-PPD-001.md` (this record)
+- `docs/approved_requirements/index.json` (updated)
 
 ## Required tests
 
+- `ancestry_mmm/tests/test_posterior_predictive_metric_distributions.py`
+  (10 tests: expected columns/draw-count, point value reused unchanged
+  from `error_metrics_by_outcome*`, the metric-of-the-mean vs. mean-of-
+  the-metric distinction under noise, credible-interval bounding, and the
+  zero-noise-collapses-to-a-point sanity check, for both Model A and
+  Model C)
 - `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists`
 - `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists`
 - `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid`
@@ -106,14 +142,20 @@ uncertainty") for more than one of the three objects in Requirement 1.
 
 ## Migration impact
 
-None yet. Implementation will require an additive `DiagnosticsArtefact`
-schema bump following the existing pattern.
+None yet. `DiagnosticsArtefact` is not yet touched — the additive schema
+bump is deferred to land together with `REQ-STAB-001`.
 
 ## Unresolved decisions
 
 - Which metrics in the existing `error_metrics_by_outcome` set (MAE, RMSE,
   sMAPE, WAPE, bias) get a draw-level distribution in the first
-  implementation versus remaining point-only, pending `VL-021`/`RP-021`.
+  implementation versus remaining point-only, pending `VL-021`/`RP-021` —
+  this implementation computes all five for every outcome; the PRD's own
+  decision registers, not this record, govern which ones are officially
+  required.
+- `DiagnosticsArtefact`/Diagnostics-page schema and UI wiring — deferred
+  to be designed jointly with `REQ-STAB-001`'s structural-stability
+  evidence.
 
 ## Owner
 

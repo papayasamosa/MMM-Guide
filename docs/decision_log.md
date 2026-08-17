@@ -5323,3 +5323,80 @@ changes.
 **Owner:** Data Science / Platform engineering.
 **Status:** Accepted; implemented on this work package's branch. PR and CI
 remain the release gate.
+
+
+## Posterior predictive metric distributions (Work Package 2, part 1)
+
+**Context:** REQ-PPD-001 (approved Work Package 0) required distinguishing
+three analytical objects that had been at risk of conflation: a metric
+(MAE/RMSE/sMAPE/WAPE/bias) calculated once from the posterior-mean
+prediction (`core.diagnostics.error_metrics_by_outcome`, already
+implemented under REQ-VAL-001); the distribution of that same metric
+calculated independently per posterior predictive draw; and the posterior
+predictive interval for the outcome itself (`posterior_predictive_
+coverage`, already implemented, a separate object). No module computed
+the second of these three.
+
+**Decision:** Added `core.diagnostics.posterior_predictive_metric_
+distributions` (Model A) and `core.market_specific_diagnostics.
+posterior_predictive_metric_distributions_market_specific` (Model C),
+both reusing `trace.posterior["mu"].stack(sample=("chain","draw"))` -
+the exact posterior-draw-stacking convention `posterior_predictive_
+coverage` already established - to compute each metric independently per
+draw via straightforward numpy vectorisation (no per-draw Python loop).
+The point-metric column is not recomputed independently; it is the
+existing `error_metrics_by_outcome`/`error_metrics_by_outcome_market_
+specific` value passed straight through, so the two can never silently
+diverge. The draw-level mechanics are shared between Model A and Model C
+via a private `_posterior_predictive_metric_distributions_core` helper,
+matching `core.market_specific_diagnostics`'s own documented precedent
+that `mu`'s shape does not depend on market-specificity (the same reason
+`posterior_predictive_coverage` itself is reused unchanged for both model
+types).
+
+A test (`test_distribution_mean_differs_from_point_for_nonlinear_metric_
+under_noise`) asserts the two point/distribution values are NOT forced
+into numerical agreement under a noisy posterior - proving the
+implementation preserves the substantive distinction REQ-PPD-001 exists
+to create, rather than accidentally computing the same number twice. A
+companion zero-noise test proves the reverse: with no posterior spread,
+the distribution correctly collapses onto the point value, which required
+fixing the test fixture to set fabricated `mu` draws to `predict_mu`'s own
+deterministic output plus noise (not an unrelated synthetic value) - the
+`test_diagnostics_artefact.py` fixture this file's fixture was modelled on
+deliberately decouples its fabricated `mu` from `predict_mu(params)`, which
+is fine for exercising unrelated `DiagnosticsService` plumbing but would
+have made a zero-noise-collapse assertion meaningless here.
+
+**Rejected alternative:** Wiring this evidence into `DiagnosticsArtefact`
+(a new schema v8 section) and `pages/06_Diagnostics.py` in this same
+package (rejected - REQ-STAB-001's structural-stability evidence is the
+other half of Work Package 2 and is expected to land in the same
+Diagnostics-page view, since the brief requires the UI to separate
+predictive quality, predictive stability, structural stability,
+identification and approval readiness as one coherent update. Building
+the schema/UI integration now and again for the structural-stability
+follow-up risks two uncoordinated additions to the same page; landing the
+typed core contract first, exactly as Work Package 1's REQ-LEAK-001
+already did, keeps this PR narrow and defers the shared integration to
+when both consumers exist).
+
+**Impact:** `ancestry_mmm/core/diagnostics.py` (new: `posterior_
+predictive_metric_distributions`, `_posterior_predictive_metric_
+distributions_core`); `ancestry_mmm/core/market_specific_diagnostics.py`
+(new: `posterior_predictive_metric_distributions_market_specific`);
+`ancestry_mmm/tests/test_posterior_predictive_metric_distributions.py`
+(new, 10 tests); `docs/approved_requirements/REQ-PPD-001.md`/`index.json`/
+`docs/specification_authority.md` updated. Two new `trace.posterior[...]`
+accesses on an `az.InferenceData`-annotated parameter are `# type:
+ignore[attr-defined]` (the same pre-existing, already-tolerated mypy
+limitation this exact access pattern already has everywhere else in
+`core.diagnostics`/`core.market_specific_diagnostics`/`core.
+identification_diagnostics` - explicitly suppressed here rather than
+silently raising the full-core mypy ratchet past its 241 ceiling).
+Full-core ratchet confirmed unchanged at 241/241 after the suppression.
+No schema, migration, or persisted-artefact changes.
+
+**Owner:** Data Science / Platform engineering.
+**Status:** Accepted; implemented on this work package's branch. PR and CI
+remain the release gate.

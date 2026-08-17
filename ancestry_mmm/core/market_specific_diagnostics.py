@@ -19,6 +19,7 @@ from .diagnostics import (
     _bias,
     _mae,
     _mape,
+    _posterior_predictive_metric_distributions_core,
     _r_squared,
     _residual_autocorrelation_stats,
     _rmse,
@@ -80,6 +81,27 @@ def error_metrics_by_outcome_market_specific(
             }
         )
     return pd.DataFrame(rows)
+
+
+def posterior_predictive_metric_distributions_market_specific(
+    trace: az.InferenceData,
+    frame: Dict,
+    meta: FHModelMeta,
+    params: FHMarketSpecificPosteriorParams,
+    *,
+    credible_mass: float = 0.9,
+) -> pd.DataFrame:
+    """REQ-PPD-001 (Model C / market-specific model) - Model C equivalent
+    of `core.diagnostics.posterior_predictive_metric_distributions`. The
+    draw-level computation is shared with Model A via `_posterior_
+    predictive_metric_distributions_core` (`trace.posterior["mu"]`'s shape
+    does not depend on whether `hill_K`/`beta` are market-specific); only
+    the point-metric column, reused unchanged from `error_metrics_by_
+    outcome_market_specific`, differs."""
+    point_metrics = error_metrics_by_outcome_market_specific(frame, meta, params)
+    return _posterior_predictive_metric_distributions_core(
+        trace, frame, meta, point_metrics, credible_mass=credible_mass
+    )
 
 
 def residual_temporal_diagnostics_market_specific(
