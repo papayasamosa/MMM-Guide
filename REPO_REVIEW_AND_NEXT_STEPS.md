@@ -458,6 +458,23 @@ business or modelling definitions:
   questions are which bundle identity model, which materiality method,
   and which forecaster (if any) are approved. Blocked pending review of
   that package.
+- A time-varying latent baseline (`AGENTS.md` future-variable-role #5) is
+  not yet implemented - `core.hierarchical_model`/`core.market_specific_
+  model` both define `intercept` as a single static per-market/outcome
+  scalar. Work Package 10 (2026-08-18) reconciled this into a formal
+  requirement (`REQ-BASELINE-001`) and produced a decision package
+  (`docs/wp10_time_varying_baseline_decision_package.md`) rather than
+  implementing it directly: this repository's own upstream-reference
+  workflow surfaced that `pymc-marketing`'s closest built-in pattern
+  (`time_varying_intercept`, a Gaussian Process) is documented by its own
+  authors as unsuitable for forecasting beyond a short horizon - directly
+  in tension with role #5's "projected... for planning" requirement.
+  Whether a new baseline capability is even warranted beyond the existing
+  deterministic trend/Fourier continuation, which statistical process
+  would generate it, its `REQ-LATENT-001` identification strategy, and its
+  forward-projection mechanism (if any) are all genuinely unresolved
+  statistical questions, not an implementation gap. Blocked pending review
+  of that package.
 - Real UK data readiness is an operational step and must be run only by an
   authorised analyst with approved local data outside Git.
 
