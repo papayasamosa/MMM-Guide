@@ -111,6 +111,94 @@ function Get-GhOrFail {
 }
 
 # ---------------------------------------------------------------------------
+# Dispatched-recovery-job verification (fixes a genuine tooling defect found
+# while merging PR #288 - see docs/decision_log.md "Fix Fold refit
+# recovery/Candidate A posterior recovery dispatch verification"): GitHub
+# creates a *separate* check-suite per trigger event, so a `workflow_dispatch`
+# run of `Tests` and the PR's own `pull_request`-triggered run of `Tests`
+# produce two distinct check-suites for the identical head SHA. This
+# repository has no branch-protection required-checks configuration (see this
+# script's own header comment), so there is no context-name-based merge of
+# same-named checks across suites - `gh pr checks`/the PR's
+# `statusCheckRollup` only ever reflect the *first* (pull_request) suite's
+# result for a given check name. A dispatched recovery job's own outcome is
+# real and independently verifiable (`gh run view <run-id> --json jobs`), but
+# never becomes visible through `gh pr checks`, however long the caller waits
+# - confirmed by direct comparison of `gh pr checks`, `gh pr view --json
+# statusCheckRollup`, `gh api .../commits/<sha>/check-runs`, and `gh api
+# .../commits/<sha>/check-suites` against the same head SHA. Verifying job
+# success directly against the specific dispatched run ID is therefore the
+# only reliable mechanism - this function replaces the previous
+# `-RequiredChecks`/`-AllowedSkippedChecks` dance for these two specific
+# check names, which could never observe a real pass this way.
+function Wait-ForDispatchedRecoveryJobSuccess {
+    param(
+        [Parameter(Mandatory)][string]$Repo,
+        [Parameter(Mandatory)][string]$WorkflowName,
+        [Parameter(Mandatory)][string]$HeadRefName,
+        [Parameter(Mandatory)][string]$ExpectedHeadSha,
+        [Parameter(Mandatory)][string]$JobName,
+        [Parameter(Mandatory)][datetime]$DispatchedAfterUtc,
+        [Parameter(Mandatory)][int]$TimeoutMinutes,
+        [Parameter(Mandatory)][int]$PollIntervalSeconds
+    )
+
+    $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
+
+    Write-Host "  Locating the dispatched '$WorkflowName' run for $HeadRefName (head $ExpectedHeadSha)..."
+    $runId = $null
+    while ((Get-Date) -lt $deadline) {
+        $runsJson = Get-GhOrFail @("run", "list", "--repo", $Repo, "--workflow", $WorkflowName, "--branch", $HeadRefName, "--event", "workflow_dispatch", "--limit", "10", "--json", "databaseId,headSha,createdAt")
+        $runs = @()
+        if ($runsJson -and $runsJson.Trim().Length -gt 0) {
+            $runs = $runsJson | ConvertFrom-Json
+        }
+        $candidate = $runs |
+            Where-Object { $_.headSha -eq $ExpectedHeadSha -and ([datetime]$_.createdAt) -ge $DispatchedAfterUtc } |
+            Sort-Object createdAt -Descending | Select-Object -First 1
+        if ($candidate) {
+            $runId = $candidate.databaseId
+            Write-Host "  Found dispatched run $runId (created $($candidate.createdAt))."
+            break
+        }
+        Write-Host "    no matching workflow_dispatch run for head $ExpectedHeadSha yet, retrying in ${PollIntervalSeconds}s..."
+        Start-Sleep -Seconds $PollIntervalSeconds
+    }
+    if (-not $runId) {
+        throw "Timed out after $TimeoutMinutes minute(s) waiting for the dispatched '$WorkflowName' run to appear for head $ExpectedHeadSha. Not merging."
+    }
+
+    Write-Host "  Polling dispatched run $runId for job '$JobName' to reach a terminal state..."
+    while ((Get-Date) -lt $deadline) {
+        $runJson = Get-GhOrFail @("run", "view", "$runId", "--repo", $Repo, "--json", "headSha,jobs")
+        $run = $runJson | ConvertFrom-Json
+        if ($run.headSha -ne $ExpectedHeadSha) {
+            throw "Dispatched run $runId's headSha ($($run.headSha)) does not match the " +
+                "expected head ($ExpectedHeadSha) - refusing to trust it. Not merging."
+        }
+        $job = $run.jobs | Where-Object { $_.name -eq $JobName } | Select-Object -First 1
+        if (-not $job) {
+            throw "Dispatched run $runId has no job named '$JobName' - the workflow may " +
+                "have changed since this script's -FoldRefitPaths/-CandidateAPaths were " +
+                "written; investigate manually before merging."
+        }
+        if ($job.status -eq "completed") {
+            if ($job.conclusion -eq "success") {
+                Write-Host "  '$JobName' succeeded in dispatched run $runId ($($job.url))."
+                return
+            }
+            throw "'$JobName' completed with conclusion '$($job.conclusion)' in dispatched " +
+                "run $runId ($($job.url)) - not merging. Fix and push a new commit, then " +
+                "re-run this script (this dispatches a fresh recovery run)."
+        }
+        Write-Host "    '$JobName' status: $($job.status), retrying in ${PollIntervalSeconds}s..."
+        Start-Sleep -Seconds $PollIntervalSeconds
+    }
+    throw "Timed out after $TimeoutMinutes minute(s) waiting for '$JobName' to complete in " +
+        "dispatched run $runId. Not merging."
+}
+
+# ---------------------------------------------------------------------------
 # Remote/auth preflight (brief §5.13/§8.5) - never trust local state without
 # verifying it against the actual remote first.
 # ---------------------------------------------------------------------------
@@ -193,15 +281,17 @@ if (-not $RequireCandidateARecovery) {
 }
 
 $scheduleWorkflowDispatched = $false
+$scheduleWorkflowDispatchedAtUtc = $null
 
 if ($RequireCandidateARecovery) {
-    $AllowedSkippedChecks = $AllowedSkippedChecks | Where-Object { $_ -ne "Candidate A posterior recovery" }
-    $RequiredChecks = $RequiredChecks + "Candidate A posterior recovery"
     Write-Host "REQUIRE-CANDIDATE-A-RECOVERY set: a successful, non-skipped 'Candidate A posterior recovery' run is now required before merge."
     Write-Host "Dispatching a workflow_dispatch run of 'Tests' on branch $headRefName so 'candidate-a-recovery' runs against this PR's head..."
+    $scheduleWorkflowDispatchedAtUtc = (Get-Date).ToUniversalTime().AddSeconds(-30)
     Get-GhOrFail @("workflow", "run", "Tests", "--repo", $Repo, "--ref", $headRefName) | Out-Null
     $scheduleWorkflowDispatched = $true
-    Write-Host "  Dispatched. It should attach to this PR's checks list (matched by head SHA) once GitHub registers it."
+    Write-Host "  Dispatched. Verifying its 'Candidate A posterior recovery' job directly by dispatched run ID - gh pr checks/statusCheckRollup do not reliably surface a workflow_dispatch run's job outcome for this PR (see Wait-ForDispatchedRecoveryJobSuccess's comment above)."
+    Wait-ForDispatchedRecoveryJobSuccess -Repo $Repo -WorkflowName "Tests" -HeadRefName $headRefName -ExpectedHeadSha $capturedHeadSha -JobName "Candidate A posterior recovery" -DispatchedAfterUtc $scheduleWorkflowDispatchedAtUtc -TimeoutMinutes $TimeoutMinutes -PollIntervalSeconds $PollIntervalSeconds
+    Write-Host "  Verified: 'Candidate A posterior recovery' succeeded for head $capturedHeadSha."
 }
 
 # ---------------------------------------------------------------------------
@@ -226,18 +316,20 @@ if (-not $RequireFoldRefitRecovery) {
 }
 
 if ($RequireFoldRefitRecovery) {
-    $AllowedSkippedChecks = $AllowedSkippedChecks | Where-Object { $_ -ne "Fold refit recovery" }
-    $RequiredChecks = $RequiredChecks + "Fold refit recovery"
     Write-Host "REQUIRE-FOLD-REFIT-RECOVERY set: a successful, non-skipped 'Fold refit recovery' run is now required before merge."
     if ($scheduleWorkflowDispatched) {
         Write-Host "  A workflow_dispatch run of 'Tests' was already triggered above (for candidate-a-recovery) - it also runs fold-refit-recovery, so no second dispatch is needed."
     }
     else {
         Write-Host "Dispatching a workflow_dispatch run of 'Tests' on branch $headRefName so 'fold-refit-recovery' runs against this PR's head..."
+        $scheduleWorkflowDispatchedAtUtc = (Get-Date).ToUniversalTime().AddSeconds(-30)
         Get-GhOrFail @("workflow", "run", "Tests", "--repo", $Repo, "--ref", $headRefName) | Out-Null
         $scheduleWorkflowDispatched = $true
-        Write-Host "  Dispatched. It should attach to this PR's checks list (matched by head SHA) once GitHub registers it."
+        Write-Host "  Dispatched."
     }
+    Write-Host "  Verifying its 'Fold refit recovery' job directly by dispatched run ID - gh pr checks/statusCheckRollup do not reliably surface a workflow_dispatch run's job outcome for this PR (see Wait-ForDispatchedRecoveryJobSuccess's comment above)."
+    Wait-ForDispatchedRecoveryJobSuccess -Repo $Repo -WorkflowName "Tests" -HeadRefName $headRefName -ExpectedHeadSha $capturedHeadSha -JobName "Fold refit recovery" -DispatchedAfterUtc $scheduleWorkflowDispatchedAtUtc -TimeoutMinutes $TimeoutMinutes -PollIntervalSeconds $PollIntervalSeconds
+    Write-Host "  Verified: 'Fold refit recovery' succeeded for head $capturedHeadSha."
 }
 
 Write-Host "Waiting for PR #$PRNumber's checks to appear..."

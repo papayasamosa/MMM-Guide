@@ -241,17 +241,124 @@ class TestFoldRefitRecoveryIsAutomatic:
         assert '"workflow", "run", "Tests"' in text
         assert "RequireFoldRefitRecovery" in text
 
-    def test_fold_refit_recovery_removed_from_allowed_skipped_when_required(self):
+    def test_fold_refit_recovery_verified_via_dispatched_run_not_pr_checks(self):
+        """Tooling-defect fix (found while merging PR #288, part of Work
+        Package 1): `Fold refit recovery` is required by calling
+        `Wait-ForDispatchedRecoveryJobSuccess` directly, never by adding it
+        to `-RequiredChecks` and trusting `gh pr checks` to observe a
+        `workflow_dispatch` run's outcome - see
+        `TestDispatchedRecoveryJobVerificationFixesPRChecksBlindSpot`."""
         text = _read()
         assert (
-            '$AllowedSkippedChecks = $AllowedSkippedChecks | Where-Object { $_ -ne "Fold refit recovery" }'
-            in text
+            'Wait-ForDispatchedRecoveryJobSuccess -Repo $Repo -WorkflowName "Tests" '
+            "-HeadRefName $headRefName -ExpectedHeadSha $capturedHeadSha "
+            '-JobName "Fold refit recovery"' in text
         )
-        assert '$RequiredChecks = $RequiredChecks + "Fold refit recovery"' in text
+        # The old, broken mechanism must not have crept back in - it could
+        # never observe a real pass for this check (see the class above's
+        # docstring and Wait-ForDispatchedRecoveryJobSuccess's own comment).
+        assert (
+            '$AllowedSkippedChecks = $AllowedSkippedChecks | Where-Object { $_ -ne "Fold refit recovery" }'
+            not in text
+        )
+        assert '$RequiredChecks = $RequiredChecks + "Fold refit recovery"' not in text
 
     def test_fold_refit_recovery_gate_check_is_informational(self):
         text = _read()
         assert '"Fold refit recovery gate check"' in text
+
+
+class TestDispatchedRecoveryJobVerificationFixesPRChecksBlindSpot:
+    """Tooling-defect fix, found and diagnosed while merging PR #288 (Work
+    Package 1 part 2): GitHub creates a *separate* check-suite per trigger
+    event, so a `workflow_dispatch` run of `Tests` and the PR's own
+    `pull_request`-triggered run of `Tests` produce two distinct
+    check-suites for the identical head SHA. This repository has no
+    branch-protection required-checks configuration, so `gh pr checks`/the
+    PR's `statusCheckRollup` only ever reflect the *first* (pull_request)
+    suite's result for a given check name - confirmed live: a genuinely
+    successful, manually verified `Fold refit recovery` dispatched run
+    still showed as `SKIPPED` in both `gh pr checks` and `gh pr view --json
+    statusCheckRollup`, while `gh api .../commits/<sha>/check-runs` (which
+    lists every check-suite's check-runs, not just one) showed the real
+    `conclusion: success` for that exact run ID. Both `Candidate A
+    posterior recovery` and `Fold refit recovery` are required via
+    `Wait-ForDispatchedRecoveryJobSuccess`, which resolves the specific
+    dispatched run by `gh run list --event workflow_dispatch` (filtered to
+    the expected head SHA and a dispatch timestamp) and polls that run's
+    specific job by name via `gh run view <run-id> --json headSha,jobs` -
+    never trusting the PR-level checks view for these two check names."""
+
+    def test_helper_function_is_defined_before_first_use(self):
+        text = _read()
+        definition_index = text.index("function Wait-ForDispatchedRecoveryJobSuccess")
+        first_call_index = text.index("Wait-ForDispatchedRecoveryJobSuccess -Repo")
+        assert definition_index < first_call_index
+
+    def test_helper_locates_the_run_by_workflow_dispatch_event_and_head_sha(self):
+        text = _read()
+        helper_body = text.split("function Wait-ForDispatchedRecoveryJobSuccess", 1)[
+            1
+        ].split("\n}\n", 1)[0]
+        assert '"run", "list"' in helper_body
+        assert '"--event", "workflow_dispatch"' in helper_body
+        assert "ExpectedHeadSha" in helper_body
+
+    def test_helper_verifies_the_specific_job_not_the_whole_run_conclusion(self):
+        """A dispatched run also runs unrelated schedule-only jobs (e.g.
+        Deterministic attribution recovery) that may independently fail,
+        making the *run's* overall conclusion an unreliable proxy - the
+        helper must inspect the named job's own status/conclusion inside
+        `.jobs`, never `run.conclusion`."""
+        text = _read()
+        helper_body = text.split("function Wait-ForDispatchedRecoveryJobSuccess", 1)[
+            1
+        ].split("\n}\n", 1)[0]
+        assert '"run", "view", "$runId", "--repo", $Repo, "--json", "headSha,jobs"' in (
+            helper_body
+        )
+        assert "$run.jobs | Where-Object { $_.name -eq $JobName }" in helper_body
+        assert "$job.status" in helper_body
+        assert "$job.conclusion" in helper_body
+
+    def test_helper_refuses_to_trust_a_run_for_the_wrong_head_sha(self):
+        text = _read()
+        helper_body = text.split("function Wait-ForDispatchedRecoveryJobSuccess", 1)[
+            1
+        ].split("\n}\n", 1)[0]
+        assert "$run.headSha -ne $ExpectedHeadSha" in helper_body
+
+    def test_candidate_a_recovery_also_verified_via_dispatched_run_not_pr_checks(self):
+        """The same PR-checks blind spot applies symmetrically to Candidate
+        A's dispatch path - fixed with the identical mechanism, not a
+        one-off special case for fold-refit only."""
+        text = _read()
+        assert (
+            'Wait-ForDispatchedRecoveryJobSuccess -Repo $Repo -WorkflowName "Tests" '
+            "-HeadRefName $headRefName -ExpectedHeadSha $capturedHeadSha "
+            '-JobName "Candidate A posterior recovery"' in text
+        )
+        assert (
+            '$AllowedSkippedChecks = $AllowedSkippedChecks | Where-Object { $_ -ne "Candidate A posterior recovery" }'
+            not in text
+        )
+        assert (
+            '$RequiredChecks = $RequiredChecks + "Candidate A posterior recovery"'
+            not in text
+        )
+
+    def test_both_recovery_checks_remain_classified_as_allowed_skipped(self):
+        """The PR-checks view will still forever show both check names as
+        `skipping` (from the permanent, always-skipped pull_request-suite
+        entry) - that must stay a harmless, recognised state (never
+        `-RequiredChecks`, which would re-introduce the bug), not trip the
+        unclassified-check fail-closed guard."""
+        text = _read()
+        allowed_skipped_block = text.split("[string[]]$AllowedSkippedChecks = @(", 1)[
+            1
+        ].split(")", 1)[0]
+        assert "Candidate A posterior recovery" in allowed_skipped_block
+        assert "Fold refit recovery" in allowed_skipped_block
 
 
 class TestPostMergeVerificationCannotBeSilentlyBypassed:

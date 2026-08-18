@@ -6803,3 +6803,100 @@ schedule/manual recovery job before merge.
 **Owner:** Modelling / Platform engineering (validation pipeline).
 **Status:** Implemented.
 
+## Fix Fold refit recovery/Candidate A posterior recovery dispatch verification
+
+**Context:** Discovered while merging PR #288 (Work Package 1 part 2). PR
+#288 touches `application/fold_refit_service.py`/`core/validation_
+folds.py`, so `scripts/wait_for_pr_green_then_merge.ps1` correctly
+auto-detected and dispatched a `workflow_dispatch` run of `Tests` so
+`fold-refit-recovery` would run. That dispatched run's `Fold refit
+recovery` job genuinely succeeded (verified directly via `gh run view`),
+but the script's polling loop - which relies on `gh pr checks $PRNumber
+--json name,state,bucket` - kept reporting it as `SKIPPED` indefinitely,
+throwing "failed/cancelled/unexpectedly-skipped required check(s): Fold
+refit recovery" and refusing to merge a PR whose actual recovery evidence
+was green.
+
+Root-caused by direct comparison of four data sources for the identical
+head SHA: `gh pr checks` and `gh pr view --json statusCheckRollup` both
+showed `SKIPPED` (from the original `pull_request`-triggered run's
+always-skipped job, per that job's own `if: github.event_name ==
+'schedule' || github.event_name == 'workflow_dispatch'` condition); `gh
+api repos/.../commits/<sha>/check-runs` showed *two* check-runs named
+"Fold refit recovery" for that SHA - the stale skipped one and the
+genuinely successful dispatched one; `gh api .../commits/<sha>/check-
+suites` explained why: GitHub creates a *separate* check-suite per
+trigger event (`pull_request` vs `workflow_dispatch`), and this
+repository has no branch-protection required-checks configuration (this
+script's own header comment already documents that gap for a different
+reason - the bare `gh pr merge --auto` problem), so there is no
+context-name-based merge of same-named checks across suites. The PR-level
+rollup this script polled only ever reflected the *first* (pull_request)
+suite's result, no matter how long the dispatched run's own job kept
+running or how it concluded.
+
+**Decision:** Added `Wait-ForDispatchedRecoveryJobSuccess` to `scripts/
+wait_for_pr_green_then_merge.ps1`: after dispatching, it locates the
+specific dispatched run by `gh run list --event workflow_dispatch`
+(filtered to the expected head SHA and a dispatch timestamp, with a 30s
+clock-skew buffer), then polls that exact run by ID via `gh run view
+<run-id> --json headSha,jobs`, inspecting the *named job's* own
+`status`/`conclusion` - never the run's overall `conclusion` (a dispatched
+`Tests` run also carries unrelated schedule-only jobs, e.g.
+`Deterministic attribution recovery`, that can fail independently without
+that being relevant to the job actually being verified) - and never
+trusting `gh pr checks`/`statusCheckRollup` for these two check names.
+Replaces the previous `-RequiredChecks`/`-AllowedSkippedChecks`
+add/remove dance for both `Candidate A posterior recovery` and `Fold
+refit recovery` (the same blind spot applies symmetrically to Candidate
+A's dispatch path, fixed with the identical mechanism rather than a
+one-off special case for fold-refit only, per explicit instruction). Both
+check names remain permanently in `-AllowedSkippedChecks` (the PR-checks
+view will forever show them as `skipping` from the stale pull_request-
+suite entry - now a known, harmless, recognised state rather than an
+enforcement signal) so the unclassified-check fail-closed guard still
+recognises them.
+
+This tooling-only fix was intentionally kept out of PR #288 itself and
+merged separately against a fresh `origin/main`, so it does not itself
+touch `application/fold_refit_service.py`/`core/validation_folds.py`/
+`core/structural_stability.py` and therefore does not trigger the (until
+this fix, broken) `Fold refit recovery` auto-require path against itself
+- it merges cleanly through the existing gate, after which PR #288 is
+rebased onto the fixed main and merged using the corrected script.
+
+**Rejected alternative:** A one-time manual-verification bypass for PR
+#288 specifically (rejected per explicit user decision - fixing the gate
+mechanism itself is more valuable than a single documented manual
+override, since the same defect would silently recur for every future PR
+touching Candidate A or fold-refit-recovery paths). Trusting the dispatched
+run's overall `conclusion` instead of the specific job's `conclusion`
+(rejected - a dispatched `Tests` run's other schedule-only jobs, e.g.
+`Deterministic attribution recovery`, can fail for reasons unrelated to
+the job actually being verified, which would make the run-level
+conclusion an unreliable, over-broad proxy). Fixing only the
+`Fold refit recovery` path and leaving `Candidate A posterior recovery`'s
+identical mechanism unfixed (rejected - same underlying bug, same fix,
+per explicit instruction to check and fix both).
+
+**Impact:** `scripts/wait_for_pr_green_then_merge.ps1` (new `Wait-
+ForDispatchedRecoveryJobSuccess` function; both recovery-dispatch blocks
+rewritten to call it instead of the `-RequiredChecks`/
+`-AllowedSkippedChecks` dance), `ancestry_mmm/tests/
+test_merge_gate_script_contract.py` (existing `test_fold_refit_recovery_
+removed_from_allowed_skipped_when_required` replaced with `test_fold_
+refit_recovery_verified_via_dispatched_run_not_pr_checks`, asserting the
+old broken lines are gone; new `TestDispatchedRecoveryJobVerification
+FixesPRChecksBlindSpot` class - 6 tests covering the helper's definition
+order, run-location logic, per-job (not per-run) conclusion checking,
+head-SHA guard, Candidate A symmetry, and that both check names remain
+classified as allowed-skipped). No production `core`/`application`/
+`pages` code changed - this is a tooling-only fix to the merge-gate
+script and its own contract tests, verified against the live, real
+dispatched run this defect was found in (run 32156346023, job 95774377982
+- confirmed `conclusion: success` throughout the diagnosis, independent
+of this fix).
+
+**Owner:** Platform engineering (CI/merge tooling).
+**Status:** Implemented.
+
