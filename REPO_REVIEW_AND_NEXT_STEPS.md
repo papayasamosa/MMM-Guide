@@ -445,7 +445,19 @@ business or modelling definitions:
   lifecycle (Playwright) test for the manual sequential path also
   remains not yet implemented.
 - Chronos-2 or another future exogenous forecasting integration is not yet
-  implemented.
+  implemented. Work Package 9 (2026-08-18) reconciled the broader governed
+  future-assumption-bundle gap into a formal requirement (`REQ-FUTURE-001`)
+  and produced a decision package (`docs/wp9_future_assumption_bundle_
+  decision_package.md`) rather than implementing it directly: the bundle
+  schema, the materiality-quantification/grading method (`VL-027`/
+  `RP-024`), and whether/how Chronos-2 or another method integrates are
+  all genuinely unresolved statistical/governance questions, not a
+  mechanical wiring gap - `core.planning.future_context`'s existing per-
+  control contract already accepts any caller-supplied future series, so
+  no code change is needed merely to plumb a number through; the open
+  questions are which bundle identity model, which materiality method,
+  and which forecaster (if any) are approved. Blocked pending review of
+  that package.
 - Real UK data readiness is an operational step and must be run only by an
   authorised analyst with approved local data outside Git.
 
