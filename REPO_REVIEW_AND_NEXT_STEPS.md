@@ -9,23 +9,33 @@ and does not supersede `AGENTS.md`, `docs/approved_requirements/`, or
 
 Repository: `papayasamosa/Media-Mix-Lab`
 
-**Repository state through merged PR #269** (`WP0 (part 2): reconcile
-sequential Scenario Planner UI semantic defects`, part of `Media-Mix-Lab:
-Coding LLM Next Steps After PR #267 and Latest PRD Validation Updates`).
+This is descriptive repository-status documentation, not a live Git
+pointer. Resolve current remote `main` from GitHub before relying on it
+for the actual live state of the repository - fetch `origin` and resolve
+`origin/main`'s SHA directly; never treat this version-controlled status
+file as live remote truth.
 
-This document deliberately identifies its baseline by merged PR/work-package
-milestone, never by a field claiming to be "current `main`": a branch
-cannot know the future squash-merge commit SHA that will become `main`, so
-a hard-coded "this SHA is current" field is guaranteed to go stale the
-moment the next PR merges (this happened in practice - an earlier revision
-of this section claimed `6f342afcc03a588eb5738b8813d3d2b8beb54b57`, PR
-#261's merge commit, as "current `main`" while PR #262 was already merged
-on top of it). `ancestry_mmm/tests/test_repository_status_conformance.py::
-test_repo_review_does_not_use_a_necessarily_drifting_current_main_field`
-guards this convention. Before relying on this document for the actual
-live state of `main`, fetch `origin` and resolve `origin/main`'s SHA from
-GitHub directly - never treat a version-controlled status file as live
-remote truth.
+This document previously identified its baseline with a leading
+"Repository state through merged PR #<N>" milestone marker, on the theory
+that a PR-number marker was safer than a live-SHA field. In practice that
+marker drifted exactly the same way: it was written as "merged PR #269"
+and left in place while PRs #270-#284 (leakage-safe validation folds,
+posterior predictive metrics, structural stability, graphical and
+latent-state identification, experiment evidence modes, calibration
+comparison, sequential Scenario Planner UI reconciliation, and the WP6-WP11
+decision/evidence packages) merged on top of it - the identical failure
+mode as the earlier live-SHA field it replaced (see the SHA-drift incident
+below: `6f342afcc03a588eb5738b8813d3d2b8beb54b57`, PR #261's merge commit,
+was once claimed as "current `main`" while PR #262 was already merged on
+top of it). Any global "this is the current PR/milestone" field in this
+file - by SHA or by PR number - is guaranteed to go stale the moment the
+next PR merges, because a branch authoring this file cannot know what
+merges after it. `ancestry_mmm/tests/test_repository_status_conformance.py::
+test_repo_review_does_not_assert_a_global_current_pr_or_milestone_marker`
+guards this convention. Individual historical entries below may still cite
+the specific PR they were merged in - that is a fact about the past, not a
+claim about the live present - but no sentence in this file may assert
+which PR/milestone the *whole repository* is currently at.
 
 Historical markers (all superseded merge commits; recorded only for
 history, never as current state):

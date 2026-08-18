@@ -6459,3 +6459,57 @@ architecture, cap-object governance mechanics).
 **Status:** Decision-support package delivered; awaiting human review and
 selection. No implementation PR accompanies this entry.
 
+## Repository truth and local PRD safety (Post-PR284 Work Package 0)
+
+**Context:** `Media-Mix-Lab: Coding LLM Next Steps After PR #284` identified
+two live repository-truth defects: `README.md`'s Scenario Planner
+description still claimed the sequential (weekly, state-transition) manual
+evaluation method was "not yet wired into this page", false since PRs
+#266/#267/#269/#277/#278 wired `sequential_weekly` into the "Edited plan
+and calculated result" tab with historical carry-in, short/long response,
+terminal carryover, posterior uncertainty, and save/export; and
+`REPO_REVIEW_AND_NEXT_STEPS.md`'s "Repository state through merged PR
+#269" leading marker was itself stale (PRs #270-#284 had merged on top of
+it), which is the same drift failure the marker was originally introduced
+to fix, one level up. The brief also flagged that the local PRD suite
+under `docs/PRD/` (intentionally local-only, not pushed) had no local
+Git-exclusion protection, making it vulnerable to a future broad `git add`.
+
+**Decision:** (1) Corrected `README.md`'s Scenario Planner bullet and
+"What's explicitly not built yet" section to state both manual evaluation
+methods explicitly (steady-state monthly, used by the optimiser tabs;
+sequential weekly, used by the manual tab, with historical carry-in,
+short/long response, terminal carryover, posterior uncertainty, and
+save/export/staleness), and that sequential-weekly *optimisation* (not
+manual evaluation) remains the not-yet-implemented gap. (2) Replaced
+`REPO_REVIEW_AND_NEXT_STEPS.md`'s "Repository state through merged PR
+#<N>" leading milestone marker with fully static wording: this file
+states capabilities and labelled history; live remote state is always
+resolved from GitHub, never from this file. Historical entries may still
+cite the specific PR they were merged in - that is a fact about the past,
+not a claim about the present. (3) Replaced
+`test_repo_review_does_not_use_a_necessarily_drifting_current_main_field`
+with `test_repo_review_does_not_assert_a_global_current_pr_or_milestone_
+marker`, which rejects both the live-SHA field and the "Repository state
+through merged PR #<N>" marker as instances of the same anti-pattern,
+rather than requiring the latter. (4) Added `/docs/PRD/` to `.git/info/
+exclude` (verified with `git check-ignore -v`) - a local-only exclusion,
+not a tracked `.gitignore` change; no PRD source file was staged, modified,
+renamed, or committed.
+
+**Rejected alternative:** Replacing "#269" with "#284" in the milestone
+marker (rejected - the brief explicitly identified this as treating the
+symptom; the marker would go stale again at the next merge exactly as it
+already had once).
+
+**Impact:** `README.md` (Scenario Planner bullet and "not built yet"
+section corrected), `REPO_REVIEW_AND_NEXT_STEPS.md` (baseline section
+rewritten to static wording), `ancestry_mmm/tests/
+test_repository_status_conformance.py` (anti-drift test replaced), `.git/
+info/exclude` (local-only, unpushed). No production code changes. Local
+PRD suite under `docs/PRD/` confirmed untracked, unstaged, and now
+locally excluded throughout this work package.
+
+**Owner:** Platform engineering (documentation/tooling truth).
+**Status:** Implemented.
+
