@@ -6208,3 +6208,85 @@ the brief's sequence (Work Package 9).
 (missingness-reason taxonomy and hierarchy/pooling review).
 **Status:** Decision-support package delivered; awaiting human review and
 selection. No implementation PR accompanies this entry.
+
+
+## Governed future-assumption bundle decision package (Work Package 9)
+
+**Context:** `docs/specification_authority.md` already listed "Future-
+assumption bundles" as "No approved requirement/decision yet", and
+`REQ-FORECAST-001` (Work Package 0) named "Work Package 9's broader
+'governed future assumptions' scope" without authorising it. An Explore-
+agent investigation confirmed the gap is genuine and precisely bounded:
+`core.planning.future_context` (`REQ-SCEN-002`) already implements a
+careful, fail-closed per-control explicit/hold-last-observed contract for
+one plan window, but has no bundle-level object collecting every future-
+role assignment for a scenario with a single decision-readiness rollup,
+no attachment point for `REQ-FORECAST-001`'s not-yet-implemented
+consequence evidence, and no resolution of whether/how Chronos-2 or
+another external forecaster (permitted but not selected by `AGENTS.md`'s
+future-variable-role #2) may supply a bundle's future path.
+
+**Finding:** three genuinely unresolved questions block any
+implementation, each statistical/governance in nature rather than
+mechanical: (1) the bundle's own schema/identity (a thin wrapper around
+existing `FutureContextResult`s, an extension of that type itself, or a
+separate fingerprint-keyed registry - `core.causal_graph`/`core.
+experiments`'s existing immutable-and-versioned lineage pattern is the
+closest precedent but does not by itself answer which shape fits here);
+(2) materiality quantification/grading (`VL-027`/`RP-024`) - how much
+forecast uncertainty or downstream consequence becomes decision-material,
+and when review becomes blocking rather than advisory, inherited
+unresolved from `REQ-FORECAST-001`; (3) external-forecaster integration -
+`build_future_context`'s `explicit_future` parameter already accepts any
+caller-supplied series today, forecast-derived or not, so no code change
+is required merely to plumb a number through; the open question is
+which method (if any) is trusted for official use and how that trust is
+disclosed and audited.
+
+**Decision:** Reconcile the gap into `docs/approved_requirements/
+REQ-FUTURE-001.md` (target-state contract only, mirroring Work Package
+6's `REQ-SCEN-004` pattern) and write `docs/wp9_future_assumption_bundle_
+decision_package.md`, laying out three bundle-schema candidates (B1: thin
+named wrapper around existing `FutureContextResult`s; B2: extend
+`FutureContextResult` itself with bundle identity; B3: a separate
+fingerprint-keyed registry, closer to `core.causal_graph`/`core.
+experiments`'s identity/registry separation), three materiality-grading
+candidates (M1: effect-size threshold on the consequence axis; M2:
+decision-ranking-change detection with no absolute threshold; M3:
+disclosed, ungraded consequence evidence only, consistent with `core.
+calibration_comparison`'s established no-verdict-field precedent), and
+three external-forecaster-integration candidates (F1: no production
+integration, explicit-future-path only; F2: Chronos-2 behind an explicit
+disclosed provenance flag; F3: a method-agnostic forecaster-interface
+contract with Chronos-2 as one registered implementation, mirroring
+`core.frequency_conversion`'s approved-method-catalogue pattern). None
+selected. `docs/specification_authority.md`'s "Future-assumption
+bundles" and "Downstream forecast-consequence evidence" rows, and
+`REPO_REVIEW_AND_NEXT_STEPS.md`'s Chronos-2 bullet, updated to reference
+this package.
+
+**Rejected alternative:** Treating "no production Chronos-2 integration
+yet" as sufficient reason to skip creating a requirement record at all
+(rejected - the gap is broader than the forecaster-selection question
+alone; the bundle-schema and materiality-grading questions exist even
+under Candidate F1's "no external forecaster" branch, so a target-state
+record and decision package are needed regardless of which forecaster
+candidate is eventually chosen).
+
+**Impact:** `docs/approved_requirements/REQ-FUTURE-001.md` (new),
+`docs/approved_requirements/index.json` (new entry), `docs/wp9_future_
+assumption_bundle_decision_package.md` (new), `docs/specification_
+authority.md` (two rows updated), `REPO_REVIEW_AND_NEXT_STEPS.md`
+(Chronos-2 bullet updated). No code changes - `core.planning.
+future_context` is untouched by this package; it continues to serve one
+plan window's per-control contract exactly as before. This workstream is
+stopped pending review of the decision package; the program continues
+autonomously to the next work package in the brief's sequence (Work
+Package 10).
+
+**Owner:** Data Science / Platform engineering (bundle schema, forecaster
+integration), Modelling (materiality grading, forecast-consequence
+review policy).
+**Status:** Decision-support package delivered; awaiting human review and
+selection. No implementation PR accompanies this entry.
+
