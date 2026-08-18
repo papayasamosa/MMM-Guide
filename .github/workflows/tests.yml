@@ -723,3 +723,58 @@ jobs:
           else
             echo "No Candidate A model-mathematics files changed in this PR - no manual recovery run required by this check."
           fi
+
+  # -- Fold refit recovery module change detector (pull_request only) --
+  # Work Package 0 (structural-causal authority reconciliation, after PR
+  # #286): fold-refit-recovery above is intentionally schedule/manual-only
+  # (real NUTS sampling is too slow for blocking CI), so it is not a normal
+  # PR gate on its own, exactly like candidate-a-recovery above. This job is
+  # purely informational and never fails the workflow - it flags, via a
+  # workflow annotation, when a PR's diff touches one of the fold-refit
+  # evidence pipeline's own three modules (application/fold_refit_
+  # service.py, core/validation_folds.py, core/structural_stability.py -
+  # REQ-LEAK-001/REQ-STAB-001 affected modules), so a reviewer or
+  # scripts/wait_for_pr_green_then_merge.ps1 -RequireFoldRefitRecovery
+  # knows to require a manually-dispatched successful fold-refit-recovery
+  # run before merging. Deliberately excludes the shared production fit
+  # path these three modules call through (model_fit_service.py, models.py,
+  # predict.py, market_specific_predict.py, hierarchical_model.py,
+  # market_specific_model.py) - those are already exercised by every PR's
+  # blocking test suite, and including them would make this expensive job
+  # fire on nearly every modelling PR. It is deliberately additive - it
+  # does not change fold-refit-recovery's own trigger condition, so it
+  # cannot affect that job's existing behaviour.
+  fold-refit-recovery-gate-check:
+    name: Fold refit recovery gate check
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Flag if this PR changes a Fold refit recovery module
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          changed="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
+          echo "Changed files:"
+          echo "$changed"
+          fold_refit_paths=(
+            "ancestry_mmm/application/fold_refit_service.py"
+            "ancestry_mmm/core/validation_folds.py"
+            "ancestry_mmm/core/structural_stability.py"
+          )
+          hit=0
+          for path in "${fold_refit_paths[@]}"; do
+            if echo "$changed" | grep -qxF "$path"; then
+              echo "  -> matched Fold refit recovery affected module: $path"
+              hit=1
+            fi
+          done
+          if [ "$hit" -eq 1 ]; then
+            echo "::warning::This PR changes a Fold refit recovery module (REQ-LEAK-001/REQ-STAB-001 affected modules). fold-refit-recovery is schedule/manual-only and did not run automatically for this PR - dispatch it manually (workflow_dispatch) and require it to succeed before merging (see scripts/wait_for_pr_green_then_merge.ps1 -RequireFoldRefitRecovery)."
+          else
+            echo "No Fold refit recovery module changed in this PR - no manual recovery run required by this check."
+          fi

@@ -46,7 +46,8 @@ param(
     # (pull_request-only, informational annotations), and must not trip the
     # fail-closed "unexpected check" guard below.
     [string[]]$InformationalChecks = @(
-        "Candidate A recovery gate check"
+        "Candidate A recovery gate check",
+        "Fold refit recovery gate check"
     ),
     # Kept in sync by hand with .github/workflows/tests.yml's
     # candidate-a-recovery-gate-check job's candidate_a_paths array and
@@ -62,6 +63,31 @@ param(
         "ancestry_mmm/core/causal_graph.py"
     ),
     [switch]$RequireCandidateARecovery,
+    # Work Package 0 (structural-causal authority reconciliation, after PR
+    # #286): PR #286 added the "Fold refit recovery" schedule/manual job
+    # but no analogous automatic path-based recovery requirement existed
+    # for it, unlike Candidate A above - a future PR could alter
+    # fold-refit/validation mathematics while the expensive recovery job
+    # stayed skipped unless an operator remembered to run it. Scoped, via
+    # actual import inspection (not guesswork), to the fold-refit evidence
+    # pipeline's own three modules - deliberately excludes the shared
+    # production fit path they call through (model_fit_service.py,
+    # models.py, predict.py, market_specific_predict.py,
+    # hierarchical_model.py, market_specific_model.py), which is already
+    # exercised by every PR's blocking test suite (including
+    # test_fold_refit_service.py's own tiny real fit) and would make this
+    # expensive job fire on nearly every modelling PR if included - the
+    # same narrow-scoping precedent $CandidateAPaths above already
+    # establishes (it excludes predict.py despite Candidate A depending on
+    # it transitively). Kept in sync by hand with .github/workflows/
+    # tests.yml's fold-refit-recovery-gate-check job's fold_refit_paths
+    # array.
+    [string[]]$FoldRefitPaths = @(
+        "ancestry_mmm/application/fold_refit_service.py",
+        "ancestry_mmm/core/validation_folds.py",
+        "ancestry_mmm/core/structural_stability.py"
+    ),
+    [switch]$RequireFoldRefitRecovery,
     [string]$MergeMethod = "squash",
     [int]$PollIntervalSeconds = 30,
     [int]$TimeoutMinutes = 60,
@@ -166,13 +192,52 @@ if (-not $RequireCandidateARecovery) {
     }
 }
 
+$scheduleWorkflowDispatched = $false
+
 if ($RequireCandidateARecovery) {
     $AllowedSkippedChecks = $AllowedSkippedChecks | Where-Object { $_ -ne "Candidate A posterior recovery" }
     $RequiredChecks = $RequiredChecks + "Candidate A posterior recovery"
     Write-Host "REQUIRE-CANDIDATE-A-RECOVERY set: a successful, non-skipped 'Candidate A posterior recovery' run is now required before merge."
     Write-Host "Dispatching a workflow_dispatch run of 'Tests' on branch $headRefName so 'candidate-a-recovery' runs against this PR's head..."
     Get-GhOrFail @("workflow", "run", "Tests", "--repo", $Repo, "--ref", $headRefName) | Out-Null
+    $scheduleWorkflowDispatched = $true
     Write-Host "  Dispatched. It should attach to this PR's checks list (matched by head SHA) once GitHub registers it."
+}
+
+# ---------------------------------------------------------------------------
+# Automatic Fold refit recovery path detection (Work Package 0, structural-
+# causal authority reconciliation, after PR #286) - mirrors the Candidate A
+# detection above for the fold-refit evidence pipeline's own three modules.
+# ---------------------------------------------------------------------------
+
+if (-not $RequireFoldRefitRecovery) {
+    Write-Host "Checking whether PR #$PRNumber changes any Fold refit recovery module..."
+    $diffOutput = Get-GhOrFail @("pr", "diff", "$PRNumber", "--repo", $Repo, "--name-only")
+    $changedFiles = ($diffOutput -join "`n") -split "`r?`n" | Where-Object { $_ }
+    $hitPaths = $FoldRefitPaths | Where-Object { $changedFiles -contains $_ }
+    if ($hitPaths.Count -gt 0) {
+        Write-Host "  Fold refit recovery affected module(s) changed: $($hitPaths -join ', ')"
+        Write-Host "  Automatically requiring Fold refit recovery before merge."
+        $RequireFoldRefitRecovery = $true
+    }
+    else {
+        Write-Host "  No Fold refit recovery affected module changed - recovery not required."
+    }
+}
+
+if ($RequireFoldRefitRecovery) {
+    $AllowedSkippedChecks = $AllowedSkippedChecks | Where-Object { $_ -ne "Fold refit recovery" }
+    $RequiredChecks = $RequiredChecks + "Fold refit recovery"
+    Write-Host "REQUIRE-FOLD-REFIT-RECOVERY set: a successful, non-skipped 'Fold refit recovery' run is now required before merge."
+    if ($scheduleWorkflowDispatched) {
+        Write-Host "  A workflow_dispatch run of 'Tests' was already triggered above (for candidate-a-recovery) - it also runs fold-refit-recovery, so no second dispatch is needed."
+    }
+    else {
+        Write-Host "Dispatching a workflow_dispatch run of 'Tests' on branch $headRefName so 'fold-refit-recovery' runs against this PR's head..."
+        Get-GhOrFail @("workflow", "run", "Tests", "--repo", $Repo, "--ref", $headRefName) | Out-Null
+        $scheduleWorkflowDispatched = $true
+        Write-Host "  Dispatched. It should attach to this PR's checks list (matched by head SHA) once GitHub registers it."
+    }
 }
 
 Write-Host "Waiting for PR #$PRNumber's checks to appear..."

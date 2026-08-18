@@ -129,6 +129,67 @@ There is no vendor handover workflow. The platform is licensed under open-source
 terms and operated without an ongoing vendor licence, but the build, maintenance
 and operation are performed by Ancestry's own data science team.
 
+## Version history: focused structural-causal engine integration overlay
+
+Work Package 0 of `Media-Mix-Lab: Coding LLM Next Steps After PR #286`
+reconciled a newer local PRD traceability set covering a bounded
+supplemental structural-causal capability, and — via a later local PRD
+refresh reviewed within the same work package — a resolved primary-
+production-engine decision. This is a **focused overlay**, not a
+full-suite version bump.
+
+| Part | Version | Notes |
+|---|---|---|
+| Part 1 | v1.4 (within v1.5 suite) | Retained; not updated by this overlay |
+| Part 2 | v1.4 (within v1.5 suite) | Retained; not updated by this overlay |
+| Part 3 | v1.10 focused overlay | Cumulative: v1.10 resolves the primary production MMM engine (PyMC) as an approved decision, no longer `decision_required` — see `REQ-ENGINE-001`; retains v1.9 (approved physical source-input/template contract) and v1.8 (bounded structural causal engine integration) content in the same file |
+| Part 4 | v1.6 focused overlay | Bounded structural causal engine architecture plus approved source-input architecture alignment — see `REQ-SCENGINE-001` |
+| Part 5 | v1.4 (within v1.5 suite) | Retained; not updated by this overlay. Parts 4, 6, 7, 10 and 11 each reference a further Part 5 v1.6 that was **not** supplied in the local PRD traceability set reconciled by this work package — see "Known version-reference gaps" below |
+| Part 6 | v1.8 focused overlay | Structural causal model adapter, joint Bayesian mediation, estimand-specific identification and posterior intervention, approved data-input contract alignment — see `REQ-SCENGINE-001`, `REQ-SCEFFECT-001`, `REQ-CAUSALROBUST-001` |
+| Part 7 | v1.7 focused overlay | Structural causal validation coherence: DAG falsification, placebo/permutation refutation, unmeasured-confounding sensitivity, approved data-input validation — see `REQ-CAUSALROBUST-001` |
+| Part 8 | v1.5 focused overlay | Structural intervention response curves and bounded causal-engine use — see `REQ-SCCURVE-001` |
+| Part 9 | v1.6 focused overlay | Structural causal reporting, causal-robustness evidence, structural intervention curve reporting — supersedes the v1.5 focused Bayesian-validation overlay's version label for Part 9 recorded above; that overlay's approved capabilities (`REQ-LEAK-001`, `REQ-STAB-001`, `REQ-PPD-001`, `REQ-FORECAST-001`, and the others sharing that overlay) are unaffected, only the version label advances |
+| Part 10 | v1.8 focused overlay | Structural causal modelling, causal robustness, and intervention UX; approved data-input UX alignment — see `REQ-SCENGINE-001`, `REQ-CAUSALROBUST-001`, `REQ-SCCURVE-001` |
+| Part 11 | v1.7 focused overlay | Bounded structural causal service and API contracts; approved data-input service contracts — see `REQ-SCENGINE-001` |
+
+Do not treat this table as evidence that Part 1, 2, or 5 is now at any
+version from this overlay. `REQ-ENGINE-001`, `REQ-SCENGINE-001`,
+`REQ-SCEFFECT-001`, `REQ-CAUSALROBUST-001`, and `REQ-SCCURVE-001`
+(all `docs/approved_requirements/`) translate this overlay's
+implementation-ready invariants into repository authority.
+`REQ-ENGINE-001` reconciles an already-resolved decision (already the
+de facto implementation; zero migration impact). The other four approve
+engine-independent target-state *contracts* only, with zero
+implementation — each explicitly excludes the specific engine selection,
+exact statistical/causal method, threshold, and UX-label decisions the
+source PRD parts themselves leave open in their own decision registers
+(Part 6 §37 `MD-022`; Part 7 §48 `VL-028`/`VL-029`; Part 10 §47
+`UX-031`/`UX-032`/`UX-033`) — none of those items is approved by this
+overlay's reconciliation. `docs/wp_structural_causal_engine_decision_
+package.md` is the companion decision-support document covering all of
+them; no candidate in it is chosen.
+
+### Known version-reference gaps
+
+Part 4 v1.6, Part 6 v1.8, Part 7 v1.7, Part 10 v1.8, and Part 11 v1.7 each
+reference a further **Part 5 v1.6** ("canonical entities, physical and
+logical source contracts, mapping artefacts, persistence semantics and
+lineage") that was not supplied in the local PRD traceability set
+reconciled by this work package — only Part 5 v1.4 is present locally.
+This reconciliation does not infer Part 5 v1.6's content, does not
+promote the present Part 5 v1.4 file to v1.6, and does not claim the
+local PRD set is fully self-contained. Where Part 5 v1.6 content would
+have been needed to reconcile an invariant, that invariant remains
+unreconciled pending the missing source, rather than being approved from
+inference.
+
+(An earlier reconciliation pass within this same work package additionally
+found Part 3 v1.9 and Part 11 v1.7 referenced-but-absent against an
+earlier local PRD snapshot; a subsequent local PRD refresh, reviewed
+before this record was finalised, supplied Part 3 v1.10 — cumulatively
+retaining its own v1.9 content — and Part 11 v1.7 Final, resolving both of
+those specific gaps. Only the Part 5 v1.6 gap remains open.)
+
 ## Historical status of earlier documents
 
 | Document | Status | Notes |
@@ -185,6 +246,10 @@ Each row below is one of two distinct states, not to be conflated:
 | Time-varying baseline (`REQ-BASELINE-001`) | Requirement exists but capability incomplete | Approved 2026-08-18 (Work Package 10). Target-state contract only, reconciling `AGENTS.md`'s future-variable-role #5 standing invariant into repository authority - blocked pending `docs/wp10_time_varying_baseline_decision_package.md`, which found a genuine tension between this repository's closest upstream reference (`pymc-marketing`'s `time_varying_intercept` Gaussian Process, documented by its own authors as unsuitable for forecasting beyond a short horizon) and role #5's "projected... for planning" requirement. Zero implementation yet; `core.hierarchical_model`/`core.market_specific_model` continue to use a single static per-market/outcome intercept unchanged. |
 | Search demand/capacity mathematics (latent demand estimation, cap-hit probability, captured-versus-unmet demand, joint media/cap optimisation) | Requirement exists but capability incomplete | `REQ-SEARCH-002` (approved 2026-08-15, implemented — see below) approves Candidate A, the first production Search mediation/capacity formulation, depending on the governed identities in `REQ-SEARCH-001` and the compiler in `REQ-GRAPH-001`. The approval authorises implementation and validation only; it does not approve Search estimates for official planning or optimisation — Search planning eligibility and cap optimisation remain disabled pending that separate evidence. |
 | Capacity and cap semantics (`REQ-CAP-001`) | Requirement exists but capability incomplete | Approved 2026-08-18 (Work Package 11). Target-state contract only, reconciling `AGENTS.md`'s "Capacity and cap invariants" section into repository authority - blocked pending `docs/wp11_capacity_cap_semantics_decision_package.md`, which found `core.search_capacity`'s existing `cap_binding` field represents only two of the four required cap-hit states (capped/uncapped/ambiguous/unavailable), and that `capacity_constrained` graph edges remain compilable only for Candidate A's own authorised Search structure (`REQ-GRAPH-001`). Zero pathway-agnostic implementation yet. |
+| Bounded structural causal engine adapter, capability resolution and runtime isolation (`REQ-SCENGINE-001`) | Requirement exists but capability incomplete | Approved 2026-08-18 (Work Package 0 structural-causal authority reconciliation). Target-state contract only, reconciling the newer local PRD structural-causal overlay (Part 3 v1.10 retained v1.8 section, Part 4 v1.6, Part 6 v1.8, Part 7 v1.7, Part 8 v1.5, Part 10 v1.8, Part 11 v1.7) into repository authority - blocked pending `docs/wp_structural_causal_engine_decision_package.md`, which found the PRD's own decision register (Part 6 §37 `MD-022`) explicitly leaves engine selection (including whether PathMC is adopted), eligible mediation/causal-query classes, and runtime-isolation topology as decision-required. Zero implementation yet; `core.graph_model_compiler` continues to reject every edge role beyond `direct`/`cross_product_halo`/`excluded_diagnostic_only`/Candidate A's authorised structure. |
+| Structural causal posterior intervention effects (`REQ-SCEFFECT-001`) | Requirement exists but capability incomplete | Approved 2026-08-18 (Work Package 0 structural-causal authority reconciliation). Target-state contract only - blocked pending `docs/wp_structural_causal_engine_decision_package.md` and `REQ-SCENGINE-001` (an engine must first satisfy the capability-resolution contract). Zero implementation yet; Candidate A's own direct/mediated/total reconciliation (`REQ-SEARCH-002`) is unaffected and is not superseded by this record. |
+| Causal robustness evidence: DAG falsification, placebo/permutation refutation, unmeasured-confounding sensitivity (`REQ-CAUSALROBUST-001`) | Requirement exists but capability incomplete | Approved 2026-08-18 (Work Package 0 structural-causal authority reconciliation). Target-state evidence contract only - blocked pending `docs/wp_structural_causal_engine_decision_package.md`, which found Part 7 §48 `VL-028`/`VL-029` explicitly reserve the exact test/method/threshold for each of the three dimensions as decision-required. Zero implementation yet; distinct from `REQ-IDENT-001`'s graphical identification and `REQ-LATENT-001`'s latent-state identification, neither of which this record replaces or extends. |
+| Structural intervention curve provenance and planning-eligibility boundary (`REQ-SCCURVE-001`) | Requirement exists but capability incomplete | Approved 2026-08-18 (Work Package 0 structural-causal authority reconciliation). Target-state contract only, extending `REQ-CURVE-001` to a future structural-causal-engine-produced curve - blocked pending `docs/wp_structural_causal_engine_decision_package.md` (planning/optimisation eligibility is explicitly excluded, per Part 10 §47 `UX-033`). Zero implementation yet; no structural intervention curve type exists in `core.canonical_curves`/`core.curve_bank`. |
 | Experiment translation and recalibration | Requirement exists but capability incomplete | Superseded by `REQ-EXPMODE-001`/`REQ-CALIB-001` below (approved 2026-08-17) — see those rows. |
 | Reporting semantics | No approved requirement/decision yet | No indexed record exists. |
 | Background jobs and service boundaries | No approved requirement/decision yet | No indexed record exists. |
@@ -207,12 +272,21 @@ Each row below is one of two distinct states, not to be conflated:
 `REQ-SEARCH-001` (Search object separation/governance), `REQ-SEARCH-002`
 (Candidate A Search mediation/capacity engine), `REQ-STATE-001` (sequential
 state contract), `REQ-SCEN-001` (sequential scenario evaluation contract),
-`REQ-SCEN-002` (monthly-to-weekly phasing contract), and `REQ-SCEN-003`
-(response horizon and terminal reporting contract) are approved, indexed
-requirement records with substantive implementation. None is a gap
-requiring a new decision record — each has an explicit, narrower capability
-boundary documented in its own record:
+`REQ-SCEN-002` (monthly-to-weekly phasing contract), `REQ-SCEN-003`
+(response horizon and terminal reporting contract), and `REQ-ENGINE-001`
+(approved primary production MMM engine) are approved, indexed requirement
+records with substantive implementation. None is a gap requiring a new
+decision record — each has an explicit, narrower capability boundary
+documented in its own record:
 
+- `REQ-ENGINE-001` (`docs/approved_requirements/REQ-ENGINE-001.md`):
+  reconciles Part 3 v1.10's already-resolved primary-production-engine
+  decision (PyMC) into repository authority. Zero migration/code impact —
+  every production model builder (`core.hierarchical_model`,
+  `core.market_specific_model`, `core.search_capacity`) already runs on
+  PyMC, and Meridian is not imported anywhere in `ancestry_mmm/**`. Does
+  not resolve the separate, still-open supplemental structural-causal
+  adapter decision — see `REQ-SCENGINE-001` in the gaps table above.
 - `REQ-GRAPH-001` (`docs/approved_requirements/REQ-GRAPH-001.md`): the graph
   domain, versioning, structural/layout fingerprints, deterministic
   validation, compiler integration, and Streamlit editor are implemented.

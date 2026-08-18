@@ -48,3 +48,8 @@ Coding agents must not independently interpret or reconcile the external Ancestr
 - `REQ-ACTIVITY-*` — governed activity identity, reporting taxonomy, and funnel classification
 - `REQ-STATE-*` — sequential (weekly, state-transition) simulation state contract
 - `REQ-SCEN-*` — sequential scenario evaluation, monthly-to-weekly phasing, and horizon/terminal reporting
+- `REQ-ENGINE-*` — primary production MMM engine selection and capability-classification governance
+- `REQ-SCENGINE-*` — bounded structural causal engine adapter, capability resolution, and runtime isolation
+- `REQ-SCEFFECT-*` — structural causal posterior intervention effects contract
+- `REQ-CAUSALROBUST-*` — causal robustness evidence (DAG falsification, placebo/permutation refutation, unmeasured-confounding sensitivity)
+- `REQ-SCCURVE-*` — structural intervention curve provenance and planning-eligibility boundary

@@ -172,6 +172,88 @@ class TestCandidateARecoveryIsAutomatic:
         assert "--ref" in text
 
 
+class TestFoldRefitRecoveryIsAutomatic:
+    """Work Package 0 (structural-causal authority reconciliation, after PR
+    #286): the gate must detect Fold refit recovery module changes itself,
+    mirroring TestCandidateARecoveryIsAutomatic above, not depend solely on
+    the caller remembering -RequireFoldRefitRecovery."""
+
+    def test_diffs_the_pr_for_fold_refit_affected_modules(self):
+        text = _read()
+        assert '"pr", "diff", "$PRNumber"' in text
+        assert "FoldRefitPaths" in text
+
+    def test_fold_refit_paths_match_the_ci_gate_check_job(self):
+        """This script's -FoldRefitPaths default must list the same files
+        as .github/workflows/tests.yml's fold-refit-recovery-gate-check
+        job's fold_refit_paths array - the two are separately maintained
+        (a PowerShell merge-gate decision vs. a bash CI annotation) but
+        must agree on the governed boundary (REQ-LEAK-001/REQ-STAB-001
+        affected modules)."""
+        script_text = _read()
+        workflow_text = (REPO_ROOT / ".github" / "workflows" / "tests.yml").read_text(
+            encoding="utf-8"
+        )
+        expected_paths = [
+            "ancestry_mmm/application/fold_refit_service.py",
+            "ancestry_mmm/core/validation_folds.py",
+            "ancestry_mmm/core/structural_stability.py",
+        ]
+        for path in expected_paths:
+            assert path in script_text, (
+                f"{SCRIPT} is missing Fold refit recovery affected module "
+                f"{path!r} in -FoldRefitPaths."
+            )
+            assert path in workflow_text, (
+                f".github/workflows/tests.yml's fold-refit-recovery-gate-check "
+                f"job is missing Fold refit recovery affected module {path!r} "
+                "- it has drifted from the merge-gate script's -FoldRefitPaths."
+            )
+
+    def test_fold_refit_paths_excludes_the_shared_production_fit_path(self):
+        """Deliberate scoping decision (docs/decision_log.md, "Structural-
+        causal authority reconciliation (Work Package 0)"): the shared
+        production fit path fold-refit-service calls through must not be
+        in the automatic trigger set, or the expensive recovery job would
+        fire on nearly every modelling PR."""
+        script_text = _read()
+        fold_refit_block = script_text.split("[string[]]$FoldRefitPaths = @(", 1)[1].split(
+            ")", 1
+        )[0]
+        excluded_paths = [
+            "model_fit_service.py",
+            "core/models.py",
+            "core/predict.py",
+            "market_specific_predict.py",
+            "hierarchical_model.py",
+            "market_specific_model.py",
+        ]
+        for path in excluded_paths:
+            assert path not in fold_refit_block, (
+                f"-FoldRefitPaths must not include {path!r} - it is part of "
+                "the shared production fit path, already exercised by every "
+                "PR's blocking test suite; including it would make the "
+                "expensive recovery job fire on nearly every modelling PR"
+            )
+
+    def test_auto_detection_dispatches_the_recovery_workflow(self):
+        text = _read()
+        assert '"workflow", "run", "Tests"' in text
+        assert "RequireFoldRefitRecovery" in text
+
+    def test_fold_refit_recovery_removed_from_allowed_skipped_when_required(self):
+        text = _read()
+        assert (
+            '$AllowedSkippedChecks = $AllowedSkippedChecks | Where-Object { $_ -ne "Fold refit recovery" }'
+            in text
+        )
+        assert '$RequiredChecks = $RequiredChecks + "Fold refit recovery"' in text
+
+    def test_fold_refit_recovery_gate_check_is_informational(self):
+        text = _read()
+        assert '"Fold refit recovery gate check"' in text
+
+
 class TestPostMergeVerificationCannotBeSilentlyBypassed:
     """Brief §5.13 "Post-merge verification must not be bypassed": the
     required contract is green PR -> merge -> green main -> next work
