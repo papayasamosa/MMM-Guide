@@ -21,7 +21,45 @@ mechanism may become official.
 
 ## Capability status
 
-Not yet implemented. Target-state contract only.
+Core comparison contract implemented (Work Package 4, second record,
+2026-08-18): `ancestry_mmm/core/calibration_comparison.py` resolves this
+record's own "whether calibrated-model identity extends `core.
+model_identity` or introduces a parallel calibration-identity object"
+open question by reusing `core.model_identity.ModelIdentity` directly —
+`CalibratedVsUncalibratedComparisonArtefact` and `CalibrationEventRecord`
+both reject construction if the calibrated and uncalibrated
+`ModelIdentity` instances match (`ModelIdentity.matches`), directly
+enforcing Requirement 1: a calibrated model is a new, separately
+versioned model identity, never an in-place mutation.
+`CalibrationComparisonMetric` generically represents Requirement 2's
+comparison dimensions (posterior predictive performance, historical
+holdout, media/structural parameters, adstock/saturation, baseline,
+hierarchy, posterior uncertainty, response curves, marginal economics,
+planning/optimisation consequences) by caller-supplied name and value —
+this module has no domain knowledge of how to compute any specific one
+of them. `difference` is descriptive only; there is no threshold, pass/
+fail, or "calibration preferred" field anywhere in the module
+(Requirement 3), verified by an explicit test that scans every dataclass
+field for a forbidden verdict-shaped name.
+`ExperimentAgreementComparison` reports each compatible experiment's
+calibrated-versus-uncalibrated agreement individually, mirroring `core.
+experiments`'s own "never collapsed into an average" pattern.
+`CalibrationEventRecord` implements Requirement 5: resolved-prior-
+conflict, materially-changed-decision, uncertainty-change (closed
+three-value vocabulary), and improved/worsened validation dimensions and
+new limitations are all caller-supplied, structured facts for a human
+reviewer to record — never a judgement this module computes itself,
+mirroring `core.structural_stability`'s established pattern.
+
+Not yet implemented: the material-change criteria that trigger
+mandatory review (Part 7 `VL-025`, Part 9 `RP-023`); any specific
+comparison tolerance or threshold; computing any comparison metric
+itself; and keeping calibrated/uncalibrated versions "separately visible
+and directly comparable" in curves/planning/reports (Requirement 4) — a
+UI/reporting-page requirement deferred alongside Work Package 1/2/3/4's
+own same open item. No calibration statistical mechanism exists or is
+implied — `REQ-EXPMODE-001`'s own deferred decision-support-package
+question remains open.
 
 ## Requirement
 
@@ -76,17 +114,33 @@ validation dimensions; and any new limitation introduced.
   calibrated model (Part 7 §48 `VL-025`; Part 9 §48 `RP-023`);
 - any specific comparison tolerance or pass/fail threshold.
 
-## Affected modules (target)
+## Affected modules
 
-- the experiment-registry module introduced by `REQ-EXPMODE-001`
-- `ancestry_mmm/core/model_identity.py` (calibrated model identity/versioning)
-- `ancestry_mmm/pages/06_Diagnostics.py` (calibrated-vs-uncalibrated
-  comparison view)
-- `docs/approved_requirements/REQ-CALIB-001.md` (new)
-- `docs/approved_requirements/index.json` (new entry)
+- `ancestry_mmm/core/calibration_comparison.py` (new —
+  `CalibrationComparisonMetric`, `ExperimentAgreementComparison`,
+  `CalibratedVsUncalibratedComparisonArtefact`,
+  `assemble_calibration_comparison`, `CalibrationEventRecord`)
+- `ancestry_mmm/core/model_identity.py` (read-only consumer of
+  `ModelIdentity`/`ModelIdentity.matches` — no changes to this module)
+- the experiment-registry module introduced by `REQ-EXPMODE-001` (not
+  yet coupled — `ExperimentAgreementComparison` uses a plain
+  `experiment_id` string, not a hard import, to avoid a premature
+  dependency)
+- `ancestry_mmm/pages/06_Diagnostics.py` (not yet touched — the
+  calibrated-vs-uncalibrated comparison view is deferred)
+- `docs/approved_requirements/REQ-CALIB-001.md` (this record)
+- `docs/approved_requirements/index.json` (updated)
 
 ## Required tests
 
+- `ancestry_mmm/tests/test_calibration_comparison.py` (14 tests: metric/
+  experiment-agreement validation and round-trip; the comparison
+  artefact's fail-closed rejection of identical calibrated/uncalibrated
+  identities; assembly from caller-supplied evidence; an explicit scan
+  proving no dataclass field on the artefact suggests an automatic
+  verdict or recommendation; the calibration-event record's identity
+  check, closed uncertainty-change vocabulary, `None`-means-
+  not-yet-assessed semantics, and full round-trip)
 - `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists`
 - `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists`
 - `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid`
@@ -97,13 +151,16 @@ validation dimensions; and any new limitation introduced.
 
 ## Migration impact
 
-None yet.
+None to persisted artefacts or model-fitting code — this module is
+additive and standalone, with no UI/reporting-page wiring yet.
 
 ## Unresolved decisions
 
 - Material-change thresholds (`VL-025`/`RP-023`).
 - Whether calibrated-model identity extends `core.model_identity` or
-  introduces a parallel calibration-identity object.
+  introduces a parallel calibration-identity object — **resolved**:
+  reuses `core.model_identity.ModelIdentity` directly (see "Capability
+  status" above).
 
 ## Owner
 
