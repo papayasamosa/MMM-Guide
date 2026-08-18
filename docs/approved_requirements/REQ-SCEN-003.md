@@ -87,17 +87,28 @@ was produced by the sequential contract.
   `ancestry_mmm/tests/test_terminal_response.py` (implemented, WP4),
   `ancestry_mmm/tests/test_sequential_scenario_evaluation.py` (implemented,
   WP5)
-- `ancestry_mmm/pages/08_Scenario_Planner.py` (implemented, WP5 part 2:
-  the manual "Sequential weekly" tab renders short/long horizon metrics
-  and labels the calculation method - but not terminal carryover or
-  posterior uncertainty, both explicitly disclosed as not yet available in
-  this UI rather than silently omitted)
-- Not yet implemented: terminal carryover / posterior uncertainty in the
-  UI (available via the core/service APIs directly), scenario persistence/
-  staleness for a saved sequential scenario (`core.scenario_governance`,
-  `core.persistence` - horizon configuration and terminal-carryover result
-  must become part of the persisted, fingerprinted scenario record once
-  that wiring exists)
+- `ancestry_mmm/pages/08_Scenario_Planner.py` (implemented, WP5 part 2 and
+  part 3 (2026-08-18): the manual "Sequential weekly" tab renders short/
+  long horizon metrics, labels the calculation method, and (part 3) now
+  builds a `terminal_future_context` reusing the same already-acknowledged
+  assumption set (hold-last-observed controls, zero promo) and renders
+  `result.terminal` under a "Terminal carryover (informational)" heading,
+  structurally separate from the plan-window tables above (never summed
+  into them). An opt-in checkbox ("Show posterior uncertainty for this
+  sequential plan") mirrors the steady-state tab's own opt-in pattern
+  (expensive - re-runs the scenario once per sampled draw) and, when
+  enabled, passes `n_posterior_draws`/`trace` through to `evaluate_manual_
+  scenario_sequential`, rendering a plan-window-total mean/median/90%
+  credible-interval summary from `result.posterior_weekly_incremental`
+  (summed per draw across the plan window before taking percentiles
+  across draws - draw alignment preserved throughout, per this record's
+  own "Posterior aggregation" section))
+- Not yet implemented: scenario persistence/staleness for a saved
+  sequential scenario (`core.scenario_governance`, `core.persistence` -
+  horizon configuration and terminal-carryover result must become part of
+  the persisted, fingerprinted scenario record once that wiring exists) -
+  the page's own caption continues to disclose this explicitly rather than
+  silently omitting a save/export control.
 
 ## Owner and status
 
@@ -108,6 +119,7 @@ the typed `HorizonConfiguration` contract (WP1,
 `core.planning.phasing.HorizonConfiguration`), and the business-facing
 terminal candidate/reference evaluator (WP4,
 `core.planning.terminal_response`) are implemented and tested. Short/long
-horizon reporting and method labelling are implemented in the Streamlit UI
-(WP5 part 2). Persistence with a saved scenario, and terminal carryover/
-posterior uncertainty in the UI, are approved but not yet implemented.
+horizon reporting and method labelling (WP5 part 2), and terminal
+carryover/posterior uncertainty in the UI (WP5 part 3, 2026-08-18), are
+implemented in the Streamlit UI. Persistence with a saved sequential
+scenario remains approved but not yet implemented.

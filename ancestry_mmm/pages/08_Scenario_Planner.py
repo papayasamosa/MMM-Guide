@@ -330,6 +330,8 @@ def _evaluate_sequential_manual_plan(
     scenario_governance_kwargs: dict,
     value_mapping,
     currency_context,
+    trace=None,
+    n_posterior_draws: int = 0,
 ):
     """Build and evaluate a sequential-weekly manual scenario from the same
     monthly spend_plan/governance inputs the steady-state tab uses (WP5,
@@ -503,6 +505,45 @@ def _evaluate_sequential_manual_plan(
         expected_n_fourier_columns=2 * n_fourier_harmonics,
     )
 
+    # Terminal incremental carryover (WP5 of `Media-Mix-Lab: Coding LLM Next
+    # Steps After PR #267`): the residual value that carries forward after
+    # the plan window ends, under the SAME real future non-decision context
+    # (continuing seasonality/controls) but zero future decision media -
+    # reported structurally separately, never merged into the plan-window
+    # result (`core.planning.terminal_response`'s own contract). Reuses the
+    # exact assumption set (hold-last-observed controls, zero promo) the
+    # analyst already acknowledged above for the plan window itself - no
+    # new consent gate, since no new assumption is introduced.
+    horizon_configuration = HorizonConfiguration()
+    terminal_weeks = tuple(
+        pd.date_range(
+            weeks[-1],
+            periods=horizon_configuration.terminal_continuation_weeks + 1,
+            freq="7D",
+        )[1:]
+        .strftime("%Y-%m-%d")
+        .tolist()
+    )
+    terminal_future_context = build_future_context(
+        market=market,
+        period_labels=terminal_weeks,
+        historical_n_weeks=historical_n_weeks + len(weeks),
+        n_fourier_harmonics=n_fourier_harmonics,
+        outcome_ids=tuple(meta.outcome_ids),
+        control_names=control_names,
+        outcome_control_names=outcome_control_names,
+        mode=future_mode,
+        promo_future={
+            oid: {w: 0.0 for w in terminal_weeks} for oid in meta.outcome_ids
+        },
+        eligible_for_hold_last_observed=frozenset(last_observed_controls)
+        | frozenset(last_observed_outcome_controls),
+        hold_last_observed=frozenset(last_observed_controls)
+        | frozenset(last_observed_outcome_controls),
+        last_observed_controls=last_observed_controls,
+        last_observed_outcome_controls=last_observed_outcome_controls,
+    )
+
     evaluation_context = SequentialEvaluationContext(
         model_identity=identity_kwargs.get("model_spec_fingerprint", "") or "unset",
         posterior_identity=identity_kwargs.get("posterior_fingerprint", "") or "unset",
@@ -524,11 +565,12 @@ def _evaluate_sequential_manual_plan(
         meta=meta,
         params=params,
         historical_frame=frame,
-        horizon_configuration=HorizonConfiguration(),
+        horizon_configuration=horizon_configuration,
         evaluation_context=evaluation_context,
         weekly_plan_fingerprint=candidate_provenance.fingerprint(),
         reference_weekly_plan_fingerprint=reference_provenance.fingerprint(),
         future_context=future_context,
+        terminal_future_context=terminal_future_context,
         planning_objective=planning_objective,
         activity_definitions=activity_definitions or None,
         counterfactual_policy=counterfactual_policy,
@@ -538,11 +580,19 @@ def _evaluate_sequential_manual_plan(
         artefact_kind="manual_scenario",
         value_mapping=value_mapping,
         currency_context=currency_context,
+        trace=trace,
+        n_posterior_draws=n_posterior_draws,
         **identity_kwargs,
         **scenario_governance_kwargs,
     )
     service_result = ScenarioService().evaluate_manual_sequential(sc_input)
-    return service_result, plan_start_week, weeks, future_context
+    return (
+        service_result,
+        plan_start_week,
+        weeks,
+        future_context,
+        terminal_future_context,
+    )
 
 
 st.set_page_config(
@@ -2005,9 +2055,47 @@ def _render_sequential_manual_tab():
         )
         return
 
+    if trace is None:
+        st.caption(
+            "Posterior uncertainty needs a fitted trace, not just point-estimate "
+            "posterior params - unavailable here."
+        )
+        seq_n_posterior_draws = 0
+    else:
+        show_sequential_uncertainty = st.checkbox(
+            "Show posterior uncertainty for this sequential plan (re-runs the "
+            "scenario once per sampled draw - slower)",
+            value=False,
+            key=f"{plan_key}_seq_uncertainty",
+        )
+        seq_n_posterior_draws = (
+            st.slider(
+                "Posterior draws to sample",
+                20,
+                200,
+                50,
+                step=10,
+                key=f"{plan_key}_seq_n_draws",
+            )
+            if show_sequential_uncertainty
+            else 0
+        )
+
+    spinner_text = (
+        f"Computing sequential scenario uncertainty from {seq_n_posterior_draws} "
+        "posterior draws..."
+        if seq_n_posterior_draws
+        else "Computing sequential scenario..."
+    )
     try:
-        service_result, plan_start_week, weeks, future_context = (
-            _evaluate_sequential_manual_plan(
+        with st.spinner(spinner_text):
+            (
+                service_result,
+                plan_start_week,
+                weeks,
+                future_context,
+                terminal_future_context,
+            ) = _evaluate_sequential_manual_plan(
                 market=market,
                 meta=meta,
                 params=params,
@@ -2023,8 +2111,9 @@ def _render_sequential_manual_tab():
                 scenario_governance_kwargs=scenario_governance_kwargs,
                 value_mapping=value_mapping,
                 currency_context=currency_context,
+                trace=trace,
+                n_posterior_draws=seq_n_posterior_draws,
             )
-        )
     except ValueError as exc:
         st.error(f"Cannot build the sequential weekly plan: {exc}")
         return
@@ -2085,13 +2174,62 @@ def _render_sequential_manual_tab():
             for outcome_id, value in zip(result.outcome_ids, values):
                 st.metric(f"{readable_label(outcome_id)} · {label}", f"{value:,.1f}")
 
+    st.markdown("#### Terminal carryover (informational)")
     st.caption(
-        "Terminal incremental carryover and posterior uncertainty are not yet "
-        "available in this UI for the sequential method - use the core "
-        "`core.planning.terminal_response`/`simulate_sequential_outcomes_posterior_"
-        "draw_consistent` APIs directly, or steady-state monthly's own uncertainty "
-        "panel below (a different, non-sequential calculation)."
+        "Residual value carrying forward after the plan window ends, if future "
+        "media spend stopped at zero - evaluated under the SAME real future "
+        "non-decision context (seasonality/controls) as the plan window above, "
+        "reusing the assumptions already acknowledged. Structurally separate "
+        "evidence: never added to the weekly/monthly/horizon totals above."
     )
+    if result.terminal is not None:
+        terminal_df = pd.DataFrame(
+            result.terminal.incremental,
+            index=result.terminal.period_labels,
+            columns=result.terminal.outcome_ids,
+        )
+        st.dataframe(
+            terminal_df,
+            width="stretch",
+            column_config=dataframe_column_config(terminal_df),
+        )
+    else:
+        st.caption("Terminal carryover could not be computed for this plan.")
+
+    st.markdown("#### Posterior uncertainty")
+    if result.posterior_weekly_incremental is not None:
+        window_totals = result.posterior_weekly_incremental.sum(axis=1)
+        summary_df = pd.DataFrame(
+            {
+                "mean": window_totals.mean(axis=0),
+                "median": np.median(window_totals, axis=0),
+                "p5": np.percentile(window_totals, 5, axis=0),
+                "p95": np.percentile(window_totals, 95, axis=0),
+            },
+            index=result.outcome_ids,
+        )
+        st.markdown(
+            "**Plan-window total incremental outcome, per sampled posterior draw "
+            "(mean / median / 90% credible interval)**"
+        )
+        st.dataframe(
+            summary_df,
+            width="stretch",
+            column_config=dataframe_column_config(summary_df),
+        )
+        st.caption(
+            f"Based on {result.posterior_weekly_incremental.shape[0]} sampled "
+            "posterior draws, summed per draw across the plan window (weekly "
+            "draws are not independently re-sampled per week - the same draw "
+            "index is used throughout, preserving draw-to-draw correlation)."
+        )
+    else:
+        st.caption(
+            "Enable 'Show posterior uncertainty for this sequential plan' above "
+            "to compute a credible interval for this plan's total incremental "
+            "outcome."
+        )
+
     render_technical_details(
         title="Technical details · sequential evaluation provenance",
         details={
@@ -2100,6 +2238,7 @@ def _render_sequential_manual_tab():
             "Weekly plan fingerprint (candidate)": result.weekly_plan_fingerprint,
             "Weekly plan fingerprint (reference)": result.reference_weekly_plan_fingerprint,
             "Future-context fingerprint": result.future_context_fingerprint,
+            "Terminal future-context fingerprint": terminal_future_context.fingerprint(),
             "Starting-state fingerprint": result.starting_state_fingerprint,
             "Evaluation-context fingerprint": result.evaluation_context_fingerprint,
             "Decision-ready": str(future_context.is_decision_ready),

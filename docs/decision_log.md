@@ -5776,3 +5776,82 @@ reconciliation brief.
 **Owner:** Data Science / Platform engineering.
 **Status:** Accepted; implemented on this work package's branch. PR and CI
 remain the release gate.
+
+
+## Sequential Scenario Planner terminal carryover and posterior uncertainty (Work Package 5 part 3)
+
+**Context:** WP5 part 2 wired the sequential-weekly manual-plan tab
+(`pages/08_Scenario_Planner.py`) into `ScenarioService.evaluate_manual_
+sequential`, rendering weekly/monthly incremental tables and short/long
+response-horizon metrics - but explicitly disclosed that terminal
+incremental carryover and posterior uncertainty, though already fully
+supported by the kernel and application layers (`core.planning.
+terminal_response.evaluate_terminal_incremental_response[_market_
+specific]`, `core.sequential_scenario_evaluation.evaluate_manual_
+scenario_sequential`'s `terminal_future_context`/`trace`/`n_posterior_
+draws` parameters, `SequentialManualScenarioInput.terminal_future_
+context`/`.trace`/`.n_posterior_draws`), were not yet rendered in this
+UI. Investigation confirmed the entire core/application/service chain
+was already implemented and unit-tested (`test_terminal_response.py`,
+`test_sequential_scenario_evaluation.py`'s `test_terminal_is_reported_
+separately_when_requested`/`test_draw_consistent_posterior_path_
+returns_full_per_draw_array`) - this was purely a UI-wiring gap, not a
+missing kernel capability.
+
+**Decision:** Wire both into `_evaluate_sequential_manual_plan`/
+`_render_sequential_manual_tab`. Terminal: build a `terminal_future_
+context` via `build_future_context` for `HorizonConfiguration().
+terminal_continuation_weeks` (52) weeks immediately following the plan
+window, continuing `historical_n_weeks + len(weeks)` (the same Fourier-
+phase-continuation convention `core.planning.future_context` already
+uses), reusing the exact same `future_mode`/hold-last-observed-controls/
+zero-promo assumption set the analyst already acknowledged for the plan
+window's own `future_context` - no new consent gate, since no new
+assumption is introduced. Render `result.terminal.incremental` under a
+"Terminal carryover (informational)" heading, structurally separate from
+the weekly/monthly/horizon tables above (per `core.planning.terminal_
+response`'s own "never folded into a plan-window result" contract).
+Posterior: mirror the steady-state tab's own opt-in UX pattern exactly
+(a checkbox - "re-runs the scenario once per sampled draw - slower" -
+plus a 20-200 draw-count slider, both gated behind `trace is not None`)
+rather than inventing a different UX for the same kind of expensive,
+opt-in computation; pass the chosen draw count as `n_posterior_draws`
+and always pass `trace` (the kernel's own `if trace is not None and
+n_posterior_draws > 0` guard makes an unrequested `trace` a no-op).
+Render a plan-window-total mean/median/90% credible-interval summary
+computed by summing `result.posterior_weekly_incremental` per draw
+across weeks *before* taking percentiles across draws - preserving
+draw-to-draw correlation throughout (`REQ-SCEN-003`'s own "Posterior
+aggregation" section: "aggregate draws only after the complete path...
+has been evaluated per draw").
+
+**Rejected alternative:** Re-deriving a new terminal/posterior
+computation path independent of the already-implemented kernel
+functions (rejected - the kernel/service layer already fully
+implements and tests both; the only genuine gap was the UI call site
+never populating `terminal_future_context`/`trace`/`n_posterior_
+draws`, confirmed by an Explore-agent investigation before writing any
+code, avoiding a redundant reimplementation).
+
+**Impact:** `ancestry_mmm/pages/08_Scenario_Planner.py` (`_evaluate_
+sequential_manual_plan` gains `trace`/`n_posterior_draws` parameters and
+now also builds/returns `terminal_future_context`; `_render_sequential_
+manual_tab` gains the posterior opt-in checkbox/slider and renders the
+terminal-carryover and posterior-uncertainty sections in place of the
+prior "not yet available" captions); `ancestry_mmm/tests/test_scenario_
+planner_apptest.py` (new test: `test_sequential_weekly_manual_tab_
+renders_terminal_carryover_section`, 36 tests total in this file, all
+passing). No change to `core.sequential_scenario_evaluation`, `core.
+planning.terminal_response`, or `application/scenario_service.py` - all
+three were already complete. `docs/approved_requirements/REQ-SCEN-
+001.md`/`REQ-SCEN-002.md`/`REQ-SCEN-003.md`, `docs/specification_
+authority.md`, and `REPO_REVIEW_AND_NEXT_STEPS.md` updated to reflect
+the closed gap. Still not yet implemented: sequential-weekly
+optimisation, scenario persistence/staleness for a saved sequential
+scenario, and a browser-level (Playwright) journey test for the
+Scenario Planner page - all separate, explicitly disclosed follow-ups
+(WP5 parts 4/5).
+
+**Owner:** Data Science / Platform engineering.
+**Status:** Accepted; implemented on this work package's branch. PR and CI
+remain the release gate.
