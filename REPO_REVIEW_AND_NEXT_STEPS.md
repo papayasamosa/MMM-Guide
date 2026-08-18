@@ -475,6 +475,23 @@ business or modelling definitions:
   forward-projection mechanism (if any) are all genuinely unresolved
   statistical questions, not an implementation gap. Blocked pending review
   of that package.
+- Pathway-agnostic capacity/cap semantics (`AGENTS.md`'s "Capacity and
+  cap invariants" section) are not yet implemented beyond Candidate A's
+  own narrow Search pathway - `core.search_capacity`'s `cap_binding`
+  field is a strict two-value boolean, while `AGENTS.md` requires four
+  states (capped/uncapped/ambiguous/unavailable), and `REQ-GRAPH-001`'s
+  own governed-edge-role table already states `capacity_constrained` is
+  "unsupported for every other structure" beyond Candidate A's authorised
+  Search shape. Work Package 11 (2026-08-18) reconciled this into a
+  formal requirement (`REQ-CAP-001`) and produced a decision package
+  (`docs/wp11_capacity_cap_semantics_decision_package.md`) rather than
+  implementing it directly: what "ambiguous" and "unavailable"
+  concretely mean, whether the contract is generalised into a shared
+  module now or deferred until a second capacity-constrained pathway
+  exists, and what cap-data governance beyond `core.search_objects`'s
+  existing identity/versioning requires are all genuinely unresolved
+  statistical/design questions, not a missing runtime guard. Blocked
+  pending review of that package.
 - Real UK data readiness is an operational step and must be run only by an
   authorised analyst with approved local data outside Git.
 

@@ -6373,3 +6373,89 @@ strategy, extrapolation validation), Data Science / Platform engineering
 **Status:** Decision-support package delivered; awaiting human review and
 selection. No implementation PR accompanies this entry.
 
+
+
+## Capacity and cap semantics decision package (Work Package 11)
+
+**Context:** `docs/specification_authority.md` already listed "Capacity
+and cap semantics" as "No approved requirement/decision yet", pointing to
+`AGENTS.md`'s "Capacity and cap invariants" section as the standing
+business/mathematical invariant. `REQ-GRAPH-001`'s own governed-edge-role
+table independently confirms the boundary: `capacity_constrained` is
+"Supported only by the explicit Candidate A Search linked engine for its
+authorised Search structure; unsupported for every other structure." An
+Explore-agent investigation ranked this the strongest remaining gap in
+`docs/specification_authority.md`'s "No approved requirement/decision
+yet" rows after Work Packages 6/8/9/10 (ruling out a "Candidate A Model
+C" hypothesis for Work Package 11 as a red herring with zero repo
+evidence - that phrase conflates two unrelated naming schemes, curve-
+fitting Model A/B/C variants and Search Candidate A/B/C formulations,
+neither of which names an open gap).
+
+**Finding:** inspecting Candidate A's existing implementation
+(`core.search_capacity.candidate_a_forward`) against `AGENTS.md`'s
+invariants surfaced concrete, specific gaps, not merely an absent record.
+`cap_binding` is computed as `np.isclose(paid, cap, rtol=1e-8,
+atol=1e-8)` - a strict two-value boolean - while `AGENTS.md` requires
+four states (capped/uncapped/ambiguous/unavailable); neither "ambiguous"
+(a posterior-uncertainty-driven near-boundary status - Candidate A's own
+`CapBindingSummary.probability_cap_binding` already computes a per-draw
+binding-probability distribution that could inform this, but nothing
+currently derives a status from it) nor "unavailable" (no governed cap
+value at all, distinct from a supplied cap of zero) is represented
+anywhere. Separately, `EDGE_ROLE_CAPACITY_CONSTRAINED` is already generic
+graph vocabulary, but the only compiler logic for it
+(`core.graph_model_compiler`'s Candidate-A structural validator) is
+pathway-specific, not a reusable contract - generalising from exactly one
+existing example risks encoding accidental Candidate-A-specific
+assumptions, a real design risk this package does not resolve.
+
+**Decision:** Reconcile the gap into `docs/approved_requirements/
+REQ-CAP-001.md` (target-state contract only, mirroring Work Packages 6/9/
+10's `REQ-SCEN-004`/`REQ-FUTURE-001`/`REQ-BASELINE-001` pattern) and write
+`docs/wp11_capacity_cap_semantics_decision_package.md`, laying out three
+cap-hit-status candidates (S1: extend the existing boolean to a
+threshold-based four-value enum; S2: report the full per-draw binding-
+probability distribution with no single mandatory point label, mirroring
+`core.calibration_comparison`'s established no-verdict-field precedent;
+S3: leave status definitions per-pathway with no shared vocabulary) and
+three generalisation-timing candidates (G1: extract a shared pathway-
+agnostic module now; G2: defer generalisation until a second concrete
+pathway exists, avoiding premature abstraction from one example; G3:
+approve the vocabulary/invariants now while deferring the shared-module
+question). None selected. `docs/specification_authority.md`'s "Capacity
+and cap semantics" row and `REPO_REVIEW_AND_NEXT_STEPS.md` updated to
+reference this package.
+
+**Rejected alternative:** Extending `cap_binding` to a four-value enum
+immediately inside `core.search_capacity` on the reasoning that it is a
+narrow, mechanical addition to one existing module (rejected - the
+"ambiguous" threshold is a genuine statistical judgement call with no
+obvious default, and making the change inside Candidate A's own module
+without first deciding the generalisation-timing question (G1/G2/G3)
+risks baking a pathway-specific implementation into what `AGENTS.md`
+frames as a cross-pathway invariant, exactly the premature-generalisation
+or premature-narrowing risk this package exists to avoid guessing past).
+
+**Impact:** `docs/approved_requirements/REQ-CAP-001.md` (new),
+`docs/approved_requirements/index.json` (new entry), `docs/wp11_capacity_
+cap_semantics_decision_package.md` (new), `docs/specification_
+authority.md` (row updated), `REPO_REVIEW_AND_NEXT_STEPS.md` (bullet
+added). No code changes - `core.search_capacity` and `core.graph_model_
+compiler` are both untouched by this package; `cap_binding` remains a
+strict boolean and `capacity_constrained` edges remain compilable only
+for Candidate A's authorised Search structure exactly as before. This
+workstream is stopped pending review of the decision package. Work
+Package 11 is the last work package named in the reconciled brief's
+sequence (Work Package 0 through Work Package 11) - the autonomous
+coding program's implementation phase concludes here, with six
+decision packages (Work Packages 6, 7, 8, 9, 10, 11) awaiting human
+review and selection before any of their blocked implementation work
+can proceed.
+
+**Owner:** Modelling (cap-hit status semantics, reconciliation-identity
+generality), Data Science / Platform engineering (module-sharing
+architecture, cap-object governance mechanics).
+**Status:** Decision-support package delivered; awaiting human review and
+selection. No implementation PR accompanies this entry.
+
