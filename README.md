@@ -114,12 +114,20 @@ Requires Python 3.11 or 3.12 (see [Deployment](#deployment) below for why there'
   movement, minimum-spend floors), and a clearly-labelled unconstrained benchmark - market-aware
   for Model C, with a media-unit planning mode - all evaluated with a documented steady-state
   response approximation using the model's real fitted curves, not literal MCMC-in-the-loop.
-  **Current state:** the Scenario Planner application is a steady-state monthly approximation.
-  A framework-independent sequential (weekly, state-transition) simulation kernel
-  (`core/sequential_simulation.py`) exists alongside it - real historical-media starting-adstock
-  reconstruction, an explicit weekly-plan contract, a candidate/reference incremental-outcome
-  contract, and terminal carryover, for both production-supported model types - but it is not yet
-  wired into this page or the optimiser's objective, and Chronos-2 integration is not implemented.
+  **Current state:** the "Edited plan and calculated result" tab supports two manual evaluation
+  methods, selected explicitly and never silently switched: **steady-state monthly**
+  (approximates each month independently at its adstock steady state; used exclusively by the
+  constrained/unconstrained optimiser tabs) and **sequential weekly**
+  (`core/sequential_evaluation_context.py`, `core/sequential_scenario_evaluation.py`,
+  `core/planning/weekly_plan_builder.py`) - a real week-by-week state-transition simulation that
+  reconstructs this market's own historical media carry-in, continues immediately after the fitted
+  data ends with no gap, and reports short- and long-response horizons plus terminal incremental
+  carryover, with opt-in posterior-uncertainty draws. Sequential scenarios require explicit
+  acknowledgement of month re-seating, exploratory hold-last future controls, and no-promotion
+  handling before calculating, and can be saved, exported, and re-imported like any other scenario,
+  with dependency-aware staleness on reload. Constrained/unconstrained optimisation and Chronos-2
+  integration remain steady-state monthly only; sequential-weekly optimisation is a separate,
+  not-yet-implemented work package (see `docs/approved_requirements/` for the roadmap).
   A Candidate A capacity-constrained Search engine capability (`core/search_capacity.py`,
   `REQ-SEARCH-002`) is now wired into Model Training's fit path (`application/model_fit_service.py`,
   `core.hierarchical_model.build_fh_hierarchical_model(..., search_candidate_a=...)`), reusing
@@ -159,10 +167,11 @@ and exercised by the synthetic 3-market demo, but needs real data to mean anythi
 from geo-tests/in-platform tests into the curve bank (the comparison/logging workflow exists; the
 feed is manual), Stage 2 media x context interaction terms (explicitly out of scope per the
 requirements brief), and the full policy-backed model-approval treatment for unsupported coverage.
-A sequential (weekly, state-transition) simulation kernel with starting adstock and terminal
-carryover **is now built** (`core/sequential_simulation.py`); it is not yet wired into the
-Scenario Planner application or the optimiser's objective - see the Scenario Planner section
-above. Executable frequency conversion for non-native-cadence sources **is now built** for the
+A sequential (weekly, state-transition) manual evaluation method with starting adstock and
+terminal carryover **is now wired into the Scenario Planner's manual evaluation tab** - see the
+Scenario Planner section above; sequential-weekly *optimisation* (the constrained/unconstrained
+search itself) is not yet implemented, and remains steady-state monthly only. Executable frequency
+conversion for non-native-cadence sources **is now built** for the
 governed method catalogue (`docs/mixed_frequency_alignment_wp1.md`); it remains deliberately
 narrow and does not resolve `FR-MOD-015` ragged-predictor mathematics. A Candidate A Search
 mediation/capacity engine capability (`core/search_capacity.py`) is now wired into Model Training's

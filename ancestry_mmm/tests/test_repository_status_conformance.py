@@ -107,31 +107,58 @@ CURRENT_MAIN_FIELD_RE = re.compile(
     r"current\s*`?main`?\s*(reviewed|sha|is)", re.IGNORECASE
 )
 
+# The "Repository state through merged PR #<N>" milestone marker was itself
+# a replacement for an earlier live-SHA field, adopted on the theory that a
+# PR-number marker would not drift the way a SHA field did. It drifted the
+# same way: written as "merged PR #269", left in place through PRs
+# #270-#284. Both are instances of the same anti-pattern - a single global
+# "the whole repository is currently at X" assertion in a version-controlled
+# file - so both are rejected together. A PR number may still appear when it
+# labels a specific historical entry (see
+# test_repo_review_historical_shas_are_labelled for the equivalent SHA
+# rule); it may not appear as a leading "this is where the repository is
+# now" marker.
+GLOBAL_MILESTONE_MARKER_RE = re.compile(
+    r"Repository state through merged PR #\d+", re.IGNORECASE
+)
 
-def test_repo_review_does_not_use_a_necessarily_drifting_current_main_field():
-    """A version-controlled status file must never assert "this SHA is
-    current `main`": a branch cannot know the future squash-merge commit
-    SHA that will become `main`, so that field is guaranteed to go stale
-    the moment the next PR merges (exactly what happened - an earlier
-    revision claimed PR #261's merge commit as "current `main`" while
-    PR #262 was already merged on top of it, see docs/decision_log.md and
-    the Work Package 2 entry that replaced this convention).
 
-    The replacement convention is a "Repository state through merged PR
-    #<N>" milestone marker plus explicitly historical/superseded SHAs -
-    never a field claiming to be the live current SHA."""
+def test_repo_review_does_not_assert_a_global_current_pr_or_milestone_marker():
+    """A version-controlled status file must never assert a single global
+    "the repository is currently at PR/commit X" marker, whether phrased as
+    a live `main` SHA or as a "Repository state through merged PR #<N>"
+    milestone line: a branch authoring this file cannot know what merges
+    after it, so any such global marker is guaranteed to go stale on the
+    next merge.
+
+    This already happened twice: first with a literal SHA field (PR #261's
+    merge commit claimed as "current `main`" while PR #262 had already
+    merged on top of it), then with the "Repository state through merged PR
+    #269" milestone marker that replaced it (left asserting #269 while PRs
+    #270-#284 merged on top of it). The fix is architectural, not another
+    number bump: this file states capabilities and history; live remote
+    state is always resolved from GitHub, never from this file."""
     text = _read(REPO_REVIEW)
     assert not CURRENT_MAIN_FIELD_RE.search(text), (
         "REPO_REVIEW_AND_NEXT_STEPS.md contains a 'current main' SHA field "
         "again - this convention was deliberately removed because it "
-        "necessarily drifts on every subsequent merge. Use a "
-        "'Repository state through merged PR #<N>' milestone marker "
-        "instead, and resolve the actual live origin/main SHA from GitHub, "
-        "never from this file."
+        "necessarily drifts on every subsequent merge. Resolve the actual "
+        "live origin/main SHA from GitHub, never from this file."
     )
-    assert re.search(r"Repository state through merged PR #\d+", text), (
-        "REPO_REVIEW_AND_NEXT_STEPS.md must state its baseline as "
-        "'Repository state through merged PR #<N>', not a live SHA field."
+    assert not GLOBAL_MILESTONE_MARKER_RE.search(text), (
+        "REPO_REVIEW_AND_NEXT_STEPS.md contains a 'Repository state through "
+        "merged PR #<N>' global milestone marker again - this convention "
+        "was deliberately removed because it drifts on every subsequent "
+        "merge exactly like the live-SHA field it replaced. State "
+        "capabilities and label historical entries by the PR that "
+        "introduced them; do not assert a single current PR/milestone for "
+        "the whole file."
+    )
+    assert "resolve current remote" in text.lower() or (
+        "resolve" in text.lower() and "origin/main" in text
+    ), (
+        "REPO_REVIEW_AND_NEXT_STEPS.md must instruct the reader to resolve "
+        "live origin/main state from GitHub rather than from this file."
     )
 
 
