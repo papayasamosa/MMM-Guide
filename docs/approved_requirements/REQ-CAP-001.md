@@ -1,0 +1,163 @@
+# REQ-CAP-001: Capacity and Cap Semantics
+
+## PRD source
+
+Ancestry MMM PRD reconciliation of `AGENTS.md`'s "Capacity and cap
+invariants" section - a standing repository invariant, not itself sourced
+from a specific PRD Part/section the way `REQ-SCEN-*`/`REQ-FORECAST-001`
+are. Reconciled by Work Package 11 of `Media-Mix-Lab: Coding LLM Next
+Steps After PR #267 and Latest PRD Validation Updates`.
+
+## Approval and traceability
+
+Reconciled into repository authority by Work Package 11 (2026-08-18),
+per this repository's standard authority hierarchy. Depends on
+`REQ-SEARCH-002` (the only existing concrete capacity-constrained
+pathway - Candidate A's latent-demand/capture/cap chain,
+`core.search_capacity`) and `REQ-GRAPH-001` (whose own governed-edge-role
+table already states `capacity_constrained` is "Supported only by the
+explicit Candidate A Search linked engine for its authorised Search
+structure; unsupported for every other structure" - confirming this gap's
+exact boundary from the graph-compiler side).
+
+This record reconciles the already-flagged gap
+(`docs/specification_authority.md`: "Capacity and cap semantics
+(`REQ-CAP-001`) — No approved requirement/decision yet... no `REQ-CAP-001`
+record yet translates it into an approved modelling contract") into a
+formal requirement record - it does **not** approve an implementation.
+Inspecting Candidate A's existing implementation against `AGENTS.md`'s
+invariants surfaced concrete, specific gaps (not merely an absent
+record): `core.search_capacity.candidate_a_forward`'s `cap_binding` field
+is a strict two-value boolean (`np.isclose(paid, cap, ...)`), while
+`AGENTS.md` requires four values (capped / uncapped / ambiguous /
+unavailable); neither "ambiguous" nor "unavailable" is represented
+anywhere in the current code. Genuinely unresolved questions block any
+implementation and are recorded below as decision-required, per this
+program's own governing instruction: do not implement directly from an
+unapproved gap, and if a genuine statistical/causal/business/governance
+decision is required, create a decision package and stop that workstream
+rather than guessing. See `docs/wp11_capacity_cap_semantics_decision_
+package.md`.
+
+## Capability status
+
+Not yet implemented as a pathway-agnostic contract. Blocked pending the
+decision package referenced above - this is a target-state contract
+only, reconciling `AGENTS.md`'s own standing invariant (already partially
+realised, non-uniformly, inside Candidate A specifically) into repository
+authority, without approving any specific cap-hit vocabulary
+implementation, module-sharing architecture, or cap-governance mechanism
+beyond what Candidate A already has.
+
+## Requirement (target state - not yet approved for implementation)
+
+### 1. Cap is never realised spend/delivery
+
+`AGENTS.md`'s existing rule ("A Paid Search (or other lower-funnel) cap
+must not be labelled or entered as realised spend") and Candidate A's own
+structural enforcement (`core.search_capacity.candidate_a_forward`'s
+`realised_paid_search_delivery = min(paid_opportunity, cap)`, never the
+cap value itself) are inherited unchanged, not re-decided here.
+
+### 2. A non-binding cap must not manufacture incremental value
+
+`AGENTS.md`'s existing rule is inherited unchanged: raising a cap that is
+not binding must have no effect on realised delivery, captured demand, or
+final outcome. Candidate A's `min(...)` construction already satisfies
+this mechanically for its own pathway; any future capacity-constrained
+pathway approved under this record must preserve the same property,
+whatever its specific algebraic form.
+
+### 3. Captured plus unmet demand must reconcile to latent demand
+
+`AGENTS.md`'s existing reconciliation identity is inherited unchanged.
+Candidate A's `total_captured_demand + unmet_demand == latent_branded_
+search_demand` (enforced structurally, `core.search_capacity.py` lines
+310-317) is the one existing concrete instance; whether this exact
+algebraic form is the general contract for any future pathway, or
+whether `AGENTS.md`'s own "not one frozen algebraic form" caution permits
+a different reconciliation shape, is decision-required (see Explicitly
+excluded).
+
+## Explicitly excluded (decision-required, not approved by this record)
+
+- **The cap-hit status vocabulary's concrete definition.** `AGENTS.md`
+  requires four values (capped / uncapped / ambiguous / unavailable);
+  Candidate A's current code implements only two (a strict boolean).
+  What "ambiguous" (a posterior-uncertainty-driven near-boundary status,
+  as opposed to a point-estimate tolerance check) and "unavailable" (no
+  governed cap value at all, distinct from a supplied cap of zero) mean
+  operationally, and whether the vocabulary is a single mandatory
+  categorical field or a disclosed set of evidence facets, is not decided
+  by this record.
+- **Whether the contract is generalised into a shared, pathway-agnostic
+  module now, or deferred until a second capacity-constrained pathway
+  exists to compare against.** `EDGE_ROLE_CAPACITY_CONSTRAINED` is
+  already generic graph vocabulary, but the only compiler logic that
+  exists for it is Candidate-A-specific structural validation
+  (`core.graph_model_compiler`). Generalising from one existing example
+  risks encoding accidental Candidate-A-specific assumptions; deferring
+  leaves the gap `REQ-GRAPH-001` already names unimplementable in any
+  pathway-agnostic sense.
+- **What "a governed source and a versioned cap-hit rule" requires**
+  beyond the cap object's own existing identity/versioning already
+  provided by `core.search_objects` for Candidate A specifically -
+  whether the thresholding/tolerance logic itself (e.g. the `rtol`/`atol`
+  constants currently hard-coded in `core.search_capacity`) also needs
+  independent governance/versioning is not decided.
+- **Whether Candidate A's exact reconciliation-identity algebraic form
+  generalises unchanged to a future pathway**, or whether a different
+  pathway may reconcile demand differently under `AGENTS.md`'s own
+  "do not prescribe one exact... mechanism" caution.
+
+## Affected modules (target - not yet touched)
+
+- a pathway-agnostic capacity/cap module (module TBD; depends on the
+  generalisation-timing decision above, not yet implemented)
+- `ancestry_mmm/core/search_capacity.py` (read-only reference for this
+  record - the one existing concrete implementation this record's
+  candidates would extend, refactor, or leave unchanged, not itself
+  modified by this record)
+- `ancestry_mmm/core/graph_model_compiler.py` (read-only reference - the
+  existing Candidate-A-only `capacity_constrained` compiler logic, not
+  itself modified by this record)
+- `docs/wp11_capacity_cap_semantics_decision_package.md` (new)
+- `docs/approved_requirements/REQ-CAP-001.md` (this record)
+- `docs/approved_requirements/index.json` (new entry)
+
+## Required tests
+
+- `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists`
+- `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists`
+- `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid`
+- `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist`
+- `ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique`
+- `ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists`
+- `ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable`
+
+## Migration impact
+
+None. No code changes accompany this record.
+
+## Unresolved decisions
+
+- The cap-hit status vocabulary's concrete operational definition
+  (particularly "ambiguous" and "unavailable").
+- Whether the contract is generalised into a shared module now or
+  deferred until a second capacity-constrained pathway exists.
+- What cap-data governance/versioning requires beyond the existing
+  `core.search_objects` object-identity contract.
+- Whether Candidate A's reconciliation-identity algebraic form is the
+  intended general form for any future pathway.
+
+All four are recorded in `docs/wp11_capacity_cap_semantics_decision_
+package.md` with candidate approaches and their tradeoffs - none selected
+by this coding pass.
+
+## Owner
+
+Modelling
+
+## Approval date
+
+2026-08-18
