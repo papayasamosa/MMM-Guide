@@ -6128,3 +6128,83 @@ sequence (Work Package 8).
 (counterfactual specification and extrapolation-policy review).
 **Status:** Decision-support package delivered; awaiting human review and
 selection. No implementation PR accompanies this entry.
+
+
+## Ragged multi-market predictor decision package (Work Package 8)
+
+**Context:** `REQ-COVERAGE-001` §6 already named `FR-MOD-015` (market-
+specific/ragged predictor sets inside the hierarchical model equations)
+as "explicitly not approved by this record" and listed three candidate
+shapes without choosing among them, but no dedicated decision-support
+document existed - only a fixed report string (`core.market_data_
+capability.FR_MOD_015_DECISION_REPORT`) naming the shape of the decision
+needed, referenced from several other work packages' own entries in this
+log without ever being resolved by any of them. An Explore-agent
+investigation confirmed this gap is structural, not merely an unapproved
+runtime guard: `core.hierarchical_model.build_fh_hierarchical_model` and
+`core.market_specific_model.build_fh_market_specific_model` both consume
+a single `X_media` matrix where `market_bounds` slices only which *rows*
+belong to which market, never which *columns* apply - every market must
+supply every requested channel's genuine observed coverage, with no
+runtime guard analogous to `CandidateAReplayNotSupportedError` because
+the rectangular assumption is baked into the array shape the model-
+building code consumes, one layer below where a guard could even be
+inserted.
+
+**Finding:** the genuine statistical ambiguity is prior to any
+implementation choice: does "no coverage" mean a channel truly had zero
+effect/spend in a market (a fact about the world), or that its exposure
+there is unobserved but possibly non-zero (a fact about the data)? These
+require different treatments, and `REQ-COVERAGE-001` S1's own "missing
+is not zero" principle - enforced everywhere else in this repository's
+data-coverage machinery - has no approved mechanical enforcement at this
+one remaining boundary. The answer may not even be uniform across every
+missing cell: `core.coverage`'s own governed missingness-state
+vocabulary already distinguishes reasons a cell might lack coverage, and
+whether the approved treatment should be a function of that recorded
+reason (rather than one blanket rule) is an additional, cross-cutting
+question this package raises.
+
+**Decision:** Write `docs/wp8_ragged_multi_market_predictor_decision_
+package.md`, elaborating `REQ-COVERAGE-001` §6's three named candidate
+shapes with their tradeoffs - a masked/marginalised likelihood term
+(statistically coherent under a pooled/hierarchical channel coefficient:
+a market contributing no likelihood evidence for a parameter still
+receives a posterior fully determined by the pooling prior, the standard
+Bayesian treatment of "no information," but requires re-deriving how
+`eta` is assembled per market); restructuring `X_media`/`market_bounds`
+for genuinely ragged per-market columns (similar statistical intent, a
+larger engineering shape touching the data-preparation layer too, and
+raising its own unresolved sub-question of whether an unpooled
+per-market coefficient should even exist for a channel a market never
+had); and an explicit, governed zero-fill convention (cheapest, weakest
+statistically, and - unlike the masked treatment - actively injects a
+specific, possibly wrong signal that competes with the pooling prior
+rather than contributing none) - plus the missingness-reason cross-
+cutting question above. None selected. `REPO_REVIEW_AND_NEXT_STEPS.md`'s
+`FR-MOD-015` bullet updated to reference this package.
+
+**Rejected alternative:** Defaulting to Candidate R3 (zero-fill) on the
+reasoning that it requires no engine changes and therefore "unblocks"
+ragged markets fastest (rejected - `REQ-COVERAGE-001` S1's "missing is
+not zero" principle exists precisely to prevent exactly this shortcut
+elsewhere in the repository; applying it as a blanket default here would
+be inconsistent with that already-approved principle and would silently
+inject a specific, unverified signal into a hierarchical model's pooling
+behaviour rather than the "no information" treatment a masked likelihood
+term would give).
+
+**Impact:** `docs/wp8_ragged_multi_market_predictor_decision_
+package.md` (new), `REPO_REVIEW_AND_NEXT_STEPS.md` (`FR-MOD-015` bullet
+updated). No code changes - `core.hierarchical_model.py`, `core.market_
+specific_model.py`, `core.market_data_capability.py`, and `data.
+preprocessor.py` are all untouched by this package; `check_engine_
+capability` continues to report an unsupported request exactly as
+before. This workstream is stopped pending review of the decision
+package; the program continues autonomously to the next work package in
+the brief's sequence (Work Package 9).
+
+**Owner:** Data Science / Platform engineering (decision), Modelling
+(missingness-reason taxonomy and hierarchy/pooling review).
+**Status:** Decision-support package delivered; awaiting human review and
+selection. No implementation PR accompanies this entry.
