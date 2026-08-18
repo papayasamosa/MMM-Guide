@@ -169,6 +169,16 @@ function Wait-ForDispatchedRecoveryJobSuccess {
     }
 
     Write-Host "  Polling dispatched run $runId for job '$JobName' to reach a terminal state..."
+    # A run's `jobs` list can briefly lag the run itself becoming queryable
+    # (observed live: locating the run succeeded on the very first list-poll,
+    # then an immediate `gh run view --json jobs` call did not yet include
+    # `Fold refit recovery` in a ~17-job workflow, even though the same job
+    # was present moments later) - a genuinely absent job (a real workflow
+    # drift from -FoldRefitPaths/-CandidateAPaths) and a not-yet-populated
+    # job list are indistinguishable from a single snapshot, so this grace
+    # window is required before treating "not found" as an error rather than
+    # a transient, retryable state.
+    $jobNeverSeenGraceDeadline = (Get-Date).AddMinutes([Math]::Min(3, $TimeoutMinutes))
     while ((Get-Date) -lt $deadline) {
         $runJson = Get-GhOrFail @("run", "view", "$runId", "--repo", $Repo, "--json", "headSha,jobs")
         $run = $runJson | ConvertFrom-Json
@@ -178,9 +188,15 @@ function Wait-ForDispatchedRecoveryJobSuccess {
         }
         $job = $run.jobs | Where-Object { $_.name -eq $JobName } | Select-Object -First 1
         if (-not $job) {
-            throw "Dispatched run $runId has no job named '$JobName' - the workflow may " +
-                "have changed since this script's -FoldRefitPaths/-CandidateAPaths were " +
-                "written; investigate manually before merging."
+            if ((Get-Date) -lt $jobNeverSeenGraceDeadline) {
+                Write-Host "    job '$JobName' not yet visible in run $runId's job list, retrying in ${PollIntervalSeconds}s..."
+                Start-Sleep -Seconds $PollIntervalSeconds
+                continue
+            }
+            throw "Dispatched run $runId still has no job named '$JobName' after a " +
+                "several-minute grace window - the workflow may have changed since this " +
+                "script's -FoldRefitPaths/-CandidateAPaths were written; investigate " +
+                "manually before merging."
         }
         if ($job.status -eq "completed") {
             if ($job.conclusion -eq "success") {

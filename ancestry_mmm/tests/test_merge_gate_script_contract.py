@@ -328,6 +328,34 @@ class TestDispatchedRecoveryJobVerificationFixesPRChecksBlindSpot:
         ].split("\n}\n", 1)[0]
         assert "$run.headSha -ne $ExpectedHeadSha" in helper_body
 
+    def test_helper_retries_a_not_yet_visible_job_within_a_grace_window(self):
+        """Live regression (found while merging PR #288, after PR #289's fix
+        was already on `main`): a dispatched run's `jobs` list can briefly
+        lag the run itself becoming queryable - locating a real dispatched
+        run succeeded on the very first poll, then an immediate `gh run
+        view --json jobs` call for that same run did not yet include `Fold
+        refit recovery` in a ~17-job workflow, even though the job was
+        present moments later. Treating "not found yet" as an immediate
+        hard failure (the original version of this helper) makes the gate
+        fail closed on a false positive; the fix must retry within a grace
+        window before concluding the job is genuinely absent (a real
+        `-FoldRefitPaths`/`-CandidateAPaths` workflow drift)."""
+        text = _read()
+        helper_body = text.split("function Wait-ForDispatchedRecoveryJobSuccess", 1)[
+            1
+        ].split("\n}\n", 1)[0]
+        assert "jobNeverSeenGraceDeadline" in helper_body
+        not_found_index = helper_body.index("if (-not $job) {")
+        grace_check_index = helper_body.index(
+            "(Get-Date) -lt $jobNeverSeenGraceDeadline"
+        )
+        continue_index = helper_body.index("continue", not_found_index)
+        throw_index = helper_body.index("still has no job named", not_found_index)
+        # The grace check and a `continue` (retry) must appear before the
+        # hard failure inside the same "not found" branch - never the other
+        # way around.
+        assert not_found_index < grace_check_index < continue_index < throw_index
+
     def test_candidate_a_recovery_also_verified_via_dispatched_run_not_pr_checks(self):
         """The same PR-checks blind spot applies symmetrically to Candidate
         A's dispatch path - fixed with the identical mechanism, not a
