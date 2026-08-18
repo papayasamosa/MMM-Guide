@@ -662,6 +662,7 @@
       "status": "approved_for_implementation",
       "record_path": "docs/approved_requirements/REQ-EXPMODE-001.md",
       "affected_modules": [
+        "ancestry_mmm/core/experiments.py",
         "docs/approved_requirements/REQ-EXPMODE-001.md",
         "docs/approved_requirements/index.json"
       ],
@@ -672,7 +673,11 @@
         "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
-        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable"
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_experiments.py::TestExperimentVersioning::test_current_versions_resolves_highest_per_lineage",
+        "ancestry_mmm/tests/test_experiments.py::TestBuildCalibratingUse::test_incompatible_experiment_is_rejected",
+        "ancestry_mmm/tests/test_experiments.py::TestDoubleCountedDependence::test_both_modes_without_dependence_handling_is_flagged",
+        "ancestry_mmm/tests/test_experiments.py::TestProvenanceReport::test_reports_each_experiment_individually"
       ]
     },
     {

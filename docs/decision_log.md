@@ -5637,3 +5637,74 @@ integration follow-ups.
 **Owner:** Data Science / Platform engineering.
 **Status:** Accepted; implemented on this work package's branch. PR and CI
 remain the release gate.
+
+
+## Experiment evidence modes and provenance (Work Package 4, first record)
+
+**Context:** REQ-EXPMODE-001 (approved Work Package 0) required a
+governed evidence-mode contract for every experiment-to-model
+relationship - Experiment Evidence existed only as an input data domain,
+with no module declaring which of `validation_only`/`prior_calibration`/
+`likelihood_calibration`/`diagnostic_comparison` applied to a given use,
+no compatibility gate before a calibrating use, and no double-counting
+check. Registering an experiment must never silently calibrate a model
+(requirement 2's explicit text).
+
+**Decision:** Implement `core.experiments` as a standalone registry and
+evidence-mode module. `ExperimentRecord` is immutable and versioned,
+following exactly the lineage/version pattern already established by
+`core.causal_graph` (`graph_id`/`graph_version`) and `core.
+search_objects` (`search_object_id`/`search_object_version`) -
+`new_experiment_version`/`current_experiment_versions` mirror `core.
+search_objects.new_search_object_version`/`current_search_object_
+versions` exactly, rather than inventing a fourth divergent versioning
+scheme. `ExperimentToModelUse` enforces requirement 2's closed
+four-value evidence-mode vocabulary and requires the affected prior's
+or likelihood term's name and version for a calibrating use, or
+construction raises. `CompatibilityAssessment`/`assess_experiment_
+compatibility` implement requirement 3's per-dimension compatibility
+record across all nine required dimensions (outcome, estimand, market/
+segment/product, channel/activity definition, treatment, counterfactual,
+spend/delivery range, time horizon, effect scale) - this module has no
+domain knowledge of what makes two markets or channel definitions
+compatible, so every dimension is caller-supplied evidence, never
+inferred by this module. `build_calibrating_use` is the only
+constructor for a calibrating use and is fail-closed: it raises unless
+`CompatibilityAssessment.is_fully_compatible` is `True`, directly
+implementing "an incompatible experiment must not calibrate
+automatically." `validate_no_double_counted_dependence` implements
+requirement 2's double-counting rule: flags an experiment used via two
+different calibrating modes against the same model unless every such
+use records a `dependence_handling_method`. `ExperimentProvenanceReport`
+/`build_provenance_report` implement requirement 6: every contributing
+experiment's evidence mode, estimand, version, and uncertainty
+individually - the module offers no function that collapses this list,
+so a portfolio summary can only ever be additive, never a replacement.
+
+Registering an `ExperimentRecord`/`ExperimentToModelUse` cannot silently
+calibrate a model because nothing in this repository yet reads this
+registry to build a model - `core.search_capacity`, `core.pathways`,
+and every other model-fitting module are untouched by this record.
+
+**Rejected alternative:** Choosing and implementing a specific
+likelihood-calibration or prior-calibration statistical mechanism as
+part of this record (rejected - REQ-EXPMODE-001's own "Explicitly
+excluded" section explicitly reserves this for a future Work Package 4
+decision-support package using Context7/official PyMC/PyMC-Marketing
+sources before any production default is chosen, per the PRD-authority
+instruction governing this program: do not guess an unresolved
+statistical decision).
+
+**Impact:** `ancestry_mmm/core/experiments.py` (new);
+`ancestry_mmm/tests/test_experiments.py` (new, 30 tests);
+`docs/approved_requirements/REQ-EXPMODE-001.md`/`index.json`/`docs/
+specification_authority.md` updated. No change to `core.search_capacity`,
+`core.pathways`, `core.causal_graph`, `core.search_objects`, or
+`core.persistence`. mypy: new module clean; full-core ratchet unchanged
+at 241/241. No new dependency. Deferred: any calibration statistical
+mechanism, `core.persistence` export/import wiring, and `REQ-CALIB-001`'s
+dependent comparison contract (separate record, Work Package 4 part 2).
+
+**Owner:** Data Science / Platform engineering.
+**Status:** Accepted; implemented on this work package's branch. PR and CI
+remain the release gate.

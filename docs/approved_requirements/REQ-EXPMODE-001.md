@@ -22,7 +22,51 @@ relationship, and no calibration mechanism exists.
 
 ## Capability status
 
-Not yet implemented. Target-state contract only.
+Core registry and evidence-mode contract implemented (Work Package 4,
+2026-08-18): `ancestry_mmm/core/experiments.py` provides `ExperimentRecord`
+(Requirement 1) — an immutable, versioned experiment record whose
+`experiment_id`/`experiment_version` lineage/version identity follows
+exactly the same pattern already established by `core.causal_graph`
+(`graph_id`/`graph_version`) and `core.search_objects`
+(`search_object_id`/`search_object_version`): `new_experiment_version`
+and `current_experiment_versions` mirror `core.search_objects.new_
+search_object_version`/`current_search_object_versions`. `ExperimentTo
+ModelUse` enforces exactly one governed evidence mode per use
+(Requirement 2's closed four-value vocabulary); `prior_calibration`
+and `likelihood_calibration` each require their affected prior/
+likelihood-term name and version to be recorded, or construction
+raises. `CompatibilityAssessment`/`assess_experiment_compatibility`
+implement Requirement 3's per-dimension compatibility record across
+all nine listed dimensions — this module has no domain knowledge of
+what makes two markets or channel definitions compatible, so every
+dimension's compatibility is caller-supplied evidence, never inferred.
+`build_calibrating_use` is the only way to construct a calibrating use
+and is fail-closed: it raises if `CompatibilityAssessment.is_fully_
+compatible` is `False`, directly implementing "an incompatible
+experiment must not calibrate automatically." `validate_no_double_
+counted_dependence` implements Requirement 2's double-counting rule —
+flags any experiment used via two different calibrating modes against
+the same model unless every such use records a
+`dependence_handling_method`. `ExperimentProvenanceReport`/`build_
+provenance_report` implement Requirement 6: every contributing
+experiment's evidence mode, estimand, version, and uncertainty
+individually; the module offers no function that collapses this list,
+so an average can only ever be added alongside it, never instead of it.
+
+Registering an `ExperimentRecord`/`ExperimentToModelUse` cannot
+silently calibrate a model (Requirement 2's fail-closed intent) because
+nothing in this repository yet reads this registry to build a model —
+`core.search_capacity`, `core.pathways`, and every other model-fitting
+module are untouched by this record.
+
+Not yet implemented: any specific likelihood-calibration or
+prior-calibration statistical mechanism (explicitly reserved by this
+record's own "Explicitly excluded" section for a future decision-support
+package using Context7/official PyMC/PyMC-Marketing sources, per the
+PRD-authority instruction governing this program — do not guess an
+unresolved statistical decision); `core.persistence` export/import
+wiring for the registry; and `REQ-CALIB-001`'s dependent
+calibrated-versus-uncalibrated comparison contract (separate record).
 
 ## Requirement
 
@@ -107,16 +151,29 @@ experiment-level evidence.
   using Context7/official PyMC/PyMC-Marketing sources before any production
   default is chosen.
 
-## Affected modules (target)
+## Affected modules
 
-- a new experiment-registry domain module (module TBD; likely
-  `ancestry_mmm/core/experiments.py`)
-- `ancestry_mmm/core/persistence.py` (export/import the experiment registry)
-- `docs/approved_requirements/REQ-EXPMODE-001.md` (new)
-- `docs/approved_requirements/index.json` (new entry)
+- `ancestry_mmm/core/experiments.py` (new — `ExperimentRecord`,
+  `ExperimentToModelUse`, `CompatibilityAssessment`, `assess_experiment_
+  compatibility`, `build_calibrating_use`, `validate_no_double_counted_
+  dependence`, `ExperimentProvenanceReport`, `build_provenance_report`,
+  `new_experiment_version`, `current_experiment_versions`)
+- `ancestry_mmm/core/persistence.py` (not yet touched — export/import
+  wiring for the experiment registry is deferred)
+- `docs/approved_requirements/REQ-EXPMODE-001.md` (this record)
+- `docs/approved_requirements/index.json` (updated)
 
 ## Required tests
 
+- `ancestry_mmm/tests/test_experiments.py` (30 tests: record validation/
+  round-trip/versioning mirroring `core.search_objects`'s lineage
+  pattern; compatibility-assessment dimension coverage; evidence-mode
+  validation including both calibration modes' required affected-target
+  fields; the fail-closed `build_calibrating_use` gate for a fully
+  compatible and an incompatible experiment; the double-counting rule
+  across matching/non-matching models and with/without a recorded
+  dependence-handling method; and the per-experiment provenance report,
+  including a missing-record `KeyError` and cross-model filtering)
 - `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists`
 - `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists`
 - `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid`
@@ -127,7 +184,8 @@ experiment-level evidence.
 
 ## Migration impact
 
-None yet.
+None to persisted artefacts or model-fitting code — this module is
+additive and standalone, with no export/import wiring yet.
 
 ## Unresolved decisions
 
