@@ -51,18 +51,39 @@ artefact vs. misspecification) is explicitly **not** automated by this
 module; that judgement remains a human reviewer's, informed by this
 evidence.
 
-Not yet wired: `DiagnosticsArtefact`/Diagnostics-page integration. Unlike
-`REQ-PPD-001` (which only needs a single existing trace/frame/meta/params
-call and could be wired into `DiagnosticsService.evaluate()` today), this
-record's evidence structurally requires multiple folds' *already re-
-estimated* parameter values as input — and no real per-fold re-estimation
-pipeline exists yet in this repository (the same expensive, unresolved
-"real-fold PyMC recovery" question `REQ-LEAK-001` already recorded, not
-newly introduced here). Wiring an artefact section that can only ever be
-populated by a caller manually assembling synthetic snapshots would not
-be genuine evidence integration. The schema/UI work for both `REQ-PPD-
-001` and this record remains a coherent follow-up once a real multi-fold
-re-estimation path exists to feed it.
+Real per-fold re-estimation now exists (Work Package 1 part 1 of
+`Media-Mix-Lab: Coding LLM Next Steps After PR #284`, 2026-08-18):
+`ancestry_mmm/application/fold_refit_service.py::fit_fold_with_real_model`
+runs the real production fit sequence (`data.prepare_fh_modeling_frame` ->
+`application.model_fit_service.build_model_for_spec` -> `core.models.
+fit_model` -> `core.predict.extract_posterior_params`/`core.
+market_specific_predict.extract_market_specific_posterior_params`) per
+fold and extracts a genuine `FoldParameterSnapshot` from the fitted trace
+(point values from the posterior mean, draws from a subsample of real
+`(chain, draw)` pairs via `core.uncertainty.sample_draw_indices` — the
+same per-draw approximation `core.uncertainty` already uses elsewhere).
+`run_leakage_safe_fold_refit` drives this through `core.validation_folds`'s
+leakage-safe fold contract (fitting only folds `assess_fold_source_
+reconstruction` cleared) and returns both the R²/MAPE evidence and the
+per-fold snapshots from one fit each — proven end-to-end (both production
+model types, real MCMC, feeding `assess_structural_stability`) by
+`test_fold_refit_service.py` (blocking CI, one tiny shared-model fit) and
+`test_fold_refit_service_recovery.py` (schedule/manual-only, Model C,
+the single-market fallback path, and two real fits feeding genuine
+multi-fold structural-stability evidence).
+
+Still not wired: `DiagnosticsArtefact`/Diagnostics-page integration, and
+point-in-time reconstruction of the raw source data itself (this module's
+fold-local refit still operates on plain date-sliced rows of a single
+already-prepared dataframe — selecting the source *version* that existed
+as of a fold's cutoff, and fold-local re-execution of `core.
+official_preparation`/`core.frequency_conversion` from raw sources,
+remains Work Package 1 part 2, undelivered). Unlike `REQ-PPD-001` (which
+only needs a single existing trace/frame/meta/params call and could be
+wired into `DiagnosticsService.evaluate()` today), wiring this record's
+`DiagnosticsArtefact` section is deferred one more step: the schema/UI
+work is planned jointly with `REQ-PPD-001`'s once wiring begins, not
+because a real re-estimation pipeline is still missing.
 
 ## Requirement
 
@@ -139,9 +160,12 @@ closed.
 
 ## Affected modules
 
-- `ancestry_mmm/core/structural_stability.py` (new —
-  `FoldParameterSnapshot`, `ParameterFoldComparison`,
-  `StructuralStabilityArtefact`, `assess_structural_stability`)
+- `ancestry_mmm/core/structural_stability.py` (`FoldParameterSnapshot`,
+  `ParameterFoldComparison`, `StructuralStabilityArtefact`,
+  `assess_structural_stability`)
+- `ancestry_mmm/application/fold_refit_service.py` (new, Work Package 1
+  part 1 — `fit_fold_with_real_model`, `run_leakage_safe_fold_refit`, the
+  first real-fit producer of `FoldParameterSnapshot` evidence)
 - `ancestry_mmm/core/diagnostics.py` (not yet touched — `DiagnosticsArtefact`
   schema extension deferred, see Capability status)
 - `ancestry_mmm/pages/06_Diagnostics.py` (not yet wired — deferred)
@@ -167,22 +191,43 @@ closed.
 - `ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique`
 - `ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists`
 - `ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable`
+- `ancestry_mmm/tests/test_fold_refit_service.py` (blocking CI: one real,
+  tiny shared-model fit driven through the leakage-safe fold contract,
+  reused across every test in the file; the unsafe-fold path fits
+  nothing; a real snapshot plus a synthetic second fold proves
+  `assess_structural_stability` integration without a second real fit)
+- `ancestry_mmm/tests/test_fold_refit_service_recovery.py` (schedule/
+  manual-only — Model C real fit and market-qualified naming, the
+  single-market fallback path, and two real fits feeding genuine
+  multi-fold structural-stability evidence; run by the `fold-refit-
+  recovery` CI job, `.github/workflows/tests.yml`)
 
 ## Migration impact
 
-None yet. `core.structural_stability` is a new, additive module with no
-persisted artefact today; `DiagnosticsArtefact` is not yet touched.
+None yet. `core.structural_stability` and `application.fold_refit_service`
+are additive modules with no persisted artefact today; `DiagnosticsArtefact`
+is not yet touched.
 
 ## Unresolved decisions
 
 - Whether real-fold PyMC re-estimation for structural-stability evidence
-  runs in normal CI or is schedule/manual evidence (cost-dependent;
-  measure before deciding) — unchanged from `REQ-LEAK-001`'s own open
-  question; not resolved by this record either.
+  runs in normal CI or is schedule/manual evidence is now resolved
+  *operationally*, not by threshold policy: a tiny (draws=15/tune=15)
+  fit runs in blocking CI (`test_fold_refit_service.py`), a moderate
+  (draws=200/tune=200) fit runs schedule/manual-only
+  (`test_fold_refit_service_recovery.py`, mirroring `candidate-a-
+  recovery`) — `REQ-LEAK-001`'s own equivalent open question is resolved
+  the same way by this same change.
 - `DiagnosticsArtefact`/Diagnostics-page schema and UI wiring for both
-  this record and `REQ-PPD-001` — deferred until a real multi-fold
-  re-estimation pipeline exists to supply genuine `FoldParameterSnapshot`
-  evidence (see Capability status).
+  this record and `REQ-PPD-001` — deferred; a real multi-fold
+  re-estimation pipeline now exists to supply genuine
+  `FoldParameterSnapshot` evidence (see Capability status), so this is a
+  UI/schema-design follow-up, not blocked on evidence-production
+  existing.
+- Point-in-time reconstruction of the raw source data itself (Work
+  Package 1 part 2, undelivered) — `fit_fold_with_real_model` still
+  operates on plain date-sliced rows of a single already-prepared
+  dataframe, not a per-fold reconstruction from raw source versions.
 - The minimum fold-support, parameter/effect classes, materiality rules,
   and permitted-use consequences for time-slice structural instability
   remain Part 7 `VL-022`'s open decision, not approved here.

@@ -39,7 +39,8 @@ param(
     ),
     [string[]]$AllowedSkippedChecks = @(
         "Deterministic attribution recovery",
-        "Candidate A posterior recovery"
+        "Candidate A posterior recovery",
+        "Fold refit recovery"
     ),
     # Checks that are known to exist, never block merge on their own
     # (pull_request-only, informational annotations), and must not trip the

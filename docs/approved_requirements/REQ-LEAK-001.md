@@ -59,14 +59,32 @@ metadata alone) — this is recorded as an explicit remaining scope, not
 silently claimed as done. `core.diagnostics.expanding_window_backtest`
 itself is unchanged and still carries no leakage-safety claim.
 
-Not yet wired: `DiagnosticsArtefact`/Diagnostics-page integration
+Real-fold PyMC re-fitting now exists (Work Package 1 part 1 of
+`Media-Mix-Lab: Coding LLM Next Steps After PR #284`, 2026-08-18):
+`ancestry_mmm/application/fold_refit_service.py::run_leakage_safe_fold_
+refit` reimplements this module's own `build_expanding_window_folds`
++ `assess_fold_source_reconstruction` selection loop (so it fits only
+folds this record's assessment already cleared) and, for each cleared
+fold, calls the real production fit sequence exactly once — never a
+fake `fit_fold_fn`. A tiny (draws=15/tune=15) fit runs in blocking CI
+(`test_fold_refit_service.py`); a moderate (draws=200/tune=200) fit runs
+schedule/manual-only (`test_fold_refit_service_recovery.py`, mirroring
+`candidate-a-recovery`) — this record's own "measure before deciding
+normal-CI vs. schedule/manual" open question is resolved operationally by
+this split, not by a single all-or-nothing choice.
+
+Still not wired: `DiagnosticsArtefact`/Diagnostics-page integration
 (deferred so Work Package 2's structural-stability evidence — which
 Requirement 6 says must share these same fold manifests — is designed
-into the same schema/UI addition once, not twice); expensive real-fold
-PyMC re-fitting (this record's own "Unresolved decisions" already flagged
-this as schedule/manual evidence pending a measured normal-CI runtime
-case, and none is added here — all tests use injected/fake `fit_fold_fn`
-callables per the brief's own instruction).
+into the same schema/UI addition once, not twice); point-in-time
+reconstruction of the raw source data itself (Work Package 1 part 2,
+undelivered — `run_leakage_safe_fold_refit` still fits plain date-sliced
+rows of a single already-prepared dataframe, exactly `leakage_safe_
+expanding_window_backtest`'s own existing limitation; it does not select
+a source *version* as of the fold's cutoff or re-run `core.
+official_preparation`/`core.frequency_conversion` fold-locally from raw
+sources — Requirement 2's "scaling fit on training data only" remains
+moot regardless, since no scaler exists anywhere in the production path).
 
 ## Requirement
 
@@ -143,10 +161,13 @@ be hard-coded from this record:
 
 ## Affected modules
 
-- `ancestry_mmm/core/validation_folds.py` (new — `ValidationFold`,
+- `ancestry_mmm/core/validation_folds.py` (`ValidationFold`,
   `VariableReconstructionAssessment`, `FoldReconstructionAssessment`,
   `build_expanding_window_folds`, `assess_fold_source_reconstruction`,
   `leakage_safe_expanding_window_backtest`)
+- `ancestry_mmm/application/fold_refit_service.py` (new, Work Package 1
+  part 1 — `fit_fold_with_real_model`, `run_leakage_safe_fold_refit`, the
+  first real per-fold PyMC refit this record's contract ever drove)
 - `ancestry_mmm/core/diagnostics.py` (unchanged — `expanding_window_
   backtest` remains a plain date-sliced backtest with no leakage-safety
   claim; verified by `TestLeakageSafeExpandingWindowBacktest::
@@ -169,11 +190,18 @@ be hard-coded from this record:
 - `ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique`
 - `ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists`
 - `ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable`
+- `ancestry_mmm/tests/test_fold_refit_service.py` (blocking CI: real,
+  tiny fit driven through this record's own leakage-safe fold selection
+  loop, including the unsafe-fold-never-fit path)
+- `ancestry_mmm/tests/test_fold_refit_service_recovery.py` (schedule/
+  manual-only, run by the `fold-refit-recovery` CI job — Model C,
+  the single-market fallback path, and two real fits)
 
 ## Migration impact
 
-None. `core.validation_folds` is a new, additive module with no persisted
-artefact today; no existing schema, model, or persisted artefact changes.
+None. `core.validation_folds` and `application.fold_refit_service` are
+additive modules with no persisted artefact today; no existing schema,
+model, or persisted artefact changes.
 
 ## Unresolved decisions
 
@@ -183,14 +211,18 @@ artefact today; no existing schema, model, or persisted artefact changes.
   cannot; the production threshold policy remains a separate decision.
 - Whether/how to rebuild the full model-ready `frame`/scaling/mixed-
   frequency pipeline per fold from raw sources, beyond what `Variable
-  CoverageMatrix` metadata can verify — deferred to a future
-  real-model-integration pass.
+  CoverageMatrix` metadata can verify — Work Package 1 part 1 delivered
+  real per-fold model refitting; point-in-time raw-source reconstruction
+  (selecting a source *version* as of the fold's cutoff, fold-local
+  `core.official_preparation`/`core.frequency_conversion` re-execution)
+  remains undelivered (Work Package 1 part 2).
 - `DiagnosticsArtefact`/Diagnostics-page schema and UI wiring — deferred
   to be designed jointly with Work Package 2's structural-stability
   evidence (Requirement 6), not built twice.
 - Whether expensive real-fold PyMC recovery runs as schedule/manual CI
-  evidence or normal-CI evidence — no real-model test was added; all
-  tests use injected/fake `fit_fold_fn` callables.
+  evidence or normal-CI evidence — resolved operationally by Work
+  Package 1 part 1's split: a tiny fit in blocking CI, a moderate fit
+  schedule/manual-only (see Capability status).
 
 ## Owner
 
