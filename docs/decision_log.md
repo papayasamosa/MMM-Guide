@@ -5960,3 +5960,88 @@ Scenario Planner page - both separate, explicitly disclosed follow-ups.
 **Owner:** Data Science / Platform engineering.
 **Status:** Accepted; implemented on this work package's branch. PR and CI
 remain the release gate.
+
+
+## Sequential-weekly optimisation: reconciliation and decision package (Work Package 6)
+
+**Context:** With Work Package 5 complete (sequential-weekly manual
+evaluation fully wired: terminal carryover, posterior uncertainty, save/
+export), the brief's own sequence names Work Package 6 as "sequential
+monthly optimisation." Before writing any code, an Explore-agent
+investigation (per this program's standing PRD-authority instruction:
+no implementation without an approved requirement, and no guessing an
+unresolved statistical/business/governance decision) confirmed two
+blocking facts: no approved requirement record exists for sequential-
+weekly *optimisation* (only manual evaluation is covered by `REQ-SCEN-
+001`/`002`/`003`), and wiring the sequential kernel into `core.
+optimization`'s existing search loop is not a mechanical rewiring.
+
+**Finding - tractability:** `core.optimization.optimize_scenario`'s
+search (`scipy.optimize.minimize`, method `SLSQP`, no analytic Jacobian
+supplied) finite-differences its objective, calling the existing
+analytic, per-month, state-independent steady-state response function
+roughly `(n_months x n_channels + 1)` times per iteration - potentially
+hundreds to low thousands of calls per optimisation run.
+`core.sequential_scenario_evaluation.evaluate_manual_scenario_
+sequential` performs a full week-by-week state-transition (adstock
+carry-in) simulation per call, with no possible partial re-evaluation
+(each week depends on the previous week's state), and optionally loops
+that entire simulation once per requested posterior draw. Calling it
+directly inside SLSQP's finite-difference inner loop replaces today's
+cheap analytic objective with a materially more expensive computational
+problem per candidate plan - untested at realistic plan sizes, and
+plausibly intractable at interactive UI latency.
+
+**Finding - objective definition:** the sequential contract natively
+produces at least three distinct incremental-outcome quantities per
+candidate plan (short-horizon, long-horizon, and terminal carryover -
+the last already forbidden from the optimisation objective by
+`REQ-SCEN-003` without a separately approved requirement). Steady-state
+optimisation has one unambiguous per-month value to sum; sequential
+optimisation does not, until one of these (or an approved combination)
+is chosen as the target. This is a business/statistical decision, not
+an engineering one.
+
+**Decision:** Reconcile the gap into `REQ-SCEN-004` (target-state
+contract only, explicitly not approved for implementation) and write
+`docs/wp6_sequential_optimisation_decision_package.md`, laying out four
+tractability candidates (T1 direct replay; T2 reduced-evaluation-budget
+search; T3 two-stage steady-state-search-then-sequential-report; T4 a
+validated fast surrogate used only inside the search loop) and four
+objective candidates (O1 plan-window total; O2 short-horizon only; O3
+long-horizon only; O4 an approved weighted combination), with tradeoffs
+for each - none selected by this coding pass, per the same "candidate
+formulations, not a chosen answer" pattern already established by
+`docs/search_mediation_capacity_decision_wp3.md` (Work Package 3 of the
+prior brief). Stopping this workstream here, rather than guessing a
+tractability strategy or an objective weighting, is the explicit
+instruction this program operates under.
+
+**Rejected alternative:** Implementing Candidate T1 (direct replay)
+with Candidate O1 (plan-window total) unilaterally, on the reasoning
+that they are the "simplest" or "most obvious" choices (rejected - T1's
+actual runtime at realistic plan sizes was never measured, so shipping
+it could silently produce an unusably slow or numerically unstable
+optimiser in production; O1 is a defensible default but is still a
+business framing choice about what "the plan's value" means under
+sequential semantics that deserves an explicit decision, not an
+assumed one, especially given `REQ-SCEN-003` already treats the
+analogous terminal-carryover-in-objective question as approval-gated
+rather than default-permitted).
+
+**Impact:** `docs/approved_requirements/REQ-SCEN-004.md` (new),
+`docs/wp6_sequential_optimisation_decision_package.md` (new),
+`docs/approved_requirements/index.json` (updated), `docs/
+specification_authority.md` (gap-table row updated),
+`REPO_REVIEW_AND_NEXT_STEPS.md` (updated). No code changes - `core.
+optimization.py`, `core.sequential_scenario_evaluation.py`, and
+`pages/08_Scenario_Planner.py`'s optimiser tabs are all untouched by
+this package. This workstream (sequential-weekly optimisation) is
+stopped pending review of the decision package; the program continues
+autonomously to the next work package in the brief's sequence
+(Work Package 7).
+
+**Owner:** Data Science / Platform engineering (decision required before
+any implementation).
+**Status:** Decision-support package delivered; awaiting human review and
+selection. No implementation PR accompanies this entry.
