@@ -6513,3 +6513,80 @@ locally excluded throughout this work package.
 **Owner:** Platform engineering (documentation/tooling truth).
 **Status:** Implemented.
 
+## Real per-fold PyMC refit orchestration (Work Package 1 part 1)
+
+**Context:** `REQ-LEAK-001` (leakage-safe fold contract) and `REQ-STAB-001`
+(structural-stability comparison) were both built on a deliberate "the
+caller supplies the fold-local computation" contract - and both explicitly
+recorded, in their own "Unresolved decisions", that no real per-fold PyMC
+re-estimation pipeline existed anywhere in the repository yet:
+`core.validation_folds.leakage_safe_expanding_window_backtest`'s
+`fit_fold_fn` had only ever been called with a fake (`test_validation_
+folds.py`); `core.structural_stability.assess_structural_stability` had
+only ever compared manually-constructed `FoldParameterSnapshot`s. The one
+real per-fold refit in the repository was `pages/06_Diagnostics.py`'s
+"Out-of-sample accuracy" backtest closure, wired to the plain,
+non-leakage-safe `core.diagnostics.expanding_window_backtest`, producing
+only R²/MAPE - no structural-stability evidence, and no leakage-safety
+proof.
+
+**Decision:** Added `ancestry_mmm/application/fold_refit_service.py`:
+`fit_fold_with_real_model` runs the real production fit sequence
+(`data.prepare_fh_modeling_frame` -> `application.model_fit_service.
+build_model_for_spec` -> `core.models.fit_model` -> `core.predict.
+extract_posterior_params`/`core.market_specific_predict.
+extract_market_specific_posterior_params`) - reused, never a second
+validation-only model engine - and extracts a genuine `FoldParameterSnapshot`
+from the fitted trace (point values from the posterior mean; draws from a
+subsample of real `(chain, draw)` pairs via the same `core.uncertainty.
+sample_draw_indices` approximation `core.uncertainty` already uses
+elsewhere). `run_leakage_safe_fold_refit` reimplements `leakage_safe_
+expanding_window_backtest`'s own fold-selection loop (`build_expanding_
+window_folds` + `assess_fold_source_reconstruction`, both already public)
+rather than widening that helper's tested `fit_fold_fn` contract or fitting
+each fold twice - so a real fit happens exactly once per accepted fold,
+producing both the R²/MAPE evidence and the snapshot from the same fit,
+never two numerically-divergent fits for one fold. CI cost is split
+exactly like `candidate-a-recovery`: `test_fold_refit_service.py` pays for
+one tiny (draws=15/tune=15) shared-model fit in blocking CI (one real fit
+total, reused via a module-scoped fixture - a first attempt at ~7
+independent real fits took 28 minutes and was rejected as too slow before
+landing); `test_fold_refit_service_recovery.py` (Model C, the
+single-market fallback path, two real fits feeding genuine multi-fold
+structural stability) runs schedule/manual-only via the new
+`fold-refit-recovery` workflow job, added to `scripts/wait_for_pr_green_
+then_merge.ps1`'s `-AllowedSkippedChecks`. `REQ-LEAK-001` and
+`REQ-STAB-001` updated in place (their own established "Capability status"
+convention) rather than superseded - this is delivery of scope both
+records already described as open, not a new business decision.
+
+**Rejected alternative:** Widening `leakage_safe_expanding_window_
+backtest`'s `fit_fold_fn` contract to also receive `fold_id` (rejected -
+would change an existing, separately-tested public contract's shape for
+every caller, for the sole benefit of one new caller that can just
+reimplement the same ~15-line selection loop from already-public
+primitives instead). Fitting each fold twice, once for the existing
+helper's r2/mape row and once more for a snapshot (rejected - doubles
+real MCMC cost and risks two independently-seeded fits reporting
+inconsistent numbers for what is nominally "the same fold").
+
+**Impact:** `ancestry_mmm/application/fold_refit_service.py` (new),
+`ancestry_mmm/tests/test_fold_refit_service.py` (new, blocking CI),
+`ancestry_mmm/tests/test_fold_refit_service_recovery.py` (new,
+schedule/manual-only), `.github/workflows/tests.yml` (new `fold-refit-
+recovery` job; both Python 3.11/3.12 jobs now also `--ignore` the new
+recovery file), `scripts/wait_for_pr_green_then_merge.ps1` (`"Fold refit
+recovery"` added to `-AllowedSkippedChecks`), `docs/approved_requirements/
+REQ-LEAK-001.md` and `REQ-STAB-001.md` (Capability status/Unresolved
+decisions updated in place), `docs/approved_requirements/index.json`
+(affected_modules/required_tests updated for both records). No change to
+`core.validation_folds`, `core.structural_stability`,
+`pages/06_Diagnostics.py`, or any persisted schema. Point-in-time
+reconstruction of raw source data (selecting a source *version* as of a
+fold's cutoff, fold-local `core.official_preparation`/`core.
+frequency_conversion` re-execution) remains undelivered - Work Package 1
+part 2.
+
+**Owner:** Modelling / Platform engineering (validation pipeline).
+**Status:** Implemented.
+
