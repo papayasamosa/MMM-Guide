@@ -562,7 +562,13 @@
         "ancestry_mmm/tests/test_validation_folds.py::TestLeakageSafeExpandingWindowBacktest::test_mixed_folds_call_fit_fold_fn_only_for_the_safe_ones",
         "ancestry_mmm/tests/test_validation_folds.py::TestLeakageSafeExpandingWindowBacktest::test_does_not_mutate_expanding_window_backtest",
         "ancestry_mmm/tests/test_fold_refit_service.py::TestRunLeakageSafeFoldRefitSafePath::test_safe_fold_is_fit_and_produces_one_snapshot",
-        "ancestry_mmm/tests/test_fold_refit_service.py::TestRunLeakageSafeFoldRefitUnsafePath::test_unsafe_fold_is_never_fit"
+        "ancestry_mmm/tests/test_fold_refit_service.py::TestRunLeakageSafeFoldRefitUnsafePath::test_unsafe_fold_is_never_fit",
+        "ancestry_mmm/tests/test_validation_folds.py::TestSourceVersionAwareReconstruction::test_later_source_version_cannot_alter_earlier_fold",
+        "ancestry_mmm/tests/test_validation_folds.py::TestSourceVersionAwareReconstruction::test_missing_historical_vintage_blocks_with_explicit_limitation",
+        "ancestry_mmm/tests/test_fold_refit_service.py::TestRunLeakageSafeFoldRefitFromSourcesSafePath::test_safe_fold_is_fit_and_produces_one_snapshot",
+        "ancestry_mmm/tests/test_fold_refit_service.py::TestRunLeakageSafeFoldRefitFromSourcesBlockedPaths::test_unresolved_coverage_blocks_the_whole_fold_without_fitting",
+        "ancestry_mmm/tests/test_fold_refit_service.py::TestRunLeakageSafeFoldRefitFromSourcesBlockedPaths::test_publication_lag_blocks_without_fitting",
+        "ancestry_mmm/tests/test_fold_refit_service.py::TestRunLeakageSafeFoldRefitFromSourcesBlockedPaths::test_later_source_version_blocks_without_fitting"
       ]
     },
     {
@@ -588,7 +594,10 @@
         "ancestry_mmm/tests/test_structural_stability.py::TestAssessStructuralStability::test_posterior_draws_preserved_per_fold_not_reduced_to_point",
         "ancestry_mmm/tests/test_structural_stability.py::TestParameterFoldComparison::test_no_threshold_or_verdict_field_exists",
         "ancestry_mmm/tests/test_structural_stability.py::TestSharedFoldIdentityWithValidationFolds::test_fold_ids_from_validation_folds_flow_through_unchanged",
-        "ancestry_mmm/tests/test_fold_refit_service.py::TestRealSnapshotIntegratesWithStructuralStability::test_real_snapshot_plus_a_second_fold_compares_without_error"
+        "ancestry_mmm/tests/test_fold_refit_service.py::TestRealSnapshotIntegratesWithStructuralStability::test_real_snapshot_plus_a_second_fold_compares_without_error",
+        "ancestry_mmm/tests/test_fold_refit_service.py::TestRunLeakageSafeFoldRefitFromSourcesSafePath::test_structural_snapshot_matches_predictive_evidence_fit",
+        "ancestry_mmm/tests/test_fold_refit_service_recovery.py::TestFromSourcesGenuineMultiFoldStructuralStability::test_two_real_fits_from_raw_sources_feed_structural_stability",
+        "ancestry_mmm/tests/test_fold_refit_service_recovery.py::TestFromSourcesMarketSpecificRealFit::test_market_specific_fit_via_fold_local_official_preparation"
       ]
     },
     {

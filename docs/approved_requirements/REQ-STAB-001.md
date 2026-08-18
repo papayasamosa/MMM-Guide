@@ -72,18 +72,29 @@ model types, real MCMC, feeding `assess_structural_stability`) by
 the single-market fallback path, and two real fits feeding genuine
 multi-fold structural-stability evidence).
 
-Still not wired: `DiagnosticsArtefact`/Diagnostics-page integration, and
-point-in-time reconstruction of the raw source data itself (this module's
-fold-local refit still operates on plain date-sliced rows of a single
-already-prepared dataframe — selecting the source *version* that existed
-as of a fold's cutoff, and fold-local re-execution of `core.
-official_preparation`/`core.frequency_conversion` from raw sources,
-remains Work Package 1 part 2, undelivered). Unlike `REQ-PPD-001` (which
-only needs a single existing trace/frame/meta/params call and could be
-wired into `DiagnosticsService.evaluate()` today), wiring this record's
-`DiagnosticsArtefact` section is deferred one more step: the schema/UI
-work is planned jointly with `REQ-PPD-001`'s once wiring begins, not
-because a real re-estimation pipeline is still missing.
+Point-in-time reconstruction of the raw source data itself now exists
+(Work Package 1 part 2 of `Media-Mix-Lab: Coding LLM Next Steps After PR
+#286`, 2026-08-18): `ancestry_mmm/application/fold_refit_service.py::
+run_leakage_safe_fold_refit_from_sources` re-runs `core.
+official_preparation.prepare_canonical_native_frame`/`core.
+frequency_alignment.assess_official_preparation` fold-locally (governed to
+each fold's own training window and information cutoff) from the
+project's raw native per-source tables, rather than slicing one
+already-prepared dataframe, before calling `fit_fold_with_real_model` —
+producing `FoldParameterSnapshot`s from fits whose *input reconstruction*,
+not only the fit itself, respects each fold's cutoff. Proven for both
+Model A and Model C by `test_fold_refit_service.py`/`test_fold_refit_
+service_recovery.py` (see `REQ-LEAK-001`'s own Capability status for the
+full test list — this record's structural-stability integration test is
+`TestFromSourcesGenuineMultiFoldStructuralStability`, mirroring the
+existing `TestGenuineMultiFoldStructuralStability`).
+
+Still not wired: `DiagnosticsArtefact`/Diagnostics-page integration.
+Unlike `REQ-PPD-001` (which only needs a single existing trace/frame/
+meta/params call and could be wired into `DiagnosticsService.evaluate()`
+today), wiring this record's `DiagnosticsArtefact` section is deferred one
+more step: the schema/UI work is planned jointly with `REQ-PPD-001`'s once
+wiring begins, not because a real re-estimation pipeline is still missing.
 
 ## Requirement
 
@@ -163,9 +174,11 @@ closed.
 - `ancestry_mmm/core/structural_stability.py` (`FoldParameterSnapshot`,
   `ParameterFoldComparison`, `StructuralStabilityArtefact`,
   `assess_structural_stability`)
-- `ancestry_mmm/application/fold_refit_service.py` (new, Work Package 1
-  part 1 — `fit_fold_with_real_model`, `run_leakage_safe_fold_refit`, the
-  first real-fit producer of `FoldParameterSnapshot` evidence)
+- `ancestry_mmm/application/fold_refit_service.py` (Work Package 1 part 1
+  — `fit_fold_with_real_model`, `run_leakage_safe_fold_refit`, the first
+  real-fit producer of `FoldParameterSnapshot` evidence; Work Package 1
+  part 2 (new) — `run_leakage_safe_fold_refit_from_sources`, the same
+  producer driven by fold-local raw-source reconstruction)
 - `ancestry_mmm/core/diagnostics.py` (not yet touched — `DiagnosticsArtefact`
   schema extension deferred, see Capability status)
 - `ancestry_mmm/pages/06_Diagnostics.py` (not yet wired — deferred)
@@ -200,7 +213,10 @@ closed.
   manual-only — Model C real fit and market-qualified naming, the
   single-market fallback path, and two real fits feeding genuine
   multi-fold structural-stability evidence; run by the `fold-refit-
-  recovery` CI job, `.github/workflows/tests.yml`)
+  recovery` CI job, `.github/workflows/tests.yml`; Work Package 1 part 2
+  — `TestFromSourcesMarketSpecificRealFit`/`TestFromSourcesGenuine
+  MultiFoldStructuralStability`, the same coverage for
+  `run_leakage_safe_fold_refit_from_sources`)
 
 ## Migration impact
 
@@ -217,17 +233,14 @@ is not yet touched.
   (draws=200/tune=200) fit runs schedule/manual-only
   (`test_fold_refit_service_recovery.py`, mirroring `candidate-a-
   recovery`) — `REQ-LEAK-001`'s own equivalent open question is resolved
-  the same way by this same change.
+  the same way by this same change, and Work Package 1 part 2's
+  `run_leakage_safe_fold_refit_from_sources` follows the identical split.
 - `DiagnosticsArtefact`/Diagnostics-page schema and UI wiring for both
   this record and `REQ-PPD-001` — deferred; a real multi-fold
   re-estimation pipeline now exists to supply genuine
   `FoldParameterSnapshot` evidence (see Capability status), so this is a
   UI/schema-design follow-up, not blocked on evidence-production
   existing.
-- Point-in-time reconstruction of the raw source data itself (Work
-  Package 1 part 2, undelivered) — `fit_fold_with_real_model` still
-  operates on plain date-sliced rows of a single already-prepared
-  dataframe, not a per-fold reconstruction from raw source versions.
 - The minimum fold-support, parameter/effect classes, materiality rules,
   and permitted-use consequences for time-slice structural instability
   remain Part 7 `VL-022`'s open decision, not approved here.

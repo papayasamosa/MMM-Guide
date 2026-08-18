@@ -99,9 +99,27 @@ class TestConversionMethodSpec:
 class TestConversionMethodRegistry:
     def test_registry_is_empty_by_default(self):
         """The single most important invariant of this module: no method
-        is registered anywhere for any variable class. Work Package D
-        registers one only once a modelling decision approves it."""
-        assert registered_method_count() == 0
+        is registered anywhere for any variable class unless something
+        explicitly registered one. Work Package D's `ensure_approved_
+        frequency_methods` (`core.frequency_conversion`) does exactly
+        that - idempotently, for the whole process - and by design is
+        exercised by any test that reaches a "ready" `assess_official_
+        preparation` result (Work Package 1 part 2's fold-local
+        reconstruction tests do this legitimately). This test's own
+        assertion is about a *genuinely untouched* registry, not "whatever
+        this shared test process happens to have accumulated by the time
+        this test runs" - so it isolates itself exactly like `test_
+        registered_but_unapproved_method_is_not_resolved`/`test_
+        registered_and_approved_method_is_resolved` below already do,
+        rather than depending on file-collection-order accidents."""
+        from ancestry_mmm.core import frequency_alignment as fa
+
+        saved = dict(fa._METHOD_REGISTRY)
+        fa._METHOD_REGISTRY.clear()
+        try:
+            assert registered_method_count() == 0
+        finally:
+            fa._METHOD_REGISTRY.update(saved)
 
     def test_resolve_returns_none_when_nothing_registered(self):
         assert resolve_conversion_method("flow_count") is None

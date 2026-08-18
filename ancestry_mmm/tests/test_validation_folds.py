@@ -12,6 +12,7 @@ from ancestry_mmm.core.coverage import (
     CoverageSegment,
     DefinitionBreak,
     FrequencyMetadata,
+    SourceVersion,
     VariableCoverageMatrix,
     VariableCoverageRecord,
 )
@@ -356,6 +357,142 @@ class TestAssessFoldSourceReconstruction:
         matrix = _matrix((_coverage_record(market="*"),))
         assessment = assess_fold_source_reconstruction(fold, matrix)
         assert len(assessment.per_variable) == 1
+
+
+class TestSourceVersionAwareReconstruction:
+    """Work Package 1 part 2: `assess_fold_source_reconstruction`'s
+    optional `source_versions` cross-check - REQ-LEAK-001 requirement 4's
+    "never substitute today's later revision and call it historically
+    valid"."""
+
+    def _fold(self, **overrides) -> ValidationFold:
+        values = dict(
+            fold_id="fold_1",
+            fold_manifest_version=1,
+            train_start="2024-01-01",
+            train_end="2024-06-01",
+            test_start="2024-06-08",
+            test_end="2024-07-01",
+            market_scope=("UK",),
+        )
+        values.update(overrides)
+        return ValidationFold(**values)
+
+    def test_omitting_source_versions_preserves_prior_behaviour(self):
+        """Backward compatibility: existing callers of this function that
+        never pass `source_versions` see the exact same result as before
+        this parameter existed."""
+        fold = self._fold()
+        matrix = _matrix((_coverage_record(),))
+        assessment = assess_fold_source_reconstruction(fold, matrix)
+        assert assessment.is_leakage_safe
+
+    def test_pinned_source_version_uploaded_before_cutoff_is_safe(self):
+        fold = self._fold()
+        matrix = _matrix((_coverage_record(),))
+        versions = (
+            SourceVersion(
+                source_id="src-1",
+                version=1,
+                original_filename="media.csv",
+                checksum="a" * 64,
+                size_bytes=100,
+                uploaded_at="2023-12-01",
+                parsed_representation_version="v1",
+            ),
+        )
+        assessment = assess_fold_source_reconstruction(fold, matrix, versions)
+        assert assessment.is_leakage_safe
+
+    def test_later_source_version_cannot_alter_earlier_fold(self):
+        """The coverage record is pinned to source_version=2, uploaded
+        after this fold's cutoff. An earlier version (1) exists but this
+        module retains no separate historical content for it - the fold
+        must be blocked, never silently fit against the later revision's
+        content."""
+        fold = self._fold()
+        record_v2 = VariableCoverageRecord(
+            variable_id="tv_spend",
+            source_id="src-1",
+            source_version=2,
+            market="UK",
+            frequency=FrequencyMetadata(
+                native_frequency="weekly",
+                target_frequency="weekly",
+                variable_class=VARIABLE_CLASS_FLOW_COUNT,
+            ),
+            coverage_segments=(),
+        )
+        matrix_v2 = _matrix((record_v2,))
+        versions = (
+            SourceVersion(
+                source_id="src-1",
+                version=1,
+                original_filename="media_v1.csv",
+                checksum="a" * 64,
+                size_bytes=100,
+                uploaded_at="2023-12-01",
+                parsed_representation_version="v1",
+            ),
+            SourceVersion(
+                source_id="src-1",
+                version=2,
+                original_filename="media_v2.csv",
+                checksum="b" * 64,
+                size_bytes=110,
+                uploaded_at="2024-06-15",  # after fold train_end 2024-06-01
+                parsed_representation_version="v1",
+            ),
+        )
+        assessment = assess_fold_source_reconstruction(fold, matrix_v2, versions)
+        assert not assessment.is_leakage_safe
+        assert assessment.per_variable[0].status == LEAKAGE_STATUS_CANNOT_VERIFY
+        assert assessment.limitations
+        assert "after this fold's information cutoff" in assessment.limitations[0]
+
+    def test_missing_historical_vintage_blocks_with_explicit_limitation(self):
+        """No SourceVersion at all predates the fold's cutoff (the source
+        did not exist yet as of this point) - an explicit, provable
+        limitation, never a silently-assumed-safe fold."""
+        fold = self._fold()
+        matrix = _matrix((_coverage_record(),))
+        versions = (
+            SourceVersion(
+                source_id="src-1",
+                version=1,
+                original_filename="media.csv",
+                checksum="a" * 64,
+                size_bytes=100,
+                uploaded_at="2024-06-15",  # after fold train_end 2024-06-01
+                parsed_representation_version="v1",
+            ),
+        )
+        assessment = assess_fold_source_reconstruction(fold, matrix, versions)
+        assert not assessment.is_leakage_safe
+        assert assessment.per_variable[0].status == LEAKAGE_STATUS_CANNOT_VERIFY
+        assert assessment.limitations
+
+    def test_unidentified_pinned_source_version_cannot_verify(self):
+        """`source_versions` is supplied but contains nothing identifying
+        the coverage record's pinned (source_id, source_version) at all -
+        never silently treated as safe merely because nothing contradicts
+        it."""
+        fold = self._fold()
+        matrix = _matrix((_coverage_record(),))
+        versions = (
+            SourceVersion(
+                source_id="a-completely-different-source",
+                version=1,
+                original_filename="other.csv",
+                checksum="c" * 64,
+                size_bytes=50,
+                uploaded_at="2023-01-01",
+                parsed_representation_version="v1",
+            ),
+        )
+        assessment = assess_fold_source_reconstruction(fold, matrix, versions)
+        assert not assessment.is_leakage_safe
+        assert assessment.per_variable[0].status == LEAKAGE_STATUS_CANNOT_VERIFY
 
 
 class TestVariableReconstructionAssessmentValidation:

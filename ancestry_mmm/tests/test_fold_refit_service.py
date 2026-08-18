@@ -24,6 +24,7 @@ import pytest
 
 from ancestry_mmm.application.fold_refit_service import (
     run_leakage_safe_fold_refit,
+    run_leakage_safe_fold_refit_from_sources,
 )
 from ancestry_mmm.application.model_fit_service import MODEL_TYPE_SHARED
 from ancestry_mmm.core.coverage import (
@@ -31,9 +32,11 @@ from ancestry_mmm.core.coverage import (
     VARIABLE_CLASS_FLOW_COUNT,
     CoverageSegment,
     FrequencyMetadata,
+    SourceVersion,
     VariableCoverageMatrix,
     VariableCoverageRecord,
 )
+from ancestry_mmm.core.outcomes import FAMILY_HISTORY, METRIC_GSA, OutcomeDefinition
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.structural_stability import (
     FoldParameterSnapshot,
@@ -221,3 +224,287 @@ class TestRealSnapshotIntegratesWithStructuralStability:
         assert "hill_K__TV_Brand" in by_name
         assert np.isfinite(by_name["hill_K__TV_Brand"].point_range)
         assert by_name["hill_K__TV_Brand"].point_range > 0
+
+
+# ---------------------------------------------------------------------------
+# Work Package 1 part 2: run_leakage_safe_fold_refit_from_sources -
+# point-in-time reconstruction from raw native per-source tables, never one
+# already-prepared/date-sliced dataframe.
+# ---------------------------------------------------------------------------
+
+
+def _source_frames(n_weeks: int = 40) -> dict:
+    dates = pd.date_range("2024-01-01", periods=n_weeks, freq="W")
+    outcome_frames, media_frames = [], []
+    for i, market in enumerate(["UK", "US"]):
+        outcome_frames.append(
+            pd.DataFrame(
+                {
+                    "date": dates,
+                    "market": market,
+                    "GSA_New": np.linspace(20.0 + i * 5, 120.0 + i * 5, n_weeks),
+                }
+            )
+        )
+        media_frames.append(
+            pd.DataFrame(
+                {
+                    "date": dates,
+                    "market": market,
+                    "TV_Brand": np.linspace(100.0 + i * 10, 900.0 + i * 10, n_weeks),
+                }
+            )
+        )
+    return {
+        "outcomes-src": pd.concat(outcome_frames, ignore_index=True),
+        "media-src": pd.concat(media_frames, ignore_index=True),
+    }
+
+
+def _sources_spec() -> ModelSpec:
+    return ModelSpec(
+        date_col="date",
+        market_col="market",
+        markets=["UK", "US"],
+        segment_outcomes={"New": "GSA_New"},
+        channels=["TV_Brand"],
+    )
+
+
+def _sources_outcomes() -> list:
+    """Matches exactly what `core.outcomes.fh_outcomes_from_spec` would
+    derive from `_sources_spec().segment_outcomes` - `fit_fold_with_real_
+    model` calls `prepare_fh_modeling_frame(train_df, spec)` without an
+    explicit `outcomes` list, so that internal auto-derivation and this
+    module's explicit `outcomes` argument (needed for the capability/
+    consumed-variable resolution `build_official_capability_report`
+    requires) must resolve to the same outcome_id/source_column."""
+    return [
+        OutcomeDefinition(
+            outcome_id="fh_new",
+            product=FAMILY_HISTORY,
+            segment="New",
+            metric=METRIC_GSA,
+            source_column="GSA_New",
+        )
+    ]
+
+
+def _sources_coverage_matrix(
+    *,
+    tv_brand_segments_by_market: dict | None = None,
+    tv_brand_publication_lag: int = 0,
+) -> VariableCoverageMatrix:
+    tv_brand_segments_by_market = tv_brand_segments_by_market or {}
+    records = [
+        VariableCoverageRecord(
+            variable_id="GSA_New",
+            source_id="outcomes-src",
+            source_version=1,
+            market="*",
+            frequency=FrequencyMetadata(
+                native_frequency="weekly",
+                target_frequency="weekly",
+                variable_class=VARIABLE_CLASS_FLOW_COUNT,
+            ),
+            coverage_segments=(),
+        )
+    ]
+    for market in ("UK", "US"):
+        records.append(
+            VariableCoverageRecord(
+                variable_id="TV_Brand",
+                source_id="media-src",
+                source_version=1,
+                market=market,
+                frequency=FrequencyMetadata(
+                    native_frequency="weekly",
+                    target_frequency="weekly",
+                    variable_class=VARIABLE_CLASS_FLOW_COUNT,
+                    publication_lag_periods=tv_brand_publication_lag,
+                ),
+                coverage_segments=tv_brand_segments_by_market.get(market, ()),
+            )
+        )
+    return VariableCoverageMatrix(
+        matrix_id="sources-matrix",
+        matrix_version=1,
+        generated_at="2026-08-18",
+        records=tuple(records),
+    )
+
+
+@pytest.fixture(scope="module")
+def shared_sources_refit_result():
+    """The one real (tiny) MCMC fit this section pays for, driven through
+    fold-local `core.official_preparation.prepare_canonical_native_frame`
+    reconstruction rather than a date-sliced already-prepared frame."""
+    return run_leakage_safe_fold_refit_from_sources(
+        _source_frames(n_weeks=40),
+        _sources_spec(),
+        _sources_coverage_matrix(),
+        _sources_outcomes(),
+        model_type=MODEL_TYPE_SHARED,
+        n_folds=1,
+        min_train_frac=0.7,
+        posterior_draw_subsample=5,
+        **FIT_KWARGS,
+    )
+
+
+class TestRunLeakageSafeFoldRefitFromSourcesSafePath:
+    def test_safe_fold_is_fit_and_produces_one_snapshot(
+        self, shared_sources_refit_result
+    ):
+        result = shared_sources_refit_result
+        assert len(result.folds) == 1
+        assert len(result.snapshots) == 1
+        assert result.snapshots[0].fold_id == result.folds[0].fold_id
+        assert not result.results_df.empty
+        assert (result.results_df["leakage_safe"] == True).all()  # noqa: E712
+
+    def test_r2_and_mape_are_real_finite_numbers(self, shared_sources_refit_result):
+        row = shared_sources_refit_result.results_df.iloc[0]
+        assert row["outcome_id"] == "fh_new"
+        assert np.isfinite(row["r_squared"])
+        assert np.isfinite(row["mape_pct"])
+
+    def test_structural_snapshot_matches_predictive_evidence_fit(
+        self, shared_sources_refit_result
+    ):
+        """The snapshot and the R²/MAPE row for this fold both came from
+        the exact same `fit_fold_with_real_model` call - one fit, not two
+        divergent ones."""
+        result = shared_sources_refit_result
+        assert result.snapshots[0].fold_id == result.results_df.iloc[0]["fold_id"]
+
+
+class TestRunLeakageSafeFoldRefitFromSourcesBlockedPaths:
+    """Every case below must never call `fit_fold_with_real_model` -
+    asserted indirectly by `len(result.snapshots) == 0` with no real MCMC
+    cost paid (draws/tune from FIT_KWARGS are irrelevant if unreached)."""
+
+    def test_unresolved_coverage_blocks_the_whole_fold_without_fitting(self):
+        """One market's TV_Brand is unavailable_source - the fold is
+        rejected entirely, never partially fit with the other market's
+        data and a zero/blank standing in for the unavailable one."""
+        matrix = _sources_coverage_matrix(
+            tv_brand_segments_by_market={
+                "UK": (
+                    CoverageSegment(
+                        period_start="2024-01-01",
+                        period_end="2025-12-31",
+                        state=STATE_UNAVAILABLE_SOURCE,
+                    ),
+                )
+            }
+        )
+        result = run_leakage_safe_fold_refit_from_sources(
+            _source_frames(n_weeks=40),
+            _sources_spec(),
+            matrix,
+            _sources_outcomes(),
+            model_type=MODEL_TYPE_SHARED,
+            n_folds=1,
+            min_train_frac=0.7,
+            posterior_draw_subsample=5,
+            **FIT_KWARGS,
+        )
+        assert len(result.snapshots) == 0
+        assert not result.assessments[0].is_leakage_safe
+        row = result.results_df.iloc[0]
+        assert row["leakage_safe"] == False  # noqa: E712
+        assert row["skipped_reason"]
+        assert pd.isna(row["r_squared"])
+
+    def test_publication_lag_blocks_without_fitting(self):
+        """A later publication cannot leak backward into this fold's
+        training reconstruction - proven end-to-end through the fold-local
+        official-preparation orchestration, not only at the
+        `assess_fold_source_reconstruction` unit level."""
+        matrix = _sources_coverage_matrix(tv_brand_publication_lag=4)
+        result = run_leakage_safe_fold_refit_from_sources(
+            _source_frames(n_weeks=40),
+            _sources_spec(),
+            matrix,
+            _sources_outcomes(),
+            model_type=MODEL_TYPE_SHARED,
+            n_folds=1,
+            min_train_frac=0.7,
+            posterior_draw_subsample=5,
+            **FIT_KWARGS,
+        )
+        assert len(result.snapshots) == 0
+        assert not result.assessments[0].is_leakage_safe
+
+    def test_later_source_version_blocks_without_fitting(self):
+        """The pinned SourceVersion for the media source was uploaded
+        after this fold's train_end - the fold must never be fit against
+        content that could not have existed as of that point (REQ-LEAK-001
+        requirement 4)."""
+        matrix = _sources_coverage_matrix()
+        dates = pd.date_range("2024-01-01", periods=40, freq="W")
+        train_end = dates[int(40 * 0.7)]
+        versions = (
+            SourceVersion(
+                source_id="media-src",
+                version=1,
+                original_filename="media.csv",
+                checksum="a" * 64,
+                size_bytes=100,
+                uploaded_at=(train_end + pd.Timedelta(days=30)).strftime("%Y-%m-%d"),
+                parsed_representation_version="v1",
+            ),
+        )
+        result = run_leakage_safe_fold_refit_from_sources(
+            _source_frames(n_weeks=40),
+            _sources_spec(),
+            matrix,
+            _sources_outcomes(),
+            source_versions=versions,
+            model_type=MODEL_TYPE_SHARED,
+            n_folds=1,
+            min_train_frac=0.7,
+            posterior_draw_subsample=5,
+            **FIT_KWARGS,
+        )
+        assert len(result.snapshots) == 0
+        assert not result.assessments[0].is_leakage_safe
+
+    def test_earlier_source_version_does_not_block(self):
+        """Sanity check: an uploaded-in-time SourceVersion never blocks a
+        fold merely because `source_versions` was supplied."""
+        matrix = _sources_coverage_matrix()
+        versions = (
+            SourceVersion(
+                source_id="media-src",
+                version=1,
+                original_filename="media.csv",
+                checksum="a" * 64,
+                size_bytes=100,
+                uploaded_at="2023-06-01",
+                parsed_representation_version="v1",
+            ),
+            SourceVersion(
+                source_id="outcomes-src",
+                version=1,
+                original_filename="outcomes.csv",
+                checksum="b" * 64,
+                size_bytes=100,
+                uploaded_at="2023-06-01",
+                parsed_representation_version="v1",
+            ),
+        )
+        result = run_leakage_safe_fold_refit_from_sources(
+            _source_frames(n_weeks=40),
+            _sources_spec(),
+            matrix,
+            _sources_outcomes(),
+            source_versions=versions,
+            model_type=MODEL_TYPE_SHARED,
+            n_folds=1,
+            min_train_frac=0.7,
+            posterior_draw_subsample=5,
+            **FIT_KWARGS,
+        )
+        assert result.assessments[0].is_leakage_safe
