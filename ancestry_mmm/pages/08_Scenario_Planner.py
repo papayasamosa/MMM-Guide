@@ -125,6 +125,7 @@ from ancestry_mmm.core.planning.phasing import (
 )
 from ancestry_mmm.core.planning.weekly_plan_builder import build_governed_weekly_plan
 from ancestry_mmm.core.sequential_evaluation_context import SequentialEvaluationContext
+from ancestry_mmm.core.sequential_scenario_evaluation import sequential_scenario_to_dict
 
 
 def _catalogue_value(item, key, default=None):
@@ -2244,10 +2245,20 @@ def _render_sequential_manual_tab():
             "Decision-ready": str(future_context.is_decision_ready),
         },
     )
-    st.caption(
-        "Saving a sequential scenario is not yet available - only steady-state "
-        "monthly scenarios can be saved and exported in this release."
+    seq_scenario_name = st.text_input(
+        "Scenario name *",
+        value=f"sequential-{market}-{plan_start_week.date()}",
+        key=f"{plan_key}_seq_scenario_name",
     )
+    if st.button("Save this scenario", key=f"{plan_key}_save_sequential"):
+        scenarios = get_state("scenarios") or []
+        scenarios.append(
+            sequential_scenario_to_dict(
+                seq_scenario_name, result, notes="sequential_weekly manual"
+            )
+        )
+        set_state("scenarios", scenarios)
+        st.success(f"Saved scenario '{seq_scenario_name}'.")
 
 
 with tab_manual:
@@ -2597,6 +2608,46 @@ with tab_unconstrained:
             column_config=dataframe_column_config(unconstrained_plan_df),
         )
 
+
+def _filter_current_scenarios(
+    scenarios, current_cost_mapping_fingerprint, current_counterfactual_fingerprint
+):
+    """A scenario saved under a since-edited cost mapping or counterfactual
+    policy predicts totals that no longer reflect governance now in effect
+    - comparing it alongside current scenarios would be indistinguishable
+    from a current comparison (Corrective PR C9/review finding). Shared by
+    the steady-state and sequential-weekly saved-scenario sections below -
+    both dict shapes carry `governance_dependencies` the same way
+    (`sequential_scenario_to_dict` populates it identically to
+    `scenario_to_dict`), so one staleness check covers both."""
+    current_scenarios = []
+    stale_scenario_names = []
+    for scenario in scenarios:
+        scenario_cf_fp = (scenario.get("governance_dependencies") or {}).get(
+            "counterfactual_policy_fingerprint"
+        )
+        if scenario_cf_fp and scenario_cf_fp != current_counterfactual_fingerprint:
+            stale_scenario_names.append(scenario.get("name", "(unnamed)"))
+            continue
+        try:
+            dependency_fingerprint = resolve_scenario_cost_mapping_fingerprint(scenario)
+        except ValueError:
+            # Conflicting top-level vs. nested fingerprints - neither can be
+            # trusted, so fail closed rather than silently picking one.
+            stale_scenario_names.append(scenario.get("name", "(unnamed)"))
+            continue
+        if not dependency_fingerprint:
+            current_scenarios.append(scenario)
+            continue
+        try:
+            require_current_cost_mapping(scenario, current_cost_mapping_fingerprint)
+        except ValueError:
+            stale_scenario_names.append(scenario.get("name", "(unnamed)"))
+        else:
+            current_scenarios.append(scenario)
+    return current_scenarios, stale_scenario_names
+
+
 with SectionCard(
     "Saved scenarios",
     description=(
@@ -2605,50 +2656,25 @@ with SectionCard(
     ),
 ):
     scenarios = get_state("scenarios") or []
-    if scenarios:
-        # A scenario saved under a since-edited cost mapping predicts totals
-        # that no longer reflect the governed mapping in effect now - comparing
-        # it alongside current scenarios would be indistinguishable from a
-        # current comparison (Corrective PR C9). Only a scenario whose resolved
-        # dependency (Corrective PR E2.1: nested governance_dependencies is the
-        # current contract, the top-level field only an explicit legacy
-        # fallback - see resolve_scenario_cost_mapping_fingerprint) actually
-        # names a cost mapping has this dependency at all; a scenario that
-        # never depended on cost mappings is never flagged stale by this check.
-        current_cost_mapping_fingerprint = cost_mapping_registry.fingerprint()
-        # Corrective review finding: this comparison only ever checked cost
-        # mappings - a scenario saved under a since-changed counterfactual
-        # policy predicted totals under a demand-capture rule the project no
-        # longer uses, but was never excluded or flagged, indistinguishable from
-        # a genuinely current scenario.
-        current_counterfactual_fingerprint = counterfactual_policy.fingerprint()
-        current_scenarios = []
-        stale_scenario_names = []
-        for scenario in scenarios:
-            scenario_cf_fp = (scenario.get("governance_dependencies") or {}).get(
-                "counterfactual_policy_fingerprint"
-            )
-            if scenario_cf_fp and scenario_cf_fp != current_counterfactual_fingerprint:
-                stale_scenario_names.append(scenario.get("name", "(unnamed)"))
-                continue
-            try:
-                dependency_fingerprint = resolve_scenario_cost_mapping_fingerprint(
-                    scenario
-                )
-            except ValueError:
-                # Conflicting top-level vs. nested fingerprints - neither can
-                # be trusted, so fail closed rather than silently picking one.
-                stale_scenario_names.append(scenario.get("name", "(unnamed)"))
-                continue
-            if not dependency_fingerprint:
-                current_scenarios.append(scenario)
-                continue
-            try:
-                require_current_cost_mapping(scenario, current_cost_mapping_fingerprint)
-            except ValueError:
-                stale_scenario_names.append(scenario.get("name", "(unnamed)"))
-            else:
-                current_scenarios.append(scenario)
+    # WP5 part 4: a saved sequential-weekly scenario has no `predicted`
+    # DataFrame (`compare_scenarios` requires one) - split by calculation
+    # method rather than passing a mixed list into the steady-state-only
+    # comparison below.
+    steady_state_scenarios = [
+        s for s in scenarios if s.get("calculation_method") != "sequential_weekly"
+    ]
+    sequential_scenarios_saved = [
+        s for s in scenarios if s.get("calculation_method") == "sequential_weekly"
+    ]
+    current_cost_mapping_fingerprint = cost_mapping_registry.fingerprint()
+    current_counterfactual_fingerprint = counterfactual_policy.fingerprint()
+
+    if steady_state_scenarios:
+        current_scenarios, stale_scenario_names = _filter_current_scenarios(
+            steady_state_scenarios,
+            current_cost_mapping_fingerprint,
+            current_counterfactual_fingerprint,
+        )
         if stale_scenario_names:
             st.warning(
                 "Excluded from the comparison below because their governed cost "
@@ -2681,8 +2707,52 @@ with SectionCard(
                 },
             )
         elif not stale_scenario_names:
-            st.info("No scenarios saved yet.")
+            st.info("No steady-state scenarios saved yet.")
     else:
-        st.info("No scenarios saved yet.")
+        st.info("No steady-state scenarios saved yet.")
+
+    if sequential_scenarios_saved:
+        st.markdown("**Saved sequential-weekly scenarios**")
+        seq_current, seq_stale_names = _filter_current_scenarios(
+            sequential_scenarios_saved,
+            current_cost_mapping_fingerprint,
+            current_counterfactual_fingerprint,
+        )
+        if seq_stale_names:
+            st.warning(
+                "Excluded below because their governed cost mapping or "
+                "counterfactual policy has since changed - regenerate them to "
+                f"compare current totals: {', '.join(seq_stale_names)}"
+            )
+        if seq_current:
+            seq_rows = []
+            for scenario in seq_current:
+                ev = scenario["sequential_evaluation"]
+                weekly = np.array(ev["weekly_incremental"])
+                row = {
+                    "name": scenario.get("name", "(unnamed)"),
+                    "market": scenario.get("market", ""),
+                    "governance_mode": scenario.get("governance_mode", ""),
+                    "weeks": len(ev.get("weekly_period_labels", [])),
+                }
+                for i, oid in enumerate(ev.get("outcome_ids", [])):
+                    row[f"total_{readable_label(oid)}"] = (
+                        float(weekly[:, i].sum()) if weekly.size else 0.0
+                    )
+                seq_rows.append(row)
+            seq_display = pd.DataFrame(seq_rows)
+            st.dataframe(
+                seq_display,
+                width="stretch",
+                column_config=dataframe_column_config(seq_display),
+            )
+            st.caption(
+                "Totals are the plan-window weekly incremental outcome summed per "
+                "outcome - not directly comparable to the steady-state monthly "
+                "comparison above (a different calculation method). Terminal "
+                "carryover and posterior uncertainty are not shown in this "
+                "comparison - re-evaluate the scenario in the manual tab above to "
+                "see them."
+            )
 
 render_next_step("scenario_planner")

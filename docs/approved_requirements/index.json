@@ -476,7 +476,9 @@
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
         "ancestry_mmm/tests/test_sequential_simulation.py::TestCandidateReferenceContract::test_no_change_scenario_invariant_is_zero",
-        "ancestry_mmm/tests/test_sequential_simulation.py::TestPosteriorHandling::test_returns_one_full_path_per_draw_not_a_summary"
+        "ancestry_mmm/tests/test_sequential_simulation.py::TestPosteriorHandling::test_returns_one_full_path_per_draw_not_a_summary",
+        "ancestry_mmm/tests/test_sequential_scenario_evaluation.py::TestSequentialScenarioToDict::test_scenario_from_dict_passes_through_unchanged",
+        "ancestry_mmm/tests/test_persistence.py::test_export_then_import_reproduces_a_sequential_scenario"
       ]
     },
     {

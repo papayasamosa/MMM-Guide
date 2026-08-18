@@ -25,7 +25,7 @@ structurally separate, typed result - never merged into a plan-window
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Sequence, Tuple
+from typing import Any, Dict, Mapping, Sequence, Tuple
 
 import numpy as np
 
@@ -97,6 +97,27 @@ class TerminalIncrementalResult:
     candidate: SequentialSimulationResult
     reference: SequentialSimulationResult
     incremental: np.ndarray  # (n_weeks, n_outcomes)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "market": self.market,
+            "period_labels": list(self.period_labels),
+            "outcome_ids": list(self.outcome_ids),
+            "candidate": self.candidate.to_dict(),
+            "reference": self.reference.to_dict(),
+            "incremental": self.incremental.tolist(),
+        }
+
+    @classmethod
+    def from_dict(cls, d: Mapping[str, Any]) -> "TerminalIncrementalResult":
+        return cls(
+            market=d.get("market", ""),
+            period_labels=tuple(d.get("period_labels", [])),
+            outcome_ids=tuple(d.get("outcome_ids", [])),
+            candidate=SequentialSimulationResult.from_dict(d["candidate"]),
+            reference=SequentialSimulationResult.from_dict(d["reference"]),
+            incremental=np.array(d.get("incremental", [])),
+        )
 
 
 def evaluate_terminal_incremental_response(

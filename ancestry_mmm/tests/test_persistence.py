@@ -509,6 +509,98 @@ def test_export_then_import_reproduces_scenarios_and_constraints(
     )
 
 
+def test_export_then_import_reproduces_a_sequential_scenario(tmp_path, sample_project):
+    """WP5 part 4: a sequential-weekly scenario dict
+    (`core.sequential_scenario_evaluation.sequential_scenario_to_dict`)
+    appended to the SAME `scenarios` list a steady-state scenario is must
+    survive a full export/import round trip through the generic,
+    unmodified scenario-persistence path - no `core.persistence` change
+    was needed because the dict is already fully JSON-native
+    (`SequentialScenarioEvaluationResult.to_dict()` converts every numpy
+    array to a plain list) and carries no `predicted` DataFrame key (the
+    only field `export_project`'s scenario loop treats specially)."""
+    from ancestry_mmm.core.planning.value import (
+        SEQUENTIAL_WEEKLY_PLANNING_EVALUATION_SEMANTICS,
+    )
+    from ancestry_mmm.core.sequential_scenario_evaluation import (
+        SequentialScenarioEvaluationResult,
+        sequential_scenario_to_dict,
+    )
+    from ancestry_mmm.core.sequential_simulation import (
+        SequentialCarryInState,
+        SequentialSimulationResult,
+    )
+
+    ending_state = SequentialCarryInState(
+        market="UK",
+        channels=("TV_Brand",),
+        starting_adstock={"TV_Brand": 12.5},
+        lag_context_sat_media=np.zeros((0, 1)),
+        lag_context_length=0,
+    )
+    sim_result = SequentialSimulationResult(
+        market="UK",
+        period_labels=("2024-01-01", "2024-01-08"),
+        outcome_ids=("New",),
+        mu=np.array([[10.0], [11.0]]),
+        sat_media=np.array([[5.0], [6.0]]),
+        ending_state=ending_state,
+    )
+    sequential_result = SequentialScenarioEvaluationResult(
+        market="UK",
+        calculation_method="sequential_weekly",
+        weekly_period_labels=("2024-01-01", "2024-01-08"),
+        monthly_period_labels=("2024-01",),
+        outcome_ids=("New",),
+        candidate=sim_result,
+        reference=sim_result,
+        weekly_incremental=np.array([[0.0], [0.0]]),
+        monthly_incremental=np.array([[0.0]]),
+        short_horizon_incremental=np.array([0.0]),
+        long_horizon_incremental=np.array([0.0]),
+        terminal=None,
+        posterior_weekly_incremental=None,
+        phasing_method_id="calendar_day_overlap_v1",
+        weekly_plan_fingerprint="wp-1",
+        reference_weekly_plan_fingerprint="wp-1",
+        future_context_fingerprint="fc-1",
+        starting_state_fingerprint="ss-1",
+        evaluation_context_fingerprint="ec-1",
+        governance_mode="exploratory",
+        artefact_kind="manual_scenario",
+        resolved_governance=None,
+        governance_dependencies=None,
+        activity_definitions_fingerprint=None,
+        cost_mapping_fingerprint=None,
+        counterfactual_policy_fingerprint="cf-1",
+        economics_coverage=None,
+        planning_semantics=SEQUENTIAL_WEEKLY_PLANNING_EVALUATION_SEMANTICS,
+    )
+    sequential_scenario = sequential_scenario_to_dict(
+        "sequential-uk", sequential_result, notes="sequential_weekly manual"
+    )
+    sample_project["scenarios"] = list(sample_project["scenarios"]) + [
+        sequential_scenario
+    ]
+
+    output_path = export_project(tmp_path / "bundle.zip", **sample_project)
+    imported = import_project(output_path)
+
+    assert len(imported["scenarios"]) == 2
+    restored = next(
+        s for s in imported["scenarios"] if s.get("name") == "sequential-uk"
+    )
+    assert restored["calculation_method"] == "sequential_weekly"
+    assert "predicted" not in restored
+    restored_result = SequentialScenarioEvaluationResult.from_dict(
+        restored["sequential_evaluation"]
+    )
+    np.testing.assert_array_equal(
+        restored_result.weekly_incremental, sequential_result.weekly_incremental
+    )
+    assert restored_result.market == sequential_result.market
+
+
 def test_legacy_value_scenario_without_currency_stays_loadable_and_blocked(
     tmp_path,
     sample_project,

@@ -3848,6 +3848,14 @@ def scenario_to_dict(
 
 def scenario_from_dict(d: dict) -> dict:
     d = dict(d)
+    # WP5 part 4: a sequential-weekly scenario (`core.sequential_scenario_
+    # evaluation.sequential_scenario_to_dict`) has no `spend_plan`/
+    # `objective`/`scenario_plan` in the steady-state shape this legacy-
+    # migration logic below assumes - it is a new schema starting now, with
+    # nothing to migrate from, so it passes through unchanged rather than
+    # having steady-state-specific fields spuriously injected into it.
+    if d.get("calculation_method") == "sequential_weekly":
+        return d
     schema_ver = d.get("schema_version", 1)
     if "scenario_plan" not in d:
         d["scenario_plan"] = ScenarioPlan.from_legacy_spend_plan(

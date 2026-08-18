@@ -510,6 +510,27 @@ class SequentialSimulationResult:
     )  # (n_weeks, n_channels) - adstocked+saturated media, for inspection
     ending_state: SequentialCarryInState  # this run's ending adstock + lag context
 
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "market": self.market,
+            "period_labels": list(self.period_labels),
+            "outcome_ids": list(self.outcome_ids),
+            "mu": self.mu.tolist(),
+            "sat_media": self.sat_media.tolist(),
+            "ending_state": self.ending_state.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "SequentialSimulationResult":
+        return cls(
+            market=d.get("market", ""),
+            period_labels=tuple(d.get("period_labels", [])),
+            outcome_ids=tuple(d.get("outcome_ids", [])),
+            mu=np.array(d.get("mu", [])),
+            sat_media=np.array(d.get("sat_media", [])),
+            ending_state=SequentialCarryInState.from_dict(d["ending_state"]),
+        )
+
 
 def _assemble_replay_frame(
     plan: WeeklyPlan,
