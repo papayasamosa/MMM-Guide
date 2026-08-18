@@ -156,6 +156,117 @@ class SequentialScenarioEvaluationResult:
     planning_semantics: PlanningEvaluationSemantics
     warnings: Tuple[str, ...] = ()
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize for persistence (WP5 part 4). Every numpy array
+        becomes a plain list; every nested typed object delegates to its
+        own `to_dict` - this method never re-derives that serialization
+        itself, mirroring `core.sequential_simulation.SequentialCarryInState.
+        to_dict`'s established pattern for this codebase's sequential
+        types."""
+        return {
+            "market": self.market,
+            "calculation_method": self.calculation_method,
+            "weekly_period_labels": list(self.weekly_period_labels),
+            "monthly_period_labels": list(self.monthly_period_labels),
+            "outcome_ids": list(self.outcome_ids),
+            "candidate": self.candidate.to_dict(),
+            "reference": self.reference.to_dict(),
+            "weekly_incremental": self.weekly_incremental.tolist(),
+            "monthly_incremental": self.monthly_incremental.tolist(),
+            "short_horizon_incremental": self.short_horizon_incremental.tolist(),
+            "long_horizon_incremental": self.long_horizon_incremental.tolist(),
+            "terminal": self.terminal.to_dict() if self.terminal is not None else None,
+            "posterior_weekly_incremental": (
+                self.posterior_weekly_incremental.tolist()
+                if self.posterior_weekly_incremental is not None
+                else None
+            ),
+            "phasing_method_id": self.phasing_method_id,
+            "weekly_plan_fingerprint": self.weekly_plan_fingerprint,
+            "reference_weekly_plan_fingerprint": self.reference_weekly_plan_fingerprint,
+            "future_context_fingerprint": self.future_context_fingerprint,
+            "starting_state_fingerprint": self.starting_state_fingerprint,
+            "evaluation_context_fingerprint": self.evaluation_context_fingerprint,
+            "governance_mode": self.governance_mode,
+            "artefact_kind": self.artefact_kind,
+            "resolved_governance": (
+                self.resolved_governance.to_dict()
+                if self.resolved_governance is not None
+                else None
+            ),
+            "governance_dependencies": (
+                self.governance_dependencies.to_dict()
+                if self.governance_dependencies is not None
+                else None
+            ),
+            "activity_definitions_fingerprint": self.activity_definitions_fingerprint,
+            "cost_mapping_fingerprint": self.cost_mapping_fingerprint,
+            "counterfactual_policy_fingerprint": self.counterfactual_policy_fingerprint,
+            "economics_coverage": self.economics_coverage,
+            "planning_semantics": self.planning_semantics.to_dict(),
+            "warnings": list(self.warnings),
+        }
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "SequentialScenarioEvaluationResult":
+        terminal = d.get("terminal")
+        resolved_governance = d.get("resolved_governance")
+        governance_dependencies = d.get("governance_dependencies")
+        posterior_weekly_incremental = d.get("posterior_weekly_incremental")
+        return cls(
+            market=d["market"],
+            calculation_method=d["calculation_method"],
+            weekly_period_labels=tuple(d.get("weekly_period_labels", [])),
+            monthly_period_labels=tuple(d.get("monthly_period_labels", [])),
+            outcome_ids=tuple(d.get("outcome_ids", [])),
+            candidate=SequentialSimulationResult.from_dict(d["candidate"]),
+            reference=SequentialSimulationResult.from_dict(d["reference"]),
+            weekly_incremental=np.array(d.get("weekly_incremental", [])),
+            monthly_incremental=np.array(d.get("monthly_incremental", [])),
+            short_horizon_incremental=np.array(d.get("short_horizon_incremental", [])),
+            long_horizon_incremental=np.array(d.get("long_horizon_incremental", [])),
+            terminal=(
+                TerminalIncrementalResult.from_dict(terminal)
+                if terminal is not None
+                else None
+            ),
+            posterior_weekly_incremental=(
+                np.array(posterior_weekly_incremental)
+                if posterior_weekly_incremental is not None
+                else None
+            ),
+            phasing_method_id=d.get("phasing_method_id", ""),
+            weekly_plan_fingerprint=d.get("weekly_plan_fingerprint", ""),
+            reference_weekly_plan_fingerprint=d.get(
+                "reference_weekly_plan_fingerprint", ""
+            ),
+            future_context_fingerprint=d.get("future_context_fingerprint", ""),
+            starting_state_fingerprint=d.get("starting_state_fingerprint", ""),
+            evaluation_context_fingerprint=d.get("evaluation_context_fingerprint", ""),
+            governance_mode=d.get("governance_mode", "official"),
+            artefact_kind=d.get("artefact_kind", "manual_scenario"),
+            resolved_governance=(
+                ResolvedPlanningGovernance.from_dict(resolved_governance)
+                if resolved_governance is not None
+                else None
+            ),
+            governance_dependencies=(
+                ScenarioGovernanceDependencies.from_dict(governance_dependencies)
+                if governance_dependencies is not None
+                else None
+            ),
+            activity_definitions_fingerprint=d.get("activity_definitions_fingerprint"),
+            cost_mapping_fingerprint=d.get("cost_mapping_fingerprint"),
+            counterfactual_policy_fingerprint=d.get(
+                "counterfactual_policy_fingerprint", ""
+            ),
+            economics_coverage=d.get("economics_coverage"),
+            planning_semantics=PlanningEvaluationSemantics.from_dict(
+                d["planning_semantics"]
+            ),
+            warnings=tuple(d.get("warnings", [])),
+        )
+
 
 def evaluate_manual_scenario_sequential(
     *,
@@ -501,9 +612,52 @@ def evaluate_manual_scenario_sequential(
     )
 
 
+def sequential_scenario_to_dict(
+    name: str,
+    result: SequentialScenarioEvaluationResult,
+    *,
+    notes: str = "",
+) -> Dict[str, Any]:
+    """Build the persisted-scenario dict for a saved sequential-weekly
+    scenario (WP5 part 4) - appended to the SAME `scenarios` list a
+    steady-state scenario is (`core.optimization.scenario_to_dict`), not a
+    separate parallel list, so the existing save/export/staleness
+    machinery (`core.persistence.export_project`'s generic scenario
+    serialization; the Scenario Planner page's cost-mapping/
+    counterfactual-policy staleness loop, which reads only
+    `governance_dependencies` - never `predicted`) already handles it
+    without modification. `calculation_method="sequential_weekly"` is the
+    discriminator `core.optimization.scenario_from_dict` checks to skip
+    steady-state-specific legacy migration for this shape - a genuinely
+    new schema starting now, with nothing to migrate from.
+
+    `sequential_evaluation` holds the full `SequentialScenarioEvaluation
+    Result.to_dict()` - every array already a plain list, so the whole
+    dict is directly JSON-serializable with no special-casing in
+    `export_project`. This dict has no `predicted` key (steady-state's
+    DataFrame result) - `core.optimization.compare_scenarios` requires
+    one, so callers must filter scenarios by `calculation_method` before
+    comparing, never pass this dict to it directly."""
+    return {
+        "name": name,
+        "market": result.market,
+        "calculation_method": result.calculation_method,
+        "notes": notes,
+        "governance_mode": result.governance_mode,
+        "governance_dependencies": (
+            result.governance_dependencies.to_dict()
+            if result.governance_dependencies is not None
+            else None
+        ),
+        "sequential_evaluation": result.to_dict(),
+        "schema_version": 1,
+    }
+
+
 __all__ = [
     "MARKET_SPECIFIC_MODEL_TYPE",
     "SequentialScenarioEvaluationError",
     "SequentialScenarioEvaluationResult",
     "evaluate_manual_scenario_sequential",
+    "sequential_scenario_to_dict",
 ]

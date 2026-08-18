@@ -5855,3 +5855,108 @@ Scenario Planner page - all separate, explicitly disclosed follow-ups
 **Owner:** Data Science / Platform engineering.
 **Status:** Accepted; implemented on this work package's branch. PR and CI
 remain the release gate.
+
+
+## Sequential Scenario Planner save/export and staleness (Work Package 5 part 4)
+
+**Context:** WP5 part 3 left one remaining disclosed gap for the
+sequential-weekly manual tab: "Saving a sequential scenario is not yet
+available - only steady-state monthly scenarios can be saved and
+exported in this release." An Explore-agent investigation before writing
+any code confirmed this genuinely required new design work (unlike WP5
+part 3's terminal/posterior gap, which was pure UI wiring onto an
+already-complete kernel): `SequentialSimulationResult`, `Terminal
+IncrementalResult`, and `SequentialScenarioEvaluationResult` had no
+`to_dict`/`from_dict`, and no dict shape or schema had been sketched for
+a persisted sequential scenario - REQ-SCEN-001's own "Not yet covered"
+section confirmed no save/load path existed and no format had been
+decided.
+
+**Decision:** Add `to_dict`/`from_dict` to all three types, mirroring
+`core.sequential_simulation.SequentialCarryInState.to_dict`'s established
+"every numpy array becomes a plain list, every nested typed object
+delegates to its own to_dict" pattern - no new serialization convention
+invented. `core.sequential_scenario_evaluation.sequential_scenario_to_
+dict` builds the persisted-scenario dict, appended to the SAME
+`scenarios` list a steady-state scenario is (`core.optimization.
+scenario_to_dict`) - never a separate parallel list, following this
+session's repeated "reuse over fork" pattern (mirrors `core.calibration_
+comparison` reusing `ModelIdentity` rather than inventing a parallel
+identity type, WP4 part 2). This choice is a genuine, defensible
+engineering decision (not a guessed statistical/business/governance
+one): `core.optimization.validate_scenario_dependencies` was already made
+engine-aware in WP5 (recognising both planning-semantics constants as
+current), so a unified list with a `calculation_method` discriminator is
+the natural continuation of that existing direction, not an invented
+alternative.
+
+Because a sequential scenario dict has no `spend_plan`/`objective`/
+`scenario_plan` in the steady-state shape `core.optimization.scenario_
+from_dict`'s legacy-migration logic assumes, that function gained an
+early guard: `if d.get("calculation_method") == "sequential_weekly":
+return d` - a genuinely new schema starting now, with nothing to migrate
+from, passes through unchanged rather than having steady-state-specific
+fields spuriously injected into it. `core.persistence.export_project`/
+`import_project` needed NO changes at all: the generic scenario-export
+loop already treats any non-`predicted`-DataFrame dict as plain
+`json.dumps`-able metadata, and `SequentialScenarioEvaluationResult.
+to_dict()` guarantees the whole dict already is - confirmed by an
+explicit `export_project`/`import_project` round-trip test in `test_
+persistence.py`, not merely by code inspection (the corresponding claim
+in the pre-implementation investigation was verified, not assumed).
+
+Staleness reuses the SAME cost-mapping/counterfactual-policy check the
+steady-state path already had (both dict shapes carry `governance_
+dependencies` identically, since `sequential_scenario_to_dict` populates
+it from `result.governance_dependencies.to_dict()` the same way `scenario_
+to_dict` does) - factored into a shared `_filter_current_scenarios`
+helper on the page rather than duplicated. `core.optimization.compare_
+scenarios` still requires a `predicted` DataFrame no sequential scenario
+dict carries, so the page splits saved scenarios by `calculation_method`
+before comparing, rendering saved sequential scenarios in a separate
+"Saved sequential-weekly scenarios" summary (plan-window-total weekly
+incremental per outcome) instead of forcing them through the steady-
+state-only comparison table.
+
+**Rejected alternative:** A separate `sequential_scenarios` persisted
+list, parallel to `scenarios` (rejected - would require a second
+export/import code path, a second staleness check, and a second "Saved
+scenarios" UI section for no benefit; the unified-list-with-
+discriminator design already required by `validate_scenario_
+dependencies`'s existing engine-awareness extends cleanly to persistence
+too, and `core.persistence`'s generic JSON-metadata handling already
+supports an arbitrary dict shape without any DataFrame-specific
+assumption baked in beyond the single `predicted` key check).
+
+**Bug caught during review:** an earlier edit to the AppTest file
+accidentally spliced a new test's body into the middle of the previous
+test function (a stray trailing assertion from WP5 part 3's own test
+ended up appended after the new test's final assertion, with no `def`
+boundary between them, silently becoming part of the new test's body).
+Caught by an unexpected test failure during verification, not by
+inspection - fixed by restoring the correct function boundaries. A
+reminder that a large multi-part edit into an existing test file needs
+its result read back, not just its diff trusted.
+
+**Impact:** `ancestry_mmm/core/sequential_simulation.py`
+(`SequentialSimulationResult.to_dict`/`.from_dict`); `ancestry_mmm/core/
+planning/terminal_response.py` (`TerminalIncrementalResult.to_dict`/
+`.from_dict`); `ancestry_mmm/core/sequential_scenario_evaluation.py`
+(`SequentialScenarioEvaluationResult.to_dict`/`.from_dict`,
+`sequential_scenario_to_dict`); `ancestry_mmm/core/optimization.py`
+(`scenario_from_dict`'s sequential-scenario passthrough guard);
+`ancestry_mmm/pages/08_Scenario_Planner.py` ("Save this scenario" control
+for the sequential tab; `_filter_current_scenarios` helper; a separate
+"Saved sequential-weekly scenarios" summary section). Tests: `test_
+sequential_scenario_evaluation.py` (+19: serialization round-trips with
+and without terminal/posterior, `sequential_scenario_to_dict` JSON-
+serializability/passthrough/staleness-field tests), `test_persistence.py`
+(+1: full export/import round-trip), `test_scenario_planner_apptest.py`
+(+1: save-button flow, 38 tests total in this file). mypy: ratchet
+unchanged at 241/241. No new dependency. Deferred: sequential-weekly
+optimisation and a browser-level (Playwright) journey test for the
+Scenario Planner page - both separate, explicitly disclosed follow-ups.
+
+**Owner:** Data Science / Platform engineering.
+**Status:** Accepted; implemented on this work package's branch. PR and CI
+remain the release gate.

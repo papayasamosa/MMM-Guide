@@ -106,13 +106,30 @@ optimisation remain steady-state-only (see "Not yet covered" below):
   inputs `evaluate_manual_scenario_sequential` consumes is implemented for
   the manual-plan path by `pages/08_Scenario_Planner.py` (WP5 part 2), and
   by tests - not yet by the optimiser tabs).
-- Scenario persistence/staleness for a saved sequential scenario
-  (`core.persistence`, `core.scenario_governance`) - not yet implemented;
-  `validate_scenario_dependencies`'s `planning_semantics_fingerprint`
-  check is engine-aware as of Work Package 5 (recognises both
-  `CURRENT_PLANNING_EVALUATION_SEMANTICS` and `SEQUENTIAL_WEEKLY_
-  PLANNING_EVALUATION_SEMANTICS` as current), but no save/load path for a
-  `SequentialScenarioEvaluationResult` exists yet.
+- ~~Scenario persistence/staleness for a saved sequential scenario~~ -
+  implemented, WP5 part 4 (2026-08-18): `core.sequential_scenario_
+  evaluation.sequential_scenario_to_dict` builds a `calculation_
+  method="sequential_weekly"` dict appended to the SAME `scenarios`
+  session-state/persisted list a steady-state scenario is - never a
+  separate parallel list. `SequentialSimulationResult`/
+  `TerminalIncrementalResult`/`SequentialScenarioEvaluationResult` all
+  gained `to_dict`/`from_dict` (every numpy array becomes a plain list),
+  so the resulting dict is fully JSON-native and requires no
+  `core.persistence.export_project`/`import_project` change - confirmed
+  by an explicit export/import round-trip test, not merely by code
+  inspection. `core.optimization.scenario_from_dict` gained a guard that
+  passes a sequential scenario dict through unchanged, since it has no
+  `spend_plan`/`objective`/`scenario_plan` in the steady-state shape the
+  existing legacy-migration logic assumes - a genuinely new schema
+  starting now, with nothing to migrate from. Staleness reuses the SAME
+  cost-mapping/counterfactual-policy check the steady-state path already
+  had (both dict shapes carry `governance_dependencies` identically), now
+  factored into a shared `_filter_current_scenarios` helper on the page.
+  `compare_scenarios` still requires a `predicted` DataFrame no
+  sequential scenario dict carries, so the page filters by
+  `calculation_method` before calling it, rendering saved sequential
+  scenarios in a separate "Saved sequential-weekly scenarios" summary
+  instead.
 - Optimiser objective wiring for the sequential contract - both the
   constrained and unconstrained-benchmark tabs on
   `pages/08_Scenario_Planner.py` remain steady-state-only; a separate,
@@ -134,7 +151,8 @@ optimisation remain steady-state-only (see "Not yet covered" below):
 
 - `ancestry_mmm/core/sequential_simulation.py`
   (`compute_incremental_outcome`, `simulate_sequential_outcomes_posterior`
-  and its draw-consistent/Model C variants)
+  and its draw-consistent/Model C variants; `SequentialSimulationResult.
+  to_dict`/`.from_dict`, WP5 part 4)
 - `ancestry_mmm/core/sequential_evaluation_context.py` (Work Package 3)
 - `ancestry_mmm/core/sequential_scenario_evaluation.py` (Work Package 5 -
   application-level items 6-8)
@@ -142,7 +160,13 @@ optimisation remain steady-state-only (see "Not yet covered" below):
   (`SequentialManualScenarioInput`, `ScenarioService.
   evaluate_manual_sequential`, Work Package 5)
 - `ancestry_mmm/core/optimization.py` (`validate_scenario_dependencies`'s
-  `planning_semantics_fingerprint` check made engine-aware, Work Package 5)
+  `planning_semantics_fingerprint` check made engine-aware, Work Package 5;
+  `scenario_from_dict` gained a sequential-scenario passthrough guard, WP5
+  part 4, 2026-08-18)
+- `ancestry_mmm/core/planning/terminal_response.py` (`TerminalIncrementalResult.
+  to_dict`/`.from_dict`, WP5 part 4)
+- `ancestry_mmm/tests/test_persistence.py` (sequential-scenario export/
+  import round-trip test, WP5 part 4)
 - `ancestry_mmm/tests/test_sequential_simulation.py`
 - `ancestry_mmm/tests/test_sequential_evaluation_context.py` (Work Package 3)
 - `ancestry_mmm/tests/test_sequential_scenario_evaluation.py`,
@@ -160,7 +184,8 @@ optimisation remain steady-state-only (see "Not yet covered" below):
 Application-level contract (items 6-8) implemented at the service level
 (Work Package 5) and, for the manual-plan path, in the Streamlit UI
 (Work Package 5 part 2 - short/long horizon and method labelling; part 3 -
-terminal carryover and posterior uncertainty) - see `REQ-SCEN-002`/
-`REQ-SCEN-003` for the dependent contracts, and
-`REPO_REVIEW_AND_NEXT_STEPS.md` ("Known bounded gaps") for remaining
-application-layer status (optimiser wiring, persistence).
+terminal carryover and posterior uncertainty; part 4, 2026-08-18 - save/
+export and staleness) - see `REQ-SCEN-002`/`REQ-SCEN-003` for the
+dependent contracts, and `REPO_REVIEW_AND_NEXT_STEPS.md` ("Known bounded
+gaps") for remaining application-layer status (optimiser wiring; a
+browser-level journey test for the sequential path).

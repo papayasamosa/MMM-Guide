@@ -278,10 +278,21 @@ The current implementation includes:
   sequential plan", mirroring the steady-state tab's own opt-in pattern)
   passes `n_posterior_draws`/`trace` through and renders a plan-window-
   total mean/median/90% credible-interval summary from `result.
-  posterior_weekly_incremental`. **Not yet implemented in this UI:**
-  sequential-weekly optimisation, and saving/exporting a sequential
-  scenario - both explicitly disclosed on the page, not silently absent.
-  See Known bounded gaps below.
+  posterior_weekly_incremental`. Work Package 5 part 4 (2026-08-18) adds
+  save/export: `core.sequential_scenario_evaluation.sequential_scenario_
+  to_dict` appends a `calculation_method="sequential_weekly"` dict to the
+  SAME `scenarios` list a steady-state scenario is saved to - never a
+  separate parallel list - so the existing `core.persistence` export/
+  import path handles it with no persistence-layer change (confirmed by
+  an explicit round-trip test), and `core.optimization.scenario_from_
+  dict` gained a guard passing it through unchanged rather than applying
+  steady-state legacy migration. Staleness reuses the same cost-mapping/
+  counterfactual-policy check the steady-state path already had. Saved
+  sequential scenarios render in a separate "Saved sequential-weekly
+  scenarios" summary, since `compare_scenarios` requires a `predicted`
+  DataFrame no sequential scenario dict carries. **Not yet implemented in
+  this UI:** sequential-weekly optimisation - explicitly disclosed on the
+  page, not silently absent. See Known bounded gaps below.
 - Sequential Scenario Planner UI semantic-defect reconciliation (Work
   Package 0 part 2 of `Media-Mix-Lab: Coding LLM Next Steps After PR
   #267 and Latest PRD Validation Updates`, `pages/08_Scenario_Planner.py`,
@@ -387,20 +398,21 @@ business or modelling definitions:
   already invokes it - retiring 4 further pre-existing errors); it is a
   ceiling, not a target. CI must fail if the measured count increases.
 - The Scenario Planner *page*'s manual tab (`pages/08_Scenario_
-  Planner.py`, WP5 part 2 of `...Post PR262`; part 3, 2026-08-18) now
+  Planner.py`, WP5 part 2 of `...Post PR262`; parts 3-4, 2026-08-18) now
   offers a sequential-weekly method choice alongside the existing
-  steady-state monthly approximation, and renders terminal carryover and
-  (opt-in) posterior uncertainty for it - see Delivered foundation above
-  for what it wires together. Persistence/staleness for a saved
-  sequential scenario, and a real browser-lifecycle test for the
-  sequential path, remain not yet implemented in this UI. Both optimiser
-  tabs (constrained and unconstrained-benchmark) and `core.optimization`'s
-  objective still only offer the steady-state monthly approximation - a
-  sequential-weekly method choice is not yet exposed there. Wiring
-  sequential evaluation into the optimiser's objective (and, for the
-  manual tab, persistence/staleness and a real browser-lifecycle test for
-  the sequential path) is a documented, not-yet-attempted follow-up, not
-  a modelling or core-engineering gap.
+  steady-state monthly approximation, renders terminal carryover and
+  (opt-in) posterior uncertainty for it, and can save/export a sequential
+  scenario (appended to the same `scenarios` list a steady-state scenario
+  is - see Delivered foundation above for what it wires together). A real
+  browser-lifecycle (Playwright) test for the sequential path remains not
+  yet implemented - only Streamlit `AppTest` coverage exists for it. Both
+  optimiser tabs (constrained and unconstrained-benchmark) and `core.
+  optimization`'s objective still only offer the steady-state monthly
+  approximation - a sequential-weekly method choice is not yet exposed
+  there. Wiring sequential evaluation into the optimiser's objective (and,
+  for the manual tab, a real browser-lifecycle test for the sequential
+  path) is a documented, not-yet-attempted follow-up, not a modelling or
+  core-engineering gap.
 - Chronos-2 or another future exogenous forecasting integration is not yet
   implemented.
 - Real UK data readiness is an operational step and must be run only by an

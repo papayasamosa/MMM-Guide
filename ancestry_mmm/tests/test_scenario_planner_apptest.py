@@ -1295,6 +1295,39 @@ def test_sequential_weekly_manual_tab_renders_terminal_carryover_section():
         for text in markdown_text
     )
 
+
+def test_sequential_weekly_manual_tab_can_save_a_scenario():
+    """WP5 part 4: saving a sequential-weekly scenario must append a
+    calculation_method="sequential_weekly" dict to the same `scenarios`
+    session-state list a steady-state scenario is saved to, and the
+    "Saved scenarios" section must render it (separately from the
+    steady-state-only comparison table, which requires a `predicted`
+    DataFrame no sequential scenario dict carries) without raising."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_official_governance_state(at)
+    at.run()
+
+    method_radio = next(
+        r for r in at.radio if r.label == "Manual plan evaluation method"
+    )
+    method_radio.set_value("sequential_weekly").run()
+    _check_sequential_acknowledgment_gates(at)
+    at.run()
+    assert not at.exception, f"acknowledging assumptions raised: {at.exception}"
+
+    save_button = next(b for b in at.button if b.label == "Save this scenario")
+    save_button.click().run()
+    assert not at.exception, f"saving the sequential scenario raised: {at.exception}"
+
+    scenarios = at.session_state["scenarios"]
+    assert len(scenarios) == 1
+    assert scenarios[0]["calculation_method"] == "sequential_weekly"
+    assert "predicted" not in scenarios[0]
+    assert "sequential_evaluation" in scenarios[0]
+
+    markdown_text = [m.value or "" for m in at.markdown]
+    assert any("Saved sequential-weekly scenarios" in text for text in markdown_text)
+
     captions = [c.value or "" for c in at.caption]
     assert any(text.startswith("Plan window:") for text in captions)
 

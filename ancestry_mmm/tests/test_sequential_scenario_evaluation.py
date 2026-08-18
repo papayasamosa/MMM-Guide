@@ -37,7 +37,9 @@ from ancestry_mmm.core.search_capacity import SEARCH_CANDIDATE_A_ENGINE
 from ancestry_mmm.core.sequential_evaluation_context import SequentialEvaluationContext
 from ancestry_mmm.core.sequential_scenario_evaluation import (
     MARKET_SPECIFIC_MODEL_TYPE,
+    SequentialScenarioEvaluationResult,
     evaluate_manual_scenario_sequential,
+    sequential_scenario_to_dict,
 )
 from ancestry_mmm.tests.conftest import pathway_strength_from_flat
 
@@ -625,3 +627,302 @@ class TestOfficialGovernance:
             result.governance_dependencies.planning_semantics_fingerprint
             == SEQUENTIAL_WEEKLY_PLANNING_EVALUATION_SEMANTICS.fingerprint()
         )
+
+
+def _assert_round_trips_via_dict(obj) -> None:
+    """`SequentialSimulationResult`/`TerminalIncrementalResult`/
+    `SequentialScenarioEvaluationResult` all carry numpy-array fields, so
+    a plain `==` on two instances raises `ValueError` (dataclass-
+    generated `__eq__` calls `bool()` on each field's `==` result) rather
+    than comparing cleanly. `to_dict()` converts every array to a plain
+    list first, so comparing the two dicts (never the two dataclass
+    instances directly) verifies every field, including nested objects,
+    without hitting that ambiguity."""
+    restored = type(obj).from_dict(obj.to_dict())
+    assert restored.to_dict() == obj.to_dict()
+
+
+class TestSequentialScenarioEvaluationResultSerialization:
+    """WP5 part 4: a SequentialScenarioEvaluationResult must round-trip
+    through to_dict/from_dict exactly, including its nested
+    SequentialSimulationResult/TerminalIncrementalResult objects and
+    Optional fields (terminal, posterior_weekly_incremental) - the
+    persistence contract this record's own "Not yet covered" section
+    previously flagged as missing."""
+
+    def test_round_trip_without_terminal_or_posterior(self):
+        meta = _meta()
+        params = _params()
+        future_context = _future_context()
+        candidate = _weekly_plan("UK", meta, future_context, [200.0] * 6, [200.0] * 6)
+        reference = _weekly_plan("UK", meta, future_context, [0.0] * 6, [0.0] * 6)
+
+        original = evaluate_manual_scenario_sequential(
+            market="UK",
+            candidate_plan=candidate,
+            reference_plan=reference,
+            meta=meta,
+            params=params,
+            historical_frame=_historical_frame(),
+            horizon_configuration=HorizonConfiguration(),
+            evaluation_context=_context(),
+            weekly_plan_fingerprint="wp-candidate",
+            reference_weekly_plan_fingerprint="wp-reference",
+            governance_mode="exploratory",
+        )
+        _assert_round_trips_via_dict(original)
+
+    def test_round_trip_with_terminal_and_posterior(self):
+        import arviz as az
+
+        meta = _meta()
+        future_context = _future_context()
+        candidate = _weekly_plan("UK", meta, future_context, [300.0] * 6, [0.0] * 6)
+        reference = _weekly_plan("UK", meta, future_context, [0.0] * 6, [0.0] * 6)
+        terminal_weeks = tuple(
+            __import__("pandas")
+            .date_range(WEEKS[-1], periods=5, freq="7D")[1:]
+            .strftime("%Y-%m-%d")
+            .tolist()
+        )
+        terminal_context = build_future_context(
+            market="UK",
+            period_labels=terminal_weeks,
+            historical_n_weeks=26,
+            n_fourier_harmonics=N_FOURIER_HARMONICS,
+            outcome_ids=tuple(OUTCOME_IDS),
+            mode=OFFICIAL_MODE,
+            promo_future={oid: {w: 0.0 for w in terminal_weeks} for oid in OUTCOME_IDS},
+        )
+
+        n_chain, n_draw = 1, 2
+        coords = {
+            "outcome": OUTCOME_IDS,
+            "channel": CHANNELS,
+            "market": ["UK"],
+            "fourier": list(range(2 * N_FOURIER_HARMONICS)),
+        }
+        decay_rate = np.zeros((n_chain, n_draw, 2))
+        decay_rate[0, 0, :] = [0.2, 0.3]
+        decay_rate[0, 1, :] = [0.8, 0.7]
+        posterior = {
+            "decay_rate": decay_rate,
+            "hill_K": np.broadcast_to([500.0, 300.0], (n_chain, n_draw, 2)).copy(),
+            "hill_S": np.broadcast_to([1.0, 1.0], (n_chain, n_draw, 2)).copy(),
+            "beta": np.broadcast_to(
+                [[0.02, 0.01], [0.0, 0.03]], (n_chain, n_draw, 2, 2)
+            ).copy(),
+            "promo_coef": np.zeros((n_chain, n_draw, 2)),
+            "market_offset": np.zeros((n_chain, n_draw, 1, 2)),
+            "intercept": np.broadcast_to([3.0, 2.0], (n_chain, n_draw, 2)).copy(),
+            "trend_coef": np.zeros((n_chain, n_draw, 2)),
+            "gamma_fourier": np.zeros((n_chain, n_draw, 2 * N_FOURIER_HARMONICS, 2)),
+            "alpha": np.full((n_chain, n_draw, 2), 5.0),
+        }
+        dims = {
+            "decay_rate": ["channel"],
+            "hill_K": ["channel"],
+            "hill_S": ["channel"],
+            "beta": ["outcome", "channel"],
+            "promo_coef": ["outcome"],
+            "market_offset": ["market", "outcome"],
+            "intercept": ["outcome"],
+            "trend_coef": ["outcome"],
+            "gamma_fourier": ["fourier", "outcome"],
+            "alpha": ["outcome"],
+        }
+        trace = az.from_dict(posterior=posterior, coords=coords, dims=dims)
+
+        original = evaluate_manual_scenario_sequential(
+            market="UK",
+            candidate_plan=candidate,
+            reference_plan=reference,
+            meta=meta,
+            params=_params(),
+            historical_frame=_historical_frame(),
+            horizon_configuration=HorizonConfiguration(),
+            evaluation_context=_context(),
+            weekly_plan_fingerprint="wp-candidate",
+            reference_weekly_plan_fingerprint="wp-reference",
+            terminal_future_context=terminal_context,
+            governance_mode="exploratory",
+            trace=trace,
+            n_posterior_draws=2,
+        )
+        assert original.terminal is not None
+        assert original.posterior_weekly_incremental is not None
+
+        _assert_round_trips_via_dict(original)
+
+        restored = SequentialScenarioEvaluationResult.from_dict(original.to_dict())
+        assert restored.terminal is not None
+        assert restored.posterior_weekly_incremental is not None
+        np.testing.assert_array_equal(
+            restored.posterior_weekly_incremental,
+            original.posterior_weekly_incremental,
+        )
+
+
+class TestSequentialScenarioToDict:
+    """WP5 part 4: `sequential_scenario_to_dict` builds the persisted-
+    scenario dict appended to the SAME `scenarios` list a steady-state
+    scenario is - `core.optimization.scenario_from_dict` must recognise
+    and pass it through unchanged (never injecting steady-state-specific
+    legacy fields), and the whole dict must be plain-JSON-serializable
+    (no numpy arrays survive `to_dict()`)."""
+
+    def _result(self):
+        meta = _meta()
+        params = _params()
+        future_context = _future_context()
+        candidate = _weekly_plan("UK", meta, future_context, [200.0] * 6, [100.0] * 6)
+        reference = _weekly_plan("UK", meta, future_context, [0.0] * 6, [0.0] * 6)
+        return evaluate_manual_scenario_sequential(
+            market="UK",
+            candidate_plan=candidate,
+            reference_plan=reference,
+            meta=meta,
+            params=params,
+            historical_frame=_historical_frame(),
+            horizon_configuration=HorizonConfiguration(),
+            evaluation_context=_context(),
+            weekly_plan_fingerprint="wp-candidate",
+            reference_weekly_plan_fingerprint="wp-reference",
+            governance_mode="exploratory",
+        )
+
+    def test_json_serializable(self):
+        import json
+
+        s = sequential_scenario_to_dict("seq-1", self._result())
+        json.dumps(s, default=str)  # must not raise
+
+    def test_has_no_predicted_key(self):
+        """`compare_scenarios` requires a `predicted` DataFrame - a
+        sequential scenario dict must never carry one, so a caller is
+        forced to filter by calculation_method before comparing rather
+        than silently passing this dict into a steady-state-only path."""
+        s = sequential_scenario_to_dict("seq-1", self._result())
+        assert "predicted" not in s
+
+    def test_calculation_method_is_sequential_weekly(self):
+        s = sequential_scenario_to_dict("seq-1", self._result())
+        assert s["calculation_method"] == "sequential_weekly"
+
+    def test_scenario_from_dict_passes_through_unchanged(self):
+        from ancestry_mmm.core.optimization import scenario_from_dict
+
+        s = sequential_scenario_to_dict("seq-1", self._result(), notes="test")
+        migrated = scenario_from_dict(s)
+        assert migrated == s
+        assert "scenario_plan" not in migrated
+        assert "planning_objective" not in migrated
+
+    def test_governance_dependencies_absent_in_exploratory_mode(self):
+        s = sequential_scenario_to_dict("seq-1", self._result())
+        assert s["governance_dependencies"] is None
+
+    def test_governance_dependencies_present_for_staleness_check_in_official_mode(self):
+        outcome = OutcomeDefinition(
+            outcome_id="New",
+            product=FAMILY_HISTORY,
+            segment="New",
+            metric="GSA",
+            metric_key=METRIC_KEY_FH_GSA,
+            source_column="GSA_New",
+            unit="GSA",
+            aggregation_type="count",
+            event_definition="A new subscriber",
+            date_basis="event_date",
+            cohort_or_attribution_basis="signup_cohort",
+            completeness_or_maturity_policy="Mature after 12 weeks",
+            exclusions="Excludes internal/test accounts",
+            reconciliation_source="Finance report",
+            business_owner="Analytics",
+            definition_version="1.0",
+        )
+        meta = FHModelMeta(
+            markets=["UK"],
+            outcome_ids=["New"],
+            channels=["TV"],
+            dna_channels=[],
+            dna_channel_idx=[],
+            non_dna_idx=[0],
+            dna_outcome_id="New",
+            dna_lag_weeks=2,
+            unpooled_markets=[],
+            control_names=[],
+            outcome_catalogue_at_fit=[outcome],
+        )
+        params = FHPosteriorParams(
+            decay_rate={"TV": 0.5},
+            hill_K={"TV": 1000.0},
+            hill_S={"TV": 1.0},
+            beta={"New": {"TV": 0.1}},
+            pathway_strength={},
+            promo_coef={"New": 0.0},
+            market_offset={"UK": {"New": 0.0}},
+            intercept={"New": 3.0},
+            trend_coef={"New": 0.0},
+            gamma_fourier={"New": np.zeros(2 * N_FOURIER_HARMONICS)},
+            alpha={"New": 5.0},
+            control_coef={},
+            outcome_control_coef={},
+        )
+        future_context = build_future_context(
+            market="UK",
+            period_labels=WEEKS,
+            historical_n_weeks=20,
+            n_fourier_harmonics=N_FOURIER_HARMONICS,
+            outcome_ids=("New",),
+            mode=OFFICIAL_MODE,
+            promo_future={"New": {w: 0.0 for w in WEEKS}},
+        )
+        plan, _prov = build_governed_weekly_plan(
+            market="UK",
+            meta=meta,
+            channel_allocations={"TV": _FixedAllocation("UK", [100.0] * 6)},
+            future_context=future_context,
+            expected_n_fourier_columns=2 * N_FOURIER_HARMONICS,
+        )
+        identity = dict(
+            model_run_id="run-abc123",
+            data_fingerprint="data-fp-1",
+            model_spec_fingerprint="spec-fp-1",
+            posterior_fingerprint="posterior-fp-1",
+        )
+        approval = ModelApproval(approved_by="Jane Analyst", **identity)
+        outcome_approval = OutcomeApproval(
+            approval_id="apr-new-gsa",
+            outcome_id="New",
+            definition_fingerprint=fingerprint_outcome_definition(outcome),
+            status="approved",
+            allowed_uses=("planning", "optimisation"),
+            approved_by="Jane Analyst",
+            approved_at="2026-01-01",
+        )
+        planning_objective = PlanningObjective(
+            estimand="incremental_outcome",
+            metric_key=METRIC_KEY_FH_GSA,
+            target_outcome_ids=("New",),
+        )
+        result = evaluate_manual_scenario_sequential(
+            market="UK",
+            candidate_plan=plan,
+            reference_plan=plan,
+            meta=meta,
+            params=params,
+            historical_frame=_historical_frame(n_hist=20, n_channels=1, n_outcomes=1),
+            horizon_configuration=HorizonConfiguration(),
+            evaluation_context=_context(),
+            weekly_plan_fingerprint="wp-1",
+            reference_weekly_plan_fingerprint="wp-1",
+            governance_mode="official",
+            planning_objective=planning_objective,
+            approval=approval,
+            outcome_approvals=[outcome_approval],
+            **identity,
+        )
+        s = sequential_scenario_to_dict("seq-1", result)
+        assert s["governance_dependencies"] is not None
+        assert "counterfactual_policy_fingerprint" in s["governance_dependencies"]
