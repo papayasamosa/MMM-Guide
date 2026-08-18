@@ -6290,3 +6290,86 @@ review policy).
 **Status:** Decision-support package delivered; awaiting human review and
 selection. No implementation PR accompanies this entry.
 
+
+
+## Time-varying latent baseline decision package (Work Package 10)
+
+**Context:** `docs/specification_authority.md` already listed "Time-
+varying baseline" as "No approved requirement/decision yet", pointing to
+`AGENTS.md`'s future-variable-role #5 ("latent baseline state - the
+time-varying intercept, projected from its own fitted statistical
+process, never treated as an ordinary external control") as the standing
+invariant. An Explore-agent investigation confirmed no `REQ-BASELINE-*`
+record exists and no time-varying-intercept code path exists anywhere in
+`core.hierarchical_model`/`core.market_specific_model` - both define
+`intercept` as a single static `pm.Normal` per market/outcome (lines
+805-812 and 441-448 respectively), never a function of time.
+
+**Finding:** following this repository's "Required upstream-reference
+workflow," the closest relevant `pymc-labs/pymc-marketing` implementation
+was inspected (`MMM`'s `time_varying_intercept=True`, a Hilbert Space
+Gaussian Process modelling the intercept's percentage deviation from a
+fitted baseline) - and its own documentation states this component
+"reverts to its prior mean and exhibits rapidly growing
+uncertainty beyond the training data window," recommending trend/Fourier
+continuation instead for forecasting or scenario planning beyond a short
+horizon. This directly conflicts with `AGENTS.md` role #5's "projected...
+for planning" language for the most obvious upstream implementation
+choice, and raises a genuine, unresolved question this repository's
+existing `core.hierarchical_model` trend/Fourier terms (already
+deterministically continued forward by `core.planning.future_context`)
+may already substantially address - whether a distinct time-varying-
+baseline capability is even warranted for planning use, versus being
+scoped to in-sample measurement/diagnostics only (e.g. explaining a past
+competitor-launch or pandemic-style demand shift, pymc-marketing's own
+stated use case). Separately, `REQ-LATENT-001`'s Requirement 1 already
+anticipates "any future latent baseline state" needing an identifying
+strategy, but a baseline has no obvious analogue to Candidate A's
+capture-share Dirichlet anchor - which strategy would apply is not
+decided by any existing record.
+
+**Decision:** Reconcile the gap into `docs/approved_requirements/
+REQ-BASELINE-001.md` (target-state contract only, mirroring Work Package
+6's `REQ-SCEN-004` and Work Package 9's `REQ-FUTURE-001` pattern) and
+write `docs/wp10_time_varying_baseline_decision_package.md`, laying out
+three baseline-process candidates (T1: direct upstream HSGP adoption; T2:
+a discrete-time random-walk-style process with different, potentially
+more planning-suitable extrapolation behaviour but no upstream `pymc-
+marketing` reference; T3: no new process, concluding existing trend/
+Fourier continuation already satisfies role #5's planning intent) and
+three forward-projection candidates (P1: measurement/diagnostics only, no
+planning use; P2: hold at the fitted process's own implied steady-state/
+prior-mean value, mirroring but not identical to `hold_last_observed`;
+P3: restrict to a process with validated extrapolation behaviour before
+any planning use). None selected. `docs/specification_authority.md`'s
+"Time-varying baseline" row and `REPO_REVIEW_AND_NEXT_STEPS.md` updated
+to reference this package.
+
+**Rejected alternative:** Adopting Candidate T1 (direct upstream HSGP
+adoption) by default on the reasoning that it is the named, documented
+`pymc-marketing` pattern for this exact repository-invariant role
+(rejected - upstream's own documentation explicitly cautions against
+using that same component for forecasting/scenario planning beyond a
+short horizon, which is precisely the planning use `AGENTS.md` role #5
+requires; adopting it without also resolving the forward-projection
+question (Candidate P) would silently ship a capability upstream itself
+says is unsuited to the purpose it is meant to serve).
+
+**Impact:** `docs/approved_requirements/REQ-BASELINE-001.md` (new),
+`docs/approved_requirements/index.json` (new entry), `docs/wp10_time_
+varying_baseline_decision_package.md` (new), `docs/specification_
+authority.md` (row updated), `REPO_REVIEW_AND_NEXT_STEPS.md` (bullet
+added). No code changes - `core.hierarchical_model`, `core.market_
+specific_model`, `core.latent_state_identification`, and `core.planning.
+future_context` are all untouched by this package; the intercept remains
+a single static per-market/outcome scalar exactly as before. This
+workstream is stopped pending review of the decision package; the
+program continues autonomously to the next work package in the brief's
+sequence (Work Package 11).
+
+**Owner:** Modelling (baseline-process selection, identification
+strategy, extrapolation validation), Data Science / Platform engineering
+(implementation once a strategy is approved).
+**Status:** Decision-support package delivered; awaiting human review and
+selection. No implementation PR accompanies this entry.
+
