@@ -395,9 +395,19 @@ business or modelling definitions:
   6. Search planning eligibility: disabled.
   7. Search-cap optimisation: disabled.
 
-  Ragged market-specific predictor mathematics (`FR-MOD-015`), moderated
-  pathways, and residual-interaction engine support remain decision-bound or
-  unsupported, independent of Candidate A.
+  Ragged market-specific predictor mathematics (`FR-MOD-015`) - explicitly
+  reserved, not resolved, by `REQ-COVERAGE-001` §6 - now has a dedicated
+  decision package, `docs/wp8_ragged_multi_market_predictor_decision_
+  package.md` (Work Package 8, 2026-08-18), laying out three candidate
+  treatments for a (market, channel) cell with no genuine coverage (a
+  masked/marginalised likelihood term; restructuring `X_media`/`market_
+  bounds` for genuinely ragged per-market columns; an explicit governed
+  zero-fill convention) and a cross-cutting question about whether the
+  answer should depend on the cell's recorded missingness reason - none
+  selected. `core.market_data_capability.check_engine_capability`
+  continues to report an unsupported request exactly as before. Moderated
+  pathways and residual-interaction engine support remain decision-bound
+  or unsupported, independent of Candidate A.
 - The full-core mypy debt ceiling is now 241 errors (Work Package 4 closed
   the single largest repeated pattern - 34 occurrences of a
   `FHModelMeta.pathway_masks` Optional-narrowing gap now fixed via
