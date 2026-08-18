@@ -228,11 +228,15 @@ candidate/reference contract.
   not-decision-ready warning), builds governed `WeeklyPlan`s, and routes
   through `ScenarioService.evaluate_manual_sequential`. Renders weekly and
   monthly incremental tables, short/long response-horizon metrics, and
-  provenance fingerprints.
+  provenance fingerprints. WP5 part 3 (2026-08-18) additionally builds a
+  `terminal_future_context` (reusing the assumptions already acknowledged
+  for the plan window) and renders `result.terminal` separately from the
+  plan-window tables, plus an opt-in checkbox that renders a plan-window-
+  total credible-interval summary from `result.posterior_weekly_
+  incremental` when a fitted trace is available.
 
 **Not yet implemented:** sequential-weekly constrained/unconstrained
-optimisation (both optimiser tabs remain steady-state-only), terminal
-incremental carryover and posterior uncertainty in this UI (available via
-the core APIs directly), and saving/exporting a sequential scenario (only
-steady-state monthly scenarios can be saved in this release) - all
-explicitly disclosed in the UI, not silently absent.
+optimisation (both optimiser tabs remain steady-state-only), and saving/
+exporting a sequential scenario (only steady-state monthly scenarios can
+be saved in this release) - explicitly disclosed in the UI, not silently
+absent.

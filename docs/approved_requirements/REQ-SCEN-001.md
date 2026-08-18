@@ -117,9 +117,12 @@ optimisation remain steady-state-only (see "Not yet covered" below):
   constrained and unconstrained-benchmark tabs on
   `pages/08_Scenario_Planner.py` remain steady-state-only; a separate,
   not-yet-approved follow-up work package.
-- Terminal incremental carryover and posterior uncertainty in the UI - the
-  service/core APIs support both, but the WP5 part 2 manual tab does not
-  yet render either (explicitly disclosed in the UI, not silently absent).
+- ~~Terminal incremental carryover and posterior uncertainty in the UI~~ -
+  implemented, WP5 part 3 (2026-08-18): the manual tab now builds a
+  `terminal_future_context` and renders `result.terminal` separately from
+  the plan-window tables, and an opt-in checkbox passes `n_posterior_
+  draws`/`trace` through to render a plan-window-total credible-interval
+  summary from `result.posterior_weekly_incremental`.
 - Candidate A final-outcome sequential replay - blocked pending the
   counterfactual-replay decision recorded against `REQ-SEARCH-002`.
   Inherited for free by this record's implementation: calling into
@@ -146,7 +149,8 @@ optimisation remain steady-state-only (see "Not yet covered" below):
   `ancestry_mmm/tests/test_scenario_service_sequential.py` (Work Package 5)
 - `ancestry_mmm/pages/08_Scenario_Planner.py`,
   `ancestry_mmm/tests/test_scenario_planner_apptest.py` (Work Package 5
-  part 2 - manual-tab UI wiring)
+  part 2 - manual-tab UI wiring; part 3, 2026-08-18 - terminal carryover/
+  posterior uncertainty rendering)
 
 ## Owner and status
 
@@ -154,8 +158,9 @@ optimisation remain steady-state-only (see "Not yet covered" below):
 
 **Status:** Kernel-level contract (items 1-5) approved and implemented.
 Application-level contract (items 6-8) implemented at the service level
-(Work Package 5) and, for the manual-plan path only, in the Streamlit UI
-(Work Package 5 part 2) - see `REQ-SCEN-002`/`REQ-SCEN-003` for the
-dependent contracts, and `REPO_REVIEW_AND_NEXT_STEPS.md` ("Known bounded
-gaps") for current application-layer status (optimiser wiring, terminal/
-posterior UI, persistence).
+(Work Package 5) and, for the manual-plan path, in the Streamlit UI
+(Work Package 5 part 2 - short/long horizon and method labelling; part 3 -
+terminal carryover and posterior uncertainty) - see `REQ-SCEN-002`/
+`REQ-SCEN-003` for the dependent contracts, and
+`REPO_REVIEW_AND_NEXT_STEPS.md` ("Known bounded gaps") for remaining
+application-layer status (optimiser wiring, persistence).

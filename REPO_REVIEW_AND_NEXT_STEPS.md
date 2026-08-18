@@ -269,11 +269,19 @@ The current implementation includes:
   the market's last historical week, continuing the exact same weekly
   cadence with no gap - never the steady-state tab's user-chosen start
   month. Renders weekly and monthly incremental tables and short/long
-  response-horizon metrics. **Not yet implemented in this UI:** terminal
-  incremental carryover and posterior uncertainty (available via the
-  core/service APIs directly), sequential-weekly optimisation, and
-  saving/exporting a sequential scenario - all explicitly disclosed on
-  the page, not silently absent. See Known bounded gaps below.
+  response-horizon metrics. Work Package 5 part 3 (2026-08-18) further
+  builds a `terminal_future_context` (reusing the same already-
+  acknowledged assumption set, no new consent gate) and renders the
+  resulting `TerminalIncrementalResult` under a "Terminal carryover
+  (informational)" heading, structurally separate from the plan-window
+  tables above; an opt-in checkbox ("Show posterior uncertainty for this
+  sequential plan", mirroring the steady-state tab's own opt-in pattern)
+  passes `n_posterior_draws`/`trace` through and renders a plan-window-
+  total mean/median/90% credible-interval summary from `result.
+  posterior_weekly_incremental`. **Not yet implemented in this UI:**
+  sequential-weekly optimisation, and saving/exporting a sequential
+  scenario - both explicitly disclosed on the page, not silently absent.
+  See Known bounded gaps below.
 - Sequential Scenario Planner UI semantic-defect reconciliation (Work
   Package 0 part 2 of `Media-Mix-Lab: Coding LLM Next Steps After PR
   #267 and Latest PRD Validation Updates`, `pages/08_Scenario_Planner.py`,
@@ -379,18 +387,20 @@ business or modelling definitions:
   already invokes it - retiring 4 further pre-existing errors); it is a
   ceiling, not a target. CI must fail if the measured count increases.
 - The Scenario Planner *page*'s manual tab (`pages/08_Scenario_
-  Planner.py`, WP5 part 2 of `...Post PR262`) now offers a sequential-
-  weekly method choice alongside the existing steady-state monthly
-  approximation - see Delivered foundation above for what it wires
-  together and its own explicitly-disclosed gaps (terminal carryover,
-  posterior uncertainty, persistence not yet in this UI). Both optimiser
+  Planner.py`, WP5 part 2 of `...Post PR262`; part 3, 2026-08-18) now
+  offers a sequential-weekly method choice alongside the existing
+  steady-state monthly approximation, and renders terminal carryover and
+  (opt-in) posterior uncertainty for it - see Delivered foundation above
+  for what it wires together. Persistence/staleness for a saved
+  sequential scenario, and a real browser-lifecycle test for the
+  sequential path, remain not yet implemented in this UI. Both optimiser
   tabs (constrained and unconstrained-benchmark) and `core.optimization`'s
   objective still only offer the steady-state monthly approximation - a
   sequential-weekly method choice is not yet exposed there. Wiring
   sequential evaluation into the optimiser's objective (and, for the
-  manual tab, terminal/posterior rendering, persistence/staleness, and a
-  real browser-lifecycle test for the sequential path) is a documented,
-  not-yet-attempted follow-up, not a modelling or core-engineering gap.
+  manual tab, persistence/staleness and a real browser-lifecycle test for
+  the sequential path) is a documented, not-yet-attempted follow-up, not
+  a modelling or core-engineering gap.
 - Chronos-2 or another future exogenous forecasting integration is not yet
   implemented.
 - Real UK data readiness is an operational step and must be run only by an

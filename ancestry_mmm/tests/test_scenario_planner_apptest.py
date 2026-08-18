@@ -1248,6 +1248,53 @@ def test_sequential_weekly_manual_tab_renders_without_exception():
     assert any("Monthly incremental outcome" in text for text in markdown_text)
     assert any("Response horizons" in text for text in markdown_text)
 
+
+def test_sequential_weekly_manual_tab_renders_terminal_carryover_section():
+    """WP5 (`Media-Mix-Lab: Coding LLM Next Steps After PR #267`): the
+    sequential tab must render a structurally separate terminal-carryover
+    section (never merged into the plan-window tables above) once the
+    required assumptions are acknowledged - terminal_future_context is
+    always built regardless of whether a posterior trace is available."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_official_governance_state(at)
+    at.run()
+
+    method_radio = next(
+        r for r in at.radio if r.label == "Manual plan evaluation method"
+    )
+    method_radio.set_value("sequential_weekly").run()
+    _check_sequential_acknowledgment_gates(at)
+    at.run()
+    assert not at.exception, f"acknowledging assumptions raised: {at.exception}"
+
+    markdown_text = [m.value or "" for m in at.markdown]
+    assert any("Terminal carryover" in text for text in markdown_text)
+    assert any("Posterior uncertainty" in text for text in markdown_text)
+
+    uncertainty_checkbox = next(
+        (
+            c
+            for c in at.checkbox
+            if c.label
+            and c.label.startswith(
+                "Show posterior uncertainty for this sequential plan"
+            )
+        ),
+        None,
+    )
+    assert uncertainty_checkbox is not None
+    uncertainty_checkbox.check()
+    at.run()
+    assert not at.exception, (
+        f"enabling sequential posterior uncertainty raised: {at.exception}"
+    )
+
+    markdown_text = [m.value or "" for m in at.markdown]
+    assert any(
+        "Plan-window total incremental outcome, per sampled posterior draw" in text
+        for text in markdown_text
+    )
+
     captions = [c.value or "" for c in at.caption]
     assert any(text.startswith("Plan window:") for text in captions)
 
