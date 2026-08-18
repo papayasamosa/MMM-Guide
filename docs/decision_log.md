@@ -6698,3 +6698,108 @@ PRD refresh.
 (requirement content).
 **Status:** Implemented.
 
+## Point-in-time source reconstruction (Work Package 1 part 2)
+
+**Context:** Work Package 1 part 1 delivered real per-fold PyMC refit
+orchestration, but both `REQ-LEAK-001` and `REQ-STAB-001` recorded the
+same remaining gap in their own "Unresolved decisions": `run_leakage_
+safe_fold_refit` still fit plain date-sliced rows of one already-prepared
+dataframe. It never selected the source *version* that existed as of a
+fold's information cutoff, and never re-ran `core.official_preparation`/
+`core.frequency_alignment` fold-locally from raw sources - so a fold's
+*fit* was leakage-safe and real, but its *input reconstruction* was not
+proven point-in-time faithful. `core.coverage.VariableCoverageRecord`
+already pins each variable to a specific `(source_id, source_version)`,
+and `core.coverage.SourceVersion` already records each upload event's
+`uploaded_at` timestamp - both existing governed concepts, never invented
+for this package. `core.frequency_alignment.assess_official_preparation`
+already accepted an `as_of` parameter for exactly this purpose, unused by
+any fold-level caller until now.
+
+**Decision:** Extended `core.validation_folds.assess_fold_source_
+reconstruction` with an optional `source_versions` parameter (default
+`()`, fully backward compatible): when supplied, each assessed record's
+pinned `(source_id, source_version)` is cross-checked against the
+project's registered `SourceVersion`s - a record reflecting a version
+uploaded after the fold's `effective_information_cutoff` is reported
+`cannot_verify` and blocks the fold. This repository retains no separate
+per-vintage byte content beyond a `SourceVersion`'s own identity fields,
+so an earlier vintage's actual values can never be substituted for a
+too-late pinned version - fail-closed block is the only honest outcome,
+never a fabricated reconstruction (REQ-LEAK-001 requirement 4). Added
+`ancestry_mmm/application/fold_refit_service.py::run_leakage_safe_fold_
+refit_from_sources`: for every fold that clears both the extended
+`assess_fold_source_reconstruction` and a fold-scoped `assess_official_
+preparation` call (`governed_start`/`governed_end` clipped to the fold's
+own training window, `as_of=fold.effective_information_cutoff` - the same
+governance function `application.official_preparation_service.review_
+official_preparation` already uses for a live project, reused unchanged),
+re-runs `core.official_preparation.prepare_canonical_native_frame`
+fold-locally for both the training and held-out test windows before
+calling the existing `fit_fold_with_real_model` exactly once - never a
+second, divergent fit sequence. Extracted a small shared `_fold_row`
+helper so `run_leakage_safe_fold_refit` and the new function build the
+identical results-row shape from one place (the module docstring's own
+"shared fold orchestration" reduction), without changing either public
+function's existing signature or behaviour.
+
+**Scope boundary (deliberate, not a defect):** "point-in-time source
+reconstruction" here means *verification* that a fold's coverage/mapping
+content could have existed as of its cutoff, and fold-local re-execution
+of the *governed preparation pipeline* (official preparation, frequency
+conversion, coverage, capability) restricted to that cutoff - not
+resurrection of literal historical byte content for a source version this
+repository never separately retained. `sources: Mapping[str, DataFrame]`
+is whatever single per-source-id table the caller currently has adopted;
+a fold whose relevant coverage record pins a too-late `SourceVersion` is
+always assessed `cannot_verify` and never fit, exactly as REQ-LEAK-001
+requires, rather than attempting a reconstruction this data model cannot
+support. Whether to extend the data model to retain queryable historical
+content *per* `SourceVersion` (which would allow reconstructing against a
+genuinely earlier vintage instead of always blocking) is recorded as an
+explicit open decision in `REQ-LEAK-001`'s own "Unresolved decisions" -
+a storage/product decision, not a validation-logic one, and out of scope
+here.
+
+**Rejected alternative:** Zero-filling or otherwise substituting a
+too-late source version's content with a synthesized "earlier" value
+(rejected - REQ-LEAK-001 requirement 4 and root `AGENTS.md`'s fail-closed
+invariants explicitly forbid this; "unavailable source is not zero").
+Building a second, parallel official-preparation implementation for
+fold-local use instead of reusing `core.official_preparation.
+prepare_canonical_native_frame`/`core.frequency_alignment.assess_
+official_preparation` (rejected - REQ-LEAK-001's own requirement 2/`docs/
+decision_log.md` precedent explicitly forbid a second parallel
+model-preparation implementation). Widening `run_leakage_safe_fold_refit`
+itself to accept raw sources (rejected - would change an existing, tested
+public function's contract/shape for every current caller; a new function
+alongside it, sharing `fit_fold_with_real_model`/`assess_fold_source_
+reconstruction`/`build_expanding_window_folds`, adds the new capability
+without disturbing the old one, mirroring Work Package 1 part 1's own
+precedent for not widening `leakage_safe_expanding_window_backtest`).
+
+**Impact:** `ancestry_mmm/core/validation_folds.py` (`assess_fold_source_
+reconstruction`/`leakage_safe_expanding_window_backtest` gain an optional
+`source_versions` parameter; existing callers unaffected),
+`ancestry_mmm/application/fold_refit_service.py` (new `run_leakage_safe_
+fold_refit_from_sources`, new `_fold_row` helper, `run_leakage_safe_fold_
+refit` refactored to use it - identical behaviour), `ancestry_mmm/tests/
+test_validation_folds.py` (new `TestSourceVersionAwareReconstruction`),
+`ancestry_mmm/tests/test_fold_refit_service.py` (new sources-based safe/
+blocked-path tests, blocking CI), `ancestry_mmm/tests/test_fold_refit_
+service_recovery.py` (new sources-based Model C/multi-fold tests,
+schedule/manual-only), `docs/approved_requirements/REQ-LEAK-001.md` and
+`REQ-STAB-001.md` (Capability status/Unresolved decisions updated in
+place), `docs/approved_requirements/index.json` (required_tests updated
+for both records). No change to `core.official_preparation`, `core.
+frequency_alignment`, `core.frequency_conversion`, `core.structural_
+stability`, `pages/06_Diagnostics.py`, or any persisted schema - this
+package is additive orchestration reusing existing governed contracts.
+`ancestry_mmm/application/fold_refit_service.py` remains a `Fold refit
+recovery` affected module (`scripts/wait_for_pr_green_then_merge.ps1`'s
+`$FoldRefitPaths`), so this PR automatically required and dispatched that
+schedule/manual recovery job before merge.
+
+**Owner:** Modelling / Platform engineering (validation pipeline).
+**Status:** Implemented.
+

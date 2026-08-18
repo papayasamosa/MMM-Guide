@@ -50,16 +50,29 @@ module must apply that same guard before invoking it for a Candidate
 A-engine project; this module has no way to detect that from `df`/`spec`
 alone.
 
+Work Package 1 part 2 (`Media-Mix-Lab: Coding LLM Next Steps After PR
+#286`) added `run_leakage_safe_fold_refit_from_sources`: unlike
+`run_leakage_safe_fold_refit` above, it never slices one already-prepared
+dataframe. It accepts the project's raw native per-source tables and
+registered `core.coverage.SourceVersion` upload events, and for each fold
+that clears assessment, re-runs `core.official_preparation.
+prepare_canonical_native_frame` and `core.frequency_alignment.
+assess_official_preparation` *fold-locally* - governed to the fold's own
+training window and information cutoff - so a later source revision,
+publication, or mapping/alignment decision genuinely cannot enter an
+earlier fold's training reconstruction. It reuses `fit_fold_with_real_
+model` for the actual fit (never a second, divergent fit sequence) and
+`assess_fold_source_reconstruction`/`build_expanding_window_folds` for
+fold selection (never a second leakage-detection mechanism) - the same
+"caller supplies the fold-local computation" reuse pattern
+`run_leakage_safe_fold_refit` already established, extended one layer
+earlier in the pipeline. See its own docstring for the exact scope
+boundary on what "point-in-time" can and cannot mean given what this
+repository's data model retains.
+
 Deliberately out of scope for Work Package 1 part 1 (see the module
 docstring's "part 2" reference in `docs/decision_log.md`):
 
-- Point-in-time reconstruction of the raw source data itself (selecting
-  the source *version* that existed as of a fold's information cutoff,
-  re-running `core.official_preparation`/`core.frequency_conversion`
-  fold-locally from raw sources). `df`/`test_df` here are still plain
-  date-sliced rows of whatever single dataframe the caller supplies -
-  exactly `leakage_safe_expanding_window_backtest`'s own existing
-  limitation, unchanged by this module.
 - Wiring this evidence into `DiagnosticsArtefact`/the Diagnostics page.
 - Any real-NUTS-per-fold CI cost decision beyond "callers choose their own
   draws/tune/chains budget" - normal-CI callers should use a small budget
@@ -71,7 +84,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, Dict, List, Mapping, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -81,19 +94,31 @@ from ancestry_mmm.application.model_fit_service import (
     MODEL_TYPE_SHARED,
     build_model_for_spec,
 )
-from ancestry_mmm.core.coverage import VariableCoverageMatrix
+from ancestry_mmm.core.activities import ActivityDefinition
+from ancestry_mmm.core.coverage import SourceVersion, VariableCoverageMatrix
+from ancestry_mmm.core.frequency_alignment import (
+    alignment_specs_from_coverage_matrix,
+    assess_official_preparation,
+)
 from ancestry_mmm.core.market_specific_predict import (
     FHMarketSpecificPosteriorParams,
     extract_market_specific_posterior_params,
     predict_mu_market_specific,
 )
 from ancestry_mmm.core.models import fit_model
+from ancestry_mmm.core.official_preparation import (
+    OfficialPreparationDataError,
+    build_official_capability_report,
+    prepare_canonical_native_frame,
+)
+from ancestry_mmm.core.outcomes import OutcomeDefinition
 from ancestry_mmm.core.predict import (
     FHPosteriorParams,
     extract_posterior_params,
     predict_mu,
 )
 from ancestry_mmm.core.schema import ModelSpec
+from ancestry_mmm.core.search_objects import SearchObjectDefinition
 from ancestry_mmm.core.structural_stability import FoldParameterSnapshot
 from ancestry_mmm.core.uncertainty import sample_draw_indices
 from ancestry_mmm.core.validation_folds import (
@@ -320,6 +345,34 @@ class LeakageSafeFoldRefitResult:
     snapshots: Tuple[FoldParameterSnapshot, ...]
 
 
+def _fold_row(
+    fold: ValidationFold,
+    *,
+    outcome_id: Optional[str],
+    r_squared: Optional[float],
+    mape_pct: Optional[float],
+    leakage_safe: bool,
+    skipped_reason: Optional[str],
+) -> Dict[str, Any]:
+    """The single row shape both `run_leakage_safe_fold_refit` and
+    `run_leakage_safe_fold_refit_from_sources` build (Work Package 1 part
+    2's own instance of the "shared fold orchestration" reduction the
+    module docstring/`docs/decision_log.md` describe) - kept identical to
+    `core.validation_folds.leakage_safe_expanding_window_backtest`'s row
+    shape so every caller of any of the three functions can treat
+    `results_df` uniformly."""
+    return {
+        "fold_id": fold.fold_id,
+        "train_end": fold.train_end,
+        "test_end": fold.test_end,
+        "outcome_id": outcome_id,
+        "r_squared": r_squared,
+        "mape_pct": mape_pct,
+        "leakage_safe": leakage_safe,
+        "skipped_reason": skipped_reason,
+    }
+
+
 def run_leakage_safe_fold_refit(
     df: pd.DataFrame,
     spec: ModelSpec,
@@ -369,20 +422,18 @@ def run_leakage_safe_fold_refit(
 
         if not assessment.is_leakage_safe:
             rows.append(
-                {
-                    "fold_id": fold.fold_id,
-                    "train_end": fold.train_end,
-                    "test_end": fold.test_end,
-                    "outcome_id": None,
-                    "r_squared": None,
-                    "mape_pct": None,
-                    "leakage_safe": False,
-                    "skipped_reason": (
+                _fold_row(
+                    fold,
+                    outcome_id=None,
+                    r_squared=None,
+                    mape_pct=None,
+                    leakage_safe=False,
+                    skipped_reason=(
                         "fold failed leakage-safety assessment - see the "
                         "returned FoldReconstructionAssessment for this "
                         "fold_id"
                     ),
-                }
+                )
             )
             continue
 
@@ -406,21 +457,269 @@ def run_leakage_safe_fold_refit(
         snapshots.append(outcome.snapshot)
         for oid in outcome.r2_by_outcome:
             rows.append(
-                {
-                    "fold_id": fold.fold_id,
-                    "train_end": fold.train_end,
-                    "test_end": fold.test_end,
-                    "outcome_id": oid,
-                    "r_squared": outcome.r2_by_outcome[oid],
-                    "mape_pct": outcome.mape_by_outcome[oid],
-                    "leakage_safe": True,
-                    "skipped_reason": None,
-                }
+                _fold_row(
+                    fold,
+                    outcome_id=oid,
+                    r_squared=outcome.r2_by_outcome[oid],
+                    mape_pct=outcome.mape_by_outcome[oid],
+                    leakage_safe=True,
+                    skipped_reason=None,
+                )
             )
 
     return LeakageSafeFoldRefitResult(
         results_df=pd.DataFrame(rows),
         folds=folds,
         assessments=assessments,
+        snapshots=tuple(snapshots),
+    )
+
+
+def run_leakage_safe_fold_refit_from_sources(
+    sources: Mapping[str, pd.DataFrame],
+    spec: ModelSpec,
+    coverage_matrix: VariableCoverageMatrix,
+    outcomes: Sequence[OutcomeDefinition | Mapping[str, Any]],
+    *,
+    governed_frequency: str = "weekly",
+    source_versions: Sequence[SourceVersion | Mapping[str, Any]] = (),
+    activity_definitions: Sequence[ActivityDefinition | Mapping[str, Any]] = (),
+    search_objects: Sequence[SearchObjectDefinition | Mapping[str, Any]] = (),
+    pipeline_steps: Sequence[Mapping[str, Any]] = (),
+    model_type: str = MODEL_TYPE_SHARED,
+    n_folds: int = 3,
+    min_train_frac: float = 0.6,
+    dna_lag_weeks: int = 4,
+    prior_config: Any = None,
+    draws: int = 500,
+    tune: int = 500,
+    chains: int = 2,
+    cores: int = 1,
+    target_accept: float = 0.9,
+    posterior_draw_subsample: int = 100,
+    random_seed: int = 42,
+) -> LeakageSafeFoldRefitResult:
+    """Point-in-time source reconstruction (REQ-LEAK-001 §"rebuilding the
+    full model-ready frame ... per fold", Work Package 1 part 2): unlike
+    `run_leakage_safe_fold_refit`, this function never slices one
+    already-prepared dataframe. `sources` are the project's raw native
+    per-source tables (the same shape `core.official_preparation.
+    prepare_canonical_native_frame` and `application.uk_readiness` already
+    use), keyed by `source_id`.
+
+    For every candidate fold, this function:
+
+    1. Assesses per-variable leakage-safety against `coverage_matrix` and
+       `source_versions` (`core.validation_folds.
+       assess_fold_source_reconstruction` - unchanged, reused, never a
+       second leakage-detection mechanism).
+    2. Assesses fold-local *official-preparation readiness* - governed to
+       the fold's own training window (`governed_start=fold.train_start`,
+       `governed_end=fold.train_end`) and information cutoff
+       (`as_of=fold.effective_information_cutoff`) - via `core.
+       frequency_alignment.assess_official_preparation`, the same
+       governance function `application.official_preparation_service.
+       review_official_preparation` already uses for a live project. A
+       fold whose training window would require a mixed-frequency
+       conversion, definition-break bridge, or coverage decision not yet
+       resolved/approved as of its own cutoff is not leakage-safe, exactly
+       like an unsupported method staying blocked for a live project.
+    3. Only for a fold that clears both checks: re-runs `core.
+       official_preparation.prepare_canonical_native_frame` fold-locally,
+       once for the training window (`[fold.train_start, fold.train_end]`)
+       and once for the held-out test window
+       (`[fold.test_start, fold.test_end]`) - never one join clipped after
+       the fact. The test window is *not* point-in-time-restricted: it is
+       the already-realised ground truth this fold's holdout prediction is
+       scored against (exactly as `run_leakage_safe_fold_refit`'s own
+       `test_df` already is today's data, unmodified), not training input.
+    4. Fits the real production model exactly once via `fit_fold_with_
+       real_model` on the two fold-locally reconstructed frames - reused
+       unchanged, never a second, divergent fit sequence.
+
+    Scope boundary (see also `core.validation_folds.
+    assess_fold_source_reconstruction`'s own docstring): `sources` is
+    whatever single per-source-id table the caller currently has adopted
+    (e.g. `data.source_pack_adoption.adopted_model_input_sources`'s
+    output) - this repository's data model does not retain a separate,
+    independently queryable table *per historical `SourceVersion`*, only
+    that version's own upload-event identity (checksum/filename/size/
+    `uploaded_at`). A fold whose relevant coverage record pins a
+    `SourceVersion` uploaded after the fold's own cutoff is therefore
+    always assessed `cannot_verify` and never fit - this function cannot
+    (and does not attempt to) reconstruct what an earlier vintage's actual
+    values would have been from data this repository does not separately
+    retain. That is the explicit, honest limitation REQ-LEAK-001
+    requirement 4 requires, not a defect: never substitute today's later
+    revision and call it historically valid.
+
+    `outcomes`/`activity_definitions`/`search_objects`/`pipeline_steps`
+    resolve consumed variables and alignment specs exactly once (structural
+    to `spec`, not fold-dependent) via `core.official_preparation.
+    build_official_capability_report`/`core.frequency_alignment.
+    alignment_specs_from_coverage_matrix` - the same functions a live
+    project's official-preparation review already calls, never a second,
+    parallel resolution.
+    """
+    date_col = spec.date_col
+    market_col = spec.market_col
+    resolved_source_versions = tuple(
+        item if isinstance(item, SourceVersion) else SourceVersion.from_dict(item)
+        for item in source_versions
+    )
+
+    capability_report = build_official_capability_report(
+        spec,
+        outcomes,
+        coverage_matrix,
+        activity_definitions=activity_definitions,
+        search_objects=search_objects,
+        pipeline_steps=pipeline_steps,
+    )
+    consumed_variable_ids = tuple(
+        item.variable_id for item in capability_report.consumed_variables
+    )
+    alignment_specs = alignment_specs_from_coverage_matrix(
+        coverage_matrix,
+        target_frequency=governed_frequency,
+        consumed_variable_ids=consumed_variable_ids,
+    )
+
+    calendar_dates = pd.concat(
+        [pd.to_datetime(source[date_col]) for source in sources.values()],
+        ignore_index=True,
+    )
+    calendar_df = pd.DataFrame({date_col: sorted(calendar_dates.unique())})
+    folds = build_expanding_window_folds(
+        calendar_df, date_col, n_folds=n_folds, min_train_frac=min_train_frac
+    )
+
+    rows: List[Dict[str, Any]] = []
+    snapshots: List[FoldParameterSnapshot] = []
+    assessments: List[FoldReconstructionAssessment] = []
+
+    for fold in folds:
+        assessment = assess_fold_source_reconstruction(
+            fold, coverage_matrix, resolved_source_versions
+        )
+        assessments.append(assessment)
+
+        preparation = assess_official_preparation(
+            coverage_matrix,
+            governed_start=fold.train_start,
+            governed_end=fold.train_end,
+            governed_frequency=governed_frequency,
+            as_of=fold.effective_information_cutoff,
+            consumed_variable_ids=consumed_variable_ids,
+            capability_evidence=capability_report.to_dict(),
+        )
+
+        if not assessment.is_leakage_safe or not preparation.ready:
+            reasons = []
+            if not assessment.is_leakage_safe:
+                reasons.append(
+                    "fold failed leakage-safety assessment - see the "
+                    "returned FoldReconstructionAssessment for this fold_id"
+                )
+            if not preparation.ready:
+                reasons.append(
+                    f"fold-local official preparation was not ready as of "
+                    f"{fold.effective_information_cutoff} "
+                    f"(status={preparation.status!r}): {preparation.reason}"
+                )
+            rows.append(
+                _fold_row(
+                    fold,
+                    outcome_id=None,
+                    r_squared=None,
+                    mape_pct=None,
+                    leakage_safe=False,
+                    skipped_reason=" ".join(reasons),
+                )
+            )
+            continue
+
+        try:
+            train_prepared = prepare_canonical_native_frame(
+                sources,
+                date_col=date_col,
+                market_col=market_col,
+                governed_start=fold.train_start,
+                governed_end=fold.train_end,
+                governed_frequency=governed_frequency,
+                pipeline_steps=pipeline_steps,
+                alignment_specs=alignment_specs,
+                consumed_variable_ids=consumed_variable_ids,
+            )
+            test_prepared = prepare_canonical_native_frame(
+                sources,
+                date_col=date_col,
+                market_col=market_col,
+                governed_start=fold.test_start,
+                governed_end=fold.test_end,
+                governed_frequency=governed_frequency,
+                pipeline_steps=pipeline_steps,
+                alignment_specs=alignment_specs,
+                consumed_variable_ids=consumed_variable_ids,
+            )
+        except OfficialPreparationDataError as exc:
+            rows.append(
+                _fold_row(
+                    fold,
+                    outcome_id=None,
+                    r_squared=None,
+                    mape_pct=None,
+                    leakage_safe=False,
+                    skipped_reason=(f"fold-local official preparation raised: {exc}"),
+                )
+            )
+            continue
+
+        if test_prepared.frame.empty:
+            rows.append(
+                _fold_row(
+                    fold,
+                    outcome_id=None,
+                    r_squared=None,
+                    mape_pct=None,
+                    leakage_safe=False,
+                    skipped_reason="fold's held-out test window has no rows",
+                )
+            )
+            continue
+
+        outcome = fit_fold_with_real_model(
+            train_prepared.frame,
+            test_prepared.frame,
+            spec,
+            fold_id=fold.fold_id,
+            model_type=model_type,
+            dna_lag_weeks=dna_lag_weeks,
+            prior_config=prior_config,
+            draws=draws,
+            tune=tune,
+            chains=chains,
+            cores=cores,
+            target_accept=target_accept,
+            posterior_draw_subsample=posterior_draw_subsample,
+            random_seed=random_seed,
+        )
+        snapshots.append(outcome.snapshot)
+        for oid in outcome.r2_by_outcome:
+            rows.append(
+                _fold_row(
+                    fold,
+                    outcome_id=oid,
+                    r_squared=outcome.r2_by_outcome[oid],
+                    mape_pct=outcome.mape_by_outcome[oid],
+                    leakage_safe=True,
+                    skipped_reason=None,
+                )
+            )
+
+    return LeakageSafeFoldRefitResult(
+        results_df=pd.DataFrame(rows),
+        folds=folds,
+        assessments=tuple(assessments),
         snapshots=tuple(snapshots),
     )

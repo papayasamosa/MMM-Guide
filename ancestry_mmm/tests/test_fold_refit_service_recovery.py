@@ -31,12 +31,19 @@ import pandas as pd
 from ancestry_mmm.application.fold_refit_service import (
     fit_fold_with_real_model,
     run_leakage_safe_fold_refit,
+    run_leakage_safe_fold_refit_from_sources,
 )
 from ancestry_mmm.application.model_fit_service import (
     MODEL_TYPE_MARKET_SPECIFIC,
     MODEL_TYPE_SHARED,
 )
-from ancestry_mmm.core.coverage import VariableCoverageMatrix
+from ancestry_mmm.core.coverage import (
+    VARIABLE_CLASS_FLOW_COUNT,
+    FrequencyMetadata,
+    VariableCoverageMatrix,
+    VariableCoverageRecord,
+)
+from ancestry_mmm.core.outcomes import FAMILY_HISTORY, METRIC_GSA, OutcomeDefinition
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.structural_stability import assess_structural_stability
 
@@ -168,6 +175,152 @@ class TestGenuineMultiFoldStructuralStability:
         assert artefact.fold_ids == tuple(s.fold_id for s in result.snapshots)
         by_name = {p.parameter_name: p for p in artefact.per_parameter}
         assert "hill_K__TV_Brand" in by_name
+
+
+# ---------------------------------------------------------------------------
+# Work Package 1 part 2: run_leakage_safe_fold_refit_from_sources - the
+# heavier realistic Model A/Model C fold-local point-in-time reconstruction
+# evidence this schedule/manual job exists for (brief §11.6).
+# ---------------------------------------------------------------------------
+
+
+def _sources_by_market(n_weeks: int, markets: tuple[str, ...]) -> dict:
+    dates = pd.date_range("2024-01-01", periods=n_weeks, freq="W")
+    outcome_frames, media_frames = [], []
+    for i, market in enumerate(markets):
+        outcome_frames.append(
+            pd.DataFrame(
+                {
+                    "date": dates,
+                    "market": market,
+                    "GSA_New": np.linspace(20.0 + i * 5, 120.0 + i * 5, n_weeks),
+                }
+            )
+        )
+        media_frames.append(
+            pd.DataFrame(
+                {
+                    "date": dates,
+                    "market": market,
+                    "TV_Brand": np.linspace(100.0 + i * 10, 900.0 + i * 10, n_weeks),
+                }
+            )
+        )
+    return {
+        "outcomes-src": pd.concat(outcome_frames, ignore_index=True),
+        "media-src": pd.concat(media_frames, ignore_index=True),
+    }
+
+
+def _sources_outcomes() -> list:
+    return [
+        OutcomeDefinition(
+            outcome_id="fh_new",
+            product=FAMILY_HISTORY,
+            segment="New",
+            metric=METRIC_GSA,
+            source_column="GSA_New",
+        )
+    ]
+
+
+def _sources_coverage_matrix(markets: tuple[str, ...]) -> VariableCoverageMatrix:
+    records = [
+        VariableCoverageRecord(
+            variable_id="GSA_New",
+            source_id="outcomes-src",
+            source_version=1,
+            market="*",
+            frequency=FrequencyMetadata(
+                native_frequency="weekly",
+                target_frequency="weekly",
+                variable_class=VARIABLE_CLASS_FLOW_COUNT,
+            ),
+            coverage_segments=(),
+        )
+    ]
+    for market in markets:
+        records.append(
+            VariableCoverageRecord(
+                variable_id="TV_Brand",
+                source_id="media-src",
+                source_version=1,
+                market=market,
+                frequency=FrequencyMetadata(
+                    native_frequency="weekly",
+                    target_frequency="weekly",
+                    variable_class=VARIABLE_CLASS_FLOW_COUNT,
+                ),
+                coverage_segments=(),
+            )
+        )
+    return VariableCoverageMatrix(
+        matrix_id="sources-matrix",
+        matrix_version=1,
+        generated_at="2026-08-18",
+        records=tuple(records),
+    )
+
+
+class TestFromSourcesMarketSpecificRealFit:
+    def test_market_specific_fit_via_fold_local_official_preparation(self):
+        """Model C, driven entirely through fold-local `core.
+        official_preparation.prepare_canonical_native_frame` reconstruction
+        from raw per-source tables - never a date-sliced already-prepared
+        dataframe."""
+        markets = ("UK", "US")
+        result = run_leakage_safe_fold_refit_from_sources(
+            _sources_by_market(n_weeks=40, markets=markets),
+            _spec(markets),
+            _sources_coverage_matrix(markets),
+            _sources_outcomes(),
+            model_type=MODEL_TYPE_MARKET_SPECIFIC,
+            n_folds=1,
+            min_train_frac=0.7,
+            posterior_draw_subsample=20,
+            **FIT_KWARGS,
+        )
+
+        assert len(result.snapshots) == 1
+        snapshot = result.snapshots[0]
+        for expected_key in (
+            "adstock_decay__TV_Brand",
+            "hill_K__UK__TV_Brand",
+            "hill_K__US__TV_Brand",
+            "beta__UK__TV_Brand__fh_new",
+            "beta__US__TV_Brand__fh_new",
+        ):
+            assert expected_key in snapshot.point_values, expected_key
+            assert np.isfinite(snapshot.point_values[expected_key])
+        row = result.results_df.iloc[0]
+        assert row["outcome_id"] == "fh_new"
+        assert np.isfinite(row["r_squared"])
+
+
+class TestFromSourcesGenuineMultiFoldStructuralStability:
+    def test_two_real_fits_from_raw_sources_feed_structural_stability(self):
+        markets = ("UK", "US")
+        result = run_leakage_safe_fold_refit_from_sources(
+            _sources_by_market(n_weeks=60, markets=markets),
+            _spec(markets),
+            _sources_coverage_matrix(markets),
+            _sources_outcomes(),
+            model_type=MODEL_TYPE_SHARED,
+            n_folds=2,
+            min_train_frac=0.6,
+            posterior_draw_subsample=20,
+            **FIT_KWARGS,
+        )
+
+        assert len(result.snapshots) == 2
+        artefact = assess_structural_stability(result.snapshots)
+
+        assert artefact.fold_ids == tuple(s.fold_id for s in result.snapshots)
+        by_name = {p.parameter_name: p for p in artefact.per_parameter}
+        assert "hill_K__TV_Brand" in by_name
+        comparison = by_name["hill_K__TV_Brand"]
+        assert len(comparison.fold_point_values) == 2
+        assert np.isfinite(comparison.point_range)
         comparison = by_name["hill_K__TV_Brand"]
         assert len(comparison.fold_point_values) == 2
         assert np.isfinite(comparison.point_range)

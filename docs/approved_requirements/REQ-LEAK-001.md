@@ -73,18 +73,50 @@ schedule/manual-only (`test_fold_refit_service_recovery.py`, mirroring
 normal-CI vs. schedule/manual" open question is resolved operationally by
 this split, not by a single all-or-nothing choice.
 
+Point-in-time source reconstruction now exists (Work Package 1 part 2 of
+`Media-Mix-Lab: Coding LLM Next Steps After PR #286`, 2026-08-18):
+`assess_fold_source_reconstruction` gained an optional `source_versions`
+parameter — when a caller supplies the project's registered
+`core.coverage.SourceVersion` upload events, each assessed record's pinned
+`(source_id, source_version)` is cross-checked against them; a coverage
+record reflecting a `SourceVersion` uploaded after the fold's own
+`effective_information_cutoff` is reported `cannot_verify` and blocks the
+fold, never silently accepted (this module retains no separate per-vintage
+byte content beyond a `SourceVersion`'s own identity fields, so an earlier
+vintage's actual values — had one existed — can never be substituted for
+the too-late pinned version; the only honest outcome is the explicit
+limitation this requirement's own point 4 requires). Omitting
+`source_versions` (the default) preserves every existing caller's prior
+behaviour unchanged.
+
+`ancestry_mmm/application/fold_refit_service.py::run_leakage_safe_fold_
+refit_from_sources` (new) is the fold-local-reconstruction counterpart to
+`run_leakage_safe_fold_refit`: instead of slicing one already-prepared
+dataframe, it accepts the project's raw native per-source tables and, for
+every fold that clears both `assess_fold_source_reconstruction` (extended
+above) and a fold-scoped call to `core.frequency_alignment.
+assess_official_preparation` (governed to the fold's own training window,
+`as_of=fold.effective_information_cutoff` — the same governance function
+`application.official_preparation_service.review_official_preparation`
+already uses for a live project, reused unchanged), re-runs `core.
+official_preparation.prepare_canonical_native_frame` fold-locally for both
+the training and held-out test windows before calling `fit_fold_with_real_
+model` exactly once. A fold requiring an unresolved mixed-frequency
+conversion, unbridged definition break, or unresolved coverage as of its
+own cutoff is blocked the same way an unsupported method stays blocked for
+a live project — never inferred or silently approved. Proven, both for
+Model A and Model C, by `test_fold_refit_service.py` (blocking CI, tiny
+fit plus fast assessment-only blocked-path tests: unresolved coverage,
+publication lag, and a later `SourceVersion`, each proven to never reach a
+real fit) and `test_fold_refit_service_recovery.py` (schedule/manual-only,
+moderate-budget Model C fit and genuine two-real-fit structural-stability
+evidence, mirroring the existing `run_leakage_safe_fold_refit` recovery
+coverage).
+
 Still not wired: `DiagnosticsArtefact`/Diagnostics-page integration
 (deferred so Work Package 2's structural-stability evidence — which
 Requirement 6 says must share these same fold manifests — is designed
-into the same schema/UI addition once, not twice); point-in-time
-reconstruction of the raw source data itself (Work Package 1 part 2,
-undelivered — `run_leakage_safe_fold_refit` still fits plain date-sliced
-rows of a single already-prepared dataframe, exactly `leakage_safe_
-expanding_window_backtest`'s own existing limitation; it does not select
-a source *version* as of the fold's cutoff or re-run `core.
-official_preparation`/`core.frequency_conversion` fold-locally from raw
-sources — Requirement 2's "scaling fit on training data only" remains
-moot regardless, since no scaler exists anywhere in the production path).
+into the same schema/UI addition once, not twice).
 
 ## Requirement
 
@@ -163,11 +195,16 @@ be hard-coded from this record:
 
 - `ancestry_mmm/core/validation_folds.py` (`ValidationFold`,
   `VariableReconstructionAssessment`, `FoldReconstructionAssessment`,
-  `build_expanding_window_folds`, `assess_fold_source_reconstruction`,
-  `leakage_safe_expanding_window_backtest`)
-- `ancestry_mmm/application/fold_refit_service.py` (new, Work Package 1
-  part 1 — `fit_fold_with_real_model`, `run_leakage_safe_fold_refit`, the
-  first real per-fold PyMC refit this record's contract ever drove)
+  `build_expanding_window_folds`, `assess_fold_source_reconstruction`
+  (extended, Work Package 1 part 2, with an optional `source_versions`
+  cross-check), `leakage_safe_expanding_window_backtest`)
+- `ancestry_mmm/application/fold_refit_service.py` (Work Package 1 part 1
+  — `fit_fold_with_real_model`, `run_leakage_safe_fold_refit`, the first
+  real per-fold PyMC refit this record's contract ever drove; Work
+  Package 1 part 2 (new) — `run_leakage_safe_fold_refit_from_sources`,
+  fold-local reconstruction from raw native per-source tables via `core.
+  official_preparation.prepare_canonical_native_frame`/`core.
+  frequency_alignment.assess_official_preparation`)
 - `ancestry_mmm/core/diagnostics.py` (unchanged — `expanding_window_
   backtest` remains a plain date-sliced backtest with no leakage-safety
   claim; verified by `TestLeakageSafeExpandingWindowBacktest::
@@ -177,12 +214,17 @@ be hard-coded from this record:
 
 ## Required tests
 
-- `ancestry_mmm/tests/test_validation_folds.py` (30 tests: fold
-  construction/validation, fold-boundary and no-future-leakage-in-split
-  blocking tests, per-variable leakage assessment across every status —
-  safe, not-yet-effective, publication-lag risk, definition-break
-  crossing, cannot-verify — and the key blocking test that a fold failing
-  assessment never calls `fit_fold_fn`)
+- `ancestry_mmm/tests/test_validation_folds.py` (fold construction/
+  validation, fold-boundary and no-future-leakage-in-split blocking
+  tests, per-variable leakage assessment across every status — safe,
+  not-yet-effective, publication-lag risk, definition-break crossing,
+  cannot-verify — the key blocking test that a fold failing assessment
+  never calls `fit_fold_fn`, and (Work Package 1 part 2)
+  `TestSourceVersionAwareReconstruction`: a source version uploaded
+  before a fold's cutoff is safe, a later source version cannot alter an
+  earlier fold, a missing historical vintage blocks with an explicit
+  limitation, an unidentified pinned source version cannot verify, and
+  omitting `source_versions` preserves prior behaviour)
 - `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists`
 - `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists`
 - `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid`
@@ -192,10 +234,16 @@ be hard-coded from this record:
 - `ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable`
 - `ancestry_mmm/tests/test_fold_refit_service.py` (blocking CI: real,
   tiny fit driven through this record's own leakage-safe fold selection
-  loop, including the unsafe-fold-never-fit path)
+  loop, including the unsafe-fold-never-fit path; Work Package 1 part 2
+  — `run_leakage_safe_fold_refit_from_sources`'s own real, tiny fit
+  through fold-local `prepare_canonical_native_frame` reconstruction, plus
+  fast never-fits-anything blocked-path tests for unresolved coverage,
+  publication lag, and a later `SourceVersion`)
 - `ancestry_mmm/tests/test_fold_refit_service_recovery.py` (schedule/
   manual-only, run by the `fold-refit-recovery` CI job — Model C,
-  the single-market fallback path, and two real fits)
+  the single-market fallback path, two real fits, and (Work Package 1
+  part 2) the same Model C/multi-fold coverage for
+  `run_leakage_safe_fold_refit_from_sources`)
 
 ## Migration impact
 
@@ -209,20 +257,22 @@ model, or persisted artefact changes.
   required to describe a fold as leakage-safe *for production use* (Part
   7 §48 `VL-023`) — this record reports what it can verify and what it
   cannot; the production threshold policy remains a separate decision.
-- Whether/how to rebuild the full model-ready `frame`/scaling/mixed-
-  frequency pipeline per fold from raw sources, beyond what `Variable
-  CoverageMatrix` metadata can verify — Work Package 1 part 1 delivered
-  real per-fold model refitting; point-in-time raw-source reconstruction
-  (selecting a source *version* as of the fold's cutoff, fold-local
-  `core.official_preparation`/`core.frequency_conversion` re-execution)
-  remains undelivered (Work Package 1 part 2).
 - `DiagnosticsArtefact`/Diagnostics-page schema and UI wiring — deferred
   to be designed jointly with Work Package 2's structural-stability
   evidence (Requirement 6), not built twice.
 - Whether expensive real-fold PyMC recovery runs as schedule/manual CI
   evidence or normal-CI evidence — resolved operationally by Work
   Package 1 part 1's split: a tiny fit in blocking CI, a moderate fit
-  schedule/manual-only (see Capability status).
+  schedule/manual-only (see Capability status). Work Package 1 part 2's
+  `run_leakage_safe_fold_refit_from_sources` follows the same split.
+- Whether this repository's data model should be extended to retain
+  queryable historical content *per* `SourceVersion` (not only that
+  version's upload-event identity) so a fold whose pinned coverage record
+  reflects a too-late version could be reconstructed against a genuinely
+  earlier vintage instead of always blocking — out of scope for Work
+  Package 1 part 2 (a data-model/storage decision, not a validation-logic
+  one); until decided, the fail-closed `cannot_verify` block is this
+  record's only approved behaviour for that case.
 
 ## Owner
 

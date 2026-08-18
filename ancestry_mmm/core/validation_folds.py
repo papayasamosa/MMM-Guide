@@ -1,6 +1,8 @@
 """Leakage-safe, time-respecting historical validation folds
 (REQ-LEAK-001, Work Package 1 of `Media-Mix-Lab: Coding LLM Next Steps
-After PR #267 and Latest PRD Validation Updates`).
+After PR #267 and Latest PRD Validation Updates`; point-in-time source
+reconstruction added by Work Package 1 of `Media-Mix-Lab: Coding LLM Next
+Steps After PR #286`, "part 2").
 
 `core.diagnostics.expanding_window_backtest` performs a date-sliced
 train/test split and calls a caller-supplied `fit_fold_fn`. That split
@@ -27,16 +29,39 @@ This module provides:
   each one, and refuses to call `fit_fold_fn` for a fold the assessment
   could not clear - leakage-safety is provable per fold, never assumed.
 
+Point-in-time source-version reconstruction (Work Package 1 part 2):
+`assess_fold_source_reconstruction` optionally accepts `source_versions` -
+the project's registered `core.coverage.SourceVersion` upload-event
+records. When supplied, each assessed `VariableCoverageRecord`'s pinned
+`(source_id, source_version)` is cross-checked against those records: if
+the specific `SourceVersion` that record's coverage/mapping content was
+derived from was itself uploaded (`uploaded_at`) *after* the fold's
+`effective_information_cutoff`, that data could not have existed for this
+fold - reported as `cannot_verify`, never silently accepted. This
+module retains no separate per-vintage byte content beyond a
+`SourceVersion`'s own identity fields (checksum/filename/size), so an
+earlier vintage's actual data (had one existed) can never be substituted
+for the too-late pinned version - the only honest outcome is an explicit
+limitation, exactly REQ-LEAK-001 requirement 4's "never substitute
+today's later revision and call it historically valid". Omitting
+`source_versions` (the default, `()`) preserves this function's exact
+prior behaviour - existing callers are unaffected.
+
 Deliberately out of scope for this module (see REQ-LEAK-001's own
 "Unresolved decisions"):
 
 - Rebuilding the full model-ready `frame`/scaling/mixed-frequency
   pipeline per fold from raw sources. This module assesses leakage risk
   from `VariableCoverageMatrix` metadata (effective periods, publication
-  lag, definition breaks, coverage-segment states) - it does not itself
-  refit a scaler or re-run `core.official_preparation` per fold. A
-  variable this module cannot assess from that metadata alone is reported
-  as a limitation, never silently assumed safe.
+  lag, definition breaks, coverage-segment states) and, when
+  `source_versions` is supplied, upload-event timing - it does not itself
+  refit a scaler. A variable this module cannot assess from that metadata
+  alone is reported as a limitation, never silently assumed safe.
+  `ancestry_mmm.application.fold_refit_service.
+  run_leakage_safe_fold_refit_from_sources` reuses this assessment and
+  additionally re-runs `core.official_preparation`/`core.
+  frequency_alignment` fold-locally from raw native source tables (Work
+  Package 1 part 2).
 - Wiring this evidence into `DiagnosticsArtefact`/the Diagnostics page.
   Work Package 2's structural-stability evidence is expected to share
   these same fold manifests (REQ-LEAK-001 requirement 6); the schema/UI
@@ -51,7 +76,7 @@ Deliberately out of scope for this module (see REQ-LEAK-001's own
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -59,6 +84,7 @@ import pandas as pd
 from .coverage import (
     STATE_UNAVAILABLE_SOURCE,
     STATE_UNKNOWN,
+    SourceVersion,
     VariableCoverageMatrix,
 )
 from .frequency_alignment import (
@@ -307,9 +333,31 @@ def build_expanding_window_folds(
     return tuple(folds)
 
 
+def _resolve_pinned_source_version(
+    record_source_id: str,
+    record_source_version: int,
+    source_versions: Tuple[SourceVersion, ...],
+) -> Optional[SourceVersion]:
+    """The exact `SourceVersion` a `VariableCoverageRecord` pins itself to
+    (its `(source_id, source_version)` pair), or `None` if no supplied
+    `SourceVersion` identifies it. Never falls back to `current_source_
+    versions` (the highest-numbered version) - a coverage record's pinned
+    `source_version` may deliberately not be the current one, and this
+    module must assess the version it actually reflects, not today's
+    latest."""
+    for version in source_versions:
+        if (
+            version.source_id == record_source_id
+            and version.version == record_source_version
+        ):
+            return version
+    return None
+
+
 def assess_fold_source_reconstruction(
     fold: ValidationFold,
     coverage_matrix: VariableCoverageMatrix,
+    source_versions: Iterable[SourceVersion] = (),
 ) -> FoldReconstructionAssessment:
     """Assess, per variable in `coverage_matrix`, whether that variable's
     training-window data for `fold` could have been reconstructed using
@@ -320,10 +368,18 @@ def assess_fold_source_reconstruction(
     for source-data-preparation leakage checks (`check_publication_
     leakage`, `check_definition_break_crossing`) - this module does not
     invent a second leakage-detection mechanism.
+
+    `source_versions` (Work Package 1 part 2, optional, default `()`):
+    the project's registered `SourceVersion` upload events. When supplied,
+    each record's pinned `(source_id, source_version)` is additionally
+    cross-checked against them - see the module docstring's "Point-in-time
+    source-version reconstruction" section. Omitting this parameter
+    preserves this function's exact prior behaviour.
     """
     scoped_markets = set(fold.market_scope) or None
     assessments = []
     limitations = []
+    resolved_source_versions = tuple(source_versions)
 
     for record in coverage_matrix.records:
         if (
@@ -332,6 +388,52 @@ def assess_fold_source_reconstruction(
             and record.market != "*"
         ):
             continue
+
+        if resolved_source_versions:
+            pinned_version = _resolve_pinned_source_version(
+                record.source_id, record.source_version, resolved_source_versions
+            )
+            if pinned_version is None:
+                reason = (
+                    f"{record.variable_id!r} ({record.market}) is pinned to "
+                    f"{record.source_id!r} version {record.source_version}, "
+                    "but no SourceVersion record identifies that upload "
+                    "event - point-in-time availability cannot be verified."
+                )
+                assessments.append(
+                    VariableReconstructionAssessment(
+                        variable_id=record.variable_id,
+                        market=record.market,
+                        status=LEAKAGE_STATUS_CANNOT_VERIFY,
+                        reason=reason,
+                    )
+                )
+                limitations.append(reason)
+                continue
+            if pd.Timestamp(pinned_version.uploaded_at) > pd.Timestamp(
+                fold.effective_information_cutoff
+            ):
+                reason = (
+                    f"{record.variable_id!r} ({record.market}) reflects "
+                    f"{record.source_id!r} version {record.source_version}, "
+                    f"uploaded {pinned_version.uploaded_at} - after this "
+                    f"fold's information cutoff "
+                    f"{fold.effective_information_cutoff}. This module "
+                    "retains no separate historical vintage content to "
+                    "reconstruct what an earlier upload would have shown; "
+                    "this fold cannot be proven leakage-safe for this "
+                    "variable rather than substituting the later revision."
+                )
+                assessments.append(
+                    VariableReconstructionAssessment(
+                        variable_id=record.variable_id,
+                        market=record.market,
+                        status=LEAKAGE_STATUS_CANNOT_VERIFY,
+                        reason=reason,
+                    )
+                )
+                limitations.append(reason)
+                continue
 
         ambiguous_segment = next(
             (
@@ -459,6 +561,7 @@ def leakage_safe_expanding_window_backtest(
     *,
     n_folds: int = 3,
     min_train_frac: float = 0.6,
+    source_versions: Iterable[SourceVersion] = (),
 ) -> Tuple[
     pd.DataFrame, Tuple[ValidationFold, ...], Tuple[FoldReconstructionAssessment, ...]
 ]:
@@ -475,6 +578,11 @@ def leakage_safe_expanding_window_backtest(
     REQ-LEAK-001's own instruction not to present the existing helper as
     satisfying this stronger contract).
 
+    `source_versions` (Work Package 1 part 2, optional): forwarded to
+    `assess_fold_source_reconstruction` unchanged - see that function's
+    docstring. Omitting it preserves this function's exact prior
+    behaviour.
+
     Returns `(results_df, folds, assessments)` - the caller retains the
     full fold/assessment evidence, not only the flattened metric rows.
     """
@@ -485,7 +593,8 @@ def leakage_safe_expanding_window_backtest(
         min_train_frac=min_train_frac,
     )
     assessments = tuple(
-        assess_fold_source_reconstruction(fold, coverage_matrix) for fold in folds
+        assess_fold_source_reconstruction(fold, coverage_matrix, source_versions)
+        for fold in folds
     )
 
     dates = pd.to_datetime(df[spec.date_col])
