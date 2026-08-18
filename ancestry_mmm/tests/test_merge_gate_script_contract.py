@@ -217,9 +217,9 @@ class TestFoldRefitRecoveryIsAutomatic:
         in the automatic trigger set, or the expensive recovery job would
         fire on nearly every modelling PR."""
         script_text = _read()
-        fold_refit_block = script_text.split("[string[]]$FoldRefitPaths = @(", 1)[1].split(
-            ")", 1
-        )[0]
+        fold_refit_block = script_text.split("[string[]]$FoldRefitPaths = @(", 1)[
+            1
+        ].split(")", 1)[0]
         excluded_paths = [
             "model_fit_service.py",
             "core/models.py",

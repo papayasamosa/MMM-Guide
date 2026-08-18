@@ -18,7 +18,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 INDEX_PATH = REPO_ROOT / "docs" / "approved_requirements" / "index.json"
 AUTHORITY_PATH = REPO_ROOT / "docs" / "specification_authority.md"
-DECISION_PACKAGE_PATH = REPO_ROOT / "docs" / "wp_structural_causal_engine_decision_package.md"
+DECISION_PACKAGE_PATH = (
+    REPO_ROOT / "docs" / "wp_structural_causal_engine_decision_package.md"
+)
 PRD_DIR = REPO_ROOT / "docs" / "PRD"
 
 
@@ -172,7 +174,14 @@ class TestStructuralCausalEngineOverlayReconciled:
         item IDs (not invent new ones), so a future reviewer can trace each
         excluded item back to its exact PRD source."""
         package_text = DECISION_PACKAGE_PATH.read_text()
-        for decision_item in ("MD-022", "VL-028", "VL-029", "UX-031", "UX-032", "UX-033"):
+        for decision_item in (
+            "MD-022",
+            "VL-028",
+            "VL-029",
+            "UX-031",
+            "UX-032",
+            "UX-033",
+        ):
             assert decision_item in package_text, (
                 f"decision package does not cite PRD decision-register item {decision_item}"
             )
@@ -197,7 +206,16 @@ class TestStructuralCausalEngineOverlayReconciled:
 
         # Parts actually reconciled by this overlay carry a "focused
         # overlay" version note.
-        for part in ("Part 3", "Part 4", "Part 6", "Part 7", "Part 8", "Part 9", "Part 10", "Part 11"):
+        for part in (
+            "Part 3",
+            "Part 4",
+            "Part 6",
+            "Part 7",
+            "Part 8",
+            "Part 9",
+            "Part 10",
+            "Part 11",
+        ):
             assert "focused overlay" in by_part[part], (
                 f"{part}'s row does not read as a focused overlay: {by_part[part]!r}"
             )
@@ -233,9 +251,9 @@ class TestStructuralCausalEngineOverlayReconciled:
         never silently promoting the present Part 5 v1.4 file, and never
         claiming the local PRD set is fully self-contained."""
         content = AUTHORITY_PATH.read_text()
-        gaps_note_section = content.split("### Known version-reference gaps", 1)[1].split(
-            "## Historical status of earlier documents", 1
-        )[0]
+        gaps_note_section = content.split("### Known version-reference gaps", 1)[
+            1
+        ].split("## Historical status of earlier documents", 1)[0]
         assert "Part 5 v1.6" in gaps_note_section
         assert "not supplied" in gaps_note_section
         assert "does not infer Part 5 v1.6" in gaps_note_section
@@ -252,7 +270,9 @@ class TestStructuralCausalEngineOverlayReconciled:
             "## Version history: focused structural-causal engine integration overlay",
             1,
         )[1].split("## Historical status of earlier documents", 1)[0]
-        assert "supersedes the v1.5 focused Bayesian-validation overlay" in overlay_section
+        assert (
+            "supersedes the v1.5 focused Bayesian-validation overlay" in overlay_section
+        )
         assert "REQ-LEAK-001" in overlay_section
 
     def test_local_prd_directory_remains_untracked_when_present(self):
