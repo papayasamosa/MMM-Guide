@@ -213,6 +213,17 @@ Before creating or changing modelling functionality:
 
 ## Engine-capability boundary
 
+**PyMC is the approved primary production MMM engine** (`REQ-ENGINE-001`,
+reconciling PRD Part 3 v1.10's resolved primary-engine decision) — this
+was previously an open choice between PyMC and Meridian; it is now
+resolved and is not re-opened by any capability described below. A
+separate, still-open decision governs whether and how a bounded
+*supplemental* structural-causal engine adapter (PathMC being the current
+PRD-named candidate) is adopted alongside PyMC for specific mediation/
+causal-query classes — see `REQ-SCENGINE-001` and
+`docs/wp_structural_causal_engine_decision_package.md`; that decision does
+not change the primary-engine answer.
+
 Every approved model specification must record, per capability, whether it is:
 
 - native to the selected engine
@@ -222,7 +233,17 @@ Every approved model specification must record, per capability, whether it is:
 - experimental
 - not supported
 
-Do not imply that Meridian, PyMC Marketing, PyMC, Chronos-2, or another dependency natively provides every platform capability. Meridian may be used for the core Bayesian MMM, media transformations, priors, calibration, and standard optimisation where its supported model form is sufficient; it must not be assumed to natively support a bespoke censored lower-funnel model, an arbitrary multi-stage causal graph, or a custom maturity likelihood unless verified in the implemented version. PyMC/PyMC-Marketing is the custom-modelling path for censored lower-funnel demand, joint linked outcomes, bespoke time-varying structures, custom maturity/survival models, and full posterior mediation/capacity effects. The platform may launch with one engine behind a stable adapter boundary rather than both at once.
+Do not imply that PyMC Marketing, PyMC, a supplemental structural-causal
+adapter, Chronos-2, or another dependency natively provides every platform
+capability. PyMC/PyMC-Marketing is the primary and custom-modelling path
+for censored lower-funnel demand, joint linked outcomes, bespoke
+time-varying structures, custom maturity/survival models, and full
+posterior mediation/capacity effects; PyMC Marketing components are used
+where they satisfy the governed contract, and approved custom PyMC
+extensions elsewhere. Meridian remains a benchmark or possible future
+adapter only — not the current or planned production MMM path — unless a
+future, separately approved decision explicitly changes the engine
+architecture (`REQ-ENGINE-001` §5, §7).
 
 Where relevant, maintain a capability matrix or alignment document recording: feature, engine, implementation mode, supported version, validation evidence, known limitations, and reporting/planning/optimisation eligibility.
 

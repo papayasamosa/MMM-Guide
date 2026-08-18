@@ -802,6 +802,107 @@
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable"
       ]
+    },
+    {
+      "requirement_id": "REQ-ENGINE-001",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-ENGINE-001.md",
+      "affected_modules": [
+        "AGENTS.md",
+        "docs/approved_requirements/REQ-ENGINE-001.md",
+        "docs/approved_requirements/index.json"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_structural_causal_authority_reconciliation.py::TestStructuralCausalEngineOverlayReconciled::test_req_engine_001_indexed_and_no_meridian_import"
+      ]
+    },
+    {
+      "requirement_id": "REQ-SCENGINE-001",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-SCENGINE-001.md",
+      "affected_modules": [
+        "docs/wp_structural_causal_engine_decision_package.md",
+        "docs/approved_requirements/REQ-SCENGINE-001.md",
+        "docs/approved_requirements/index.json"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_structural_causal_authority_reconciliation.py::TestStructuralCausalEngineOverlayReconciled::test_req_scengine_001_indexed_and_classified_incomplete",
+        "ancestry_mmm/tests/test_structural_causal_authority_reconciliation.py::TestStructuralCausalEngineOverlayReconciled::test_decision_package_referenced_by_req_scengine_001"
+      ]
+    },
+    {
+      "requirement_id": "REQ-SCEFFECT-001",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-SCEFFECT-001.md",
+      "affected_modules": [
+        "docs/wp_structural_causal_engine_decision_package.md",
+        "docs/approved_requirements/REQ-SCEFFECT-001.md",
+        "docs/approved_requirements/index.json"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_structural_causal_authority_reconciliation.py::TestStructuralCausalEngineOverlayReconciled::test_req_sceffect_001_indexed_and_classified_incomplete"
+      ]
+    },
+    {
+      "requirement_id": "REQ-CAUSALROBUST-001",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-CAUSALROBUST-001.md",
+      "affected_modules": [
+        "docs/wp_structural_causal_engine_decision_package.md",
+        "docs/approved_requirements/REQ-CAUSALROBUST-001.md",
+        "docs/approved_requirements/index.json"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_structural_causal_authority_reconciliation.py::TestStructuralCausalEngineOverlayReconciled::test_req_causalrobust_001_indexed_and_classified_incomplete"
+      ]
+    },
+    {
+      "requirement_id": "REQ-SCCURVE-001",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-SCCURVE-001.md",
+      "affected_modules": [
+        "docs/wp_structural_causal_engine_decision_package.md",
+        "docs/approved_requirements/REQ-SCCURVE-001.md",
+        "docs/approved_requirements/index.json"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_structural_causal_authority_reconciliation.py::TestStructuralCausalEngineOverlayReconciled::test_req_sccurve_001_indexed_and_classified_incomplete"
+      ]
     }
   ]
 }

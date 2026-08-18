@@ -6590,3 +6590,111 @@ part 2.
 **Owner:** Modelling / Platform engineering (validation pipeline).
 **Status:** Implemented.
 
+## Structural-causal authority reconciliation (Work Package 0)
+
+**Context:** The reviewed GitHub authority document
+(`docs/specification_authority.md`) recorded the earlier focused Bayesian-
+validation/identification/calibration overlay (Part 3 v1.7, Part 6 v1.6,
+Part 7 v1.5, Part 9 v1.5, Part 10 v1.6) but had not yet reconciled the
+local PRD suite's newer structural-causal revisions. Mid-work-package, the
+user supplied a refreshed local `docs/PRD/` snapshot (Part 3 bumped v1.8
+-> v1.10, cumulatively retaining v1.9/v1.8 content; Part 9 v1.5 -> v1.6;
+Part 10 v1.7 -> v1.8; Part 11 v1.6 -> v1.7; Part 4/6/7/8 unchanged version
+labels). Part 3 v1.10 additionally resolved a previously open governance
+question: PyMC is now the approved primary production MMM engine (not
+`decision_required`), distinct from the still-open supplemental
+structural-causal-adapter question.
+
+**Decision:** Reconciled the newer local PRD structural-causal overlay
+into repository authority as five new approved requirement records:
+`REQ-ENGINE-001` (approved primary production MMM engine — zero
+implementation gap, since every production model builder already runs on
+PyMC and Meridian is not imported anywhere in `ancestry_mmm/**`; cross-
+referenced into root `AGENTS.md`'s "Engine-capability boundary" section,
+which previously left the PyMC-versus-Meridian choice open), and four
+target-state-only contracts with zero implementation —
+`REQ-SCENGINE-001` (structural causal engine adapter, capability
+resolution, runtime isolation), `REQ-SCEFFECT-001` (posterior structural
+intervention effects), `REQ-CAUSALROBUST-001` (DAG falsification, placebo/
+permutation refutation, unmeasured-confounding sensitivity evidence), and
+`REQ-SCCURVE-001` (structural intervention curve provenance and
+planning-eligibility boundary, extending `REQ-CURVE-001`). Every
+statistical/causal/UX choice the PRD's own decision registers (Part 6 §37
+`MD-022`; Part 7 §48 `VL-028`/`VL-029`; Part 10 §47 `UX-031`/`UX-032`/
+`UX-033`) leave open — including whether PathMC is adopted at all — was
+routed to a new decision-support document,
+`docs/wp_structural_causal_engine_decision_package.md`, with no candidate
+chosen. `docs/specification_authority.md` gained a new "Version history:
+focused structural-causal engine integration overlay" section (Part-by-
+part version table plus an explicit "Known version-reference gaps"
+subsection recording that Part 4/6/7/10/11 each still reference a Part 5
+v1.6 not supplied locally — only Part 5 v1.4 is present) and five new
+implementation-gaps-table rows. `docs/approved_requirements/index.json`
+and `README.md` updated for the five new records and their `REQ-ENGINE-*`/
+`REQ-SCENGINE-*`/`REQ-SCEFFECT-*`/`REQ-CAUSALROBUST-*`/`REQ-SCCURVE-*`
+naming-convention prefixes.
+
+Separately, reviewed the safe-merge script's existing Candidate-A
+affected-path automatic recovery-gate mechanism
+(`scripts/wait_for_pr_green_then_merge.ps1`'s `$CandidateAPaths`/
+`-RequireCandidateARecovery`) against the `Fold refit recovery` job added
+by PR #286 (WP1 part 1), which had no analogous automatic dispatch/require
+mechanism — a future PR could alter fold-refit/validation mathematics
+while the expensive recovery job stayed schedule/manual-only unless an
+operator remembered to run it. Added an analogous narrow
+`$FoldRefitPaths`/`-RequireFoldRefitRecovery` mechanism, scoped (via actual
+import inspection, not guesswork) to `ancestry_mmm/application/
+fold_refit_service.py`, `ancestry_mmm/core/validation_folds.py`, and
+`ancestry_mmm/core/structural_stability.py` — the fold-refit evidence
+pipeline's own three modules. Deliberately excluded the shared production
+fit path those three modules call through (`model_fit_service.py`,
+`models.py`, `predict.py`, `market_specific_predict.py`,
+`hierarchical_model.py`, `market_specific_model.py`) from the automatic
+trigger set: those files are already exercised by every PR's blocking
+Python 3.11/3.12 test suite (including `test_fold_refit_service.py`'s own
+tiny real fit), and including them would make the expensive schedule/
+manual job fire for nearly every modelling PR, contradicting the brief's
+explicit "do not blindly require the job for every PR" instruction — the
+same narrow-scoping precedent `$CandidateAPaths` itself already
+established (it excludes `predict.py` despite Candidate A depending on it
+transitively). Added a matching `fold-refit-recovery-gate-check`
+`pull_request`-only informational annotation job in
+`.github/workflows/tests.yml`, mirroring `candidate-a-recovery-gate-check`,
+and registered its name in the merge script's `$InformationalChecks`.
+
+Added `ancestry_mmm/tests/test_structural_causal_authority_reconciliation.py`
+(anti-drift tests verifying the five new records are indexed and correctly
+classified, the decision package exists and is referenced, the version-
+reconciliation table states the actual reconciled versions without
+fabricating a fictitious "fully self-contained" claim, and that
+`REQ-ENGINE-001`'s zero-Meridian-import claim holds).
+
+**Rejected alternative:** Approving PathMC, an exact DSL, an exact
+falsification/placebo/sensitivity method, or any threshold from PRD prose
+(rejected — explicitly out of authority for this work package per its own
+governing brief; every PRD decision-register item citing these was routed
+to the decision package instead). Including the shared production fit
+path in the automatic Fold refit recovery trigger set (rejected — see
+above; would make the expensive job effectively unconditional).
+
+**Impact:** `docs/approved_requirements/REQ-ENGINE-001.md`,
+`REQ-SCENGINE-001.md`, `REQ-SCEFFECT-001.md`, `REQ-CAUSALROBUST-001.md`,
+`REQ-SCCURVE-001.md` (new), `docs/approved_requirements/index.json` and
+`README.md` (updated), `docs/wp_structural_causal_engine_decision_
+package.md` (new), `docs/specification_authority.md` (new overlay section
+plus gaps-table rows), `AGENTS.md` (root — "Engine-capability boundary"
+cross-referenced to `REQ-ENGINE-001`), `ancestry_mmm/tests/
+test_structural_causal_authority_reconciliation.py` (new),
+`scripts/wait_for_pr_green_then_merge.ps1` (new `$FoldRefitPaths`/
+`-RequireFoldRefitRecovery` automatic detection, `fold-refit-recovery-gate-
+check` added to `$InformationalChecks`), `.github/workflows/tests.yml`
+(new `fold-refit-recovery-gate-check` job). No `core`/`application`/
+`pages` code changes — this is a documentation/governance work package;
+local PRD suite under `docs/PRD/` confirmed untracked, unstaged, and
+`.git/info/exclude`-protected throughout, including after the mid-task
+PRD refresh.
+
+**Owner:** Platform engineering (authority/governance), Modelling
+(requirement content).
+**Status:** Implemented.
+
