@@ -6795,3 +6795,52 @@ of this fix).
 **Owner:** Platform engineering (CI/merge tooling).
 **Status:** Implemented.
 
+## Fix job-visibility race in Wait-ForDispatchedRecoveryJobSuccess
+
+**Context:** Found immediately after the previous fix (`Fix Fold refit
+recovery/Candidate A posterior recovery dispatch verification`, above)
+landed on `main` and was exercised for real against PR #288's actual
+retry. `Wait-ForDispatchedRecoveryJobSuccess` located the freshly
+dispatched run on its very first list-poll (run 32179871092), then
+immediately called `gh run view <run-id> --json headSha,jobs` - which at
+that instant did not yet include a `Fold refit recovery` entry in the
+~17-job `Tests` workflow's `jobs` array, even though `gh api .../actions/
+runs/<id>/jobs` showed the job present (along with every other job)
+moments later. The helper treated "job not found in this one snapshot"
+as an immediate hard failure ("Dispatched run ... has no job named ..."),
+which is wrong: a run's job list can lag the run itself becoming
+queryable by a few seconds, and that lag is indistinguishable from a
+genuine `-FoldRefitPaths`/`-CandidateAPaths` workflow-drift case from a
+single snapshot.
+
+**Decision:** Added a 3-minute (or `-TimeoutMinutes`, if shorter) grace
+window before treating "job not found" as a real failure -
+`Wait-ForDispatchedRecoveryJobSuccess` now retries (`continue`, same
+`-PollIntervalSeconds` cadence as every other wait in this script) while
+within that window, and only throws "still has no job named ... after a
+several-minute grace window" once it has elapsed without ever seeing the
+job. A job that *is* found (even mid-run, not yet completed) is handled
+exactly as before - the grace window only covers the "never seen it at
+all yet" case, never masks a job that started and then failed.
+
+**Rejected alternative:** A single retry immediately after locating the
+run, hoping the race resolves within one extra poll (rejected - the
+actual lag observed live was long enough that a fixed single retry could
+plausibly still lose the race under different load conditions; a proper
+grace window bounded by elapsed time, not iteration count, is the correct
+fix). Increasing `-PollIntervalSeconds` globally to paper over the race
+(rejected - would slow down every other polling loop in this script for
+a narrow, localised timing issue).
+
+**Impact:** `scripts/wait_for_pr_green_then_merge.ps1`
+(`Wait-ForDispatchedRecoveryJobSuccess`'s "job not found" branch now
+retries within a grace window instead of failing immediately),
+`ancestry_mmm/tests/test_merge_gate_script_contract.py` (new
+`test_helper_retries_a_not_yet_visible_job_within_a_grace_window`,
+asserting the grace-check-then-retry ordering precedes the hard failure
+inside the same branch). No production `core`/`application`/`pages` code
+changed.
+
+**Owner:** Platform engineering (CI/merge tooling).
+**Status:** Implemented.
+
