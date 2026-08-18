@@ -685,6 +685,7 @@
       "status": "approved_for_implementation",
       "record_path": "docs/approved_requirements/REQ-CALIB-001.md",
       "affected_modules": [
+        "ancestry_mmm/core/calibration_comparison.py",
         "docs/approved_requirements/REQ-CALIB-001.md",
         "docs/approved_requirements/index.json"
       ],
@@ -695,7 +696,10 @@
         "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
-        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable"
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_calibration_comparison.py::TestComparisonArtefact::test_rejects_identical_identities",
+        "ancestry_mmm/tests/test_calibration_comparison.py::TestComparisonArtefact::test_no_verdict_or_recommendation_field_exists",
+        "ancestry_mmm/tests/test_calibration_comparison.py::TestCalibrationEventRecord::test_full_record_round_trip"
       ]
     },
     {

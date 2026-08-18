@@ -5708,3 +5708,71 @@ dependent comparison contract (separate record, Work Package 4 part 2).
 **Owner:** Data Science / Platform engineering.
 **Status:** Accepted; implemented on this work package's branch. PR and CI
 remain the release gate.
+
+
+## Calibrated-versus-uncalibrated model comparison (Work Package 4, second record)
+
+**Context:** REQ-CALIB-001 (approved Work Package 0) required a
+comparison contract that must exist before any future calibration
+mechanism may become official - no calibration mechanism exists in this
+repository, and no module compared a calibrated model against the
+uncalibrated model it came from. The record's own "Unresolved decisions"
+explicitly left open "whether calibrated-model identity extends
+`core.model_identity` or introduces a parallel calibration-identity
+object."
+
+**Decision:** Implement `core.calibration_comparison` reusing `core.
+model_identity.ModelIdentity` directly rather than introducing a second,
+parallel identity type - resolving that open question. `Calibrated
+VsUncalibratedComparisonArtefact` and `CalibrationEventRecord` both
+reject construction via `ModelIdentity.matches` unless the calibrated
+and uncalibrated identities are genuinely distinct, directly enforcing
+requirement 1 ("never an in-place mutation of the model it was
+calibrated from"). `CalibrationComparisonMetric` represents requirement
+2's comparison dimensions (posterior predictive performance, historical
+holdout, media/structural parameters, adstock/saturation, baseline,
+hierarchy, posterior uncertainty, response curves, marginal economics,
+planning/optimisation consequences) generically by caller-supplied name
+and value - this module has no domain knowledge of how to compute any
+specific one of them, mirroring `core.structural_stability`'s "the
+caller supplies the computation" pattern from Work Package 2 part 2.
+`difference` is descriptive only. `ExperimentAgreementComparison`
+reports each compatible experiment's agreement individually, mirroring
+`core.experiments`'s own "never collapsed into an average" pattern from
+this same work package's first record. Requirement 3 ("closer agreement
+with an experiment is not automatically preferred") is enforced by
+omission - no threshold, pass/fail, or "calibration preferred" field
+exists anywhere in the module - and verified by an explicit test that
+scans every dataclass field on the comparison artefact for a forbidden
+verdict-shaped name, the same discipline `core.structural_stability`
+already established with its own `test_no_threshold_or_verdict_field_
+exists`. `CalibrationEventRecord` implements requirement 5: resolved-
+prior-conflict, materially-changed-decision, a closed three-value
+uncertainty-change vocabulary, and improved/worsened validation
+dimensions and new limitations are all caller-supplied structured facts
+for a human reviewer to record, never a judgement this module computes.
+
+**Rejected alternative:** Introducing a parallel `CalibrationIdentity`
+type distinct from `core.model_identity.ModelIdentity` (rejected - a
+calibrated model is still a model with a model_run_id/data/spec/
+posterior fingerprint; inventing a second identity concept for the same
+underlying thing would fragment identity handling across the codebase
+for no benefit, and `ModelIdentity.matches` already gives exactly the
+distinctness check requirement 1 needs).
+
+**Impact:** `ancestry_mmm/core/calibration_comparison.py` (new);
+`ancestry_mmm/tests/test_calibration_comparison.py` (new, 14 tests);
+`docs/approved_requirements/REQ-CALIB-001.md`/`index.json`/`docs/
+specification_authority.md` updated. No change to `core.model_identity`,
+`core.experiments`, or `pages/06_Diagnostics.py`. mypy: new module
+clean; full-core ratchet unchanged at 241/241. No new dependency.
+Deferred: material-change criteria/thresholds, computing any specific
+comparison metric, and Diagnostics-page UI wiring (requirement 4). No
+calibration statistical mechanism exists or is implied -
+`REQ-EXPMODE-001`'s own deferred decision-support-package question
+remains open. This completes Work Package 4 as scoped by the
+reconciliation brief.
+
+**Owner:** Data Science / Platform engineering.
+**Status:** Accepted; implemented on this work package's branch. PR and CI
+remain the release gate.
