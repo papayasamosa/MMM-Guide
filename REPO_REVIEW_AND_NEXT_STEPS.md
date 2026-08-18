@@ -364,8 +364,17 @@ business or modelling definitions:
      design (REQ-SEARCH-002), and the NumPy replay (`predict_mu`) has no
      representation for a *counterfactual* Search demand/capture/cap state
      at a hypothetical scenario/curve spend point - a genuine modelling
-     design question (see `docs/decision_log.md`, Work Package 3 entry),
-     not a mechanical extension.
+     design question (see `docs/decision_log.md`, Work Package 3 entry).
+     Work Package 7 (2026-08-18) produced a dedicated decision package,
+     `docs/wp7_candidate_a_final_outcome_replay_decision_package.md`,
+     laying out candidate approaches to the four sub-questions this
+     requires (upstream-media input at a hypothetical spend point; the
+     paid-search cap's counterfactual specification, since it is a fixed
+     historical input with no observed value in a future/planned period;
+     extrapolation policy outside the fitted spend/cap range; and
+     posterior-uncertainty propagation through the cap's non-linear
+     `min(...)` censoring) - none selected. Still not a mechanical
+     extension until one is approved.
   5. Full joint posterior-recovery evidence (Work Package 2): a synthetic
      generator and evidence package now exist
      (`core/search_candidate_a_recovery.py`) - an independently-coded

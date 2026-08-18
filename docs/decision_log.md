@@ -6045,3 +6045,86 @@ autonomously to the next work package in the brief's sequence
 any implementation).
 **Status:** Decision-support package delivered; awaiting human review and
 selection. No implementation PR accompanies this entry.
+
+
+## Candidate A final-outcome replay decision package (Work Package 7)
+
+**Context:** `REQ-SEARCH-002` approved Candidate A (structural latent
+demand with hard censoring) as the production Search mediation/capacity
+formulation on 2026-08-15 - that choice is settled. Since that record's
+own Work Package 3, `core.predict.predict_mu` and (later)
+`core.sequential_simulation.simulate_sequential_outcomes` have both
+raised `CandidateAReplayNotSupportedError` for a Candidate A fit,
+explicitly deferring "full replay integration" as "a genuine modelling
+design question, not a mechanical extension." An Explore-agent
+investigation before writing anything confirmed this question had never
+been given its own decision-support document - only the formulation-
+choice package (`docs/search_mediation_capacity_decision_wp3.md`, a
+different question, already resolved) and Work Package 6's optimisation-
+tractability package (a different question again) exist.
+
+**Finding:** Candidate A's demand/capture/cap chain
+(`core.search_capacity.add_search_candidate_a_to_model`) computes
+`latent_branded_search_demand`, `capture_shares` (Dirichlet-allocated),
+`realised_paid_search_delivery` (`min(paid_opportunity, cap)`),
+`organic_capture`, `direct_navigation_capture`, and finally `search_eta_
+contribution` as **fit-time deterministics** over the historical,
+adstocked/saturated upstream media and a fixed, *observed* `cap` array
+(`fit_inputs.paid_search_cap` - not a latent parameter, not forecastable
+by the fitted model itself). Nothing in the current model defines this
+chain as a function `predict_mu`/`simulate_sequential_outcomes` can
+re-evaluate at an arbitrary candidate spend level, unlike the ordinary
+media/baseline/trend/season/promo/controls terms those functions already
+replay. Four genuinely open sub-questions block "full replay
+integration," not one: (1) how upstream media is supplied at a
+hypothetical spend point; (2) how the paid-search cap - a fixed
+historical input with no observed value in a future/planned period - is
+specified counterfactually; (3) how far outside the historically
+observed spend/cap range a replay may extrapolate; (4) how posterior
+uncertainty propagates through the cap's `min(...)` non-linearity
+(concave, so `E[min(X, cap)] <= min(E[X], cap)` by Jensen's inequality
+whenever `X` is posterior-drawn near the cap-binding region - not a
+hypothetical edge case for a Dirichlet-allocated capture share).
+
+**Decision:** Write `docs/wp7_candidate_a_final_outcome_replay_
+decision_package.md`, laying out two upstream-media candidates (direct
+re-evaluation; range-restricted re-evaluation), three cap-specification
+candidates (reuse `core.planning.future_context`'s existing hold-last-
+observed/explicit-future-value pattern already approved for exogenous
+controls; require an explicit new governed planning input; treat the
+cap as unconstraining for planning purposes, changing what the replayed
+number represents), three extrapolation-policy candidates (unbounded;
+bounded-and-flagged, mirroring `core.curve_artifact`'s existing
+extrapolation-status contract; hard-blocked outside an approved
+tolerance), and two uncertainty candidates (point-estimate; draw-
+consistent, mirroring `core.sequential_scenario_evaluation`'s existing
+per-draw contract) - none selected. `REPO_REVIEW_AND_NEXT_STEPS.md`
+item 4b updated to reference this package rather than only naming the
+question as open.
+
+**Rejected alternative:** Implementing Candidate M1 (direct re-
+evaluation) with Candidate C1 (reuse future-context hold-last-observed)
+and Candidate U1 (point-estimate only) unilaterally, on the reasoning
+that they are the most direct application of already-approved patterns
+elsewhere in the repository (rejected - "already approved elsewhere for
+a different purpose" is not the same as "approved for this purpose";
+the cap is a capacity ceiling, not an ordinary covariate, and silently
+extrapolating a fitted demand curve to an arbitrary spend level while
+ignoring the cap's non-linear effect on the outcome distribution is
+exactly the kind of plausible-but-wrong number `CandidateAReplayNot
+SupportedError` exists to prevent, per its own docstring).
+
+**Impact:** `docs/wp7_candidate_a_final_outcome_replay_decision_
+package.md` (new), `REPO_REVIEW_AND_NEXT_STEPS.md` (item 4b updated).
+No code changes - `core.predict.py`, `core.sequential_simulation.py`,
+`core.search_capacity.py`, `core.attribution.py`, and `core.curve_
+artifact.py` are all untouched by this package; `CandidateAReplayNot
+SupportedError` continues to be raised exactly as before. This
+workstream is stopped pending review of the decision package; the
+program continues autonomously to the next work package in the brief's
+sequence (Work Package 8).
+
+**Owner:** Data Science / Platform engineering (decision), Modelling
+(counterfactual specification and extrapolation-policy review).
+**Status:** Decision-support package delivered; awaiting human review and
+selection. No implementation PR accompanies this entry.
