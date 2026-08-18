@@ -409,10 +409,22 @@ business or modelling definitions:
   optimiser tabs (constrained and unconstrained-benchmark) and `core.
   optimization`'s objective still only offer the steady-state monthly
   approximation - a sequential-weekly method choice is not yet exposed
-  there. Wiring sequential evaluation into the optimiser's objective (and,
-  for the manual tab, a real browser-lifecycle test for the sequential
-  path) is a documented, not-yet-attempted follow-up, not a modelling or
-  core-engineering gap.
+  there. Work Package 6 (2026-08-18) reconciled this into a formal
+  requirement (`REQ-SCEN-004`) and produced a decision package
+  (`docs/wp6_sequential_optimisation_decision_package.md`) rather than
+  implementing it directly: `core.optimization.optimize_scenario`'s
+  SLSQP search finite-differences an analytic, per-month objective
+  potentially hundreds to low thousands of times per run, while the
+  sequential kernel performs a full week-by-week state-transition
+  simulation per call (no partial re-evaluation possible) - calling it
+  directly inside that search loop is a materially more expensive
+  computational problem, not a mechanical rewiring, and no decision has
+  been made about which incremental-outcome quantity (short-horizon,
+  long-horizon, or a combination) would even become the optimised
+  scalar. Blocked pending review of that package - not a modelling or
+  core-engineering gap resolvable by more coding. A real browser-
+  lifecycle (Playwright) test for the manual sequential path also
+  remains not yet implemented.
 - Chronos-2 or another future exogenous forecasting integration is not yet
   implemented.
 - Real UK data readiness is an operational step and must be run only by an
