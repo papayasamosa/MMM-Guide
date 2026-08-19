@@ -6981,3 +6981,43 @@ candidate integration points, no candidate selected) and
 guards). No production `core`/`application`/`pages` code changed.
 **Owner:** Marketing Data Science (identification policy; MD-021/VL-026 decision owners).
 **Status:** Decision package recorded; compiler-gating blocked pending VL-026/MD-021.
+
+---
+
+**Date:** 2026-08-19
+**Decision:** Record the Work Package 4 structural-causal engine capability
+evaluation in `docs/wp4_structural_causal_engine_capability_evaluation.md`.
+The evaluation classifies PathMC 0.3.0, DoWhy 0.14, pgmpy 1.1.2, and the
+no-supplemental-engine baseline against the approved six-way capability
+vocabulary across 16 dimensions derived from `REQ-SCENGINE-001`,
+`REQ-SCEFFECT-001`, `REQ-CAUSALROBUST-001`, and `REQ-SCCURVE-001`, all from
+current upstream sources retrieved 2026-08-19. Key recorded facts: PathMC meets
+the runtime-isolation trigger (`REQ-SCENGINE-001` section 4) because it requires
+`pymc>=6,<7`/`pytensor>=3.1.1,<4` while the repository pins
+`pymc==5.28.5`/`pytensor==2.38.3`; a generated-spec architecture is feasible
+(upstream `dag_to_spec`/`BuildModelFromDAG`) and is the only allowed path; count
+outcomes are supported (NegBinomial/Poisson with log link); ragged-coverage
+support is unverified for every candidate; robustness dimensions are split
+across candidates (PathMC has DAG falsification and tipping-point sensitivity,
+DoWhy has the placebo refuter). No engine is selected; no dependency is added;
+no production code is created. The primary engine remains PyMC
+(`REQ-ENGINE-001`, resolved) and the sequential simulator remains authoritative.
+**Reason:** The four records approve target-state contracts only and explicitly
+exclude engine selection (`MD-022`), robustness policy (`VL-028`/`VL-029`), and
+UX presentation (`UX-031`/`UX-032`/`UX-033`). Work Package 4's brief requires
+the evaluation-and-decision-package evidence so those decisions can be made by
+their owners, not by an implementation workstream.
+**Alternatives considered:** Evaluating only PathMC (rejected - the brief names
+"PathMC etc." and the no-supplemental baseline is required to justify any new
+dependency); deferring evaluation entirely (rejected - candidate D1-A of the
+Work Package 0 decision package explicitly names this capability-matrix work);
+adding an adapter or dependency now (rejected - unauthorised under the records).
+**Impact:** New `docs/wp4_structural_causal_engine_capability_evaluation.md`,
+new `ancestry_mmm/tests/test_wp4_structural_causal_capability_evaluation.py`
+(9 anti-drift conformance tests), cross-reference added to
+`docs/wp_structural_causal_engine_decision_package.md`. No production
+`core`/`application`/`pages` code changed.
+**Owner:** Modelling / Platform engineering (MD-022, VL-028/VL-029 decision
+owners).
+**Status:** Decision package recorded; engine selection remains open pending
+MD-022 review.
