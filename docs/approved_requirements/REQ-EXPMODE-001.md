@@ -59,14 +59,32 @@ nothing in this repository yet reads this registry to build a model —
 `core.search_capacity`, `core.pathways`, and every other model-fitting
 module are untouched by this record.
 
+`DiagnosticsArtefact`/Diagnostics-page provenance display now exists (Work
+Package 2 of `Media-Mix-Lab: Coding LLM Next Steps After PR #286`,
+canonical Diagnostics evidence integration, 2026-08-18): schema v8 adds
+the `experiment_calibration` section — computed inline in
+`DiagnosticsService.evaluate()` when the caller supplies an
+`ExperimentProvenanceReport` (`build_provenance_report`'s own output,
+unchanged and reused verbatim via its `to_dict()`; every entry retains
+its own estimand/uncertainty, never averaged) — but this is a display
+slot only, not a registry: this repository still has no durable adoption/
+persistence workflow that gets an `ExperimentRecord`/`ExperimentToModelUse`
+into a live project's session state in the first place (that workflow is
+a separate work package). `pages/06_Diagnostics.py` therefore always
+shows `not_applicable`/`not_computed` for this section today, with an
+explicit "no experiment evidence... registered" message — never blank,
+never a fabricated pass.
+
 Not yet implemented: any specific likelihood-calibration or
 prior-calibration statistical mechanism (explicitly reserved by this
 record's own "Explicitly excluded" section for a future decision-support
 package using Context7/official PyMC/PyMC-Marketing sources, per the
 PRD-authority instruction governing this program — do not guess an
 unresolved statistical decision); `core.persistence` export/import
-wiring for the registry; and `REQ-CALIB-001`'s dependent
-calibrated-versus-uncalibrated comparison contract (separate record).
+wiring for the registry (the durable Experiment Evidence workflow); and
+`REQ-CALIB-001`'s dependent calibrated-versus-uncalibrated comparison
+contract (separate record, also now Diagnostics-wired — see
+`REQ-CALIB-001`'s own Capability status).
 
 ## Requirement
 
@@ -160,6 +178,10 @@ experiment-level evidence.
   `new_experiment_version`, `current_experiment_versions`)
 - `ancestry_mmm/core/persistence.py` (not yet touched — export/import
   wiring for the experiment registry is deferred)
+- `ancestry_mmm/application/diagnostics_service.py` (Work Package 2 —
+  `DiagnosticsArtefact` schema v8 `experiment_calibration` section,
+  computed inline in `evaluate()`; display-slot only, no registry)
+- `ancestry_mmm/pages/06_Diagnostics.py` (Work Package 2 — wired)
 - `docs/approved_requirements/REQ-EXPMODE-001.md` (this record)
 - `docs/approved_requirements/index.json` (updated)
 
@@ -174,6 +196,11 @@ experiment-level evidence.
   across matching/non-matching models and with/without a recorded
   dependence-handling method; and the per-experiment provenance report,
   including a missing-record `KeyError` and cross-model filtering)
+- `ancestry_mmm/tests/test_diagnostics_artefact.py::TestEvaluateExperimentCalibration`
+  (Work Package 2 — not_applicable with no evidence; provenance report
+  computed and entries kept individually separate, never averaged; round
+  trip/fingerprint)
+- `ancestry_mmm/tests/test_diagnostics_wp2_evidence_apptest.py::test_scorecard_reports_not_applicable_latent_state_and_experiment_sections`
 - `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists`
 - `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists`
 - `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid`
@@ -184,14 +211,22 @@ experiment-level evidence.
 
 ## Migration impact
 
-None to persisted artefacts or model-fitting code — this module is
-additive and standalone, with no export/import wiring yet.
+None to `core.experiments` itself or model-fitting code — this module
+remains additive and standalone, with no export/import wiring yet.
+Resolved (Work Package 2): `DiagnosticsArtefact` schema v7 → v8 adds a
+display slot for this record's provenance report; an artefact computed
+before schema v8 upgrades this section to `not_computed` with an explicit
+"added in schema v8" message.
 
 ## Unresolved decisions
 
 - Likelihood-calibration statistical mechanism (Work Package 4
   decision-support package, not this record).
 - Experiment-registry persistence schema and versioning scheme.
+- The durable source-to-governed adoption workflow that would let a real
+  project supply this Diagnostics section's `ExperimentProvenanceReport`
+  in the first place — out of scope for Work Package 2 (UI/schema wiring
+  only); a separate work package.
 
 ## Owner
 

@@ -340,8 +340,8 @@ class TestDiagnosticsVersionAuthority:
     able to silently disagree with each other."""
 
     def test_current_version_constants_are_consistent(self):
-        assert CURRENT_DIAGNOSTICS_VERSION == "7.0.0"
-        assert CURRENT_DIAGNOSTICS_SCHEMA_VERSION == 7
+        assert CURRENT_DIAGNOSTICS_VERSION == "8.0.0"
+        assert CURRENT_DIAGNOSTICS_SCHEMA_VERSION == 8
 
     def test_default_diagnostics_result_uses_current_version(self):
         result = DiagnosticsResult(
@@ -931,13 +931,17 @@ class TestSchemaV5ToV6Compatibility:
 
 class TestSchemaV6FreshArtefact:
     def test_current_defaults_are_schema_v6(self):
-        # WP3 (Media-Mix-Lab: Coding LLM Next Steps After PR #253) bumped
-        # the schema to v7 (search_capacity section) - this test's name is
-        # kept as historical continuity with the v6 introduction, but its
+        # Work Package 2 (canonical Diagnostics evidence integration,
+        # `Media-Mix-Lab: Coding LLM Next Steps After PR #286`) bumped the
+        # schema to v8 (posterior_predictive_metric_distributions,
+        # historical_validation, structural_stability,
+        # graphical_identification, latent_state_identification,
+        # experiment_calibration sections) - this test's name is kept as
+        # historical continuity with the v6 introduction, but its
         # assertion must track the live constants, same as every other
         # version-authority test in this file.
-        assert CURRENT_DIAGNOSTICS_SCHEMA_VERSION == 7
-        assert CURRENT_DIAGNOSTICS_VERSION.startswith("7.")
+        assert CURRENT_DIAGNOSTICS_SCHEMA_VERSION == 8
+        assert CURRENT_DIAGNOSTICS_VERSION.startswith("8.")
 
     def test_freshly_constructed_artefact_has_not_computed_market_channel_capability(
         self,
@@ -1885,3 +1889,818 @@ class TestSearchCapacitySection:
         assert restored.schema_version == 6
         assert restored.search_capacity.status == "not_computed"
         assert "schema v7" in restored.search_capacity.error
+
+
+# =========================================================================
+# Work Package 2 (canonical Diagnostics evidence integration,
+# `Media-Mix-Lab: Coding LLM Next Steps After PR #286`): schema v8 -
+# posterior_predictive_metric_distributions (REQ-PPD-001),
+# historical_validation / structural_stability (REQ-LEAK-001 /
+# REQ-STAB-001), graphical_identification (REQ-IDENT-001),
+# latent_state_identification (REQ-LATENT-001), experiment_calibration
+# (REQ-EXPMODE-001 / REQ-CALIB-001).
+# =========================================================================
+
+
+def _minimal_market_specific_trace_frame_meta():
+    """A minimal, single-market, single-outcome, single-channel Model C
+    trace/frame/meta triple - the Model C equivalent of
+    `_minimal_trace_frame_meta`, carrying every posterior variable
+    `DiagnosticsService.evaluate()`'s market_specific path touches
+    (market-indexed hill_K/beta, mu/alpha, decay_rate/hill_S/promo_coef/
+    market_offset/intercept/trend_coef/gamma_fourier - mirroring
+    `test_market_specific_diagnostics.py`'s own full `trace` fixture,
+    scoped down to one market/outcome/channel) so the full evaluate()
+    pipeline succeeds end to end, not only one function under test."""
+    rng = np.random.default_rng(23)
+    n_obs, n_chain, n_draw = 16, 2, 20
+    oids = ["fh_new_gsa"]
+    chs = ["TV"]
+    markets = ["UK"]
+
+    Y = rng.uniform(5, 30, size=(n_obs, 1))
+    frame = {
+        "Y": Y,
+        "X_media": rng.uniform(0, 100, size=(n_obs, 1)),
+        "markets": markets,
+        "market_bounds": [(0, n_obs)],
+        "market_idx": np.zeros(n_obs, dtype=int),
+        "promo": np.zeros((n_obs, 1)),
+        "trend": np.arange(n_obs, dtype=float),
+        "fourier": np.zeros((n_obs, 4)),
+        "control_names": [],
+        "X_controls": np.zeros((n_obs, 0)),
+        "outcome_controls": {},
+        "outcome_control_names": {},
+    }
+    meta = FHModelMeta(
+        markets=markets,
+        outcome_ids=oids,
+        channels=chs,
+        dna_channels=[],
+        dna_channel_idx=[],
+        non_dna_idx=[0],
+        dna_outcome_id=oids[0],
+        dna_lag_weeks=1,
+        unpooled_markets=[],
+        control_names=[],
+        pathway_masks=resolve_pathway_masks(
+            oids,
+            chs,
+            [],
+            dna_channel_idx=[],
+            dna_outcome_id=oids[0],
+            direct_dna_outcome_ids=[],
+            dna_lag_weeks=1,
+        ),
+    )
+
+    posterior = {
+        "hill_K": np.ones((n_chain, n_draw, 1, 1)),
+        "beta": np.ones((n_chain, n_draw, 1, 1, 1)),
+        "hill_S": np.full((n_chain, n_draw, 1), 4.0),
+        "alpha": np.full((n_chain, n_draw, 1), 8.0),
+        "mu": np.maximum(
+            Y[None, None, :, 0] + rng.normal(0, 0.5, size=(n_chain, n_draw, n_obs)),
+            0.1,
+        )[..., None],
+        "decay_rate": np.full((n_chain, n_draw, 1), 0.5),
+        "promo_coef": np.zeros((n_chain, n_draw, 1)),
+        "market_offset": np.zeros((n_chain, n_draw, 1, 1)),
+        "intercept": np.zeros((n_chain, n_draw, 1)),
+        "trend_coef": np.zeros((n_chain, n_draw, 1)),
+        "gamma_fourier": np.zeros((n_chain, n_draw, 4, 1)),
+    }
+    dims = {
+        "hill_K": ["market", "channel"],
+        "beta": ["market", "outcome", "channel"],
+        "hill_S": ["channel"],
+        "alpha": ["outcome"],
+        "mu": ["obs", "outcome"],
+        "decay_rate": ["channel"],
+        "promo_coef": ["outcome"],
+        "market_offset": ["market", "outcome"],
+        "intercept": ["outcome"],
+        "trend_coef": ["outcome"],
+        "gamma_fourier": ["fourier", "outcome"],
+    }
+    coords = {
+        "obs": list(range(n_obs)),
+        "outcome": oids,
+        "channel": chs,
+        "market": markets,
+        "fourier": list(range(4)),
+    }
+    trace = az.from_dict(
+        posterior=posterior,
+        coords=coords,
+        dims=dims,
+        sample_stats={"diverging": np.zeros((n_chain, n_draw), dtype=bool)},
+    )
+    return trace, frame, meta
+
+
+def _simple_confounder_graph():
+    """X <- Z -> Y, X -> Y: Z is a confounder on the only backdoor path -
+    the same minimal scenario `test_estimand_identification.py` uses."""
+    from ancestry_mmm.core.causal_graph import CausalEdge, CausalGraph, CausalNode
+
+    return CausalGraph(
+        graph_id="wp2-diagnostics-test-graph",
+        graph_version=1,
+        nodes=[CausalNode(node_id=n, label=n) for n in ("X", "Y", "Z")],
+        edges=[
+            CausalEdge(source_node_id="Z", target_node_id="X"),
+            CausalEdge(source_node_id="Z", target_node_id="Y"),
+            CausalEdge(source_node_id="X", target_node_id="Y"),
+        ],
+    )
+
+
+class TestSchemaV8Migration:
+    def test_v7_artefact_upgrades_all_six_new_sections_to_not_computed(self):
+        trace, frame, meta = _minimal_trace_frame_meta()
+        diag_input = DiagnosticsInput(trace=trace, frame=frame, meta=meta)
+        artefact = DiagnosticsService().evaluate(diag_input).diagnostics_artefact
+        v7_dict = {**artefact.to_dict(), "schema_version": 7}
+        for key in (
+            "posterior_predictive_metric_distributions",
+            "historical_validation",
+            "structural_stability",
+            "graphical_identification",
+            "latent_state_identification",
+            "experiment_calibration",
+        ):
+            del v7_dict[key]
+
+        restored = DiagnosticsArtefact.from_dict(v7_dict)
+        assert restored.schema_version == 7
+        assert restored.legacy_incomplete is False
+        for section, name in (
+            (restored.posterior_predictive_metric_distributions, "REQ-PPD-001"),
+            (restored.historical_validation, "REQ-LEAK-001"),
+            (restored.structural_stability, "REQ-STAB-001"),
+            (restored.graphical_identification, "REQ-IDENT-001"),
+            (restored.latent_state_identification, "REQ-LATENT-001"),
+            (restored.experiment_calibration, "REQ-EXPMODE-001"),
+        ):
+            assert section.status == "not_computed"
+            assert "schema v8" in section.error
+            assert name in section.error
+
+    def test_v7_upgrade_preserves_existing_sections(self):
+        trace, frame, meta = _minimal_trace_frame_meta()
+        diag_input = DiagnosticsInput(trace=trace, frame=frame, meta=meta)
+        artefact = DiagnosticsService().evaluate(diag_input).diagnostics_artefact
+        v7_dict = {**artefact.to_dict(), "schema_version": 7}
+        for key in (
+            "posterior_predictive_metric_distributions",
+            "historical_validation",
+            "structural_stability",
+            "graphical_identification",
+            "latent_state_identification",
+            "experiment_calibration",
+        ):
+            del v7_dict[key]
+
+        restored = DiagnosticsArtefact.from_dict(v7_dict)
+        assert restored.convergence.status == "computed"
+        assert restored.error_metrics.status == "computed"
+
+    def test_v7_round_trip_through_to_dict_is_stable(self):
+        trace, frame, meta = _minimal_trace_frame_meta()
+        diag_input = DiagnosticsInput(trace=trace, frame=frame, meta=meta)
+        artefact = DiagnosticsService().evaluate(diag_input).diagnostics_artefact
+        v7_dict = {**artefact.to_dict(), "schema_version": 7}
+        for key in (
+            "posterior_predictive_metric_distributions",
+            "historical_validation",
+            "structural_stability",
+            "graphical_identification",
+            "latent_state_identification",
+            "experiment_calibration",
+        ):
+            del v7_dict[key]
+
+        restored = DiagnosticsArtefact.from_dict(v7_dict)
+        round_tripped = DiagnosticsArtefact.from_dict(restored.to_dict())
+        assert round_tripped.schema_version == restored.schema_version
+        assert round_tripped.fingerprint() == restored.fingerprint()
+
+    def test_unsupported_future_schema_version_is_rejected(self):
+        trace, frame, meta = _minimal_trace_frame_meta()
+        diag_input = DiagnosticsInput(trace=trace, frame=frame, meta=meta)
+        artefact = DiagnosticsService().evaluate(diag_input).diagnostics_artefact
+        future_dict = {**artefact.to_dict(), "schema_version": 9}
+        with pytest.raises(ValueError, match="Unsupported schema_version"):
+            DiagnosticsArtefact.from_dict(future_dict)
+
+
+class TestSchemaV8FreshArtefact:
+    def test_current_defaults_are_schema_v8(self):
+        assert CURRENT_DIAGNOSTICS_SCHEMA_VERSION == 8
+        assert CURRENT_DIAGNOSTICS_VERSION == "8.0.0"
+
+    def test_freshly_constructed_artefact_has_not_computed_new_sections(self):
+        artefact = DiagnosticsArtefact()
+        assert artefact.schema_version == CURRENT_DIAGNOSTICS_SCHEMA_VERSION
+        for section in (
+            artefact.posterior_predictive_metric_distributions,
+            artefact.historical_validation,
+            artefact.structural_stability,
+            artefact.graphical_identification,
+            artefact.latent_state_identification,
+            artefact.experiment_calibration,
+        ):
+            assert section.status == "not_computed"
+
+    @pytest.mark.parametrize(
+        "field_name",
+        [
+            "posterior_predictive_metric_distributions",
+            "historical_validation",
+            "structural_stability",
+            "graphical_identification",
+            "latent_state_identification",
+            "experiment_calibration",
+        ],
+    )
+    def test_each_new_section_change_is_covered_by_fingerprint(self, field_name):
+        import dataclasses as dc
+
+        base = DiagnosticsArtefact()
+        mutated = dc.replace(
+            base,
+            **{
+                field_name: DiagnosticSection(
+                    status="computed", payload={"evidence": 1}
+                )
+            },
+        )
+        assert base.fingerprint() != mutated.fingerprint()
+
+
+class TestEvaluatePosteriorPredictiveMetricDistributions:
+    """REQ-PPD-001 wired into DiagnosticsService.evaluate() - Model A and
+    Model C, computed inline from the same trace/frame/meta/params already
+    used for error_metrics (no extra fit)."""
+
+    def test_model_a_computes_the_section(self):
+        trace, frame, meta = _minimal_trace_frame_meta()
+        diag_input = DiagnosticsInput(trace=trace, frame=frame, meta=meta)
+        artefact = DiagnosticsService().evaluate(diag_input).diagnostics_artefact
+
+        section = artefact.posterior_predictive_metric_distributions
+        assert section.status == "computed", section.error
+        assert len(section.payload) == len(meta.outcome_ids)
+        row = section.payload[0]
+        for metric in ("mae", "rmse", "smape_pct", "wape_pct", "bias"):
+            for suffix in ("point", "mean", "median", "lower", "upper"):
+                assert f"{metric}_{suffix}" in row
+
+    def test_model_c_computes_the_section(self):
+        trace, frame, meta = _minimal_market_specific_trace_frame_meta()
+        diag_input = DiagnosticsInput(
+            trace=trace, frame=frame, meta=meta, model_type="market_specific"
+        )
+        artefact = DiagnosticsService().evaluate(diag_input).diagnostics_artefact
+
+        section = artefact.posterior_predictive_metric_distributions
+        assert section.status == "computed", section.error
+        assert len(section.payload) == len(meta.outcome_ids)
+
+    def test_section_round_trips_and_is_fingerprinted(self):
+        trace, frame, meta = _minimal_trace_frame_meta()
+        diag_input = DiagnosticsInput(trace=trace, frame=frame, meta=meta)
+        artefact = DiagnosticsService().evaluate(diag_input).diagnostics_artefact
+
+        restored = DiagnosticsArtefact.from_dict(artefact.to_dict())
+        assert restored.fingerprint() == artefact.fingerprint()
+        assert (
+            restored.posterior_predictive_metric_distributions.payload
+            == artefact.posterior_predictive_metric_distributions.payload
+        )
+
+
+class TestEvaluateGraphicalIdentification:
+    """REQ-IDENT-001 wired into DiagnosticsService.evaluate()."""
+
+    def test_no_graph_or_requests_is_not_computed(self):
+        trace, frame, meta = _minimal_trace_frame_meta()
+        diag_input = DiagnosticsInput(trace=trace, frame=frame, meta=meta)
+        artefact = DiagnosticsService().evaluate(diag_input).diagnostics_artefact
+        assert artefact.graphical_identification.status == "not_computed"
+
+    def test_graph_compatible_total_effect_request_is_computed(self):
+        trace, frame, meta = _minimal_trace_frame_meta()
+        diag_input = DiagnosticsInput(
+            trace=trace,
+            frame=frame,
+            meta=meta,
+            causal_graph=_simple_confounder_graph(),
+            identification_requests=[
+                {
+                    "treatment": "X",
+                    "outcome": "Y",
+                    "effect_type": "total",
+                    "proposed_adjustment_set": ("Z",),
+                }
+            ],
+        )
+        artefact = DiagnosticsService().evaluate(diag_input).diagnostics_artefact
+        section = artefact.graphical_identification
+        assert section.status == "computed", section.error
+        results = section.payload["results"]
+        assert len(results) == 1
+        assert results[0]["status"] == "graph_compatible"
+        assert "does not prove" in results[0]["disclaimer"]
+
+    def test_unsupported_direct_effect_request_is_rejected_not_silently_allowed(self):
+        """REQ-IDENT-001: a direct-effect request must never be silently
+        treated as identified by the total-effect backdoor checker - it
+        must resolve to unsupported_by_current_checker."""
+        trace, frame, meta = _minimal_trace_frame_meta()
+        diag_input = DiagnosticsInput(
+            trace=trace,
+            frame=frame,
+            meta=meta,
+            causal_graph=_simple_confounder_graph(),
+            identification_requests=[
+                {
+                    "treatment": "X",
+                    "outcome": "Y",
+                    "effect_type": "direct",
+                    "proposed_adjustment_set": ("Z",),
+                }
+            ],
+        )
+        artefact = DiagnosticsService().evaluate(diag_input).diagnostics_artefact
+        section = artefact.graphical_identification
+        assert section.status == "computed", section.error
+        results = section.payload["results"]
+        assert results[0]["status"] == "unsupported_by_current_checker"
+        assert results[0]["effect_type"] == "direct"
+
+    def test_section_round_trips_and_is_fingerprinted(self):
+        trace, frame, meta = _minimal_trace_frame_meta()
+        diag_input = DiagnosticsInput(
+            trace=trace,
+            frame=frame,
+            meta=meta,
+            causal_graph=_simple_confounder_graph(),
+            identification_requests=[
+                {"treatment": "X", "outcome": "Y", "proposed_adjustment_set": ("Z",)}
+            ],
+        )
+        artefact = DiagnosticsService().evaluate(diag_input).diagnostics_artefact
+        restored = DiagnosticsArtefact.from_dict(artefact.to_dict())
+        assert restored.fingerprint() == artefact.fingerprint()
+        assert restored.graphical_identification.status == "computed"
+
+
+class TestEvaluateLatentStateIdentification:
+    """REQ-LATENT-001 wired into DiagnosticsService.evaluate()."""
+
+    def test_ordinary_fit_is_not_applicable(self):
+        trace, frame, meta = _minimal_trace_frame_meta()
+        diag_input = DiagnosticsInput(trace=trace, frame=frame, meta=meta)
+        artefact = DiagnosticsService().evaluate(diag_input).diagnostics_artefact
+        assert artefact.latent_state_identification.status == "not_applicable"
+
+    def test_candidate_a_fit_with_no_declaration_is_not_identified(self):
+        """REQ-LATENT-001's fail-closed contract: no declaration means
+        not_identified, never a fabricated pass."""
+        trace, frame, meta = _minimal_candidate_a_trace_frame_meta()
+        diag_input = DiagnosticsInput(trace=trace, frame=frame, meta=meta)
+        artefact = DiagnosticsService().evaluate(diag_input).diagnostics_artefact
+
+        section = artefact.latent_state_identification
+        assert section.status == "computed", section.error
+        results = {r["latent_state_id"]: r for r in section.payload["results"]}
+        assert (
+            results["candidate_a_latent_branded_search_demand"]["status"]
+            == "not_identified"
+        )
+        assert (
+            "does not prove"
+            in results["candidate_a_latent_branded_search_demand"]["disclaimer"]
+        )
+
+    def test_candidate_a_fit_with_declaration_but_no_chain_draws_is_review_required(
+        self,
+    ):
+        """A declared identifying strategy that has not yet been
+        empirically checked under sampling is review_required, not a
+        fabricated pass."""
+        from ancestry_mmm.core.latent_state_identification import (
+            LatentStateIdentificationDeclaration,
+        )
+
+        trace, frame, meta = _minimal_candidate_a_trace_frame_meta()
+        declaration = LatentStateIdentificationDeclaration(
+            latent_state_id="candidate_a_latent_branded_search_demand",
+            strategy_kind="anchored_to_observed",
+            description="Anchored to observed branded-search impressions.",
+        )
+        diag_input = DiagnosticsInput(
+            trace=trace,
+            frame=frame,
+            meta=meta,
+            latent_state_declarations=[declaration],
+        )
+        artefact = DiagnosticsService().evaluate(diag_input).diagnostics_artefact
+
+        section = artefact.latent_state_identification
+        assert section.status == "computed", section.error
+        results = {r["latent_state_id"]: r for r in section.payload["results"]}
+        assert (
+            results["candidate_a_latent_branded_search_demand"]["status"]
+            == "review_required"
+        )
+
+    def test_section_round_trips_and_is_fingerprinted(self):
+        trace, frame, meta = _minimal_candidate_a_trace_frame_meta()
+        diag_input = DiagnosticsInput(trace=trace, frame=frame, meta=meta)
+        artefact = DiagnosticsService().evaluate(diag_input).diagnostics_artefact
+        restored = DiagnosticsArtefact.from_dict(artefact.to_dict())
+        assert restored.fingerprint() == artefact.fingerprint()
+        assert restored.latent_state_identification.status == "computed"
+
+
+class TestEvaluateExperimentCalibration:
+    """REQ-EXPMODE-001 / REQ-CALIB-001 wired into
+    DiagnosticsService.evaluate()."""
+
+    def test_no_evidence_supplied_is_not_applicable(self):
+        trace, frame, meta = _minimal_trace_frame_meta()
+        diag_input = DiagnosticsInput(trace=trace, frame=frame, meta=meta)
+        artefact = DiagnosticsService().evaluate(diag_input).diagnostics_artefact
+        assert artefact.experiment_calibration.status == "not_applicable"
+
+    def test_experiment_provenance_report_is_computed_and_kept_separate(self):
+        from ancestry_mmm.core.experiments import (
+            ExperimentProvenanceEntry,
+            ExperimentProvenanceReport,
+        )
+
+        report = ExperimentProvenanceReport(
+            model_id="model-1",
+            model_version="1",
+            entries=(
+                ExperimentProvenanceEntry(
+                    experiment_id="exp-1",
+                    experiment_version=1,
+                    evidence_mode="validation_only",
+                    estimand="total_effect_tv_on_new",
+                    observed_effect_estimate=0.12,
+                    effect_uncertainty=0.03,
+                ),
+            ),
+        )
+        trace, frame, meta = _minimal_trace_frame_meta()
+        diag_input = DiagnosticsInput(
+            trace=trace,
+            frame=frame,
+            meta=meta,
+            experiment_provenance_report=report,
+        )
+        artefact = DiagnosticsService().evaluate(diag_input).diagnostics_artefact
+
+        section = artefact.experiment_calibration
+        assert section.status == "computed", section.error
+        assert section.payload["experiments"]["entries"][0]["experiment_id"] == "exp-1"
+        # Never collapsed into an average - each entry retains its own
+        # estimand/uncertainty individually.
+        assert "effect_uncertainty" in section.payload["experiments"]["entries"][0]
+        assert section.payload["calibration_comparison"] is None
+
+    def test_section_round_trips_and_is_fingerprinted(self):
+        from ancestry_mmm.core.experiments import (
+            ExperimentProvenanceEntry,
+            ExperimentProvenanceReport,
+        )
+
+        report = ExperimentProvenanceReport(
+            model_id="model-1",
+            model_version="1",
+            entries=(
+                ExperimentProvenanceEntry(
+                    experiment_id="exp-1",
+                    experiment_version=1,
+                    evidence_mode="validation_only",
+                    estimand="total_effect_tv_on_new",
+                    observed_effect_estimate=0.12,
+                    effect_uncertainty=0.03,
+                ),
+            ),
+        )
+        trace, frame, meta = _minimal_trace_frame_meta()
+        diag_input = DiagnosticsInput(
+            trace=trace,
+            frame=frame,
+            meta=meta,
+            experiment_provenance_report=report,
+        )
+        artefact = DiagnosticsService().evaluate(diag_input).diagnostics_artefact
+        restored = DiagnosticsArtefact.from_dict(artefact.to_dict())
+        assert restored.fingerprint() == artefact.fingerprint()
+
+
+class TestRunHistoricalAndStructuralValidationCheck:
+    """REQ-LEAK-001 / REQ-STAB-001 wired into DiagnosticsService via
+    `run_historical_and_structural_validation_check` - the same pure,
+    immutable "replace one section, carry the rest" pattern as
+    `run_backtest`/`run_prior_predictive_check`."""
+
+    def _fold(self, fold_id: str):
+        from ancestry_mmm.core.validation_folds import ValidationFold
+
+        return ValidationFold(
+            fold_id=fold_id,
+            fold_manifest_version=1,
+            train_start="2024-01-01",
+            train_end="2024-06-01",
+            test_start="2024-06-08",
+            test_end="2024-07-01",
+        )
+
+    def _safe_assessment(self, fold_id: str):
+        from ancestry_mmm.core.validation_folds import (
+            LEAKAGE_STATUS_SAFE,
+            FoldReconstructionAssessment,
+            VariableReconstructionAssessment,
+        )
+
+        return FoldReconstructionAssessment(
+            fold_id=fold_id,
+            per_variable=(
+                VariableReconstructionAssessment(
+                    variable_id="tv_spend",
+                    market="UK",
+                    status=LEAKAGE_STATUS_SAFE,
+                    reason="Source version pinned before fold cutoff.",
+                ),
+            ),
+        )
+
+    def _unsafe_assessment(self, fold_id: str):
+        from ancestry_mmm.core.validation_folds import (
+            LEAKAGE_STATUS_CANNOT_VERIFY,
+            FoldReconstructionAssessment,
+            VariableReconstructionAssessment,
+        )
+
+        return FoldReconstructionAssessment(
+            fold_id=fold_id,
+            per_variable=(
+                VariableReconstructionAssessment(
+                    variable_id="tv_spend",
+                    market="UK",
+                    status=LEAKAGE_STATUS_CANNOT_VERIFY,
+                    reason="Source version pinned after fold cutoff.",
+                ),
+            ),
+            limitations=("Cannot verify a later source version.",),
+        )
+
+    def _snapshot(self, fold_id: str, value: float):
+        from ancestry_mmm.core.structural_stability import FoldParameterSnapshot
+
+        return FoldParameterSnapshot(
+            fold_id=fold_id, point_values={"hill_K__TV": value}
+        )
+
+    def test_missing_fold_history_is_not_computed(self):
+        """No folds supplied at all (e.g. a project with no historical
+        support yet) - both sections must be not_computed, never a
+        fabricated evidence payload."""
+        base = DiagnosticsArtefact()
+        result = DiagnosticsService().run_historical_and_structural_validation_check(
+            base,
+            results_df=pd.DataFrame(),
+            folds=(),
+            assessments=(),
+            snapshots=(),
+        )
+        assert result.historical_validation.status == "not_computed"
+        assert result.structural_stability.status == "not_computed"
+
+    def test_folds_assessed_but_none_leakage_safe_is_still_computed_evidence(self):
+        """Every fold rejected is still genuine evidence - not_computed
+        would silently hide that the evaluation actually ran."""
+        fold = self._fold("fold-1")
+        base = DiagnosticsArtefact()
+        result = DiagnosticsService().run_historical_and_structural_validation_check(
+            base,
+            results_df=pd.DataFrame(
+                [
+                    {
+                        "fold_id": "fold-1",
+                        "outcome_id": None,
+                        "leakage_safe": False,
+                        "skipped_reason": "cannot_verify",
+                    }
+                ]
+            ),
+            folds=(fold,),
+            assessments=(self._unsafe_assessment("fold-1"),),
+            snapshots=(),
+        )
+        assert result.historical_validation.status == "computed"
+        assert result.historical_validation.payload["n_folds_leakage_safe"] == 0
+        # No fold cleared, so no snapshot exists - structural stability
+        # cannot be computed, and must say so explicitly.
+        assert result.structural_stability.status == "not_computed"
+
+    def test_folds_with_snapshots_compute_both_sections_from_one_fit(self):
+        fold_a, fold_b = self._fold("fold-1"), self._fold("fold-2")
+        base = DiagnosticsArtefact()
+        result = DiagnosticsService().run_historical_and_structural_validation_check(
+            base,
+            results_df=pd.DataFrame(
+                [
+                    {
+                        "fold_id": "fold-1",
+                        "outcome_id": "fh_new_gsa",
+                        "r_squared": 0.8,
+                        "mape_pct": 12.0,
+                        "leakage_safe": True,
+                        "skipped_reason": None,
+                    },
+                    {
+                        "fold_id": "fold-2",
+                        "outcome_id": "fh_new_gsa",
+                        "r_squared": 0.75,
+                        "mape_pct": 14.0,
+                        "leakage_safe": True,
+                        "skipped_reason": None,
+                    },
+                ]
+            ),
+            folds=(fold_a, fold_b),
+            assessments=(
+                self._safe_assessment("fold-1"),
+                self._safe_assessment("fold-2"),
+            ),
+            snapshots=(
+                self._snapshot("fold-1", 100.0),
+                self._snapshot("fold-2", 110.0),
+            ),
+        )
+        assert result.historical_validation.status == "computed"
+        assert result.historical_validation.payload["n_folds_leakage_safe"] == 2
+        assert result.structural_stability.status == "computed"
+        per_param = result.structural_stability.payload["per_parameter"]
+        assert len(per_param) == 1
+        assert per_param[0]["parameter_name"] == "hill_K__TV"
+        assert per_param[0]["point_range"] == pytest.approx(10.0)
+        # REQ-STAB-001: never a status/verdict/pass/fail field.
+        for forbidden in ("status", "verdict", "pass", "fail", "stable", "unstable"):
+            assert forbidden not in per_param[0]
+
+    def test_update_is_pure_and_carries_other_sections_over_unchanged(self):
+        trace, frame, meta = _minimal_trace_frame_meta()
+        diag_input = DiagnosticsInput(trace=trace, frame=frame, meta=meta)
+        artefact = DiagnosticsService().evaluate(diag_input).diagnostics_artefact
+
+        fold = self._fold("fold-1")
+        updated = DiagnosticsService().run_historical_and_structural_validation_check(
+            artefact,
+            results_df=pd.DataFrame(
+                [
+                    {
+                        "fold_id": "fold-1",
+                        "outcome_id": "fh_new_gsa",
+                        "r_squared": 0.8,
+                        "mape_pct": 12.0,
+                        "leakage_safe": True,
+                        "skipped_reason": None,
+                    }
+                ]
+            ),
+            folds=(fold,),
+            assessments=(self._safe_assessment("fold-1"),),
+            snapshots=(self._snapshot("fold-1", 100.0),),
+        )
+        # The original artefact object is untouched.
+        assert artefact.historical_validation.status == "not_computed"
+        # Every other already-computed section carries over unchanged.
+        assert updated.convergence.payload == artefact.convergence.payload
+        assert updated.error_metrics.payload == artefact.error_metrics.payload
+        assert updated.historical_validation.status == "computed"
+        assert updated.structural_stability.status == "computed"
+        assert updated.fingerprint() != artefact.fingerprint()
+
+    def test_upgrades_a_pre_v8_artefact_schema_version(self):
+        """Mirrors run_prior_predictive_check's own upgrade contract: an
+        artefact computed before schema v8 must be upgraded to current so
+        to_dict()/from_dict() can round-trip the newly-added evidence."""
+        pre_v8 = DiagnosticsArtefact(schema_version=7)
+        fold = self._fold("fold-1")
+        updated = DiagnosticsService().run_historical_and_structural_validation_check(
+            pre_v8,
+            results_df=pd.DataFrame(
+                [{"fold_id": "fold-1", "leakage_safe": True, "skipped_reason": None}]
+            ),
+            folds=(fold,),
+            assessments=(self._safe_assessment("fold-1"),),
+            snapshots=(self._snapshot("fold-1", 100.0),),
+        )
+        assert updated.schema_version == CURRENT_DIAGNOSTICS_SCHEMA_VERSION
+        assert updated.diagnostics_version == CURRENT_DIAGNOSTICS_VERSION
+
+        round_tripped = DiagnosticsArtefact.from_dict(updated.to_dict())
+        assert round_tripped.historical_validation.status == "computed"
+        assert round_tripped.fingerprint() == updated.fingerprint()
+
+
+class TestSchemaV8StalenessAndReadiness:
+    """REQ-VAL-001's existing `diagnostic_artefact_fingerprint` staleness
+    mechanism (`core.validation_policy.readiness_matches_current_evidence`,
+    `ApprovalReadiness`) must react to schema-v8 evidence changes
+    automatically - no new policy/threshold code is introduced by this
+    work package."""
+
+    def test_readiness_becomes_stale_when_historical_validation_evidence_is_added(
+        self,
+    ):
+        from ancestry_mmm.core.validation_policy import (
+            ApprovalReadiness,
+            readiness_matches_current_evidence,
+        )
+        from ancestry_mmm.core.validation_folds import ValidationFold
+        from ancestry_mmm.core.validation_folds import (
+            LEAKAGE_STATUS_SAFE,
+            FoldReconstructionAssessment,
+            VariableReconstructionAssessment,
+        )
+        from ancestry_mmm.core.structural_stability import FoldParameterSnapshot
+
+        trace, frame, meta = _minimal_trace_frame_meta()
+        diag_input = DiagnosticsInput(trace=trace, frame=frame, meta=meta)
+        artefact = DiagnosticsService().evaluate(diag_input).diagnostics_artefact
+
+        readiness = ApprovalReadiness(
+            readiness_artefact_id="r1",
+            policy_fingerprint="policy-fp",
+            model_identity_fingerprint="model-fp",
+            diagnostic_artefact_fingerprint=artefact.fingerprint(),
+            overall_ready=True,
+        )
+        # Bound to the artefact's fingerprint as it stood before WP2
+        # evidence was added - still current.
+        assert readiness_matches_current_evidence(
+            readiness,
+            policy_fingerprint="policy-fp",
+            model_identity_fingerprint="model-fp",
+            diagnostic_artefact_fingerprint=artefact.fingerprint(),
+        )
+
+        fold = ValidationFold(
+            fold_id="fold-1",
+            fold_manifest_version=1,
+            train_start="2024-01-01",
+            train_end="2024-06-01",
+            test_start="2024-06-08",
+            test_end="2024-07-01",
+        )
+        assessment = FoldReconstructionAssessment(
+            fold_id="fold-1",
+            per_variable=(
+                VariableReconstructionAssessment(
+                    variable_id="tv_spend",
+                    market="UK",
+                    status=LEAKAGE_STATUS_SAFE,
+                    reason="Source version pinned before fold cutoff.",
+                ),
+            ),
+        )
+        snapshot = FoldParameterSnapshot(
+            fold_id="fold-1", point_values={"hill_K__TV": 100.0}
+        )
+        updated_artefact = (
+            DiagnosticsService().run_historical_and_structural_validation_check(
+                artefact,
+                results_df=pd.DataFrame(
+                    [
+                        {
+                            "fold_id": "fold-1",
+                            "leakage_safe": True,
+                            "skipped_reason": None,
+                        }
+                    ]
+                ),
+                folds=(fold,),
+                assessments=(assessment,),
+                snapshots=(snapshot,),
+            )
+        )
+
+        # The stored readiness was evaluated against the artefact before
+        # this new evidence existed - it must now be stale.
+        assert not readiness_matches_current_evidence(
+            readiness,
+            policy_fingerprint="policy-fp",
+            model_identity_fingerprint="model-fp",
+            diagnostic_artefact_fingerprint=updated_artefact.fingerprint(),
+        )

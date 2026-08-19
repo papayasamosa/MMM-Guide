@@ -41,6 +41,7 @@ from ancestry_mmm.core.diagnostics import (
     error_metrics_by_outcome,
     in_sample_fit,
     posterior_predictive_coverage,
+    posterior_predictive_metric_distributions,
     curve_plausibility_checks,
     expanding_window_backtest,
     predictive_density_summary,
@@ -51,6 +52,7 @@ from ancestry_mmm.core.market_specific_diagnostics import (
     error_metrics_by_outcome_market_specific,
     in_sample_fit_market_specific,
     curve_plausibility_checks_market_specific,
+    posterior_predictive_metric_distributions_market_specific,
     residual_temporal_diagnostics_market_specific,
 )
 from ancestry_mmm.core.identification_diagnostics import (
@@ -77,6 +79,37 @@ from ancestry_mmm.core.search_capacity import (
     validate_candidate_a_spec,
 )
 from ancestry_mmm.core.search_objects import SearchObjectDefinition
+from ancestry_mmm.core.causal_graph import CausalGraph
+from ancestry_mmm.core.estimand_identification import (
+    EFFECT_TYPE_TOTAL,
+    assess_backdoor_identification,
+)
+from ancestry_mmm.core.latent_state_identification import (
+    LatentStateIdentificationDeclaration,
+    assess_latent_state_identification,
+)
+from ancestry_mmm.core.calibration_comparison import (
+    CalibratedVsUncalibratedComparisonArtefact,
+)
+from ancestry_mmm.core.experiments import ExperimentProvenanceReport
+from ancestry_mmm.core.validation_folds import (
+    FoldReconstructionAssessment,
+    ValidationFold,
+)
+from ancestry_mmm.core.structural_stability import (
+    FoldParameterSnapshot,
+    assess_structural_stability,
+)
+
+# Work Package 2 (`Media-Mix-Lab: Coding LLM Next Steps After PR #286`,
+# canonical Diagnostics evidence integration): the stable identifier this
+# module uses to diagnose Candidate A's latent branded-search-demand state
+# via `core.latent_state_identification`. This is a diagnostics-layer
+# bookkeeping label only - it asserts no specific identifying anchor for
+# the state (REQ-LATENT-001's own substantive anchor choice, Part 6
+# `MD-021`, remains an explicitly unresolved decision this record does not
+# make).
+CANDIDATE_A_LATENT_DEMAND_STATE_ID = "candidate_a_latent_branded_search_demand"
 
 # ---------------------------------------------------------------------------
 # Diagnostics version authority (Work Package 1)
@@ -138,8 +171,62 @@ from ancestry_mmm.core.search_objects import SearchObjectDefinition
 # ``causal_graph_engine == core.search_capacity.SEARCH_CANDIDATE_A_ENGINE``;
 # ``not_applicable`` for every ordinary fit. Another schema *shape* change,
 # same precedent as v5 -> v6.
-CURRENT_DIAGNOSTICS_SCHEMA_VERSION = 7
-CURRENT_DIAGNOSTICS_VERSION = "7.0.0"
+#
+# Work Package 2 (`Media-Mix-Lab: Coding LLM Next Steps After PR #286`,
+# canonical Diagnostics evidence integration): schema v7 -> v8 adds six
+# sections, wiring evidence types that already existed as standalone core/
+# application objects (REQ-PPD-001, REQ-LEAK-001/REQ-STAB-001,
+# REQ-IDENT-001, REQ-LATENT-001, REQ-EXPMODE-001/REQ-CALIB-001) into one
+# persisted artefact for the first time, per each record's own deferred
+# "DiagnosticsArtefact/Diagnostics-page integration" open item:
+#
+# - ``posterior_predictive_metric_distributions`` (REQ-PPD-001): computed
+#   inline in ``evaluate()`` from the same trace/frame/meta/params already
+#   used for ``error_metrics`` - cheap, no extra fit required.
+# - ``historical_validation`` / ``structural_stability`` (REQ-LEAK-001 /
+#   REQ-STAB-001): NOT computed inline - real per-fold PyMC re-fitting is
+#   expensive (`application.fold_refit_service.run_leakage_safe_fold_
+#   refit`/`run_leakage_safe_fold_refit_from_sources`). A caller runs that
+#   separately and passes the resulting folds/assessments/snapshots to
+#   ``run_historical_and_structural_validation_check`` - the same pure,
+#   immutable "replace one section, carry the rest" pattern as
+#   ``run_backtest``/``run_prior_predictive_check``. Both sections are
+#   populated from exactly one fold-refit run (never two divergent fits
+#   for the same fold), consistent with REQ-LEAK-001 requirement 6's "the
+#   two must not each derive their own, potentially divergent, notion of
+#   what a historical fold reconstructed."
+# - ``graphical_identification`` (REQ-IDENT-001): computed inline when the
+#   caller supplies a ``causal_graph`` and one or more
+#   ``identification_requests`` - cheap (no PyMC), analogous to
+#   ``market_channel_capability``'s "computed only when the optional input
+#   is supplied" pattern. Every result carries `core.
+#   estimand_identification.GRAPHICAL_IDENTIFICATION_DISCLAIMER`
+#   unchanged (REQ-IDENT-001 requirement 1) - this module never strips or
+#   paraphrases it.
+# - ``latent_state_identification`` (REQ-LATENT-001): computed inline,
+#   dispatched the same way ``search_capacity`` already is - `meta.
+#   causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE` determines whether
+#   Candidate A's latent demand state is in scope; declarations/chain
+#   draws are optional caller-supplied evidence. No declaration means
+#   `not_identified`, never a fabricated pass (REQ-LATENT-001's own
+#   fail-closed contract, unchanged here).
+# - ``experiment_calibration`` (REQ-EXPMODE-001 / REQ-CALIB-001): computed
+#   inline from an optional caller-supplied `ExperimentProvenanceReport`/
+#   `CalibratedVsUncalibratedComparisonArtefact` pair - `not_applicable`
+#   when neither is supplied, since no experiment-registry/calibration
+#   persistence wiring exists in this repository yet (deferred to the
+#   Experiment Evidence workflow work package; this record only adds the
+#   artefact slot the evidence will occupy once that workflow exists).
+#
+# None of these six sections introduces a new blocking threshold - every
+# one is descriptive evidence only, exactly like every other
+# DiagnosticsArtefact section (REQ-VAL-001's "evidence computation and
+# approval policy are separate"; `core.validation_policy.ThresholdPolicy`/
+# `ApprovalReadiness` are unchanged by this schema addition - the existing
+# `diagnostic_artefact_fingerprint` staleness mechanism already reacts to
+# this artefact's now-larger fingerprint automatically).
+CURRENT_DIAGNOSTICS_SCHEMA_VERSION = 8
+CURRENT_DIAGNOSTICS_VERSION = "8.0.0"
 
 # ---------------------------------------------------------------------------
 # Section status
@@ -350,6 +437,24 @@ class DiagnosticsArtefact:
     search_capacity: DiagnosticSection = field(
         default_factory=lambda: DiagnosticSection(status="not_computed", payload=None)
     )
+    posterior_predictive_metric_distributions: DiagnosticSection = field(
+        default_factory=lambda: DiagnosticSection(status="not_computed", payload=None)
+    )
+    historical_validation: DiagnosticSection = field(
+        default_factory=lambda: DiagnosticSection(status="not_computed", payload=None)
+    )
+    structural_stability: DiagnosticSection = field(
+        default_factory=lambda: DiagnosticSection(status="not_computed", payload=None)
+    )
+    graphical_identification: DiagnosticSection = field(
+        default_factory=lambda: DiagnosticSection(status="not_computed", payload=None)
+    )
+    latent_state_identification: DiagnosticSection = field(
+        default_factory=lambda: DiagnosticSection(status="not_computed", payload=None)
+    )
+    experiment_calibration: DiagnosticSection = field(
+        default_factory=lambda: DiagnosticSection(status="not_computed", payload=None)
+    )
 
     # Global warnings and errors
     global_warnings: Tuple[str, ...] = ()
@@ -383,6 +488,16 @@ class DiagnosticsArtefact:
             "predictive_density": self.predictive_density.fingerprint_payload(),
             "market_channel_capability": self.market_channel_capability.fingerprint_payload(),
             "search_capacity": self.search_capacity.fingerprint_payload(),
+            "posterior_predictive_metric_distributions": (
+                self.posterior_predictive_metric_distributions.fingerprint_payload()
+            ),
+            "historical_validation": self.historical_validation.fingerprint_payload(),
+            "structural_stability": self.structural_stability.fingerprint_payload(),
+            "graphical_identification": self.graphical_identification.fingerprint_payload(),
+            "latent_state_identification": (
+                self.latent_state_identification.fingerprint_payload()
+            ),
+            "experiment_calibration": self.experiment_calibration.fingerprint_payload(),
             "global_warnings": sorted(self.global_warnings),
             "global_errors": sorted(self.global_errors),
             "settings": tuple(sorted(self.settings)),
@@ -416,6 +531,14 @@ class DiagnosticsArtefact:
             "predictive_density": self.predictive_density.to_dict(),
             "market_channel_capability": self.market_channel_capability.to_dict(),
             "search_capacity": self.search_capacity.to_dict(),
+            "posterior_predictive_metric_distributions": (
+                self.posterior_predictive_metric_distributions.to_dict()
+            ),
+            "historical_validation": self.historical_validation.to_dict(),
+            "structural_stability": self.structural_stability.to_dict(),
+            "graphical_identification": self.graphical_identification.to_dict(),
+            "latent_state_identification": self.latent_state_identification.to_dict(),
+            "experiment_calibration": self.experiment_calibration.to_dict(),
             "global_warnings": list(self.global_warnings),
             "global_errors": list(self.global_errors),
             "settings": list(self.settings),
@@ -424,10 +547,10 @@ class DiagnosticsArtefact:
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "DiagnosticsArtefact":
-        """Load from a dict. Supports schema v1 (legacy_incomplete), v2, v3
-        and v4 (each upgraded in place to the current shape - see the class
-        docstring for why this is not also marked legacy_incomplete), and
-        v5.
+        """Load from a dict. Supports schema v1 (legacy_incomplete) through
+        the current schema v8 (each upgraded in place to the current shape
+        - see the class docstring for why this is not also marked
+        legacy_incomplete).
 
         `schema_version` is validated strictly via
         `_validate_diagnostics_schema_version` when the key is present -
@@ -445,7 +568,7 @@ class DiagnosticsArtefact:
         if sv == 1:
             # Schema v1 → wrap summaries into sections, mark legacy_incomplete
             return cls._from_v1(d)
-        if sv in (2, 3, 4, 5, 6, 7):
+        if sv in (2, 3, 4, 5, 6, 7, 8):
             if sv >= 3:
                 error_metrics_sec = DiagnosticSection.from_dict(
                     d.get("error_metrics", {})
@@ -536,6 +659,74 @@ class DiagnosticsArtefact:
                     "Search capacity evidence (REQ-SEARCH-002) was added "
                     "in schema v7.",
                 )
+            if sv >= 8:
+                ppd_sec = DiagnosticSection.from_dict(
+                    d.get("posterior_predictive_metric_distributions", {})
+                )
+                historical_validation_sec = DiagnosticSection.from_dict(
+                    d.get("historical_validation", {})
+                )
+                structural_stability_sec = DiagnosticSection.from_dict(
+                    d.get("structural_stability", {})
+                )
+                graphical_identification_sec = DiagnosticSection.from_dict(
+                    d.get("graphical_identification", {})
+                )
+                latent_state_identification_sec = DiagnosticSection.from_dict(
+                    d.get("latent_state_identification", {})
+                )
+                experiment_calibration_sec = DiagnosticSection.from_dict(
+                    d.get("experiment_calibration", {})
+                )
+            else:
+                # Work Package 2 (canonical Diagnostics evidence
+                # integration): none of these six sections existed when a
+                # schema-v2..v7 artefact was computed - not_computed,
+                # never a fabricated payload (mirrors every earlier
+                # schema-bump precedent above).
+                ppd_sec = DiagnosticSection(
+                    status="not_computed",
+                    payload=None,
+                    error=f"Not available in schema v{sv} - posterior "
+                    "predictive metric distribution evidence (REQ-PPD-001) "
+                    "was added in schema v8.",
+                )
+                historical_validation_sec = DiagnosticSection(
+                    status="not_computed",
+                    payload=None,
+                    error=f"Not available in schema v{sv} - point-in-time "
+                    "historical validation evidence (REQ-LEAK-001) was "
+                    "added in schema v8.",
+                )
+                structural_stability_sec = DiagnosticSection(
+                    status="not_computed",
+                    payload=None,
+                    error=f"Not available in schema v{sv} - structural "
+                    "stability evidence (REQ-STAB-001) was added in "
+                    "schema v8.",
+                )
+                graphical_identification_sec = DiagnosticSection(
+                    status="not_computed",
+                    payload=None,
+                    error=f"Not available in schema v{sv} - estimand-"
+                    "specific graphical identification evidence "
+                    "(REQ-IDENT-001) was added in schema v8.",
+                )
+                latent_state_identification_sec = DiagnosticSection(
+                    status="not_computed",
+                    payload=None,
+                    error=f"Not available in schema v{sv} - latent-state "
+                    "scale/location identification evidence "
+                    "(REQ-LATENT-001) was added in schema v8.",
+                )
+                experiment_calibration_sec = DiagnosticSection(
+                    status="not_computed",
+                    payload=None,
+                    error=f"Not available in schema v{sv} - experiment "
+                    "provenance / calibrated-vs-uncalibrated comparison "
+                    "evidence (REQ-EXPMODE-001 / REQ-CALIB-001) was added "
+                    "in schema v8.",
+                )
             return cls(
                 artefact_id=d.get("artefact_id", ""),
                 diagnostics_version=d.get("diagnostics_version", "2.0.0"),
@@ -563,6 +754,12 @@ class DiagnosticsArtefact:
                 predictive_density=predictive_density_sec,
                 market_channel_capability=market_channel_capability_sec,
                 search_capacity=search_capacity_sec,
+                posterior_predictive_metric_distributions=ppd_sec,
+                historical_validation=historical_validation_sec,
+                structural_stability=structural_stability_sec,
+                graphical_identification=graphical_identification_sec,
+                latent_state_identification=latent_state_identification_sec,
+                experiment_calibration=experiment_calibration_sec,
                 global_warnings=tuple(d.get("global_warnings", [])),
                 global_errors=tuple(d.get("global_errors", [])),
                 settings=tuple(tuple(x) for x in d.get("settings", [])),
@@ -701,6 +898,41 @@ class DiagnosticsInput:
     ] = ()
     candidate_a_paid_search_cap: Optional[np.ndarray] = None
     candidate_a_paid_search_delivery: Optional[np.ndarray] = None
+    # Work Package 2 (canonical Diagnostics evidence integration,
+    # `Media-Mix-Lab: Coding LLM Next Steps After PR #286`): optional
+    # governed evidence for the six new schema-v8 sections. Every field
+    # here is caller-supplied, already-computed evidence (mirroring
+    # `candidate_a_spec`'s own "optional, additive" pattern above) - this
+    # service performs no fitting, graph editing, or identification-anchor
+    # invention of its own.
+    #
+    # REQ-IDENT-001 (graphical identification): a requested estimand,
+    # e.g. {"treatment": "tv_spend", "outcome": "fh_new_gsa",
+    # "effect_type": "total", "proposed_adjustment_set": ("seasonality",)}.
+    # `effect_type` defaults to "total" (the only effect type this
+    # module's checker supports natively - see
+    # `core.estimand_identification`'s own module docstring; requesting
+    # "direct" is still accepted here and correctly resolves to
+    # `unsupported_by_current_checker`, never silently treated as total).
+    causal_graph: Optional[CausalGraph] = None
+    identification_requests: Sequence[Mapping[str, Any]] = ()
+    # REQ-LATENT-001 (latent-state identification): optional declarations
+    # and, optionally, per-chain posterior draws for each declared state's
+    # representative scalar, keyed by latent_state_id.
+    latent_state_declarations: Sequence[LatentStateIdentificationDeclaration] = ()
+    latent_state_chain_draws: Mapping[str, Tuple[Tuple[float, ...], ...]] = field(
+        default_factory=dict
+    )
+    # REQ-EXPMODE-001 / REQ-CALIB-001 (experiment provenance / calibrated-
+    # vs-uncalibrated comparison): both optional - neither the experiment
+    # registry nor a calibration mechanism has persistence/UI wiring in
+    # this repository yet (see each record's own "Capability status"), so
+    # this section stays `not_applicable` until a caller (a future
+    # Experiment Evidence workflow) supplies one or both.
+    experiment_provenance_report: Optional[ExperimentProvenanceReport] = None
+    calibration_comparison_artefact: Optional[
+        CalibratedVsUncalibratedComparisonArtefact
+    ] = None
 
 
 @dataclass
@@ -876,6 +1108,45 @@ class DiagnosticsService:
             residual_diagnostics_sec = DiagnosticSection(
                 status="failed", payload=None, error=str(exc)
             )
+
+        # --- 2d. Posterior predictive metric distributions (REQ-PPD-001,
+        # Work Package 2) - reuses the trace/frame/meta/params already
+        # available for error_metrics above (no extra fit; `trace.
+        # posterior["mu"]` is already materialised for the fitted model).
+        # A separate try/except from error_metrics above so a failure in
+        # one never hides the other - the same "independent single-
+        # authoritative calculation" pattern every other section here
+        # follows. ---
+        ppd_sec: DiagnosticSection
+        try:
+            if diag_input.model_type == "market_specific":
+                market_ppd_params = extract_market_specific_posterior_params(
+                    diag_input.trace, diag_input.meta
+                )
+                ppd_df = posterior_predictive_metric_distributions_market_specific(
+                    diag_input.trace,
+                    diag_input.frame,
+                    diag_input.meta,
+                    market_ppd_params,
+                    credible_mass=diag_input.credible_mass,
+                )
+            else:
+                shared_ppd_params = extract_posterior_params(
+                    diag_input.trace, diag_input.meta
+                )
+                ppd_df = posterior_predictive_metric_distributions(
+                    diag_input.trace,
+                    diag_input.frame,
+                    diag_input.meta,
+                    shared_ppd_params,
+                    credible_mass=diag_input.credible_mass,
+                )
+            ppd_sec = DiagnosticSection(
+                status="computed", payload=ppd_df.to_dict(orient="records")
+            )
+        except Exception as exc:
+            errors.append(f"Posterior predictive metric distributions failed: {exc}")
+            ppd_sec = DiagnosticSection(status="failed", payload=None, error=str(exc))
 
         # --- 3. PPC coverage (single authoritative calculation) ---
         ppc_sec: DiagnosticSection
@@ -1195,6 +1466,144 @@ class DiagnosticsService:
                     status="failed", payload=None, error=str(exc)
                 )
 
+        # --- 10. Estimand-specific graphical identification
+        # (REQ-IDENT-001, Work Package 2) - cheap (no PyMC, pure
+        # networkx.DiGraph analysis), computed only when the caller
+        # supplies both a `causal_graph` and at least one identification
+        # request; `not_computed` (never fabricated) otherwise. Every
+        # result carries `GRAPHICAL_IDENTIFICATION_DISCLAIMER` unchanged
+        # (REQ-IDENT-001 requirement 1) - this module never strips or
+        # paraphrases it. A `direct` effect_type request is passed through
+        # unchanged to `assess_backdoor_identification`, which itself
+        # returns `unsupported_by_current_checker` rather than silently
+        # applying the total-effect criterion (REQ-IDENT-001's own
+        # contract; never re-implemented or bypassed here). ---
+        graphical_identification_sec: DiagnosticSection
+        if diag_input.causal_graph is None or not diag_input.identification_requests:
+            graphical_identification_sec = DiagnosticSection(
+                status="not_computed",
+                payload=None,
+                error="No causal_graph and/or identification_requests were "
+                "supplied for this evaluation.",
+            )
+        else:
+            try:
+                identification_results = []
+                for request in diag_input.identification_requests:
+                    result = assess_backdoor_identification(
+                        diag_input.causal_graph,
+                        treatment=request["treatment"],
+                        outcome=request["outcome"],
+                        proposed_adjustment_set=tuple(
+                            request.get("proposed_adjustment_set") or ()
+                        ),
+                        effect_type=request.get("effect_type", EFFECT_TYPE_TOTAL),
+                    )
+                    identification_results.append(result.to_dict())
+                graphical_identification_sec = DiagnosticSection(
+                    status="computed",
+                    payload={"results": identification_results},
+                )
+            except Exception as exc:
+                errors.append(f"Graphical identification assessment failed: {exc}")
+                graphical_identification_sec = DiagnosticSection(
+                    status="failed", payload=None, error=str(exc)
+                )
+
+        # --- 11. Latent-state scale/location identification
+        # (REQ-LATENT-001, Work Package 2) - dispatched the same way
+        # search_capacity is above: `not_applicable` for a fit with no
+        # latent causal state at all. For a Candidate A fit, the latent
+        # branded-search-demand state (`CANDIDATE_A_LATENT_DEMAND_STATE_
+        # ID`) is always assessed - with no declaration supplied, this
+        # correctly resolves to `not_identified` (REQ-LATENT-001's
+        # fail-closed contract: Requirement 1 is directly unmet), never a
+        # fabricated pass. Any additional caller-declared latent states
+        # are assessed alongside it. ---
+        latent_state_identification_sec: DiagnosticSection
+        try:
+            declarations_by_id = {
+                d.latent_state_id: d for d in diag_input.latent_state_declarations
+            }
+            candidate_latent_state_ids = set(declarations_by_id)
+            if diag_input.meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE:
+                candidate_latent_state_ids.add(CANDIDATE_A_LATENT_DEMAND_STATE_ID)
+
+            if not candidate_latent_state_ids:
+                latent_state_identification_sec = DiagnosticSection(
+                    status="not_applicable",
+                    payload=None,
+                    error="No latent causal states are declared or fitted "
+                    "for this model.",
+                )
+            else:
+                latent_results = []
+                for latent_state_id in sorted(candidate_latent_state_ids):
+                    chain_draws = diag_input.latent_state_chain_draws.get(
+                        latent_state_id
+                    )
+                    latent_result = assess_latent_state_identification(
+                        latent_state_id,
+                        declarations_by_id.get(latent_state_id),
+                        chain_draws=chain_draws,
+                    )
+                    latent_results.append(latent_result.to_dict())
+                latent_state_identification_sec = DiagnosticSection(
+                    status="computed", payload={"results": latent_results}
+                )
+        except Exception as exc:
+            errors.append(f"Latent-state identification assessment failed: {exc}")
+            latent_state_identification_sec = DiagnosticSection(
+                status="failed", payload=None, error=str(exc)
+            )
+
+        # --- 12. Experiment provenance / calibrated-vs-uncalibrated
+        # comparison (REQ-EXPMODE-001 / REQ-CALIB-001, Work Package 2) -
+        # `not_applicable` when the caller supplies neither, since this
+        # repository has no experiment-registry or calibration-mechanism
+        # persistence/UI wiring yet (both explicitly deferred by their own
+        # requirement records to a future Experiment Evidence workflow).
+        # Kept as two clearly separated keys under one payload, never
+        # merged into one score - REQ-EXPMODE-001's "never collapsed into
+        # an average" and REQ-CALIB-001's "no aggregate/verdict field"
+        # both remain enforced by the underlying `to_dict()` calls this
+        # section reuses unchanged. ---
+        experiment_calibration_sec: DiagnosticSection
+        if (
+            diag_input.experiment_provenance_report is None
+            and diag_input.calibration_comparison_artefact is None
+        ):
+            experiment_calibration_sec = DiagnosticSection(
+                status="not_applicable",
+                payload=None,
+                error="No experiment evidence or calibrated-model "
+                "comparison was supplied for this project.",
+            )
+        else:
+            try:
+                experiment_calibration_sec = DiagnosticSection(
+                    status="computed",
+                    payload={
+                        "experiments": (
+                            diag_input.experiment_provenance_report.to_dict()
+                            if diag_input.experiment_provenance_report is not None
+                            else None
+                        ),
+                        "calibration_comparison": (
+                            diag_input.calibration_comparison_artefact.to_dict()
+                            if diag_input.calibration_comparison_artefact is not None
+                            else None
+                        ),
+                    },
+                )
+            except Exception as exc:
+                errors.append(
+                    f"Experiment / calibration comparison evidence failed: {exc}"
+                )
+                experiment_calibration_sec = DiagnosticSection(
+                    status="failed", payload=None, error=str(exc)
+                )
+
         # --- Build fingerprinted artefact ---
         identity_fp = (
             diag_input.model_identity.fingerprint()
@@ -1220,6 +1629,10 @@ class DiagnosticsService:
             residual_diagnostics=residual_diagnostics_sec,
             market_channel_capability=capability_sec,
             search_capacity=search_capacity_sec,
+            posterior_predictive_metric_distributions=ppd_sec,
+            graphical_identification=graphical_identification_sec,
+            latent_state_identification=latent_state_identification_sec,
+            experiment_calibration=experiment_calibration_sec,
             global_warnings=tuple(warnings),
             global_errors=tuple(errors),
             settings=(
@@ -1431,21 +1844,133 @@ class DiagnosticsService:
             ),
         )
 
+    def run_historical_and_structural_validation_check(
+        self,
+        artefact: DiagnosticsArtefact,
+        *,
+        results_df: pd.DataFrame,
+        folds: Sequence[ValidationFold],
+        assessments: Sequence[FoldReconstructionAssessment],
+        snapshots: Sequence[FoldParameterSnapshot],
+    ) -> DiagnosticsArtefact:
+        """Populate `historical_validation` (REQ-LEAK-001) and
+        `structural_stability` (REQ-STAB-001) together from one real
+        fold-refit run, and return a new artefact with only those two
+        sections replaced - the same pure, immutable update pattern as
+        `run_backtest`/`run_prior_predictive_check`/`run_predictive_
+        density_check`. Every other already-computed section is carried
+        over unchanged.
+
+        Callers obtain `results_df`/`folds`/`assessments`/`snapshots` from
+        exactly one call to `application.fold_refit_service.
+        run_leakage_safe_fold_refit` or `run_leakage_safe_fold_refit_
+        from_sources` (its `LeakageSafeFoldRefitResult`'s own four fields,
+        by name) - this method is deliberately decoupled from that
+        module's own result type (accepting the plain `core.
+        validation_folds`/`core.structural_stability` types instead) so
+        this service does not need to import the heavier fold-refit-
+        service module. Real per-fold PyMC re-fitting is expensive and is
+        never performed by this method itself - mirroring `core.
+        structural_stability`'s and `core.validation_folds`'s own "the
+        caller supplies the fold-local computation" contract.
+
+        `historical_validation` is `computed` whenever at least one fold
+        was assessed (even if every fold was rejected - that is itself
+        genuine evidence, never `not_computed`), `not_computed` only when
+        the caller passes no folds at all. `structural_stability` requires
+        at least one real per-fold snapshot (REQ-LEAK-001 requirement 6:
+        both sections share one notion of what a historical fold is, so a
+        fold rejected by the leakage-safety assessment never contributes a
+        snapshot to either section) - with zero snapshots, it is
+        `not_computed` with an explicit reason, never a fabricated
+        artefact from `core.structural_stability.assess_structural_
+        stability` (which itself raises on an empty snapshot tuple).
+        """
+        if not folds:
+            historical_validation_sec = DiagnosticSection(
+                status="not_computed",
+                payload=None,
+                error="No validation folds were supplied for this evaluation.",
+            )
+        else:
+            try:
+                historical_validation_sec = DiagnosticSection(
+                    status="computed",
+                    payload={
+                        "folds": [f.to_dict() for f in folds],
+                        "assessments": [a.to_dict() for a in assessments],
+                        "results": results_df.to_dict(orient="records"),
+                        "n_folds_assessed": len(folds),
+                        "n_folds_leakage_safe": sum(
+                            1 for a in assessments if a.is_leakage_safe
+                        ),
+                    },
+                )
+            except Exception as exc:
+                historical_validation_sec = DiagnosticSection(
+                    status="failed", payload=None, error=str(exc)
+                )
+
+        if not snapshots:
+            structural_stability_sec = DiagnosticSection(
+                status="not_computed",
+                payload=None,
+                error="No fold cleared leakage-safety/official-preparation "
+                "assessment with a real per-fold parameter snapshot - "
+                "structural-stability comparison requires at least one.",
+            )
+        else:
+            try:
+                stability_artefact = assess_structural_stability(tuple(snapshots))
+                structural_stability_sec = DiagnosticSection(
+                    status="computed", payload=stability_artefact.to_dict()
+                )
+            except Exception as exc:
+                structural_stability_sec = DiagnosticSection(
+                    status="failed", payload=None, error=str(exc)
+                )
+
+        return self._upgrade_schema_and_replace(
+            artefact,
+            historical_validation=historical_validation_sec,
+            structural_stability=structural_stability_sec,
+        )
+
+    def record_historical_and_structural_validation_failure(
+        self, artefact: DiagnosticsArtefact, error: str
+    ) -> DiagnosticsArtefact:
+        """For a caller-side failure before fold reconstruction/re-fitting
+        could even be attempted (e.g. a page failing to build the folds at
+        all - `application.fold_refit_service.run_leakage_safe_fold_refit`
+        raising before it ever returns a `LeakageSafeFoldRefitResult` for
+        `run_historical_and_structural_validation_check` to consume) - same
+        schema-upgrade contract as `record_prior_predictive_failure`/
+        `record_predictive_density_failure`, via the same shared helper, so
+        every failure route can never diverge."""
+        failed = DiagnosticSection(status="failed", payload=None, error=error)
+        return self._upgrade_schema_and_replace(
+            artefact,
+            historical_validation=failed,
+            structural_stability=failed,
+        )
+
     @staticmethod
     def _upgrade_schema_and_replace(
         artefact: DiagnosticsArtefact,
         *,
         prior_predictive: Optional[DiagnosticSection] = None,
         predictive_density: Optional[DiagnosticSection] = None,
+        historical_validation: Optional[DiagnosticSection] = None,
+        structural_stability: Optional[DiagnosticSection] = None,
     ) -> DiagnosticsArtefact:
-        """Replace `prior_predictive` and/or `predictive_density` on
-        `artefact` and, if `artefact` predates the current schema (computed
-        before those sections existed, or just restored from an older
-        imported bundle), upgrade its `schema_version`/`diagnostics_version`
-        to current at the same time. Explicit named parameters (never a
-        generic `**kwargs` splat into `dataclasses.replace`) so mypy can
-        verify each argument against `DiagnosticsArtefact`'s actual field
-        types.
+        """Replace one or more of `prior_predictive`, `predictive_density`,
+        `historical_validation`, `structural_stability` on `artefact` and,
+        if `artefact` predates the current schema (computed before those
+        sections existed, or just restored from an older imported bundle),
+        upgrade its `schema_version`/`diagnostics_version` to current at
+        the same time. Explicit named parameters (never a generic
+        `**kwargs` splat into `dataclasses.replace`) so mypy can verify
+        each argument against `DiagnosticsArtefact`'s actual field types.
 
         Without this, `dataclasses.replace` alone would leave an older
         artefact's `schema_version` unchanged while it now carries real
@@ -1454,9 +1979,9 @@ class DiagnosticsService:
         cannot round-trip: `from_dict` reads the (unchanged, pre-upgrade)
         `schema_version` and treats the new section as unavailable for that
         schema, discarding the evidence this call just added (Codex review,
-        PR #147). Every code path that replaces `prior_predictive` or
-        `predictive_density` - computed or failed - must go through this
-        helper, never a bare `dataclasses.replace(artefact, ...)`.
+        PR #147). Every code path that replaces any of these four sections
+        - computed or failed - must go through this helper, never a bare
+        `dataclasses.replace(artefact, ...)`.
         """
         schema_version = max(
             artefact.schema_version, CURRENT_DIAGNOSTICS_SCHEMA_VERSION
@@ -1479,6 +2004,16 @@ class DiagnosticsService:
                 predictive_density
                 if predictive_density is not None
                 else artefact.predictive_density
+            ),
+            historical_validation=(
+                historical_validation
+                if historical_validation is not None
+                else artefact.historical_validation
+            ),
+            structural_stability=(
+                structural_stability
+                if structural_stability is not None
+                else artefact.structural_stability
             ),
         )
 

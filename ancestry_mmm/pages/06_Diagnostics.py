@@ -104,6 +104,11 @@ from ancestry_mmm.core.market_specific_predict import (
     predict_mu_market_specific,
 )
 from ancestry_mmm.data import prepare_fh_modeling_frame
+from ancestry_mmm.application.fold_refit_service import run_leakage_safe_fold_refit
+from ancestry_mmm.core.estimand_identification import (
+    EFFECT_TYPE_DIRECT,
+    EFFECT_TYPE_TOTAL,
+)
 
 MODEL_TYPE_LABEL = {
     "shared": "Shared response across markets",
@@ -1536,5 +1541,325 @@ else:
                 f"Violations at: {', '.join(format_date(d) for d in result['violation_periods'][:10])}"
                 + (" ..." if len(result["violation_periods"]) > 10 else "")
             )
+
+st.markdown("---")
+st.markdown("### Posterior predictive metric distributions")
+st.caption(
+    "For each error metric (MAE/RMSE/sMAPE/WAPE/bias), the *distribution* of "
+    "that metric computed independently across posterior predictive draws - "
+    "not only the single point value from the posterior mean shown in Error "
+    "metrics above. For a non-linear metric such as RMSE, the metric of the "
+    "posterior mean is not generally equal to the mean of the metric across "
+    "draws - these are genuinely different numbers, kept separate here. "
+    "Computed automatically alongside the scorecard above - re-run "
+    "'Compute scorecard' to refresh it."
+)
+ppd_section = (
+    diag_artefact.posterior_predictive_metric_distributions if diag_artefact else None
+)
+if ppd_section is not None and ppd_section.status == "computed":
+    ppd_df = pd.DataFrame(ppd_section.payload)
+    st.dataframe(ppd_df, width="stretch", column_config=dataframe_column_config(ppd_df))
+elif ppd_section is not None and ppd_section.status == "failed":
+    st.error(f"Posterior predictive metric distributions failed: {ppd_section.error}")
+else:
+    st.info("Compute the scorecard to see this evidence.")
+
+st.markdown("---")
+st.markdown("### Historical validation & structural stability")
+st.caption(
+    "Point-in-time, leakage-safe historical folds (REQ-LEAK-001): each fold "
+    "refits the real production model on an expanding training window and is "
+    "only fit at all if it first clears a per-variable reconstruction "
+    "assessment against the current variable coverage matrix (effective "
+    "periods, publication lag, definition breaks) - a fold that cannot be "
+    "proven leakage-safe is skipped, never silently fit anyway. This check "
+    "uses the coverage matrix's own recorded metadata, not a full per-source-"
+    "version cross-check (that deeper check is available to a caller that "
+    "supplies registered source-version upload events - not wired into this "
+    "page). Structural stability (REQ-STAB-001) compares decision-driving "
+    "parameters (adstock decay, saturation, response coefficients, ...) "
+    "across every fold that was actually fit - reporting each parameter's "
+    "plain numeric range across folds, never a stability verdict or "
+    "threshold. Both sections come from exactly one fit per fold - never two "
+    "divergent fits for the same fold."
+)
+hv_c1, hv_c2, hv_c3 = st.columns(3)
+hv_n_folds = hv_c1.number_input(
+    "Folds", min_value=1, max_value=5, value=1, key="hv_n_folds"
+)
+hv_min_train_frac = hv_c2.slider(
+    "Min training fraction", 0.4, 0.9, 0.7, 0.05, key="hv_min_train_frac"
+)
+hv_draws = hv_c3.number_input(
+    "Draws per fold (reduced for speed)",
+    min_value=200,
+    max_value=3000,
+    value=500,
+    step=100,
+    key="hv_draws",
+)
+
+if st.button("Run historical validation & structural stability"):
+    if diag_artefact is None:
+        st.error("Compute the scorecard first.")
+    elif meta is not None and meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE:
+        # Mirrors the backtest section's own Candidate A guard above: no
+        # fold has the Search observations needed to rebuild its demand/
+        # capture chain.
+        st.error(
+            "This fit used the Candidate A Search engine. Leakage-safe "
+            "fold re-fitting for Candidate A is not yet implemented."
+        )
+    elif not coverage_matrix_dict:
+        st.error(
+            "No variable coverage matrix is available for this project - "
+            "build one on the Data Coverage page first."
+        )
+    else:
+        hv_spec = ModelSpec.from_dict(get_state("model_spec"))
+        hv_df = get_state("transformed_data")
+        hv_coverage_matrix = VariableCoverageMatrix.from_dict(coverage_matrix_dict)
+        try:
+            with st.spinner(
+                f"Running {hv_n_folds}-fold leakage-safe refit "
+                "(this refits the real model per accepted fold)..."
+            ):
+                fold_refit_result = run_leakage_safe_fold_refit(
+                    hv_df,
+                    hv_spec,
+                    hv_coverage_matrix,
+                    model_type=model_type,
+                    n_folds=int(hv_n_folds),
+                    min_train_frac=hv_min_train_frac,
+                    dna_lag_weeks=get_state("dna_lag_weeks", 4),
+                    prior_config=get_state("prior_config"),
+                    draws=int(hv_draws),
+                    tune=int(hv_draws),
+                )
+        except Exception as e:
+            # Fold construction/assessment failed before any fit could even
+            # be attempted (e.g. no transformed_data available yet) -
+            # reported through the same "failed" artefact-section path as a
+            # sampling failure above, rather than a page-only ephemeral
+            # message, so this outcome is itself canonical evidence and
+            # consistently invalidates governance evidence.
+            updated_artefact = DiagnosticsService().record_historical_and_structural_validation_failure(
+                diag_artefact,
+                f"Could not run the leakage-safe fold refit: {e}",
+            )
+        else:
+            updated_artefact = (
+                DiagnosticsService().run_historical_and_structural_validation_check(
+                    diag_artefact,
+                    results_df=fold_refit_result.results_df,
+                    folds=fold_refit_result.folds,
+                    assessments=fold_refit_result.assessments,
+                    snapshots=fold_refit_result.snapshots,
+                )
+            )
+        set_state("diagnostics_artefact", updated_artefact)
+        diag_artefact = updated_artefact
+        invalidate_governance_evidence()
+        _render_summary_into(_summary_slot)
+        if updated_artefact.historical_validation.status == "computed":
+            st.success(
+                "Historical validation computed - diagnostics artefact "
+                "updated. Click 'Evaluate readiness' above to re-evaluate "
+                "against the new evidence."
+            )
+        else:
+            st.error(
+                "Historical validation failed: "
+                f"{updated_artefact.historical_validation.error}"
+            )
+
+hv_section = diag_artefact.historical_validation if diag_artefact else None
+if hv_section is not None and hv_section.status == "computed":
+    st.caption(
+        f"Folds assessed: {hv_section.payload['n_folds_assessed']} | "
+        f"Leakage-safe: {hv_section.payload['n_folds_leakage_safe']}"
+    )
+    with st.expander("Fold reconstruction assessments"):
+        for assessment in hv_section.payload["assessments"]:
+            st.markdown(
+                f"**{assessment['fold_id']}** - "
+                f"{'leakage-safe' if assessment['is_leakage_safe'] else 'not leakage-safe'}"
+            )
+            if assessment["limitations"]:
+                for limitation in assessment["limitations"]:
+                    st.caption(f"Limitation: {limitation}")
+    results_df = pd.DataFrame(hv_section.payload["results"])
+    st.dataframe(
+        results_df, width="stretch", column_config=dataframe_column_config(results_df)
+    )
+elif hv_section is not None and hv_section.status == "failed":
+    st.error(f"Historical validation failed: {hv_section.error}")
+
+ss_section = diag_artefact.structural_stability if diag_artefact else None
+if ss_section is not None and ss_section.status == "computed":
+    st.markdown("**Structural stability across folds**")
+    per_param_rows = [
+        {
+            "parameter_name": p["parameter_name"],
+            "point_range": p["point_range"],
+            "fold_point_values": p["fold_point_values"],
+        }
+        for p in ss_section.payload["per_parameter"]
+    ]
+    ss_df = pd.DataFrame(per_param_rows)
+    st.dataframe(ss_df, width="stretch", column_config=dataframe_column_config(ss_df))
+    for limitation in ss_section.payload["limitations"]:
+        st.caption(f"Limitation: {limitation}")
+elif ss_section is not None and ss_section.status == "not_computed":
+    st.info(ss_section.error)
+elif ss_section is not None and ss_section.status == "failed":
+    st.error(f"Structural stability failed: {ss_section.error}")
+
+st.markdown("---")
+st.markdown("### Estimand-specific graphical identification")
+st.caption(
+    "This evaluates the assumed graph. It does not prove that the graph is "
+    "true or rule out unobserved confounding. Assesses whether the proposed "
+    "adjustment set blocks every backdoor path between the selected "
+    "treatment and outcome under the approved causal graph (Pearl's "
+    "back-door criterion) - a diagnostic on the assumed graph, never proof "
+    "that the graph is correct, that timing/measurement is right, or that "
+    "the functional form is valid. Direct-effect requests are not silently "
+    "treated as identified by this checker - a different identification "
+    "strategy is required for a direct effect, and is reported as such."
+)
+graph_dict = get_state("causal_graph")
+if not graph_dict:
+    st.info("No causal graph is configured for this project.")
+else:
+    gi_graph = CausalGraph.from_dict(graph_dict)
+    node_ids = [n.node_id for n in gi_graph.nodes]
+    gi_c1, gi_c2, gi_c3 = st.columns(3)
+    gi_treatment = gi_c1.selectbox("Treatment", node_ids, key="gi_treatment")
+    gi_outcome = gi_c2.selectbox("Outcome", node_ids, key="gi_outcome")
+    gi_effect_type = gi_c3.selectbox(
+        "Effect type", [EFFECT_TYPE_TOTAL, EFFECT_TYPE_DIRECT], key="gi_effect_type"
+    )
+    gi_adjustment_set = st.multiselect(
+        "Proposed adjustment set", node_ids, key="gi_adjustment_set"
+    )
+    if st.button("Assess identification"):
+        if diag_artefact is None:
+            st.error("Compute the scorecard first.")
+        else:
+            with st.spinner("Assessing graphical identification..."):
+                gi_service = DiagnosticsService()
+                gi_input = DiagnosticsInput(
+                    trace=trace,
+                    frame=frame,
+                    meta=meta,
+                    model_type=model_type,
+                    model_identity=current_model_identity,
+                    raw_model_spec=(
+                        ModelSpec.from_dict(model_spec_dict)
+                        if model_spec_dict
+                        else None
+                    ),
+                    coverage_matrix=(
+                        VariableCoverageMatrix.from_dict(coverage_matrix_dict)
+                        if coverage_matrix_dict
+                        else None
+                    ),
+                    coverage_matrix_built_against_fingerprint=get_state(
+                        "variable_coverage_matrix_built_against_fingerprint"
+                    ),
+                    joined_dataframe_fingerprint=fingerprint_dataframe(frame["df"]),
+                    causal_graph=gi_graph,
+                    identification_requests=[
+                        {
+                            "treatment": gi_treatment,
+                            "outcome": gi_outcome,
+                            "effect_type": gi_effect_type,
+                            "proposed_adjustment_set": tuple(gi_adjustment_set),
+                        }
+                    ],
+                )
+                gi_result = gi_service.evaluate(gi_input)
+            set_state("diagnostics_artefact", gi_result.diagnostics_artefact)
+            diag_artefact = gi_result.diagnostics_artefact
+            invalidate_governance_evidence()
+            _render_summary_into(_summary_slot)
+
+gi_section = diag_artefact.graphical_identification if diag_artefact else None
+if gi_section is not None and gi_section.status == "computed":
+    for result in gi_section.payload["results"]:
+        st.markdown(
+            f"**{result['treatment']} -> {result['outcome']}** "
+            f"({result['effect_type']}): `{result['status']}`"
+        )
+        st.caption(result["disclaimer"])
+        if result["minimal_adjustment_set"] is not None:
+            st.caption(
+                "Constructive minimal adjustment set: "
+                f"{list(result['minimal_adjustment_set'])}"
+            )
+        for limitation in result["limitations"]:
+            st.caption(f"Limitation: {limitation}")
+elif gi_section is not None and gi_section.status == "failed":
+    st.error(f"Graphical identification failed: {gi_section.error}")
+elif gi_section is not None and gi_section.status == "not_computed":
+    st.info("No estimand has been assessed yet.")
+
+st.markdown("---")
+st.markdown("### Latent-state scale/location identification")
+st.caption(
+    "Every fitted latent causal state (e.g. Candidate A's latent branded-"
+    "search demand) needs a declared identifying strategy for what one unit "
+    "of it means - prior regularisation alone does not resolve structural "
+    "non-identification. With no declared strategy, this is not_identified "
+    "(a fail-closed result), never a fabricated pass. Declaring an "
+    "identifying strategy or supplying per-chain posterior draws for "
+    "empirical checking is not yet available from this page."
+)
+lsi_section = diag_artefact.latent_state_identification if diag_artefact else None
+if lsi_section is not None and lsi_section.status == "computed":
+    for result in lsi_section.payload["results"]:
+        st.markdown(f"**{result['latent_state_id']}**: `{result['status']}`")
+        st.caption(result["disclaimer"])
+        for limitation in result["limitations"]:
+            st.caption(f"Limitation: {limitation}")
+elif lsi_section is not None and lsi_section.status in (
+    "not_applicable",
+    "not_computed",
+):
+    st.info("No latent causal states are declared or fitted for this model.")
+elif lsi_section is not None and lsi_section.status == "failed":
+    st.error(f"Latent-state identification failed: {lsi_section.error}")
+
+st.markdown("---")
+st.markdown("### Experiment & calibration evidence")
+st.caption(
+    "Experiment provenance (REQ-EXPMODE-001) and calibrated-versus-"
+    "uncalibrated model comparison (REQ-CALIB-001), kept as two separate, "
+    "individually attributed evidence groups - never averaged into one "
+    "score, and never used to silently override this model's fitted "
+    "estimates. This project has no durable experiment-evidence registry "
+    "or calibration mechanism wired in yet, so this section stays "
+    "not_applicable until that governed workflow exists."
+)
+ec_section = diag_artefact.experiment_calibration if diag_artefact else None
+if ec_section is not None and ec_section.status == "computed":
+    if ec_section.payload["experiments"] is not None:
+        st.markdown("**Experiment provenance**")
+        exp_df = pd.DataFrame(ec_section.payload["experiments"]["entries"])
+        st.dataframe(
+            exp_df, width="stretch", column_config=dataframe_column_config(exp_df)
+        )
+    if ec_section.payload["calibration_comparison"] is not None:
+        st.markdown("**Calibrated vs. uncalibrated comparison**")
+        cal_df = pd.DataFrame(
+            ec_section.payload["calibration_comparison"]["per_metric"]
+        )
+        st.dataframe(
+            cal_df, width="stretch", column_config=dataframe_column_config(cal_df)
+        )
+elif ec_section is not None and ec_section.status in ("not_applicable", "not_computed"):
+    st.info("No experiment evidence or calibrated-model comparison is registered.")
 
 render_next_step("diagnostics")

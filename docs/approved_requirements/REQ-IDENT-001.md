@@ -61,13 +61,25 @@ Structural/linked-model estimands (Requirement 4) are correspondingly out
 of this module's scope by construction: it only ever answers an
 adjustment-based question.
 
+`DiagnosticsArtefact`/Diagnostics-page wiring (Requirement 6's reporting
+separation) now complete (Work Package 2 of `Media-Mix-Lab: Coding LLM
+Next Steps After PR #286`, canonical Diagnostics evidence integration,
+2026-08-18): schema v8 adds the `graphical_identification` section,
+computed inline in `DiagnosticsService.evaluate()` when the caller
+supplies a `causal_graph` and one or more `identification_requests` (no
+PyMC required) — every result carries `GRAPHICAL_IDENTIFICATION_
+DISCLAIMER` unchanged, and a `direct` effect-type request correctly
+resolves to `unsupported_by_current_checker` rather than being silently
+treated as identified (verified by an explicit test). `pages/06_
+Diagnostics.py` exposes an interactive treatment/outcome/effect-type/
+adjustment-set assessment, reported separately from every other evidence
+dimension, always showing the disclaimer text.
+
 Not yet implemented: Requirement 5 (extending `core.graph_model_
 compiler`'s blocking-error contract to fail official compilation on an
-incompatible adjustment-based estimand) and `DiagnosticsArtefact`/
-Diagnostics-page wiring (Requirement 6's reporting separation) — both
-deferred as separate integration follow-ups, consistent with how Work
-Package 1/2's core diagnostics were shipped ahead of their own compiler/
-UI wiring.
+incompatible adjustment-based estimand) — deferred as a separate
+integration follow-up; this record's own diagnostic evidence production
+does not depend on it.
 
 ## Requirement
 
@@ -160,8 +172,12 @@ one undifferentiated "identified"/"not identified" flag.
   record's diagnostic is additional, not a replacement)
 - `ancestry_mmm/core/graph_model_compiler.py` (not yet touched — Requirement
   5's compiler-blocking extension is deferred)
-- `ancestry_mmm/pages/14_Causal_Graph.py` / `ancestry_mmm/pages/06_
-  Diagnostics.py` (not yet wired — deferred)
+- `ancestry_mmm/pages/14_Causal_Graph.py` (not yet wired — deferred)
+- `ancestry_mmm/application/diagnostics_service.py` (Work Package 2 —
+  `DiagnosticsArtefact` schema v8 `graphical_identification` section,
+  computed inline in `evaluate()`)
+- `ancestry_mmm/pages/06_Diagnostics.py` (Work Package 2 — wired,
+  interactive treatment/outcome/effect-type/adjustment-set assessment)
 - `docs/approved_requirements/REQ-IDENT-001.md` (this record)
 - `docs/approved_requirements/index.json` (updated)
 
@@ -180,6 +196,13 @@ one undifferentiated "identified"/"not identified" flag.
   cyclic graph returning `unsupported_by_current_checker` rather than a
   silently wrong answer; `excluded_diagnostic_only` edges excluded from
   the identification graph; and result validation/round-trip)
+- `ancestry_mmm/tests/test_diagnostics_artefact.py::TestEvaluateGraphicalIdentification`
+  (Work Package 2 — not_computed with no graph/requests; graph-compatible
+  total-effect request computed; `direct` effect-type request rejected,
+  not silently allowed; round trip/fingerprint)
+- `ancestry_mmm/tests/test_diagnostics_wp2_evidence_apptest.py::test_graphical_identification_assesses_a_graph_compatible_total_effect`
+- `ancestry_mmm/tests/test_diagnostics_wp2_evidence_apptest.py::test_graphical_identification_rejects_unsupported_direct_effect_request`
+- `ancestry_mmm/tests/test_official_lifecycle_browser.py::test_diagnostics_wp2_evidence_sections_render_in_browser`
 - `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists`
 - `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists`
 - `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid`
@@ -190,9 +213,12 @@ one undifferentiated "identified"/"not identified" flag.
 
 ## Migration impact
 
-None to persisted artefacts. New dependency `networkx>=3.5,<4.0` added to
-`pyproject.toml`/`uv.lock` (pure-Python, MIT-licensed, no known
-vulnerabilities per `pip-audit` against the updated lock file).
+Resolved (Work Package 2): `DiagnosticsArtefact` schema v7 → v8. An
+artefact computed before schema v8 upgrades this section to `not_computed`
+with an explicit "added in schema v8" message. New dependency
+`networkx>=3.5,<4.0` added to `pyproject.toml`/`uv.lock` (pure-Python,
+MIT-licensed, no known vulnerabilities per `pip-audit` against the updated
+lock file) remains unchanged by this wiring.
 
 ## Unresolved decisions
 
@@ -201,9 +227,13 @@ vulnerabilities per `pip-audit` against the updated lock file).
   `find_minimal_d_separator`), verified via Context7 against
   `/networkx/networkx` current documentation before selection, per root
   `AGENTS.md`'s required upstream-reference workflow.
+- `DiagnosticsArtefact`/Diagnostics-page wiring — **resolved** (Work
+  Package 2, see Capability status above).
 - Whether this diagnostic is computed synchronously at graph-approval
   time, at model-compile time, or both — deferred to the Requirement 5
-  compiler-integration follow-up.
+  compiler-integration follow-up (Diagnostics-page evaluation, resolved
+  above, is one such point; graph-approval-time and compile-time remain
+  undecided).
 - The full set of graphical-identification statuses, when graph checks
   are required versus optional, and the accepted identification
   strategies for structural/linked estimands (Part 7 §48 `VL-026`) —

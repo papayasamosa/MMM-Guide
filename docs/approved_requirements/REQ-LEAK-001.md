@@ -113,10 +113,22 @@ moderate-budget Model C fit and genuine two-real-fit structural-stability
 evidence, mirroring the existing `run_leakage_safe_fold_refit` recovery
 coverage).
 
-Still not wired: `DiagnosticsArtefact`/Diagnostics-page integration
-(deferred so Work Package 2's structural-stability evidence — which
-Requirement 6 says must share these same fold manifests — is designed
-into the same schema/UI addition once, not twice).
+`DiagnosticsArtefact`/Diagnostics-page integration now complete (Work
+Package 2 of `Media-Mix-Lab: Coding LLM Next Steps After PR #286`,
+canonical Diagnostics evidence integration, 2026-08-18): schema v8 adds
+the `historical_validation` section, designed into the same schema/UI
+addition as `REQ-STAB-001`'s `structural_stability` section (Requirement
+6's "the two must not each derive their own... notion of what a
+historical fold reconstructed") — `DiagnosticsService.
+run_historical_and_structural_validation_check()` populates both sections
+from exactly one `application.fold_refit_service.
+run_leakage_safe_fold_refit(_from_sources)` run's folds/assessments/
+snapshots, in one pure, immutable artefact update. `pages/06_Diagnostics.py`
+exposes this as a "Historical validation & structural stability" action;
+every fold's reconstruction assessment (leakage-safe or not, and why) is
+shown, never only the folds that were fit. A fold rejected by assessment
+is still `computed` evidence (zero folds cleared is itself a genuine
+result), never silently reported as `not_computed`.
 
 ## Requirement
 
@@ -209,6 +221,11 @@ be hard-coded from this record:
   backtest` remains a plain date-sliced backtest with no leakage-safety
   claim; verified by `TestLeakageSafeExpandingWindowBacktest::
   test_does_not_mutate_expanding_window_backtest`)
+- `ancestry_mmm/application/diagnostics_service.py` (Work Package 2 —
+  `DiagnosticsArtefact` schema v8 `historical_validation` section,
+  `run_historical_and_structural_validation_check`,
+  `record_historical_and_structural_validation_failure`)
+- `ancestry_mmm/pages/06_Diagnostics.py` (Work Package 2 — wired)
 - `docs/approved_requirements/REQ-LEAK-001.md` (this record)
 - `docs/approved_requirements/index.json` (updated)
 
@@ -244,12 +261,22 @@ be hard-coded from this record:
   the single-market fallback path, two real fits, and (Work Package 1
   part 2) the same Model C/multi-fold coverage for
   `run_leakage_safe_fold_refit_from_sources`)
+- `ancestry_mmm/tests/test_diagnostics_artefact.py::TestRunHistoricalAndStructuralValidationCheck`
+  (Work Package 2 — missing fold history, zero-leakage-safe-folds-still-
+  computed, both sections from one fit, pure-update/carries-other-sections-
+  over, pre-v8 schema upgrade)
+- `ancestry_mmm/tests/test_diagnostics_artefact.py::TestSchemaV8StalenessAndReadiness`
+- `ancestry_mmm/tests/test_diagnostics_wp2_evidence_apptest.py::test_historical_validation_button_records_a_failed_section_without_crashing`
+- `ancestry_mmm/tests/test_official_lifecycle_browser.py::test_diagnostics_wp2_evidence_sections_render_in_browser`
 
 ## Migration impact
 
-None. `core.validation_folds` and `application.fold_refit_service` are
-additive modules with no persisted artefact today; no existing schema,
-model, or persisted artefact changes.
+`core.validation_folds` and `application.fold_refit_service` remain
+additive modules with no persisted artefact of their own. Resolved (Work
+Package 2): `DiagnosticsArtefact` schema v7 → v8 now persists this
+record's evidence (as `historical_validation`) via `DiagnosticsService`.
+An artefact computed before schema v8 upgrades this section to
+`not_computed` with an explicit "added in schema v8" message.
 
 ## Unresolved decisions
 
@@ -257,22 +284,22 @@ model, or persisted artefact changes.
   required to describe a fold as leakage-safe *for production use* (Part
   7 §48 `VL-023`) — this record reports what it can verify and what it
   cannot; the production threshold policy remains a separate decision.
-- `DiagnosticsArtefact`/Diagnostics-page schema and UI wiring — deferred
-  to be designed jointly with Work Package 2's structural-stability
-  evidence (Requirement 6), not built twice.
+- `DiagnosticsArtefact`/Diagnostics-page schema and UI wiring — **resolved**
+  (Work Package 2, see Capability status above).
+- Whether this repository's data model should be extended to retain
+  queryable historical content *per* `SourceVersion` so a fold whose
+  pinned coverage record reflects a too-late version could be
+  reconstructed against a genuinely earlier vintage instead of always
+  blocking — remains open (unchanged by Work Package 2's UI/schema
+  wiring, which does not touch this data-model question); the
+  `historical_validation` section surfaces whatever `cannot_verify`
+  limitation the underlying fold assessment already reports, it does not
+  resolve it.
 - Whether expensive real-fold PyMC recovery runs as schedule/manual CI
   evidence or normal-CI evidence — resolved operationally by Work
   Package 1 part 1's split: a tiny fit in blocking CI, a moderate fit
   schedule/manual-only (see Capability status). Work Package 1 part 2's
   `run_leakage_safe_fold_refit_from_sources` follows the same split.
-- Whether this repository's data model should be extended to retain
-  queryable historical content *per* `SourceVersion` (not only that
-  version's upload-event identity) so a fold whose pinned coverage record
-  reflects a too-late version could be reconstructed against a genuinely
-  earlier vintage instead of always blocking — out of scope for Work
-  Package 1 part 2 (a data-model/storage decision, not a validation-logic
-  one); until decided, the fail-closed `cannot_verify` block is this
-  record's only approved behaviour for that case.
 
 ## Owner
 
