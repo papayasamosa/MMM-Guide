@@ -414,3 +414,64 @@ class TestPostMergeVerificationCannotBeSilentlyBypassed:
         assert (
             'Where-Object { $_.headSha -eq $mergeSha -and $_.event -eq "push" }' in text
         )
+
+
+class TestBrowserLifecycleInstallIsBounded:
+    """The Browser lifecycle journey's Chromium install step once hung for
+    over two hours (`uv run playwright install --with-deps chromium` stalled
+    in Ubuntu/Azure package-mirror dependency installation before any
+    browser test started). The fix is bounded time, not weakened tests: a
+    job-level timeout, a step-level timeout, one bounded retry of the
+    install, and the real browser tests untouched. CI must still fail when
+    the install genuinely cannot complete."""
+
+    WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "tests.yml"
+
+    @classmethod
+    def _browser_job_text(cls) -> str:
+        workflow_text = cls.WORKFLOW_PATH.read_text(encoding="utf-8")
+        start = workflow_text.index("  browser:\n")
+        # The next top-level job after `browser:` in this workflow file.
+        end_marker = "\n  # -- Deterministic attribution recovery"
+        end = workflow_text.index(end_marker, start)
+        return workflow_text[start:end]
+
+    def test_browser_job_has_a_bounded_overall_timeout(self):
+        browser_job = self._browser_job_text()
+        job_header = browser_job.split("- name:", 1)[0]
+        assert "timeout-minutes:" in job_header, (
+            "the browser job must carry a job-level timeout-minutes so it can "
+            "never hang a CI/merge wait indefinitely."
+        )
+
+    def test_chromium_install_step_is_bounded_with_one_retry(self):
+        browser_job = self._browser_job_text()
+        assert "Install Chromium" in browser_job
+        install_step = browser_job.split("- name: Install Chromium", 1)[1].split(
+            "- name:", 1
+        )[0]
+        assert "timeout-minutes:" in install_step, (
+            "the Chromium install step must carry its own bounded timeout-minutes."
+        )
+        # One bounded retry: a fixed two-attempt loop, each attempt killed
+        # by `timeout` so a hung apt/mirror install cannot stall again.
+        assert "for attempt in 1 2" in install_step
+        assert "timeout --signal=TERM" in install_step
+        assert "after 2 bounded attempts" in install_step
+        assert "exit 1" in install_step
+
+    def test_browser_tests_are_not_weakened_or_skipped(self):
+        """The install hang must never be worked around by weakening or
+        skipping the actual browser lifecycle tests - they keep running
+        with their own bounded timeout."""
+        browser_job = self._browser_job_text()
+        test_step = browser_job.split(
+            "- name: Run deterministic browser lifecycle journey", 1
+        )[1].split("- name:", 1)[0]
+        assert (
+            "uv run pytest ancestry_mmm/tests/test_official_lifecycle_browser.py"
+            in test_step
+        )
+        assert "test_causal_graph_editor_browser.py" in test_step
+        assert "--browser chromium" in test_step
+        assert "timeout-minutes:" in test_step
