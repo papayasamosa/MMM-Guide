@@ -473,7 +473,7 @@ def test_diagnostics_wp2_evidence_sections_render_in_browser(
     # coverage-metadata-only tier otherwise - never silently.
     expect(
         page.get_by_text(
-            "it automatically uses the stronger reconstruction", exact=False
+            "automatically uses the stronger reconstruction", exact=False
         )
     ).to_be_visible(timeout=30_000)
     expect(
