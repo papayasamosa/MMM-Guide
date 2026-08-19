@@ -269,3 +269,84 @@ def test_readme_does_not_claim_candidate_a_wholly_unwired_from_diagnostics():
         "DiagnosticsArtefact.search_capacity). State the Results/official-"
         "curves/Scenario-Planner gap separately from Diagnostics."
     )
+
+
+# Literal phrasing that appeared in docs/specification_authority.md's
+# "Current implementation gaps requiring decision records" table as of
+# 2026-08-18, describing the Diagnostics evidence work as still unwired.
+# The canonical Diagnostics evidence integration (schema v8) has been
+# merged since: PR #288 (WP1 part 2: point-in-time source reconstruction
+# for leakage-safe folds) and PR #291 (WP2: canonical Diagnostics evidence
+# integration). These "still missing" claims must not come back into a
+# current-state authority document without a corresponding fix.
+STALE_SPEC_AUTHORITY_DIAGNOSTICS_GAP_PHRASES = [
+    # REQ-LEAK-001: fold-local reconstruction claimed not yet built.
+    "rebuilding the full model-ready frame/scaling pipeline per fold",
+    "DiagnosticsArtefact`/UI wiring (deferred to Work Package 2",
+    # REQ-STAB-001: real per-fold re-estimation claimed not yet built.
+    "Still no real per-fold model re-estimation pipeline",
+    # REQ-PPD-001: Diagnostics wiring claimed deferred.
+    "DiagnosticsArtefact`/Diagnostics-page wiring (deferred until a real multi-fold",
+    # REQ-IDENT-001: Diagnostics wiring claimed not yet implemented.
+    "blocking-error extension and `DiagnosticsArtefact`/Diagnostics-page wiring.",
+    # REQ-LATENT-001: Causal-Graph-page wiring claimed not yet implemented.
+    "and `DiagnosticsArtefact`/Causal-Graph-page wiring.",
+    # REQ-EXPMODE-001: the REQ-CALIB-001 comparison contract claimed missing.
+    "export/import wiring, and `REQ-CALIB-001`'s dependent comparison contract.",
+    # REQ-CALIB-001: the Diagnostics-page display slot claimed missing.
+    "and `pages/06_Diagnostics.py` UI wiring (Requirement 4).",
+]
+
+# Markers the current-status row for each of the seven records must now
+# contain (capability facts, not PR numbers - a PR number is a historical
+# label, these are assertions about what the codebase does).
+SPEC_AUTHORITY_DIAGNOSTICS_EVIDENCE_MARKERS = [
+    "run_leakage_safe_fold_refit_from_sources",
+    "historical_validation",
+    "structural_stability",
+    "posterior_predictive_metric_distributions",
+    "graphical_identification",
+    "latent_state_identification",
+    "experiment_calibration",
+]
+
+
+def test_spec_authority_diagnostics_evidence_gaps_not_claimed_open():
+    """docs/specification_authority.md must not re-assert the pre-schema-v8
+    Diagnostics wiring gaps. PR #288 (point-in-time source reconstruction
+    for leakage-safe folds, run_leakage_safe_fold_refit_from_sources) and
+    PR #291 (canonical Diagnostics evidence integration, schema v8:
+    historical_validation, structural_stability,
+    posterior_predictive_metric_distributions, graphical_identification,
+    latent_state_identification, experiment_calibration) closed the exact
+    items these phrases describe as still missing. The authority doc must
+    describe what remains (compiler blocking-error extensions,
+    persistence/export-import wiring, calibration mechanisms) instead of
+    re-asserting closed gaps."""
+    text = _read(SPEC_AUTHORITY)
+    for phrase in STALE_SPEC_AUTHORITY_DIAGNOSTICS_GAP_PHRASES:
+        assert phrase not in text, (
+            f"docs/specification_authority.md contains stale claim: "
+            f"{phrase!r}. The canonical Diagnostics evidence integration "
+            "(schema v8, PRs #288/#291) closed this item - update the "
+            "authority doc instead of reintroducing a closed gap."
+        )
+
+
+def test_spec_authority_references_schema_v8_evidence_sections():
+    """docs/specification_authority.md must reference the implemented
+    schema v8 Diagnostics evidence surface, including the deeper
+    source-based fold-reconstruction path - these exist in code
+    (ancestry_mmm/application/fold_refit_service.py,
+    ancestry_mmm/application/diagnostics_service.py) and in the seven
+    records' own current Capability status sections, and the central
+    summary must not lag behind its own indexed records."""
+    text = _read(SPEC_AUTHORITY)
+    for marker in SPEC_AUTHORITY_DIAGNOSTICS_EVIDENCE_MARKERS:
+        assert marker in text, (
+            f"docs/specification_authority.md must reference {marker!r}: "
+            "the canonical Diagnostics evidence integration (schema v8, "
+            "PRs #288/#291) and the deeper source-based fold-reconstruction "
+            "path are implemented and recorded in the individual REQ "
+            "records' Capability status sections."
+        )
