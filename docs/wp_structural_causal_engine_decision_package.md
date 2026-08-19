@@ -3,6 +3,15 @@
 Status: decision support only. No code changes accompany this package; no
 candidate approach below is enabled, selected, or implemented by it.
 
+> **Work Package 4 (2026-08-19) follow-up:** the capability-matrix
+> evaluation named by candidate D1-A below has now been performed and is
+> recorded in
+> `docs/wp4_structural_causal_engine_capability_evaluation.md` (current
+> upstream evidence for PathMC, DoWhy, pgmpy, and the
+> no-supplemental-engine baseline, classified per `AGENTS.md`'s six-way
+> vocabulary). It supplies evidence only; it still does not decide D1,
+> D2, or D3, and no engine is adopted by it.
+
 ## Why this package exists
 
 Work Package 0's reconciliation of the local PRD suite's newer structural-
