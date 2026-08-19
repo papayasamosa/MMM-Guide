@@ -325,6 +325,35 @@ The current implementation includes:
   (the brief's own permitted alternative). No new future-control-input or
   promotion-schedule editor was built - those remain separate, larger UI
   features tracked as bounded gaps, not resolved here.
+- Canonical Diagnostics evidence integration (WP1 part 2 and WP2 of
+  `Media-Mix-Lab: Coding LLM Next Steps After PR #286`,
+  `application/fold_refit_service.py`,
+  `application/diagnostics_service.py`, `pages/06_Diagnostics.py`,
+  `DiagnosticsArtefact` schema v8): real per-fold PyMC re-fits behind
+  leakage-safe historical validation, with a deeper point-in-time
+  source-reconstruction path (`run_leakage_safe_fold_refit_from_sources`
+  - fold-local `prepare_canonical_native_frame`/`assess_official_
+  preparation` governed to each fold's own information cutoff, and
+  `SourceVersion` upload-timing cross-checks that resolve `cannot_verify`
+  rather than silently reusing a too-late revision; no durable
+  historical-vintage byte store exists, and none is claimed), feeding one
+  shared fold run into both the `historical_validation` and
+  `structural_stability` evidence sections - never two divergent fits for
+  one fold. Schema v8 additionally renders posterior predictive metric
+  distributions (`posterior_predictive_metric_distributions`, computed
+  inline, no extra fit), graphical identification
+  (`graphical_identification`, always carrying its disclaimer),
+  latent-state identification (`latent_state_identification`,
+  fail-closed, never a fabricated pass), and the experiment/calibration
+  provenance display slots (`experiment_calibration` - display slots
+  only: no experiment adoption/persistence workflow and no calibration
+  mechanism exist yet, and the page says so explicitly). The compiler
+  blocking-error extensions reserved by `REQ-IDENT-001` Requirement 5 and
+  `REQ-LATENT-001` Requirement 3 remain open, as do Candidate A's
+  identifying anchor (`MD-021`), the durable Experiment Evidence
+  workflow, and the calibration statistical mechanism - all recorded in
+  `docs/approved_requirements/` and `docs/decision_log.md`, not silently
+  reclassified as implemented.
 
 ## Known bounded gaps
 

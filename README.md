@@ -86,7 +86,16 @@ Requires Python 3.11 or 3.12 (see [Deployment](#deployment) below for why there'
   posterior predictive coverage, curve/ROI plausibility flags, multicollinearity/weak-identification
   diagnostics, coefficient stability, and an expanding-window out-of-sample backtest. Every section
   is computed once and stored in a fingerprinted `DiagnosticsArtefact`; the Diagnostics page renders
-  from that canonical artefact, never a separate live recomputation.
+  from that canonical artefact, never a separate live recomputation. Schema v8 adds six canonical
+  evidence sections: leakage-safe historical validation and structural stability across real
+  per-fold PyMC re-fits (`historical_validation`/`structural_stability`, including a deeper
+  point-in-time source-reconstruction path via `application/fold_refit_service` that fails closed
+  with `cannot_verify` rather than reusing a too-late source revision - no durable
+  historical-vintage byte store is claimed), posterior predictive metric distributions
+  (`posterior_predictive_metric_distributions`), graphical identification
+  (`graphical_identification`), latent-state identification (`latent_state_identification`), and
+  experiment/calibration evidence display slots (`experiment_calibration` - display only: no
+  experiment adoption/persistence workflow or calibration mechanism exists yet).
 - **Model approval gate** (`ancestry_mmm/core/approval.py`): a high R-squared isn't a reason to
   accept a model on its own - an explicit approval (reviewer, notes, known limitations, which
   diagnostics were checked) is required before a model's curves can be saved to the curve bank or

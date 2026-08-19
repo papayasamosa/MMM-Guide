@@ -575,6 +575,10 @@ jobs:
   browser:
     name: Browser lifecycle journey
     runs-on: ubuntu-latest
+    # Outer bound so this job can never hang a CI/merge wait indefinitely.
+    # The Chromium install step below carries its own tighter bound plus one
+    # bounded retry; the browser tests themselves keep their own timeout.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v8.3.2
@@ -583,8 +587,28 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
       - run: uv sync --locked
-      - name: Install Chromium
-        run: uv run playwright install --with-deps chromium
+      - name: Install Chromium (bounded, one retry)
+        # `--with-deps` shells out to apt, which has historically hung for
+        # hours on Ubuntu/Azure package-mirror dependency installation. Each
+        # attempt is bounded by `timeout` and the step itself is bounded by
+        # `timeout-minutes`; after two bounded attempts the step fails, and
+        # CI fails - an install problem is never worked around by weakening
+        # or skipping the browser tests below.
+        run: |
+          set -euo pipefail
+          for attempt in 1 2; do
+            echo "::group::Chromium install attempt ${attempt} of 2"
+            if timeout --signal=TERM --kill-after=60s 13m uv run playwright install --with-deps chromium; then
+              echo "::endgroup::"
+              echo "Chromium installed successfully on attempt ${attempt}."
+              exit 0
+            fi
+            echo "::endgroup::"
+            echo "Chromium install attempt ${attempt} failed or timed out."
+          done
+          echo "::error::Chromium install failed after 2 bounded attempts."
+          exit 1
+        timeout-minutes: 30
       - name: Run deterministic browser lifecycle journey
         run: |
           uv run pytest ancestry_mmm/tests/test_official_lifecycle_browser.py ancestry_mmm/tests/test_causal_graph_editor_browser.py \

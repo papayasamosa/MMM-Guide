@@ -977,13 +977,20 @@ class TestAuthorityConsistency:
             )
 
     def test_validation_overlay_requirement_records_classified_incomplete(self):
-        """The eight REQ-* records this overlay produced (REQ-LEAK-001,
-        REQ-STAB-001, REQ-PPD-001, REQ-IDENT-001, REQ-LATENT-001,
-        REQ-EXPMODE-001, REQ-CALIB-001, REQ-FORECAST-001) must each appear in
-        the implementation-gaps table classified "Requirement exists but
-        capability incomplete" - never "no approved requirement/decision
-        yet", since each is an approved, indexed record even though none has
-        any implementation yet."""
+        """The eight REQ-* records this overlay produced are all approved,
+        indexed records - never "no approved requirement/decision yet".
+
+        Five still reserve remaining scope and must appear in the
+        implementation-gaps table classified "Requirement exists but
+        capability incomplete": REQ-IDENT-001, REQ-LATENT-001,
+        REQ-EXPMODE-001, REQ-CALIB-001, REQ-FORECAST-001.
+
+        Three have been implemented end-to-end since (PR #288 point-in-time
+        source reconstruction for leakage-safe folds; PR #291 canonical
+        Diagnostics evidence integration, schema v8) and must NOT appear as
+        gap rows any longer: REQ-LEAK-001, REQ-STAB-001, REQ-PPD-001 - each
+        must instead be recorded in the "Approved requirement records
+        already implemented" section."""
         authority_path = (
             Path(__file__).parent.parent.parent / "docs" / "specification_authority.md"
         )
@@ -996,9 +1003,6 @@ class TestAuthorityConsistency:
 
         incomplete_state = "Requirement exists but capability incomplete"
         for requirement_id in (
-            "REQ-LEAK-001",
-            "REQ-STAB-001",
-            "REQ-PPD-001",
             "REQ-IDENT-001",
             "REQ-LATENT-001",
             "REQ-EXPMODE-001",
@@ -1012,6 +1016,23 @@ class TestAuthorityConsistency:
                     f"{requirement_id}'s own capability row is classified "
                     f"{row[1]!r}, expected {incomplete_state!r}: {row}"
                 )
+
+        implemented_section = content.split(
+            "## Approved requirement records already implemented", 1
+        )[1]
+        for requirement_id in ("REQ-LEAK-001", "REQ-STAB-001", "REQ-PPD-001"):
+            assert not [row for row in gap_rows if requirement_id in row[0]], (
+                f"{requirement_id} is still listed as an implementation gap; "
+                "it is implemented end-to-end (PR #288 fold-local source "
+                "reconstruction; PR #291 canonical Diagnostics evidence "
+                "integration, schema v8) and must be recorded in the "
+                "'Approved requirement records already implemented' section."
+            )
+            assert requirement_id in implemented_section, (
+                f"{requirement_id} must be recorded in the 'Approved "
+                "requirement records already implemented' section of "
+                "docs/specification_authority.md."
+            )
 
 
 # ---------------------------------------------------------------------------
